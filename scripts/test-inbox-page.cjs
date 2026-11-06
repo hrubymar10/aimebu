@@ -14,7 +14,7 @@ const root = path.join(__dirname, '..', 'web');
 const INBOX = fs.existsSync(path.join(root, 'js', 'pages', 'inbox', 'page.js')) ? '/js/pages/inbox/page.js' : '/js/inbox.js';
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
-<body><main id="app-view" class="app"><header class="workspace-bar"><button id="inbox-toggle" class="btn-icon" type="button" title="Inbox" aria-label="Inbox"><span id="inbox-count" class="badge" hidden>0</span></button></header>
+<body><main id="app-view" class="app"><header class="topbar"><button id="inbox-toggle" class="btn-icon" type="button" title="Inbox" aria-label="Inbox"><span id="inbox-count" class="badge" hidden>0</span></button></header>
 <aside class="sidebar"></aside><section class="chat"></section>
 <section id="inbox-view" class="inbox-view" hidden><header><div><h1>Inbox</h1><p>Questions, approvals, and agent recovery</p></div></header><div id="inbox-list" class="inbox-list"></div><p id="inbox-error" class="error" role="alert"></p></section></main></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };

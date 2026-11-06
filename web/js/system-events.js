@@ -83,7 +83,7 @@ export class SystemEvents {
     this.list = node('div', 'system-events-list'); this.popover.append(head, this.list);
     const health = document.querySelector('#health-toggle');
     health.before(this.toggle);
-    document.querySelector('.workspace-bar').append(this.popover);
+    document.querySelector('.topbar').append(this.popover);
     this.toggle.onclick = event => { event.stopPropagation(); if (this.popover.hidden) this.open(); else this.close(); };
     // A click outside closes the panel. The More menu on a phone forwards its System events item to the bell, so a click in that menu is not outside:
     // it would close the panel the same click just opened.

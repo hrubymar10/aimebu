@@ -58,7 +58,7 @@ const FIXTURE = async () => {
 };
 
 const TARGETS = [
-  'body', '.workspace-bar', '.workspace-brand strong', '#rooms-toggle', '#usages-toggle', '#settings-toggle', '#health-toggle', '.badge',
+  'body', '.topbar', '.topbar-left .logo', '#rooms-toggle', '#usages-toggle', '#settings-toggle', '#health-toggle', '.badge',
   '.sidebar', '.room-row', '.room-row .room-name', '.room-health',
   '.chat header', '#messages', '#composer', '#composer textarea', '#composer button[type=submit]', '.quick-commands[data-fixture=quick]', '.quick-command', '.quick-command[aria-selected=true]',
   '.chat-msg[data-fixture=plain]', '.chat-msg[data-fixture=self]', '.chat-msg.needs-attention', '.chat-msg-system', '.chat-msg-system-row', '.chat-msg-header', '.chat-msg-from-name', '.chat-msg-header time', 'button.chat-msg-id',

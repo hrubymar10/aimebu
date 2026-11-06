@@ -99,3 +99,65 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* A project whose rooms have not arrived yet (see the room list's streamed load): its name in its place, not a control. */
 .project-placeholder .room-row, .project-placeholder .room-row:hover { background: none; cursor: default; pointer-events: none; }
 .project-placeholder .room-name { opacity: .6; }
+
+/* ── Top bar ──
+   The markup is v1's: .topbar around .topbar-left (.logo-mark, .logo, .build-version) and nav.topbar-right, the connection as .status-indicator > .status-dot,
+   so v1's rules draw the bar, the logo, the version and the dot. What is v2's stays here: the placement in the app grid, the fixed bar heights, the compact
+   30px (40px on touch) icon buttons and their counters, the light and dark logo, the experiment pill, and the buttons that move into the ⋯ menu on a phone or
+   a tablet. The popovers (⋯ menu, health, usages, system events) are children of the bar, so the generic `.topbar button` sizes in theme-v1.css (kept in
+   place: they tie in specificity with the popovers' own rules, so their order matters) reach them too. */
+.topbar { grid-column: 1 / -1; grid-row: 1; position: relative; z-index: auto; padding: 0 16px; } /* v1 raises the bar to 100; v2 keeps it below the first-run card and the other full-viewport layers */
+.app > .topbar { height: 53px; min-height: 53px; box-sizing: border-box; }
+.topbar nav { gap: 6px; min-width: 0; flex-shrink: 1; }
+.topbar .build-version { white-space: nowrap; }
+.topbar #logout { margin-left: 4px; }
+.topbar #connection { margin: 0 3px 0 2px; align-self: center; }
+.topbar #more-toggle.has-issues { color: var(--orange); }
+/* The two logos: the light one is shown only on light themes, on every viewport. */
+.topbar-left .brand-logo-light { display: none; }
+:is([data-theme="light"], [data-theme$="-light"]) .topbar-left .brand-logo-light { display: block; }
+:is([data-theme="light"], [data-theme$="-light"]) .topbar-left .brand-logo-dark { display: none; }
+.app > .topbar nav .btn-icon { position: relative; display: inline-grid; place-items: center; flex: 0 0 30px; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; border: 1px solid var(--border); background: transparent; }
+.app > .topbar nav .btn-icon:hover:not(:disabled), .app > .topbar nav .btn-icon:focus-visible { border-color: var(--text-primary); background: var(--bg-tertiary); color: var(--text-primary); }
+.topbar nav .icon-mask { width: 17px; height: 17px; }
+.topbar nav .badge { position: absolute; top: 0; right: 0; min-width: 15px; height: 15px; margin: 0; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 15px; text-align: center; pointer-events: none; }
+.topbar nav .badge[hidden] { display: none; }
+@media (min-width: 701px) { .topbar nav button.btn { height: 28px; min-height: 28px; } .topbar #rooms-toggle { display: none; } }
+/* The A/B/C experiment switch (hidden unless an experiment is active). */
+.topbar nav button.ui-variant-toggle { display: inline-flex; align-items: center; gap: 3px; min-width: 76px; height: 28px; padding: 0 7px; border-radius: 999px; white-space: nowrap; }
+.topbar nav button.ui-variant-toggle[hidden] { display: none; }
+/* Phone: the controls stay at the right edge and only those that do not fit are tucked away (js/pages/topbar). */
+@media (max-width: 700px) {
+  .topbar { z-index: 8; padding: 0 8px; gap: 6px; }
+  .topbar-left img { width: 19px; height: 19px; }
+  .topbar .logo, .topbar .build-version { display: none; }
+  .topbar nav { flex: 1 1 auto; justify-content: flex-end; overflow: visible; }
+  .app > .topbar nav .btn-icon.topbar-tucked { display: none; }
+  .topbar.topbar-has-overflow #more-toggle { display: inline-grid; }
+  .topbar #logout { margin-left: 2px; }
+  .topbar .badge { white-space: nowrap; }
+  .topbar #connection { flex: 0 0 auto; }
+  .topbar nav button.ui-variant-toggle { height: 40px; min-width: 40px; padding: 0 5px; } /* a tap target, even with only A | B */
+}
+@media (max-width: 480px) { .app > .topbar { height: 49px; min-height: 49px; } .topbar-left img { width: 22px; height: 22px; } }
+@media (max-width: 360px) { .topbar-left { display: none; } }
+@media (max-width: 700px), (pointer: coarse) { .app > .topbar nav .btn-icon { flex-basis: 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; } }
+/* v1 hides the version under 740px; v2 hides it from 700px down (and on a touch tablet, below), so a desktop window between 701 and 740px shows it. */
+@media (min-width: 701px) and (max-width: 740px) { .topbar .build-version { display: inline; } }
+/* Tablets and big phones (a touch screen up to 900px wide, such as an iPad mini upright): 40px buttons no longer fit next to the brand and the experiment
+   pill, so the bar keeps what a phone's keeps (Rooms, Inbox, Usages, Settings) and the rest live in the ⋯ menu. The version text and the pill's long
+   label go, so nothing is squashed or clipped. */
+@media (min-width: 701px) and (max-width: 900px) and (pointer: coarse) {
+  .topbar #system-events-toggle, .topbar #health-toggle, .topbar #knowledge-toggle, .topbar #logout { display: none; }
+  .topbar #more-toggle { display: inline-grid; }
+  .topbar .build-version, .ui-variant-toggle .ui-variant-testing { display: none; }
+  .topbar nav button.ui-variant-toggle { flex: 0 0 auto; }
+}
+/* Touch targets on a tablet are 40px too: the experiment pill was sized for a mouse above 700px. */
+@media (pointer: coarse) { .topbar nav button.ui-variant-toggle { height: 40px; } }
+/* With two experiments the two pills share a phone's top bar: tighter letters. */
+@media (max-width: 700px) {
+  .topbar nav button.ui-variant-toggle { gap: 1px; padding: 0 4px; font-size: 11px; }
+  .topbar nav button.ui-variant-toggle + button.ui-variant-toggle { margin-left: -2px; }
+}
+@media (max-width: 520px) { .topbar nav button.ui-variant-toggle { min-width: 40px; justify-content: center; } }

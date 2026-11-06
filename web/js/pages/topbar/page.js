@@ -15,7 +15,7 @@ const PHONE = '(max-width: 700px)';
 const TABLET = '(min-width: 701px) and (max-width: 900px) and (pointer: coarse)';
 
 export class TopbarMenu {
-  constructor({ toggle = document.querySelector('#more-toggle'), menu = document.querySelector('#more-menu'), sources = ITEMS.map(([selector, label]) => ({ target: document.querySelector(selector), label })), health = document.querySelector('#health-toggle'), bar = toggle.closest('.workspace-bar') } = {}) {
+  constructor({ toggle = document.querySelector('#more-toggle'), menu = document.querySelector('#more-menu'), sources = ITEMS.map(([selector, label]) => ({ target: document.querySelector(selector), label })), health = document.querySelector('#health-toggle'), bar = toggle.closest('.topbar') } = {}) {
     owners.get(menu)?.destroy(); owners.set(menu, this);
     this.toggle = toggle; this.menu = menu; this.targets = sources.map(source => source.target);
     this.bar = bar; this.nav = bar?.querySelector('nav') || null; this.health = health;

@@ -31,7 +31,7 @@ function audit(MIN) {
   };
 
   // Top bar
-  const bar = document.querySelector('.workspace-bar'), nav = bar.querySelector('nav');
+  const bar = document.querySelector('.topbar'), nav = bar.querySelector('nav');
   const barButtons = [...nav.querySelectorAll('button')].filter(button => !button.hidden && box(button).width);
   small(nav, 'top bar', 'button');
   overlaps(barButtons, 'top bar');
@@ -161,8 +161,8 @@ async function menuAudit(page, vw) {
       if (!document.querySelector('#health-toggle').classList.contains('topbar-tucked') || !toggle.classList.contains('has-issues')) findings.push('menu: tucked Health warning is missing');
     }
     if (width === 440) {
-      const nav = document.querySelector('.workspace-bar nav');
-      const brand = document.querySelector('.workspace-brand').getBoundingClientRect();
+      const nav = document.querySelector('.topbar nav');
+      const brand = document.querySelector('.topbar-left').getBoundingClientRect();
       const buttons = [...nav.querySelectorAll('button')].filter(button => !button.hidden && button.getBoundingClientRect().width);
       if (getComputedStyle(toggle).display !== 'none') findings.push('menu: overflow shows with room for every button at 440px');
       const connection = document.querySelector('#connection').getBoundingClientRect();
@@ -175,9 +175,9 @@ async function menuAudit(page, vw) {
       if (tucked.join() !== 'logout' || toggle.classList.contains('has-issues')) findings.push('menu: visible Health incorrectly colors More when only Sign out is tucked');
       return findings;
     }
-    const tucked = [...document.querySelectorAll('.workspace-bar nav .topbar-tucked')].filter(button => !button.hidden);
+    const tucked = [...document.querySelectorAll('.topbar nav .topbar-tucked')].filter(button => !button.hidden);
     if (width <= 700) {
-      const nav = document.querySelector('.workspace-bar nav');
+      const nav = document.querySelector('.topbar nav');
       const visible = [...nav.children].filter(element => element.getBoundingClientRect().width);
       if (nav.scrollWidth > nav.clientWidth + 1 || visible.some(element => { const rect = element.getBoundingClientRect(); return rect.left < -1 || rect.right > width + 1; })) findings.push(`menu: top bar overflows at ${width}px`);
     }

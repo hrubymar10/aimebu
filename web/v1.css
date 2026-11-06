@@ -341,6 +341,18 @@
 
 /* ── Top Bar ──────────────────────────────────────────────────── */
 
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  z-index: 100;
+  gap: 16px;
+}
+
 .topbar-left {
   display: flex;
   align-items: center;
@@ -369,10 +381,26 @@
   position: relative;
 }
 
+.logo {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
 .logo-subtitle {
   font-size: 0.75rem;
   color: var(--text-muted);
   font-weight: 400;
+}
+
+.build-version {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+  letter-spacing: 0.02em;
+  font-family: var(--font-mono, monospace);
 }
 
 .agent-id-label {
@@ -718,6 +746,16 @@
   border-radius: 50%;
   display: inline-block;
   transition: background var(--transition);
+}
+
+.status-indicator.connected .status-dot {
+  background: var(--green-text);
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.4);
+}
+
+.status-indicator.disconnected .status-dot {
+  background: var(--red);
+  box-shadow: 0 0 6px rgba(248, 81, 73, 0.4);
 }
 
 /* ── Buttons ──────────────────────────────────────────────────── */
@@ -2677,7 +2715,7 @@
     display: none;
   }
 
-  .logo-subtitle {
+  .logo-subtitle, .build-version {
     display: none;
   }
 
@@ -2698,7 +2736,10 @@
 }
 
 @media (max-width: 480px) {
-  
+  .topbar {
+    padding: 8px 12px;
+    gap: 8px;
+  }
 
   .topbar-right {
     min-width: 0;

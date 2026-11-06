@@ -36,6 +36,11 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 | Settings | `section.settings-content` (`[hidden]`) | `section.settings-section` (`.active` when selected, `hidden` kept) | settings |
 | Settings | `.settings-section` inside a page (stacked sub-block) | `.settings-subsection` (v2's own; v1's `.settings-section` is a tab body) | settings |
 | Settings | `.settings-row` / `-group` / `-label` / `-desc` / `-control` | same names, now v1's rules (the scoped v2 copies are deleted) | settings |
+| Top bar | `header.workspace-bar` | `header.topbar` | top bar |
+| Top bar | `.workspace-brand` / `img.brand-logo` | `.topbar-left` / `img.logo-mark` (`.brand-logo` and `-light` / `-dark` stay as the light/dark swap hook) | top bar |
+| Top bar | `<strong>aimebu</strong>` / `#build-version` | `h1.logo` / `span.build-version#build-version` | top bar |
+| Top bar | `nav` | `nav.topbar-right` | top bar |
+| Top bar | `span.connection-dot(.connected / .disconnected)` | `span.status-indicator(.connected / .disconnected) > span.status-dot` | top bar |
 
 ## Kept from v2 on purpose (decided by the owner, 2026-11-05)
 
@@ -45,6 +50,11 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 - Touch-sized targets on phones (v1 has none).
 - A real background on a plain `.btn` (v1 leaves the browser's grey), a hover on it, and a visible focus ring (v1's `.btn` sets `outline: none`).
 - Icon-only top bar with tooltips (v1 and v2 already agree).
+- Top bar (the layout stays v2's, by decision): placed in the app grid and fixed at 53px (49px under 480px, with `--bar-h` following), no bar padding above or
+  below; 30px icon buttons (40px on touch and on a phone) with v2's counters (`.badge`, v1 has only a dot), the Rooms/Inbox/Health/Memory/Usages/
+  Settings/⋯/Sign out set, the ⋯ menu and the tucking of controls that do not fit on a phone or a touch tablet, the A/B/C experiment pill, the
+  light and dark logo swap, and `z-index: auto` (v1 raises the bar to 100, which would lift it over the first-run card). The generic `.topbar button`
+  sizes stay in `theme-v1.css`, in place: the popovers (⋯ menu, health, usages, system events) are children of the bar and tie with their own rules.
 - Settings keeps what v1 never had in `v2-only.css`: the `<dialog>` reset, the caption gap before the Agents group, the hidden pending Users tab,
   toggle and stacked rows, the actions row, and 40px tabs on touch. The quota, switcher and harness blocks keep v2's own
   rules until their areas move.
@@ -62,6 +72,10 @@ Left under v2's names for now (their areas move later): the toolbar (`.message-a
 `.thread-chip`, `.message-receipts` (read receipts come back to v1's `.chat-msg-receipts` in a later step), `.message-images`, `.message-role`.
 
 ## Reverted to v1 on purpose
+- Top bar atoms are v1's: the logo (1.15rem, 700, was 16px), the version text (.6rem at .6 opacity, was 8.4px at .9; high contrast keeps full
+  opacity), the brand gap (10px, was 7px) and the connection dot (8px with a glow, was 9px with a halo ring). The System events popover's title is a plain
+  `strong` now: it was styled as the brand (16px, letter-spaced) and hidden on phones by the bar's `strong` rule, and is 14px and shown like the other
+  popovers' titles, so every popover title in the bar shows on a phone now. v1 hides the version under 740px; v2 shows it again from 701px.
 
 - Colour tokens and the nine palettes are v1's, including its muted text and light themes, which are under WCAG AA in places: the `test-ui`
   contrast audit now reports them instead of failing on them (`a11y-audit.cjs --strict` still enforces).

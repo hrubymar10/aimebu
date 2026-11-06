@@ -22,16 +22,16 @@ async function main() {
     const menu = () => page.evaluate(() => ({ open: !document.querySelector('#more-menu').hidden, expanded: document.querySelector('#more-toggle').getAttribute('aria-expanded'), focus: document.activeElement?.classList.contains('more-item') ? document.activeElement.firstElementChild.textContent : document.activeElement?.id || '', items: [...document.querySelectorAll('#more-menu .more-item')].map(button => [button.firstElementChild.textContent, button.hidden]) }));
     // on a phone the bar tucks controls only when they do not fit, in the order Sign out, System events, Memory, Health
     const bar = () => page.evaluate(() => ({
-      tucked: [...document.querySelectorAll('.workspace-bar nav .topbar-tucked')].map(button => button.id),
+      tucked: [...document.querySelectorAll('.topbar nav .topbar-tucked')].map(button => button.id),
       more: getComputedStyle(document.querySelector('#more-toggle')).display !== 'none',
       offered: [...document.querySelectorAll('#more-menu .more-item')].filter(button => !button.hidden).map(button => button.firstElementChild.textContent),
       mark: document.querySelector('#more-toggle').classList.contains('has-issues'),
-      overflow: document.querySelector('.workspace-bar nav').scrollWidth > document.querySelector('.workspace-bar nav').clientWidth + 1 || document.documentElement.scrollWidth > innerWidth,
+      overflow: document.querySelector('.topbar nav').scrollWidth > document.querySelector('.topbar nav').clientWidth + 1 || document.documentElement.scrollWidth > innerWidth,
     }));
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 50)))));
     await page.setViewport({ width: 600, height: 900 }); await settle();
     assert.deepEqual(await bar(), { tucked: [], more: false, offered: [], mark: false, overflow: false }, 'with room for every control nothing is tucked and the overflow button is gone');
-    const aligned = await page.evaluate(() => { const nav = document.querySelector('.workspace-bar nav'), brand = document.querySelector('.workspace-brand').getBoundingClientRect(); return [getComputedStyle(nav).justifyContent, [...nav.querySelectorAll('button')].find(button => button.getBoundingClientRect().width).getBoundingClientRect().left > brand.right + 20, innerWidth - document.querySelector('#connection').getBoundingClientRect().right <= 16]; });
+    const aligned = await page.evaluate(() => { const nav = document.querySelector('.topbar nav'), brand = document.querySelector('.topbar-left').getBoundingClientRect(); return [getComputedStyle(nav).justifyContent, [...nav.querySelectorAll('button')].find(button => button.getBoundingClientRect().width).getBoundingClientRect().left > brand.right + 20, innerWidth - document.querySelector('#connection').getBoundingClientRect().right <= 16]; });
     assert.deepEqual(aligned, ['flex-end', true, true], 'the controls sit at the right edge, away from the logo');
     await page.$eval('#health-toggle', button => button.classList.add('has-issues')); await settle();
     assert.equal((await bar()).mark, false, 'a Health warning does not colour the overflow button while Health is in the bar');

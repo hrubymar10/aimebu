@@ -55,8 +55,8 @@ function showToast(message) {
 }
 function setStartupState(state) {
   const busy = state === 'loading';
-  for (const child of appView.children) if (child !== appView.querySelector('.workspace-bar') && child !== startupStatus) child.inert = busy;
-  for (const button of appView.querySelectorAll('.workspace-bar button:not(#logout)')) button.inert = busy;
+  for (const child of appView.children) if (child !== appView.querySelector('.topbar') && child !== startupStatus) child.inert = busy;
+  for (const button of appView.querySelectorAll('.topbar button:not(#logout)')) button.inert = busy;
   if (busy) appView.setAttribute('aria-busy', 'true'); else appView.removeAttribute('aria-busy');
   startupStatus.hidden = state === 'ready'; startupStatus.dataset.loading = String(busy);
   startupText.textContent = busy ? 'Finishing sign-in…' : state === 'timeout' ? "Some checks didn't finish." : '';

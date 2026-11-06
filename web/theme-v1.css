@@ -47,27 +47,17 @@ button.btn-danger:hover:not(:disabled), button.btn-danger:focus-visible { backgr
 /* Not in the layer: v1 sets `outline: none` on .btn and .msg-input and has no focus ring; a visible one is a v2 requirement (checked by the audits). */
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @layer v1-reset {
-  :is(.send-bar, .send-bar *, .send-bar *::before, .send-bar *::after) { margin: 0; padding: 0; box-sizing: border-box; }
+  :is(.send-bar, .send-bar *, .send-bar *::before, .send-bar *::after, .topbar-left, .topbar-left *, .topbar-left *::before, .topbar-left *::after) { margin: 0; padding: 0; box-sizing: border-box; }
 }
 
 .app { grid-template-columns: 240px minmax(0, 1fr); background: var(--bg-primary); }
-.workspace-bar { min-height: 49px; gap: 16px; padding: 9px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); }
-.brand-logo-light { display: none; }
-:is([data-theme="light"], [data-theme$="-light"]) .brand-logo-light { display: inline; }
-:is([data-theme="light"], [data-theme$="-light"]) .brand-logo-dark { display: none; }
-.workspace-bar strong { color: var(--text-primary); font-size: 16px; letter-spacing: -.02em; }
-.workspace-bar button { padding: 5px 10px; font-size: 12px; }
-.workspace-brand { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.workspace-brand img { flex: 0 0 auto; }
-#app-view[aria-busy="true"] > :not(.workspace-bar):not(#startup-status),
-#app-view[aria-busy="true"] .workspace-bar button:not(#logout) { opacity: .55; }
+.topbar button { padding: 5px 10px; font-size: 12px; }
+#app-view[aria-busy="true"] > :not(.topbar):not(#startup-status),
+#app-view[aria-busy="true"] .topbar button:not(#logout) { opacity: .55; }
 #startup-status { position: fixed; top: 60px; right: 16px; z-index: 50; display: flex; align-items: center; gap: 10px; max-width: min(360px, calc(100vw - 32px)); padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-secondary); color: var(--text-primary); box-shadow: 0 8px 24px var(--overlay-shadow); }
 #startup-status[hidden] { display: none; }
 #startup-status[data-loading="true"]::before { content: ''; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid var(--border-hover); border-top-color: var(--accent); border-radius: 50%; animation: startup-spin .8s linear infinite; }
 @keyframes startup-spin { to { transform: rotate(360deg); } }
-#build-version { margin-left: 3px; color: var(--text-muted); opacity: .9; font: 8.4px/1 var(--font-mono); white-space: nowrap; }
-.connection-dot { display: inline-block; flex: 0 0 auto; width: 9px; height: 9px; margin: 0 6px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 2px var(--red-halo); }
-.connection-dot.connected { background: var(--green-text); box-shadow: 0 0 0 2px var(--green-halo); }
 .badge { background: var(--accent); color: var(--bg-primary); }
 
 .login { background: var(--bg-primary); }
@@ -436,15 +426,8 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 
 @media (max-width: 700px) {
   .app { position: relative; height: 100dvh; overflow: hidden; }
-  .workspace-bar { position: relative; z-index: 8; height: 54px; min-height: 54px; gap: 4px; padding: 7px 6px; }
-  .workspace-bar strong { font-size: 14px; }
-  .workspace-bar nav { gap: 2px; }
-  .workspace-bar button { padding: 4px 5px; font-size: 10px; }
-  .workspace-bar #settings-toggle { font-size: 15px; line-height: 1; }
-  .workspace-brand img { width: 19px; height: 19px; }
-  #build-version { display: none; }
-  .workspace-bar .btn-icon { width: 25px; height: 27px; padding: 0; }
-  .connection-dot { margin: 0 2px; }
+  .topbar button { padding: 4px 5px; font-size: 10px; }
+  .topbar #settings-toggle { font-size: 15px; line-height: 1; }
   .sidebar, .chat, .inbox-view { height: calc(100dvh - 54px); }
   .chat { overflow: hidden; }
   .chat > header { flex: 0 0 auto; }
@@ -480,9 +463,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .chat.agents-collapsed > .send-bar { margin-right: 0; }
 }
 @media (max-width: 360px) {
-  .workspace-brand img { display: none; }
-  .workspace-bar nav { gap: 0; }
-  .workspace-bar button { white-space: nowrap; }
+  .topbar button { white-space: nowrap; }
 }
 .snippet-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .snippet-text { min-width: 0; }
@@ -523,11 +504,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme="high-contrast-dark"] :is(button,input,textarea,select):focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
 /* Shared chat chrome follows the compact v1 layout. */
-.workspace-bar { height: 53px; min-height: 53px; padding: 0 16px; align-items: center; }
-.workspace-bar nav { display: flex; align-items: center; gap: 6px; min-width: 0; }
-@media (min-width: 701px) { .workspace-bar nav button.btn { height: 28px; min-height: 28px; } }
-.workspace-bar #logout { margin-left: 4px; }
-.workspace-bar #connection { margin: 0 3px 0 2px; align-self: center; }
 .chat > header { height: 43px; min-height: 43px; padding: 0 16px; gap: 12px; }
 .room-heading { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
 .room-heading #room-icon { flex: 0 0 auto; color: var(--text-muted); font-size: 14px; font-weight: 700; line-height: 1.4; }
@@ -548,14 +524,11 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .agents-panel > header { box-sizing: border-box; height: 43px; min-height: 43px; padding-top: 0; padding-bottom: 0; }
 }
 @media (max-width: 700px) {
-  .workspace-bar strong { display: none; }
-  .workspace-brand img { display: block; }
   .thread-panel { top: 0; }
   .sidebar, .chat, .inbox-view { height: calc(100dvh - var(--bar-h, 53px)); }
   .app.chat-open .sidebar { top: var(--bar-h, 53px); }
   .app.rooms-open #rooms-scrim { inset: var(--bar-h, 53px) 0 0; }
 }
-@media (max-width: 360px) { .workspace-brand { display: none; } }
 /* Room header on phones: the six room controls collapse into one overflow menu (js/pages/room-menu)
    so the title keeps room and the Agents button never covers a control. A touch screen up to 900px (an iPad upright, where the chat
    column shares the window with the side panels) does the same. */
@@ -888,28 +861,15 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 /* Phone top bar: keep the controls at the right edge and tuck only those that do not fit. */
 @media (max-width: 700px) {
   :root { --bar-h: 56px; }
-  .workspace-bar { height: 56px; min-height: 56px; padding: 0 8px; gap: 6px; }
-  .workspace-bar > .workspace-brand { flex: 0 0 auto; }
-  .workspace-bar nav { flex: 1 1 auto; justify-content: flex-end; gap: 2px; overflow: visible; }
-  .app > .workspace-bar nav .btn-icon.topbar-tucked { display: none; }
-  .workspace-bar.topbar-has-overflow #more-toggle { display: inline-grid; }
-  .workspace-bar nav button, .workspace-bar .btn-icon { flex: 0 0 auto; min-width: 40px; height: 40px; min-height: 40px; padding: 0 8px; font-size: 11px; white-space: nowrap; }
-  .workspace-bar .btn-icon { width: 40px; padding: 0; }
-  .workspace-bar #logout { margin-left: 2px; }
-  .workspace-bar .badge { white-space: nowrap; }
-  .workspace-bar #connection, .workspace-bar .connection-dot { flex: 0 0 auto; }
+  .topbar nav button, .topbar .btn-icon { flex: 0 0 auto; min-width: 40px; height: 40px; min-height: 40px; padding: 0 8px; font-size: 11px; white-space: nowrap; }
+  .topbar .btn-icon { width: 40px; padding: 0; }
 }
 #more-toggle { display: none; }
 .more-menu { right: 8px; width: min(240px, calc(100vw - 16px)); padding: 6px; }
 .more-menu .more-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 40px; padding: 0 12px; text-align: left; background: transparent; border-color: transparent; }
 .more-menu .more-item[hidden] { display: none; }
 .more-menu .more-item:hover { background: var(--bg-hover); }
-.workspace-bar #more-toggle.has-issues { color: var(--orange); }
 @media (min-width: 901px), (min-width: 701px) and (pointer: fine) { .more-menu { display: none !important; } }
-@media (max-width: 480px) {
-  .workspace-brand strong { display: none; }
-  .workspace-brand img { display: block; width: 22px; height: 22px; }
-}
 
 /* Touch devices: message actions are real tap targets. */
 @media (hover: none) and (pointer: coarse) {
@@ -950,7 +910,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 @media (min-width: 701px) {
   button.edge-toggle, .sidebar header button.edge-toggle, .agents-panel header button.edge-toggle { display: inline-flex; }
   #agents-close { display: none; }
-  .workspace-bar #rooms-toggle { display: none; }
   .agents-panel header { gap: 8px; }
   /* A collapsed column is 0px (nothing is left over); its expand button sits in the chat header. */
   .chat > header > button.edge-expand { display: none; }
@@ -1165,14 +1124,10 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
   .chat-msg.actions-open .message-actions, .chat-msg:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { display: flex; }
 }
 
-/* The A/B/C experiment switch in the top bar (hidden unless an experiment is active). */
-.workspace-bar nav button.ui-variant-toggle { display: inline-flex; align-items: center; gap: 3px; min-width: 76px; height: 28px; padding: 0 7px; border-radius: 999px; white-space: nowrap; }
 .ui-variant-toggle .ui-variant-options { display: inline-flex; align-items: center; gap: 3px; }
 .ui-variant-toggle .ui-variant-opt { font-weight: 600; }
 .ui-variant-toggle[data-active="a"] .ui-variant-a, .ui-variant-toggle[data-active="b"] .ui-variant-b, .ui-variant-toggle[data-active="c"] .ui-variant-c, .ui-variant-toggle[data-active="d"] .ui-variant-d, .ui-variant-toggle[data-active="e"] .ui-variant-e { color: var(--text-primary); font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
-@media (max-width: 700px) { .workspace-bar nav button.ui-variant-toggle { height: 40px; min-width: 40px; padding: 0 5px; } } /* a tap target, even with only A | B */
 @media (max-width: 700px) { .ui-variant-toggle > span:first-child { display: none; } }
-.workspace-bar nav button.ui-variant-toggle[hidden] { display: none; }
 .ui-variant-toggle .ui-variant-testing { margin-left: 4px; color: var(--text-secondary); font-weight: 600; letter-spacing: .02em; }
 @media (max-width: 700px) { .ui-variant-toggle .ui-variant-testing { display: none; } }
 
@@ -1258,11 +1213,6 @@ html[data-debug-inspector="on"] dt.room-fact-debug, html[data-debug-inspector="o
 html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-debug-inspector="on"]) .inbox-raw { display: none; }
 
 
-/* The two logos: the light one is shown only on light themes, on every viewport (a phone rule used to show both). */
-.workspace-brand .brand-logo-light { display: none; }
-:is([data-theme="light"], [data-theme$="-light"]) .workspace-brand .brand-logo-light { display: block; }
-:is([data-theme="light"], [data-theme$="-light"]) .workspace-brand .brand-logo-dark { display: none; }
-
 /* v1's phone navigation: Rooms | Chat | Agents along the bottom. The top-bar Rooms button, the chat header's drawer
    buttons and the title bar's own Agents button are replaced by it on a phone. */
 .mobile-tabs { display: none; }
@@ -1272,7 +1222,6 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
   .mobile-tab { flex: 1; min-height: 40px; border: 0; border-top: 2px solid transparent; border-radius: 0; background: none; color: var(--text-secondary); font: 600 12.8px var(--font-sans); }
   .mobile-tab:hover, .mobile-tab:focus-visible { color: var(--text-primary); background: none; }
   .mobile-tab.active { color: var(--accent); border-top-color: var(--accent); }
-  .workspace-bar { height: 56px; min-height: 56px; box-sizing: border-box; }
   .app.chat-open .sidebar { bottom: calc(var(--tabbar) + var(--sab)); } /* the rooms drawer ends above the bar */
   .sidebar, .chat, .inbox-view { height: calc(100dvh - var(--bar-h) - var(--tabbar) - var(--sab)); }
   #app-view #rooms-toggle, #app-view .chat > header #back, #app-view .chat header #agents-toggle { display: none !important; }
@@ -1444,22 +1393,14 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-inbox { -webkit-mask-image: url("/icons/inbox.svg"); mask-image: url("/icons/inbox.svg"); }
 .icon-mask-health { -webkit-mask-image: url("/icons/health.svg"); mask-image: url("/icons/health.svg"); }
 .icon-mask-spawn { -webkit-mask-image: url("/icons/spawn.svg"); mask-image: url("/icons/spawn.svg"); }
-.app > .workspace-bar { height: 53px; min-height: 53px; box-sizing: border-box; }
-.app > .workspace-bar nav { gap: 6px; }
-.app > .workspace-bar nav .btn-icon { position: relative; display: inline-grid; place-items: center; flex: 0 0 30px; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; border: 1px solid var(--border); background: transparent; }
-.app > .workspace-bar nav .btn-icon:hover:not(:disabled), .app > .workspace-bar nav .btn-icon:focus-visible { border-color: var(--text-primary); background: var(--bg-tertiary); color: var(--text-primary); }
-.workspace-bar nav .icon-mask { width: 17px; height: 17px; }
-.workspace-bar nav .badge { position: absolute; top: 0; right: 0; min-width: 15px; height: 15px; margin: 0; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 15px; text-align: center; pointer-events: none; }
-.workspace-bar nav .badge[hidden] { display: none; }
 #agents-toggle .icon-mask, #spawn-open .icon-mask { width: 16px; height: 16px; }
 /* Spawn is the owner's exception to the icon-only rule: the green Send look, a glyph and the word. */
 #spawn-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; min-height: 28px; padding: 0 12px; border-radius: 8px; font-weight: 600; }
 @media (max-width: 700px), (pointer: coarse) {
-  .app > .workspace-bar nav .btn-icon { flex-basis: 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
   #spawn-open { height: 40px; min-height: 40px; }
 }
 @media (max-width: 700px) { :root { --bar-h: 53px; } }
-@media (max-width: 480px) { :root { --bar-h: 49px; } .app > .workspace-bar { height: 49px; min-height: 49px; } }
+@media (max-width: 480px) { :root { --bar-h: 49px; } }
 
 /* The composer's notices (web/js/notice.js): a short message with a dismiss button, under the composer. */
 /* The quiet bar that offers browser notifications, under the room header: one line, an icon, the text, Enable and Dismiss as icon buttons. */
@@ -1551,21 +1492,6 @@ button > .icon-mask { pointer-events: none; }
 .macro-import textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 var(--font-mono, monospace); }
 .macro-import-summary { margin: 0; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .macro-import-summary.error { color: var(--red); }
-
-/* Tablets and big phones (a touch screen up to 900px wide, such as an iPad mini upright): 40px buttons no longer fit next to the
-   brand and the experiment pill, so the bar keeps what a phone's keeps (Rooms, Inbox, Usages, Settings) and the rest live in the
-   ⋯ menu. The version text and the pill's long label go, so nothing is squashed or clipped. */
-@media (min-width: 701px) and (max-width: 900px) and (pointer: coarse) {
-  .workspace-bar #system-events-toggle, .workspace-bar #health-toggle, .workspace-bar #knowledge-toggle, .workspace-bar #logout { display: none; }
-  .workspace-bar #more-toggle { display: inline-grid; }
-  .workspace-bar nav { overflow-x: visible; background: none; }
-  #build-version, .ui-variant-toggle .ui-variant-testing { display: none; }
-  .workspace-bar nav button.ui-variant-toggle { flex: 0 0 auto; }
-}
-/* Touch targets on a tablet are 40px too: the experiment pill and the settings tabs were sized for a mouse above 700px. */
-@media (pointer: coarse) {
-  .workspace-bar nav button.ui-variant-toggle { height: 40px; }
-}
 
 /* First-run welcome (see web/js/pages/setup/welcome.js): four bands top to bottom. The art takes the first two, the name the third and Continue the
    fourth. data-stage reveals the parts in turn ("done" shows everything) and data-variant picks how each one arrives; reduced motion
@@ -1680,13 +1606,10 @@ dialog:focus, dialog:focus-visible { outline: none; }
 
 /* With two experiments the two pills share a phone's top bar: tighter letters. */
 @media (max-width: 700px) {
-  .workspace-bar nav button.ui-variant-toggle { gap: 1px; padding: 0 4px; font-size: 11px; }
   .ui-variant-toggle .ui-variant-options { gap: 1px; }
-  .workspace-bar nav button.ui-variant-toggle + button.ui-variant-toggle { margin-left: -2px; }
 }
 @media (max-width: 520px) {
   /* A phone shows only the chosen letter on each pill (a tap cycles it; the tooltip and the accessible name list the options). */
-  .workspace-bar nav button.ui-variant-toggle { min-width: 40px; justify-content: center; }
   .ui-variant-toggle .ui-variant-options > span[aria-hidden="true"] { display: none; }
   .ui-variant-toggle[data-active="a"] .ui-variant-opt:not(.ui-variant-a), .ui-variant-toggle[data-active="b"] .ui-variant-opt:not(.ui-variant-b), .ui-variant-toggle[data-active="c"] .ui-variant-opt:not(.ui-variant-c), .ui-variant-toggle[data-active="d"] .ui-variant-opt:not(.ui-variant-d), .ui-variant-toggle[data-active="e"] .ui-variant-opt:not(.ui-variant-e) { display: none; }
 }

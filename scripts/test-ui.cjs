@@ -384,10 +384,10 @@ async function main() {
         })) };
         return out;
       });
-      assert.deepEqual(icons.dark, [{ cls: 'brand-logo brand-logo-dark', loaded: true }], 'the default (dark) theme shows the dark logo');
-      assert.deepEqual(icons.light, [{ cls: 'brand-logo brand-logo-light', loaded: true }]);
-      assert.deepEqual(icons.blueLight, [{ cls: 'brand-logo brand-logo-light', loaded: true }]);
-      assert.deepEqual(icons.hcDark, [{ cls: 'brand-logo brand-logo-dark', loaded: true }]);
+      assert.deepEqual(icons.dark, [{ cls: 'logo-mark brand-logo brand-logo-dark', loaded: true }], 'the default (dark) theme shows the dark logo');
+      assert.deepEqual(icons.light, [{ cls: 'logo-mark brand-logo brand-logo-light', loaded: true }]);
+      assert.deepEqual(icons.blueLight, [{ cls: 'logo-mark brand-logo brand-logo-light', loaded: true }]);
+      assert.deepEqual(icons.hcDark, [{ cls: 'logo-mark brand-logo brand-logo-dark', loaded: true }]);
       assert.deepEqual(icons.links.map(link => [link.rel, link.status, link.type.split(';')[0]]), [['icon', 200, 'image/svg+xml'], ['icon', 200, 'image/vnd.microsoft.icon'], ['apple-touch-icon', 200, 'image/png'], ['manifest', 200, 'application/manifest+json']], JSON.stringify(icons.links));
       assert.equal(icons.manifest.name, 'aimebu'); assert.equal(icons.manifest.display, 'standalone');
       assert.ok(icons.manifest.icons.length >= 2 && icons.manifest.icons.every(icon => icon.status === 200 && (icon.declared === 'any' || icon.size === icon.declared)), JSON.stringify(icons.manifest));
@@ -1945,12 +1945,12 @@ async function main() {
     for (const theme of ['', 'light', 'high-contrast-dark', 'high-contrast-light']) {
       const look = await first.evaluate(theme => {
         if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
-        const version = document.querySelector('#build-version'), title = document.querySelector('.workspace-brand strong');
+        const version = document.querySelector('#build-version'), title = document.querySelector('.topbar-left .logo');
         const middle = node => { const box = node.getBoundingClientRect(); return (box.top + box.bottom) / 2; };
         return { delta: Math.abs(middle(version) - middle(title)), opacity: getComputedStyle(version).opacity, lineHeight: getComputedStyle(version).lineHeight };
       }, theme);
       assert.ok(look.delta <= 1, `version and title are vertically centred in ${theme || 'dark'}: ${JSON.stringify(look)}`);
-      assert.deepEqual([look.opacity, look.lineHeight], [theme.startsWith('high-contrast') ? '1' : '0.9', '8.4px'], `version styling in ${theme || 'dark'}`);
+      assert.deepEqual([look.opacity, look.lineHeight], [theme.startsWith('high-contrast') ? '1' : '0.6', '12.6px'], `version styling in ${theme || 'dark'}`);
     }
     await first.evaluate(theme => { document.documentElement.dataset.theme = theme; }, originalTheme);
     await first.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
@@ -2225,7 +2225,7 @@ async function main() {
         preview: [css('.room-preview').fontSize, css('.room-preview').lineHeight],
         header: [Math.round(box('.chat > header').height), css('.chat > header').gap, css('.chat > header').padding],
         count: [Math.round(box('#room-members').height), css('#room-members').backgroundColor, css('#room-members').fontSize],
-        bar: [Math.round(box('.workspace-bar').height), Math.round(box('#settings-toggle').width), css('#settings-toggle').backgroundColor, css('#build-version').fontSize, css('#build-version').opacity],
+        bar: [Math.round(box('.topbar').height), Math.round(box('#settings-toggle').width), css('#settings-toggle').backgroundColor, css('#build-version').fontSize, css('#build-version').opacity],
       };
       sample.remove();
       return result;
@@ -2235,7 +2235,7 @@ async function main() {
       unread: ['700', '9.1px', '1px 7px', 'rgb(31, 111, 235)', 'rgb(255, 255, 255)'],
       preview: ['10.5px', '15.75px'], header: [43, '12px', '0px 16px'],
       count: [22, 'rgb(28, 33, 40)', '9.1px'],
-      bar: [53, 30, 'rgba(0, 0, 0, 0)', '8.4px', '0.9'],
+      bar: [53, 30, 'rgba(0, 0, 0, 0)', '8.4px', '0.6'],
     }, 'desktop panels retain the v1 measurements');
     await second.evaluate(() => [...document.querySelectorAll('.room-name')].find(el => el.textContent.startsWith('⌂'))?.click());
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
@@ -2347,7 +2347,7 @@ async function main() {
     // No experiment is running: the pill stays hidden.
     // Message width: text, code, tables and plans all use the whole bubble (no line-length cap).
     {
-      assert.deepEqual(await first.$$eval('.workspace-bar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'with no experiment running the pill is hidden');
+      assert.deepEqual(await first.$$eval('.topbar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'with no experiment running the pill is hidden');
       assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].some(name => name.startsWith('data-ui-'))), false, 'and no experiment option is set');
       const widths = await first.evaluate(async () => {
         const { renderMarkdown } = await import('/js/markdown.js');
@@ -5317,7 +5317,7 @@ async function main() {
     assert.deepEqual(await agentPage.evaluate(() => { const header = document.querySelector('.sidebar > header').getBoundingClientRect(), plus = document.querySelector('#project-open').getBoundingClientRect(), fold = document.querySelector('#rooms-fold').getBoundingClientRect(), collapse = document.querySelector('#edge-rooms').getBoundingClientRect(), filter = document.querySelector('.sidebar .room-filter').getBoundingClientRect(), input = document.querySelector('.sidebar .room-filter-input').getBoundingClientRect(); return { gap: Math.round(collapse.left - fold.right), rightPad: Math.round(header.right - collapse.right), band: Math.round(filter.top - header.bottom) <= 14, newProjectRightOfFilter: plus.left >= input.right && Math.abs((plus.top + plus.bottom) / 2 - (input.top + input.bottom) / 2) < 4 && document.querySelector('#project-open').parentElement.classList.contains('room-filter') }; }), { gap: 6, rightPad: 12, band: true, newProjectRightOfFilter: true }, 'the rooms header groups its buttons and leaves no empty band, and New project sits to the right of the room filter');
     // One button system: every visible button in the app shell is a .btn, an .btn-icon or a .row-btn, and a hover lights the
     // top bar's buttons up (the border and the text go to the primary text colour).
-    const strays = await agentPage.evaluate(() => [...document.querySelectorAll('#app-view button, .workspace-bar button')].filter(el => el.getClientRects().length && !el.matches('.btn, .btn-icon, .row-btn')).map(el => `${el.id || el.className || el.tagName}:${el.textContent.trim().slice(0, 16)}`));
+    const strays = await agentPage.evaluate(() => [...document.querySelectorAll('#app-view button, .topbar button')].filter(el => el.getClientRects().length && !el.matches('.btn, .btn-icon, .row-btn')).map(el => `${el.id || el.className || el.tagName}:${el.textContent.trim().slice(0, 16)}`));
     assert.deepEqual(strays, [], `buttons outside the button system: ${strays.join(', ')}`);
     const topBefore = await agentPage.$eval('#inbox-toggle', el => { const cs = getComputedStyle(el); return { border: cs.borderTopColor, colour: cs.color }; });
     await agentPage.hover('#inbox-toggle'); await new Promise(resolve => setTimeout(resolve, 400)); // past the colour transition
@@ -5412,7 +5412,7 @@ async function main() {
     await agentPage.waitForFunction(() => document.querySelector('#app-view').classList.contains('rooms-open') && Math.abs(document.querySelector('.sidebar').getBoundingClientRect().left) < 1);
     await agentPage.mouse.click(380, 400);
     await agentPage.waitForFunction(() => !document.querySelector('#app-view').classList.contains('rooms-open'));
-    const phone = await agentPage.evaluate(() => ({ tabs: document.querySelector('#mobile-tabs').getBoundingClientRect().toJSON(), composer: document.querySelector('.send-bar').getBoundingClientRect().toJSON(), chat: document.querySelector('.chat').getBoundingClientRect().toJSON(), bar: document.querySelector('.workspace-bar').getBoundingClientRect().toJSON(), viewport: { width: innerWidth, height: innerHeight } }));
+    const phone = await agentPage.evaluate(() => ({ tabs: document.querySelector('#mobile-tabs').getBoundingClientRect().toJSON(), composer: document.querySelector('.send-bar').getBoundingClientRect().toJSON(), chat: document.querySelector('.chat').getBoundingClientRect().toJSON(), bar: document.querySelector('.topbar').getBoundingClientRect().toJSON(), viewport: { width: innerWidth, height: innerHeight } }));
     assert.equal(Math.abs(phone.composer.bottom - phone.tabs.top) < 1 && Math.abs(phone.tabs.bottom - phone.viewport.height) < 1, true, `phone composer is not pinned just above the bottom tab bar: ${JSON.stringify(phone)}`);
     // v1's phone navigation: the bottom tabs drive the drawers and show where you are; one logo; v1's names on the top-bar icons.
     {
@@ -5437,11 +5437,11 @@ async function main() {
         document.documentElement.style.removeProperty('--sab'); return result;
       });
       assert.deepEqual(notch, { barHeight: 78, bottomAtViewport: true, tabInside: true, chatMeetsBar: true }, 'the phone tab bar mishandles a bottom safe-area inset');
-      assert.equal(await agentPage.$$eval('.workspace-brand img', imgs => imgs.filter(img => getComputedStyle(img).display !== 'none').length), 1, 'one logo is shown on a phone');
+      assert.equal(await agentPage.$$eval('.topbar-left img', imgs => imgs.filter(img => getComputedStyle(img).display !== 'none').length), 1, 'one logo is shown on a phone');
       assert.deepEqual(await agentPage.evaluate(() => ['#usages-toggle', '#knowledge-toggle', '#system-events-toggle', '#settings-toggle'].map(id => { const el = document.querySelector(id); return el && [el.title, el.getAttribute('aria-label')]; })), [['Usages', 'Usages'], ['Memory', 'Memory'], ['System events', 'System events'], ['Settings', 'Settings']], "the top-bar icons carry v1's names");
     }
     await agentPage.setViewport({ width: 320, height: 640 });
-    const narrow = await agentPage.evaluate(() => ({ logout: document.querySelector('#logout').getBoundingClientRect().right, send: document.querySelector('#composer button[type=submit]').getBoundingClientRect().right, controls: document.querySelector('.room-controls').getBoundingClientRect().right, agents: document.querySelector('#mobile-tabs').getBoundingClientRect().right, bottom: document.querySelector('.send-bar').getBoundingClientRect().bottom, topbar: document.querySelector('.workspace-bar').getBoundingClientRect().height, chat: document.querySelector('.chat').getBoundingClientRect().toJSON(), width: innerWidth, height: innerHeight }));
+    const narrow = await agentPage.evaluate(() => ({ logout: document.querySelector('#logout').getBoundingClientRect().right, send: document.querySelector('#composer button[type=submit]').getBoundingClientRect().right, controls: document.querySelector('.room-controls').getBoundingClientRect().right, agents: document.querySelector('#mobile-tabs').getBoundingClientRect().right, bottom: document.querySelector('.send-bar').getBoundingClientRect().bottom, topbar: document.querySelector('.topbar').getBoundingClientRect().height, chat: document.querySelector('.chat').getBoundingClientRect().toJSON(), width: innerWidth, height: innerHeight }));
     assert.equal(narrow.logout <= narrow.width && narrow.send <= narrow.width && narrow.controls <= narrow.width && narrow.agents <= narrow.width && Math.abs(narrow.bottom - (narrow.height - 44)) < 1, true, `narrow phone layout overflows (the composer sits just above the 44px tab bar): ${JSON.stringify(narrow)}`);
     // Phone room header: the room controls collapse into one overflow menu, nothing overlaps,
     // and every header target is at least 40px.
@@ -6318,8 +6318,8 @@ async function main() {
           const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
           const visible = element => !element.hidden && getComputedStyle(element).display !== 'none';
           const buttons = [...document.querySelectorAll('.room-controls button')].filter(visible).map(el => el.getBoundingClientRect().toJSON());
-          const topButtons = [...document.querySelectorAll('.workspace-bar nav button')].filter(visible).map(el => ({ ...el.getBoundingClientRect().toJSON(), icon: el.classList.contains('btn-icon') }));
-          return { viewport: innerWidth, bar: box('.workspace-bar'), header: box('.chat > header'), panel: box('#agents-panel'), toolbar: box('.room-controls'), buttons, topButtons, connection: box('#connection') };
+          const topButtons = [...document.querySelectorAll('.topbar nav button')].filter(visible).map(el => ({ ...el.getBoundingClientRect().toJSON(), icon: el.classList.contains('btn-icon') }));
+          return { viewport: innerWidth, bar: box('.topbar'), header: box('.chat > header'), panel: box('#agents-panel'), toolbar: box('.room-controls'), buttons, topButtons, connection: box('#connection') };
         });
         const noOverlap = boxes => boxes.every((a, i) => boxes.slice(i + 1).every(b => a.right <= b.left || b.right <= a.left));
         assert.ok(layout.topButtons.every(box => box.top >= 0 && box.bottom <= layout.bar.bottom && box.right <= width && Math.abs(box.height - (box.icon ? 30 : 28)) < 1) && layout.connection.right <= width && noOverlap(layout.topButtons), `${theme} top bar clips, overlaps, or has uneven button heights at ${width}: ${JSON.stringify(layout)}`);
@@ -8475,7 +8475,7 @@ async function main() {
     // The navbar is v1's height and every control in it is one icon button: an svg or mask glyph, a tooltip and an accessible name,
     // no text of its own, one box size, and a count that is a corner pill that never widens its button.
     const navbar = await first.evaluate(() => {
-      const bar = document.querySelector('.workspace-bar'), buttons = [...bar.querySelectorAll('nav button')].filter(button => !button.classList.contains('ui-variant-toggle') && button.getClientRects().length);
+      const bar = document.querySelector('.topbar'), buttons = [...bar.querySelectorAll('nav button')].filter(button => !button.classList.contains('ui-variant-toggle') && button.getClientRects().length);
       const widthOf = id => document.querySelector(id).getBoundingClientRect().width;
       const badge = document.querySelector('#inbox-count'), wasHidden = badge.hidden, text = badge.textContent, before = widthOf('#inbox-toggle');
       badge.hidden = false; badge.textContent = '99'; const withBadge = widthOf('#inbox-toggle'), badgeBox = badge.getBoundingClientRect(), buttonBox = document.querySelector('#inbox-toggle').getBoundingClientRect();
