@@ -467,7 +467,7 @@ the order the server lists them); the choice and the manual order are personal p
 one list across projects, with no section labels: each project's home
 room (`⌂ name`) is the parent row and its task rooms nest under it, one level. Every row shows `#name`, its member count and an unread badge, plus a project chip
 when there are several projects (left off a home room that only repeats the project name); the
-row's `+` shows on hover or keyboard focus, and always on touch screens; a project's home row has a single ☰ button instead (same visibility), whose menu holds New room and, in the manual sort, Move up and Move down (and, in that sort, the button is also the drag handle). The last message is
+row's `+` shows on hover or keyboard focus, and always on touch screens; a project's home row has a ☰ button next to it (same visibility; no arrows), whose menu holds New room (as the `+` does) and, in the manual sort, Move up and Move down (and, in that sort, the button is also the drag handle). The last message is
 previewed only under the open room, and one Direct messages section covers every project and
 always comes last. The box on top only filters the list as you type (Enter does nothing); rooms
 are created with a row's `+` or a project's ☰ menu. A project's tree ends with an

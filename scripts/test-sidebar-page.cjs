@@ -138,30 +138,30 @@ async function main() {
     await page.setViewport({ width: 1200, height: 800 });
     await page.$eval('[data-room-id=rm_ah] > .room-row > .room-collapse', node => node.click()); // a folded project shows an unread badge at the row end
     const measure = () => page.$eval('[data-room-id=rm_ah] > .room-row', row => {
-      const name = row.querySelector('.room-name'), menu = row.querySelector('.project-menu-btn'), extra = row.querySelectorAll('.add-room:not([hidden]), .project-move:not(.project-menu-btn)').length;
+      const name = row.querySelector('.room-name'), menu = row.querySelector('.project-menu-btn'), add = row.querySelector('.add-room:not([hidden])'), extra = row.querySelectorAll('.project-move:not(.project-menu-btn), .project-move-up, .project-move-down').length;
       return { nameRight: name.getBoundingClientRect().right, rowRight: row.getBoundingClientRect().right,
-        nameWidth: name.clientWidth, textWidth: name.scrollWidth, menu: getComputedStyle(menu).display, extra };
+        nameWidth: name.clientWidth, textWidth: name.scrollWidth, menu: getComputedStyle(menu).display, add: add ? getComputedStyle(add).display : 'missing', extra };
     });
     await page.mouse.move(1100, 700);
     const idle = await measure();
-    assert.deepEqual([idle.menu, idle.extra], ['none', 0], 'the project row holds only the ☰ button, and it takes no width before hover');
+    assert.deepEqual([idle.menu, idle.add, idle.extra], ['none', 'none', 0], 'a project row has the ☰ and + buttons and no arrows, and they take no width before hover');
     assert.ok(idle.textWidth <= idle.nameWidth, 'the name fits without an ellipsis');
     assert.ok(idle.rowRight - idle.nameRight < 12, 'the name reaches the row end when controls are hidden');
     await page.hover('[data-room-id=rm_ah] > .room-row');
     const hovered = await measure();
-    assert.deepEqual([hovered.menu, hovered.extra], ['flex', 0]);
+    assert.deepEqual([hovered.menu, hovered.add, hovered.extra], ['flex', 'flex', 0]);
     assert.ok(hovered.nameWidth < idle.nameWidth, 'the name yields width to visible controls');
     await page.mouse.move(1100, 700);
     await page.focus('[data-room-id=rm_ah] .room-name');
     const focused = await measure();
-    assert.deepEqual([focused.menu, focused.extra], ['flex', 0], 'keyboard focus reveals the controls');
+    assert.deepEqual([focused.menu, focused.add, focused.extra], ['flex', 'flex', 0], 'keyboard focus reveals the controls');
     await page.evaluate(() => { document.activeElement.blur(); document.documentElement.dataset.theme = 'high-contrast-dark'; });
     assert.deepEqual([(await measure()).menu], ['none'], 'high contrast keeps idle controls out of layout');
     const session = await page.createCDPSession();
     await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
     assert.equal(await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches), true);
     const touch = await measure();
-    assert.deepEqual([touch.menu, touch.extra], ['flex', 0], 'touch keeps controls reachable without hover');
+    assert.deepEqual([touch.menu, touch.add, touch.extra], ['flex', 'flex', 0], 'touch keeps controls reachable without hover');
     await page.close();
   }
 
@@ -422,7 +422,8 @@ async function main() {
     await page.close();
     // create
     page = await mount();
-    await projectAct(page, 'rm_ah', 'add');
+    // The + of a project's row makes a room, as the ☰ menu's New room does (the second case below).
+    await page.$eval('[data-room-id=rm_ah] > .room-row > .add-room', node => node.click());
     await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
     await fill(page, 'fresh-room');
     held = await waitRequest(page, 'POST', '/api/projects/prj_a/rooms');
