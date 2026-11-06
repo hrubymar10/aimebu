@@ -1,8 +1,9 @@
 // Builds the raster icons with headless Chromium (no extra dependencies).
 //   From the 1024 px masters in assets/{light,dark}.png (Icon Composer exports), downscaled in steps with
 //   high-quality smoothing:
-//     web/icons/apple-touch-icon.png  180 px, the light icon on a white square (iOS applies its own mask)
-//     web/icons/icon-192.png, icon-512.png  the light icon for the web app manifest
+//     web/icons/apple-touch-icon.png  180 px, the dark tiled icon with the tile's colour filling its corners (opaque: iOS and macOS apply their own mask)
+//     web/icons/icon-192.png, icon-512.png  the dark tiled icon, with its own rounded transparent corners, for the web app manifest (purpose any)
+//     web/icons/icon-maskable-512.png  the same at 80% on a square of the tile's colour, so the mark stays in the safe zone a platform mask leaves
 //     web/icons/icon-512-dark.png  the dark icon, for the first-run welcome on a dark theme
 //     web/icons/logo-light.png, logo-dark.png  50 px (2x of the 25 px header logo)
 //   From the tiled favicon (web/icons/favicon.svg: the small mark on the dark squircle tile; the SVG itself switches to a light tile
@@ -17,6 +18,7 @@ let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
 
 const icons = path.join(__dirname, '..', 'web', 'icons');
+const TILE = '#0f1117'; // the dark tile's colour, sampled from assets/dark.png (also the manifest's background_color)
 const uri = name => `data:image/svg+xml;base64,${fs.readFileSync(path.join(icons, name)).toString('base64')}`;
 
 async function render(browser, svg, size, background) {
@@ -51,6 +53,21 @@ async function downscale(browser, master, size, background) {
   return Buffer.from(out, 'base64');
 }
 
+// The master at a fraction of the size, centred on a square of the background colour (the maskable icon's safe zone).
+async function maskable(browser, master, size, scale, background) {
+  const inner = await downscale(browser, master, Math.round(size * scale));
+  const page = await browser.newPage();
+  const out = await page.evaluate(async (data, size, background) => {
+    const image = new Image(); image.src = `data:image/png;base64,${data}`; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = size;
+    const context = canvas.getContext('2d'); context.fillStyle = background; context.fillRect(0, 0, size, size);
+    context.drawImage(image, (size - image.naturalWidth) / 2, (size - image.naturalHeight) / 2);
+    return canvas.toDataURL('image/png').split(',')[1];
+  }, inner.toString('base64'), size, background);
+  await page.close();
+  return Buffer.from(out, 'base64');
+}
+
 // ICO with PNG payloads (supported by every current browser): header, one directory entry per image, then the images.
 function ico(images) {
   const header = Buffer.alloc(6); header.writeUInt16LE(1, 2); header.writeUInt16LE(images.length, 4);
@@ -67,8 +84,9 @@ function ico(images) {
 (async () => {
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   try {
-    fs.writeFileSync(path.join(icons, 'apple-touch-icon.png'), await downscale(browser, 'light.png', 180, '#ffffff'));
-    for (const size of [192, 512]) fs.writeFileSync(path.join(icons, `icon-${size}.png`), await downscale(browser, 'light.png', size));
+    fs.writeFileSync(path.join(icons, 'apple-touch-icon.png'), await downscale(browser, 'dark.png', 180, TILE));
+    for (const size of [192, 512]) fs.writeFileSync(path.join(icons, `icon-${size}.png`), await downscale(browser, 'dark.png', size));
+    fs.writeFileSync(path.join(icons, 'icon-maskable-512.png'), await maskable(browser, 'dark.png', 512, 0.8, TILE));
     fs.writeFileSync(path.join(icons, 'icon-512-dark.png'), await downscale(browser, 'dark.png', 512));
     for (const theme of ['light', 'dark']) fs.writeFileSync(path.join(icons, `logo-${theme}.png`), await downscale(browser, `${theme}.png`, 50));
     fs.writeFileSync(path.join(__dirname, '..', 'web', 'favicon.ico'), ico([
