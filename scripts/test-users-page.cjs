@@ -131,9 +131,45 @@ async function main() {
       assert.equal(await bobRow.$eval('select', el => el.value), 'viewer', 'the refused role is put back');
       const accountRow = await rowOf(page, '.user-accounts', 'bob');
       await accountRow.$eval('.user-admin-toggle input', el => el.click());
+      await confirmOk(page);
       await page.waitForFunction(() => document.querySelector('#settings-users p.error').textContent === 'Nope');
       assert.equal(await accountRow.$eval('.user-admin-toggle input', el => el.checked), false, 'the refused admin switch flips back');
       assert.deepEqual((await calls(page, 'PUT')).at(-1), ['/api/users/usr_bob/admin', { admin: true }]);
+      await page.close();
+    }
+    // Granting and taking away admin are confirmed first, naming the person and what an admin can do; cancelling puts the box back and sends nothing.
+    {
+      const page = await mount({ auto: { ...everything, 'PUT /api/users/usr_bob/admin': {}, 'PUT /api/users/usr_amy/admin': {} } });
+      await ready(page);
+      const box = async (who) => (await rowOf(page, '.user-accounts', who)).$('.user-admin-toggle input');
+      const text = () => page.$eval('#app-dialog', el => el.textContent);
+      const bobBox = await box('bob');
+      await bobBox.click();
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      const grant = await text();
+      assert.ok(grant.includes('Make bob an admin?') && /roles, prompts, macros and memory/.test(grant) && /create projects/.test(grant) && /cannot reach your own account/.test(grant), `names the person and what an admin can do: ${grant}`);
+      assert.equal(await page.$eval('#app-dialog .app-dialog-ok', el => el.textContent), 'Make admin');
+      assert.equal(await bobBox.evaluate(el => el.checked), true, 'the box shows the choice while it is asked');
+      await page.$eval('#app-dialog .app-dialog-cancel', el => el.click());
+      await page.waitForFunction(() => !document.querySelector('#app-dialog')?.open);
+      assert.equal(await bobBox.evaluate(el => el.checked), false, 'cancel puts the box back');
+      assert.equal((await calls(page, 'PUT')).length, 0, 'a cancelled grant sends nothing');
+      await bobBox.click(); await confirmOk(page);
+      await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/users/usr_bob/admin'));
+      assert.deepEqual((await calls(page, 'PUT')).at(-1), ['/api/users/usr_bob/admin', { admin: true }], 'confirming sends it');
+      const amyBox = await box('amy');
+      assert.equal(await amyBox.evaluate(el => el.checked), true);
+      await amyBox.click();
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      const revoke = await text();
+      assert.ok(revoke.includes('Remove admin from amy?') && /ordinary account/.test(revoke) && /memberships stay/.test(revoke), `revoking says what is lost: ${revoke}`);
+      await page.$eval('#app-dialog .app-dialog-cancel', el => el.click());
+      await page.waitForFunction(() => !document.querySelector('#app-dialog')?.open);
+      assert.equal(await amyBox.evaluate(el => el.checked), true, 'cancel keeps the admin');
+      const before = (await calls(page, 'PUT')).length;
+      await amyBox.click(); await confirmOk(page);
+      await page.waitForFunction(count => window.__requests.filter(request => request.method === 'PUT').length > count, {}, before);
+      assert.deepEqual((await calls(page, 'PUT')).at(-1), ['/api/users/usr_amy/admin', { admin: false }], 'confirming a revoke sends it');
       await page.close();
     }
     // Accounts: reset shows the link (selected), a deactivation is confirmed first.

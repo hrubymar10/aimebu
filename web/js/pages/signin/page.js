@@ -12,6 +12,8 @@ export class Signin {
     document.body.append(this.dialog);
     this.dialog.addEventListener('close', () => this.store.closeDialog());
     this.pages = [mountPreactPage(view, () => html`<${SigninPage} store=${this.store} />`, { onError }), mountPreactPage(this.dialog, () => html`<${InviteDialogBody} store=${this.store} />`, { onError })];
+    this.onHash = () => { void this.store.followHash(location.hash); };
+    window.addEventListener('hashchange', this.onHash);
     this.stops = [
       effect(() => { view.hidden = !this.store.shown.value; }),
       effect(() => { const open = this.store.dialogOpen.value; if (open && !this.dialog.open) this.dialog.showModal(); else if (!open && this.dialog.open) this.dialog.close(); }),
@@ -23,5 +25,5 @@ export class Signin {
   hide() { this.store.hide(); }
   openDialog() { this.store.openDialog(); }
 
-  destroy() { for (const stop of this.stops) stop(); this.store.destroy(); for (const page of this.pages) page.destroy(); this.dialog.remove(); }
+  destroy() { window.removeEventListener('hashchange', this.onHash); for (const stop of this.stops) stop(); this.store.destroy(); for (const page of this.pages) page.destroy(); this.dialog.remove(); }
 }

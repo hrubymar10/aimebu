@@ -20,7 +20,16 @@ function MemberRow({ store, user }) {
 
 function AccountRow({ store, user }) {
   const can = accountActions(user, { globalOwner: store.globalOwner, currentUser });
-  const toggle = event => { const box = event.currentTarget; store.setAdmin(user, box.checked, () => { box.checked = !box.checked; }); };
+  // Admin is trusted like the owner (docs/auth.md), so granting or taking it away is asked first; cancelling puts the box back.
+  const toggle = async event => {
+    const box = event.currentTarget, grant = box.checked;
+    const confirmed = await confirmDialog(grant
+      ? `Make ${user.login} an admin? An admin is trusted like you: they can change the roles, prompts, macros and memory that shape what every agent is told, create projects in any folder on this machine, manage harnesses, and invite or deactivate ordinary accounts. They cannot reach your own account, other admins, machine pairing or provider logins.`
+      : `Remove admin from ${user.login}? They go back to an ordinary account: no instance settings (roles, prompts, macros, harnesses), no new projects and no account management. Their project memberships stay.`,
+      { title: grant ? 'Make admin' : 'Remove admin', confirm: grant ? 'Make admin' : 'Remove admin', danger: grant });
+    if (!confirmed) { box.checked = !grant; return; }
+    store.setAdmin(user, grant, () => { box.checked = !grant; });
+  };
   const deactivate = async () => {
     if (!await confirmDialog(`Deactivate ${user.login} across all projects?`, { title: 'Deactivate account', confirm: 'Deactivate', danger: true })) return;
     store.deactivate(user);

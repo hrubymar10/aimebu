@@ -101,6 +101,44 @@ async function main() {
       await page.close();
     }
 
+    // A link pasted into the address bar of a tab that already shows the sign-in only changes the hash: the card opens at once, as after a reload; then a
+    // second link replaces the first; a hash with no invitation, or the same link again, changes nothing.
+    {
+      const first = await owner('/api/invites', { method: 'POST', body: { project_id: projectID, role: 'viewer' } });
+      const second = await owner('/api/invites', { method: 'POST', body: { project_id: projectID, role: 'operator' } });
+      assert.equal(first.status + second.status, 402, 'both links are made');
+      const page = await signedOut();
+      await page.waitForSelector('#login-view:not([hidden])');
+      assert.equal(await page.evaluate(() => !document.querySelector('#login-form').hidden && document.querySelector('.invite-entry').hidden), true, 'a plain visit shows the sign-in form');
+      const requests = []; page.on('request', request => { if (/\/api\/invites\/inspect$/.test(request.url())) requests.push(request.postData()); });
+      await page.evaluate(() => { window.__sameDocument = true; }); // a reload would drop it (a hash change keeps the document)
+      const lead = () => page.evaluate(() => document.querySelector('.invite-lead').textContent);
+      await page.evaluate(token => { location.hash = `invite=${encodeURIComponent(token)}`; }, first.body.token);
+      await page.waitForSelector('.invite-entry:not([hidden])', { timeout: 10000 });
+      assert.match(await lead(), /invited to Signin Project as a viewer/, 'the pasted link opens its card without a reload');
+      assert.equal(await page.evaluate(() => document.querySelector('#login-form').hidden), true, 'in place of the sign-in form');
+      await page.evaluate(token => { location.hash = `invite=${encodeURIComponent(token)}`; }, second.body.token);
+      await page.waitForFunction(() => /as an operator/.test(document.querySelector('.invite-lead').textContent), { timeout: 10000 });
+      assert.equal(requests.length, 2, 'each link is looked at once');
+      await page.evaluate(() => { location.hash = 'something-else'; });
+      await page.evaluate(token => { location.hash = `invite=${encodeURIComponent(token)}`; }, second.body.token);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      assert.equal(requests.length, 2, 'a hash with no invitation, and the same link again, ask nothing');
+      assert.match(await lead(), /as an operator/);
+      assert.equal(await page.evaluate(() => window.__sameDocument === true), true, 'the page was never reloaded');
+      await page.close();
+      // Signed in, a changed hash does nothing to the app.
+      const inApp = await signedOut();
+      await inApp.waitForSelector('#login-view:not([hidden])');
+      await inApp.type('#login-form [name=login]', OWNER.login); await inApp.type('#login-form [name=password]', OWNER.password);
+      await inApp.$eval('#login-form', form => form.requestSubmit());
+      await enterApp(inApp);
+      await inApp.evaluate(() => { location.hash = 'invite=nothing-real'; });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      assert.deepEqual(await inApp.evaluate(() => ({ app: !document.querySelector('#app-view').hidden, login: !document.querySelector('#login-view').hidden })), { app: true, login: false }, 'a signed-in tab is left alone');
+      await inApp.close();
+    }
+
     // an invitation to join: the card says what it is for, creates the account and signs it in
     {
       const invite = await owner('/api/invites', { method: 'POST', body: { project_id: projectID, role: 'operator' } });

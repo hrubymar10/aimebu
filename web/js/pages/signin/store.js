@@ -38,6 +38,16 @@ export class SigninStore {
 
   hide() { this.next(); this.shown.value = false; }
 
+  // A link pasted into the address bar of a tab that already shows the sign-in changes only the hash, which loads nothing: the invitation it holds is
+  // opened now, as a reload would. Nothing is done while someone is signed in (the dialog for a link is the sign-in's own business at load), for the
+  // link already open, or for a hash that holds no invitation.
+  followHash(hash) {
+    const token = inviteToken(String(hash).replace(/^#/, ''));
+    if (!this.alive || !this.shown.value || !token || token === this.pending) return Promise.resolve();
+    this.pending = token; this.info.value = null; this.redeemed.value = ''; this.back.value = false;
+    return this.show();
+  }
+
   async guarded(kind, error, run) {
     if (!this.alive || this.busy[kind]) return;
     const ticket = this.next();
