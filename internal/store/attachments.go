@@ -27,6 +27,16 @@ const MaxMessageAttachments = 4
 
 var ErrInvalidAttachment = errors.New("invalid_attachment")
 
+// What one person may have uploaded and not yet sent in a message. An upload no message ever claims sits on the disk for a day, so without a
+// cap anyone with a login could fill it with 10 MB files as fast as they can send them.
+const (
+	MaxStagedAttachments     = 20
+	MaxStagedAttachmentBytes = 100 << 20
+)
+
+// ErrAttachmentQuota is returned when a person's unsent uploads are at the cap; sending or removing some makes room.
+var ErrAttachmentQuota = errors.New("attachment_quota")
+
 type Attachment struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -69,6 +79,10 @@ func safeAttachmentName(name string) string {
 // so neither a guessed ID nor a later message can move it across rooms.
 func (s *Store) SaveAttachment(ctx context.Context, roomID, userID, filename string, input io.Reader) (Attachment, error) {
 	if err := s.UserRoomAccess(ctx, userID, roomID); err != nil {
+		return Attachment{}, err
+	}
+	// Refuse a person who is already at the cap before reading what they send; the check is made again, with the size, when the row is added.
+	if err := s.stagedWithinQuota(ctx, s.readDB, userID, 0); err != nil {
 		return Attachment{}, err
 	}
 	data, err := io.ReadAll(io.LimitReader(input, MaxAttachmentSize+1))
@@ -131,6 +145,9 @@ func (s *Store) SaveAttachment(ctx context.Context, roomID, userID, filename str
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM room WHERE id=?`, roomID).Scan(&projectID); err != nil {
 			return err
 		}
+		if err := s.stagedWithinQuota(tx.ctx, tx.tx, userID, int64(len(data))); err != nil {
+			return err
+		}
 		_, err := tx.Exec(`INSERT INTO attachment(id,project_id,room_id,sha256,mime,size,path,created_by,created_at,filename,width,height,arrived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, projectID, roomID, hex.EncodeToString(hash[:]), mime, len(data), path, userID, timestamp(), name, result.Width, result.Height, timestamp())
 		return err
 	})
@@ -141,11 +158,27 @@ func (s *Store) SaveAttachment(ctx context.Context, roomID, userID, filename str
 	return result, nil
 }
 
-func (s *Store) AttachmentByID(ctx context.Context, id string) (Attachment, string, string, error) {
+// stagedWithinQuota says whether a person may add an upload of the given size to the ones they have not sent yet.
+func (s *Store) stagedWithinQuota(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, userID string, adding int64) error {
+	var count, bytes int64
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(size),0) FROM attachment WHERE created_by=? AND message_id IS NULL AND removed_at IS NULL`, userID).Scan(&count, &bytes); err != nil {
+		return err
+	}
+	if count >= MaxStagedAttachments || bytes+adding > MaxStagedAttachmentBytes {
+		return ErrAttachmentQuota
+	}
+	return nil
+}
+
+// AttachmentByID finds an attachment for a person to open. One no message has claimed yet is only its uploader's: another member of the
+// room could not otherwise be kept from fetching a draft's image if they knew its id.
+func (s *Store) AttachmentByID(ctx context.Context, id, userID string) (Attachment, string, string, error) {
 	var a Attachment
 	var roomID, path string
 	var removedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id,room_id,filename,mime,size,path,width,height,removed_at,removed_after_days FROM attachment WHERE id=? AND room_id IS NOT NULL`, id).
+	err := s.db.QueryRowContext(ctx, `SELECT id,room_id,filename,mime,size,path,width,height,removed_at,removed_after_days FROM attachment WHERE id=? AND room_id IS NOT NULL AND (message_id IS NOT NULL OR created_by=?)`, id, userID).
 		Scan(&a.ID, &roomID, &a.Name, &a.MIME, &a.Size, &path, &a.Width, &a.Height, &removedAt, &a.RemovedAfterDays)
 	a.URL = "/api/attachments/" + a.ID
 	a.RemovedAt = removedAt.String

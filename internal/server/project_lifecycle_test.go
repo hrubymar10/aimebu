@@ -266,11 +266,11 @@ func TestProjectArchiveReopenAndDelete(t *testing.T) {
 			t.Fatalf("a non-owner deleted the project: %d", resp.StatusCode)
 		}
 	}
-	_, _, doomedPath, err := f.db.AttachmentByID(t.Context(), doomedUpload.ID)
+	_, _, doomedPath, err := f.db.AttachmentByID(t.Context(), doomedUpload.ID, f.ownerUserID(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, keptPath, err := f.db.AttachmentByID(t.Context(), keptUpload.ID)
+	_, _, keptPath, err := f.db.AttachmentByID(t.Context(), keptUpload.ID, f.ownerUserID(t))
 	if err != nil {
 		t.Fatal(err)
 	}

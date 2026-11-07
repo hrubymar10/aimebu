@@ -260,3 +260,54 @@ func TestRoomWorktreeAPICloseAndReopen(t *testing.T) {
 		t.Fatalf("restored worktree: %v", err)
 	}
 }
+
+// A viewer is told where a room's worktree is under the project, not the absolute path on the machine's disk; the people who work there see it.
+func TestViewerDoesNotSeeTheWorktreesAbsolutePath(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	task, err := f.db.CreateRoom(t.Context(), store.Room{ProjectID: f.project.ID, Kind: "task", Title: "Worktree room", CreatedBy: f.ownerUserID(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The room asks for a worktree (a row for the room), and the machine's answer is recorded (a row for the room on that machine, which names the path).
+	if _, err := f.db.RequestRoomWorktree(t.Context(), task.ID, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.RecordRoomWorktree(t.Context(), task.ID, f.machineID, "/srv/secret/disk/layout/.aimebu/worktrees/"+task.ID, "main", "base", "ready", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	viewerCookie, viewerCSRF := f.projectMember(t, "worktreeviewer", f.project.ID, "viewer")
+	read := func(cookie *http.Cookie, csrf string) map[string]any {
+		t.Helper()
+		resp := f.requestAs(t, cookie, csrf, "GET", "/api/rooms/"+task.ID+"/worktree", nil)
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+	if owner := read(f.cookie, f.csrf); owner["path"] == nil || owner["path"] == "" {
+		t.Fatalf("the owner should see the path: %v", owner)
+	}
+	viewer := read(viewerCookie, viewerCSRF)
+	if p, _ := viewer["path"].(string); p != "" {
+		t.Fatalf("a viewer saw the absolute path: %v", viewer)
+	}
+	if viewer["relative_path"] == nil || viewer["relative_path"] == "" {
+		t.Fatalf("a viewer still sees where it is under the project: %v", viewer)
+	}
+}
+
+// A viewer's agent card says who blocks an agent but not where on the machine's disk: the blocker's checkout path and the grants' paths are
+// blanked, on a copy (the card the server holds keeps them).
+func TestCardWithoutPathsBlanksTheAbsolutePaths(t *testing.T) {
+	card := store.AgentCard{ID: "agt_x", WriterBlock: &store.WriterBlock{AgentID: "agt_y", Slug: "y", Path: "/srv/secret/project"},
+		BoundaryGrants: []store.BoundaryGrant{{MachineID: "mch_1", Path: "/srv/secret/other", ApprovedAt: "then"}}}
+	shown := cardWithoutPaths(card)
+	if shown.WriterBlock.Path != "" || shown.WriterBlock.Slug != "y" || shown.BoundaryGrants[0].Path != "" || shown.BoundaryGrants[0].MachineID != "mch_1" {
+		t.Fatalf("shown=%+v block=%+v", shown, shown.WriterBlock)
+	}
+	if card.WriterBlock.Path == "" || card.BoundaryGrants[0].Path == "" {
+		t.Fatal("the card the server holds lost its paths")
+	}
+}

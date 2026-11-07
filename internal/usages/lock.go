@@ -23,7 +23,11 @@ func acquireProviderLock(root, provider string) (*FileLock, error) {
 }
 
 func acquireNamedLock(root, name string) (*FileLock, error) {
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return nil, err
+	}
+	// The folder holds provider credentials and tokens: it is the person's alone, also when an earlier version made it open to others.
+	if err := os.Chmod(root, 0o700); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(filepath.Join(root, name), os.O_CREATE|os.O_RDWR, 0o644)

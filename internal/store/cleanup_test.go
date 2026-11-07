@@ -106,7 +106,7 @@ func TestAttachmentRetentionMarksTheRowAndKeepsASharedFile(t *testing.T) {
 	if err != nil || len(attachments) != 2 || attachments[0].RemovedAt == "" || attachments[0].RemovedAfterDays != 90 {
 		t.Fatalf("the message lost its attachment records: %+v %v", attachments, err)
 	}
-	if _, _, _, err := s.AttachmentByID(ctx, "att_a"); !errors.Is(err, ErrAttachmentRemoved) {
+	if _, _, _, err := s.AttachmentByID(ctx, "att_a", "owner"); !errors.Is(err, ErrAttachmentRemoved) {
 		t.Fatalf("a removed attachment is served: %v", err)
 	}
 	if _, err := s.MarkAttachmentRemoved(ctx, "att_a", 90); err == nil {

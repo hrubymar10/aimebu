@@ -560,6 +560,12 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
+		// A viewer is shown what the agents are doing, not where on the machine's disk they work: the absolute paths on a card are blanked.
+		if role, roleErr := s.Store.UserProjectRole(r.Context(), userID(r), room.ProjectID); roleErr == nil && role == "viewer" {
+			for i := range cards {
+				cards[i] = cardWithoutPaths(cards[i])
+			}
+		}
 		withUsage := make([]agentCardWithUsage, 0, len(cards))
 		holds := s.agentHolds(r.Context(), cards)
 		for _, card := range cards {
@@ -583,6 +589,24 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.spawnAgentRequest(w, r, room, req, "user", userID(r))
+}
+
+// cardWithoutPaths is the card as a viewer sees it: the checkout path of the writer that blocks it and the paths of its boundary grants are gone.
+func cardWithoutPaths(card store.AgentCard) store.AgentCard {
+	if card.WriterBlock != nil {
+		block := *card.WriterBlock
+		block.Path = ""
+		card.WriterBlock = &block
+	}
+	if len(card.BoundaryGrants) > 0 {
+		grants := make([]store.BoundaryGrant, len(card.BoundaryGrants))
+		for i, grant := range card.BoundaryGrants {
+			grant.Path = ""
+			grants[i] = grant
+		}
+		card.BoundaryGrants = grants
+	}
+	return card
 }
 
 func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room store.Room, req spawnRequest, actorKind, actorID string) {
@@ -1213,6 +1237,12 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// Who may do this is decided first, so a person who may not (or an id that is no agent) gets the same refusal without anything having been
+	// loaded, probed or sent to a machine on their behalf.
+	if err := s.Store.AuthorizeAgentControl(r.Context(), id, userID(r)); err != nil {
+		fail(w, err)
+		return
+	}
 	// An agent that works in a worktree of its own is started under that worktree's lock, so a removal cannot take the folder from it
 	// between the check and the start. It is let go before the fallback below, which takes the same lock itself.
 	release := sync.OnceFunc(func() {})

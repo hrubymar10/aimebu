@@ -52,6 +52,16 @@ func uploadFile(t *testing.T, f *fixture, roomID, filename string, data []byte) 
 	return resp, a
 }
 
+// ownerUserID is the id of the fixture's owner account: created_by holds ids, not logins, so a test that asks for a draft passes this.
+func (f *fixture) ownerUserID(t *testing.T) string {
+	t.Helper()
+	owner, err := f.db.UserByLogin(t.Context(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return owner.ID
+}
+
 func uploadImage(t *testing.T, f *fixture, roomID string, data []byte) (*http.Response, store.Attachment) {
 	return uploadFile(t, f, roomID, "image.png", data)
 }
@@ -123,7 +133,7 @@ func TestAttachmentRoomBindingAndPrivateRead(t *testing.T) {
 	if _, err := f.db.SaveAttachment(t.Context(), dm.ID, "owner", "private.png", bytes.NewReader(testPNG)); err == nil {
 		t.Fatal("nonmember uploaded to DM")
 	}
-	_, _, path, err := f.db.AttachmentByID(t.Context(), a.ID)
+	_, _, path, err := f.db.AttachmentByID(t.Context(), a.ID, f.ownerUserID(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,11 +143,16 @@ func TestAttachmentRoomBindingAndPrivateRead(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// An attachment the person may not open answers like one that does not exist, in status and in body.
 	resp = f.request(http.MethodGet, "/api/attachments/att_private", nil, false)
-	if resp.StatusCode != 403 {
-		t.Fatalf("private image read: %d", resp.StatusCode)
-	}
+	private, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	missing := f.request(http.MethodGet, "/api/attachments/att_does_not_exist", nil, false)
+	unknown, _ := io.ReadAll(missing.Body)
+	missing.Body.Close()
+	if resp.StatusCode != 404 || missing.StatusCode != 404 || string(private) != string(unknown) {
+		t.Fatalf("private image read: %d %q, a missing one: %d %q", resp.StatusCode, private, missing.StatusCode, unknown)
+	}
 }
 
 func TestAttachmentTypeAndSize(t *testing.T) {
@@ -164,7 +179,7 @@ func TestAttachmentTypeAndSize(t *testing.T) {
 	if resp.StatusCode != 201 {
 		t.Fatalf("valid upload: %d", resp.StatusCode)
 	}
-	_, _, path, err := f.db.AttachmentByID(t.Context(), a.ID)
+	_, _, path, err := f.db.AttachmentByID(t.Context(), a.ID, f.ownerUserID(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,5 +413,43 @@ func TestSVGAttachmentIsAnImageOnlyForImageRequests(t *testing.T) {
 		if !strings.HasPrefix(got.Header.Get("Content-Disposition"), "attachment") {
 			t.Fatalf("%s was shown inline: %v", name, got.Header)
 		}
+	}
+}
+
+// An upload no message has claimed is a draft: only the person who made it can open it, and they can only have so many at once.
+func TestStagedAttachmentsAreTheUploadersAndCapped(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	resp, staged := uploadImage(t, f, f.room.ID, testPNG)
+	if resp.StatusCode != 201 {
+		t.Fatalf("upload: %d", resp.StatusCode)
+	}
+	cookie, csrf := f.projectMember(t, "otherreader", f.project.ID, "operator")
+	get := func(c *http.Cookie, token string) int {
+		r := f.requestAs(t, c, token, "GET", staged.URL, nil)
+		defer r.Body.Close()
+		return r.StatusCode
+	}
+	if got := get(cookie, csrf); got != http.StatusNotFound {
+		t.Fatalf("another member opened someone's unsent upload: %d", got)
+	}
+	if got := get(f.cookie, f.csrf); got != http.StatusOK {
+		t.Fatalf("the uploader cannot open their own draft: %d", got)
+	}
+	// The rest of the cap, then one more.
+	for i := 1; i < store.MaxStagedAttachments; i++ {
+		if r, _ := uploadImage(t, f, f.room.ID, testPNG); r.StatusCode != 201 {
+			t.Fatalf("upload %d within the cap: %d", i+1, r.StatusCode)
+		}
+	}
+	if r, _ := uploadImage(t, f, f.room.ID, testPNG); r.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("an upload past the cap: %d", r.StatusCode)
+	}
+	// Removing one makes room again, and the cap is per person.
+	del := f.requestAs(t, f.cookie, f.csrf, "DELETE", "/api/rooms/"+f.room.ID+"/attachments/"+staged.ID, nil)
+	del.Body.Close()
+	if r, _ := uploadImage(t, f, f.room.ID, testPNG); r.StatusCode != 201 {
+		t.Fatalf("an upload after one was removed: %d", r.StatusCode)
 	}
 }

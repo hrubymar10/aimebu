@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -52,6 +53,10 @@ func (s *Server) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "invalid_attachment", "nonempty file up to 10 MB required")
 		return
 	}
+	if errors.Is(err, store.ErrAttachmentQuota) {
+		apiError(w, 429, "attachment_quota", fmt.Sprintf("too many unsent uploads (at most %d, %d MB together): send or remove some first", store.MaxStagedAttachments, store.MaxStagedAttachmentBytes>>20))
+		return
+	}
 	if err != nil {
 		fail(w, err)
 		return
@@ -75,12 +80,23 @@ func (s *Server) deleteAttachment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) downloadAttachment(w http.ResponseWriter, r *http.Request) {
-	a, roomID, path, err := s.Store.AttachmentByID(r.Context(), r.PathValue("attachment"))
+	// An attachment the person may not open and one that does not exist answer the same, so an id says nothing about whether it exists in a
+	// room they are not in.
+	notFound := func() { apiError(w, http.StatusNotFound, "not_found", "attachment not found") }
+	a, roomID, path, err := s.Store.AttachmentByID(r.Context(), r.PathValue("attachment"), userID(r))
+	if errors.Is(err, sql.ErrNoRows) {
+		notFound()
+		return
+	}
 	if err != nil && !errors.Is(err, store.ErrAttachmentRemoved) {
 		fail(w, err)
 		return
 	}
-	if _, ok := s.roomAccess(w, r, roomID); !ok {
+	if err := s.Store.UserRoomAccess(r.Context(), userID(r), roomID); errors.Is(err, store.ErrForbidden) || errors.Is(err, sql.ErrNoRows) {
+		notFound()
+		return
+	} else if err != nil {
+		fail(w, err)
 		return
 	}
 	if errors.Is(err, store.ErrAttachmentRemoved) {

@@ -252,6 +252,13 @@ func (s *Server) roomWorktree(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, map[string]any{"enabled": false})
 			return
 		}
+		// A viewer sees where the worktree is under the project (relative_path), not the absolute path on the machine's disk.
+		if role, err := s.Store.UserProjectRole(r.Context(), userID(r), room.ProjectID); err != nil {
+			fail(w, err)
+			return
+		} else if role == "viewer" {
+			item.Path = ""
+		}
 		writeJSON(w, 200, item)
 		return
 	}

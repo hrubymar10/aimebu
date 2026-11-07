@@ -28,7 +28,8 @@ admin can dismiss an alert without rearming it in the same cycle; then
 the thresholds can fire again. An active limit guard holds new turns as
 described in [automatic account switching](quota-switcher.md#limit-guard-acting-before-100)
 and hides both warning and critical quota Inbox alerts for that tool. Alert
-state is stored in private `usages/alerts.json` with mode 0600; account
+state is stored in private `usages/alerts.json` with mode 0600 (the `usages/` folder itself is 0700,
+including one an earlier version made open); account
 identity is hashed there. Stored profiles receive an opaque ID in their directory,
 so renaming a profile keeps its alert identity and reusing its name does not.
 The account switcher's profile overlay is applied before alert tracking, so

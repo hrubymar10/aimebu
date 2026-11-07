@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -299,12 +301,23 @@ func (s *Server) agentToolReact(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "invalid_request", "invalid emoji")
 		return
 	}
+	// A message the agent may not react to, one in a room it has not joined and one that does not exist, gets the same answer: the status and
+	// the text must not tell which message ids or numbers exist in rooms the agent is not in.
+	notAvailable := func() { apiError(w, http.StatusForbidden, "forbidden", "message is not available") }
 	id, err := s.Store.ResolveMessageRef(r.Context(), id) // a message may be named by its number ("#12") as well as its id
+	if errors.Is(err, sql.ErrNoRows) {
+		notAvailable()
+		return
+	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	message, err := s.Store.MessageByID(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		notAvailable()
+		return
+	}
 	if err != nil {
 		fail(w, err)
 		return
@@ -322,7 +335,7 @@ func (s *Server) agentToolReact(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !joined {
-		apiError(w, http.StatusForbidden, "forbidden", "not a member of the room")
+		notAvailable()
 		return
 	}
 	err = s.Store.Tx(r.Context(), func(tx *store.Tx) error {

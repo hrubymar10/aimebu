@@ -990,3 +990,66 @@ func TestRoomMentionUsersListsAddressableHumans(t *testing.T) {
 		t.Fatal("unknown room served")
 	}
 }
+
+// A message in a room the agent has not joined and a message that does not exist answer the same, in status and in body, so reacting is not
+// a way to find out which message ids exist elsewhere.
+func TestAgentReactAnswersTheSameForAMessageItMayNotSeeAndOneThatDoesNotExist(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	_, key := f.createToolAgent(t, "role_reviewer_default")
+	otherRoom, err := f.db.CreateRoom(t.Context(), store.Room{ProjectID: f.project.ID, Kind: "task", Title: "Other task", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: otherRoom.ID, AuthorKind: "system", AuthorID: "system", Body: "private task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	react := func(messageID string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, f.http.URL+"/api/agent/messages/"+messageID+"/reactions/"+url.PathEscape("👍"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	hiddenStatus, hiddenBody := react(hidden.ID)
+	missingStatus, missingBody := react("msg_does_not_exist")
+	if hiddenStatus != missingStatus || hiddenBody != missingBody {
+		t.Fatalf("a hidden message answers %d %q but a missing one %d %q", hiddenStatus, hiddenBody, missingStatus, missingBody)
+	}
+	if hiddenStatus != http.StatusForbidden {
+		t.Fatalf("status=%d", hiddenStatus)
+	}
+}
+
+// Starting, pausing or stopping an agent is refused for a person who may not, and for an id that is no agent, before anything is done: both
+// answer the same, so the control endpoint does not reveal which agent ids exist.
+func TestAgentControlRefusesAStrangerBeforeDoingAnyWork(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	initRepo(t, f.project.Folder)
+	f.connectFakeSupervisor(t)
+	_, card, _ := f.spawnRequest(t, "control", "worker")
+	cookie, csrf := f.projectMember(t, "lookeronly", f.project.ID, "viewer")
+	control := func(id string) (int, string) {
+		resp := f.requestAs(t, cookie, csrf, "POST", "/api/agents/"+id+"/control", map[string]any{"desired": "active", "rev": card.DesiredRev})
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	realStatus, realBody := control(card.ID)
+	missingStatus, missingBody := control("agt_does_not_exist")
+	if realStatus != http.StatusForbidden || realStatus != missingStatus || realBody != missingBody {
+		t.Fatalf("an agent a viewer may not control answers %d %q but a missing one %d %q", realStatus, realBody, missingStatus, missingBody)
+	}
+}

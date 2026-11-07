@@ -636,6 +636,24 @@ func (s *Store) AgentCardByID(ctx context.Context, id string) (AgentCard, error)
 	return c, err
 }
 
+// AuthorizeAgentControl says whether a person may start, pause or stop an agent, with the same rule SetAgentDesired applies in its
+// transaction: an owner or operator of the agent's project. It exists so a request is refused before any work is done for it (loading the
+// launcher, probing a remote folder). An agent that does not exist gives the same ErrForbidden as one the person may not control, so the
+// answer does not tell a stranger which agent ids exist.
+func (s *Store) AuthorizeAgentControl(ctx context.Context, id, actorID string) error {
+	return s.Tx(ctx, func(tx *Tx) error {
+		var projectID string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, id).Scan(&projectID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrForbidden
+		}
+		if err != nil {
+			return err
+		}
+		return tx.authorizeSpawnActor(projectID, "user", actorID, false)
+	})
+}
+
 func (tx *Tx) SetAgentDesired(id, actorID, desired string, rev int64) (AgentCard, error) {
 	return tx.setAgentDesired(id, "user", actorID, desired, rev, true)
 }
