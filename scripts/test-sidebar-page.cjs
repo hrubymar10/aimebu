@@ -240,29 +240,34 @@ async function main() {
     await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click()); // a folded project shows an unread badge at the row end
     const measure = () => page.$eval('[data-room-id=rm_ah] > .room-item', row => {
       const name = row.querySelector('.room-item-name'), menu = row.querySelector('.project-menu-btn'), add = row.querySelector('.add-room:not([hidden])'), extra = row.querySelectorAll('.project-move:not(.project-menu-btn), .project-move-up, .project-move-down').length;
-      return { nameRight: row.querySelector('.room-item-info').getBoundingClientRect().right, rowRight: row.getBoundingClientRect().right,
-        nameWidth: name.clientWidth, textWidth: name.scrollWidth, menu: getComputedStyle(menu).display, add: add ? getComputedStyle(add).display : 'missing', extra };
+      const actions = getComputedStyle(row.querySelector('.room-item-actions')), info = row.querySelector('.room-item-info').getBoundingClientRect();
+      return { nameRight: info.right, rowRight: row.getBoundingClientRect().right, rowHeight: row.getBoundingClientRect().height, info: [info.left, info.right, info.height], badges: [...row.querySelectorAll('.room-item-count, .room-item-attention, .room-item-unread, .room-health, .room-muted')].map(node => { const box = node.getBoundingClientRect(); const at = row.getBoundingClientRect(); return [node.className, box.left - at.left, box.top - at.top, box.width, box.height]; }),
+        nameWidth: name.clientWidth, textWidth: name.scrollWidth, menu: !!menu, add: !!add, overlay: [actions.position, actions.opacity, actions.pointerEvents], extra };
     });
     await page.mouse.move(1100, 700);
     const idle = await measure();
-    assert.deepEqual([idle.menu, idle.add, idle.extra], ['none', 'none', 0], 'a project row has the ☰ and + buttons and no arrows, and they take no width before hover');
+    assert.deepEqual([idle.menu, idle.add, idle.extra, idle.overlay], [true, true, 0, ['absolute', '0', 'none']], 'a project row has the ☰ and + buttons and no arrows, in an overlay that is not seen and takes no room before hover');
     assert.ok(idle.textWidth <= idle.nameWidth, 'the name fits without an ellipsis');
     assert.ok(idle.rowRight - idle.nameRight < 12, `the name column (v1's .room-item-info) reaches the row end, less the row's padding, when controls are hidden: ${JSON.stringify(idle)}`);
-    await page.hover('[data-room-id=rm_ah] > .room-item');
+    const overlayShown = () => page.waitForFunction(() => getComputedStyle(document.querySelector('[data-room-id=rm_ah] > .room-item .room-item-actions')).opacity === '1'); // past v1's 120ms fade
+    await page.hover('[data-room-id=rm_ah] > .room-item'); await overlayShown();
     const hovered = await measure();
-    assert.deepEqual([hovered.menu, hovered.add, hovered.extra], ['flex', 'flex', 0]);
-    assert.ok(hovered.nameWidth < idle.nameWidth, 'the name yields width to visible controls');
+    assert.deepEqual([hovered.menu, hovered.add, hovered.extra, hovered.overlay], [true, true, 0, ['absolute', '1', 'auto']]);
+    assert.ok(idle.badges.length > 0, 'the project row has a badge to keep in place');
+    assert.deepEqual([hovered.rowHeight, hovered.info, hovered.nameWidth, hovered.badges], [idle.rowHeight, idle.info, idle.nameWidth, idle.badges], 'showing the controls changes neither the row nor its columns: they are laid over its end');
     await page.mouse.move(1100, 700);
-    await page.focus('[data-room-id=rm_ah] .room-item-name');
+    await page.focus('[data-room-id=rm_ah] .room-item-name'); await overlayShown();
     const focused = await measure();
-    assert.deepEqual([focused.menu, focused.add, focused.extra], ['flex', 'flex', 0], 'keyboard focus reveals the controls');
+    assert.deepEqual([focused.menu, focused.add, focused.extra, focused.overlay], [true, true, 0, ['absolute', '1', 'auto']], 'keyboard focus reveals the controls');
+    assert.deepEqual([focused.rowHeight, focused.info, focused.nameWidth, focused.badges], [idle.rowHeight, idle.info, idle.nameWidth, idle.badges], 'and they do not change the row either');
     await page.evaluate(() => { document.activeElement.blur(); document.documentElement.dataset.theme = 'high-contrast-dark'; });
-    assert.deepEqual([(await measure()).menu], ['none'], 'high contrast keeps idle controls out of layout');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-room-id=rm_ah] > .room-item .room-item-actions')).opacity === '0'); // the fade out
+    assert.deepEqual([(await measure()).overlay], [['absolute', '0', 'none']], 'high contrast keeps idle controls out of sight and out of layout');
     const session = await page.createCDPSession();
     await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
     assert.equal(await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches), true);
     const touch = await measure();
-    assert.deepEqual([touch.menu, touch.add, touch.extra], ['flex', 'flex', 0], 'touch keeps controls reachable without hover');
+    assert.deepEqual([touch.menu, touch.add, touch.extra, touch.overlay], [true, true, 0, ['static', '1', 'auto']], 'touch keeps controls in the row, reachable without hover');
     await page.close();
   }
 
@@ -445,6 +450,26 @@ async function main() {
     assert.equal(await page.$eval('[data-room-id=rm_api] .room-health', node => node.hidden), true);
     await page.close();
   }
+  // A row with every badge (project chip, health, mute, member count, attention, unread) at the narrowest rooms column: the name gives way, with an
+  // ellipsis, and no badge or other part of the row reaches past the row's right edge, on a desktop width and on a phone.
+  for (const [label, viewport] of [['desktop', { width: 1280, height: 800 }], ['phone', { width: 390, height: 844 }]]) {
+    const far = new Date(Date.now() + 3600000).toISOString();
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_api' ? { ...item, member_count: 3, muted_until: far, title: 'api-work-with-a-rather-long-name' } : item)) }) });
+    await page.setViewport(viewport);
+    await page.evaluate(() => { document.documentElement.style.setProperty('--rooms-w', '180px'); document.querySelector('.sidebar').style.width = '180px'; window.__sidebar.setHealth([{ name: 'ada', room_ids: ['rm_api'], flags: [{ code: 'stuck' }] }]); });
+    await page.evaluate(() => { const group = document.querySelector('[data-room-id=rm_ah]'); if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse').click(); });
+    await page.waitForFunction(() => document.querySelector('[data-room-id=rm_api] > .room-item').getBoundingClientRect().width > 0);
+    const fit = await page.$eval('[data-room-id=rm_api] > .room-item', row => {
+      const edge = row.getBoundingClientRect().right, over = [];
+      for (const node of row.querySelectorAll('*')) { const box = node.getBoundingClientRect(); if (box.width > 0 && getComputedStyle(node).display !== 'none' && box.right > edge + 0.5) over.push(`${node.className || node.tagName}:${Math.round(box.right - edge)}`); }
+      const name = row.querySelector('.room-item-name'), css = getComputedStyle(name);
+      const kinds = ['.room-health', '.room-item-count', '.room-item-attention', '.room-item-unread', '.room-muted'].filter(selector => row.querySelector(selector) && getComputedStyle(row.querySelector(selector)).display !== 'none');
+      return { over, ellipsis: css.textOverflow === 'ellipsis' && css.overflow === 'hidden', truncated: name.scrollWidth > name.clientWidth, kinds, list: document.querySelector('#projects').scrollWidth <= document.querySelector('#projects').clientWidth };
+    });
+    assert.deepEqual([fit.over, fit.ellipsis, fit.truncated, fit.list], [[], true, true, true], `${label}: a row's badges stay inside it and the name is cut with an ellipsis: ${JSON.stringify(fit)}`);
+    assert.equal(fit.kinds.length, 5, `${label}: the test row shows all five badges: ${JSON.stringify(fit.kinds)}`);
+    await page.close();
+  }
 
   // A change of a room's preference (showing a hidden room) asks the server, reads the project again and opens the room; a refusal is told in a
   // dialog; a reset while the request is out takes the answer, reads nothing and opens nothing.
@@ -539,7 +564,7 @@ async function main() {
     // create
     page = await mount();
     // The + of a project's row makes a room, as the ☰ menu's New room does (the second case below).
-    await page.$eval('[data-room-id=rm_ah] > .room-item > .add-room', node => node.click());
+    await page.$eval('[data-room-id=rm_ah] > .room-item .add-room', node => node.click());
     await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
     await fill(page, 'fresh-room');
     held = await waitRequest(page, 'POST', '/api/projects/prj_a/rooms');

@@ -123,5 +123,9 @@ Left under v2's names for now (their areas move later): the toolbar (`.message-a
 - `scripts/v1-css-hold.json` `released` maps a held state class to the classes of moved areas that release it: `active` is released by `settings-nav-item`,
   `settings-section` and `room-item`, `dm` and `pinned` by `room-item`, so v1's `.room-item.active`, `.room-item.dm .room-item-icon` and
   `.room-item.pinned .room-item-name` rules come in while a bare `.active` elsewhere stays held.
+- A row's hover controls (the project menu and the + for a new room) are an overlay at the row's end, centred on it and fading in on hover or focus as v1's
+  agent card actions do, so showing them changes neither the row's height nor its badges; on a touch screen they are part of the row.
+- A row's badges (project chip, health, mute, member count, attention, unread) never shrink and never leave the row. The name is cut with an ellipsis,
+  and when even a ten-character name and the badges do not fit side by side (a nested row at the narrowest column) the badges wrap under it.
 - The rooms rows show what v1 shows and v2 had hidden or drawn differently: the attention pill (`🔔 N`) is visible, the member count is always drawn (`0`
   when the room has no count), and an unread count makes a row bold only while it is not the open one.

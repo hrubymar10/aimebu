@@ -149,7 +149,7 @@ func (s *Store) RoomsForProject(ctx context.Context, projectID string) ([]Room, 
 		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
-		COALESCE((SELECT substr(m.body,1,160) FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),''),
+		COALESCE((SELECT substr(m.body,1,160) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system' ORDER BY m.seq DESC LIMIT 1),''),
 		COALESCE((SELECT m.created_at FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),r.created_at)
 		FROM room r WHERE r.project_id=? ORDER BY r.depth,r.created_at,r.id`, projectID)
 	if err != nil {
@@ -201,7 +201,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
-		COALESCE((SELECT substr(m.body,1,160) FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),''),
+		COALESCE((SELECT substr(m.body,1,160) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system' ORDER BY m.seq DESC LIMIT 1),''),
 		COALESCE((SELECT m.created_at FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),r.created_at),
 		COALESCE(v.hidden,0),COALESCE(v.notify,'default'),COALESCE(v.muted_until,''),COALESCE(c.last_read_seq,0),
 		(SELECT COUNT(*) FROM message um WHERE um.room_id=r.id AND um.seq>COALESCE(c.last_read_seq,0)

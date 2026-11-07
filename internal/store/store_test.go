@@ -481,7 +481,7 @@ func TestRoomsForProjectIncludesReadOnlySidebarFacts(t *testing.T) {
 	if err := s.AddMember(context.Background(), room.ID, "agent", "agent_example"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.InsertMessage(context.Background(), Message{RoomID: room.ID, AuthorKind: "system", AuthorID: "system", Body: "most recent\npreview"}); err != nil {
+	if _, err := s.InsertMessage(context.Background(), Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "usr_test", Body: "most recent\npreview"}); err != nil {
 		t.Fatal(err)
 	}
 	rooms, err := s.RoomsForProject(context.Background(), project.ID)

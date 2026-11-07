@@ -487,7 +487,7 @@ expose `targets` as a JSON array and omit the raw `targets_json` column.
 Project room lists and single-room details include read-only `member_count`
 (active project humans, or a private chat's own people, plus room agents; a disabled
 user counts nowhere), `message_count`, and an optional
-`last_message_body` preview (at most 160 characters) and `last_activity_at` (the newest message's time, else the room's creation, which orders the room list). Both include the
+`last_message_body` preview (at most 160 characters of the newest message that is not a system notice; absent when the room has only notices) and `last_activity_at` (the newest message's time, notices included, else the room's creation, which orders the room list). Both include the
 signed-in user's `hidden`, `notify` (`default` until they choose) and `muted_until` (omitted unless a mute is set; it may be in the past) preferences, plus per-user read state:
 `read_cursor` (highest read message `seq`), `unread_count` (messages after the
 cursor; posting a message advances the author's own cursor to it; in a room whose `notify` is `mentions`, only the messages that address the user, which `POST /api/rooms/{room}/read` answers the same way), and `attention_count` (open inbox entries
