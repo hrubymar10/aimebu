@@ -317,3 +317,7 @@ html[data-ui-roomsettings="b"] #room-info-dialog::backdrop { background: rgba(0,
   .room-item :is(.add-room, .project-move, .branch.room-collapse) { position: relative; }
   .room-item :is(.add-room, .project-move, .branch.room-collapse)::after { content: ""; position: absolute; inset: -9px -7px; }
 }
+
+/* A harness's fields and panels turn off as one for someone who may look but not change (fieldset disabled); the fieldset adds no box of its own. */
+.machine-harness-readonly { border: 0; margin: 0; padding: 0; min-width: 0; }
+.machine-harness-fields { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 9px; }

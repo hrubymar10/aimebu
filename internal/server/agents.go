@@ -116,6 +116,15 @@ func (s *Server) spawnCatalog(w http.ResponseWriter, r *http.Request) {
 		}
 		machineID = host.ID
 	}
+	// Only a machine one of the person's projects is mapped to (as a project they can start agents in): any other, one that does not exist
+	// included, is "not found", so the catalog is no way to list machines or read what they have installed.
+	if allowed, err := s.Store.UserMayUseMachine(r.Context(), userID(r), machineID); err != nil {
+		fail(w, err)
+		return
+	} else if !allowed {
+		apiError(w, 404, "not_found", "machine not found")
+		return
+	}
 	models, err := s.Store.MachineHarnessModels(r.Context(), machineID)
 	if err != nil {
 		fail(w, err)
@@ -1597,6 +1606,12 @@ func (s *Server) agentWorktreeForLocked(ctx context.Context, room store.Room, ma
 	}
 	if mode == "off" {
 		return nil, "the project's worktree mode is off"
+	}
+	if admitted, err := s.machineAdmitted(ctx, room.ProjectID, machine); err != nil {
+		return nil, err.Error()
+	} else if !admitted {
+		// Nothing is made in the project's folder on a machine the owner has not admitted for it; the agent waits for that approval as it always has.
+		return nil, errMachineNotAdmitted.Error()
 	}
 	root, err := s.selectedMachinePath(ctx, room.ProjectID, machine)
 	if err != nil {

@@ -173,8 +173,10 @@ func (s *Server) machineLaunchers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"machine_id": id, "launchers": rows, "activity": activity})
 }
 
+// machineLauncher saves or removes a launcher: the command a machine runs for an agent. That is code on the host, so it is the owner's alone; an admin
+// the owner appointed can see launchers (machineLaunchers) but not change them.
 func (s *Server) machineLauncher(w http.ResponseWriter, r *http.Request) {
-	if !s.adminMachine(w, r) {
+	if !s.ownerMachine(w, r) {
 		return
 	}
 	machineID, launcherID := r.PathValue("id"), r.PathValue("launcher")
@@ -362,7 +364,7 @@ func (s *Server) newHarnessName(ctx context.Context, machineID string, item stor
 // exactly one default; a refused list changes nothing. With expected_rev (the models_rev of the list the edit was based on) an edit over a
 // list that has changed since is refused with 409 stale_models; without it the list is replaced unconditionally.
 func (s *Server) machineHarnessModels(w http.ResponseWriter, r *http.Request) {
-	if !s.adminMachine(w, r) {
+	if !s.ownerMachine(w, r) {
 		return
 	}
 	machineID, launcherID := r.PathValue("id"), r.PathValue("launcher")
@@ -404,7 +406,7 @@ func (s *Server) machineHarnessModels(w http.ResponseWriter, r *http.Request) {
 // same transaction. The answer carries both lists, since the models may have changed. Only names of key variables are stored: no key
 // ever passes through here.
 func (s *Server) machineHarnessProviders(w http.ResponseWriter, r *http.Request) {
-	if !s.adminMachine(w, r) {
+	if !s.ownerMachine(w, r) {
 		return
 	}
 	machineID, launcherID := r.PathValue("id"), r.PathValue("launcher")

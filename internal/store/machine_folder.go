@@ -198,3 +198,67 @@ func (s *Store) SetProjectMachineFolder(ctx context.Context, projectID, machineI
 	})
 	return result, err
 }
+
+// UserMayUseMachine says whether a person may be shown what a machine can start: the owner and admins for any machine, anyone else only for
+// a machine their project is mapped to (the host belongs to every project) and only as an owner or operator of that project, the people who can
+// start an agent there. A machine nobody mapped for them is not theirs to look into, which also keeps which machines exist to themselves.
+func (s *Store) UserMayUseMachine(ctx context.Context, userID, machineID string) (bool, error) {
+	if admin, err := s.IsGlobalAdmin(ctx, userID); err != nil || admin {
+		return admin, err
+	}
+	var found int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM membership mb
+		JOIN project p ON p.id=mb.project_id
+		JOIN machine m ON m.id=?
+		WHERE mb.user_id=? AND mb.role IN ('owner','operator') AND m.revoked_at IS NULL
+		AND (m.is_host=1 OR EXISTS (SELECT 1 FROM project_machine_folder f WHERE f.project_id=p.id AND f.machine_id=m.id AND f.folder<>''))
+		LIMIT 1`, machineID, userID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// AdmitProjectMachine records the project owner's approval of a machine for a project without waiting for an agent to ask for it: the
+// folder the project has on the machine is then worked on there (sessions are listed, worktrees made, agents started under the ordinary
+// approval of each). It is the owner's (or an admin's) alone, needs the machine paired, approved and with a folder mapped for the project,
+// and does nothing for the host, which every project has.
+func (s *Store) AdmitProjectMachine(ctx context.Context, projectID, machineID, userID string) error {
+	return s.Tx(ctx, func(tx *Tx) error {
+		var role string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT role FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&role)
+		owner := err == nil && role == "owner"
+		if !owner {
+			var admin bool
+			var first string
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM user ORDER BY created_at,id LIMIT 1`).Scan(&first); err != nil {
+				return err
+			}
+			if first == userID {
+				admin = true
+			} else if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE((SELECT admin=1 AND disabled_at IS NULL FROM user WHERE id=?),0)`, userID).Scan(&admin); err != nil {
+				return err
+			}
+			if !admin {
+				return ErrForbidden
+			}
+		}
+		var host, approved bool
+		var folder string
+		err = tx.tx.QueryRowContext(tx.ctx, `SELECT m.is_host=1,m.approved=1,COALESCE(f.folder,'')
+			FROM machine m LEFT JOIN project_machine_folder f ON f.machine_id=m.id AND f.project_id=?
+			WHERE m.id=? AND m.revoked_at IS NULL`, projectID, machineID).Scan(&host, &approved, &folder)
+		if err != nil {
+			return err // sql.ErrNoRows: no such machine
+		}
+		if host {
+			return nil
+		}
+		if !approved || folder == "" {
+			return ErrInvalidTransition
+		}
+		_, err = tx.Exec(`INSERT INTO project_machine_allowed(project_id,machine_id,approved_by,approved_at) VALUES (?,?,?,?)
+			ON CONFLICT(project_id,machine_id) DO NOTHING`, projectID, machineID, userID, timestamp())
+		return err
+	})
+}

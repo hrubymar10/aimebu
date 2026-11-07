@@ -1,4 +1,5 @@
 import { batch, computed, signal } from '../../ui.js';
+import { rights } from '../../api.js';
 import { agentLabel } from '../../sender-identity.js';
 import { harnessName } from '../../harness-version.js';
 import { hintParts, switchModel, switchReason, switchStart, switchUnchanged } from '../../spawn-model.js';
@@ -9,7 +10,7 @@ import { MachineStore } from './machine-store.js';
 export class SwitchStore {
   constructor(host) {
     this.host = host;
-    this.machine = new MachineStore({ onChange: () => this.loadCatalog(), onFolderEdit: () => {} });
+    this.machine = new MachineStore({ onChange: () => this.loadCatalog(), onFolderEdit: () => {}, mayAdmit: () => rights.admin || this.host.projectRole?.(this.host.room?.project_id) === 'owner' });
     this.agentName = signal('');
     this.catalog = signal([]);
     this.toolIndex = signal(-1);

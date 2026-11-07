@@ -645,6 +645,28 @@ async function main() {
     await page.close();
   }
 
+  // A machine the project's owner has not admitted yet: an admin, or the project's own owner, gets an "Admit this machine" button, which sends the admit
+  // request and reads the machines again; an operator of the project, who may not admit it, gets none.
+  for (const { admin, role, shown } of [{ admin: true, role: 'owner', shown: true }, { admin: false, role: 'owner', shown: true }, { admin: false, role: 'operator', shown: false }]) {
+    const who = `${admin ? 'an admin' : `a non-admin ${role}`}`;
+    const unadmitted = { machines: [machines.machines[0], { ...machines.machines[1], project_allowed: false }] };
+    const page = await mount({ admin, auto: stable({ 'GET /api/machines?project_id=p1': unadmitted, 'POST /api/projects/p1/machine-folders/m2/admit': undefined }) });
+    await page.evaluate(role => { window.__panel.projectRole = () => role; }, role);
+    await open(page); await ready(page);
+    await select(page, 'machine', 'm2');
+    assert.equal(await page.$eval('#spawn-admit-machine', node => !node.hidden && getComputedStyle(node).display !== 'none'), shown, `${who}: the admit button is ${shown ? 'shown' : 'hidden'}`);
+    if (shown && admin) {
+      await page.$eval('#spawn-admit-machine', node => node.click());
+      const admit = await waitRequest(page, 'POST', '/api/projects/p1/machine-folders/m2/admit');
+      const reads = () => page.evaluate(() => window.__requests.filter(request => request.path === '/api/machines?project_id=p1').length);
+      const before = await reads();
+      await answer(page, admit, 204, undefined); await settle(page);
+      assert.equal(await page.$eval('#spawn-folder-status', node => node.textContent), 'Machine admitted for this project.');
+      assert.ok(await reads() > before, 'the machines are read again after the admit');
+    }
+    await page.close();
+  }
+
   // Two saves for the same machine: only the newest speaks and holds the Save button. The older one, answered while the newer is still out,
   // changes no status, reads no catalog and does not enable the button; then the newer one ends normally. A save of a dialog that was opened
   // again does not enable the new dialog's button either.

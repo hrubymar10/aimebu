@@ -118,14 +118,19 @@ func TestGlobalAdminPermissionMatrix(t *testing.T) {
 		{"create a project", "POST", "/api/projects", map[string]string{"name": "made", "folder": t.TempDir()}, ownerAdmin},
 		{"macros", "PUT", "/api/macros", map[string]string{}, ownerAdmin},
 		{"message expiry", "PUT", "/api/retention", map[string]int{"messages_considered_expired_after_seconds": 21600}, ownerAdmin},
-		{"edit a harness's models", "PUT", "/api/machines/" + w.f.machineID + "/launchers/mln_none/models", map[string]any{"models": []any{}}, ownerAdmin},
-		{"edit a harness's providers", "PUT", "/api/machines/" + w.f.machineID + "/launchers/mln_none/providers", map[string]any{"providers": []any{}}, ownerAdmin},
+		{"edit a harness's models", "PUT", "/api/machines/" + w.f.machineID + "/launchers/mln_none/models", map[string]any{"models": []any{}}, ownerOnly},
+		{"edit a harness's providers", "PUT", "/api/machines/" + w.f.machineID + "/launchers/mln_none/providers", map[string]any{"providers": []any{}}, ownerOnly},
+		{"import a harness's providers", "POST", "/api/machines/" + w.f.machineID + "/launchers/mln_none/providers/import", nil, ownerOnly},
+		{"override a harness's path", "PUT", "/api/machines/" + w.f.machineID + "/harnesses/claude/native", map[string]any{"override_path": "/bin/true"}, ownerOnly},
 		{"read a harness's providers", "GET", "/api/machines/" + w.f.machineID + "/launchers/mln_none/providers", nil, ownerAdmin},
 		{"list machines", "GET", "/api/machines", nil, ownerAdmin},
 		{"machine launchers", "GET", "/api/machines/mch_none/launchers", nil, ownerAdmin},
+		{"save a launcher", "POST", "/api/machines/" + w.f.machineID + "/launchers", map[string]any{}, ownerOnly},
+		{"change a launcher", "PUT", "/api/machines/" + w.f.machineID + "/launchers/mln_none", map[string]any{}, ownerOnly},
+		{"remove a launcher", "DELETE", "/api/machines/" + w.f.machineID + "/launchers/mln_none", nil, ownerOnly},
 		{"machine harnesses", "GET", "/api/machines/mch_none/harnesses", nil, ownerAdmin},
 		{"detect harnesses", "POST", "/api/machines/" + w.f.machineID + "/launchers/detect", nil, ownerAdmin},
-		{"detect a harness's models", "POST", "/api/machines/" + w.f.machineID + "/launchers/mln_none/models/detect", nil, ownerAdmin},
+		{"detect a harness's models", "POST", "/api/machines/" + w.f.machineID + "/launchers/mln_none/models/detect", nil, ownerOnly},
 		{"delete a sound", "DELETE", "/api/sounds/snd_none", nil, ownerAdmin},
 		{"disk report", "GET", "/api/disk", nil, ownerAdmin},
 		{"cleanup plan", "POST", "/api/cleanup", map[string]bool{"dry_run": true}, ownerAdmin},
@@ -515,20 +520,21 @@ func TestAdminWithoutAProjectManagesGlobalMemory(t *testing.T) {
 	}
 }
 
-// An admin is trusted like the owner, so harness settings are theirs too: they can list a harness's models, an operator or viewer cannot.
-func TestAnAdminMayEditAHarnessAndItsModels(t *testing.T) {
+// A harness's models and providers are part of what the machine runs and where it sends its keys, so the owner alone edits them: an admin
+// is refused, as an operator, a viewer and a project owner are.
+func TestOnlyTheOwnerMayEditAHarnessAndItsModels(t *testing.T) {
 	t.Parallel()
 	w := newAdminWorld(t)
 	harness := w.f.harness(t, "claude", "native")
 	path := "/api/machines/" + w.f.machineID + "/launchers/" + harness.ID + "/models"
 	models := map[string]any{"models": []store.HarnessModel{{Slug: "claude-sonnet-5-5", Label: "Sonnet 5.5", Default: true}}}
-	if code, body := w.json(t, w.admin, "PUT", path, models); code != 200 {
-		t.Fatalf("an admin editing a harness's models: %d %v", code, body)
+	if code, body := w.json(t, w.owner, "PUT", path, models); code != 200 {
+		t.Fatalf("the owner editing a harness's models: %d %v", code, body)
 	}
 	if saved, err := w.f.db.HarnessModels(t.Context(), harness.ID); err != nil || len(saved) != 1 || saved[0].Slug != "claude-sonnet-5-5" {
-		t.Fatalf("the admin's list was saved: %+v %v", saved, err)
+		t.Fatalf("the owner's list was saved: %+v %v", saved, err)
 	}
-	for name, who := range map[string]adminActor{"operator": w.oper, "viewer": w.viewer, "project owner": w.pOwner} {
+	for name, who := range map[string]adminActor{"admin": w.admin, "operator": w.oper, "viewer": w.viewer, "project owner": w.pOwner} {
 		if code, _ := w.json(t, who, "PUT", path, models); code != 403 {
 			t.Errorf("a %s must not edit a harness: %d", name, code)
 		}

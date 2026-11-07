@@ -211,6 +211,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/machines/{id}/revoke", s.Auth.RequireUser(http.HandlerFunc(s.machineRevocation)))
 	mux.Handle("GET /api/projects/{project}/machine-folders", s.Auth.RequireUser(http.HandlerFunc(s.machineFolders)))
 	mux.Handle("PUT /api/projects/{project}/machine-folders/{machine}", s.Auth.RequireUser(http.HandlerFunc(s.machineFolder)))
+	mux.Handle("POST /api/projects/{project}/machine-folders/{machine}/admit", s.Auth.RequireUser(http.HandlerFunc(s.machineAdmit)))
 	mux.Handle("GET /api/roles", s.Auth.RequireUser(http.HandlerFunc(s.roles)))
 	mux.Handle("POST /api/roles", s.Auth.RequireUser(http.HandlerFunc(s.roles)))
 	mux.Handle("PUT /api/roles/{id}", s.Auth.RequireUser(http.HandlerFunc(s.role)))

@@ -4,6 +4,8 @@ import { HarnessCard } from './card.js';
 import { Activity } from './activity.js';
 import { AddHarnessForm } from './add-harness-form.js';
 import { DetectPanel } from './detect-panel.js';
+import { rights } from '../../api.js';
+import { OWNER_ONLY } from './model.js';
 import { useHarnesses } from './use-harnesses.js';
 import { DetectionDetails } from './detection-details.js';
 import { MasterList } from './master-list.js';
@@ -20,6 +22,7 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
   const panelRef = useRef(null);
   const data = useHarnesses({ openToken, wanted, closePanel: () => setPanel(null), onReady, onOpened, isHidden });
   const { state, load } = data;
+  const readOnly = !rights.owner;
   const machineID = state.machineID.value, rows = state.rows.value, openForms = state.openForms.value, selected = state.selected.value, roles = state.roles.value;
   // Focused in the same commit as the panel: after paint it would take the focus from a field already chosen.
   useLayoutEffect(() => { if (panel) panelRef.current?.querySelector('input,select,button')?.focus(); }, [panel]);
@@ -31,7 +34,7 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
   };
 
   const cardProps = harness => ({
-    machineID, harness, key: harness.id, selected: harness.id === selected,
+    machineID, harness, key: harness.id, selected: harness.id === selected, readOnly,
     formOpen: openForms.has(harness.id),
     onFormOpen: data.setFormOpen,
     roles, defaults: data.defaults, onRoleChanged: data.roleChanged, onStale: data.staleModels, onStaleProviders: data.staleProviders,
@@ -71,9 +74,10 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
       <p class="settings-intro" role="status">${state.summary.value}</p>
       <p class="error" role="alert">${state.error.value}</p>
       <${DetectionDetails} detail=${state.errorDetail.value} />
+      <p class="settings-intro" id=${`${idPrefix}harness-readonly`} role="note" hidden=${!readOnly}>${OWNER_ONLY} You can look at the harnesses here; the controls are off.</p>
       <div class="machine-actions" hidden=${state.toolbarHidden.value}>
-        <button type="button" class="btn btn-primary" id=${`${idPrefix}harness-add`} onClick=${() => setPanel({ kind: 'add', machineID })}>Add harness</button>
-        <button type="button" class="btn" id=${`${idPrefix}harness-detect`} disabled=${state.detecting.value} onClick=${detect}>
+        <button type="button" class="btn btn-primary" id=${`${idPrefix}harness-add`} disabled=${readOnly} title=${readOnly ? OWNER_ONLY : undefined} onClick=${() => setPanel({ kind: 'add', machineID })}>Add harness</button>
+        <button type="button" class="btn" id=${`${idPrefix}harness-detect`} disabled=${state.detecting.value || readOnly} title=${readOnly ? OWNER_ONLY : undefined} onClick=${detect}>
           ${state.detecting.value ? 'Detecting…' : 'Auto-detect harnesses'}
         </button>
       </div>

@@ -1,5 +1,5 @@
 import { batch, computed, signal } from '../../ui.js';
-import { request } from '../../api.js';
+import { request, rights } from '../../api.js';
 import { ClaudeSessionPicker } from '../../claude-sessions.js';
 import { chooseModel, hintParts, historyNote, modelChangeWarning, NEW_ROOM, REOPEN_PREFIX, resumeBanner, resumeToolChoice, sessionEntryState, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption, writerHolder, writerHolderText } from '../../spawn-model.js';
 import { relativeTime } from '../../time.js';
@@ -12,7 +12,7 @@ const HOLDER_STOP_WAIT_MS = 20000, HOLDER_STOP_POLL_MS = 1000;
 export class SpawnStore {
   constructor(host) {
     this.host = host;
-    this.machine = new MachineStore({ onChange: () => { this.defaultPreviewToken++; this.syncWorktree(); return this.loadCatalog(); }, onFolderEdit: () => {} });
+    this.machine = new MachineStore({ onChange: () => { this.defaultPreviewToken++; this.syncWorktree(); return this.loadCatalog(); }, onFolderEdit: () => {}, mayAdmit: () => rights.admin || this.host.projectRole?.(this.host.room?.project_id) === 'owner' });
     this.resume = signal(null);
     this.mode = signal('continue');
     this.confirmed = signal(false);

@@ -132,7 +132,7 @@ func (s *Server) machineHarnessDetect(w http.ResponseWriter, r *http.Request) {
 // config directory unless the request names a folder on that machine (dir), which the person picks when a harness refuses to answer
 // from the default one. Nothing is saved.
 func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Request) {
-	if !s.adminMachine(w, r) {
+	if !s.ownerMachine(w, r) {
 		return
 	}
 	machineID, launcherID := r.PathValue("id"), r.PathValue("launcher")

@@ -100,6 +100,15 @@ func (s *Server) claudeSessions(w http.ResponseWriter, r *http.Request) {
 		machineSelectionError(w, machine, err)
 		return
 	}
+	// A transcript title is what somebody typed to Claude: another machine's are read only once the owner has admitted that machine for the project (or
+	// by the owner or an admin, whose business the machine is: machineAdmitted lets them through).
+	if admitted, err := s.machineAdmitted(r.Context(), projectID, machine); err != nil {
+		fail(w, err)
+		return
+	} else if !admitted {
+		apiError(w, 403, "machine_not_admitted", errMachineNotAdmitted.Error())
+		return
+	}
 	launcherID, ok := s.claudeLauncher(w, r, conn, machine, r.URL.Query().Get("launcher_id"))
 	if !ok {
 		return

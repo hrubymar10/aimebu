@@ -1321,3 +1321,46 @@ func TestAgentWorktreeCanBeRemovedAndComesBackOnReactivation(t *testing.T) {
 		t.Fatal("the first writer is not in the second's worktree")
 	}
 }
+
+// The spawn catalog is shown for a machine one of the person's projects is mapped to, as a project they can start agents in; any other
+// machine, one that does not exist included, is "not found", and the owner can look at any.
+func TestSpawnCatalogIsOnlyForMachinesTheCallerCanSpawnOn(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	remote := f.remoteMachine(t, true)
+	// remoteMachine maps the project's folder on the machine; this test starts with nobody having mapped it.
+	if _, err := f.exec(`DELETE FROM project_machine_folder WHERE project_id=? AND machine_id=?`, f.project.ID, remote); err != nil {
+		t.Fatal(err)
+	}
+	viewerCookie, viewerCSRF := f.projectMember(t, "catalogviewer", f.project.ID, "viewer")
+	operatorCookie, operatorCSRF := f.projectMember(t, "catalogoperator", f.project.ID, "operator")
+	status := func(cookie *http.Cookie, csrf, machine string) int {
+		t.Helper()
+		resp := f.requestAs(t, cookie, csrf, "GET", "/api/spawn-catalog?machine_id="+machine, nil)
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	// Nobody mapped the remote machine for the project yet.
+	if got := status(operatorCookie, operatorCSRF, remote); got != 404 {
+		t.Fatalf("an operator on a machine the project is not mapped to = %d", got)
+	}
+	if got := status(f.cookie, f.csrf, remote); got == 404 || got == 403 {
+		t.Fatalf("the owner may look at any machine = %d", got)
+	}
+	if got := status(operatorCookie, operatorCSRF, "mch_does_not_exist"); got != 404 {
+		t.Fatalf("a machine that does not exist = %d", got)
+	}
+	if _, err := f.exec(`INSERT INTO project_machine_folder(project_id,machine_id,folder) VALUES (?,?,?)`, f.project.ID, remote, "/srv/project"); err != nil {
+		t.Fatal(err)
+	}
+	if got := status(operatorCookie, operatorCSRF, remote); got == 404 || got == 403 {
+		t.Fatalf("an operator on a machine the project is mapped to = %d", got)
+	}
+	if got := status(viewerCookie, viewerCSRF, remote); got != 404 {
+		t.Fatalf("a viewer cannot start agents there = %d", got)
+	}
+	if got := status(operatorCookie, operatorCSRF, f.machineID); got == 404 || got == 403 {
+		t.Fatalf("the host belongs to every project = %d", got)
+	}
+}

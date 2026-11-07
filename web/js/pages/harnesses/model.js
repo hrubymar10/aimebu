@@ -226,3 +226,6 @@ export function addSuggestions(providers, picked) {
   const status = taken ? `${taken} added to the list${keyless ? `; ${keyless === 1 ? 'its' : 'their'} key was written into the OpenCode config, so set an environment variable and enter its name` : ''}. Save providers to keep ${taken === 1 ? 'it' : 'them'}.` : next.length >= PROVIDERS_MAX ? `The list is full (limit ${PROVIDERS_MAX}).` : 'Nothing new to add.';
   return { providers: next, taken, status };
 }
+
+// What a machine runs (a harness's command, models and providers) is the owner's alone: an admin sees it, and the controls that are off say why.
+export const OWNER_ONLY = 'Only the owner can change what a machine runs.';

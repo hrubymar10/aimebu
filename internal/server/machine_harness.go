@@ -54,7 +54,7 @@ func (s *Server) machineHarnesses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) machineHarness(w http.ResponseWriter, r *http.Request) {
-	if !s.adminMachine(w, r) {
+	if !s.ownerMachine(w, r) {
 		return
 	}
 	id, tool, variant := r.PathValue("id"), r.PathValue("tool"), r.PathValue("variant")

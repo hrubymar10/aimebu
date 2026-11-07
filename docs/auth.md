@@ -184,7 +184,7 @@ person caused it, an owner of the lead's own project must.
 
 The owner is the first account. The owner can flag other accounts as **admins** (Settings → Users → Accounts, the *Admin* toggle that only
 the owner sees; `PUT /api/users/{user}/admin {admin}`, migration adds `user.admin`). An admin has the owner's reach over people, projects
-and global settings, harnesses included, and can read the list of machines, but cannot pair, approve or revoke one, nor reach provider logins, the account switcher, the quota switcher or the v1 import. A deactivated account has no reach whatever its flag
+and global settings, and can read the list of machines and a harness's launchers, but cannot pair, approve or revoke a machine, change what a machine runs (launchers, harness models and providers, a harness's path, detecting a harness's models), nor reach provider logins, the account switcher, the quota switcher or the v1 import. A deactivated account has no reach whatever its flag
 says; taking the flag away ends it at once.
 
 | | owner | admin | project owner | operator / viewer |
@@ -194,9 +194,10 @@ says; taking the flag away ends it at once.
 | list every account; invites into any project at any role; change anyone's project role | yes | yes (not the owner's or another admin's role) | their own project | no |
 | password-reset link, deactivate | any account but the owner can be deactivated | ordinary accounts only | no | no |
 | appoint or remove admins | yes | no | no | no |
-| macros, message expiry, sounds, global memory, global roles/prompts, cleanup and disk report, settings export, harnesses (their launchers, models and auto-detect), the machine list (read-only) | yes | yes | no | no |
+| macros, message expiry, sounds, global memory, global roles/prompts, cleanup and disk report, settings export, harness auto-detect, the machine list and a harness's launchers (read-only) | yes | yes | no | no |
 | stop all agents on a machine (`POST /api/machines/{id}/agents/stop`, Settings → Machines): the agents they could stop one by one | yes | yes | no | no |
-| machines (pairing, approval, revoking), account switcher and provider usages and credentials, quota switcher and limit guard, v1 import, settings preview/apply | yes | no | no | no |
+| machines (pairing, approval, revoking), what a machine runs (saving, changing or removing a launcher; a harness's models, providers and path override; detecting a harness's models, which sends a provider key), account switcher and provider usages and credentials, quota switcher and limit guard, v1 import, settings preview/apply | yes | no | no | no |
+| admit a paired machine for a project (`POST /api/projects/{project}/machine-folders/{machine}/admit`) | yes | yes | their own project | no |
 
 Links follow their issuer: a password-reset link is rechecked when it is used (the issuer must still be allowed to act on that account, so
 an admin who lost the flag or was deactivated, or whose target was promoted to admin meanwhile, cannot use an old link), and losing the

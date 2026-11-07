@@ -49,6 +49,10 @@ transcript whose first line holding a working folder is longer than the first
 
 ## Listing and picking
 
+A machine other than the host must be admitted for the project (the owner's approval of that machine for it) before its folder
+is read or a worktree is made there; until then the request is 403 `machine_not_admitted` and nothing is sent to the machine
+(the owner and admins may still look).
+
 `GET /api/projects/{project}/claude-sessions?machine_id=&launcher_id=` (the
 answer names the `launcher_id` it read; the Spawn dialog keeps it, so the start
 selects that launcher and not another native one with a different Claude home) lists the

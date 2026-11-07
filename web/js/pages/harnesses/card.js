@@ -8,7 +8,7 @@ import { ModelsPanel } from './models.js';
 import { ProvidersPanel } from './providers.js';
 import { useIdPrefix } from './id-prefix.js';
 import { versionLabel } from '../../harness-version.js';
-import { familyName, harnessStatus, harnessTitle, harnessLabel, formFromHarness, launcherBody, enabledBody } from './model.js';
+import { OWNER_ONLY, familyName, harnessStatus, harnessTitle, harnessLabel, formFromHarness, launcherBody, enabledBody } from './model.js';
 
 const launcherURL = (machineID, harnessID) => `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}`;
 
@@ -28,7 +28,7 @@ const Switch = ({ label, checked, onChange }) => html`
 `;
 
 // Drafts survive other cards' refreshes; a save clears its draft only if nothing was typed meanwhile.
-export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen, draft, onDraft, roles, defaults, onRoleChanged, modelFailure, onModelFailure, onReload, onRefresh, onModelsSaved, onStale, onStaleProviders, onSnapshot, onDirty }) {
+export function HarnessCard({ readOnly = false, machineID, harness, selected, formOpen, onFormOpen, draft, onDraft, roles, defaults, onRoleChanged, modelFailure, onModelFailure, onReload, onRefresh, onModelsSaved, onStale, onStaleProviders, onSnapshot, onDirty }) {
   const alive = useAlive();
   const edits = draft?.form ?? null;
   const setEdits = update => onDraft('form', update);
@@ -131,7 +131,8 @@ export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen
             type="checkbox"
             name="enabled"
             checked=${enabled}
-            disabled=${writing}
+            disabled=${writing || readOnly}
+            title=${readOnly ? OWNER_ONLY : undefined}
             aria-label=${`Enable ${harness.label || harness.tool}`}
             onChange=${event => toggle(event.currentTarget.checked)}
           />Enabled</label>
@@ -146,6 +147,7 @@ export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen
         </div>
       </div>
       <form class="machine-harness-form" id=${formID} hidden=${!formOpen} onSubmit=${save}>
+        <fieldset class="machine-harness-fields" disabled=${readOnly} title=${readOnly ? OWNER_ONLY : undefined}>
         <label class="machine-harness-path-label">Label<input
           type="text"
           name="label"
@@ -179,8 +181,10 @@ export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen
           <button type="submit" class="btn btn-primary" disabled=${writing}>Save</button>
           <${IconButton} name="trash" label=${`Remove ${harnessLabel(harness)}`} danger className="machine-harness-remove" disabled=${writing} onClick=${remove} />
         </div>
+        </fieldset>
         <p class="error" role="alert">${error}</p>
       </form>
+      <fieldset class="machine-harness-readonly" disabled=${readOnly} title=${readOnly ? OWNER_ONLY : undefined}>
       ${harness.tool === 'opencode' && html`
         <${ProvidersPanel}
           machineID=${machineID}
@@ -208,6 +212,7 @@ export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen
         onSnapshot=${onSnapshot}
         onDirty=${onDirty}
       />
+      </fieldset>
     </article>
   `;
 }

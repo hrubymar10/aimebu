@@ -44,6 +44,51 @@ func (s *Server) ownerMachine(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// errMachineNotAdmitted is the refusal to work on another machine's copy of a project before the owner has admitted that machine for the project.
+var errMachineNotAdmitted = errors.New("this machine is not admitted for the project yet: the project's owner admits it (POST /api/projects/{project}/machine-folders/{machine}/admit, or by approving the first agent that asks to run there)")
+
+// machineAdmitted says whether a project may be worked on at a machine by the person the request is from: the host always, another machine once
+// the owner admitted it for the project, and for the project's owner and the admins always (admitting it is their business, so their own
+// request does not wait for an approval nobody else could give). What reads or writes a project's folder on a machine does so only when this holds.
+func (s *Server) machineAdmitted(ctx context.Context, projectID string, machine store.Machine) (bool, error) {
+	if machine.IsHost {
+		return true, nil
+	}
+	if allowed, err := s.Store.ProjectMachineAllowed(ctx, projectID, machine.ID); err != nil || allowed {
+		return allowed, err
+	}
+	user, _ := auth.UserIDFromContext(ctx)
+	if user == "" {
+		return false, nil
+	}
+	if admin, err := s.Store.IsGlobalAdmin(ctx, user); err != nil || admin {
+		return admin, err
+	}
+	role, err := s.Store.UserProjectRole(ctx, user, projectID)
+	if errors.Is(err, store.ErrForbidden) {
+		return false, nil
+	}
+	return role == "owner", err
+}
+
+// POST /api/projects/{project}/machine-folders/{machine}/admit: the project owner (or an admin) admits a paired machine for the project, so its
+// folder there is worked on, without having to start an agent to raise the approval.
+func (s *Server) machineAdmit(w http.ResponseWriter, r *http.Request) {
+	err := s.Store.AdmitProjectMachine(r.Context(), r.PathValue("project"), r.PathValue("machine"), userID(r))
+	switch {
+	case errors.Is(err, store.ErrForbidden):
+		apiError(w, 403, "forbidden", "project owner required")
+	case errors.Is(err, store.ErrInvalidTransition):
+		apiError(w, 409, "invalid_transition", "the machine must be approved and have a folder mapped for this project")
+	case errors.Is(err, sql.ErrNoRows):
+		apiError(w, 404, "not_found", "machine not found")
+	case err != nil:
+		fail(w, err)
+	default:
+		w.WriteHeader(204)
+	}
+}
+
 // adminMachine allows the owner and the admins the owner appointed: the reach over people, projects and global settings. Things that
 // run code on the host or hold provider logins stay behind ownerMachine.
 func (s *Server) adminMachine(w http.ResponseWriter, r *http.Request) bool {

@@ -98,7 +98,7 @@ func (s *Server) machineProviderKeys(w http.ResponseWriter, r *http.Request) {
 // is) and marked `already_added` when the harness has that id. Nothing is saved, and no key is ever copied: a key that is a reference to a
 // variable arrives as that variable's name, and a key written into the config as text only sets `inline_key`.
 func (s *Server) machineProviderImport(w http.ResponseWriter, r *http.Request) {
-	if !s.adminMachine(w, r) {
+	if !s.ownerMachine(w, r) {
 		return
 	}
 	harness, ok := s.openCodeHarness(w, r)

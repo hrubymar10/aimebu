@@ -43,19 +43,20 @@ async function main() {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = await puppeteer.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
-  const mount = async (auto = {}, { wanted = '' } = {}) => {
+  const mount = async (auto = {}, { wanted = '', owner = true } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(installFetch, { 'GET /api/machines': machines, 'GET /api/roles': [], 'GET /api/machines/mch_a/launchers': { launchers: launchers.mch_a, activity: [] }, 'GET /api/machines/mch_b/launchers': { launchers: launchers.mch_b, activity: [] }, ...auto });
-    await page.evaluate(async wanted => {
+    await page.evaluate(async (wanted, owner) => {
+      (await import('/js/api.js')).setSession({ csrf_token: 'token', id: 'usr_me', owner, admin: true });
       const dialog = document.querySelector('#settings-dialog');
       const { HarnessSettings } = await import('/js/pages/harnesses/page.js');
       window.__page = new HarnessSettings(dialog);
       window.__page.wanted = wanted;
       window.__page.section.hidden = false; window.__page.section.classList.add('active'); window.__page.open();
-    }, wanted);
+    }, wanted, owner);
     await page.waitForFunction(() => document.querySelectorAll('#harnesses-list .machine-harness').length >= 1);
     return page;
   };
@@ -70,6 +71,23 @@ async function main() {
   const chooseMachine = (page, id) => page.$eval('#harness-machine', (el, id) => { el.value = id; el.dispatchEvent(new Event('change', { bubbles: true })); }, id);
   const card = id => `#harnesses-list .machine-harness[data-variant="${id}"]`;
   try {
+    // An admin who is not the owner may look but not change what a machine runs: the controls that write are off with the reason as their title, the
+    // note says so, and the owner sees none of that.
+    for (const owner of [true, false]) {
+      const page = await mount({}, { owner });
+      const state = await page.evaluate(card => ({
+        note: !document.querySelector('#harness-readonly').hidden,
+        add: [document.querySelector('#harness-add').disabled, document.querySelector('#harness-add').title],
+        detect: document.querySelector('#harness-detect').disabled,
+        enabled: document.querySelector(`${card} [name=enabled]`).disabled,
+        fields: document.querySelector(`${card} .machine-harness-fields`).disabled,
+        panels: document.querySelector(`${card} .machine-harness-readonly`).disabled,
+        reason: document.querySelector(`${card} .machine-harness-fields`).title,
+      }), card('a1'));
+      if (owner) assert.deepEqual(state, { note: false, add: [false, ''], detect: false, enabled: false, fields: false, panels: false, reason: '' }, 'the owner can change harnesses');
+      else assert.deepEqual(state, { note: true, add: [true, 'Only the owner can change what a machine runs.'], detect: true, enabled: true, fields: true, panels: true, reason: 'Only the owner can change what a machine runs.' }, 'an admin cannot, and is told why');
+      await page.close();
+    }
     // A late save on machine A, answered after B was chosen, leaves B's page alone: no read of A, B's own pending read still draws.
     {
       const page = await mount({ 'GET /api/machines/mch_b/launchers': null });
@@ -494,6 +512,7 @@ async function main() {
         'PUT /api/machines/mch_a/launchers/a3/models': {},
       });
       await page.evaluate(async () => {
+        (await import('/js/api.js')).setSession({ csrf_token: 'token', id: 'usr_me', owner: true, admin: true });
         const host = document.createElement('div'); host.id = 'host'; document.body.append(host);
         const { HarnessSettings } = await import('/js/pages/harnesses/page.js');
         window.__ticks = []; window.__ready = 0;
