@@ -686,7 +686,19 @@ func requestCopilotDeviceCode(ctx context.Context, client *http.Client, endpoint
 	if raw.DeviceCode == "" || raw.UserCode == "" || raw.VerificationURI == "" {
 		return copilotDeviceStartResponse{}, errors.New("GitHub device-code response was missing required fields.")
 	}
+	// The person is sent to this address to type the code in, so it must be a web address over https: the page is only a link, and a
+	// javascript: or http: address from a rogue Enterprise host would make it something else.
+	for _, address := range []string{raw.VerificationURI, raw.VerificationURIComplete} {
+		if address != "" && !httpsAddress(address) {
+			return copilotDeviceStartResponse{}, errors.New("GitHub device-code response carried a verification address that is not https.")
+		}
+	}
 	return raw, nil
+}
+
+func httpsAddress(address string) bool {
+	parsed, err := url.Parse(address)
+	return err == nil && parsed.Scheme == "https" && parsed.Hostname() != "" && parsed.User == nil
 }
 
 func requestCopilotAccessToken(ctx context.Context, client *http.Client, endpoint, deviceCode string) (string, string, error) {

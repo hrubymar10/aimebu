@@ -218,6 +218,18 @@ async function main() {
       assert.equal(await page.evaluate(() => window.__polls), 1, 'a destroyed page stops polling');
       await page.close();
     }
+    // A verification address that is not https is shown as no link at all.
+    for (const address of ['javascript:alert(1)', 'http://github.com/login/device', 'https://user:pw@github.com/login/device']) {
+      const page = await mount();
+      await page.evaluate(uri => {
+        window.__source.copilotStart = async () => ({ flow_id: 'mock-flow', user_code: 'ABCD-1234', verification_uri: uri, interval: 60, expires_at: new Date(Date.now() + 600000).toISOString() });
+        window.__source.copilotPoll = async () => ({ status: 'pending', interval: 60 });
+      }, address);
+      await click(page, `${cardOf('github-copilot')} .btn-primary`);
+      await page.waitForFunction(() => document.querySelector('.usage-copilot-flow span'));
+      assert.equal(await page.evaluate(() => document.querySelector('.usage-copilot-flow a')), null, `${address} became a link`);
+      await page.close();
+    }
     // GitHub sign-in started and the page destroyed before the start is answered: nothing is drawn and no poll is sent.
     {
       const page = await mount({ held: ['copilotStart'] });

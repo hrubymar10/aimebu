@@ -381,3 +381,20 @@ func TestUpdateConfigClearsTheManagedFlag(t *testing.T) {
 		t.Fatalf("managed flag survived clearing: %+v %v", cfg, err)
 	}
 }
+
+// The address the person is sent to for the code must be https: anything else from the device-code endpoint fails the start.
+func TestCopilotDeviceStartRefusesAVerificationAddressThatIsNotHTTPS(t *testing.T) {
+	old := usageHTTPClient
+	t.Cleanup(func() { usageHTTPClient = old })
+	for _, body := range []string{
+		`{"device_code":"d","user_code":"ABCD","verification_uri":"javascript:alert(1)","expires_in":90,"interval":5}`,
+		`{"device_code":"d","user_code":"ABCD","verification_uri":"http://github.com/login/device","expires_in":90,"interval":5}`,
+		`{"device_code":"d","user_code":"ABCD","verification_uri":"https://github.com/login/device","verification_uri_complete":"http://github.com/x","expires_in":90,"interval":5}`,
+		`{"device_code":"d","user_code":"ABCD","verification_uri":"https://user:pw@github.com/login/device","expires_in":90,"interval":5}`,
+	} {
+		usageHTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return response(body), nil })}
+		if _, err := NewCopilotFlow().Start(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "not https") {
+			t.Fatalf("%s: err=%v", body, err)
+		}
+	}
+}

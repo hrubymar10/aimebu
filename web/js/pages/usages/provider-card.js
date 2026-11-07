@@ -4,6 +4,11 @@ import { promptDialog } from '../../dialogs.js';
 import { toolOf, isSwitchable, providerStatus, affectedText, canEnable, providerConfigured, movedOrder, ollamaBody, flowText, profileKey } from './model.js';
 import { ProfileCard } from './profile-card.js';
 
+// The verification address comes from GitHub (or an Enterprise host), and only an https address becomes a link.
+function httpsHref(address) {
+  try { const url = new URL(address); return url.protocol === 'https:' && !url.username && !url.password ? url.href : ''; } catch { return ''; }
+}
+
 function CopilotSetup({ store, provider }) {
   const host = useRef(null);
   const flow = store.flow.value;
@@ -11,7 +16,7 @@ function CopilotSetup({ store, provider }) {
     <input class="settings-text-input" type="url" placeholder="GitHub Enterprise host (optional)" ref=${host} value=${provider.enterprise_host || ''} />
     <button type="button" class="btn btn-primary" onClick=${() => store.startCopilot(host.current.value)}>Sign in with GitHub</button>
     ${provider.token_configured && html`<button type="button" class="btn" onClick=${() => store.mutateUsage(() => store.source.copilotLogout())}>Sign out</button>`}
-    <div class="usage-copilot-flow">${flow && html`<${Fragment}><span>${flowText(flow)}</span><a href=${flow.verification_uri} target="_blank" rel="noopener noreferrer">Open GitHub verification</a><//>`}</div>
+    <div class="usage-copilot-flow">${flow && html`<${Fragment}><span>${flowText(flow)}</span>${httpsHref(flow.verification_uri) && html`<a href=${httpsHref(flow.verification_uri)} target="_blank" rel="noopener noreferrer">Open GitHub verification</a>`}<//>`}</div>
   `;
 }
 
