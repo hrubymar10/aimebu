@@ -20,7 +20,7 @@ Reporting is decided in this order:
    ships a default DSN, otherwise off), the DSN field, and one sentence on what is and is not sent. **Save** keeps what is shown; **Not
    now** (or Escape) turns reports off. Either way it is not asked again.
 
-A build that ships no default DSN is off until a DSN comes from the environment or Settings.
+This build ships the maintainers' DSN as the default (`internal/telemetry/default_dsn.go`, EU ingest host `ingest.de.sentry.io`), so the popup's toggle starts on with it filled in. Deleting that one file gives a build with no default, which is off until a DSN comes from the environment or Settings. Set `AIMEBU2_SENTRY_DSN=off` to opt out for a whole server.
 
 Other variables (all optional):
 

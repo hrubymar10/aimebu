@@ -173,8 +173,8 @@ Before a cutover, `node scripts/variant-gate.cjs` drives every tool and containe
 variant through task, pause, kill, and recovery on a real server; see
 [the variant gate](docs/variant-gate.md).
 
-Error and performance reporting to Sentry is **off until a DSN is set and the owner has answered a one-time popup**. Set
-`AIMEBU2_SENTRY_DSN` (or `off`), or use Settings → General → Error reports, to send crashes, 5xx answers and traces from the server and
+Error and performance reporting to Sentry is **on by default, once the owner has answered a one-time popup** (its toggle starts on, with the maintainers' DSN filled in; "Not now" turns it off). Set
+`AIMEBU2_SENTRY_DSN=off` (or another DSN), or use Settings → General → Error reports, to stop or redirect the sending of crashes, 5xx answers and traces from the server and
 the web UI to a Sentry project (the maintainers', yours, or a self-hosted one); `AIMEBU2_SENTRY_ENV` and
 `AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` tune it. There is no Session Replay.
 Message bodies, prompts, attachments, tokens, cookies, headers, environment values and query strings are never sent: see
