@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestParsePiModels(t *testing.T) {
@@ -111,7 +112,7 @@ func TestParseCodexModelsKeepsOnlyListedOnes(t *testing.T) {
 func writeScript(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path

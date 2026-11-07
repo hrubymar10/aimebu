@@ -14,13 +14,14 @@ import (
 	"github.com/coder/websocket"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func versionLauncher(t *testing.T, body string) (protocol.LauncherDefinition, string) {
 	t.Helper()
 	root := t.TempDir()
 	command := filepath.Join(root, "claude-docker")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return protocol.LauncherDefinition{ID: "mln_docker", Tool: "claude", Name: "harness-docker", Command: command, Enabled: true, Containerized: true, Toolbox: true}, root
@@ -80,7 +81,7 @@ func TestContainerLauncherVersionRecoversAfterStartupFailure(t *testing.T) {
 		"if [ ! -f \"" + first + "\" ]; then echo first > \"" + first + "\"; echo first >> \"" + calls + "\"; echo 'not started' >&2; exit 1; fi\n" +
 		"if [ ! -f \"" + second + "\" ]; then echo second > \"" + second + "\"; echo second >> \"" + calls + "\"; echo 'not started' >&2; exit 1; fi\n" +
 		"echo third >> \"" + calls + "\"; echo 'codex 2.0'\n"
-	if err := os.WriteFile(command, []byte(body), 0o700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	def := protocol.LauncherDefinition{ID: "container", Tool: "codex", Name: "harness-docker", Command: command, Enabled: true, Containerized: true}

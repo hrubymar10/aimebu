@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sync/atomic"
@@ -15,11 +14,12 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter/claude"
 	"github.com/hrubymar10/aimebu/internal/adapter/codex"
 	"github.com/hrubymar10/aimebu/internal/adapter/pi"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestMultiCatalogIncludesClaude(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claude")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '2.1.296\\n'\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\nprintf '2.1.296\\n'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	implementation := claude.New()
@@ -54,7 +54,7 @@ func TestMultiPiCapabilitiesAfterMountedLauncherProbe(t *testing.T) {
 
 func TestMultiCatalogIncludesCodex(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	implementation := codex.New(t.TempDir())

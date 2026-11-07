@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // daemonHelperEnv makes this test binary behave as `aimebu` (see TestMain): `server start` runs os.Executable, which in a test is the test
@@ -515,7 +517,7 @@ func TestServerDaemonLeavesV1sPidFileAlone(t *testing.T) {
 func TestServerStartFailsWithoutProofThatTheServerIsUp(t *testing.T) {
 	root, _ := daemonFixture(t)
 	idle := filepath.Join(t.TempDir(), "idle")
-	if err := os.WriteFile(idle, []byte("#!/bin/sh\nexec sleep 120\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(idle, []byte("#!/bin/sh\nexec sleep 120\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	daemonExecutable = func() (string, error) { return idle, nil }

@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // lockedBuffer is a bytes.Buffer safe to write from the adapter's goroutine and read from the test.
@@ -42,7 +42,7 @@ func TestStderrSinkReceivesWhatTheHarnessPrints(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "codex")
 	script := "#!/bin/sh\necho 'first warning' >&2\necho 'Bearer aak_secret: second' >&2\nexit 19\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	for name, sink := range map[string]io.Writer{"a sink": &lockedBuffer{}, "a broken sink": brokenSink{}} {

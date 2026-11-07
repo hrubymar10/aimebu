@@ -16,6 +16,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 const testSession = "123e4567-e89b-42d3-a456-426614174000"
@@ -67,7 +68,7 @@ case "$prompt" in
 esac
 `
 	script = strings.ReplaceAll(strings.ReplaceAll(script, "SESSION", testSession), "EFFECT", marker)
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
@@ -105,7 +106,7 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 	}
 	keyPath := filepath.Join(root, "key")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s' \"${PI_CODING_AGENT_DIR:-}\" > " + envPath + "\nprintf '%s' \"${AIMEBU2_AGENT_KEY:-}\" > " + keyPath + "\ncat " + fixture + "\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := testToolsConfig(t, "agt_test")
@@ -181,7 +182,7 @@ func TestLargeTurnPromptUsesStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat > " + inputPath + "\ncat " + fixture + "\n"
-	if err := os.WriteFile(command, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	longNote := strings.Repeat("x", 160*1024)
@@ -220,7 +221,7 @@ func TestParserRequiresMatchingSessionAndSettledRun(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "pi")
 			script := "#!/bin/sh\nprintf '%s\\n' " + scenario.lines + "\n"
-			if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+			if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
 			turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "incomplete", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, NativeSessionHandle: testSession, Mode: adapter.ModeCorrection})
@@ -242,7 +243,7 @@ func TestCorrectionAndDiagnosticDisableActionTools(t *testing.T) {
 	path := filepath.Join(root, "pi")
 	argsPath := filepath.Join(root, "args")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' '{\"type\":\"session\",\"id\":\"" + testSession + "\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	for _, mode := range []adapter.Mode{adapter.ModeCorrection, adapter.ModeDiagnostic} {
@@ -271,7 +272,7 @@ func TestPrintFixtureParsesSessionAnswerUsageAndCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\ncat "+fixture+"\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ncat "+fixture+"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "fixture", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, NativeSessionHandle: testSession, Mode: adapter.ModeCorrection})
@@ -306,7 +307,7 @@ func TestCompactUsesRPC(t *testing.T) {
 	path := filepath.Join(root, "pi")
 	requestPath := filepath.Join(root, "request")
 	script := "#!/bin/sh\nread request\nprintf '%s' \"$request\" > " + requestPath + "\nprintf '%s\\n' '{\"type\":\"compaction_start\",\"reason\":\"manual\"}' '{\"type\":\"compaction_end\",\"result\":{\"tokensBefore\":2125,\"estimatedTokensAfter\":2033}}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	compact, err := (&Adapter{Command: path, AllowNative: true}).Compact(context.Background(), adapter.TurnSpec{
@@ -392,7 +393,7 @@ func TestToolExecutionEventsCarryToolIDs(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "pi")
 	script := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"turn_start\"}' '{\"type\":\"tool_execution_start\",\"toolCallId\":\"call-1\"}' '{\"type\":\"tool_execution_end\",\"toolCallId\":\"call-1\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "tool-ids", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, NativeSessionHandle: testSession, Mode: adapter.ModeCorrection})
@@ -425,7 +426,7 @@ func TestRetriesExhaustedExitNamesTheProviderError(t *testing.T) {
 		"'{\"type\":\"auto_retry_start\",\"attempt\":1,\"maxAttempts\":3,\"delayMs\":2000,\"errorMessage\":\"429 weekly limit\"}' " +
 		"'{\"type\":\"turn_start\"}' '" + failed + "' " +
 		"'{\"type\":\"auto_retry_end\",\"success\":false,\"attempt\":3,\"finalError\":\"429 weekly usage limit, try again in 3 hours\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	turn, err := (&Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), adapter.TurnSpec{TurnID: "retries", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
@@ -452,7 +453,7 @@ func TestSuccessfulRetryLeavesNoProviderError(t *testing.T) {
 	script := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' " +
 		"'{\"type\":\"turn_end\",\"message\":{\"role\":\"assistant\",\"content\":[],\"stopReason\":\"error\",\"errorMessage\":\"503 overloaded\"}}' " +
 		"'{\"type\":\"auto_retry_end\",\"success\":true,\"attempt\":1}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	turn, err := (&Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), adapter.TurnSpec{TurnID: "recovered", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})

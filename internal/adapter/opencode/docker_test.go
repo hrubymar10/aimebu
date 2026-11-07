@@ -14,6 +14,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // dockerLauncher writes a fake opencode-docker. A launcher that has the feature probe answers it with the features and exits, as the real
@@ -32,7 +33,7 @@ func dockerLauncher(t *testing.T, root string, probe bool, body string) (path, r
 	source += "{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
 		" for v in HARNESS_DOCKER_FORWARD_ENV OPENCODE_LAUNCH_FLAGS XDG_CONFIG_HOME OPENCODE_DB OPENCODE_CONFIG_CONTENT OPENCODE_DISABLE_AUTOUPDATE OPENCODE_DISABLE_PROJECT_CONFIG OPENCODE_DISABLE_CLAUDE_CODE OLLAMA_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME AIMEBU2_AGENT_KEY DOCKER_HOST OWNER_OVERRIDE; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"prompt=$(cat)\nprintf 'PROMPT:%s\\n' \"$prompt\" >> " + record + "\n" + body
-	if err := os.WriteFile(path, []byte(source), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path, record
@@ -67,7 +68,7 @@ case "$prompt" in
   *turn-crash_after_effect*) : > "` + marker + `"; exit 17 ;;
 esac
 `
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
@@ -267,7 +268,7 @@ func TestDockerCatalogAndCapabilities(t *testing.T) {
 	root := t.TempDir()
 	path, _ := dockerLauncher(t, root, true, "")
 	script := "#!/bin/sh\nif [ \"$OPENCODE_LAUNCH_FLAGS\" != \"\" ] || [ \"${OPENCODE_LAUNCH_FLAGS+x}\" != x ]; then echo wrong-flags; exit 1; fi\necho 1.19.0\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := NewDocker()

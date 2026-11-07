@@ -9,6 +9,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 const userJSONC = `{
@@ -88,7 +89,7 @@ func TestNativeTurnCarriesThePersonsOwnServersNextToAimebu(t *testing.T) {
 	capture := filepath.Join(root, "captured")
 	path := filepath.Join(root, "opencode")
 	body := "#!/bin/sh\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > " + capture + ".json\nenv | grep -E '^(DOCS_TOKEN|OPENCODE_CONFIG|OPENCODE_CONFIG_DIR|XDG_CONFIG_HOME)=' | sort > " + capture + ".env\ncat >/dev/null\ncat " + fixture(t, "ok.jsonl") + "\n"
-	if err := os.WriteFile(path, []byte(body), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	run := func(mode adapter.Mode) (config, env string) {

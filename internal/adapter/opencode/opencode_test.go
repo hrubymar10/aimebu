@@ -15,6 +15,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
 	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 const testSession = "ses_eb9ff7679ffeTWs01Hgh3UTIS0"
@@ -48,7 +49,7 @@ func script(t *testing.T, root, body string) (path, record string) {
 		"{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
 		" for v in XDG_CONFIG_HOME XDG_DATA_HOME OPENCODE_DB OPENCODE_CONFIG_CONTENT OPENCODE_DISABLE_AUTOUPDATE OPENCODE_DISABLE_PROJECT_CONFIG OPENCODE_DISABLE_CLAUDE_CODE OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME CLAUDE_CONFIG_DIR AIMEBU2_AGENT_KEY; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"prompt=$(cat)\nprintf 'PROMPT:%s\\n' \"$prompt\" >> " + record + "\n" + body
-	if err := os.WriteFile(path, []byte(source), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path, record
@@ -93,7 +94,7 @@ case "$prompt" in
   *turn-crash_after_effect*) : > "` + marker + `"; exit 17 ;;
 esac
 `
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
@@ -465,7 +466,7 @@ func TestStartRejectsWhatOpenCodeCannotRun(t *testing.T) {
 func TestCatalogAndCapabilities(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "opencode")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 1.19.0\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho 1.19.0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path}

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // The Makefile is read by every make call, on machines that have no node (the web tests run in Docker, so `make test-full` needs Docker, Go and make,
@@ -32,7 +34,7 @@ func runMake(t *testing.T, extra map[string]string, args ...string) (stdout, std
 		t.Fatal(err)
 	}
 	for name, script := range extra {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		if err := testenv.WriteExecutable(filepath.Join(bin, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

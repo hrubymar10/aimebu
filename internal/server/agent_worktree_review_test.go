@@ -16,6 +16,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // agentWorktreeFolders lists the folders under the project's worktrees directory (none when it does not exist yet); any other read error fails
@@ -169,7 +170,7 @@ func TestOwnWorktreeOutsideTheLaunchersRootsIsRefused(t *testing.T) {
 	initRepo(t, f.project.Folder)
 	f.connectFakeSupervisor(t)
 	command := filepath.Join(t.TempDir(), "launcher")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\necho fixture-version\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\necho fixture-version\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	resp := f.request(http.MethodPost, "/api/machines/"+f.machineID+"/launchers", store.Launcher{Tool: "claude", Name: "scratch", Command: command, Enabled: true}, true)
@@ -338,7 +339,7 @@ func TestBulkResumeSkippingAWriterLeavesItsWorktreeUnlocked(t *testing.T) {
 	initRepo(t, f.project.Folder)
 	f.connectFakeSupervisor(t)
 	command := filepath.Join(t.TempDir(), "launcher")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\necho fixture-version\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\necho fixture-version\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	resp := f.request(http.MethodPost, "/api/machines/"+f.machineID+"/launchers", store.Launcher{Tool: "claude", Name: "scratch", Command: command, Enabled: true}, true)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestUserMCPServersAreCopiedWithoutAimebu(t *testing.T) {
@@ -59,7 +60,7 @@ func TestNativeTurnLoadsThePersonsOwnMCPServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argsPath+"\ncat "+fixture+"\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argsPath+"\ncat "+fixture+"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}

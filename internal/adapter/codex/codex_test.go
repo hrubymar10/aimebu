@@ -17,6 +17,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestTurnPromptSeparatesInboxAskFromAttention(t *testing.T) {
@@ -37,7 +38,7 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 	path := filepath.Join(root, "codex-docker")
 	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CODEX_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path, Variant: "docker"}
@@ -75,7 +76,7 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 func TestFailedLauncherCapturesRedactedStderr(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "codex")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'key=aak_secret: checkout is not mounted' >&2\nexit 19\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho 'key=aak_secret: checkout is not mounted' >&2\nexit 19\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := New(filepath.Join(root, "runtime"))
@@ -100,7 +101,7 @@ cat >/dev/null
 printf '%s\n' '{"type":"error","message":"first error"}' '{"type":"turn.failed","error":{"message":"Bearer aak_secret: MCP OAuth invalid_grant"}}'
 exit 1
 `
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := New(filepath.Join(root, "runtime"))
@@ -137,7 +138,7 @@ case "$input" in
   *turn-crash_after_effect*) : > "` + marker + `"; exit 17 ;;
 esac
 `
-		if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		if err := testenv.WriteExecutable(script, []byte(body), 0700); err != nil {
 			t.Fatal(err)
 		}
 		effected := make(chan struct{})
@@ -173,7 +174,7 @@ func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
 	capture := filepath.Join(root, "args")
 	script := filepath.Join(root, "codex")
 	body := "#!/bin/sh\nprintf '%s' \"$*\" > " + capture + "\nprintf '%s' \"$AIMEBU2_AGENT_KEY\" > " + capture + ".key\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"turn.started\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}" + "\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}'\n"
-	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+	if err := testenv.WriteExecutable(script, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a.Command = script
@@ -241,7 +242,7 @@ func TestRejectsChangingThreadID(t *testing.T) {
 cat >/dev/null
 printf '%s\n' '{"type":"thread.started","thread_id":"first"}' '{"type":"thread.started","thread_id":"second"}' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"messages\":[]}"}}' '{"type":"turn.completed"}'
 `
-	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+	if err := testenv.WriteExecutable(script, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := New(filepath.Join(root, "runtime"))
@@ -281,7 +282,7 @@ func TestChildEnvExcludesBusSecrets(t *testing.T) {
 
 func TestCatalogDetectsCLIVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := New(t.TempDir())
@@ -394,7 +395,7 @@ func TestCommandItemsMarkToolEvents(t *testing.T) {
 cat >/dev/null
 printf '%s\n' '{"type":"thread.started","thread_id":"th"}' '{"type":"item.started","item":{"id":"i1","type":"command_execution","command":"sleep 900"}}' '{"type":"item.started","item":{"id":"i2","type":"reasoning"}}' '{"type":"item.updated","item":{"id":"i1","type":"command_execution"}}' '{"type":"item.completed","item":{"id":"i1","type":"command_execution"}}' '{"type":"item.completed","item":{"id":"i3","type":"agent_message","text":"done"}}' '{"type":"turn.completed","usage":{}}'
 `
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := New(filepath.Join(root, "runtime"))
@@ -429,7 +430,7 @@ func TestVersionProbeDoesNotWaitForHelpersTheLauncherLeftBehind(t *testing.T) {
 		t.Skip("needs a POSIX shell")
 	}
 	script := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 20 &\nsleep 20\n"), 0o700); err != nil {
+	if err := testenv.WriteExecutable(script, []byte("#!/bin/sh\nsleep 20 &\nsleep 20\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	implementation := New(t.TempDir())
@@ -450,7 +451,7 @@ func TestVersionProbeSucceedsForALauncherThatExitedZeroAndLeftAHelperBehind(t *t
 		t.Skip("needs a POSIX shell")
 	}
 	script := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'codex-cli 0.162.1'\nsleep 4 &\nexit 0\n"), 0o700); err != nil {
+	if err := testenv.WriteExecutable(script, []byte("#!/bin/sh\necho 'codex-cli 0.162.1'\nsleep 4 &\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	implementation := New(t.TempDir())

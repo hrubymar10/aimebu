@@ -15,12 +15,13 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/ccsessions"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestDockerSpawnRejectsUnreachableCheckoutBeforeWritingKey(t *testing.T) {
 	root := t.TempDir()
 	launcher := filepath.Join(root, "claude-docker")
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\necho 'Directory is not mounted in the harness container' >&2\nexit 1\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(launcher, []byte("#!/bin/sh\necho 'Directory is not mounted in the harness container' >&2\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -199,7 +200,7 @@ func TestSlowPathProbeDoesNotBlockMachineFrames(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".slow-probe-only"), []byte(""), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(command, []byte("#!/bin/sh\nif [ -f .slow-probe-only ]; then sleep 2; fi\necho version\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\nif [ -f .slow-probe-only ]; then sleep 2; fi\necho version\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	definition := protocol.LauncherDefinition{ID: "launch", Name: "slow", Tool: "codex", Command: command, Enabled: true}
@@ -263,7 +264,7 @@ func TestPathProbeDoesNotReportAfterConnectionEnds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".slow-probe-only"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(command, []byte("#!/bin/sh\nif [ -f .slow-probe-only ]; then touch .probe-started; sleep 2; fi\necho version\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\nif [ -f .slow-probe-only ]; then touch .probe-started; sleep 2; fi\necho version\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	definition := protocol.LauncherDefinition{ID: "launch", Name: "probe", Tool: "codex", Command: command, Enabled: true}

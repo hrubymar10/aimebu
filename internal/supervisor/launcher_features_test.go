@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // A Docker launcher whose tool depends on a feature is asked for its features when it is inspected in a checkout, and the answer lands on
@@ -17,7 +18,7 @@ func TestInspectLauncherRecordsDockerFeatures(t *testing.T) {
 	command := filepath.Join(root, "vibe-docker")
 	write := func(body string) {
 		t.Helper()
-		if err := os.WriteFile(command, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
+		if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}

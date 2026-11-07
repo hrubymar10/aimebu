@@ -17,6 +17,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestBackupV1LayoutResumesAndPreservesIndependentState(t *testing.T) {
@@ -454,7 +455,7 @@ func TestV1DaemonOnAnotherPortBlocksTheMove(t *testing.T) {
 	}
 	exeFile := func(name string) string {
 		path := filepath.Join(bin, name)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		return path

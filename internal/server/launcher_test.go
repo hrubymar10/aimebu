@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestOwnerEnablesMachineLauncherBeforeCatalogSpawn(t *testing.T) {
@@ -66,7 +66,7 @@ func TestOwnerEnablesMachineLauncherBeforeCatalogSpawn(t *testing.T) {
 		t.Fatalf("disabled launcher selected: %v", err)
 	}
 	path := filepath.Join(t.TempDir(), "codex-wrapper")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho codex-cli 0.162.1\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho codex-cli 0.162.1\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	codex.Command, codex.Enabled = path, true
@@ -173,7 +173,7 @@ func TestLauncherPreflightRejectsSpawnBeforeAgentCreation(t *testing.T) {
 		t.Fatal("supervisor did not connect")
 	}
 	command := filepath.Join(t.TempDir(), "launcher")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\necho fixture-version\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\necho fixture-version\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	resp := f.request(http.MethodPost, "/api/machines/"+f.machineID+"/launchers", store.Launcher{
@@ -215,7 +215,7 @@ func TestLauncherPreflightRejectsSpawnBeforeAgentCreation(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("spawn by launcher ID: %d", resp.StatusCode)
 	}
-	if err := os.WriteFile(command, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	resp = spawn("preflight-fails", "reviewer", "")
@@ -389,7 +389,7 @@ func TestOwnerAddsAMistralVibeHarness(t *testing.T) {
 		t.Fatal("supervisor did not connect")
 	}
 	path := filepath.Join(t.TempDir(), "vibe")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'vibe 2.25.0'\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho 'vibe 2.25.0'\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	body := map[string]any{"tool": "vibe", "command": path, "enabled": true, "args": []string{}, "env_refs": map[string]string{}, "path_maps": []any{}, "visible_roots": []string{}, "supports_toolbox": true}
@@ -472,7 +472,7 @@ func TestOwnerAddsADockerOpenCodeHarness(t *testing.T) {
 		t.Fatal("supervisor did not connect")
 	}
 	path := filepath.Join(t.TempDir(), "opencode-docker")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 1.19.4\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho 1.19.4\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	body := map[string]any{"tool": "opencode", "command": path, "enabled": true, "containerized": true, "args": []string{}, "env_refs": map[string]string{},
@@ -541,7 +541,7 @@ func TestLauncherListSaysWhyAContainerVersionIsUnknown(t *testing.T) {
 		t.Fatal("supervisor did not connect")
 	}
 	path := filepath.Join(t.TempDir(), "claude-docker")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 2.1.310 (Claude Code)\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho 2.1.310 (Claude Code)\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	body := map[string]any{"tool": "claude", "command": path, "enabled": true, "containerized": true, "args": []string{}, "env_refs": map[string]string{},

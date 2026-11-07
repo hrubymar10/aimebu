@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // A containerized OpenCode launcher is allowed now, and its checkout preflight asks whether the launcher can forward the environment: an
@@ -23,7 +24,7 @@ func TestContainerizedOpenCodeLauncherNeedsOneThatForwardsTheEnvironment(t *test
 	}
 	command := filepath.Join(root, "opencode-docker")
 	write := func(body string) {
-		if err := os.WriteFile(command, []byte("#!/bin/sh\n"+body+"\n"), 0700); err != nil {
+		if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\n"+body+"\n"), 0700); err != nil {
 			t.Fatal(err)
 		}
 	}

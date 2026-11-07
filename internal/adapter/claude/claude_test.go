@@ -16,6 +16,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
@@ -24,7 +25,7 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	path := filepath.Join(root, "claude-docker")
 	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CLAUDE_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path, Variant: "docker"}
@@ -78,7 +79,7 @@ func TestOnlyADiagnosticTurnIsStrictAboutMCP(t *testing.T) {
 			path := filepath.Join(root, "claude")
 			argsPath := filepath.Join(root, "args")
 			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
-			if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+			if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
 			a := &Adapter{Command: path, Variant: tc.variant, AllowNative: true}
@@ -139,7 +140,7 @@ func TestClaudeSchemaDefinesStructuredInboxQuestion(t *testing.T) {
 func TestFailedLauncherCapturesRedactedStderr(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'Bearer aak_secret: checkout is not mounted' >&2\nexit 17\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho 'Bearer aak_secret: checkout is not mounted' >&2\nexit 17\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path, AllowNative: true}
@@ -159,7 +160,7 @@ func TestFailedClaudeResultKeepsRedactedLimitEvidence(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")
 	program := "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":true,\"result\":\"limit reached; resets at 2026-10-15T12:00:00Z aak_secret\"}'\nexit 1\n"
-	if err := os.WriteFile(path, []byte(program), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(program), 0700); err != nil {
 		t.Fatal(err)
 	}
 	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{
@@ -196,7 +197,7 @@ case "$input" in
 esac
 `
 	script = strings.ReplaceAll(script, "EFFECT_MARKER", marker)
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	adaptertest.Run(t, func(t *testing.T, scenario adaptertest.Scenario) (adapter.Adapter, adapter.TurnSpec, <-chan struct{}) {
@@ -228,7 +229,7 @@ func TestResultUsageIncludesCacheTokens(t *testing.T) {
 cat >/dev/null
 printf '%s\n' '{"type":"assistant","message":{"usage":{"input_tokens":11,"cache_read_input_tokens":10,"cache_creation_input_tokens":4}}}' '{"type":"assistant","parent_tool_use_id":"toolu_child","message":{"usage":{"input_tokens":90}}}' '{"type":"result","result":"{\"messages\":[]}","usage":{"input_tokens":111,"output_tokens":7,"cache_read_input_tokens":110,"cache_creation_input_tokens":40},"modelUsage":{"x":{"contextWindow":200,"costUSD":0.1}}}'
 `
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := &adapter.AgentToolsAccess{AgentID: "agt_usage", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
@@ -258,7 +259,7 @@ func TestResumeAndRawCandidate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claude")
 	var argsPath = filepath.Join(t.TempDir(), "args")
 	script := "#!/bin/sh\nprintf '%s' \"$*\" > " + argsPath + "\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	implementation := &Adapter{Command: path, AllowNative: true}
@@ -297,7 +298,7 @@ func TestNewSessionReportsServerIssuedHandle(t *testing.T) {
 	argsPath := filepath.Join(root, "args")
 	path := filepath.Join(root, "claude")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"4c014434-9712-45a7-9d2e-a7866ef8f8dc\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
@@ -335,7 +336,7 @@ func TestForkedTurnReportsTheCopyOfTheSession(t *testing.T) {
 	path := filepath.Join(root, "claude")
 	const original, copyID = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + original + "\"}' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + copyID + "\"}' '{\"type\":\"result\",\"session_id\":\"" + copyID + "\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
@@ -392,7 +393,7 @@ func TestFailedFirstSessionDoesNotReportStarted(t *testing.T) {
 	}
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 17\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\nexit 17\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
@@ -501,7 +502,7 @@ func TestToolUseAndResultMarkToolEvents(t *testing.T) {
 cat >/dev/null
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"x"},{"type":"tool_use","id":"toolu_a"},{"type":"tool_use","id":"toolu_b"}]}}' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a"}]}}' '{"type":"user","message":{"content":"plain text"}}' '{"type":"result","result":"{\"messages\":[]}"}'
 `
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := &adapter.AgentToolsAccess{AgentID: "agt_tools", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
@@ -533,7 +534,7 @@ func TestOversizedStdoutLineKillsProcessGroupBeforeWait(t *testing.T) {
 	// One stdout line beyond the 8 MiB scanner limit, then the CLI stays
 	// alive holding stdout and stderr open, as a wedged harness would.
 	script := "#!/bin/sh\ncat >/dev/null\nhead -c 9437184 /dev/zero | tr '\\0' a\necho\nsleep 30\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path, AllowNative: true}
@@ -582,7 +583,7 @@ func TestLaunchPathIsTheFolderTheHarnessStartsIn(t *testing.T) {
 	path := filepath.Join(root, "claude")
 	const session = "11111111-1111-4111-8111-111111111111"
 	script := "#!/bin/sh\nprintf '%s' \"$PWD\" > " + pwdPath + "\nprintf '%s\\n' '{\"type\":\"result\",\"session_id\":\"" + session + "\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
@@ -638,7 +639,7 @@ func TestClaudeErrorResultIsADefiniteFailureOnlyWhenTheTurnDidNothing(t *testing
 			program += "printf '%s\\n' '" + event + "'\n"
 		}
 		program += "exit 1\n"
-		if err := os.WriteFile(path, []byte(program), 0700); err != nil {
+		if err := testenv.WriteExecutable(path, []byte(program), 0700); err != nil {
 			t.Fatal(err)
 		}
 		turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{
@@ -674,7 +675,7 @@ func TestNativeTurnKeyIsInTheEnvironmentOnly(t *testing.T) {
 	path := filepath.Join(root, "claude")
 	argsPath, envPath := filepath.Join(captures, "args"), filepath.Join(captures, "env")
 	script := "#!/bin/sh\nprintf '%s' \"$AIMEBU2_AGENT_KEY\" > " + envPath + "\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	const key = "aak_native_claude_key"

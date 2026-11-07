@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestDockerMCPUsesTheTurnsAccessWithoutAFile(t *testing.T) {
@@ -26,7 +28,7 @@ func TestDockerMCPUsesTheTurnsAccessWithoutAFile(t *testing.T) {
 func TestDockerPreflightRejectsUnmountedCheckout(t *testing.T) {
 	root := t.TempDir()
 	launcher := filepath.Join(root, "claude-docker")
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\necho 'Directory is not mounted in the harness container' >&2\nexit 1\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(launcher, []byte("#!/bin/sh\necho 'Directory is not mounted in the harness container' >&2\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -45,7 +47,7 @@ func TestDockerPreflightRejectsUnmountedCheckout(t *testing.T) {
 func TestDockerPreflightPassesForALauncherThatLeavesAHelperBehind(t *testing.T) {
 	root := t.TempDir()
 	launcher := filepath.Join(root, "pi-docker")
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\necho 'pi 1.0'\nsleep 4 &\nexit 0\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(launcher, []byte("#!/bin/sh\necho 'pi 1.0'\nsleep 4 &\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -67,11 +69,11 @@ func TestDockerPreflightPassesForALauncherThatLeavesAHelperBehind(t *testing.T) 
 func TestDockerFeaturesTellANewLauncherFromAnOldOne(t *testing.T) {
 	root := t.TempDir()
 	probing := filepath.Join(root, "new-launcher")
-	if err := os.WriteFile(probing, []byte("#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then printf 'forward_env\\nsomething_else\\n'; exit 0; fi\necho 'not the probe' >&2; exit 9\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(probing, []byte("#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then printf 'forward_env\\nsomething_else\\n'; exit 0; fi\necho 'not the probe' >&2; exit 9\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	old := filepath.Join(root, "old-launcher")
-	if err := os.WriteFile(old, []byte("#!/bin/sh\ncase \"$*\" in *--version*) echo 1.19.4;; *) echo 'started the harness' >&2; exit 9;; esac\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(old, []byte("#!/bin/sh\ncase \"$*\" in *--version*) echo 1.19.4;; *) echo 'started the harness' >&2; exit 9;; esac\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	features, err := DockerFeatures(t.Context(), probing, []string{"--wrapper-flag"}, root, os.Environ())
@@ -90,7 +92,7 @@ func TestDockerFeaturesTellANewLauncherFromAnOldOne(t *testing.T) {
 		t.Fatalf("a launcher with the feature passes: %v", err)
 	}
 	failing := filepath.Join(root, "failing")
-	if err := os.WriteFile(failing, []byte("#!/bin/sh\necho 'Docker is not running.' >&2\nexit 1\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(failing, []byte("#!/bin/sh\necho 'Docker is not running.' >&2\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := DockerFeatures(t.Context(), failing, nil, root, os.Environ()); err == nil || !strings.Contains(err.Error(), "Docker is not running") {
@@ -109,13 +111,13 @@ func TestDockerPreflightOfOpenCodeNeedsALauncherThatForwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := filepath.Join(root, "opencode-docker")
-	if err := os.WriteFile(old, []byte("#!/bin/sh\necho 1.19.4\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(old, []byte("#!/bin/sh\necho 1.19.4\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := DockerPreflight("opencode", checkout, old); err == nil || !strings.Contains(err.Error(), "too old") {
 		t.Fatalf("an older launcher: %v", err)
 	}
-	if err := os.WriteFile(old, []byte("#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\n[ \"${OPENCODE_LAUNCH_FLAGS+x}\" = x ] && echo 1.19.4\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(old, []byte("#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\n[ \"${OPENCODE_LAUNCH_FLAGS+x}\" = x ] && echo 1.19.4\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := DockerPreflight("opencode", checkout, old); err != nil {

@@ -11,6 +11,7 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 const userConfig = `model = "gpt-6"
@@ -187,7 +188,7 @@ func TestNativeTurnCarriesThePersonsOwnServersNextToAimebu(t *testing.T) {
 	script := filepath.Join(root, "codex")
 	body := "#!/bin/sh\ncat \"$CODEX_HOME/config.toml\" > " + capture + ".toml\nenv | grep -E '^(DOCS_TOKEN|UNRELATED|TEAM_ID|CODEX_HOME)=' | sort > " + capture + ".env\ncat >/dev/null\n" +
 		"printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"turn.started\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}'\n"
-	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+	if err := testenv.WriteExecutable(script, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	run := func(mode adapter.Mode) (config, env string) {
@@ -366,7 +367,7 @@ func TestDockerTurnPassesThePersonsRemoteServersAsOverrides(t *testing.T) {
 	path := filepath.Join(root, "codex-docker")
 	argsPath := filepath.Join(root, "args")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path, Variant: "docker"}

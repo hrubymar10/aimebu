@@ -16,12 +16,13 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter/claude"
 	"github.com/hrubymar10/aimebu/internal/adapter/pi"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestHarnessOverrideValidationWithoutNativeEnvGate(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "codex")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho codex-cli 1.2.3\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho codex-cli 1.2.3\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range []string{"relative", path + " --flag", dir} {
@@ -48,7 +49,7 @@ func TestDockerSpawnRefreshesVersionAndCapabilitiesAfterFolderMapping(t *testing
 		t.Fatal(err)
 	}
 	launcher := filepath.Join(root, "pi-docker")
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\n[ \"$(pwd)\" = \"$TEST_MOUNT\" ] || exit 1\necho 1.1.0\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(launcher, []byte("#!/bin/sh\n[ \"$(pwd)\" = \"$TEST_MOUNT\" ] || exit 1\necho 1.1.0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TEST_MOUNT", checkout)
@@ -148,7 +149,7 @@ func TestDockerDiscoveryOutsideMirroredCheckout(t *testing.T) {
 	launcher := filepath.Join(root, "claude-docker")
 	// (The launcher answers the feature probe like a current one: Claude's Docker turns need forward_env.)
 	script := "#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\nprintf '%s\\n' \"$(pwd)\" >> \"$TEST_PROBE_LOG\"\nif [ \"$(pwd)\" != \"$TEST_MOUNT\" ]; then echo 'not mounted' >&2; exit 1; fi\necho claude 1.2.3\n"
-	if err := os.WriteFile(launcher, []byte(script), 0755); err != nil {
+	if err := testenv.WriteExecutable(launcher, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TEST_MOUNT", checkout)
@@ -185,7 +186,7 @@ func TestLegacyDockerHarnessIsAskedFromEveryFolder(t *testing.T) {
 	root, good, bad := t.TempDir(), t.TempDir(), t.TempDir()
 	launcher := filepath.Join(root, "claude-docker")
 	script := "#!/bin/sh\ncase \"$PWD\" in *" + filepath.Base(good) + ") echo 'claude 4.5.6';; *) echo \"Error: Directory '$PWD' is not mounted\" >&2; exit 1;; esac\n"
-	if err := os.WriteFile(launcher, []byte(script), 0o755); err != nil {
+	if err := testenv.WriteExecutable(launcher, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))

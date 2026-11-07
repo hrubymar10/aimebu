@@ -9,6 +9,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 const providerSecret = "sk-corp-secret-value-123"
@@ -26,7 +27,7 @@ func providerRecorder(t *testing.T, root string, docker bool) (path, record stri
 	source += "{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
 		" for v in HARNESS_DOCKER_FORWARD_ENV CORP_LLM_KEY OTHER_KEY PATH_PROVIDER_KEY OPENCODE_CONFIG_CONTENT; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"cat > /dev/null\ncat " + fixture(t, "ok.jsonl") + "\n"
-	if err := os.WriteFile(path, []byte(source), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path, record

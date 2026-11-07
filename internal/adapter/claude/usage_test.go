@@ -2,7 +2,6 @@ package claude
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -10,6 +9,7 @@ import (
 	"github.com/goccy/go-json"
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // usageEvents runs a stand-in claude that prints the given stream-json lines and returns the usage events the adapter produced.
@@ -24,7 +24,7 @@ func usageEvents(t *testing.T, lines ...string) []*adapter.Usage {
 	for _, line := range lines {
 		script += "printf '%s\\n' '" + line + "'\n"
 	}
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := &adapter.AgentToolsAccess{AgentID: "agt_usage", ServerURL: "http://127.0.0.1:9897", Key: "aak_canary", Command: "/usr/bin/aimebu"}

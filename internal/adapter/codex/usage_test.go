@@ -3,7 +3,6 @@ package codex
 import (
 	"context"
 	"math"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"github.com/goccy/go-json"
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // usageOf runs a stand-in codex that prints the given turn.completed line and returns the usage event the adapter produced.
@@ -23,7 +23,7 @@ func usageOf(t *testing.T, completed string) *adapter.Usage {
 	root := t.TempDir()
 	script := filepath.Join(root, "codex")
 	body := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"turn.started\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '" + completed + "'\n"
-	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+	if err := testenv.WriteExecutable(script, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := New(filepath.Join(root, "runtime"))

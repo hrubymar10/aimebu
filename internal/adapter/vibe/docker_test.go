@@ -12,6 +12,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // dockerLauncher writes a fake vibe-docker. A launcher with the feature probe answers it with the features and exits, as the real one does
@@ -30,7 +31,7 @@ func dockerLauncher(t *testing.T, root string, probe bool, body string) (path, r
 	source += "{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
 		" for v in HARNESS_DOCKER_FORWARD_ENV VIBE_LAUNCH_FLAGS VIBE_HOME VIBE_ACTIVE_MODEL VIBE_SESSION_LOGGING__SAVE_DIR VIBE_MCP_SERVERS AIMEBU2_AGENT_KEY MISTRAL_API_KEY ACME_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME DOCKER_HOST PYTHONUNBUFFERED; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"prompt=$(cat)\nprintf 'PROMPT:%s\\n' \"$prompt\" >> " + record + "\n" + body
-	if err := os.WriteFile(path, []byte(source), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path, record
@@ -69,7 +70,7 @@ case "$prompt" in
   *turn-crash_after_effect*) : > "` + marker + `"; exit 17 ;;
 esac
 `
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
@@ -292,7 +293,7 @@ func TestDockerCatalogAndCapabilities(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "vibe-docker")
 	script := "#!/bin/sh\nif [ \"${VIBE_LAUNCH_FLAGS+x}\" != x ] || [ \"$VIBE_LAUNCH_FLAGS\" != \"\" ]; then echo wrong-flags; exit 1; fi\necho 'vibe 2.25.0'\n"
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := NewDocker()

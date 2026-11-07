@@ -1,13 +1,17 @@
 package testenv
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -67,7 +71,7 @@ func TestPinGoCacheEnvUsesEffectiveGoSettings(t *testing.T) {
 	root := t.TempDir()
 	goCommand := filepath.Join(bin, "go")
 	script := "#!/bin/sh\n[ \"$*\" = 'env GOCACHE GOPATH GOMODCACHE' ] || exit 2\nprintf '%s\\n%s\\n%s\\n' '" + filepath.Join(root, "build") + "' '" + filepath.Join(root, "path") + "' '" + filepath.Join(root, "modules") + "'\n"
-	if err := os.WriteFile(goCommand, []byte(script), 0o700); err != nil {
+	if err := WriteExecutable(goCommand, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
@@ -238,5 +242,62 @@ func TestIsolateForcesErrorReportingOff(t *testing.T) {
 	t.Setenv("AIMEBU2_SENTRY_DSN", "https://k@h.example/1")
 	if Check() == nil {
 		t.Fatal("Check must refuse a test environment where error reporting is not off")
+	}
+}
+
+// A test that writes a file to run with os.WriteFile and an executable mode can fail with "text file busy" whenever another goroutine forks while the file is
+// open for writing (or when it rewrites a launcher a process is running): it writes with WriteExecutable instead.
+func TestNoTestWritesAnExecutableWithWriteFile(t *testing.T) {
+	root := moduleRoot(t)
+	exec := regexp.MustCompile(`os\.WriteFile\([^\n]*, 0o?7(00|55)\)`)
+	var found []string
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, "_test.go") || strings.Contains(path, string(filepath.Separator)+"node_modules"+string(filepath.Separator)) {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		for number, line := range strings.Split(string(data), "\n") {
+			if exec.MatchString(line) {
+				rel, _ := filepath.Rel(root, path)
+				found = append(found, fmt.Sprintf("%s:%d", rel, number+1))
+			}
+		}
+		return nil
+	})
+	if len(found) > 0 {
+		t.Fatalf("use testenv.WriteExecutable instead of os.WriteFile with an executable mode (it fails with ETXTBSY under parallel forks): %s", strings.Join(found, ", "))
+	}
+}
+
+// WriteExecutable's file runs straight away, rewriting it while it runs works, and doing both from many goroutines that also start processes never fails.
+func TestWriteExecutableNeverRaces(t *testing.T) {
+	dir := t.TempDir()
+	var wg sync.WaitGroup
+	errs := make(chan error, 64)
+	for worker := 0; worker < 16; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			path := filepath.Join(dir, fmt.Sprintf("script-%d", worker))
+			for round := 0; round < 25; round++ {
+				if err := WriteExecutable(path, []byte(fmt.Sprintf("#!/bin/sh\necho %d\n", round)), 0700); err != nil {
+					errs <- err
+					return
+				}
+				out, err := exec.Command(path).Output()
+				if err != nil || strings.TrimSpace(string(out)) != fmt.Sprint(round) {
+					errs <- fmt.Errorf("worker %d round %d: %q %v", worker, round, out, err)
+					return
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
 	}
 }

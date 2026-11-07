@@ -16,6 +16,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // The fixtures in testdata are entries shaped like the ones `vibe -p --output streaming` writes (the PublicHistoryEntry models of Vibe
@@ -65,7 +66,7 @@ func script(t *testing.T, root, body string) (path, record string) {
 		"{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
 		" for v in VIBE_HOME VIBE_ACTIVE_MODEL VIBE_SESSION_LOGGING__SAVE_DIR VIBE_MCP_SERVERS AIMEBU2_AGENT_KEY MISTRAL_API_KEY ACME_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME CLAUDE_CONFIG_DIR PYTHONUNBUFFERED; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"prompt=$(cat)\nprintf 'PROMPT:%s\\n' \"$prompt\" >> " + record + "\n" + body
-	if err := os.WriteFile(path, []byte(source), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path, record
@@ -136,7 +137,7 @@ case "$prompt" in
   *turn-crash_after_effect*) : > "` + marker + `"; exit 17 ;;
 esac
 `
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
@@ -664,7 +665,7 @@ func TestStartRejectsWhatVibeCannotRun(t *testing.T) {
 func TestCatalogAndCapabilities(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "vibe")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'vibe 2.25.0'\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho 'vibe 2.25.0'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path}
@@ -692,7 +693,7 @@ func TestCatalogAndCapabilities(t *testing.T) {
 		t.Fatal("a missing executable must not be listed")
 	}
 	empty := filepath.Join(root, "silent")
-	if err := os.WriteFile(empty, []byte("#!/bin/sh\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(empty, []byte("#!/bin/sh\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if (&Adapter{Command: empty}).Catalog() != nil {

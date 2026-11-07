@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -180,4 +181,34 @@ func RestrictPATH(root string, tools ...string) {
 	if err := os.Setenv("AIMEBU2_TEST_RESTRICT_PATH", "1"); err != nil {
 		panic(err)
 	}
+}
+
+// WriteExecutable writes a file a test is going to run, so that running it cannot fail with "text file busy" (ETXTBSY).
+//
+// Two things cause that failure and a plain os.WriteFile has both. While the file is open for writing, a process forked by another goroutine inherits
+// the descriptor and keeps it until its exec, and an exec of the file in that window is refused. And opening for writing a file that a process is
+// executing is refused, which a test that rewrites its launcher between two runs does. So the contents go to a temporary file in the same directory,
+// written while holding the read side of syscall.ForkLock (os/exec takes the write side around every fork, so none happens while the descriptor is open),
+// and the file is renamed over the target: the target is never open for writing, and replacing one that is running is allowed.
+func WriteExecutable(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".exec-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name) // a no-op once the rename has moved it
+	syscall.ForkLock.RLock()
+	_, err = tmp.Write(data)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(name, perm); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }

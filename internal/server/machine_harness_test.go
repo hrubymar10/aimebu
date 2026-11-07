@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestMachineHarnessSettingsValidateOnSupervisorAndAudit(t *testing.T) {
@@ -57,7 +57,7 @@ func TestMachineHarnessSettingsValidateOnSupervisorAndAudit(t *testing.T) {
 	}
 	resp.Body.Close()
 	path := filepath.Join(t.TempDir(), "codex-test")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho codex-cli 1.2.3\n"), 0755); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\necho codex-cli 1.2.3\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	resp = f.request(http.MethodPut, url+"/codex/native", map[string]any{"enabled": true, "override_path": path}, true)

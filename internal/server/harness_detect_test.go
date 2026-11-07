@@ -14,6 +14,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestParseAnthropicModelsKeepsCurrentOnes(t *testing.T) {
@@ -120,7 +121,7 @@ func TestOwnerDetectsAndAddsAHarnessAndItsModels(t *testing.T) {
 	t.Setenv("PATH", bin)
 	script := "#!/bin/sh\ncase \"$1\" in\n  --version) echo \"pi 0.9.3\" ;;\n  --offline) printf 'provider model context max-out thinking images\\nollama-cloud gemma4:31b 256K 32K no no\\nollama-cloud qwen3:32b 128K 16K yes no\\n' ;;\nesac\n"
 	piPath := filepath.Join(bin, "pi")
-	if err := os.WriteFile(piPath, []byte(script), 0o755); err != nil {
+	if err := testenv.WriteExecutable(piPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	f := newFixture(t)
@@ -234,7 +235,7 @@ func TestContainerizedHarnessModelsAreDetectedAndAChosenFolderIsPassed(t *testin
 		"if [ \"$(pwd -P)\" = \"" + refused + "\" ]; then echo \"cannot answer from '$(pwd -P)'\" >&2; exit 1; fi\n" +
 		"printf '%s\\n%s\\n' \"$(pwd -P)\" \"$*\" > " + seen + "\n" +
 		"echo '{\"models\":[{\"slug\":\"gpt-6-astra\",\"display_name\":\"GPT-6-Astra\",\"visibility\":\"list\"}]}'\n"
-	if err := os.WriteFile(filepath.Join(bin, "codex-docker"), []byte(script), 0o755); err != nil {
+	if err := testenv.WriteExecutable(filepath.Join(bin, "codex-docker"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	f := newFixture(t)

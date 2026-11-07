@@ -2,13 +2,14 @@ package cmdprobe
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func script(t *testing.T, body string) string {
@@ -17,7 +18,7 @@ func script(t *testing.T, body string) string {
 		t.Skip("needs a POSIX shell")
 	}
 	path := filepath.Join(t.TempDir(), "tool")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return path

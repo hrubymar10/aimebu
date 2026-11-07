@@ -16,6 +16,7 @@ import (
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestStripJSONC(t *testing.T) {
@@ -330,7 +331,7 @@ func TestOpencodeListingUsesThePrivateConfigAndAsksEndpoints(t *testing.T) {
 	record := filepath.Join(root, "record")
 	script := "#!/bin/sh\n{ printf 'ARGS:%s\\n' \"$*\"; for v in XDG_CONFIG_HOME OPENCODE_DISABLE_PROJECT_CONFIG OPENCODE_DISABLE_CLAUDE_CODE OPENCODE_CONFIG_CONTENT; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" + "echo ollama-cloud/gemma4:31b\n"
 	command := filepath.Join(root, "opencode")
-	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	provider := adapter.CustomProvider{ID: "corp-llm", Name: "Corp", NPM: adapter.CustomProviderNPM, BaseURL: server.URL + "/v1", KeyEnv: "CORP_LLM_KEY",
@@ -383,7 +384,7 @@ func TestOpencodeListingUsesThePrivateConfigAndAsksEndpoints(t *testing.T) {
 	}
 	// A listing with nothing of its own is still a list when an endpoint serves models.
 	empty := filepath.Join(root, "opencode-empty")
-	if err := os.WriteFile(empty, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+	if err := testenv.WriteExecutable(empty, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if models, err := detectModelsWith(t.Context(), "opencode", empty, nil, t.TempDir(), false, &detectExtras{providers: []adapter.CustomProvider{provider}}); err != nil || len(models) != 2 {
@@ -448,7 +449,7 @@ func TestOpencodeListingWithNoModelsStillAsksTheCustomEndpoints(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	command := filepath.Join(root, "opencode")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\necho 'error: no models available' >&2\nexit 1\n"), 0o700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\necho 'error: no models available' >&2\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	custom := func(id, path string) adapter.CustomProvider {

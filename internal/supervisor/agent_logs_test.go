@@ -2,7 +2,6 @@ package supervisor
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter/claude"
 	"github.com/hrubymar10/aimebu/internal/agentlog"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // A turn's stderr is kept in the agent's output log on the machine, redacted, and the server can read its tail over the machine socket;
@@ -29,7 +29,7 @@ func TestAgentOutputIsCapturedAndServedOverTheMachineSocket(t *testing.T) {
 	}
 	defer j.Close()
 	harness := filepath.Join(t.TempDir(), "claude")
-	if err := os.WriteFile(harness, []byte("#!/bin/sh\necho 'warning: Bearer aak_secret_value in a header' >&2\necho 'second line of stderr' >&2\nexit 0\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(harness, []byte("#!/bin/sh\necho 'warning: Bearer aak_secret_value in a header' >&2\necho 'second line of stderr' >&2\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	c := NewClient("machine", "key", peer.server.URL, j, claude.New())

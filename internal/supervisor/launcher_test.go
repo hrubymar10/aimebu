@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestLauncherResolvesCommandAndVisibleCheckout(t *testing.T) {
@@ -17,7 +18,7 @@ func TestLauncherResolvesCommandAndVisibleCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := filepath.Join(root, "c-l-a-u-d-e")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\necho claude-code 2.0\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\necho claude-code 2.0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	def := protocol.LauncherDefinition{ID: "mln_custom", Tool: "claude", Name: "custom", Command: command,
@@ -44,7 +45,7 @@ func TestLauncherResolvesCommandAndVisibleCheckout(t *testing.T) {
 func TestCancelledLauncherProbeDoesNotWaitForChildOutputPipe(t *testing.T) {
 	root := t.TempDir()
 	command := filepath.Join(root, "launcher-with-child")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\nsleep 5 &\necho ready > .probe-started\nwait\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\nsleep 5 &\necho ready > .probe-started\nwait\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	def := protocol.LauncherDefinition{ID: "slow", Name: "slow", Tool: "codex", Command: command, Enabled: true}
@@ -78,7 +79,7 @@ func TestCancelledLauncherProbeDoesNotWaitForChildOutputPipe(t *testing.T) {
 func TestSuccessfulLauncherProbeAcceptsInheritedOutputPipe(t *testing.T) {
 	root := t.TempDir()
 	command := filepath.Join(root, "launcher-with-child")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\nsleep 2 &\necho v1\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\nsleep 2 &\necho v1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	def := protocol.LauncherDefinition{ID: "success", Name: "success", Tool: "codex", Command: command, Enabled: true}
