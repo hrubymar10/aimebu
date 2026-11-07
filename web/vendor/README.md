@@ -76,3 +76,13 @@ Vendored frontend dependency:
   and @preact/signals-core **1.14.4** (MIT; `signals.mjs`, `signals-core.mjs`), approved by the owner on 2026-10-22
   (`signals.mjs` is `19c5ca080f54f3b36d1b687555dc82c0c8ce29eaedc0ca42b237012892861841`, `signals-core.mjs`
   `0676238240715faeb4eb8b0a329837dc06ef7f37e7103601e13af3ed309c042c`).
+
+- `sentry/bundle.tracing.min.js` is the Sentry browser SDK v11.11.0 with Tracing (MIT, Copyright (c) 2019 Functional Software, Inc. dba Sentry;
+  `sentry/LICENSE` is the licence of the npm package `@sentry/browser@11.11.0`). It is the unmodified CDN bundle
+  `https://browser.sentry-cdn.com/11.11.0/bundle.tracing.min.js` (header: "@sentry/browser (Performance Monitoring) 11.11.0 (eadbabb)"). SHA-256:
+  `143375024988ceab2b9425d41c1f4c0ea42e3fd8744e76a304890f12066e721b`. The tracing-only bundle is used on purpose: it contains no Session Replay code
+  (the `replayIntegration` it exports is a stub that only warns), so Replay cannot be switched on by a setting until its recording can be scrubbed.
+  It is loaded by `web/js/telemetry.js` only while the server has reporting on (`AIMEBU2_SENTRY_DSN` or Settings -> General -> Error reports);
+  otherwise the page never requests it (docs/telemetry.md). Added with the owner's approval of 2026-11-06 (bus #39710), together with the Go modules
+  `sentry-go`, `sentry-go/otel` and the OpenTelemetry API and SDK. To update, download the new version's file from the same URL pattern and `LICENSE`
+  from the npm package, replace both, and update the version and the hash here.

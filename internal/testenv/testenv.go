@@ -51,6 +51,8 @@ func Isolate() (root string, cleanup func()) {
 		"AIMEBU_CONFIG_DIR":         filepath.Join(root, ".aimebu"),
 		"AIMEBU2_CONFIG_DIR":        filepath.Join(root, ".aimebu2"),
 		"AIMEBU2_DEV_SKIP_V1_PROBE": "1",
+		// Error reporting is forced off: a test must never send anything to Sentry, whatever DSN the machine or a default ships.
+		"AIMEBU2_SENTRY_DSN": "off",
 	} {
 		if err := os.Setenv(name, value); err != nil {
 			panic(err)
@@ -95,6 +97,9 @@ func Main(m *testing.M) {
 
 // Check reports an environment in which the home directory, or a data directory that is set, is outside the temporary directory.
 func Check() error {
+	if got := os.Getenv("AIMEBU2_SENTRY_DSN"); got != "off" {
+		return fmt.Errorf("AIMEBU2_SENTRY_DSN is %q in the test environment, want \"off\": a test must never send error reports", got)
+	}
 	temp, err := resolve(os.TempDir())
 	if err != nil {
 		return err

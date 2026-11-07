@@ -27,7 +27,7 @@ async function main() {
     if (build.status !== 0) throw new Error('go build failed');
   }
   const port = await freePort(), origin = `http://127.0.0.1:${port}`;
-  const server = spawn(binary, ['server'], { env: { ...env, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(binary, ['server'], { env: { ...env, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; server.stderr.on('data', data => { logs += data; });
   let supervisor, browser, page;
   const roleSaves = [], pageErrors = [];

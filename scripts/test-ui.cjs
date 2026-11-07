@@ -25,7 +25,7 @@ for (const args of [['add', 'README.md'], ['commit', '-qm', 'base']]) {
 }
 const testHome = path.join(tmp, 'home');
 fs.mkdirSync(testHome, { recursive: true });
-const isolatedEnv = { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, '.codex'), CLAUDE_CONFIG_DIR: path.join(testHome, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp };
+const isolatedEnv = { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, '.codex'), CLAUDE_CONFIG_DIR: path.join(testHome, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp, AIMEBU2_SENTRY_DSN: 'off' };
 const binary = path.join(tmp, 'aimebu');
 const build = spawnSync('go', ['build', '-o', binary, './cmd/aimebu'], { stdio: 'inherit' });
 if (build.status !== 0) process.exit(build.status || 1);
@@ -92,7 +92,7 @@ async function main() {
     assert.equal(harnesses.status, 0, `harness settings smoke failed:\n${harnesses.stdout}${harnesses.stderr}`);
   }
   const port = await freePort(); const origin = `http://127.0.0.1:${port}`;
-  const child = spawn(binary, ['server'], { env: { ...isolatedEnv, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(binary, ['server'], { env: { ...isolatedEnv, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; child.stderr.on('data', data => logs += data);
   let browser, supervisor, preserveFailure = false, browserClosing = false;
   try {
@@ -347,7 +347,7 @@ async function main() {
       await first.click('#welcome-continue'); await first.evaluate(() => window.__welcomeDone);
       // The welcome is first-run only: Settings -> General has no section to play it again.
       await openSettings(first);
-      assert.deepEqual(await first.evaluate(() => ({ section: !!document.querySelector('#settings-welcome, #settings-welcome-play'), headings: [...document.querySelectorAll('#settings-general h3')].map(el => el.textContent.trim().toLowerCase()) })), { section: false, headings: ['appearance', 'chat', 'messages', 'settings backup'] }, 'Settings -> General has no Welcome section');
+      assert.deepEqual(await first.evaluate(() => ({ section: !!document.querySelector('#settings-welcome, #settings-welcome-play'), headings: [...document.querySelectorAll('#settings-general h3')].map(el => el.textContent.trim().toLowerCase()) })), { section: false, headings: ['appearance', 'chat', 'messages', 'error reports', 'settings backup'] }, 'Settings -> General has no Welcome section');
       await first.evaluate(() => document.querySelector('#settings-dialog').close());
     }
     // v1's global shortcuts: Ctrl/Cmd+, opens Settings on General; Ctrl/Cmd+W closes it again; Shift in the chord does nothing.
@@ -3493,7 +3493,7 @@ async function main() {
       {
         const setupTmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-setup-'));
         const setupPort = await freePort(), setupOrigin = `http://127.0.0.1:${setupPort}`;
-        const setupEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: setupTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_USAGES: '0', AIMEBU2_PORT: String(setupPort) };
+        const setupEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: setupTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_PORT: String(setupPort) };
         delete setupEnv.AIMEBU2_OWNER_LOGIN; delete setupEnv.AIMEBU2_OWNER_PASSWORD;
         const setupServer = spawn(binary, ['server'], { env: setupEnv, stdio: ['ignore', 'pipe', 'pipe'] });
         let setupLogs = ''; setupServer.stderr.on('data', data => setupLogs += data);
@@ -4086,7 +4086,7 @@ async function main() {
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
     for (const id of ['settings-general', 'settings-usages', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
-    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, and the settings backup, all as rows');
+    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'error-reports-enabled', 'error-reports-dsn', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
     // edge, and row actions such as move, remove and delete are icon buttons with a tooltip and an accessible name.

@@ -131,6 +131,8 @@ func TestGlobalAdminPermissionMatrix(t *testing.T) {
 		{"cleanup plan", "POST", "/api/cleanup", map[string]bool{"dry_run": true}, ownerAdmin},
 		{"cleanup settings", "GET", "/api/cleanup/settings", nil, ownerAdmin},
 		{"cleanup log", "GET", "/api/cleanup/log", nil, ownerAdmin},
+		{"error reports settings", "GET", "/api/telemetry/settings", nil, ownerAdmin},
+		{"save error reports settings", "PUT", "/api/telemetry/settings", map[string]any{"prompted": true}, ownerAdmin},
 		{"settings export", "GET", "/api/settings-backup", nil, ownerAdmin},
 		{"list every account", "GET", "/api/users", nil, ownerAdmin},
 		{"a global role", "POST", "/api/roles", map[string]any{"project_id": "", "role_key": "adminrole", "label": "Admin role", "emoji": "", "body": "x", "cardinality": "multi"}, ownerAdmin},

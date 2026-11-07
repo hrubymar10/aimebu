@@ -15,6 +15,8 @@ dependencies are `github.com/goccy/go-json`, `github.com/coder/websocket`,
 Codex `config.toml`), and add each only when implementation needs it.
 `github.com/air-verse/air` is approved as a `tool` directive for `make dev`
 only (GPL-3.0; it is never imported or linked into aimebu).
+`github.com/getsentry/sentry-go` and `.../sentry-go/otel` (MIT) and `go.opentelemetry.io/otel`, `.../otel/sdk` and `.../otel/trace` (Apache-2.0) are
+approved for `internal/telemetry` only (owner approval 2026-11-06), with the vendored Sentry browser bundle in `web/vendor/sentry/`.
 Ask before adding, removing, or updating any other dependency.
 
 For JSON, always import `github.com/goccy/go-json` (package `json`), never

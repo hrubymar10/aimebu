@@ -19,6 +19,10 @@ const (
 	hardMaxDepth    = 5
 )
 
+// SQLDriverName is the database/sql driver the store opens its databases with: the plain SQLite driver, or a traced copy of it that main
+// registers when telemetry is on (internal/telemetry.SQLDriver). Set it before Open.
+var SQLDriverName = "sqlite"
+
 var ErrDepthExceeded = errors.New("depth_exceeded")
 var ErrTxReentry = errors.New("store transaction re-entry")
 
@@ -112,7 +116,7 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 		}
 		path = abs
 	}
-	db, err := sql.Open("sqlite", sqliteDSN(path))
+	db, err := sql.Open(SQLDriverName, sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +128,7 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	readDB, err := sql.Open("sqlite", readOnlyDSN(path))
+	readDB, err := sql.Open(SQLDriverName, readOnlyDSN(path))
 	if err != nil {
 		_ = db.Close()
 		return nil, err

@@ -36,6 +36,11 @@ var environment = []envVar{
 	{[]string{"AIMEBU2_ALLOW_NATIVE"}, []string{
 		"Set to 1 when migrating a database to enable host-native launchers; has no",
 		"effect afterwards"}},
+	{[]string{"AIMEBU2_SENTRY_DSN"}, []string{
+		"Sentry DSN for error and performance reports (server and web UI); \"off\" or",
+		"empty disables, and either overrides Settings. See docs/telemetry.md"}},
+	{[]string{"AIMEBU2_SENTRY_ENV"}, []string{"Sentry environment name (default: dev)"}},
+	{[]string{"AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"}, []string{"Share of requests traced, 0 to 1 (default: 0.1)"}},
 	{[]string{"AIMEBU2_USAGES"}, []string{"Set to 0 to disable credential reads and provider usage requests"}},
 	{[]string{"AIMEBU_TOKEN_LEAD_CLAUDE", "AIMEBU_TOKEN_LEAD_CODEX"}, []string{
 		"How long before expiry the token refresher renews a profile (Go durations,",

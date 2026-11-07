@@ -39,7 +39,7 @@ fmt-check: ## Fail if Go source is unformatted
 
 test-full: fmt-check vet test-race test-web ## Full local and CI gate
 
-WEB_TESTS := chat-model room-panel-model sidebar-model claude-sessions claude-session-import system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown composer-paste markdown import-tree quick-commands message-usage role-defaults harness-model prompts-model macros-model roles-model general-model notifications-model usages-model quota-model users-model machines-model project-model shell-model health-model knowledge-model inbox-model agents-model members-model sender-profile-model preact-vendor spawn-model harness-version workspace-folder build-version import-problems signin-model setup-model onboarding-model topbar-model
+WEB_TESTS := chat-model room-panel-model sidebar-model claude-sessions claude-session-import system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown composer-paste markdown import-tree quick-commands message-usage role-defaults harness-model prompts-model macros-model roles-model general-model notifications-model usages-model quota-model users-model machines-model project-model shell-model health-model knowledge-model inbox-model agents-model members-model sender-profile-model preact-vendor spawn-model harness-version workspace-folder build-version import-problems signin-model setup-model onboarding-model topbar-model telemetry telemetry-consent
 
 # The web tests are plain node scripts, with no npm dependencies. By default they run in Docker, from a digest-pinned image, so that every
 # machine runs the same toolchain: the repository is mounted read-only at /src, copied to a tmpfs, and run from there with no network
@@ -104,6 +104,7 @@ test-ui: ## Check web/v1.css against v1, run Chromium smoke against a scratch se
 	node scripts/test-onboarding-page.cjs
 	node scripts/test-topbar-page.cjs
 	node scripts/test-backdrop-page.cjs
+	node scripts/test-telemetry-page.cjs
 
 dev: ## Run the server with live reload
 	go tool air -c .air.toml

@@ -33,6 +33,9 @@ import { ImportV1Wizard } from './import-v1.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
 import { DiskUsage } from './pages/health/disk.js';
 import { showBuildVersion } from './build-version.js';
+import { startTelemetry } from './telemetry.js';
+import { askTelemetryConsent } from './telemetry-consent.js';
+import { formDialog } from './dialogs.js';
 import { UpdateBar } from './update-bar.js';
 import { ColumnResize } from './column-resize.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
@@ -450,9 +453,11 @@ async function signedIn(session) {
   // before it could miss. (The first sign-in waits behind the welcome, which can take long, so it starts nothing early.)
   const cursor = session.first_run ? undefined : request('/api/events/cursor');
   cursor?.then(() => chat.prefetchLatest(roomInAddress() || rememberedRoom()), () => {});
-  setSession(session); void showBuildVersion(request, document.querySelector('#build-version')).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
+  setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
+  // The owner is asked about error reports once (after the welcome on a new install, or on the first sign-in after an update brought them).
+  if (session.telemetry_prompt) { await askTelemetryConsent(request, formDialog); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;
   const expireStartup = () => {
     if (!startupActive()) return;

@@ -11,11 +11,12 @@ export function versionLabel(info) {
 }
 
 // Resolves to the version string as the server states it ('' when it could not be read), for the caller that wants to know which build served it.
-export async function showBuildVersion(request, element) {
+export async function showBuildVersion(request, element, onInfo) {
   try {
     const info = await request('/api/buildinfo');
     const label = versionLabel(info);
     if (element && label) { element.textContent = label.text; element.title = label.title; }
+    try { onInfo?.(info); } catch { /* a listener failing never costs the header */ }
     return typeof info?.version === 'string' ? info.version : '';
   } catch { /* the header keeps its default text */ return ''; }
 }

@@ -13,7 +13,7 @@ const OWNER = { login: 'owner', password: 'test-password-123' };
 
 // A scratch server and a browser for a page test. With `owner` the server starts with that account; without it there is no owner yet and the
 // server waits for its setup token (its path is in /api/setup/status). `AUTH_BINARY` names a binary built already, so several scripts share one.
-async function scratch({ owner = OWNER } = {}) {
+async function scratch({ owner = OWNER, env: extraEnv = {} } = {}) {
   const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'aimebu-auth-'));
   const home = path.join(tmp, 'home'); fs.mkdirSync(home, { recursive: true });
   const env = { ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp, TMPDIR: tmp };
@@ -24,7 +24,8 @@ async function scratch({ owner = OWNER } = {}) {
     if (build.status !== 0) throw new Error('go build failed');
   }
   const port = await freePort(), origin = `http://127.0.0.1:${port}`;
-  const serverEnv = { ...env, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port) };
+  const serverEnv = { ...env, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_SENTRY_DSN: 'off', ...extraEnv }; // error reports are off in every test server; a test can pass its own DSN, or null to leave it unset
+  for (const [name, value] of Object.entries(extraEnv)) if (value === null) delete serverEnv[name];
   if (owner) { serverEnv.AIMEBU2_OWNER_LOGIN = owner.login; serverEnv.AIMEBU2_OWNER_PASSWORD = owner.password; }
   const server = spawn(binary, ['server'], { env: serverEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; server.stderr.on('data', data => { logs += data; }); server.stdout.on('data', data => { logs += data; });

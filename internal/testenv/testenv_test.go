@@ -230,3 +230,13 @@ func declaresIsolatingTestMain(t *testing.T, files []string) bool {
 	}
 	return false
 }
+
+func TestIsolateForcesErrorReportingOff(t *testing.T) {
+	if got := os.Getenv("AIMEBU2_SENTRY_DSN"); got != "off" {
+		t.Fatalf("the test environment must force AIMEBU2_SENTRY_DSN=off, got %q", got)
+	}
+	t.Setenv("AIMEBU2_SENTRY_DSN", "https://k@h.example/1")
+	if Check() == nil {
+		t.Fatal("Check must refuse a test environment where error reporting is not off")
+	}
+}

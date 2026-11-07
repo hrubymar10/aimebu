@@ -33,8 +33,10 @@ import (
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
 	"github.com/hrubymar10/aimebu/internal/switcher"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"github.com/hrubymar10/aimebu/internal/tlsclient"
 	"github.com/hrubymar10/aimebu/internal/usages"
+	"modernc.org/sqlite"
 )
 
 // version is the build-time version string. Override with:
@@ -68,9 +70,36 @@ func reserveV1History(ctx context.Context, db *store.Store, root string, stderr 
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := runWithContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	startTelemetry(os.LookupEnv, os.Stderr)
+	// Registered whether or not reporting is on: Settings can turn it on while the server runs (a statement costs one atomic load while off).
+	store.SQLDriverName = telemetry.RegisterSQLDriver(&sqlite.Driver{})
+	code := runReporting(ctx, os.Args[1:])
 	stop()
+	telemetry.Current().Close() // whichever reporter is running now (Settings may have replaced the first)
 	os.Exit(code)
+}
+
+// runReporting is the entry point of every subcommand (server, supervisor, agent-tools, the CLI): a panic on its goroutine is reported to
+// telemetry (when it is on) and then raised again, so the process dies exactly as it would without it.
+func runReporting(ctx context.Context, args []string) int {
+	defer telemetry.Recover(ctx)
+	return runWithContext(ctx, args, os.Stdout, os.Stderr)
+}
+
+// startTelemetry turns on error and performance reporting when AIMEBU2_SENTRY_DSN is set (see docs/telemetry.md); without it nothing is
+// created. A bad setting is said on stderr and the process runs with telemetry off, never refusing to start for it.
+func startTelemetry(lookup func(string) (string, bool), stderr io.Writer) *telemetry.Telemetry {
+	config, err := telemetry.FromEnv(lookup, resolveVersion())
+	if err != nil {
+		fmt.Fprintln(stderr, "telemetry off:", err)
+		return nil
+	}
+	tel, err := telemetry.Init(config.Resolve(telemetry.Stored{}), nil) // Settings are not readable yet: the server applies them once its store is open
+	if err != nil {
+		fmt.Fprintln(stderr, "telemetry off:", err)
+		return nil
+	}
+	return tel
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -548,6 +577,12 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	service.Setup = ownerSetup
 	service.ImportV1Root = config.root
 	service.Version = resolveVersion()
+	if err := service.ApplyTelemetry(context.Background()); err != nil {
+		fmt.Fprintln(stderr, "telemetry off:", err)
+	}
+	if telemetry.Current().Enabled() {
+		fmt.Fprintln(stderr, "telemetry on: reporting errors and traces to Sentry (see docs/telemetry.md)")
+	}
 	service.DataRoot = config.root
 	// `aimebu doctor --live` reads this key from the config directory; the server works without it, only --live is then unavailable.
 	if removeDoctorKey, err := service.EnableDoctorKey(config.root); err != nil {

@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/getsentry/sentry-go"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"io"
 	"io/fs"
 	"log"
@@ -71,13 +73,14 @@ type Server struct {
 	// Tests override the settings migration's Codex process scan.
 	tokenSettingRunningCodex func() ([]string, string, error)
 	// TokenSettingClock is the clock of the setting's waiting backoff; nil is time.Now.
-	TokenSettingClock func() time.Time
-	CopilotFlow       *providers.CopilotFlow
-	Switcher          *switcher.Manager
-	ImportV1Root      string
-	DataRoot          string           // the config root; falls back to ImportV1Root
-	Version           string           // the build's version string, shown in the page header (GET /api/buildinfo)
-	CleanupClock      func() time.Time // tests set the clock of the daily cleanup; nil is time.Now
+	TokenSettingClock  func() time.Time
+	CopilotFlow        *providers.CopilotFlow
+	Switcher           *switcher.Manager
+	ImportV1Root       string
+	DataRoot           string           // the config root; falls back to ImportV1Root
+	Version            string           // the build's version string, shown in the page header (GET /api/buildinfo)
+	telemetryTransport sentry.Transport // tests replace the network transport; nil is the real one
+	CleanupClock       func() time.Time // tests set the clock of the daily cleanup; nil is time.Now
 	// claudeModelsFetch gets the Anthropic SDK source Claude's model list is read from; tests replace it. nil is the real fetch.
 	claudeModelsFetch func(ctx context.Context, etag string) (body []byte, newETag string, notModified bool, err error)
 	claudeModels      claudeModelCache
@@ -126,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/login", s.login)
+	mux.Handle("GET /api/telemetry/settings", s.Auth.RequireUser(http.HandlerFunc(s.telemetrySettings)))
+	mux.Handle("PUT /api/telemetry/settings", s.Auth.RequireUser(http.HandlerFunc(s.telemetrySettings)))
 	mux.HandleFunc("GET /api/setup/status", s.setupStatus)
 	mux.HandleFunc("POST /api/setup/token", s.setupToken)
 	mux.HandleFunc("POST /api/setup", s.setupOwner)
@@ -382,7 +387,7 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(web.index))
 	})
-	return allowMiddleware(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(mux))), s.Allow)
+	return telemetry.Middleware(allowMiddleware(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(mux))), s.Allow))
 }
 
 func (s *Server) maintenanceMiddleware(next http.Handler) http.Handler {
@@ -785,7 +790,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 // buildInfo answers GET /api/buildinfo: the version this server was built as and the Go toolchain that built it, for the header of the page
 // (as v1 shows it). A signed-in account may read it; it names no path and no secret.
 func (s *Server) buildInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]string{"version": s.Version, "go_version": runtime.Version()})
+	info := map[string]any{"version": s.Version, "go_version": runtime.Version()}
+	if browser := telemetry.Current().BrowserConfig(); browser != nil {
+		info["sentry"] = browser // the page starts its Sentry SDK from this; absent means it never loads the SDK
+	}
+	writeJSON(w, 200, info)
 }
 
 // sessionView adds what the account may do instance-wide (owner, admin) to a sign-in answer, so the page can turn off what would only
@@ -800,6 +809,12 @@ func (s *Server) sessionView(ctx context.Context, user string, view map[string]a
 		return nil, err
 	}
 	view["owner"], view["admin"] = owner, admin
+	// The consent popup for error reports is shown to the owner once, after the welcome on a new install and on the first sign-in after an update.
+	if prompt, err := s.telemetryPrompt(ctx, owner); err != nil {
+		return nil, err
+	} else if prompt {
+		view["telemetry_prompt"] = true
+	}
 	// Where the folder fields start: the home folder of the user the server runs as, which is the machine projects are created on. Only the
 	// owner and admins create projects, so only they are told (a stranger gets no path of the host).
 	if admin {
