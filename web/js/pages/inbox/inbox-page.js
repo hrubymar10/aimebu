@@ -34,6 +34,10 @@ function Card({ item, store, rooms, onJump, openUsages }) {
   if (kind === 'usage_alert') {
     return wrap(html`${rights.owner && openUsages && button('Open Usages', () => openUsages(), 'btn btn-primary')}<${IconButton} name="close" label="Dismiss usage alert" disabled=${pending} onClick=${() => store.dismiss(item)} />`);
   }
+  // A shared agent note waiting for approval: approving switches it on for every project's agents, declining deletes it.
+  if (item.note_id) {
+    return wrap(html`${item.can_decide ? html`<div class="inbox-decisions">${[['Approve', 'approve', 'btn btn-primary'], ['Decline', 'deny', 'btn btn-danger']].map(([label, choice, classes]) => button(label, () => store.decide(item, choice), classes))}</div>` : html`<p class="inbox-evidence">An owner or admin must decide this note.</p>`}`);
+  }
   if (item.boundary_pending) {
     return wrap(html`<p class="inbox-evidence">${boundaryText(item)}</p>${item.can_decide ? html`<div class="inbox-decisions">${[['Approve', 'approve'], ['Deny', 'deny']].map(([label, choice]) => button(label, () => store.decide(item, choice)))}</div>` : html`<p class="inbox-evidence">The project owner must decide this request.</p>`}`);
   }

@@ -396,6 +396,16 @@ func (s *Server) agentToolMemoryList(w http.ResponseWriter, r *http.Request) {
 		knowledgeError(w, store.ErrMemoryDisabled)
 		return
 	}
+	// A person's profile is read by the agents of the projects that person belongs to, and by no others.
+	if scope == "user_profile" {
+		if member, err := s.Store.IsProjectMember(r.Context(), caller.ProjectID, key); err != nil {
+			knowledgeError(w, err)
+			return
+		} else if !member {
+			knowledgeError(w, store.ErrForbidden)
+			return
+		}
+	}
 	items, err := s.Store.ListGlobalKnowledge(r.Context(), scope, key)
 	if err != nil {
 		knowledgeError(w, err)

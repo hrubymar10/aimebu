@@ -231,7 +231,7 @@ func (tx *Tx) knowledgeSnapshot(projectID, roomID string) (map[string]any, error
 			return nil, err
 		}
 		for _, scope := range []string{"user_profile", "agent_shared_notes"} {
-			rows, err := tx.tx.QueryContext(tx.ctx, "SELECT g.id,g.scope_key,g.body,g.rev,g.author_kind,g.author_id,g.created_at,g.updated_at,COALESCE(u.login,'') FROM global_memory g LEFT JOIN user u ON u.id=g.scope_key AND g.scope='user_profile' WHERE g.scope=? AND g.active=1 ORDER BY g.scope_key,g.created_at,g.id", scope)
+			rows, err := tx.tx.QueryContext(tx.ctx, "SELECT g.id,g.scope_key,g.body,g.rev,g.author_kind,g.author_id,g.created_at,g.updated_at,COALESCE(u.login,'') FROM global_memory g LEFT JOIN user u ON u.id=g.scope_key AND g.scope='user_profile' WHERE g.scope=? AND g.active=1 AND (g.scope<>'user_profile' OR g.scope_key IN (SELECT mb.user_id FROM membership mb JOIN user mu ON mu.id=mb.user_id WHERE mb.project_id=? AND mu.disabled_at IS NULL)) ORDER BY g.scope_key,g.created_at,g.id", scope, projectID)
 			if err != nil {
 				return nil, err
 			}
@@ -471,12 +471,27 @@ func (s *Store) RecallKnowledge(ctx context.Context, agentID, query string, limi
 				hits = append(hits, KnowledgeHit{"project_memory", item.ID, "", item.Body, score, item.CreatedAt})
 			}
 		}
+		members := map[string]bool{}
 		for _, scope := range []string{"user_profile", "agent_shared_notes"} {
 			items, err := s.ListActiveGlobalKnowledge(ctx, scope)
 			if err != nil {
 				return nil, err
 			}
 			for _, item := range items {
+				// A person's profile is for the projects that person belongs to: the same rule as the context an agent starts with.
+				if scope == "user_profile" {
+					member, ok := members[item.ScopeID]
+					if !ok {
+						var err error
+						if member, err = s.IsProjectMember(ctx, projectID, item.ScopeID); err != nil {
+							return nil, err
+						}
+						members[item.ScopeID] = member
+					}
+					if !member {
+						continue
+					}
+				}
 				if score := knowledgeScore(item.Body, query, terms); score > 0 {
 					hits = append(hits, KnowledgeHit{scope, item.ID, "", item.Body, score, item.CreatedAt})
 				}

@@ -163,15 +163,26 @@ Content
   body, rev, author_kind[user|agent], author_id, source_message_id?,
   active[0|1], created_at, updated_at) — profiles key by v2 user ID and shared notes use the fixed
   `global` key. Only the installation owner or an admin can curate global records as a
-  human, even while project memory is disabled. An agent in any
-  memory-enabled project can create or edit profiles for any user and shared
-  notes; active records are visible to all project members and enter agent
-  context and recall in every memory-enabled project. This deliberately
-  carries v1's trusted-workspace cross-project knowledge semantics. Imported
-  records are ordinary and active on arrival. `active=0` is only the owner's or an admin's
-  explicit "Deactivate" on a record. The per-scope caps are 2048 bytes for one profile and
-  4096 bytes for shared notes; each body is at most 2000 Unicode characters.
-  Agents can list, revise, and remove active global records with revision
+  human, even while project memory is disabled. An agent in a memory-enabled
+  project can create or edit the profile of a person who is an active member of
+  that project (any other person's profile is refused, 403), and its context
+  carries the profiles of that project's members and no others. What an agent
+  adds to the shared notes, or changes in one, is created or set `active=0`: it
+  waits until the owner or an admin switches it on (the same toggle as
+  "Deactivate"). An agent edits or deletes only the shared notes it wrote
+  (waiting for approval or approved; an edit sends an approved one back to waiting), never the owner's or another
+  agent's, and approving a note keeps its author. Active shared notes
+  are visible to all project members and enter agent context and recall in every
+  memory-enabled project, which is deliberate: that is the cross-project
+  knowledge the notes are for, now behind that approval. Imported records are
+  ordinary and active on arrival; the owner's or an admin's own notes are active at
+  once. `active=0` is the owner's or an admin's explicit "Deactivate", or an
+  agent's pending note (the memory viewer says "Waiting for approval" for the latter and "Inactive" for the former). The per-scope caps are 2048 bytes
+  for one profile and 4096 bytes for shared notes; each body is at most 2000 Unicode characters. Notes waiting for approval do not count against the
+  shared cap (an agent could otherwise fill it with notes nobody has read); each agent's waiting notes have a 4096-byte cap of their own, and
+  approving a note counts it, refused with the limit error when it no longer fits. A waiting note has an open inbox item (kind `approval`, system requester `note:<id>`, in the agent's project's home room) for the owner and the admins who own that project; approving or declining it from the inbox, or changing the note anywhere else (an edit replaces the card, a delete or the writer taking it back withdraws it), closes it. `memory_recall` returns profiles of the agent's project's active members only.
+  Agents can list active global records, and revise and remove those they may
+  touch (a profile of a project member; shared notes they wrote), with revision
   checks. Agent-tool stale revisions return the current record.
 - **task_note**(id, room_id, body, rev, author_kind[user|agent], author_id,
   created_at, updated_at) — curated notes attached to a task room; separate

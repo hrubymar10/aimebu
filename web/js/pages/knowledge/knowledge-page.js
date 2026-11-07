@@ -1,7 +1,7 @@
 import { html } from '../../ui.js';
 import { relativeTime } from '../../time.js';
 import { IconButton } from '../../components/icon-button.js';
-import { GLOBAL_SCOPES, byteLength, emptyText, projectLabelText, recordMeta, recordScope, statusLine, usageMeta, usageRows, usageShare } from './model.js';
+import { GLOBAL_SCOPES, awaitsApproval, byteLength, emptyText, projectLabelText, recordMeta, recordScope, statusLine, usageMeta, usageRows, usageShare } from './model.js';
 
 function Record({ store, item, mode, profileUsage, cap }) {
   const scope = recordScope(item, mode);
@@ -9,7 +9,7 @@ function Record({ store, item, mode, profileUsage, cap }) {
     <textarea rows="3" maxlength="2000" aria-label=${`Record ${item.id}`} readOnly=${!item._edit} defaultValue=${item.body}></textarea>
     ${item._edit && html`<div class="knowledge-actions"><button type="button" class="btn btn-primary" onClick=${event => store.save(item, event.currentTarget.closest('.knowledge-record').querySelector('textarea').value)}>Save</button>
       <${IconButton} name="trash" label="Delete" danger onClick=${() => store.remove(item)} />
-      ${GLOBAL_SCOPES.includes(scope) && html`<${IconButton} name=${item.active ? 'stop' : 'play'} label=${item.active ? 'Deactivate' : 'Activate for agents'} onClick=${() => store.activate(item, !item.active)} />`}</div>`}</article>`;
+      ${GLOBAL_SCOPES.includes(scope) && html`<${IconButton} name=${item.active ? 'stop' : 'play'} label=${item.active ? 'Deactivate' : awaitsApproval(item, scope) ? 'Approve for agents' : 'Activate for agents'} onClick=${() => store.activate(item, !item.active)} />`}</div>`}</article>`;
 }
 
 export function KnowledgePage({ store, onClose }) {

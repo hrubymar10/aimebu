@@ -141,12 +141,23 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 	}
 	var decision store.RecoveryDecision
 	var reused bool
-	boundary, err := s.Store.IsBoundaryInbox(r.Context(), r.PathValue("item"))
+	// An approval can ask about a shared agent note (approve it, or decline and delete it) instead of about a boundary.
+	noteID, err := s.Store.NoteApprovalID(r.Context(), r.PathValue("item"))
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	if boundary {
+	boundary := false
+	if noteID == "" {
+		if boundary, err = s.Store.IsBoundaryInbox(r.Context(), r.PathValue("item")); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	if noteID != "" {
+		decision = store.RecoveryDecision{ItemID: r.PathValue("item"), Choice: req.Choice, Rev: req.Rev + 1}
+		err = s.Store.DecideNoteApproval(r.Context(), r.PathValue("item"), userID(r), req.Choice, int64(req.Rev))
+	} else if boundary {
 		// An approval starts the agent, which may work in a worktree of its own: it holds that worktree's lock, as any start does, so a removal
 		// cannot take the folder between its check and this start.
 		agentID, idErr := s.Store.BoundaryAgentID(r.Context(), r.PathValue("item"))

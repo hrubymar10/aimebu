@@ -69,7 +69,7 @@ var catalog = []tool{
 		"room_id": map[string]string{"type": "string"}, "lifecycle_rev": map[string]string{"type": "integer"},
 		"cascade": map[string]string{"type": "boolean"}, "request_key": map[string]string{"type": "string"},
 	}, "required": []string{"room_id", "lifecycle_rev", "request_key"}}},
-	{"memory_add", "Add a curated project fact, global user profile or shared agent note when project memory is enabled, or a note to a joined task room.", map[string]any{"type": "object", "properties": map[string]any{
+	{"memory_add", "Add a curated project fact, the profile of a member of your project, or a shared agent note when project memory is enabled, or a note to a joined task room. A shared note waits for the owner's approval before other agents see it.", map[string]any{"type": "object", "properties": map[string]any{
 		"scope":             map[string]any{"type": "string", "enum": []string{"project", "task", "user_profile", "agent_shared_notes"}},
 		"room_id":           map[string]string{"type": "string", "description": "Required for task notes"},
 		"scope_key":         map[string]string{"type": "string", "description": "User ID for user_profile; global for agent_shared_notes"},

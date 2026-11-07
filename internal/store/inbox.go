@@ -42,6 +42,8 @@ type InboxEntry struct {
 	BoundaryMachine   string                `json:"boundary_machine,omitempty"`
 	BoundaryPath      string                `json:"boundary_path,omitempty"`
 	BoundaryRequester string                `json:"boundary_requester,omitempty"`
+	// NoteID is the shared agent note an approval item asks about (see note_inbox.go); empty for every other item.
+	NoteID string `json:"note_id,omitempty"`
 }
 
 type inboxAsk struct {
@@ -62,6 +64,8 @@ const inboxFromSQL = `FROM inbox_item i JOIN room r ON r.id=i.room_id JOIN membe
 const inboxWhereSQL = `WHERE i.state='open' AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
 		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
 		AND (i.kind!='approval' OR member.role='owner' OR r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + `)
+		AND (i.requester_id NOT LIKE 'note:%' OR EXISTS (SELECT 1 FROM user u WHERE u.id=member.user_id AND u.disabled_at IS NULL
+			AND (u.admin=1 OR u.id=(SELECT id FROM user ORDER BY created_at,id LIMIT 1))))
 		AND (member.role='owner' OR NOT EXISTS (SELECT 1 FROM boundary_pending b WHERE b.inbox_id=i.id))
 		AND (r.kind!='dm' OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id
 			AND own.member_kind='user' AND own.member_id=? AND own.left_at IS NULL)
@@ -92,7 +96,8 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 		EXISTS(SELECT 1 FROM boundary_pending b WHERE b.inbox_id=i.id),
 		COALESCE((SELECT b.machine_id FROM boundary_pending b WHERE b.inbox_id=i.id),''),
 		COALESCE((SELECT b.canonical_path FROM boundary_pending b WHERE b.inbox_id=i.id),''),
-		COALESCE((SELECT b.requested_by_id FROM boundary_pending b WHERE b.inbox_id=i.id),'')
+		COALESCE((SELECT b.requested_by_id FROM boundary_pending b WHERE b.inbox_id=i.id),''),
+		CASE WHEN i.kind='approval' AND i.requester_kind='system' AND i.requester_id LIKE 'note:%' THEN substr(i.requester_id,6) ELSE '' END
         `+inboxFromSQL+`
         LEFT JOIN message msg ON msg.id=i.message_id
 		LEFT JOIN turn t ON t.id=i.turn_id
@@ -108,7 +113,7 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 		var options, fallback, report, memberRole, roomKind string
 		if err := rows.Scan(&item.ID, &item.ProjectID, &item.RoomID, &item.RoomLifecycle, &item.MessageID, &item.AgentID, &item.TurnID,
 			&item.TurnExec, &item.TurnOutcome, &item.Evidence, &item.ResultText, &item.DefiniteFailure, &report, &item.HeldReason, &item.DeliveryError, &item.Kind, &options, &fallback, &item.State, &item.Rev, &item.CreatedAt, &memberRole, &roomKind,
-			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester); err != nil {
+			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester, &item.NoteID); err != nil {
 			return nil, err
 		}
 		item.CanDecide = memberRole == "owner" || memberRole == "operator" && !item.BoundaryPending || roomKind == "dm" && (item.Kind == "question" || item.Kind == "delivery_failed" || item.Kind == "approval" && !item.BoundaryPending)

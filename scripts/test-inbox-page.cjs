@@ -120,6 +120,23 @@ async function main() {
       assert.match(card.warning, /^Retry is safe: the turn failed before it did anything/);
       await page.close();
     }
+    // A shared agent note waiting for approval: the words of the note, Approve and Decline; Approve decides "approve", Decline decides "deny".
+    {
+      const noteItems = [{ ...base, id: 'note1', kind: 'approval', note_id: 'knw_1', question: 'zoe wrote a note for the shared agent notes, which every project\'s agents would read once approved: “use tabs”', options: ['Approve', 'Decline'] },
+        { ...base, id: 'note2', kind: 'approval', note_id: 'knw_2', question: 'Another note', options: ['Approve', 'Decline'], can_decide: false }];
+      const page = await mount({ list: noteItems });
+      await waitList(page);
+      const cards = await summary(page);
+      const note = id => cards.find(card => card.id === id);
+      assert.deepEqual([note('note1').kind, note('note1').buttons], ['Approval', ['Approve', 'Decline']]);
+      assert.match(await page.$eval('[data-inbox-id=note1] h3', el => el.textContent), /use tabs/);
+      assert.deepEqual(note('note2').buttons, [], 'someone who may not decide it only reads it');
+      assert.match(await page.$eval('[data-inbox-id=note2]', el => el.textContent), /An owner or admin must decide this note/);
+      await page.$eval('[data-inbox-id=note1] .btn-danger', el => el.click());
+      await page.waitForFunction(() => !document.querySelector('[data-inbox-id=note1]'));
+      assert.deepEqual(await page.evaluate(() => window.__calls.filter(call => call[0] === 'decision').at(-1).slice(1, 3)), ['note1', 'deny']);
+      await page.close();
+    }
     // Every kind of item, grouped by project and room, with its words, its decisions and what it says to someone who may not decide it.
     {
       const page = await mount();

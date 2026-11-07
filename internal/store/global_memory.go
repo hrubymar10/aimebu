@@ -78,6 +78,13 @@ func (s *Store) ManageGlobalKnowledgeWithSource(ctx context.Context, scope, key,
 				return ErrForbidden
 			}
 		} else if actorKind == "agent" {
+			if scope == "user_profile" {
+				if member, err := tx.isProjectMember(projectID, key); err != nil {
+					return err
+				} else if !member {
+					return ErrForbidden
+				}
+			}
 			var enabled bool
 			if err := tx.tx.QueryRowContext(ctx, "SELECT p.memory_enabled FROM agent a JOIN settings_project p ON p.project_id=a.project_id WHERE a.id=? AND a.project_id=? AND a.revoked_at IS NULL", actorID, projectID).Scan(&enabled); err != nil {
 				return err
@@ -104,7 +111,7 @@ func (s *Store) ManageGlobalKnowledgeWithSource(ctx context.Context, scope, key,
 		if !remove && (body == "" || !utf8.ValidString(body) || utf8.RuneCountInString(body) > knowledgeBodyRunes) {
 			return ErrKnowledgeLimit
 		}
-		oldBytes := 0
+		oldBytes, oldPendingBytes := 0, 0
 		if id != "" {
 			item.ID = id
 			var source sql.NullString
@@ -113,21 +120,48 @@ func (s *Store) ManageGlobalKnowledgeWithSource(ctx context.Context, scope, key,
 				return err
 			}
 			item.SourceMessageID = source.String
-			if actorKind == "agent" && !item.Active {
-				return ErrForbidden
+			if actorKind == "agent" {
+				if scope == "agent_shared_notes" {
+					// The notes every project's agents read belong to whoever wrote them: an agent edits or deletes its own (waiting for approval or not), never
+					// the owner's, never another agent's, so no project can vandalise what the owner approved.
+					if item.AuthorKind != "agent" || item.AuthorID != actorID {
+						return ErrForbidden
+					}
+				} else if !item.Active {
+					return ErrForbidden
+				}
 			}
 			if item.Rev != rev {
 				return ErrStaleRev
 			}
-			oldBytes = len(item.Body)
+			// What a note held counted against a cap only if it was live: a note waiting for approval is counted apart (below).
+			oldPending := actorKind == "agent" && scope == "agent_shared_notes" && !item.Active
+			if !oldPending {
+				oldBytes = len(item.Body)
+			}
+			if oldPending {
+				oldPendingBytes = len(item.Body)
+			}
 		}
 		if !remove {
-			var used int
-			if err := tx.tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) FROM global_memory WHERE scope=? AND scope_key=?", scope, key).Scan(&used); err != nil {
-				return err
-			}
-			if used-oldBytes+len(body) > cap {
-				return ErrKnowledgeLimit
+			if actorKind == "agent" && scope == "agent_shared_notes" {
+				// What an agent writes waits for approval, so it is not in the shared cap yet. Each agent's waiting notes have a cap of their own, the same
+				// size, so one agent can neither fill the cap with notes nobody has read nor store without limit.
+				var pending int
+				if err := tx.tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) FROM global_memory WHERE scope=? AND scope_key=? AND active=0 AND author_kind='agent' AND author_id=?", scope, key, actorID).Scan(&pending); err != nil {
+					return err
+				}
+				if pending-oldPendingBytes+len(body) > cap {
+					return ErrKnowledgeLimit
+				}
+			} else {
+				var used int
+				if err := tx.tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) FROM global_memory WHERE scope=? AND scope_key=? AND (active=1 OR author_kind!='agent')", scope, key).Scan(&used); err != nil {
+					return err
+				}
+				if used-oldBytes+len(body) > cap {
+					return ErrKnowledgeLimit
+				}
 			}
 		}
 		now := timestamp()
@@ -137,8 +171,11 @@ func (s *Store) ManageGlobalKnowledgeWithSource(ctx context.Context, scope, key,
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec("INSERT INTO global_memory(id,scope,scope_key,body,rev,author_kind,author_id,created_at,updated_at,source_message_id) VALUES (?,?,?,?,1,?,?,?,?,?)", id, scope, key, body, actorKind, actorID, now, now, nullable(sourceID))
-			item = KnowledgeRecord{ID: id, Scope: scope, ScopeID: key, Body: body, Rev: 1, AuthorKind: actorKind, AuthorID: actorID, CreatedAt: now, UpdatedAt: now, Active: true, SourceMessageID: sourceID}
+			// What an agent adds to the notes every project's agents read waits for the owner or an admin to switch it on: nobody has read it yet, and it would
+			// otherwise reach every other project's agents at once.
+			active := !(actorKind == "agent" && scope == "agent_shared_notes")
+			_, err = tx.Exec("INSERT INTO global_memory(id,scope,scope_key,body,rev,author_kind,author_id,created_at,updated_at,source_message_id,active) VALUES (?,?,?,?,1,?,?,?,?,?,?)", id, scope, key, body, actorKind, actorID, now, now, nullable(sourceID), active)
+			item = KnowledgeRecord{ID: id, Scope: scope, ScopeID: key, Body: body, Rev: 1, AuthorKind: actorKind, AuthorID: actorID, CreatedAt: now, UpdatedAt: now, Active: active, SourceMessageID: sourceID}
 			action = "created"
 		} else if remove {
 			_, err = tx.Exec("DELETE FROM global_memory WHERE id=? AND scope=? AND scope_key=? AND rev=?", id, scope, key, rev)
@@ -146,12 +183,23 @@ func (s *Store) ManageGlobalKnowledgeWithSource(ctx context.Context, scope, key,
 			item.AuthorKind, item.AuthorID, item.UpdatedAt = actorKind, actorID, now
 			action = "deleted"
 		} else {
-			_, err = tx.Exec("UPDATE global_memory SET body=?,rev=rev+1,author_kind=?,author_id=?,updated_at=? WHERE id=? AND scope=? AND scope_key=? AND rev=?", body, actorKind, actorID, now, id, scope, key, rev)
+			// A note an agent changes waits for approval again, whoever approved the old words.
+			pending := actorKind == "agent" && scope == "agent_shared_notes"
+			_, err = tx.Exec("UPDATE global_memory SET body=?,rev=rev+1,author_kind=?,author_id=?,updated_at=?,active=CASE WHEN ? THEN 0 ELSE active END WHERE id=? AND scope=? AND scope_key=? AND rev=?", body, actorKind, actorID, now, pending, id, scope, key, rev)
 			item.Body, item.Rev = body, rev+1
+			if pending {
+				item.Active = false
+			}
 			item.AuthorKind, item.AuthorID, item.UpdatedAt = actorKind, actorID, now
 		}
 		if err != nil {
 			return err
+		}
+		// A note that waits for approval has an inbox item for the people who can approve it; any other state of the note closes it.
+		if scope == "agent_shared_notes" {
+			if err := tx.syncNoteApproval(item.ID); err != nil {
+				return err
+			}
 		}
 		// Every project's stream can refresh the global knowledge viewer. The
 		// event contains no record body or profile key.
@@ -261,11 +309,31 @@ func (s *Store) SetGlobalKnowledgeActive(ctx context.Context, scope, key, actorI
 		if item.Active == active {
 			return nil
 		}
+		if active {
+			// Approving a waiting note makes it live, so it counts against the shared cap from now on.
+			cap, err := globalKnowledgeCap(scope)
+			if err != nil {
+				return err
+			}
+			var used int
+			if err := tx.tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) FROM global_memory WHERE scope=? AND scope_key=? AND (active=1 OR author_kind!='agent')", scope, key).Scan(&used); err != nil {
+				return err
+			}
+			if used+len(item.Body) > cap {
+				return ErrKnowledgeLimit
+			}
+		}
 		now := timestamp()
-		if _, err := tx.Exec("UPDATE global_memory SET active=?,rev=rev+1,author_kind='user',author_id=?,updated_at=? WHERE id=? AND rev=?", active, actorID, now, id, rev); err != nil {
+		if _, err := tx.Exec("UPDATE global_memory SET active=?,rev=rev+1,updated_at=? WHERE id=? AND rev=?", active, now, id, rev); err != nil {
 			return err
 		}
-		item.Active, item.Rev, item.AuthorKind, item.AuthorID, item.UpdatedAt = active, rev+1, "user", actorID, now
+		// The author stays who wrote the note (the event below names who approved it): an agent keeps the right to change, or take back, what it wrote.
+		item.Active, item.Rev, item.UpdatedAt = active, rev+1, now
+		if scope == "agent_shared_notes" {
+			if err := tx.closeNoteApprovals(id, "resolved", actorID); err != nil {
+				return err
+			}
+		}
 		rows, err := tx.tx.QueryContext(ctx, "SELECT id FROM project WHERE system=0")
 		if err != nil {
 			return err
@@ -293,4 +361,18 @@ func (s *Store) SetGlobalKnowledgeActive(ctx context.Context, scope, key, actorI
 		return nil
 	})
 	return item, err
+}
+
+// isProjectMember says whether a person is an active member of a project: the people a project's agents may read the profiles of and edit them for.
+func (tx *Tx) isProjectMember(projectID, userID string) (bool, error) {
+	var member bool
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM membership mb JOIN user u ON u.id=mb.user_id WHERE mb.project_id=? AND mb.user_id=? AND u.disabled_at IS NULL)`, projectID, userID).Scan(&member)
+	return member, err
+}
+
+// IsProjectMember is isProjectMember outside a transaction.
+func (s *Store) IsProjectMember(ctx context.Context, projectID, userID string) (bool, error) {
+	var member bool
+	err := s.readDB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM membership mb JOIN user u ON u.id=mb.user_id WHERE mb.project_id=? AND mb.user_id=? AND u.disabled_at IS NULL)`, projectID, userID).Scan(&member)
+	return member, err
 }

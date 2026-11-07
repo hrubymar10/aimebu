@@ -48,9 +48,12 @@ export function statusLine(data, mode, projectName) {
 
 export const emptyText = mode => (mode === 'all' ? 'No visible memory saved.' : mode === 'project' ? 'No project facts saved.' : mode === 'task' ? 'No notes saved for this task.' : 'No global memory saved.');
 
+// A shared note an agent wrote and nobody approved yet: not the same as one the owner switched off, and the owner needs to be able to tell.
+export const awaitsApproval = (item, scope) => scope === 'agent_shared_notes' && !item.active && item.author_kind === 'agent';
+
 export function recordMeta(item, { mode, profileUsage, cap, when }) {
   const scope = recordScope(item, mode), all = mode === 'all';
-  return `${all ? SCOPE_LABELS[scope] + (scope === 'user_profile' ? ` ${item.scope_label || item.scope_id}` : '') + ' · ' : ''}${mode === 'user_profile' ? (item.scope_label || item.scope_id) + ` · ${profileUsage.get(item.scope_id)} / ${cap} bytes · ` : ''}${GLOBAL_SCOPES.includes(scope) && !item.active ? 'Inactive · ' : ''}Revision ${item.rev} · ${item.author_kind} ${item.author_id} · ${when}`;
+  return `${all ? SCOPE_LABELS[scope] + (scope === 'user_profile' ? ` ${item.scope_label || item.scope_id}` : '') + ' · ' : ''}${mode === 'user_profile' ? (item.scope_label || item.scope_id) + ` · ${profileUsage.get(item.scope_id)} / ${cap} bytes · ` : ''}${GLOBAL_SCOPES.includes(scope) && !item.active ? (awaitsApproval(item, scope) ? 'Waiting for approval · ' : 'Inactive · ') : ''}Revision ${item.rev} · ${item.author_kind} ${item.author_id} · ${when}`;
 }
 
 const EVENTS = ['knowledge_created', 'knowledge_updated', 'knowledge_deleted', 'project_memory_setting_changed', 'global_knowledge_created', 'global_knowledge_updated', 'global_knowledge_deleted'];
