@@ -1,8 +1,11 @@
 # The commands `make test-ui` runs, one per line (scripts/run-jobs.cjs runs them, a few at a time). Each one owns its ports (an ephemeral
 # port, asked for at start) and its temporary directories, so any of them can run beside any other; keep it that way: a new test must not
-# listen on a fixed port or write to a fixed path. The two long ones (the smoke and the chat page) come first, so a parallel run starts them at
+# listen on a fixed port or write to a fixed path. The long ones (the smoke and its parts, and the chat page) come first, so a parallel run starts them at
 # once; the whole run is about as long as the smoke.
 node scripts/test-ui.cjs
+node scripts/test-ui-startup.cjs
+node scripts/test-ui-claude.cjs
+node scripts/test-ui-audits.cjs
 node scripts/test-chat-page.cjs
 node scripts/sync-v1-css.cjs --check
 node scripts/test-harness-page.cjs

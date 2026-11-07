@@ -380,7 +380,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	listener, err := net.Listen("tcp", net.JoinHostPort(config.bind, strconv.Itoa(config.port)))
+	listener, err := listenTCP(net.JoinHostPort(config.bind, strconv.Itoa(config.port)))
 	if err != nil {
 		fmt.Fprintln(stderr, listenError(config.bind, config.port, err))
 		return 1
@@ -1017,6 +1017,19 @@ func listenError(bind string, port int, err error) string {
 
 // embeddedStartHook runs just before the embedded supervisor starts after the server is listening; tests hold it to see the server answer first.
 // listenerHook receives the HTTP listener, so a test can close it and make Serve fail. embeddedStarts counts supervisors that really started.
+// listenOverride replaces net.Listen for the server's own listeners (HTTP and HTTPS). It is nil in production. A test that needs a port the
+// server under test will bind used to find one by listening on :0 and closing, then pass the number on; anything on the machine could take
+// the port between the close and the server's bind. The test now keeps its listener open and hands it over here (see holdFreePorts).
+var listenOverride atomic.Pointer[func(address string) (net.Listener, error)]
+
+// listenTCP listens on a TCP address, through listenOverride when a test has set one.
+func listenTCP(address string) (net.Listener, error) {
+	if hook := listenOverride.Load(); hook != nil {
+		return (*hook)(address)
+	}
+	return net.Listen("tcp", address)
+}
+
 var (
 	embeddedStartHook atomic.Pointer[func()]
 	listenerHook      atomic.Pointer[func(net.Listener)]

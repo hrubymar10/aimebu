@@ -80,16 +80,7 @@ func waitServerStatus(t *testing.T, url string, client *http.Client, wantStatus 
 
 // useFreePort points the server at an unused loopback port. Without it a test that starts the server
 // binds the default port, which fails whenever anything else (the dev server, another test run) holds it.
-func useFreePort(t *testing.T) {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	t.Setenv("AIMEBU2_PORT", fmt.Sprint(port))
-}
+func useFreePort(t *testing.T) { holdPort(t) }
 
 func TestCommandRouting(t *testing.T) {
 	t.Setenv("AIMEBU2_USAGES", "0")
@@ -236,13 +227,7 @@ func TestServerCommandServesHTTP(t *testing.T) {
 	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	t.Setenv("AIMEBU2_PORT", fmt.Sprint(port))
+	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan int, 1)
@@ -297,13 +282,7 @@ func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	t.Setenv("AIMEBU2_PORT", fmt.Sprint(port))
+	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	var stdout, stderr bytes.Buffer
@@ -325,13 +304,7 @@ func TestEmbeddedSupervisorReconcilesCrashedTurn(t *testing.T) {
 	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	t.Setenv("AIMEBU2_PORT", fmt.Sprint(port))
+	holdPort(t)
 	var stdout, stderr bytes.Buffer
 	stopped, stop := context.WithCancel(context.Background())
 	stop()
@@ -488,13 +461,7 @@ func TestV2DefaultsIgnoreV1EnvironmentAndData(t *testing.T) {
 	if config.root != filepath.Join(home, ".aimebu2") || config.bind != "127.0.0.1" || config.port != 9897 {
 		t.Fatalf("v2 defaults: %+v", config)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	t.Setenv("AIMEBU2_PORT", fmt.Sprint(port))
+	holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var stdout, stderr bytes.Buffer

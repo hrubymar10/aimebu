@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -138,7 +139,11 @@ func stalledTurn(t *testing.T, tool string, limits TurnLimitOverrides, steps ...
 	select {
 	case <-done:
 	case <-time.After(stallWindDownBudget):
-		t.Fatalf("hung turn was never killed (waited %s)", time.Since(began).Round(time.Millisecond))
+		// A turn that does not end in this long is either a machine starved of CPU and disk or a real hang: the goroutines say which (the stack of the
+		// wind-down, or the journal write it waits on), so a failure under load leaves its own evidence.
+		stacks := make([]byte, 1<<20)
+		stacks = stacks[:runtime.Stack(stacks, true)]
+		t.Fatalf("hung turn was never killed (waited %s); goroutines:\n%s", time.Since(began).Round(time.Millisecond), stacks)
 	}
 	select {
 	case err := <-reported:

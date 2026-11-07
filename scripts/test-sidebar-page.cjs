@@ -26,6 +26,10 @@ const server = http.createServer((req, res) => {
 const at = '2026-01-01T10:00:00Z', future = '2099-01-01T00:00:00Z';
 const project = (id, name, patch = {}) => ({ id, name, role: 'owner', archived_at: '', ...patch });
 const room = (id, projectID, title, patch = {}) => ({ id, project_id: projectID, title, kind: 'task', parent_id: '', lifecycle: 'open', unread_count: 0, hidden: false, notify: 'default', muted_until: '', member_count: 2, last_activity_at: at, agent_chat: false, lifecycle_rev: 1, ...patch });
+// A time in an answer that is `ms` after the page gives the answer. A time worked out here, in Node, before the page is opened, runs out while the
+// page is still starting when the machine is busy (a browser launch, a navigation and the modules take longer under load), and a test that waits for a
+// mute to run out then never sees it running, or takes an expired one for a pending one.
+const inMs = ms => `@now+${ms}`;
 const projects = [project('prj_a', 'Alpha'), project('prj_b', 'Beta'), project('prj_c', 'Gamma', { archived_at: '2026-01-02T00:00:00Z' })];
 const rooms = () => ({
   prj_a: [room('rm_ah', 'prj_a', 'Alpha', { kind: 'home', last_activity_at: '2026-01-05T10:00:00Z' }), room('rm_gen', 'prj_a', 'general', { parent_id: 'rm_ah', unread_count: 3, last_activity_at: '2026-01-06T10:00:00Z' }),
@@ -42,7 +46,9 @@ function installFetch(auto) {
   window.__requests = []; window.__auto = auto;
   window.fetch = (input, options = {}) => new Promise((resolve, reject) => {
     const request = { path: String(input), method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : undefined, answered: false, aborted: false };
-    request.answer = (status, body) => { request.answered = true; resolve(new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })); };
+    // "@now+1500" in an answer is a time 1500 ms after the answer is given, worked out here in the page (see inMs).
+    const timed = body => JSON.stringify(body).replace(/"@now\+(\d+)"/g, (_, ms) => JSON.stringify(new Date(Date.now() + Number(ms)).toISOString()));
+    request.answer = (status, body) => { request.answered = true; resolve(new Response(status === 204 ? null : timed(body), { status, headers: { 'Content-Type': 'application/json' } })); };
     options.signal?.addEventListener('abort', () => { request.aborted = true; reject(new DOMException('aborted', 'AbortError')); });
     window.__requests.push(request);
     const rule = window.__auto[`${request.method} ${request.path}`];
@@ -443,7 +449,7 @@ async function main() {
 
   // A mute that runs out takes its bell with it without a reload; the agents with problems show on their room.
   {
-    const soon = new Date(Date.now() + 700).toISOString();
+    const soon = inMs(1500); // 1.5 s from when the list is answered: the bell is there when it is looked for, and it is gone well within the 5 s wait below
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_mute' ? { ...item, muted_until: soon } : item)) }) });
     assert.equal(await page.$('[data-room-id=rm_mute] .room-muted:not([hidden])') !== null, true);
     await page.waitForFunction(() => !document.querySelector('[data-room-id=rm_mute] .room-muted:not([hidden])'), { timeout: 5000 });
@@ -682,10 +688,11 @@ async function main() {
 
   // A mute that was running when the list was reset does not draw the list again when it runs out.
   {
-    const soon = new Date(Date.now() + 500).toISOString();
+    const soon = inMs(1200); // still pending when the list is reset (or destroyed) a moment after it is drawn, and over before the wait below ends
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_mute' ? { ...item, muted_until: soon } : item)) }) });
+    assert.equal(await page.evaluate(() => Date.parse(window.__sidebar.rooms.get('rm_mute').muted_until) > Date.now()), true, 'the mute is still running when the list is reset, so the wait below is about a pending timer');
     await page.evaluate(() => window.__sidebar.reset());
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1800));
     assert.equal(await page.$eval('#projects', node => node.children.length), 0, 'the list stays empty after a reset');
     await page.close();
   }
@@ -992,10 +999,11 @@ async function main() {
     await answer(page, held, 200, { unread_count: 1, read_cursor: 40 }); await settle(page);
     assert.equal(await count(page, 'POST', '/api/rooms/rm_api/read'), 1, 'destroy sends no follow-up mark');
     await page.close();
-    const soon = new Date(Date.now() + 500).toISOString();
+    const soon = inMs(1200); // still pending when the list is reset (or destroyed) a moment after it is drawn, and over before the wait below ends
     page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_mute' ? { ...item, muted_until: soon } : item)) }) });
+    assert.equal(await page.evaluate(() => Date.parse(window.__sidebar.rooms.get('rm_mute').muted_until) > Date.now()), true, 'the mute is still running when the list is destroyed, so the wait below is about a pending timer');
     await destroy(page);
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1800));
     assert.equal(await empty(page), 0, 'the list stays empty after destroy');
     await page.close();
   }

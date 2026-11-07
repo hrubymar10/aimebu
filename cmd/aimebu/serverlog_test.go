@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -109,13 +108,7 @@ func TestServerWritesItsLogAndKeepsItAcrossPrune(t *testing.T) {
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	t.Setenv("AIMEBU2_PORT", fmt.Sprint(port))
+	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	var stdout, stderr bytes.Buffer
@@ -180,13 +173,7 @@ func TestSetupTokenIsNotWrittenToTheLog(t *testing.T) {
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "")
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	t.Setenv("AIMEBU2_PORT", fmt.Sprint(port))
+	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	var stdout, stderr syncBuffer

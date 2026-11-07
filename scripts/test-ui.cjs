@@ -7,289 +7,15 @@ const { spawn, spawnSync } = require('node:child_process');
 const { QuotaMock } = require('./quota-mock.cjs');
 const { LimitGuardMock } = require('./limit-guard-mock.cjs');
 const { chromiumPath } = require('./chromium-path.cjs');
+const { startServer } = require('./server-start.cjs');
 let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
-
-const tempRoot = fs.realpathSync(os.tmpdir());
-process.env.TMPDIR = tempRoot;
-const tmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-'));
-assert.equal(fs.realpathSync(tmp), tmp, 'the UI smoke root is canonical');
-const gitRoot = path.join(tmp, 'project-repo');
-fs.mkdirSync(gitRoot);
-for (const args of [['init', '-q'], ['config', 'user.name', 'UI Test'], ['config', 'user.email', 'ui@example.invalid']]) {
-  const result = spawnSync('git', args, { cwd: gitRoot }); if (result.status !== 0) throw new Error(`git ${args[0]} failed`);
-}
-fs.writeFileSync(path.join(gitRoot, 'README.md'), 'UI worktree fixture\n');
-for (const args of [['add', 'README.md'], ['commit', '-qm', 'base']]) {
-  const result = spawnSync('git', args, { cwd: gitRoot }); if (result.status !== 0) throw new Error(`git ${args[0]} failed`);
-}
-const testHome = path.join(tmp, 'home');
-fs.mkdirSync(testHome, { recursive: true });
-const isolatedEnv = { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, '.codex'), CLAUDE_CONFIG_DIR: path.join(testHome, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp, AIMEBU2_SENTRY_DSN: 'off' };
-const binary = path.join(tmp, 'aimebu');
-const build = spawnSync('go', ['build', '-o', binary, './cmd/aimebu'], { stdio: 'inherit' });
-if (build.status !== 0) process.exit(build.status || 1);
-const seedBinary = path.join(tmp, 'seed-inbox');
-const seedBuild = spawnSync('go', ['build', '-o', seedBinary, './scripts/seed-inbox'], { stdio: 'inherit' });
-if (seedBuild.status !== 0) process.exit(seedBuild.status || 1);
-// The app leaves its loading state when startup finishes or hits its own 30 s deadline, so a 30 s wait here races
-// that deadline under load. Wait on the state itself with room to spare: a stuck startup still fails, a slow one passes.
-const APP_READY_TIMEOUT = 90000;
-// A project starts folded, so the page is handed over with its projects open: most checks reach rooms inside them. Where the default is the point
-// the page is waited for with appReadyFolded.
-const appReadyFolded = page => page.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: APP_READY_TIMEOUT });
-// With no project yet the first-run card (a modal over the whole viewport) opens once the room list is known; it is skipped here so the toolbar
-// behind it can be reached. The tests of the card itself (the setup flow) do not use it: they wait for the card.
-const appReady = async page => {
-  await appReadyFolded(page);
-  await page.waitForFunction(() => !document.querySelector('#onboarding-view').hidden || document.querySelector('#projects .room-group'), { timeout: 8000 }).catch(() => {}); // the list is drawn after the page is shown; a page with no project has none
-  if (await page.$('#onboarding-view:not([hidden])')) { await page.click('#onboarding-view .onboarding-skip'); await page.waitForSelector('#onboarding-view', { hidden: true }); }
-  await page.evaluate(() => { for (const toggle of document.querySelectorAll('.room-group.collapsed > .room-item > .room-collapse')) toggle.click(); });
-};
-function freePort() { return new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); }); }
-// waitForFunction that names what the page looked like when it timed out: a 30 s timeout alone cannot tell a slow
-// transition from a lost one. `dump` runs in the page and its result is appended to the error.
-async function waitDump(page, label, predicate, dump, ...args) {
-  try { await page.waitForFunction(predicate, {}, ...args); } catch (error) {
-    const state = await page.evaluate(dump, ...args).catch(failure => `dump failed: ${failure.message}`);
-    error.message += `\n${label} page state at timeout: ${JSON.stringify(state)}`;
-    throw error;
-  }
-}
-// Waits for a room row to be listed after a sign-in. On timeout it names what the page showed (rows, connection, hash, the
-// project list), so a stale room list can be told apart from a slow load.
-const waitRoomRow = (page, label, roomID) => waitDump(page, label, id => !!document.querySelector(`[data-room-id="${id}"] .room-item-name`), id => ({
-  hash: location.hash, appBusy: document.querySelector('#app-view')?.getAttribute('aria-busy'), connection: document.querySelector('#connection')?.getAttribute('aria-label'),
-  rows: [...document.querySelectorAll('[data-room-id]')].map(row => `${row.dataset.roomId}:${(row.querySelector('.room-item-name')?.textContent || '').slice(0, 20)}`),
-  projects: document.querySelector('#projects')?.innerText.replace(/\s+/g, ' ').slice(0, 300), wanted: id,
-}), roomID);
-const installFixtureChat = page => page.evaluate(async () => {
-  const [{ Chat }, { ChatStore }, { mountPreactPage }, { MessageList, ThreadList }, { html }] = await Promise.all([import('/js/chat.js'), import('/js/pages/chat/store.js'), import('/js/pages/mount-page.js'), import('/js/pages/chat/rows.js'), import('/js/ui.js')]);
-  // A chat built without its constructor, with the keyed lists mounted on the containers it is given.
-  window.__fixtureChat = (list, threadList) => {
-    const chat = Object.create(Chat.prototype); chat.store = new ChatStore(chat);
-    chat.list = list; chat.nodes = new Map(); chat.agents = new Map(); chat.raw = false; chat.messages = new Map(); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.answerItems = new Map();
-    chat.rows = []; chat.quotes = new Map(); chat.rowBatching = false; chat.rowPending = []; chat.expiry = { expired: new Set(), divider: null };
-    chat.listView = mountPreactPage(list, props => html`<${MessageList} ...${props} />`);
-    chat.threadEntries = []; chat.threadEntryIDs = new Set(); chat.threadBatching = false;
-    if (threadList) { chat.threadList = threadList; chat.threadView = mountPreactPage(threadList, props => html`<${ThreadList} ...${props} />`); }
-    chat.refreshReactions = () => {};
-    return chat;
-  };
-});
+const { start, isolatedEnv, binary } = require('./ui-smoke-lib.cjs');
 
 async function main() {
-  {
-    // Names, focus rings and button classes are hard failures. Contrast is a report: v2 ships v1's palette (the owner's decision), whose muted text
-    // and light themes are under WCAG AA in places; a run prints how many, and `node scripts/a11y-audit.cjs --strict` still enforces it.
-    const audit = spawnSync(process.execPath, [path.join(__dirname, 'a11y-audit.cjs')], { env: isolatedEnv, encoding: 'utf8' });
-    assert.equal(audit.status, 0, `accessibility audit failed:\n${audit.stdout}${audit.stderr}`);
-    console.log(`a11y contrast (report only, v1 palette): ${audit.stdout.split('\n').filter(line => line.startsWith('== Contrast failures')).map(line => line.replace('== Contrast failures ', '')).join(' · ') || 'none'}`);
-    const phone = spawnSync(process.execPath, [path.join(__dirname, 'phone-audit.cjs')], { env: isolatedEnv, encoding: 'utf8' });
-    assert.equal(phone.status, 0, `phone layout audit failed:\n${phone.stdout}${phone.stderr}`);
-    // Settings → Harnesses: model editing, role defaults, the sync with Settings → Roles, the stale-save refusal and the phone width, on a scratch server of its own.
-    const harnesses = spawnSync(process.execPath, [path.join(__dirname, 'harness-settings.cjs')], { env: { ...isolatedEnv, HARNESS_BINARY: binary }, encoding: 'utf8' });
-    assert.equal(harnesses.status, 0, `harness settings smoke failed:\n${harnesses.stdout}${harnesses.stderr}`);
-  }
-  const port = await freePort(); const origin = `http://127.0.0.1:${port}`;
-  const child = spawn(binary, ['server'], { env: { ...isolatedEnv, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let logs = ''; child.stderr.on('data', data => logs += data);
-  let browser, supervisor, preserveFailure = false, browserClosing = false;
+  const ctx = await start();
+  const { tempRoot, tmp, gitRoot, testHome, seedBinary, APP_READY_TIMEOUT, appReadyFolded, appReady, freePort, waitDump, waitRoomRow, installFixtureChat, child, browser, supervisor, createBrowserContext, a, b, first, second, origin, port, domClick, reachRow, projectMenuAct, iconOnlyReport, disableRandomUUID, answerDialogs, login, setChecked, settingsNav, openSettings, closeRoomInfo, openProjectSettings, settingsTab, welcomeState, settled, iconState, assertIcon, assertFinished, skipHarnessOffer } = ctx;
   try {
-    for (let i = 0; i < 300; i++) { try { const response = await fetch(origin); if (response.ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); if (i === 299) throw new Error(`server did not start: ${logs}`); }
-    supervisor = spawn(binary, ['supervisor'], { env: { ...isolatedEnv, AIMEBU2_URL: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
-    let supervisorLogs = ''; supervisor.stderr.on('data', data => supervisorLogs += data);
-    browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
-    // A page wait that dies with "frame got detached" and no step in its trace means Chromium itself went away; say so.
-    browser.process()?.once('exit', (code, signal) => { if (!browserClosing) console.error(`Chromium exited before the smoke finished (code ${code}, signal ${signal}); a pending wait fails as "frame got detached"`); });
-    // The smoke exercises threads, copy and links through the compact toolbar (style C); style A, the product default, has
-    // its own steps. Every page starts with that choice stored, before any navigation.
-    const prepare = async page => { await page.evaluateOnNewDocument(() => { window.__openPageSize = 100; // the smoke's rooms were written for a first page of 100 messages (test-chat-page checks the default of 40)
-      try { if (!localStorage.getItem('aimebu2.ui.variant')) localStorage.setItem('aimebu2.ui.variant', 'c'); } catch {}
-      // Browser notifications are not asked for: every smoke page reports the permission as refused, so the bar that offers them never shows
-      // over unrelated flows. The page that tests the bar replaces this with a permission that has not been asked yet.
-      try { if ('Notification' in window) Object.defineProperty(Notification, 'permission', { configurable: true, get: () => 'denied' }); } catch {}
-      // Most of the smoke drives the composer's textarea directly, so it starts with formatting off; the composer block turns it on (and checks the default by clearing this, which a page marks with a session flag).
-      try { if (!sessionStorage.getItem('smoke-default-formatting') && !localStorage.getItem('aimebu2.composer.formatting')) localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch {} }); return page; };
-    const createBrowserContext = browser.createBrowserContext.bind(browser);
-    browser.createBrowserContext = async (...args) => { const context = await createBrowserContext(...args); const newPage = context.newPage.bind(context); context.newPage = async (...pageArgs) => prepare(await newPage(...pageArgs)); return context; };
-    // Puppeteer's 30 s default is tight when other runs share the machine; a real failure still fails, just later.
-    browser.on('targetcreated', async target => { try { (await target.page())?.setDefaultTimeout(60000); } catch {} });
-    const a = await browser.createBrowserContext(), b = await browser.createBrowserContext();
-    const first = await a.newPage(), second = await b.newPage();
-    // Room settings and the agent card move while their content loads, so a pointer click can land where the button was a
-    // moment ago. These buttons are clicked through the DOM once they are shown and enabled.
-    // Every click on a control that can re-layout under the pointer goes through domClick. The raw page.click calls that remain are on
-    // purpose: the composer, its toolbar, inputs and the pickers (focus and mousedown matter there), the experiment pill, the edge toggles
-    // and the room menu (hit-test and covering checks), clicks that focus a message, and steps that check a control that is inert,
-    // disabled or hidden does nothing (a DOM click would fire where a pointer cannot).
-    // A click that cannot be lost: wait until the control is shown, enabled and its box has not moved for two frames (an agent
-    // card re-renders or expands under the pointer, and a pointer click then lands on the old position), then click it in the DOM.
-    const domClick = async (page, selector) => {
-      // A message toolbar is made when its row is reached: a click on one of its buttons reaches the row first, as the pointer would.
-      const rowOfControl = /^(.*?)\s*\.(?:message-actions|message-react|message-reply|message-find|message-copy|thread-action|quick-reaction|message-reaction-row)\b/.exec(selector)?.[1];
-      if (rowOfControl) await reachRow(page, rowOfControl);
-      // A project starts folded: a click on a room inside a folded project opens the project first, as a person would.
-      if (selector.includes('data-room-id')) await page.evaluate(selector => { for (let group = document.querySelector(selector)?.closest('.room-group'); group; group = group.parentElement?.closest('.room-group')) if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse')?.click(); }, selector);
-      await page.waitForFunction(selector => new Promise(resolve => {
-        const button = document.querySelector(selector);
-        if (!button || button.disabled || button.hidden || !button.getClientRects().length) { resolve(false); return; }
-        const box = () => { const rect = button.getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height].join(); };
-        const before = box();
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve(button.isConnected && box() === before && !button.disabled)));
-      }), {}, selector);
-      await page.$eval(selector, button => button.click());
-    };
-    // A row's toolbar is made when the row is reached (hovered, focused or touched). `reach` does what the pointer does, for a row named by a selector.
-    const reachRow = (page, row) => page.evaluate(row => { const node = document.querySelector(row); (node?.querySelector('.chat-msg-bubble') || node)?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); }, row);
-    // A project's actions are the items of the menu behind the ☰ button of its home row: reach the button by the keyboard focus that shows it, open the
-    // menu, press the item. `row` selects the home room's group.
-    const projectMenuAct = async (page, row, item) => {
-      await page.focus(`${row} > .room-item .room-item-name`);
-      await domClick(page, `${row} > .room-item .project-menu-btn`);
-      await domClick(page, `${row} > .room-item .project-menu-${item}`);
-    };
-    // The owner's rule: a control is an icon with a tooltip and an accessible name, never text. Returns what breaks it for the
-    // elements matching `selectors` (a list), and how many matched.
-    const iconOnlyReport = (page, selectors) => page.evaluate(selectors => {
-      const bad = []; let found = 0;
-      for (const element of document.querySelectorAll(selectors.join(','))) {
-        found++;
-        const text = [...element.childNodes].filter(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()).map(node => node.textContent.trim()).join('');
-        const label = element.getAttribute('aria-label'), title = element.title;
-        if (!element.querySelector('.icon-mask, svg, img') || (text && !element.matches('.hidden-room-show')) || !label || !title) bad.push(`${element.id || element.className}: glyph=${!!element.querySelector('.icon-mask, svg, img')} text=${JSON.stringify(text)} label=${JSON.stringify(label)} title=${JSON.stringify(title)}`);
-      }
-      return { found, bad };
-    }, selectors);
-    const disableRandomUUID = () => Object.defineProperty(Crypto.prototype, 'randomUUID', { configurable: true, value: undefined });
-    await first.evaluateOnNewDocument(disableRandomUUID);
-    await first.setViewport({ width: 1100, height: 720 }); await second.setViewport({ width: 1100, height: 720 });
-    let jumpSeq = '';
-    // The page's questions, confirmations and notices are in-app dialogs (web/js/dialogs.js); a flow that is not about the dialog itself has
-    // them answered here, the way the browser's native ones used to be: `answer(text)` gets the dialog's title, message and field labels and
-    // returns { accept, values } (values by field name). The dialog's own behaviour has its own checks further down.
-    async function answerDialogs(page, answer) {
-      page.__dialogAnswer = answer;
-      if (page.__dialogInstalled) return;
-      page.__dialogInstalled = true;
-      await page.exposeFunction('__answerDialog', text => page.__dialogAnswer(text));
-      const install = () => {
-        if (window.__dialogWatch) return; window.__dialogWatch = true;
-        new MutationObserver(() => {
-          const dialog = document.querySelector('#app-dialog');
-          if (!dialog || !dialog.open) { if (dialog) delete dialog.dataset.answering; return; }
-          if (dialog.dataset.answering) return;
-          dialog.dataset.answering = '1';
-          const text = [dialog.querySelector('h2').textContent, dialog.querySelector('.app-dialog-message').textContent, ...[...dialog.querySelectorAll('.app-dialog-fields label')].map(label => label.textContent)].join(' | ');
-          window.__answerDialog(text).then(({ accept, values = {} }) => {
-            if (accept) for (const input of dialog.querySelectorAll('.app-dialog-fields input')) {
-              if (input.name in values) { if (input.type === 'checkbox') input.checked = !!values[input.name]; else input.value = values[input.name]; input.dispatchEvent(new Event('input', { bubbles: true })); }
-            }
-            dialog.querySelector(accept ? '.app-dialog-ok' : '.app-dialog-cancel').click();
-          });
-        }).observe(document, { subtree: true, attributes: true, attributeFilter: ['open'], childList: true });
-      };
-      await page.evaluateOnNewDocument(install);
-      await page.evaluate(install).catch(() => {});
-    }
-    await answerDialogs(first, text => (text.includes('New task room under') ? { accept: true, values: { title: 'Nested task' } } : text.includes('Go to message') ? { accept: true, values: { value: jumpSeq } } : text.includes('Base branch or ref') ? { accept: true, values: { value: '' } } : { accept: true, values: { title: 'Nested task', value: 'Nested task' } }));
-    async function login(page, url = origin) { await page.goto(url); await page.locator('#login-form [name=login]').fill('owner'); await page.locator('#login-form [name=password]').fill('test-password-123'); await page.locator('#login-form button').click();
-      // A database nobody has signed in to yet shows the owner the welcome first (the servers other than the main one start that way): skip it.
-      await page.waitForSelector('#welcome-view, #app-view:not([hidden]):not([aria-busy])', { timeout: APP_READY_TIMEOUT });
-      if (await page.$('#welcome-view')) { await page.$eval('#welcome-view', view => view.click()); await page.waitForSelector('#welcome-continue:not([hidden])'); await page.click('#welcome-continue'); }
-      await appReady(page); await page.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
-      }
-    // puppeteer has no check()/uncheck(); toggle through the element's own click so change handlers run.
-    async function setChecked(page, selector, checked) { await page.$eval(selector, (el, want) => { if (el.checked !== want) el.click(); }, checked); }
-    // The Settings nav in two groups: SETTINGS (General ... Macros), then a gap and AGENTS (Machines, Harnesses). `items` lists the shown
-    // entries in DOM order (a caption as its upper-case text, a tab as its section); `gap` is the space between the last tab above the AGENTS
-    // caption and the first one below it, `tabGap` the space between two neighbouring tabs. The AGENTS caption is styled like the SETTINGS
-    // one, and neither caption can take focus.
-    const settingsNav = page => page.evaluate(() => {
-      const nav = document.querySelector('#settings-dialog nav'), [settings, agents] = nav.querySelectorAll('.settings-nav-title');
-      const items = [...nav.children].filter(el => !el.hidden).map(el => el.classList.contains('settings-nav-title') ? el.textContent.toUpperCase() : el.id.replace(/^settings-|-tab$/g, ''));
-      const style = el => { const s = getComputedStyle(el); return [s.color, s.fontSize, s.fontWeight, s.letterSpacing, s.textTransform, s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft, s.display]; };
-      const shownSibling = (el, step) => { do el = el[step]; while (el && el.hidden); return el; };
-      const above = shownSibling(agents, 'previousElementSibling'), below = shownSibling(agents, 'nextElementSibling');
-      const gap = agents.hidden || !above || !below ? null : Math.round(below.getBoundingClientRect().top - above.getBoundingClientRect().bottom);
-      const general = document.querySelector('#settings-general-tab'), usages = document.querySelector('#settings-usages-tab');
-      return { items, agentsHidden: agents.hidden, sameStyle: JSON.stringify(style(settings)) === JSON.stringify(style(agents)), gap, tabGap: Math.round(usages.getBoundingClientRect().top - general.getBoundingClientRect().bottom),
-        focusable: [settings, agents].some(el => el.tabIndex >= 0 || el.getAttribute('aria-hidden') !== 'true') };
-    });
-    async function openSettings(page) {
-      await domClick(page, '#settings-toggle');
-      const state = await page.evaluate(() => ({
-        open: document.querySelector('#settings-dialog').open,
-        dialogs: [...document.querySelectorAll('dialog[open]')].map(dialog => dialog.id),
-      }));
-      assert.equal(state.open, true, `Settings toggle did not open dialog; open dialogs: ${state.dialogs.join(', ') || 'none'}`);
-      assert.equal(await page.$eval('#settings-general', el => !el.hidden), true, 'Settings opens on General');
-      // v1's layout: a SETTINGS caption over plain nav items, the section name as the content title, a quiet close button.
-      assert.deepEqual(await page.evaluate(async () => { await new Promise(resolve => setTimeout(resolve, 400)); const nav = document.querySelector('#settings-dialog nav'), caption = nav.querySelector('.settings-nav-title'), selected = nav.querySelector('.active'), close = document.querySelector('#settings-close'), box = document.querySelector('#settings-dialog').getBoundingClientRect();
-        return { caption: caption.textContent, captionFirst: nav.firstElementChild === caption, title: document.querySelector('#settings-title').textContent, selected: selected.textContent, closeGlyph: close.querySelector('.icon-mask-close') ? 'icon' : close.textContent, closeQuiet: getComputedStyle(close).borderTopWidth === '0px', navWidth: Math.round(nav.getBoundingClientRect().width), fullHeight: Math.abs(box.height - innerHeight) < 1, selectedTinted: (() => { const probe = document.createElement('i'); probe.style.background = 'var(--accent-dim)'; document.body.append(probe); const tint = getComputedStyle(probe).backgroundColor; probe.remove(); const highContrast = document.documentElement.dataset.theme === 'high-contrast-dark'; return getComputedStyle(selected).backgroundColor === (highContrast ? 'rgba(0, 0, 0, 0)' : tint); })() }; }),
-        { caption: 'Settings', captionFirst: true, title: 'General', selected: 'General', closeGlyph: 'icon', closeQuiet: true, navWidth: 180, fullHeight: true, selectedTinted: true }, 'the Settings dialog follows v1: the selected tab is tinted with --accent-dim (outlined in high contrast)');
-      const nav = await settingsNav(page);
-      if (nav.items.includes('AGENTS')) { // the owner and admins: both groups, the AGENTS caption a group gap below Macros
-        assert.deepEqual(nav.items.filter(item => item !== 'usages' && item !== 'users'), ['SETTINGS', 'general', 'notifications', 'roles', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], 'Settings nav groups');
-        assert.ok(nav.sameStyle && !nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS caption looks like SETTINGS, takes no focus and opens a gap: ${JSON.stringify(nav)}`);
-      }
-    }
-    // Closes the room settings if they are open (a deleted project's home room takes its settings with it).
-    const closeRoomInfo = page => page.evaluate(() => { const dialog = document.querySelector('#room-info-dialog'); if (dialog.open) dialog.querySelector('#room-info-close').click(); });
-    // The project's own settings are the home room's (Room settings → Project; there is no Settings → Project page). Selects a project's home
-    // room (archived projects open too) and opens its settings, closing Settings first if it is open.
-    async function openProjectSettings(page, projectID) {
-      if (await page.evaluate(() => document.querySelector('#settings-dialog').open)) await domClick(page, '#settings-close');
-      if (await page.evaluate(() => document.querySelector('#room-info-dialog').open)) await domClick(page, '#room-info-close');
-      const home = await page.evaluate(async id => (await (await fetch(`/api/projects/${id}/rooms`)).json()).find(room => room.kind === 'home').id, projectID);
-      await page.evaluate(() => document.querySelectorAll('.archived-projects, .archived-project').forEach(details => { details.open = true; }));
-      await domClick(page, `[data-room-id="${home}"] .room-item-name`);
-      await page.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, home);
-      await domClick(page, '#room-info');
-      await page.waitForSelector('#room-info-dialog[open] #room-project:not([hidden]) #project-details');
-      return home;
-    }
-    // Back to a Settings tab from a home room's settings (or open Settings on it): leaves the room settings first.
-    async function settingsTab(page, tab) {
-      if (await page.evaluate(() => document.querySelector('#room-info-dialog').open)) await domClick(page, '#room-info-close');
-      if (!await page.evaluate(() => document.querySelector('#settings-dialog').open)) await domClick(page, '#settings-toggle');
-      await domClick(page, tab);
-    }
-    // The owner's first sign-in on a new install shows the welcome before the app: the art, then the name, then Continue, in bands
-    // from top to bottom. The rest of the smoke signs in many times; the welcome is gone for good once Continue is pressed.
-    const welcomeState = () => first.evaluate(() => {
-      const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; };
-      const style = selector => getComputedStyle(document.querySelector(selector));
-      return { stage: document.querySelector('#welcome-view').dataset.stage, logo: box('.welcome-logo'), title: box('.welcome-title'), button: box('#welcome-continue'), view: box('#welcome-view'), text: document.querySelector('.welcome-title').textContent,
-        focused: document.activeElement?.id, logoOpacity: style('.welcome-logo').opacity, versionOpacity: style('.welcome-version').opacity, buttonOpacity: style('#welcome-continue').opacity, inert: document.querySelector('#welcome-continue').inert };
-    });
-    // The parts fade in over a fraction of a second once the screen is finished; measure after that.
-    const settled = () => first.waitForFunction(() => ['.welcome-name', '.welcome-version', '.welcome-logo', '#welcome-continue'].every(selector => getComputedStyle(document.querySelector(selector)).opacity === '1'), { timeout: 10000 });
-    // The logo is the robot app icon on its rounded tile (never the bare mark), in the artwork that matches the theme: exactly one of the
-    // light and the dark image shows, it is the 512px icon, and it has loaded.
-    const iconState = () => first.evaluate(() => { const shown = [...document.querySelectorAll('.welcome-logo .welcome-icon')].filter(image => getComputedStyle(image).display !== 'none'); const light = /light/.test(document.documentElement.dataset.theme || ''); return { shown: shown.map(image => new URL(image.src).pathname), loaded: shown.every(image => image.complete && image.naturalWidth === 512), light }; });
-    const assertIcon = (state, label) => assert.deepEqual([state.shown, state.loaded], [[state.light ? '/icons/icon-512.png' : '/icons/icon-512-dark.png'], true], `${label}: the logo is the tiled robot icon for this theme: ${JSON.stringify(state)}`);
-    const assertFinished = (state, label) => {
-      assert.ok(state.logo.top < state.title.top && state.title.top < state.button.top && state.logo.bottom <= state.title.top + 1, `${label}: logo, name and Continue sit in bands from top to bottom: ${JSON.stringify(state)}`);
-      assert.ok(state.logo.height > 100 && state.logo.top >= state.view.top && state.logo.bottom <= state.view.top + state.view.height / 2 + 1, `${label}: the logo is full size within the top half: ${JSON.stringify(state)}`);
-      assert.deepEqual([state.stage, state.text, state.focused, state.logoOpacity, state.versionOpacity, state.buttonOpacity, state.inert], ['done', 'aimebu v2', 'welcome-continue', '1', '1', '1', false], `${label}: the finished welcome is the logo, "aimebu v2" and a focused Continue`);
-    };
-    // The owner of the main server has skipped the offer to set up a harness before anything else: the smoke sets one up itself, later, through
-    // the UI, and the offer would otherwise cover the page of every flow that signs in while there is none. The offer has its own checks (the
-    // first-run section). The skip is the account's, a preference on the server, so every page of this owner starts as if it was dealt with.
-    const skipHarnessOffer = async (base, loginName = 'owner', password = 'test-password-123') => {
-      const context = await browser.createBrowserContext(); const page = await context.newPage();
-      try {
-        await page.goto(base);
-        assert.deepEqual(await page.evaluate(async (login, secret) => {
-          const signedIn = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password: secret }) });
-          const { csrf_token } = await signedIn.json();
-          const saved = await fetch('/api/me/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ preferences: { harness_setup_skipped: '1' } }) });
-          return [signedIn.status, saved.status];
-        }, loginName, password), [200, 200], 'the owner could not skip the harness offer');
-      } finally { await context.close(); }
-    };
-    await skipHarnessOffer(origin);
     {
       await first.goto(origin);
       await first.locator('#login-form [name=login]').fill('owner'); await first.locator('#login-form [name=password]').fill('test-password-123'); await first.locator('#login-form button').click();
@@ -392,246 +118,6 @@ async function main() {
       assert.equal(icons.manifest.name, 'aimebu'); assert.equal(icons.manifest.display, 'standalone');
       assert.ok(icons.manifest.icons.length >= 2 && icons.manifest.icons.every(icon => icon.status === 200 && (icon.declared === 'any' || icon.size === icon.declared)), JSON.stringify(icons.manifest));
     }
-    const replayContext = await browser.createBrowserContext();
-    const replayPage = await replayContext.newPage();
-    await replayPage.goto(origin);
-    const replayRetry = await replayPage.evaluate(async () => {
-      const { EventStream } = await import('/js/events.js');
-      const original = window.WebSocket;
-      const sockets = [];
-      class FakeSocket {
-        constructor(url) { this.url = url; sockets.push(this); }
-        close() { this.onclose?.(); }
-        emit(frame) { this.onmessage?.({ data: JSON.stringify(frame) }); }
-      }
-      window.WebSocket = FakeSocket;
-      let snapshots = 0, live = 0;
-      const stream = new EventStream(() => { live++; }, async () => {
-        if (++snapshots === 1) throw new Error('temporary snapshot failure');
-        return 12;
-      }, () => {}, 5);
-      const until = async predicate => {
-        for (let i = 0; i < 200; i++) {
-          if (predicate()) return;
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }
-        throw new Error('event replay did not finish');
-      };
-      try {
-        stream.start();
-        // The first connection comes up with nothing to replay, then drops: what the next one replays can be anything, so it takes a snapshot.
-        sockets[0].emit({ type: 'ready', seq: 5 });
-        await until(() => stream.ready);
-        sockets[0].close();
-        await until(() => sockets.length === 2);
-        sockets[1].emit({ type: 'event', event: { seq: 8 } });
-        sockets[1].emit({ type: 'ready', seq: 8 });
-        await until(() => sockets.length === 3);
-        const retryAfter = new URL(sockets[2].url).searchParams.get('after');
-        sockets[2].emit({ type: 'event', event: { seq: 8 } });
-        sockets[2].emit({ type: 'ready', seq: 8 });
-        await until(() => stream.ready && stream.seq === 12);
-        sockets[2].emit({ type: 'event', event: { seq: 13 } });
-        await until(() => live === 1);
-        return { retryAfter, snapshots, seq: stream.seq };
-      } finally { stream.stop(); window.WebSocket = original; }
-    });
-    assert.deepEqual(replayRetry, { retryAfter: '5', snapshots: 2, seq: 13 }, 'failed replay snapshot skipped unprocessed events');
-    await replayContext.close();
-    const startupContext = await browser.createBrowserContext();
-    const startupPage = await startupContext.newPage();
-    await startupPage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      window.fetch = (input, options) => String(input) === '/api/import-v1/status'
-        ? new Promise(resolve => { window.__releaseImportCheck = () => originalFetch(input, options).then(resolve); })
-        : originalFetch(input, options);
-    });
-    await startupPage.goto(origin);
-    await startupPage.locator('#login-form [name=login]').fill('owner');
-    await startupPage.locator('#login-form [name=password]').fill('test-password-123');
-    await startupPage.click('#login-form button');
-    await startupPage.waitForFunction(() => typeof window.__releaseImportCheck === 'function');
-    // The checks while the import check is held run in one go in the page, and the check is released in the same task: the app gives startup
-    // ten seconds of its own, and every round trip to a page on a loaded machine eats into them (a slow release was reported as an abort).
-    // A click cannot reach the inert Settings button, which is what a person's click would hit: the element under its centre is not the button.
-    const held = await startupPage.evaluate(() => {
-      const toggle = document.querySelector('#settings-toggle'), box = toggle.getBoundingClientRect();
-      const under = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-      const state = { busy: document.querySelector('#app-view').getAttribute('aria-busy') === 'true', settingsInert: toggle.inert, logoutInert: document.querySelector('#logout').inert,
-        loading: !document.querySelector('#startup-status').hidden, reachable: under === toggle || toggle.contains(under), settingsOpen: document.querySelector('#settings-dialog').open };
-      void window.__releaseImportCheck();
-      return state;
-    });
-    assert.deepEqual(held, { busy: true, settingsInert: true, logoutInert: false, loading: true, reachable: false, settingsOpen: false }, 'workspace controls or loading state were wrong before the import check finished, or Settings could be reached');
-    await appReady(startupPage);
-    await startupPage.click('#settings-toggle');
-    assert.equal(await startupPage.$eval('#settings-dialog', node => node.open), true, 'Settings did not open after the import check');
-    await startupContext.close();
-    const stalledContext = await browser.createBrowserContext();
-    const stalledPage = await stalledContext.newPage();
-    await stalledPage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      window.fetch = (input, options) => String(input) === '/api/import-v1/status'
-        ? new Promise(() => {}) : originalFetch(input, options);
-    });
-    await stalledPage.goto(origin);
-    await stalledPage.locator('#login-form [name=login]').fill('owner');
-    await stalledPage.locator('#login-form [name=password]').fill('test-password-123');
-    await domClick(stalledPage, '#login-form button');
-    await stalledPage.waitForSelector('#app-view[aria-busy="true"]');
-    await stalledPage.waitForFunction(() => !document.querySelector('#startup-status').hidden && document.querySelector('#startup-status').textContent.includes("Some checks didn't finish") && !document.querySelector('#settings-toggle').inert, { timeout: 45000 });
-    assert.equal(await stalledPage.$eval('#startup-status button', button => !button.hidden && button.textContent === 'Retry'), true, 'stalled startup did not offer Retry');
-    // The v1 import is offered once, in the first-run wizard: Settings has no import tab or section, not even after a timeout.
-    await domClick(stalledPage, '#settings-toggle');
-    assert.equal(await stalledPage.evaluate(() => [document.querySelector('#settings-import-tab'), document.querySelector('#settings-import')].every(node => node === null)), true, 'Settings still has an import entry');
-    await domClick(stalledPage, '#settings-close');
-    await domClick(stalledPage, '#logout');
-    await stalledPage.waitForSelector('#login-view:not([hidden])');
-    await stalledContext.close();
-    const slowContext = await browser.createBrowserContext();
-    const slowPage = await slowContext.newPage();
-    await slowPage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      let held = false;
-      window.fetch = (input, options) => {
-        if (!held && String(input) === '/api/events/cursor') {
-          held = true;
-          return new Promise(resolve => { window.__releaseSlowSnapshot = () => originalFetch(input, options).then(resolve); });
-        }
-        return originalFetch(input, options);
-      };
-    });
-    await slowPage.goto(origin);
-    await slowPage.locator('#login-form [name=login]').fill('owner');
-    await slowPage.locator('#login-form [name=password]').fill('test-password-123');
-    await domClick(slowPage, '#login-form button');
-    await slowPage.waitForFunction(() => typeof window.__releaseSlowSnapshot === 'function');
-    await new Promise(resolve => setTimeout(resolve, 10500));
-    assert.equal(await slowPage.$eval('#app-view', node => node.getAttribute('aria-busy')), 'true', 'slow snapshot ended the startup gate before stream setup');
-    await slowPage.evaluate(() => window.__releaseSlowSnapshot());
-    await appReady(slowPage);
-    await slowPage.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
-    await slowContext.close();
-    const deniedContext = await browser.createBrowserContext();
-    const deniedPage = await deniedContext.newPage();
-    await deniedPage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      window.fetch = (input, options) => String(input) === '/api/events/cursor'
-        ? Promise.resolve(new Response(JSON.stringify({ message: 'Session expired' }), { status: 401, headers: { 'Content-Type': 'application/json' } }))
-        : originalFetch(input, options);
-    });
-    await deniedPage.goto(origin);
-    await deniedPage.locator('#login-form [name=login]').fill('owner');
-    await deniedPage.locator('#login-form [name=password]').fill('test-password-123');
-    await deniedPage.click('#login-form button');
-    await deniedPage.waitForFunction(() => !document.querySelector('#login-view').hidden && document.querySelector('#app-view').hidden);
-    assert.equal(await deniedPage.$eval('#startup-status button', button => button.hidden), true, 'expired session showed Retry instead of sign-in');
-    await deniedContext.close();
-    const preStreamContext = await browser.createBrowserContext();
-    const preStreamPage = await preStreamContext.newPage();
-    await preStreamPage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      const originalTimeout = window.setTimeout.bind(window);
-      window.setTimeout = (callback, delay, ...args) => originalTimeout(callback, delay === 30000 ? 150 : delay, ...args);
-      window.fetch = (input, options) => String(input) === '/api/events/cursor'
-        ? new Promise(resolve => { window.__releaseStuckSnapshot = () => originalFetch(input, options).then(resolve); })
-        : originalFetch(input, options);
-    });
-    await preStreamPage.goto(origin);
-    await preStreamPage.locator('#login-form [name=login]').fill('owner');
-    await preStreamPage.locator('#login-form [name=password]').fill('test-password-123');
-    await domClick(preStreamPage, '#login-form button');
-    await preStreamPage.waitForFunction(() => typeof window.__releaseStuckSnapshot === 'function');
-    await preStreamPage.waitForFunction(() => !document.querySelector('#startup-status').hidden && document.querySelector('#startup-status button').textContent === 'Retry' && !document.querySelector('#startup-status button').hidden);
-    assert.equal(await preStreamPage.$eval('#app-view', node => node.getAttribute('aria-busy')), null, 'stuck pre-stream snapshot kept workspace busy');
-    await preStreamPage.evaluate(() => window.__releaseStuckSnapshot());
-    await preStreamPage.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected' && document.querySelector('#startup-status').hidden);
-    assert.equal(await preStreamPage.$eval('#app-view', node => node.getAttribute('aria-busy')), null, 'late pre-stream snapshot left workspace busy');
-    await preStreamContext.close();
-    const failedPreStreamContext = await browser.createBrowserContext();
-    const failedPreStreamPage = await failedPreStreamContext.newPage();
-    await failedPreStreamPage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      const originalTimeout = window.setTimeout.bind(window);
-      window.setTimeout = (callback, delay, ...args) => originalTimeout(callback, delay === 30000 ? 150 : delay, ...args);
-      window.fetch = (input, options) => String(input) === '/api/events/cursor'
-        ? new Promise((resolve, reject) => { window.__failStuckSnapshot = () => reject(new Error('held snapshot failed')); })
-        : originalFetch(input, options);
-    });
-    await failedPreStreamPage.goto(origin);
-    await failedPreStreamPage.locator('#login-form [name=login]').fill('owner');
-    await failedPreStreamPage.locator('#login-form [name=password]').fill('test-password-123');
-    await domClick(failedPreStreamPage, '#login-form button');
-    await failedPreStreamPage.waitForFunction(() => typeof window.__failStuckSnapshot === 'function');
-    await failedPreStreamPage.waitForFunction(() => !document.querySelector('#startup-status button').hidden);
-    await failedPreStreamPage.evaluate(async () => { window.__failStuckSnapshot(); await new Promise(resolve => setTimeout(resolve, 0)); });
-    assert.equal(await failedPreStreamPage.$eval('#startup-status button', button => !button.hidden), true, 'failed late snapshot hid Retry');
-    assert.equal(await failedPreStreamPage.$eval('#app-view', node => node.getAttribute('aria-busy')), null, 'failed late snapshot kept workspace busy');
-    await failedPreStreamContext.close();
-    const lateContext = await browser.createBrowserContext();
-    const latePage = await lateContext.newPage();
-    await latePage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      let firstStatus = true;
-      window.fetch = (input, options) => {
-        if (firstStatus && String(input) === '/api/import-v1/status') {
-          firstStatus = false;
-          return Promise.resolve(new Response(JSON.stringify({ state: 'ready' }), { headers: { 'Content-Type': 'application/json' } }));
-        }
-        if (String(input) === '/api/import-v1/preview') return new Promise(resolve => { window.__releaseLatePreview = () => resolve(new Response(JSON.stringify({ suggested: {} }), { headers: { 'Content-Type': 'application/json' } })); });
-        return originalFetch(input, options);
-      };
-    });
-    await latePage.goto(origin);
-    await latePage.locator('#login-form [name=login]').fill('owner');
-    await latePage.locator('#login-form [name=password]').fill('test-password-123');
-    await domClick(latePage, '#login-form button');
-    await latePage.waitForFunction(() => typeof window.__releaseLatePreview === 'function');
-    await domClick(latePage, '#logout');
-    await latePage.waitForSelector('#login-view:not([hidden])');
-    await latePage.evaluate(async () => { window.__releaseLatePreview(); await new Promise(resolve => setTimeout(resolve, 0)); });
-    assert.equal(await latePage.$eval('.import-v1-dialog', dialog => dialog.open), false, 'late preview opened wizard after sign-out');
-    await latePage.locator('#login-form [name=login]').fill('owner');
-    await latePage.locator('#login-form [name=password]').fill('test-password-123');
-    await latePage.click('#login-form button');
-    await appReady(latePage);
-    assert.equal(await latePage.$eval('.import-v1-dialog', dialog => dialog.open), false, 'old wizard crossed into a new sign-in');
-    await lateContext.close();
-    // A usages request that fails with 403 after the reader picked another Settings tab must not switch them back.
-    const lateForbiddenContext = await browser.createBrowserContext();
-    const lateForbiddenPage = await lateForbiddenContext.newPage();
-    await lateForbiddenPage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      window.fetch = async (input, options) => {
-        if (String(input) === '/api/usages') { await new Promise(resolve => setTimeout(resolve, 1200)); return new Response(JSON.stringify({ message: 'forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } }); }
-        return originalFetch(input, options);
-      };
-    });
-    await login(lateForbiddenPage);
-    await domClick(lateForbiddenPage, '#settings-toggle');
-    await lateForbiddenPage.waitForFunction(() => document.querySelector('#settings-dialog')?.open);
-    await lateForbiddenPage.click('#settings-roles-tab');
-    await lateForbiddenPage.waitForFunction(() => document.querySelector('#usages-toggle')?.hidden === true, { timeout: 10000 });
-    assert.deepEqual(await lateForbiddenPage.evaluate(() => ({ roles: !document.querySelector('#settings-roles').hidden, general: !document.querySelector('#settings-general').hidden })), { roles: true, general: false }, 'a late 403 for usages switched the reader away from the tab they chose');
-    await lateForbiddenContext.close();
-    // A finished (or skipped) import is never offered again: with status `done` the wizard stays closed, and no
-    // Settings control or API call can bring it back.
-    const closedContext = await browser.createBrowserContext();
-    const closedPage = await closedContext.newPage();
-    await closedPage.evaluateOnNewDocument(() => {
-      const originalFetch = window.fetch.bind(window);
-      window.__importCalls = [];
-      window.fetch = (input, options) => {
-        if (String(input).startsWith('/api/import-v1/')) window.__importCalls.push(String(input));
-        if (String(input) === '/api/import-v1/status') return Promise.resolve(new Response(JSON.stringify({ state: 'done' }), { headers: { 'Content-Type': 'application/json' } }));
-        return originalFetch(input, options);
-      };
-    });
-    await login(closedPage);
-    await closedPage.click('#settings-toggle');
-    assert.deepEqual(await closedPage.evaluate(() => ({ dialog: document.querySelector('.import-v1-dialog')?.open ?? false, tab: Boolean(document.querySelector('#settings-import-tab')), section: Boolean(document.querySelector('#settings-import')), calls: window.__importCalls })),
-      { dialog: false, tab: false, section: false, calls: ['/api/import-v1/status'] }, 'a closed import was offered again or reachable from Settings');
-    await closedContext.close();
     const macroUI = await first.evaluate(async () => {
       const { expandMacros, MacroAutocomplete, MAX_MACRO_EXPANSION } = await import('/js/macros.js');
       const macros = { greet: 'Hello <NAME>', name: 'world', loop: '<loop>' };
@@ -2252,10 +1738,10 @@ async function main() {
     await first.keyboard.down('Shift'); await first.keyboard.press('Enter'); await first.keyboard.up('Shift');
     const shiftedDraft = await first.$eval('#composer textarea', el => el.value);
     if (shiftedDraft !== 'Draft\n') {
-      preserveFailure = true;
+      ctx.preserve();
       const trace = await first.evaluate(() => ({ keys: window.__composerEnterTrace, active: document.activeElement?.outerHTML.slice(0, 200), room: location.hash,
         messages: [...document.querySelectorAll('.chat-msg-body')].map(el => el.textContent).slice(-5), error: document.querySelector('#chat-error')?.textContent }));
-      throw new Error(`Shift+Enter changed draft to ${JSON.stringify(shiftedDraft)}; temp ${tmp}; trace ${JSON.stringify(trace)}; server ${logs.slice(-4000)}`);
+      throw new Error(`Shift+Enter changed draft to ${JSON.stringify(shiftedDraft)}; temp ${tmp}; trace ${JSON.stringify(trace)}; server ${ctx.logs().slice(-4000)}`);
     }
     await first.locator('#composer textarea').fill('First message');
     await first.keyboard.press('Enter');
@@ -2782,7 +2268,7 @@ async function main() {
     await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.markdown_mode === 'rendered', { timeout: 10000 });
     assert.equal(await markdownMode(first), 'rendered');
     assert.equal(await first.$eval('article.chat-msg:last-of-type .chat-msg-body h2', el => el.textContent), 'Heading');
-    jumpSeq = String(await first.evaluate(async id => { const messages = await (await fetch(`/api/rooms/${id}/messages`)).json(); return messages.find(item => item.body === 'Thread reply').no; }, roomID));
+    ctx.setJumpSeq(String(await first.evaluate(async id => { const messages = await (await fetch(`/api/rooms/${id}/messages`)).json(); return messages.find(item => item.body === 'Thread reply').no; }, roomID)));
     await domClick(first, '#room-jump');
     await first.waitForFunction(() => !document.querySelector('#thread-panel').hidden && [...document.querySelectorAll('.thread-entry .chat-msg-body')].some(el => el.textContent === 'Thread reply'));
     // A long unbroken word and a long sentence must wrap inside the panel, not run past it.
@@ -3090,217 +2576,6 @@ async function main() {
       assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, banner: document.querySelector('#spawn-resume').hidden })), { title: 'Spawn', banner: true }, 'closing the start dialog restores the ordinary one');
       assert.equal(await first.$eval('#spawn-start-in', el => el.hidden), true, 'the ordinary spawn dialog has no Start in picker');
     }
-    // Continue a Claude Code session: the Spawn dialog's session button opens a picker of what the machine's supervisor finds in its Claude
-    // home (a fixture one here, never the real ~/.claude), by folder or by id; a pick reopens the Spawn dialog for that session.
-    {
-      const claudeHome = path.join(testHome, '.claude');
-      const folderName = folder => folder.replace(/[^a-zA-Z0-9]/g, '-');
-      const elsewhere = path.join(tmp, 'elsewhere'); fs.mkdirSync(elsewhere, { recursive: true });
-      const ccSession = (cwd, id, { title, entrypoint = 'cli', branch = 'main', model = '' }) => {
-        const dir = path.join(claudeHome, 'projects', folderName(cwd)); fs.mkdirSync(dir, { recursive: true });
-        const lines = [{ type: 'user', cwd, sessionId: id, gitBranch: branch, version: '2.1.309', entrypoint, message: { role: 'user', content: 'start' } },
-          { type: 'assistant', cwd, sessionId: id, message: { role: 'assistant', content: 'ok', ...(model ? { model } : {}) } }, { type: 'ai-title', aiTitle: title, sessionId: id }];
-        fs.writeFileSync(path.join(dir, `${id}.jsonl`), lines.map(line => JSON.stringify(line)).join('\n') + '\n');
-      };
-      const [idOne, idActive, idAgent, idFar] = ['11111111-aaaa-4aaa-8aaa-000000000001', '11111111-aaaa-4aaa-8aaa-000000000002', '11111111-aaaa-4aaa-8aaa-000000000003', '11111111-aaaa-4aaa-8aaa-000000000004'];
-      ccSession(gitRoot, idOne, { title: 'Fix the login bug', model: 'claude-opus-4-5-20251101' });
-      ccSession(gitRoot, idActive, { title: 'Open in a terminal' });
-      ccSession(gitRoot, idAgent, { title: 'Made by an agent', entrypoint: 'sdk-cli' });
-      ccSession(elsewhere, idFar, { title: 'Worked elsewhere' });
-      fs.mkdirSync(path.join(claudeHome, 'sessions'), { recursive: true });
-      const isPidAlive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
-      // This process is the live pid; the gone one is above any kernel's pid limit, so it can never be assigned to a process (a stale entry, ignored).
-      const gonePid = 2 ** 31 - 2;
-      assert.ok(isPidAlive(process.pid) && !isPidAlive(gonePid), 'the fixture has one pid that is alive and one that is gone');
-      for (const [pid, sessionId] of [[process.pid, idActive], [gonePid, idOne]]) fs.writeFileSync(path.join(claudeHome, 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId, cwd: gitRoot, kind: 'interactive', status: 'idle' }));
-      // Whether a native Claude is on offer comes from the machine's tool detection, which can still be running when this step starts. The
-      // dialog says a session "is not available natively" until the catalog lists one it can continue on (spawn-model.js resumeToolChoice: native, or a container
-      // that shares the host's Claude home), so wait for the catalog the dialog will read to do so.
-      await first.waitForFunction(async () => (await (await fetch('/api/spawn-catalog')).json()).tools?.some(tool => tool.tool === 'claude' && tool.available && !(tool.containerized && !tool.shares_claude_home)), { polling: 500, timeout: 30000 }).catch(() => {});
-      await domClick(first, '#spawn-open');
-      await first.waitForFunction(() => document.querySelector('#spawn-dialog').open && !document.querySelector('#spawn-sessions').hidden);
-      assert.equal(await first.$eval('#spawn-sessions', el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()]).then(list => list.join('|')), 'Continue a Claude Code session|Continue a Claude Code session|Continue a session…', 'the session entry is a labelled button, not a bare glyph');
-      assert.deepEqual(await first.evaluate(() => { const button = document.querySelector('#spawn-sessions'), model = document.querySelector('#spawn-form [name=machine]'); return { enabled: !button.disabled, note: document.querySelector('#spawn-sessions-note').hidden, text: !!button.textContent.trim(), inTitle: !!button.closest('.spawn-title-row') && !!model }; }), { enabled: true, note: true, text: true, inTitle: true }, 'the session entry is usable with a launcher that can continue a session, and says nothing then');
-      await domClick(first, '#spawn-sessions');
-      await first.waitForFunction(() => document.querySelector('#cc-sessions-dialog').open && document.querySelectorAll('#cc-sessions-list .cc-session').length === 3 && !document.querySelector('#spawn-dialog').open);
-      assert.deepEqual(await first.$$eval('#cc-sessions-list .cc-session', rows => rows.map(row => [row.dataset.sessionId, row.querySelector('.cc-session-title').textContent, [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)]).sort()),
-        [[idOne, 'Fix the login bug', []], [idActive, 'Open in a terminal', ['open in a terminal']], [idAgent, 'Made by an agent', ['started by an agent']]], 'the picker lists the folder\'s sessions with their flags');
-      assert.ok(await first.$$eval('#cc-sessions-list .cc-session-pick', buttons => buttons.every(button => button.title === 'Continue this session or work on a copy' && button.getAttribute('aria-label') === 'Continue this session or work on a copy' && !button.textContent.trim())), 'each session has an icon button with a tooltip');
-      assert.equal(await first.$eval('#cc-sessions-status', el => el.textContent), '3 sessions');
-      // By id it is found wherever it worked, and says it is outside the project folder; an unknown id says so.
-      await first.$eval('#cc-session-id', (el, id) => { el.value = id; }, idFar);
-      await first.evaluate(() => document.querySelector('#cc-sessions-find').requestSubmit());
-      await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 1 && document.querySelector('#cc-sessions-list .cc-session-cwd'));
-      assert.deepEqual(await first.$eval('#cc-sessions-list .cc-session', row => [row.dataset.sessionId, [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent), row.querySelector('.cc-session-cwd').textContent]), [idFar, ['outside the project folder'], elsewhere]);
-      await first.$eval('#cc-session-id', el => { el.value = '22222222-bbbb-4bbb-8bbb-999999999999'; });
-      await first.evaluate(() => document.querySelector('#cc-sessions-find').requestSubmit());
-      await first.waitForFunction(() => document.querySelector('#cc-sessions-error').textContent.includes('no Claude Code session with that id'));
-      // Picking one reopens the Spawn dialog for it: a room of its own by default, the name kept, nothing to confirm while nothing has it open.
-      await domClick(first, '#cc-sessions-close');
-      await domClick(first, '#spawn-open');
-      await first.waitForFunction(() => document.querySelector('#spawn-dialog').open);
-      await domClick(first, '#spawn-sessions');
-      await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
-      await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idOne}"] .cc-session-pick`);
-      await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
-      // The model the session ran on is what the dialog preselects (by family), and a different one is warned about. (A scratch server without a
-      // native Claude harness has no model to select: then the dialog says the session cannot be continued here, and there is nothing to compare.)
-      await first.waitForFunction(() => document.querySelector('#spawn-form [name=model]').options.length > 0 || document.querySelector('#spawn-resume-notes').textContent.includes('not available natively'));
-      const modelNote = await first.evaluate(() => ({ options: document.querySelector('#spawn-form [name=model]').options.length, selected: document.querySelector('#spawn-form [name=model]').selectedOptions[0]?.textContent || '', notes: document.querySelector('#spawn-resume-notes').textContent }));
-      if (modelNote.options) {
-        await first.waitForFunction(() => /opus/i.test(document.querySelector('#spawn-form [name=model]').selectedOptions[0]?.textContent || '') || document.querySelector('#spawn-resume-notes').textContent.includes('This session ran on'));
-        const settled = await first.evaluate(() => ({ selected: document.querySelector('#spawn-form [name=model]').selectedOptions[0]?.textContent || '', notes: document.querySelector('#spawn-resume-notes').textContent }));
-        assert.ok(/opus/i.test(settled.selected) ? !settled.notes.includes('This session ran on') : settled.notes.includes('This session ran on claude-opus-4-5-20251101; the agent will continue it on'), `the session's model is preselected or warned about: ${JSON.stringify(settled)}`);
-      }
-      // The Continue/Fork radios sit inline with their words, not stacked above them as full-width blocks.
-      assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('#spawn-resume-mode input')].filter(input => input.offsetParent).map(input => { const label = input.closest('label'), box = input.getBoundingClientRect(), row = label.getBoundingClientRect(); return [getComputedStyle(label).display, box.top >= row.top - 1 && box.bottom <= row.bottom + 1, box.width < 30]; })), [['flex', true, true], ['flex', true, true]], 'the Continue and Fork radios are inline with their labels');
-      assert.equal(await first.evaluate(() => { const input = document.querySelector('#spawn-resume-confirm'); return `${getComputedStyle(input).display}/${getComputedStyle(input).width !== '100%'}`; }), 'inline-block/true', 'the confirmation box is not a full-width block');
-      assert.deepEqual(await first.evaluate(() => {
-        const heights = []; for (const row of document.querySelectorAll('.machine-actions, .dialog-actions')) { const icon = row.querySelector(':scope > .btn-icon'), text = row.querySelector(':scope > .btn'); if (icon && text && icon.offsetParent) heights.push(Math.round(icon.getBoundingClientRect().height) === Math.round(text.getBoundingClientRect().height)); } return heights.every(Boolean);
-      }), true, 'an icon button beside a text button is as tall as it');
-      assert.deepEqual(await first.evaluate(() => ({
-        title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
-        name: document.querySelector('.spawn-name').hidden, startIn: !document.querySelector('#spawn-start-in').hidden, room: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent,
-        sessions: !document.querySelector('#spawn-sessions')?.offsetParent, worktree: document.querySelector('.spawn-worktree-option').hidden,
-        mode: document.querySelector('#spawn-resume-mode').hidden ? 'hidden' : document.querySelector('#spawn-form [name=resume_mode]:checked').value,
-      })), { title: 'Continue a Claude Code session', text: 'This continues the session. It carries on from where it stopped, in the same transcript.',
-        confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true, mode: 'continue' }, 'the Spawn dialog opens for the picked session, continuing by default');
-      // The session is a neutral card: its short id, its folder and when it was last used, in a compact box; no title from the first prompt.
-      assert.deepEqual(await first.evaluate(() => { const box = document.querySelector('#spawn-resume'), card = document.querySelector('#spawn-resume-card'), modes = [...document.querySelectorAll('#spawn-resume-mode label')].map(label => label.getBoundingClientRect().top); return { rows: [...card.querySelectorAll('dt')].map(term => [term.textContent, term.nextElementSibling.textContent.length > 0]), id: card.querySelector('dd').textContent, oneRow: Math.abs(modes[0] - modes[1]) < 2, nameRow: [Math.round(document.querySelector('#spawn-name').getBoundingClientRect().height) === Math.round(document.querySelector('#spawn-name-dice').getBoundingClientRect().height), getComputedStyle(document.querySelector('.spawn-name > label')).fontSize === getComputedStyle(document.querySelector('#spawn-dialog > form > label')).fontSize], titled: box.textContent.includes('Fix the login bug') }; }),
-        { rows: [['Session', true], ['Folder', true], ['Last active', true], ['Ran on', true]], id: '11111111', oneRow: true, nameRow: [true, true], titled: false }, 'the picked session is shown as a neutral card, the Continue and Fork choice is one row, and the Name row matches the other fields');
-      await domClick(first, '#spawn-cancel');
-      await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
-      // A session a live process has open asks for a confirmation before it can be continued.
-      await domClick(first, '#spawn-open');
-      await first.waitForFunction(() => document.querySelector('#spawn-dialog').open);
-      await domClick(first, '#spawn-sessions');
-      await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
-      await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idActive}"] .cc-session-pick`);
-      await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
-      const activeSession = await first.evaluate(() => ({ confirm: document.querySelector('#spawn-resume-confirm-label').hidden, label: document.querySelector('#spawn-resume-confirm-label').textContent.trim(), notes: document.querySelector('#spawn-resume-notes').textContent }));
-      assert.deepEqual({ confirm: activeSession.confirm, label: activeSession.label }, { confirm: false, label: 'I closed this session in my terminal' });
-      const activeWarning = 'A Claude process has this session open. Close it first: two processes on one session corrupt it.';
-      assert.ok(activeSession.notes === activeWarning || activeSession.notes === `${activeWarning} claude is not available natively on the chosen machine, so the session cannot be continued here.`, `active-session notes: ${activeSession.notes}`);
-      // Working on a copy needs no such confirmation (the original is not touched) and says what it does; going back restores the warning.
-      await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=fork]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
-      assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
-        text: document.querySelector('#spawn-resume-text').textContent.slice(0, 60), notes: document.querySelector('#spawn-resume-notes').textContent.includes('Close it first') })),
-        { title: 'Work on a copy of a Claude Code session', confirm: true, text: 'This works on a copy of the session. The agent starts from e', notes: false });
-      await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=continue]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
-      assert.equal(await first.$eval('#spawn-resume-confirm-label', el => el.hidden), false, 'continuing asks again for the confirmation');
-      await domClick(first, '#spawn-cancel');
-      await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
-      assert.equal(await first.$eval('#spawn-form h2', el => el.textContent), 'Spawn', 'closing the dialog restores the ordinary one');
-      // Bulk import (the home room's settings → Project): the dialog is driven here with a scripted source, so no agent is really started. Roles are preset
-      // (the first session of a folder works, the rest review), what is ticked is started in order as copies in rooms of their own, and a
-      // spawn limit stops the rest and says so.
-      const imported = await first.evaluate(async projectID => {
-        const { ClaudeSessionImport } = await import('/js/pages/claude-import/page.js');
-        const calls = [];
-        const sessions = [
-          { id: 'aaaaaaaa-0000-4000-8000-000000000001', title: 'First of /p', cwd: '/p', modified_at: '2026-10-24T10:00:00Z', size: 100 },
-          { id: 'aaaaaaaa-0000-4000-8000-000000000002', title: 'Second of /p', cwd: '/p', modified_at: '2026-10-24T09:00:00Z', size: 100, agent: { slug: 'olive' } },
-          { id: 'aaaaaaaa-0000-4000-8000-000000000003', title: 'Outside', cwd: '/q', modified_at: '2026-10-24T08:00:00Z', size: 100, outside_folder: true },
-        ];
-        const source = {
-          roles: async () => [{ role_key: 'worker', label: 'Worker' }, { role_key: 'reviewer', label: 'Reviewer' }, { role_key: 'lead', label: 'Lead', cap_is_lead: true }],
-          catalog: async () => ({ tools: [{ tool: 'claude', variant: 'docker', launcher_id: 'l_docker', containerized: true, available: true, label: 'Claude Code (Docker)', models: [{ id: 'haiku' }] },
-            { tool: 'claude', variant: 'native', launcher_id: 'l_native', containerized: false, available: true, label: 'Claude Code', models: [{ id: 'opus', label: 'Opus' }, { id: 'haiku', label: 'Haiku', default: true }] }] }),
-          claudeSessions: async (project, options) => { calls.push(['list', project, options.launcherID]); return { sessions, unreadable: 2, truncated: false }; },
-          spawn: async (room, params) => {
-            calls.push(['spawn', room, params.role, params.resume_session.slice(-1), params.resume_mode, params.new_room, params.launcher_id, params.model]);
-            if (params.resume_session.endsWith('3')) throw Object.assign(new Error('agent or spawn rate limit reached'), { code: 'spawn_limit' });
-            return { slug: 'copy-' + params.resume_session.slice(-1) };
-          },
-        };
-        const dialog = new ClaudeSessionImport(source);
-        await dialog.open({ projectID, homeRoomID: 'home_room' });
-        const waitFor = async test => { for (let i = 0; i < 100 && !test(); i++) await new Promise(resolve => setTimeout(resolve, 20)); };
-        await waitFor(() => document.querySelectorAll('#cc-import-list .cc-import-row').length === 3);
-        const shown = {
-          harnesses: [...document.querySelectorAll('#cc-import-harness option')].map(option => option.textContent),
-          models: [...document.querySelectorAll('#cc-import-model option')].map(option => [option.value, option.selected]),
-          roles: [...document.querySelectorAll('#cc-import-list select')].map(select => select.value),
-          roleOptions: [...document.querySelector('#cc-import-list select').options].map(option => option.value),
-          status: document.querySelector('#cc-import-status').textContent,
-          runDisabled: document.querySelector('#cc-import-run').disabled,
-          flags: [...document.querySelectorAll('#cc-import-list .cc-import-row')].map(row => [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)),
-        };
-        document.querySelector('#cc-import-all').click();
-        await new Promise(resolve => setTimeout(resolve, 0)); // the page draws what the click changed
-        shown.afterAll = { ticked: document.querySelectorAll('#cc-import-list input:checked').length, runDisabled: document.querySelector('#cc-import-run').disabled };
-        document.querySelector('#cc-import-list select').value = 'reviewer';
-        document.querySelector('#cc-import-run').click();
-        await waitFor(() => /started/.test(document.querySelector('#cc-import-status').textContent));
-        shown.states = [...document.querySelectorAll('#cc-import-list .cc-import-state')].map(state => state.textContent);
-        shown.final = document.querySelector('#cc-import-status').textContent;
-        shown.afterRun = { ticked: document.querySelectorAll('#cc-import-list input:checked').length, locked: [...document.querySelectorAll('#cc-import-list input')].map(box => box.disabled) };
-        shown.calls = calls;
-        document.querySelector('#cc-import-close').click();
-        return shown;
-      }, actualProjectID);
-      assert.deepEqual({ harnesses: imported.harnesses, models: imported.models, roles: imported.roles, roleOptions: imported.roleOptions, status: imported.status, runDisabled: imported.runDisabled, flags: imported.flags }, {
-        harnesses: ['Claude Code'], models: [['opus', false], ['haiku', true]], roles: ['worker', 'reviewer', 'worker'], roleOptions: ['worker', 'reviewer'],
-        status: '3 sessions (2 sessions could not be read)', runDisabled: true, flags: [[], ['continued by olive'], ['outside the project folder', 'needs approval']] }, 'the import dialog lists the sessions with preset roles and only a native harness');
-      assert.deepEqual(imported.afterAll, { ticked: 3, runDisabled: false });
-      assert.deepEqual(imported.calls, [['list', actualProjectID, 'l_native'],
-        ['spawn', 'home_room', 'reviewer', '1', 'fork', true, 'l_native', 'haiku'], ['spawn', 'home_room', 'reviewer', '2', 'fork', true, 'l_native', 'haiku'], ['spawn', 'home_room', 'worker', '3', 'fork', true, 'l_native', 'haiku']],
-        'each ticked session is started in order as a copy in a room of its own, through the native harness');
-      assert.deepEqual(imported.states, ['Started as copy-1', 'Started as copy-2', 'Not started: limit reached']);
-      assert.equal(imported.final, '2 of 3 sessions started; the project\'s agent or spawn-rate limit was reached, import the rest later.');
-      assert.deepEqual(imported.afterRun, { ticked: 1, locked: [true, true, false] }, 'started sessions are locked, the unstarted one stays ticked for another try');
-      // A Docker Claude harness that shares the host's Claude home is offered next to the native one; one that does not say so is not.
-      assert.deepEqual(await first.evaluate(async projectID => {
-        const { ClaudeSessionImport } = await import('/js/pages/claude-import/page.js');
-        const entry = (launcher, label, containerized, shares) => ({ tool: 'claude', variant: containerized ? 'docker' : 'native', launcher_id: launcher, containerized, shares_claude_home: shares, available: true, label, models: [{ id: 'haiku', default: true }] });
-        const source = { roles: async () => [{ role_key: 'worker', label: 'Worker' }], claudeSessions: async () => ({ sessions: [] }), spawn: async () => ({}),
-          catalog: async () => ({ tools: [entry('l_native', 'Claude Code', false, false), entry('l_shared', 'Claude Code (shared home)', true, true), entry('l_own', 'Claude Code (own home)', true, false)] }) };
-        const dialog = new ClaudeSessionImport(source);
-        await dialog.open({ projectID, homeRoomID: 'home_room' });
-        for (let i = 0; i < 100 && !document.querySelectorAll('#cc-import-harness option').length; i++) await new Promise(resolve => setTimeout(resolve, 20));
-        const labels = [...document.querySelectorAll('#cc-import-harness option')].map(option => option.textContent);
-        document.querySelector('#cc-import-close').click();
-        return labels;
-      }, actualProjectID), ['Claude Code', 'Claude Code (shared home)'], 'the import offers a Docker Claude harness only when it shares the host Claude home');
-      // While an import runs its dialog cannot be closed (a reopened one could mix projects): Close is disabled and Escape is refused, both
-      // until the import is done.
-      const guarded = await first.evaluate(async projectID => {
-        const { ClaudeSessionImport } = await import('/js/pages/claude-import/page.js');
-        let release; const gate = new Promise(resolve => { release = resolve; });
-        const rooms = [];
-        const source = {
-          roles: async () => [{ role_key: 'worker', label: 'Worker' }],
-          catalog: async () => ({ tools: [{ tool: 'claude', variant: 'native', launcher_id: 'l_native', containerized: false, available: true, label: 'Claude Code', models: [{ id: 'haiku', default: true }] }] }),
-          claudeSessions: async () => ({ sessions: [{ id: 'bbbbbbbb-0000-4000-8000-000000000001', title: 'Only one', cwd: '/p', modified_at: '2026-10-24T10:00:00Z', size: 1 }] }),
-          spawn: async room => { rooms.push(room); await gate; return { slug: 'copy-1' }; },
-        };
-        const dialog = new ClaudeSessionImport(source);
-        await dialog.open({ projectID, homeRoomID: 'room_one' });
-        const waitFor = async test => { for (let i = 0; i < 100 && !test(); i++) await new Promise(resolve => setTimeout(resolve, 20)); };
-        await waitFor(() => document.querySelectorAll('#cc-import-list .cc-import-row').length === 1);
-        document.querySelector('#cc-import-all').click();
-        await new Promise(resolve => setTimeout(resolve, 0)); // the page draws what the click changed
-        document.querySelector('#cc-import-run').click();
-        await waitFor(() => rooms.length === 1);
-        dialog.homeRoomID = 'room_two'; // a reopen for another project changes what the dialog holds; the running import must not follow
-        const cancel = new Event('cancel', { cancelable: true });
-        document.querySelector('#cc-import-dialog').dispatchEvent(cancel);
-        const during = { closeDisabled: document.querySelector('#cc-import-close').disabled, escapeRefused: cancel.defaultPrevented, open: document.querySelector('#cc-import-dialog').open,
-          rolesLocked: [...document.querySelectorAll('#cc-import-list select')].every(select => select.disabled) };
-        // Opening it again for another project is refused, and a close from outside (it is a modal dialog, so the browser can also close it) is undone.
-        await dialog.open({ projectID: 'another_project', homeRoomID: 'room_other' });
-        during.rows = document.querySelectorAll('#cc-import-list .cc-import-row').length;
-        document.querySelector('#cc-import-dialog').close();
-        await new Promise(resolve => setTimeout(resolve, 50));
-        during.reopened = document.querySelector('#cc-import-dialog').open;
-        release();
-        await waitFor(() => /started/.test(document.querySelector('#cc-import-status').textContent));
-        const after = { closeDisabled: document.querySelector('#cc-import-close').disabled, escapeRefused: (() => { const again = new Event('cancel', { cancelable: true }); document.querySelector('#cc-import-dialog').dispatchEvent(again); return again.defaultPrevented; })() };
-        document.querySelector('#cc-import-close').click();
-        return { during, after, rooms };
-      }, actualProjectID);
-      assert.deepEqual(guarded, { during: { closeDisabled: true, escapeRefused: true, open: true, rolesLocked: true, rows: 1, reopened: true }, after: { closeDisabled: false, escapeRefused: false }, rooms: ['room_one'] }, 'a running import keeps its dialog open and its room');
-    }
     assert.equal(await first.title(), '(2) aimebu');
     assert.ok(await first.evaluate(() => window.__soundPlays > 0), 'new inbox items did not play the chime');
     assert.equal(await first.evaluate(async () => {
@@ -3515,19 +2790,18 @@ async function main() {
       // the Create owner form, signs the new owner in without a second welcome, and is gone afterwards.
       {
         const setupTmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-setup-'));
-        const setupPort = await freePort(), setupOrigin = `http://127.0.0.1:${setupPort}`;
-        const setupEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: setupTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_PORT: String(setupPort) };
-        delete setupEnv.AIMEBU2_OWNER_LOGIN; delete setupEnv.AIMEBU2_OWNER_PASSWORD;
-        const setupServer = spawn(binary, ['server'], { env: setupEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-        let setupLogs = ''; setupServer.stderr.on('data', data => setupLogs += data);
+        const { child: setupServer, origin: setupOrigin, logs: setupLogs } = await startServer(binary, port => {
+          const setupEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: setupTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_PORT: String(port) };
+          delete setupEnv.AIMEBU2_OWNER_LOGIN; delete setupEnv.AIMEBU2_OWNER_PASSWORD;
+          return setupEnv;
+        }, { label: 'setup server' });
         const setupContext = await browser.createBrowserContext();
         try {
-          for (let i = 0; i < 300; i++) { try { if ((await fetch(setupOrigin)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); if (i === 299) throw new Error(`setup server did not start: ${setupLogs}`); }
           const tokenFile = path.join(setupTmp, '.setup_token');
           const setupToken = fs.readFileSync(tokenFile, 'utf8').trim();
           assert.equal(fs.statSync(tokenFile).mode & 0o777, 0o600, 'the token file is private');
-          assert.ok(setupLogs.includes(`${setupOrigin}/setup?token=${setupToken}`), `the startup message does not carry the link: ${setupLogs}`);
-          assert.ok(setupLogs.includes(`\n  ${setupToken}\n`) && setupLogs.includes(`The token is also in ${tokenFile}`), `the startup message must print the token and name its file: ${setupLogs}`);
+          assert.ok(setupLogs().includes(`${setupOrigin}/setup?token=${setupToken}`), `the startup message does not carry the link: ${setupLogs()}`);
+          assert.ok(setupLogs().includes(`\n  ${setupToken}\n`) && setupLogs().includes(`The token is also in ${tokenFile}`), `the startup message must print the token and name its file: ${setupLogs()}`);
           // Opening the plain address of a server with no owner asks for the setup token (there is no login that could work), tells where to
           // find it, refuses a wrong one with a clear error, and accepts the one in the file.
           {
@@ -3817,14 +3091,13 @@ async function main() {
       // a change made from one browser reaches an open Settings -> Usages panel in another with no
       // reload, and a second forced refresh inside the cooldown tells the owner to wait.
       const liveTmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-usages-'));
-      const livePort = await freePort(), liveOrigin = `http://127.0.0.1:${livePort}`;
-      const liveEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: liveTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(livePort), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' };
-      delete liveEnv.AIMEBU2_USAGES;
-      const liveServer = spawn(binary, ['server'], { env: liveEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-      let liveLogs = ''; liveServer.stderr.on('data', data => liveLogs += data);
+      const { child: liveServer, origin: liveOrigin, logs: liveLogs } = await startServer(binary, port => {
+        const liveEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: liveTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' };
+        delete liveEnv.AIMEBU2_USAGES;
+        return liveEnv;
+      }, { label: 'usages server' });
       const liveContexts = [];
       try {
-        for (let i = 0; i < 300; i++) { try { if ((await fetch(liveOrigin)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); if (i === 299) throw new Error(`usages server did not start: ${liveLogs}`); }
         const [watcher, actor] = await Promise.all([browser.createBrowserContext(), browser.createBrowserContext()]);
         liveContexts.push(watcher, actor);
         const watchPage = await watcher.newPage(), actPage = await actor.newPage();
@@ -5570,7 +4843,7 @@ async function main() {
     await agentPage.mouse.click(40, 400);
     await agentPage.waitForFunction(() => document.querySelector('#room-menu').hidden);
     await agentPage.setViewport({ width: 320, height: 640 });
-    if (supervisor.exitCode !== null) throw new Error(`supervisor exited: ${supervisorLogs}`);
+    if (supervisor.exitCode !== null) throw new Error(`supervisor exited: ${ctx.supervisorLogs()}`);
     // The pages may be sitting in the Inbox view; its toggle is the way back to the chat now that the top-bar Rooms button is gone on desktop.
     for (const page of [first, second]) if (await page.$eval('#inbox-view', el => !el.hidden)) await domClick(page, '#inbox-toggle');
     await first.waitForFunction(() => document.querySelector('#inbox-view').hidden && !document.querySelector('.chat').hidden); await second.waitForFunction(() => document.querySelector('#inbox-view').hidden && !document.querySelector('.chat').hidden);
@@ -6425,7 +5698,7 @@ async function main() {
       const ui = await first.evaluate(id => ({ state: document.querySelector(`[data-agent-id="${id}"] .agent-state`)?.textContent,
         error: document.querySelector('#agents-error')?.textContent, connection: document.querySelector('#connection')?.getAttribute('aria-label') }), realAgentID);
       const response = await first.evaluate(async room => (await fetch(`/api/rooms/${room}/agents`)).json(), roomID);
-      throw new Error(`reactivate did not render: ${error.message}; UI ${JSON.stringify(ui)}; API ${JSON.stringify(response)}; server ${logs}; supervisor ${supervisorLogs}`);
+      throw new Error(`reactivate did not render: ${error.message}; UI ${JSON.stringify(ui)}; API ${JSON.stringify(response)}; server ${ctx.logs()}; supervisor ${ctx.supervisorLogs()}`);
     });
     const budgetSeed = spawnSync(seedBinary, [path.join(tmp, 'server', 'aimebu.sqlite'), actualProjectID, roomID, id, 'budget', realAgentID]);
     if (budgetSeed.status !== 0) throw new Error(`budget seed failed: ${budgetSeed.stderr}`);
@@ -6442,7 +5715,7 @@ async function main() {
     await first.locator('#composer textarea').fill('Hello agent');
     await first.click('#composer button[type=submit]');
     await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent.includes('I heard: Hello agent'))).catch(async error => {
-      preserveFailure = true;
+      ctx.preserve();
       const diagnostics = await first.evaluate(async (room, agent) => {
         const read = async path => { const response = await fetch(path); return { status: response.status, body: await response.text() }; };
         return { connection: document.querySelector('#connection')?.getAttribute('aria-label'), room: location.hash,
@@ -6451,7 +5724,7 @@ async function main() {
           agentActivity: document.querySelector(`[data-agent-id="${agent}"] .agent-activity`)?.textContent,
           messages: await read(`/api/rooms/${room}/messages`), agents: await read(`/api/rooms/${room}/agents`) };
       }, roomID, realAgentID);
-      throw new Error(`fake agent echo timed out: ${error.message}; temp ${tmp}; diagnostics ${JSON.stringify(diagnostics)}; server ${logs.slice(-8000)}; supervisor ${supervisorLogs.slice(-8000)}`);
+      throw new Error(`fake agent echo timed out: ${error.message}; temp ${tmp}; diagnostics ${JSON.stringify(diagnostics)}; server ${ctx.logs().slice(-8000)}; supervisor ${supervisorLogs.slice(-8000)}`);
     });
     await first.waitForFunction(id => document.querySelector(`[data-agent-id="${id}"] .agent-activity`)?.textContent.startsWith('Replied '), {}, realAgentID);
     await second.waitForFunction(id => document.querySelector(`[data-agent-id="${id}"] .agent-activity`)?.textContent.startsWith('Replied '), {}, realAgentID);
@@ -7259,7 +6532,7 @@ async function main() {
     await first.keyboard.press('Enter');
     await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-item`)?.classList.contains('archived') && document.querySelector('#composer textarea').disabled, {}, archiveRoomID);
     assert.equal(archiveConfirmations.some(text => text.includes('Archive room |')), true, 'slash archive kept the confirmation');
-    await answerDialogs(first, text => (text.includes('New task room under') ? { accept: true, values: { title: 'Nested task' } } : text.includes('Go to message') ? { accept: true, values: { value: jumpSeq } } : text.includes('Base branch or ref') ? { accept: true, values: { value: '' } } : { accept: true, values: { title: 'Nested task', value: 'Nested task' } }));
+    await answerDialogs(first, text => (text.includes('New task room under') ? { accept: true, values: { title: 'Nested task' } } : text.includes('Go to message') ? { accept: true, values: { value: ctx.jumpSeq() } } : text.includes('Base branch or ref') ? { accept: true, values: { value: '' } } : { accept: true, values: { title: 'Nested task', value: 'Nested task' } }));
     assert.equal(await first.$eval(`[data-room-id="${archiveChildID}"] > .room-item`, el => el.classList.contains('archived')), true, 'cascade did not archive the child room');
     await first.waitForFunction(() => document.querySelector('#room-members')?.textContent.includes('Archived'));
     assert.deepEqual(await first.$eval('#room-members', el => { const status = el.querySelector('.room-header-status'), css = getComputedStyle(status); return [status.textContent, css.fontSize, css.margin, Math.round(el.getBoundingClientRect().height), /^\d+ members? · Archived$/.test(el.title)]; }), ['Archived', '9.1px', '0px', 22, true], 'the archived member chip stays compact');
@@ -9710,12 +8983,8 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       assert.equal(two.second.worktree, true, 'the second worker works in a worktree');
       assert.match(two.second.cwd, /\.aimebu\/worktrees\/room_[^/]+-[a-z]/, 'named after its room and the agent');
     }
-    console.log('UI smoke passed: login, rooms, chat, threads, reactions, stable DOM, Markdown/XSS, inbox recovery, mock controls, scope controls, usage limits, real fake-agent spawn/echo/control');
   } finally {
-    browserClosing = true;
-    await browser?.close();
-    for (const proc of [supervisor, child]) { if (proc && proc.exitCode === null && proc.signalCode === null) { proc.kill('SIGTERM'); await new Promise(resolve => proc.once('exit', resolve)); } }
-    if (!preserveFailure) fs.rmSync(tmp, { recursive: true, force: true });
+    await ctx.close();
   }
 }
 main().catch(error => { if (error?.stopEarly) return; console.error(error); process.exitCode = 1; });

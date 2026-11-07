@@ -62,33 +62,9 @@ func testCertificate(t *testing.T) (string, string) {
 	return certPath, keyPath
 }
 
-// freeTCPPorts picks n distinct free loopback ports. The listeners stay open until every port is picked: closing each one right away
-// lets the next pick get the same port back, and a test that needs two ports (HTTP and HTTPS) would be handed one twice.
-func freeTCPPorts(t *testing.T, n int) []int {
-	t.Helper()
-	listeners := make([]net.Listener, 0, n)
-	defer func() {
-		for _, listener := range listeners {
-			listener.Close()
-		}
-	}()
-	ports := make([]int, 0, n)
-	seen := map[int]bool{}
-	for range n {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		listeners = append(listeners, listener)
-		port := listener.Addr().(*net.TCPAddr).Port
-		if seen[port] {
-			t.Fatalf("port %d was picked twice while its listener was open", port)
-		}
-		seen[port] = true
-		ports = append(ports, port)
-	}
-	return ports
-}
+// freeTCPPorts holds n distinct loopback ports for the server under test (see holdFreePorts): all are open at once, so a test that needs two
+// (HTTP and HTTPS) is never handed one twice, and none is released before the server binds it.
+func freeTCPPorts(t *testing.T, n int) []int { return holdFreePorts(t, n) }
 
 // Several ports picked at once are distinct, however many.
 func TestFreeTCPPortsAreDistinct(t *testing.T) {

@@ -1,13 +1,12 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const net = require('node:net');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const { chromiumPath } = require('./chromium-path.cjs');
 let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
 
-const freePort = () => new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
+const { freePort, startServer } = require('./server-start.cjs');
 
 const OWNER = { login: 'owner', password: 'test-password-123' };
 
@@ -23,17 +22,13 @@ async function scratch({ owner = OWNER, env: extraEnv = {} } = {}) {
     const build = spawnSync('go', ['build', '-o', binary, './cmd/aimebu'], { stdio: 'inherit', env });
     if (build.status !== 0) throw new Error('go build failed');
   }
-  const port = await freePort(), origin = `http://127.0.0.1:${port}`;
-  const serverEnv = { ...env, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_SENTRY_DSN: 'off', ...extraEnv }; // error reports are off in every test server; a test can pass its own DSN, or null to leave it unset
-  for (const [name, value] of Object.entries(extraEnv)) if (value === null) delete serverEnv[name];
-  if (owner) { serverEnv.AIMEBU2_OWNER_LOGIN = owner.login; serverEnv.AIMEBU2_OWNER_PASSWORD = owner.password; }
-  const server = spawn(binary, ['server'], { env: serverEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-  let logs = ''; server.stderr.on('data', data => { logs += data; }); server.stdout.on('data', data => { logs += data; });
-  for (let i = 0; i < 300; i++) {
-    try { if ((await fetch(origin)).ok) break; } catch { /* not up yet */ }
-    await new Promise(resolve => setTimeout(resolve, 100));
-    if (i === 299) throw new Error(`server did not start: ${logs}`);
-  }
+  // A start whose port was taken between picking it and binding it is tried again on another (see server-start.cjs).
+  const { child: server, origin, logs: serverLogs } = await startServer(binary, port => {
+    const serverEnv = { ...env, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_SENTRY_DSN: 'off', ...extraEnv }; // error reports are off in every test server; a test can pass its own DSN, or null to leave it unset
+    for (const [name, value] of Object.entries(extraEnv)) if (value === null) delete serverEnv[name];
+    if (owner) { serverEnv.AIMEBU2_OWNER_LOGIN = owner.login; serverEnv.AIMEBU2_OWNER_PASSWORD = owner.password; }
+    return serverEnv;
+  });
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
   const open = async ({ width = 1280, height = 900, reduced = true, context } = {}) => {
@@ -81,7 +76,7 @@ async function scratch({ owner = OWNER, env: extraEnv = {} } = {}) {
     }
     fs.rmSync(tmp, { recursive: true, force: true });
   };
-  return { origin, tmp, browser, open, api, signIn, ownerClient, context, stop, errors, logs: () => logs, OWNER };
+  return { origin, tmp, browser, open, api, signIn, ownerClient, context, stop, errors, logs: serverLogs, OWNER };
 }
 
 module.exports = { scratch, OWNER, freePort };

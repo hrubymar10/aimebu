@@ -53,7 +53,7 @@ func resolveServerTLSConfig(httpPort int) (*serverTLSConfig, error) {
 }
 
 func listenTLS(bind string, config *serverTLSConfig) (net.Listener, error) {
-	listener, err := net.Listen("tcp", net.JoinHostPort(bind, strconv.Itoa(config.port)))
+	listener, err := listenTCP(net.JoinHostPort(bind, strconv.Itoa(config.port)))
 	if err != nil {
 		return nil, err
 	}

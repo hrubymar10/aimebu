@@ -16,11 +16,11 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const net = require('node:net');
 const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('node:child_process');
 
 const { Client } = require('./variant-gate.cjs');
+const { startServer } = require('./server-start.cjs');
 const root = path.resolve(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vg-selftest-'));
 const home = path.join(tmp, 'home');
@@ -73,20 +73,15 @@ process.stdin.on('end', async () => {
 `;
 for (const tool of ['claude', 'codex', 'pi', 'opencode']) fs.writeFileSync(path.join(bin, tool), fakeSource, { mode: 0o755 });
 
-function freePort() { return new Promise((resolve, reject) => { const s = net.createServer(); s.once('error', reject); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); }); }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function main() {
   const aimebu = path.join(tmp, 'aimebu');
   const build = spawnSync('go', ['build', '-o', aimebu, './cmd/aimebu'], { cwd: root, stdio: 'inherit' });
   if (build.status !== 0) throw new Error('go build failed');
-  const port = await freePort(); const origin = `http://127.0.0.1:${port}`;
-  const env = { ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU2_CONFIG_DIR: path.join(tmp, 'config'),
-    PATH: `${bin}${path.delimiter}${process.env.PATH}`, AIMEBU2_ALLOW_NATIVE: '1', AIMEBU2_USAGES: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'selftest-password-123' };
-  const server = spawn(aimebu, ['server'], { env, cwd: tmp, stdio: ['ignore', 'pipe', 'pipe'] });
-  let logs = ''; server.stderr.on('data', d => logs += d); server.stdout.on('data', d => logs += d);
+  const { child: server, origin, logs: serverLogs } = await startServer(aimebu, port => ({ ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU2_CONFIG_DIR: path.join(tmp, 'config'),
+    PATH: `${bin}${path.delimiter}${process.env.PATH}`, AIMEBU2_ALLOW_NATIVE: '1', AIMEBU2_USAGES: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'selftest-password-123' }), { label: 'variant-gate server', cwd: tmp });
   try {
-    for (let i = 0; i < 300; i++) { try { if ((await fetch(origin)).ok) break; } catch { /* starting */ } await sleep(100); if (i === 299) throw new Error(`server did not start:\n${logs}`); }
     // Nothing is seeded: add the four native harnesses the fakes stand in for, each with its cheap model, as an owner would.
     const api = new Client(origin);
     await api.login('owner', 'selftest-password-123');
@@ -140,7 +135,7 @@ async function main() {
     assert.notEqual(spent.status, 201, 'an invitation works once');
     console.log('variant-gate selftest passed');
   } catch (error) {
-    console.error(`--- server log tail ---\n${logs.slice(-4000)}`);
+    console.error(`--- server log tail ---\n${serverLogs().slice(-4000)}`);
     throw error;
   } finally {
     server.kill('SIGTERM');

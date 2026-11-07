@@ -15,7 +15,10 @@ stops working, fix this file in the same commit as the change that broke it.
   image (see "The web tests in Docker" below), so a machine needs no node of its own for them.
   `WEB_TEST_RUNNER=local` runs them with a local **Node.js** instead (a current release; the tests are
   plain `node` scripts with no `npm install` step and no `package.json`, verified on Node 24). The
-  browser scripts (`make test-ui`, the audits) always use the local node.
+  browser scripts (`make test-ui`, the audits) always use the local node. Nothing the `Makefile` reads when it
+  starts may need node (not even to count CPUs, which is `getconf`, then `sysctl`, then 1): a machine without
+  node must be able to run `make test-full`, and `scripts/gotestprogress/makefile_test.go` checks that with a
+  PATH that has no node.
 - **Chromium and `puppeteer-core`**, for `make test-ui`, the audit scripts,
   and icon builds. Install `puppeteer-core` globally
   (`npm install -g puppeteer-core`);
@@ -100,6 +103,11 @@ described below, not by this limit.
 Every test owns its ports (an ephemeral one, asked for when it starts) and its temporary directories (`testenv`
 for Go, `mkdtemp` for the scripts), so two runs, or the parts of one run, can share a machine without sharing a
 path. That is what the parallel runs rely on, so a new test must keep it: no fixed port, no fixed path.
+A port is never picked by listening on `:0`, closing and passing the number on: another run can take it in between.
+In Go, a test that starts the in-process server asks for `holdPort(t)` (`cmd/aimebu/heldports_test.go`): it keeps the
+listener open and hands that very socket to the server. A script that starts a server process uses `startServer`
+(`scripts/server-start.cjs`), which starts it again on a new port if the port was taken. The detached server of
+`daemonFixture` and the port a test wants to be closed (`doctor_test.go`'s `downPort`) still have a gap of microseconds.
 
 - **`make test-ui`** runs the lines of `scripts/ui-tests.list` through `scripts/run-jobs.cjs`, `UI_JOBS` of them at
   once (default: a quarter of the CPUs, at most 4; `UI_JOBS=1` is the old one-after-the-other run). Each job has a

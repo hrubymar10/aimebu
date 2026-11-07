@@ -6,14 +6,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const { chromiumPath } = require('./chromium-path.cjs');
+const { startServer } = require('./server-start.cjs');
 let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
 
 const shots = process.env.SHOTS_DIR || '';
-const freePort = () => new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
 
 async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aimebu-harnesses-'));
@@ -26,9 +25,8 @@ async function main() {
     const build = spawnSync('go', ['build', '-o', binary, './cmd/aimebu'], { stdio: 'inherit', env: { ...env, HOME: process.env.HOME } });
     if (build.status !== 0) throw new Error('go build failed');
   }
-  const port = await freePort(), origin = `http://127.0.0.1:${port}`;
-  const server = spawn(binary, ['server'], { env: { ...env, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let logs = ''; server.stderr.on('data', data => { logs += data; });
+  // A start whose port was taken between picking it and binding it is tried again on another (see server-start.cjs).
+  const { child: server, origin, logs: serverLogs } = await startServer(binary, port => ({ ...env, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }), { label: 'harness server' });
   let supervisor, browser, page;
   const roleSaves = [], pageErrors = [];
   const cleanup = async () => {
@@ -38,7 +36,6 @@ async function main() {
     fs.rmSync(tmp, { recursive: true, force: true });
   };
   try {
-    for (let i = 0; i < 300; i++) { try { if ((await fetch(origin)).ok) break; } catch { /* not up yet */ } await new Promise(resolve => setTimeout(resolve, 100)); if (i === 299) throw new Error(`server did not start: ${logs}`); }
     supervisor = spawn(binary, ['supervisor'], { env: { ...env, AIMEBU2_URL: origin }, stdio: ['ignore', 'ignore', 'ignore'] });
     browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
     page = await browser.newPage(); page.setDefaultTimeout(60000);
@@ -301,7 +298,7 @@ async function main() {
   } catch (error) {
     if (shots) { try { fs.mkdirSync(shots, { recursive: true }); await page?.screenshot({ path: path.join(shots, 'failure.png') }); } catch { /* best effort */ } }
     console.error(`role saves: ${JSON.stringify(roleSaves)}`);
-    console.error(`server log tail:\n${logs.slice(-600)}`);
+    console.error(`server log tail:\n${serverLogs().slice(-600)}`);
     throw error;
   } finally { await cleanup(); }
 }
