@@ -109,7 +109,7 @@ function Row({ view, store, ctx, preview }) {
     ${(affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`}
     ${quiet && html`<span class="room-muted" role="img" title=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'} aria-label=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'}><span class="icon-mask icon-mask-bell-disabled" aria-hidden="true"></span></span>`}
     ${room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
-    <span class="room-item-count" title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>
+    <span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>
     ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`}
     ${view.unread > 0 && html`<span class="room-item-unread" role="img" aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
     </div>${preview && html`<div class="room-item-preview">${previewText(room.last_message_body) || 'No messages yet'}</div>`}</div>

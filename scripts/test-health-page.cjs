@@ -32,7 +32,7 @@ const agents = [
   { id: 'a2', name: 'rex', room_ids: ['r2'], flags: [{ code: 'out_of_quota', reset_at: reset }] },
   { id: 'a3', name: 'fine', room_ids: ['r1'], flags: [] },
 ];
-const guard = (soft = 'soft') => ({ profiles: {}, tools: {
+const guard = (soft = 'soft', display) => ({ ...(display ? { percent_display: display } : {}), profiles: {}, tools: {
   claude: { config: {}, held: soft === 'soft', result: { state: soft, profile: 'local', percent: 96, window: 'weekly', soft: 95, hard: 99 } },
   codex: { config: {}, held: false, result: { state: 'ok', profile: 'main', percent: 40, window: 'session', soft: 98, hard: 99 } } } });
 const disk = (patch = {}) => ({ total_bytes: 4096, free_bytes: 5 * 1024 ** 3, volume_bytes: 100 * 1024 ** 3, low_disk: false, warnings: [], projects: [{ project_id: 'p1', name: 'Alpha', bytes: 3000, attachments: 1000, worktrees: 2000 }],
@@ -95,11 +95,21 @@ async function main() {
       await page.evaluate(() => window.__refreshed);
       assert.deepEqual(await badge(page), ['0', true, 'All agents healthy', 'Health', false, 'false', 'dialog']);
       assert.deepEqual(await page.evaluate(() => { const p = document.querySelector('#health-popover'); return [p.getAttribute('role'), p.getAttribute('aria-label'), p.hidden, [...p.querySelectorAll('.health-limit')].map(n => n.dataset.tool + ':' + n.dataset.state)]; }), ['dialog', 'Health', true, ['claude:ok', 'codex:ok']]);
-      assert.equal(await page.$eval('#health-popover p:last-child', el => el.textContent), 'All agents healthy');
+      assert.equal(await page.$eval('#health-popover > p:last-child', el => el.textContent), 'All agents healthy');
       await open(page);
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#health-toggle').getAttribute('aria-expanded'), document.activeElement.id]), ['true', 'health-popover']);
       await page.keyboard.press('Escape');
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#health-popover').hidden, document.querySelector('#health-toggle').getAttribute('aria-expanded'), document.activeElement.id]), [true, 'false', 'health-toggle']);
+      await page.close();
+    }
+    // The owner's percent-left setting is honoured: the sentence, the bar and its marks all say what is left.
+    {
+      const page = await mount({ auto: answerAll({ 'GET /api/limit-guard': guard('soft', 'left') }) });
+      await page.$eval('#health-toggle', button => button.click());
+      await page.waitForSelector('#health-popover .health-limit');
+      assert.deepEqual(await page.$$eval('#health-popover .health-limit', nodes => nodes.map(node => [node.querySelector('.health-limit-text').textContent, node.querySelector('.health-limit-fill').style.width, [...node.querySelectorAll('.health-limit-tick')].map(t => t.style.left)])),
+        [['Claude (local) has 4% left of its weekly window: new turns are held, running ones finish.', '4%', ['5%', '1%']], ['Codex (main) has 60% left of its session window.', '60%', ['2%', '1%']]]);
+      assert.ok((await page.$eval('.health-limit-legend', el => el.textContent)).includes('two marks'), 'the marks are explained');
       await page.close();
     }
     // Problems: one entry per flag in plain words, the sidebar told which agents are affected, the badge counting agents plus held tools.

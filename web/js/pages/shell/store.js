@@ -17,7 +17,7 @@ export class ShellStore {
   visible(section) { return tabHidden(section, this.rights()) ? 'general' : section; }
   // Rights that take the selected section's tab away put the selection back on General.
   settle() { if (tabHidden(this.section.value, this.rights())) this.section.value = 'general'; }
-  setRights({ owner, admin }) { batch(() => { this.owner.value = owner; this.admin.value = admin; this.usagesHidden.value = !owner; this.settle(); }); }
+  setRights({ owner, admin }) { batch(() => { this.owner.value = owner; this.admin.value = admin; this.usagesHidden.value = !(owner || admin); this.settle(); }); }
   setUser() { this.usagesHidden.value = false; }
   hideUsages() { batch(() => { this.usagesHidden.value = true; this.settle(); }); }
   select(section) { batch(() => { this.section.value = this.visible(section); this.view.value = 'section'; }); }

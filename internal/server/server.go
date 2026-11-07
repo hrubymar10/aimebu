@@ -507,8 +507,15 @@ func (s *Server) maintenanceMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// usages answers GET /api/usages: the owner reads the whole snapshot, an admin reads the limits without anything that names an account or how it signs in
+// (usages.Response.ForAdmin). Every write stays the owner's.
 func (s *Server) usages(w http.ResponseWriter, r *http.Request) {
-	if !s.ownerMachine(w, r) {
+	if !s.adminMachine(w, r) {
+		return
+	}
+	owner, err := s.Store.IsGlobalOwner(r.Context(), userID(r))
+	if err != nil {
+		fail(w, err)
 		return
 	}
 	if s.Usages == nil {
@@ -521,6 +528,9 @@ func (s *Server) usages(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
+	}
+	if !owner {
+		response = response.ForAdmin()
 	}
 	writeJSON(w, 200, response)
 }

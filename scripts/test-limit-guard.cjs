@@ -20,6 +20,12 @@ assert.equal(guardSentence('Claude', view('off', null)), 'The limit guard is off
 assert.equal(guardSentence('Claude', view('unknown', null)), 'Claude: no clear usage reading yet, nothing is held.');
 assert.equal(guardSentence('Claude', undefined), 'Claude: no clear usage reading yet, nothing is held.');
 
+// With percent left the sentence says what is left, in the words of the Usages cards.
+assert.equal(guardSentence('Claude', view('ok', 38), 'left'), 'Claude (main) has 62% left of its weekly window.');
+assert.equal(guardSentence('Claude', view('soft', 91), 'left'), 'Claude (main) has 9% left of its weekly window: new turns are held, running ones finish.');
+assert.equal(guardSentence('Claude', view('ok', 38), 'used'), 'Claude (main) is at 38% of its weekly window.');
+assert.equal(guardHealthRow('claude', 'Claude', view('ok', 38), 'left').display, 'left');
+
 // The Health list only shows a tool with a clear reading.
 assert.equal(guardHealthRow('claude', 'Claude', view('off', null)), null);
 assert.equal(guardHealthRow('claude', 'Claude', view('unknown', null)), null);

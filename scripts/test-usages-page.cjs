@@ -58,6 +58,7 @@ async function main() {
       const quotaSource = !holdQuota ? absent : { load: () => { window.__reads.quota++; return new Promise(resolve => { window.__quotaRelease = () => resolve({ tools: {} }); }); } };
       const guardSource = { load: async () => { window.__reads.guard++; return absent.load(); } };
       window.__usages = new UsagesSettings({ source, quotaSource, guardSource, dialog, section });
+      window.__usages.setOwner(owner); // the owner has the switcher and its blocks; an admin reads the limits alone
       if (load) await window.__usages.load();
     }, held, owner, load, holdQuota);
     return page;
@@ -73,12 +74,12 @@ async function main() {
       const page = await mount();
       assert.deepEqual(await page.evaluate(() => ({
         controls: [...document.querySelector('#usages-switcher').children].map(node => node.className || node.tagName.toLowerCase()),
-        toggle: document.querySelector('#usages-switcher > button').textContent,
+        toggle: document.querySelector('#usage-switcher-disable').textContent,
         providers: [...document.querySelectorAll('#usages-list .usage-provider')].map(card => [card.dataset.provider, card.querySelector('.usage-provider-name').textContent, card.querySelector('.usage-provider-status').textContent, card.querySelectorAll('.usage-profile').length]),
         affected: document.querySelector('#usages-list .usage-provider .usage-affected').textContent,
         settings: ['#usage-refresh-interval', '#usage-percent-display', '#usage-alert-warning', '#usage-alert-critical'].map(selector => document.querySelector(selector).value),
         synced: window.__synced })),
-      { controls: ['btn', 'usage-config-controls'], toggle: 'Disable account switcher', providers: [['codex', 'Codex', 'Enabled', 2], ['claude-code', 'Claude Code', 'Enabled', 1], ['github-copilot', 'GitHub Copilot', 'Not configured', 1], ['mistral', 'Mistral', 'Not configured', 1], ['ollama-cloud', 'Ollama Cloud', 'Not configured', 1]],
+      { controls: ['usage-config-controls', 'settings-actions usage-switcher-danger'], toggle: 'Disable account switcher', providers: [['codex', 'Codex', 'Enabled', 2], ['claude-code', 'Claude Code', 'Enabled', 1], ['github-copilot', 'GitHub Copilot', 'Not configured', 1], ['mistral', 'Mistral', 'Not configured', 1], ['ollama-cloud', 'Ollama Cloud', 'Not configured', 1]],
         affected: 'Switch affects: milo@mock', settings: ['120', 'left', '20', '10'], synced: 2 });
       assert.deepEqual(await page.evaluate(() => {
         const card = document.querySelector('#usages-list [data-provider=codex] .usage-profile');
@@ -86,13 +87,22 @@ async function main() {
         return { name: card.querySelector('.usage-profile-name').textContent, active: card.querySelector('.usage-profile-active').hidden, windows: card.querySelectorAll('.usage-window').length, label: window.querySelector('.usage-track').getAttribute('aria-label'), now: window.querySelector('.usage-track').getAttribute('aria-valuenow'),
           marker: !!window.querySelector('.usage-pace-marker'), spark: !!window.querySelector('svg.usage-spark polyline'), pace: window.querySelector('.usages-pace-text').textContent, credits: card.querySelector('.usage-profile-credits').textContent, switchHidden: card.querySelector('.usage-switch').hidden };
       }), { name: 'main', active: false, windows: 3, label: 'Session left', now: '58', marker: true, spark: true, pace: '13% in reserve·Lasts until reset', credits: 'Credits: 12.50', switchHidden: true });
+      assert.ok(/expected pace/.test(await page.$eval('#usages-list .usages-legend', el => el.textContent)) && /In reserve/.test(await page.$eval('#usages-list .usages-legend', el => el.textContent)), 'the marks on a card are explained');
       await page.close();
     }
-    // Someone who is not the switcher's owner sees the cards and no controls.
+    // An admin who is not the owner reads the limits: the cards, with no controls and no switcher, the quota and limit-guard blocks gone, and a line that says
+    // only the owner changes Usages. The switcher is never asked for (it is the owner's, and a 403 would be shown as an error).
     {
       const page = await mount({ owner: false });
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#usages-switcher').children.length, document.querySelectorAll('#usages-list .usage-provider-actions button').length, document.querySelectorAll('#usages-list .usage-rename:not([hidden])').length, document.querySelectorAll('#usages-list .usage-switch:not([hidden])').length]), [0, 0, 0, 0]);
+      assert.deepEqual(await page.evaluate(() => ({
+        note: document.querySelector('#usages-readonly')?.textContent, switcherBox: document.querySelector('#usages-switcher'), quota: !!document.querySelector('.quota-settings'), guard: !!document.querySelector('.limit-guard-settings'),
+        cards: document.querySelectorAll('#usages-list .usage-provider').length > 0, actions: document.querySelectorAll('#usages-list .usage-provider-actions button').length, rename: document.querySelectorAll('#usages-list .usage-rename:not([hidden])').length,
+        remove: document.querySelectorAll('#usages-list .usage-remove:not([hidden])').length, switchButtons: document.querySelectorAll('#usages-list .usage-switch:not([hidden])').length, asked: window.__calls.filter(call => call[0] === 'switcher').length, error: document.querySelector('#usages-error').textContent })),
+        { note: 'Only the owner can change Usages. You can see the limits here.', switcherBox: null, quota: false, guard: false, cards: true, actions: 0, rename: 0, remove: 0, switchButtons: 0, asked: 0, error: '' });
       await page.close();
+      const owner = await mount();
+      assert.deepEqual(await owner.evaluate(() => [!!document.querySelector('#usages-readonly'), !!document.querySelector('#usages-switcher')]), [false, true], 'the owner has no read-only note, and has the switcher');
+      await owner.close();
     }
     // Switching asks first and names who is affected; the switch, then a read, follows. A failure says why.
     {
@@ -118,7 +128,7 @@ async function main() {
       await page.waitForFunction(() => window.__calls.some(call => call[0] === 'rename'));
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'rename')), ['rename', 'claude', 'local', 'renamed']);
       await page.evaluate(() => { window.__source.enable = async () => { throw new Error('Cannot switch now'); }; });
-      await click(page, '#usages-switcher > button');
+      await click(page, '#usage-switcher-disable'); await dialog(page); await click(page, '#app-dialog .app-dialog-ok');
       await page.waitForFunction(() => document.querySelector('#usages-error').textContent === 'Cannot switch now');
       await page.close();
     }
@@ -271,11 +281,71 @@ async function main() {
       await page.evaluate(async () => { window.__source.preferences.token_auto_refresh = true; await window.__usages.load(); });
       assert.deepEqual(await page.evaluate(() => { const box = document.querySelector('.usage-credential-alerts'); return [box.getAttribute('role'), [...box.children].map(p => [p.className, p.textContent])]; }),
         ['alert', [['usage-credential-alert usage-credential-alert-expiring', 'claude live: the access token expires in 4 min.']]]);
+      // Refresher conflicts of several tools are one alert in plain words with the paths folded under Details, in a red box.
+      await page.evaluate(async () => {
+        const list = window.__source.list.bind(window.__source);
+        window.__source.list = async () => { const out = await list(); out.credential_alerts = [...(out.credential_alerts || []),
+          { kind: 'refresher_conflict', message: 'claude: another token refresher may own the same live credentials: /h/.aimebu/switcher; this tool will not refresh' },
+          { kind: 'refresher_conflict', message: 'codex: another token refresher may own the same live credentials: /h/.aimebu/switcher; this tool will not refresh' }]; return out; };
+        await window.__usages.load();
+      });
+      assert.deepEqual(await page.evaluate(() => { const box = document.querySelector('.usage-credential-alerts'), conflict = box.querySelector('.usage-credential-alert-refresher_conflict');
+        return { alerts: box.children.length, text: conflict.querySelector(':scope > p').textContent.slice(0, 60), details: conflict.querySelector('details > summary').textContent, lines: conflict.querySelectorAll('details p').length, pathInSentence: /\/h\/\.aimebu/.test(conflict.querySelector(':scope > p').textContent),
+          red: getComputedStyle(box).borderTopColor !== getComputedStyle(document.body).borderTopColor && getComputedStyle(conflict).color }; }),
+        { alerts: 2, text: 'Token refresh is paused for claude, codex: another aimebu (v', details: 'Details', lines: 2, pathInSentence: false, red: await page.evaluate(() => getComputedStyle(document.querySelector('.usage-credential-alert')).color) });
       await page.close();
       const other = await mount({ owner: false });
       await other.evaluate(async () => { window.__source.preferences.token_auto_refresh = true; await window.__usages.load(); });
       assert.equal(await other.evaluate(() => document.querySelectorAll('.usage-credential-alerts').length), 0);
       await other.close();
+    }
+    // The owner signs out and an admin signs in on the same tab: nothing of the owner's snapshot (e-mails, alerts, profiles, the switcher and its blocks) is left in the page,
+    // even when the admin's own read fails with something other than a 403.
+    {
+      const page = await mount();
+      await page.evaluate(async () => { window.__source.preferences.token_auto_refresh = true; await window.__usages.load(); });
+      assert.equal(await page.evaluate(() => document.querySelector('#usages-page, .usages-page').textContent.includes('main@example.test')), true, 'the owner sees the e-mail of a login');
+      await page.evaluate(() => { window.__source.list = async () => { throw new Error('boom'); }; window.__usages.setOwner(false); window.__usages.forget(); });
+      await settle(page);
+      assert.deepEqual(await page.evaluate(() => { const text = document.querySelector('.usages-page').textContent; return { email: text.includes('main@example.test'), alerts: document.querySelectorAll('.usage-credential-alert').length, cards: document.querySelectorAll('#usages-list .usage-provider').length, switcher: !!document.querySelector('#usages-switcher'), plans: /Pro\b/.test(text) }; }),
+        { email: false, alerts: 0, cards: 0, switcher: false, plans: false });
+      await page.close();
+    }
+    // Data older than twice the refresh interval is drawn grey and says how old it is, with a Refresh for the owner (an admin has none); fresh data does neither.
+    {
+      for (const owner of [true, false]) {
+        const page = await mount({ owner });
+        await page.evaluate(async () => {
+          const list = window.__source.list.bind(window.__source);
+          window.__source.list = async () => { const out = await list(); out.providers[0].profiles[0].last_refresh_at = new Date(Date.now() - 2 * 86400000).toISOString(); return out; };
+          await window.__usages.load();
+        });
+        const view = await page.evaluate(() => ({ stale: document.querySelectorAll('.usage-profile.is-stale').length, fresh: document.querySelectorAll('.usage-profile:not(.is-stale)').length > 0, text: document.querySelector('.usage-profile-stale')?.textContent.replace(/\s+/g, ' ').trim(),
+          refresh: !!document.querySelector('.usage-profile-stale .usage-refresh'), color: getComputedStyle(document.querySelector('.usage-profile.is-stale .usage-fill')).backgroundColor }));
+        assert.deepEqual([view.stale, view.fresh, view.text, view.refresh], [1, true, owner ? 'Stale, last update 2d ago Refresh' : 'Stale, last update 2d ago', owner], `${owner ? 'owner' : 'admin'}: ${JSON.stringify(view)}`);
+        if (owner) {
+          const before = await calls(page, 'refresh');
+          await click(page, '.usage-profile-stale .usage-refresh'); await settle(page);
+          assert.equal(await calls(page, 'refresh'), before + 1, 'the stale card refreshes its provider');
+        }
+        await page.close();
+      }
+    }
+    // Disabling the account switcher is a danger button at the bottom of the page behind a confirm, and Enable is the one primary button at the top of a disabled one.
+    {
+      const page = await mount();
+      assert.deepEqual(await page.evaluate(() => ({ last: document.querySelector('#usages-switcher').lastElementChild.className, danger: document.querySelector('#usage-switcher-disable').classList.contains('btn-danger'),
+        primaries: [...document.querySelectorAll('#usages-switcher .btn-primary')].map(node => node.textContent) })), { last: 'settings-actions usage-switcher-danger', danger: true, primaries: ['Save usage settings'] });
+      await click(page, '#usage-switcher-disable');
+      await dialog(page);
+      await click(page, '#app-dialog .app-dialog-cancel'); await settle(page);
+      assert.equal(await calls(page, 'enable'), 0, 'declining the confirm disables nothing');
+      await click(page, '#usage-switcher-disable');
+      await dialog(page);
+      await click(page, '#app-dialog .app-dialog-ok'); await settle(page);
+      assert.equal(await calls(page, 'enable'), 1, 'confirming disables it');
+      assert.deepEqual(await page.evaluate(() => ({ enable: document.querySelector('#usage-switcher-enable')?.classList.contains('btn-primary'), disable: !!document.querySelector('#usage-switcher-disable') })), { enable: true, disable: false });
+      await page.close();
     }
     // Mistral and Ollama credentials: what is typed is sent, and clearing appears once something is stored.
     {

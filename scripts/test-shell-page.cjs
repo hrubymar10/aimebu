@@ -63,7 +63,7 @@ async function main() {
       assert.equal(await page.evaluate(() => window.__closed), 1);
       await page.close();
     }
-    // What the account may see: the owner everything, an admin the instance tabs but not Usages, anyone else neither.
+    // What the account may see: the owner everything, an admin the instance tabs and Usages (read-only), anyone else neither.
     {
       const page = await mount();
       await page.evaluate(() => { window.__shell.store.setUser('usr'); window.__shell.store.setRights({ owner: true, admin: false }); });
@@ -71,7 +71,7 @@ async function main() {
       assert.deepEqual((await nav(page)).filter(item => item.endsWith('!')), []);
       await page.evaluate(() => window.__shell.store.setRights({ owner: false, admin: true }));
       await settle(page);
-      assert.deepEqual((await nav(page)).filter(item => item.endsWith('!')), ['settings-usages-tab!']);
+      assert.deepEqual((await nav(page)).filter(item => item.endsWith('!')), [], 'an admin has Usages too');
       await page.evaluate(() => window.__shell.store.setRights({ owner: false, admin: false }));
       await settle(page);
       assert.deepEqual((await nav(page)).filter(item => item.endsWith('!')), ['settings-usages-tab!', 'settings-roles-tab!', 'settings-prompts-tab!', 'settings-macros-tab!', 'settings-agents-title!', 'settings-machines-tab!', 'settings-harnesses-tab!']);
@@ -116,8 +116,11 @@ async function main() {
         shown: [...document.querySelectorAll('#settings-dialog .settings-body > section')].filter(node => !node.hidden).map(node => node.id) }));
       await page.evaluate(() => { window.__shell.store.setRights({ owner: false, admin: true }); window.__shell.store.select('usages'); });
       await settle(page);
-      assert.deepEqual(await state(), { section: 'general', dataset: 'general', title: 'General', shown: ['settings-general'] }, 'an admin who is not the owner asks for Usages and gets General');
-      await page.evaluate(() => { window.__shell.store.select('roles'); });
+      assert.equal((await state()).section, 'usages', 'an admin who is not the owner has Usages (read-only)');
+      await page.evaluate(() => { window.__shell.store.setRights({ owner: false, admin: false }); window.__shell.store.select('usages'); });
+      await settle(page);
+      assert.deepEqual(await state(), { section: 'general', dataset: 'general', title: 'General', shown: ['settings-general'] }, 'someone who is neither asks for Usages and gets General');
+      await page.evaluate(() => { window.__shell.store.setRights({ owner: false, admin: true }); window.__shell.store.select('roles'); });
       await settle(page);
       assert.equal((await state()).section, 'roles', 'a section the admin may have is kept');
       await page.evaluate(() => window.__shell.store.setRights({ owner: false, admin: false }));

@@ -32,6 +32,10 @@ func TestLimitGuardRoutesAre503UntilRunningOwnerOnlyAndValidate(t *testing.T) {
 	if code != 200 || !strings.Contains(raw, `"soft":95`) || !strings.Contains(raw, `"soft":98`) || !strings.Contains(raw, `"hard":99`) || !strings.Contains(raw, `"saved":false`) {
 		t.Fatalf("overview: %d %s", code, raw)
 	}
+	// The overview carries the owner's percent-left or percent-used choice, so Health and Settings say where a tool stands the way Usages does.
+	if !strings.Contains(raw, `"percent_display":"left"`) {
+		t.Fatalf("overview has no percent_display: %s", raw)
+	}
 	anon, err := http.Get(f.http.URL + "/api/limit-guard")
 	if err != nil {
 		t.Fatal(err)

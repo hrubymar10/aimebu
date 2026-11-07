@@ -1459,7 +1459,7 @@ async function main() {
     assert.ok(hcNavContrast.ratio >= 7, `selected HC settings tab contrast ${JSON.stringify(hcNavContrast)}`);
     const settingsSize = await first.$eval('#settings-dialog .settings-pane', el => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, nav: el.querySelector('nav').getBoundingClientRect().width }));
     assert.equal(Math.round(settingsSize.width), 760);
-    assert.equal(Math.round(settingsSize.height), 720);
+    assert.equal(Math.round(settingsSize.height), 720 - 53, 'the pane runs from the bottom of the top bar to the bottom of the window');
     assert.equal(Math.round(settingsSize.nav), 180);
     for (const section of ['general', 'usages', 'notifications', 'roles', 'machines']) {
       await first.click(`#settings-${section}-tab`);
@@ -3261,7 +3261,7 @@ async function main() {
       // The group button shows each provider's active profile first, then a divider and the other profiles.
       await domClick(settingsPage, '#usages-popover .usages-popover-group');
       assert.equal(await settingsPage.$eval('#usages-popover .usages-popover-group', el => el.getAttribute('aria-pressed')), 'true');
-      assert.deepEqual(await settingsPage.$$eval('#usages-popover .usages-sidebar-list > *', nodes => nodes.map(node => node.classList.contains('usages-group-divider') ? '—' : `${node.dataset.provider}:${[...node.querySelectorAll('.usages-popover-profile-name')].map(name => name.textContent).join(',')}`)), ['codex:backup', 'claude-code:local', '—', 'codex:main'], 'active profiles first (backup is active after the switch), then a divider and the rest');
+      assert.deepEqual(await settingsPage.$$eval('#usages-popover .usages-sidebar-list > :not(.usages-legend)', nodes => nodes.map(node => node.classList.contains('usages-group-divider') ? '—' : `${node.dataset.provider}:${[...node.querySelectorAll('.usages-popover-profile-name')].map(name => name.textContent).join(',')}`)), ['codex:backup', 'claude-code:local', '—', 'codex:main'], 'active profiles first (backup is active after the switch), then a divider and the rest');
       await settingsPage.click('#usages-popover .usages-popover-group');
       assert.equal(await settingsPage.$eval('#usages-popover .usages-popover-group', el => el.getAttribute('aria-pressed')), 'false');
     }
@@ -7463,7 +7463,7 @@ async function main() {
       assert.deepEqual([ownerRow.badge, ownerRow.toggle, ownerRow.buttons.includes('Deactivate')], ['Owner', null, false], `the owner's row: ${JSON.stringify(ownerRow)}`);
       assert.deepEqual([inviteeRow.badge, inviteeRow.toggle], ['', false], `the invitee's row: ${JSON.stringify(inviteeRow)}`);
       await first.evaluate(() => [...document.querySelectorAll('#settings-users .user-accounts .user-row')].find(row => row.querySelector('strong').textContent === 'invitee').querySelector('.user-admin-toggle input').click());
-      await first.waitForFunction(() => [...document.querySelectorAll('#settings-users .user-accounts .user-row')].some(row => row.querySelector('strong').textContent === 'invitee' && row.querySelector('.user-badge')?.textContent === 'Admin'));
+      await first.waitForFunction(() => [...document.querySelectorAll('#settings-users .user-accounts .user-row')].some(row => row.querySelector('strong').textContent === 'invitee' && row.querySelector('.user-admin-toggle input')?.checked === true && !row.querySelector('.user-badge')));
       assert.deepEqual(await flagOf(invitedPage), [false, true], 'the flagged account is now an admin');
       // The admin sees the accounts, may act on ordinary ones, and is offered nothing to do to the owner or to the toggle.
       await invitedPage.evaluate(() => document.querySelector('#settings-toggle').click());

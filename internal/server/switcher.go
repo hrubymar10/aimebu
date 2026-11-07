@@ -72,7 +72,7 @@ func (s *Server) switcherStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) switcherEnabled(w http.ResponseWriter, r *http.Request) {
-	if !s.switcherReady(w) || !s.ownerMachine(w, r) {
+	if !s.ownerMachine(w, r) || !s.switcherReady(w) {
 		return
 	}
 	var req struct {
@@ -89,7 +89,7 @@ func (s *Server) switcherEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) switcherProfile(w http.ResponseWriter, r *http.Request) {
-	if !s.switcherReady(w) || !s.ownerMachine(w, r) {
+	if !s.ownerMachine(w, r) || !s.switcherReady(w) {
 		return
 	}
 	var req struct {
@@ -106,7 +106,7 @@ func (s *Server) switcherProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) switcherImport(w http.ResponseWriter, r *http.Request) {
-	if !s.switcherReady(w) || !s.ownerMachine(w, r) {
+	if !s.ownerMachine(w, r) || !s.switcherReady(w) {
 		return
 	}
 	var req struct {
@@ -124,7 +124,7 @@ func (s *Server) switcherImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
-	if !s.switcherReady(w) || !s.ownerMachine(w, r) {
+	if !s.ownerMachine(w, r) || !s.switcherReady(w) {
 		return
 	}
 	var req struct {
@@ -163,7 +163,7 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) switcherRemove(w http.ResponseWriter, r *http.Request) {
-	if !s.switcherReady(w) || !s.ownerMachine(w, r) {
+	if !s.ownerMachine(w, r) || !s.switcherReady(w) {
 		return
 	}
 	tool, name := r.PathValue("tool"), r.PathValue("name")
@@ -190,7 +190,7 @@ func (s *Server) switcherRemove(w http.ResponseWriter, r *http.Request) {
 // switcherRename renames a profile in place. The live credential file is not
 // touched, so running harnesses are unaffected and no quiescence check applies.
 func (s *Server) switcherRename(w http.ResponseWriter, r *http.Request) {
-	if !s.switcherReady(w) || !s.ownerMachine(w, r) {
+	if !s.ownerMachine(w, r) || !s.switcherReady(w) {
 		return
 	}
 	var req struct {

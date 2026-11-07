@@ -4,11 +4,12 @@ import { DiskSection } from './disk.js';
 import { healthExplanation, healthSentence } from './model.js';
 
 export function LimitRows({ guard }) {
-  const rows = GUARD_TOOLS.map(([tool, label]) => guard?.tools?.[tool] && guardHealthRow(tool, label, guard.tools[tool])).filter(Boolean);
+  const rows = GUARD_TOOLS.map(([tool, label]) => guard?.tools?.[tool] && guardHealthRow(tool, label, guard.tools[tool], guard.percent_display)).filter(Boolean);
   if (!rows.length) return null;
-  const clamp = value => Math.max(0, Math.min(100, value));
+  // The bar shows what the sentence says: the share used, or the share left when the owner chose percent left (the soft and hard marks then flip too).
+  const clamp = value => Math.max(0, Math.min(100, value)), left = row => row.display === 'left', place = (row, value) => clamp(left(row) ? 100 - value : value);
   return html`<div class="health-limits" role="group" aria-label="Usage limits">${rows.map(row => html`<div class="health-limit" data-tool=${row.tool} data-state=${row.state}>
-    <p class="health-limit-text">${row.text}</p><div class="health-limit-bar" aria-hidden="true"><div class="health-limit-fill" style=${`width:${clamp(row.percent)}%`}></div>${[row.soft, row.hard].map(at => html`<div class="health-limit-tick" style=${`left:${clamp(at)}%`}></div>`)}</div></div>`)}</div>`;
+    <p class="health-limit-text">${row.text}</p><div class="health-limit-bar" aria-hidden="true" title=${`The two marks are where new turns are held (${row.soft}% used) and where they are held until it resets (${row.hard}% used).`}><div class="health-limit-fill" style=${`width:${place(row, row.percent)}%`}></div>${[row.soft, row.hard].map(at => html`<div class="health-limit-tick" style=${`left:${place(row, at)}%`}></div>`)}</div></div>`)}<p class="health-limit-legend">The two marks on a bar are where the limit guard holds new turns: the first holds them, the second keeps them held until the window resets.</p></div>`;
 }
 
 export function HealthPopover({ store, disk, onEntry }) {

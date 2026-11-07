@@ -1,6 +1,7 @@
-import { element, creditsText, percent, windowLabel, usageSparkline, sparkFigure, paceExplanation, age, countdown, shown } from './usage-format.js';
+import { element, creditsText, percent, windowLabel, usageSparkline, sparkFigure, paceExplanation, age, countdown, shown, USAGE_LEGEND } from './usage-format.js';
 import { focusPopover, returnFocus } from './popover-focus.js';
 import { expiryBadge } from './usage-expiry.js';
+import { mergeAlerts, staleAge } from './usage-alerts.js';
 import { confirmDialog } from './dialogs.js';
 
 // A glanceable overview of every configured provider and profile, so usage can be checked
@@ -11,8 +12,9 @@ const TOOLS = { 'claude-code': 'claude', codex: 'codex' };
 
 
 export class UsagesPopover {
-  constructor(source, openSettings) {
-    this.source = source; this.openSettings = openSettings;
+  // canChange says whether this person may change usages (the owner): an admin reads them, and the refresh, which asks the providers again, is the owner's.
+  constructor(source, openSettings, canChange = () => true) {
+    this.source = source; this.openSettings = openSettings; this.canChange = canChange;
     this.toggle = document.querySelector('#usages-toggle');
     this.popover = document.querySelector('#usages-popover');
     // The panel is a column of the chat, not a floating popover: it sits where the members column is.
@@ -32,10 +34,13 @@ export class UsagesPopover {
     this.popover.querySelector('.usages-popover-close').onclick = () => { this.close(); this.toggle.focus(); };
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && !this.popover.hidden) { this.close(); this.toggle.focus(); } });
   }
-  open() { this.status.hidden = true; this.popover.hidden = false; this.chat.classList.add('usages-open'); this.toggle.setAttribute('aria-expanded', 'true'); focusPopover(this.popover); this.load(); }
+  // Nothing of what was drawn stays after a sign-out: the tiles, the cached usage, switcher state and credential tokens.
+  reset() { this.ticket++; this.usage = null; this.state = null; this.tokens = []; this.refreshSec = undefined; this.body.replaceChildren(); this.status.hidden = true; }
+  open() { this.syncRefresh(); this.status.hidden = true; this.popover.hidden = false; this.chat.classList.add('usages-open'); this.toggle.setAttribute('aria-expanded', 'true'); focusPopover(this.popover); this.load(); }
   close() { this.ticket++; returnFocus(this.popover, this.toggle); this.popover.hidden = true; this.chat.classList.remove('usages-open'); this.toggle.setAttribute('aria-expanded', 'false'); }
   // Ask the server to fetch fresh snapshots (rate limited to one forced refresh per cooldown
   // window, shared with Settings), then re-read the overview the usual way.
+  syncRefresh() { const allowed = !!this.canChange(); this.refreshButton.disabled = !allowed; this.refreshButton.title = allowed ? 'Refresh usages' : 'Only the owner can refresh usages'; }
   async refresh() {
     if (this.refreshButton.disabled) return;
     this.refreshButton.disabled = true; this.status.hidden = true;
@@ -46,7 +51,7 @@ export class UsagesPopover {
       this.status.hidden = false;
     }
     try { await this.load(); }
-    finally { this.refreshButton.disabled = false; }
+    finally { this.syncRefresh(); }
   }
   // Live push from the event stream: re-read in place while the popover is open. A closed
   // popover loads fresh on its next open, so there is nothing to keep current.
@@ -76,7 +81,13 @@ export class UsagesPopover {
       empty.append(open); this.body.replaceChildren(empty); return;
     }
     const groups = providers.map(provider => ({ provider, profiles: provider.profiles?.length ? provider.profiles : [{ profile_name: 'local', active: true }] }));
-    const alerts = (usage?.credential_alerts || []).map(alert => element('div', 'usages-credential-alert', alert.message || ''));
+    // One alert for all the tools whose refresh is paused, in plain words, with the reasons folded away: the box was most of the first screen.
+    const alerts = mergeAlerts(usage?.credential_alerts).map(alert => {
+      const node = element('div', 'usages-credential-alert'); node.append(element('p', '', alert.text));
+      if (alert.details.length) { const more = element('details', ''); more.append(element('summary', '', 'Details'), ...alert.details.map(line => element('p', '', line))); node.append(more); }
+      return node;
+    });
+    this.refreshSec = usage?.settings?.refresh_interval_sec;
     const tiles = list => list.filter(group => group.profiles.length).map(group => this.tile(group.provider, group.profiles, usedDisplay));
     const nodes = [];
     if (alerts.length) { const box = element('div', 'usages-credential-alerts'); box.setAttribute('role', 'alert'); box.append(...alerts); nodes.push(box); }
@@ -86,6 +97,7 @@ export class UsagesPopover {
       if (secondary.some(group => group.profiles.length)) { const divider = element('div', 'usages-group-divider'); divider.setAttribute('role', 'separator'); divider.setAttribute('aria-label', 'Other profiles'); nodes.push(divider); }
       nodes.push(...tiles(secondary));
     } else nodes.push(...tiles(groups));
+    nodes.push(element('p', 'usages-popover-note usages-legend', USAGE_LEGEND));
     const list = element('div', 'usages-sidebar-list'); list.append(...nodes);
     this.body.replaceChildren(list);
   }
@@ -104,7 +116,8 @@ export class UsagesPopover {
     return group;
   }
   profile(profile, usedDisplay, providerName = '') {
-    const node = element('div', `usages-popover-profile switcher-tile-profile${profile.active ? ' is-active' : ''}`);
+    const age = staleAge(profile.last_refresh_at, this.refreshSec);
+    const node = element('div', `usages-popover-profile switcher-tile-profile${profile.active ? ' is-active' : ''}${age ? ' is-stale' : ''}`);
     const head = element('div', 'usages-popover-profile-head switcher-tile-head');
     head.append(element('strong', 'usages-popover-profile-name switcher-tile-name', profile.profile_name || 'local'));
     const tool = TOOLS[providerName] || '';
@@ -120,6 +133,11 @@ export class UsagesPopover {
     if (profile.credits) node.append(element('div', 'usage-profile-credits usages-credits-row', creditsText(profile.credits)));
     const note = profile.status === 'token_expired' || profile.status === 'expired' ? 'Stale – token expired' : profile.stale ? 'Stale snapshot' : profile.status === 'ok' ? '' : !windows.length ? (profile.status || 'No snapshot').replaceAll('_', ' ') : '';
     if (note) node.append(element('div', 'usage-profile-status usages-error-line', note));
+    if (age) {
+      const line = element('div', 'usage-profile-stale', `Stale, last update ${age} ago`);
+      if (this.canChange()) { const button = element('button', 'btn usage-refresh', 'Refresh'); button.type = 'button'; button.onclick = () => this.refresh(); line.append(' ', button); }
+      node.append(line);
+    }
     return node;
   }
   // v1's SWITCH pill: shown on an inactive profile when the account switcher is on and the tool can switch.

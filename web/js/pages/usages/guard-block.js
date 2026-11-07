@@ -36,7 +36,7 @@ function Tool({ store, tool, label }) {
   const typing = (field, value) => store.edit(tool, d => { d[field] = value; }, { typing: true });
   return html`<div class="guard-tool" data-tool=${tool}>
     <h5 class="guard-tool-title">${label}</h5>
-    <p class="settings-desc guard-live" data-state=${info.result?.state || ''}>${guardSentence(label, info)}</p>
+    <p class="settings-desc guard-live" data-state=${info.result?.state || ''}>${guardSentence(label, info, data.percent_display)}</p>
     <${SettingsGroup} label=${`${label} limit guard`}>
       <${SettingsRow} label=${`Hold ${label} before it runs out`} desc=${`Use the thresholds below for ${label}.`} id=${`guard-${tool}-enabled`} className="settings-row-toggle">
         <input type="checkbox" checked=${!!draft.enabled} onChange=${event => store.edit(tool, d => { d.enabled = event.currentTarget.checked; }, { typing: true })} />

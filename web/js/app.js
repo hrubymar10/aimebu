@@ -313,7 +313,7 @@ settings.harnessSettings.onReady = harnessSeen;
 const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.admin, onSkip: () => setHarnessSkipped(true), onReady: harnessSeen });
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
 importWizard.dialog.addEventListener('close', () => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
-const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'));
+const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'), () => rights.owner);
 const topbarMenu = new TopbarMenu();
 new ColumnResize();
 const roomMenu = new RoomMenu();
@@ -348,7 +348,7 @@ function resetWorkspace() {
 function closeEverythingOpen() {
   cancelAppDialogs();
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
-  usagesPopover.close();
+  usagesPopover.close(); usagesPopover.reset();
   health.setOpen(false);
   topbarMenu.store.setOpen(false);
   roomMenu.store.close();

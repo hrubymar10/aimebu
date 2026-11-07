@@ -287,7 +287,14 @@ func (s *Server) guardOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		profiles[tool] = names
 	}
-	writeJSON(w, 200, map[string]any{"profiles": profiles, "tools": tools})
+	// The owner's percent-left or percent-used choice (Settings -> Usages), so every place that says where a tool stands says it the same way.
+	display := "left"
+	if s.Usages != nil {
+		if shown := s.Usages.Snapshot().Settings.PercentDisplay; shown == "used" {
+			display = shown
+		}
+	}
+	writeJSON(w, 200, map[string]any{"profiles": profiles, "tools": tools, "percent_display": display})
 }
 
 // PUT /api/limit-guard/{tool}

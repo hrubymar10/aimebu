@@ -49,8 +49,10 @@ export class MockUsagesSource {
   async copilotLogout() { this.flags['github-copilot'] = {}; return this.list(); }
   async rename(tool, name, newName) { this.renamed[`${tool}/${name}`] = newName; return { name: newName }; }
   profileName(tool, name) { return this.renamed[`${tool}/${name}`] || name; }
+  async enable(enabled) { this.switcherEnabled = !!enabled; return this.switcher(); }
   async switcher() {
     const state = this.switcherState();
+    if (this.switcherEnabled === false) state.enabled = false;
     for (const profile of state.profiles) profile.name = this.profileName(profile.tool, profile.name);
     return state;
   }

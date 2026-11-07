@@ -142,3 +142,7 @@ export function usageWindowRow(window, usedDisplay) {
     row.append(top, track, ...(spark ? [sparkFigure(spark, usedDisplay)] : []), foot);
     return row;
 }
+
+// What the marks on a usage card mean, said once under the cards (the Usages page and the popover): hovering a mark shows the same words, but a tooltip
+// is not something a phone or a keyboard finds.
+export const USAGE_LEGEND = 'On each bar the small tick is the expected pace for the time that has passed in the window. "In reserve" means you are using less than that pace, "in deficit" more. The thin line is the last 48 hours of use.';

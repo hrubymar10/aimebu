@@ -13,7 +13,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/usages/providers"
 )
 
-func TestUsageAlertInboxIsGlobalButUsagesStayOwnerOnly(t *testing.T) {
+func TestUsageAlertInboxIsGlobalButUsagesChangesStayOwnerOnly(t *testing.T) {
 	f := newFixture(t)
 	root := t.TempDir()
 	var err error
@@ -99,8 +99,8 @@ func TestUsageAlertInboxIsGlobalButUsagesStayOwnerOnly(t *testing.T) {
 	}
 	resp = f.requestAs(t, adminCookie, adminCSRF, http.MethodGet, "/api/usages", nil)
 	resp.Body.Close()
-	if resp.StatusCode != 403 {
-		t.Fatalf("admin usages status: %d", resp.StatusCode)
+	if resp.StatusCode == 403 {
+		t.Fatalf("an admin reads the usages (the limits, redacted): %d", resp.StatusCode)
 	}
 }
 

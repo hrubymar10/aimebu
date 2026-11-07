@@ -3,24 +3,28 @@ export const GUARD_TOOLS = [['claude', 'Claude'], ['codex', 'Codex']];
 
 const percent = value => typeof value === 'number' ? `${Math.round(value)}%` : '-';
 
+const at = (display, full) => (display === 'left' ? `has ${full}` : `is at ${full}`);
+
 // One sentence on where a tool stands: which profile, how full, and what the guard is doing about it.
-export function guardSentence(label, view) {
+// `display` is the owner's Usages setting ("left" or "used"): the sentence says it the way the Usages cards do.
+export function guardSentence(label, view, display = 'used') {
   const result = view?.result || {};
-  const full = typeof result.percent === 'number' ? `${percent(result.percent)} of its ${result.window || ''} window`.replace('  ', ' ') : '';
+  const window = `its ${result.window || ''} window`.replace('  ', ' ');
+  const full = typeof result.percent !== 'number' ? '' : display === 'left' ? `${percent(100 - result.percent)} left of ${window}` : `${percent(result.percent)} of ${window}`;
   switch (result.state) {
-    case 'soft': return `${label} (${result.profile}) is at ${full}: new turns are held, running ones finish.`;
-    case 'hard': return `${label} (${result.profile}) is at ${full}: new turns are held until it resets or the account is switched.`;
-    case 'ok': return `${label} (${result.profile}) is at ${full}.`;
+    case 'soft': return `${label} (${result.profile}) ${at(display, full)}: new turns are held, running ones finish.`;
+    case 'hard': return `${label} (${result.profile}) ${at(display, full)}: new turns are held until it resets or the account is switched.`;
+    case 'ok': return `${label} (${result.profile}) ${at(display, full)}.`;
     case 'off': return `The limit guard is off for ${label}.`;
     default: return `${label}: no clear usage reading yet, nothing is held.`;
   }
 }
 
 // What the Health list shows for a tool, or null when there is nothing to say (guard off, or no clear reading).
-export function guardHealthRow(tool, label, view) {
+export function guardHealthRow(tool, label, view, display = 'used') {
   const result = view?.result || {};
   if (!['ok', 'soft', 'hard'].includes(result.state)) return null;
-  return { tool, state: result.state, held: !!view.held, percent: result.percent, soft: result.soft, hard: result.hard, text: guardSentence(label, view) };
+  return { tool, state: result.state, held: !!view.held, percent: result.percent, soft: result.soft, hard: result.hard, display, text: guardSentence(label, view, display) };
 }
 
 // How many tools are holding new turns: they count toward the Health badge.

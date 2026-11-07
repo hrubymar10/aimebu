@@ -21,6 +21,16 @@ export class UsagesSettings {
     this.page = mountPreactPage(section, ({ onDirty }) => html`<${UsagesPage} page=${this} onDirty=${onDirty} />`);
   }
 
+  setOwner(owner) {
+    if (this.store.owner.peek() && !owner) this.forget(); // an owner who is an admin now keeps nothing of the owner's view
+    this.store.owner.value = !!owner;
+  }
+  // Clears everything the page holds from the server: the usage snapshot, the switcher, the automatic-switching and limit-guard blocks, the default limits.
+  forget() {
+    this.store.forget();
+    this.quota.hide?.(); this.guard.hide?.();
+    this.limitDefault.state.value = null; this.limitDefault.saved.value = '';
+  }
   load() { return this.store.load(); }
   changed() { return this.store.changed(); }
   setError(text) { this.store.setError(text); }

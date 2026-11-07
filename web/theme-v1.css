@@ -1869,8 +1869,23 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .usage-credential-alert details, .usages-credential-alert details { margin-top: 3px; color: var(--text-secondary); }
 .usage-credential-alert summary, .usages-credential-alert summary { cursor: pointer; }
 .usage-credential-alert details p, .usages-credential-alert details p { overflow-wrap: anywhere; font-size: 0.68rem; }
+/* The Usages column's header: the title first, like Rooms (the buttons follow), the grouping button says what it does, Switch is a button and not a status pill. */
+.chat > #usages-popover > header strong { order: -1; flex: 1; text-align: left; }
+.chat > #usages-popover > header .usages-popover-group { width: auto; gap: 5px; padding: 0 8px; }
+.usages-group-text { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.btn.switcher-switch-pill { padding: 2px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); color: var(--text-primary); font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.btn.switcher-switch-pill:hover:not(:disabled), .btn.switcher-switch-pill:focus-visible, .switcher-switch-pill:hover:not(:disabled), .switcher-switch-pill:focus-visible { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+/* The alerts about token refresh are red boxes, in Settings as in the column; their reasons are folded under Details. */
+.usage-credential-alerts, .usages-credential-alerts { display: grid; gap: 6px; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--red); border-radius: 6px; }
+.usage-credential-alert, .usages-credential-alert { color: var(--red); font-size: 12px; line-height: 1.4; }
+.usage-credential-alert p, .usages-credential-alert p { margin: 0; }
+.usage-credential-alert details, .usages-credential-alert details { margin-top: 3px; color: var(--text-secondary); }
+.usage-credential-alert summary, .usages-credential-alert summary { cursor: pointer; }
+.usage-credential-alert details p, .usages-credential-alert details p { overflow-wrap: anywhere; font-size: 0.68rem; }
 /* Data older than twice the refresh interval is grey, and says how old it is. */
 .usage-profile.is-stale, .usages-popover-profile.is-stale { --usage-color: var(--text-muted); }
 .usage-profile.is-stale .usage-pace-marker, .usages-popover-profile.is-stale .usage-pace-marker, .usage-profile.is-stale .usage-spark-line, .usages-popover-profile.is-stale .usage-spark-line { opacity: .45; }
 .usage-profile-stale { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .usage-profile-stale .usage-refresh { min-height: 0; height: auto; padding: 1px 8px; font-size: 11px; }
+/* The Settings pane starts where the top bar ends on a desktop width, so its edge does not cut the bar's buttons in half (a phone's pane is the whole screen). */
+@media (min-width: 701px) { #settings-dialog .settings-pane { height: calc(100dvh - 53px); max-height: calc(100dvh - 53px); margin: 53px auto 0; } }

@@ -13,6 +13,8 @@ export class UsagesStore {
     this.isOpen = isOpen;
     this.isShown = isShown;
     this.afterLoad = afterLoad;
+    // Only the owner has the switcher and what it holds; an admin reads the limits alone (the server answers it a view without account names).
+    this.owner = signal(false);
     this.usage = signal(null);
     this.switcher = signal(null);
     this.error = signal('');
@@ -29,13 +31,16 @@ export class UsagesStore {
   async load() {
     if (!this.alive) return;
     const ticket = ++this.generation;
-    const [usage, state] = await Promise.all([this.source.list(), this.source.switcher()]);
+    const [usage, state] = await Promise.all([this.source.list(), this.owner.peek() ? this.source.switcher() : null]);
     if (!this.alive || ticket !== this.generation) return;
     batch(() => { this.usage.value = usage; this.switcher.value = state; this.revision.value++; });
     await this.afterLoad(state);
   }
 
   setError(text) { this.error.value = text; }
+
+  // Nothing of the owner's snapshot (e-mails, alerts, profiles) stays for whoever signs in next on this tab, or for an owner who became an admin.
+  forget() { this.generation++; batch(() => { this.usage.value = null; this.switcher.value = null; this.error.value = ''; this.flow.value = null; this.revision.value++; }); }
 
   async mutate(action, failed) {
     this.error.value = '';

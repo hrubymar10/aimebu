@@ -15,15 +15,16 @@ const isTyping = event => (event.target instanceof HTMLTextAreaElement) || (even
 // quota and guard blocks) leaves the mark: the section then stays in the page when Settings closes, which costs nodes and loses nothing.
 export function UsagesPage({ page, onDirty = () => {} }) {
   const [typed, setTyped] = useState(false);
-  const revision = page.store.revision.value, defaults = page.limitDefault.state.value;
+  const revision = page.store.revision.value, defaults = page.limitDefault.state.value, owner = page.store.owner.value;
   useLayoutEffect(() => { setTyped(false); }, [revision, defaults]);
   useDirty(onDirty, 'usages-typed', typed);
   return html`<div class="usages-page" style="display: contents" onInput=${event => { if (isTyping(event)) setTyped(true); }}>
     <p class="settings-intro">Provider limits and account profiles</p>
+    ${!owner && html`<p id="usages-readonly" class="settings-intro usages-readonly" role="note">Only the owner can change Usages. You can see the limits here.</p>`}
     <p id="usages-error" class="error" role="alert">${page.store.error.value}</p>
-    <div class="usage-switcher-controls" id="usages-switcher"><${SwitcherControls} store=${page.store} /></div>
+    ${owner && html`<div class="usage-switcher-controls" id="usages-switcher"><${SwitcherControls} store=${page.store} /></div>
     <${QuotaBlock} store=${page.quota} />
-    <${GuardBlock} store=${page.guard} />
+    <${GuardBlock} store=${page.guard} />`}
     <${LimitDefault} store=${page.limitDefault} />
     <div id="usages-list"><${UsagesList} store=${page.store} /></div>
   </div>`;

@@ -87,9 +87,9 @@ and reconnects the event stream from its last seen `seq`.
 | GET | `/api/quota-switcher` | — | owner-only automatic account switching: per-tool config, state, last decision and the newest 50; 503 until it runs (see [quota-switcher](quota-switcher.md)) |
 | PUT | `/api/quota-switcher/{tool}` | config | owner replaces a tool's configuration (400 on validation, 404 unknown tool) |
 | POST | `/api/quota-switcher/{tool}/rearm`, `/reenable` | `{}` | owner clears the after-reset latch / the circuit breaker |
-| GET | `/api/limit-guard` | — | owner-only limit guard: per tool `{config, saved, result, held, since}`; 503 until the quota switcher runs (see [quota-switcher](quota-switcher.md#limit-guard-acting-before-100)) |
+| GET | `/api/limit-guard` | — | owner-only limit guard: per tool `{config, saved, result, held, since}` under `tools`, plus `profiles` and `percent_display` (`left` or `used`, the owner's Usages setting, which Health and Settings use to word the percentages); 503 until the quota switcher runs (see [quota-switcher](quota-switcher.md#limit-guard-acting-before-100)) |
 | PUT | `/api/limit-guard/{tool}` | config | owner replaces a tool's soft/hard thresholds and per-profile overrides (400 on validation, 404 unknown tool) |
-| GET | `/api/usages` | — | owner-only provider usage snapshots for Settings → Usages |
+| GET | `/api/usages` | — | provider usage snapshots for Settings → Usages. The owner reads all of it; a global admin reads the limits only (`usages.Response.ForAdmin`: windows, resets, plan, credits, status and the profile names, but no e-mail, Enterprise host, error text, credential alerts, token-refresh state or configured-secret flags); anyone else gets 403. Every write stays the owner's |
 | POST | `/api/usages/refresh` | `{provider?}` | owner-only forced refresh; `429` + `Retry-After` and `retry_after_sec` inside the 15-second cooldown (error code `cooldown`); `400 invalid_provider` for an unknown provider |
 | GET | `/api/switcher` | — | owner-only enabled state, profiles, eligibility, and host agents affected by a switch |
 | PUT | `/api/switcher` | `{enabled}` | owner enables or disables profile switching |
@@ -451,7 +451,7 @@ An unresolved lost turn on a home agent can keep a room in `closing` until
 reconciliation; the server emits one `room_close_blocked` event per blocked
 agent with `reason:agent_stop_invalid_transition`.
 
-The owner-only usage endpoint reads the v2 cache under `AIMEBU2_CONFIG_DIR/usages/`.
+The usage endpoint (the owner's whole snapshot, an admin's redacted one) reads the v2 cache under `AIMEBU2_CONFIG_DIR/usages/`.
 Set `AIMEBU2_USAGES=0` to disable credential reads and background requests;
 `/api/usages` then returns 503. Enabled providers refresh in the background
 on the stored interval (120 seconds by default, minimum 15). The response

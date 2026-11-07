@@ -6,7 +6,7 @@ export const TABS = [['general', 'General'], ['usages', 'Usages'], ['notificatio
 
 const INSTANCE = new Set(['roles', 'prompts', 'macros', 'machines', 'harnesses']);
 
-// usages: the tab is the owner's alone, and a 403 on the usage reads takes it away. users: 'pending' until the access check answers.
+// usages: the tab is the owner's and the admins' (an admin reads, only the owner changes), and a 403 on the usage reads takes it away. users: 'pending' until the access check answers.
 export function tabHidden(key, { owner, admin, usagesHidden, users }) {
   if (key === 'usages') return usagesHidden;
   if (key === 'users') return users === 'hidden';

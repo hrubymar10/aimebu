@@ -1,5 +1,7 @@
 import { html, useRef } from '../../ui.js';
 import { SettingsGroup, SettingsRow } from '../../components/settings-row.js';
+import { mergeAlerts } from '../../usage-alerts.js';
+import { confirmDialog } from '../../dialogs.js';
 import { alertKind, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenAutoRefreshOn, tokenAutoRefreshAvailable, tokenStateLine } from './model.js';
 
 const AUTO_REFRESH = 'aimebu becomes the only thing that refreshes your Claude and Codex logins. While on, aimebu must stay running whenever you use Claude or Codex, also outside aimebu: if it is stopped for more than about an hour around a token\'s expiry, sessions get auth errors until it runs again. Turn this off before stopping aimebu for long or uninstalling it.';
@@ -65,7 +67,16 @@ function UsageConfig({ store, settings }) {
 // Credentials of the token-copy model that need a human (a rejected refresh token, one about to expire), one sentence each. Plain text only:
 // the server never sends CLI output here.
 function CredentialAlerts({ alerts }) {
-  return html`<div class="usage-credential-alerts" role="alert">${alerts.map((alert, index) => html`<p class=${`usage-credential-alert usage-credential-alert-${alertKind(alert.kind)}`} key=${index}>${String(alert.message || '')}</p>`)}</div>`;
+  return html`<div class="usage-credential-alerts" role="alert">${mergeAlerts(alerts).map((alert, index) => html`<div class=${`usage-credential-alert usage-credential-alert-${alertKind(alert.kind)}`} key=${index}>
+    <p>${alert.text}</p>${alert.details.length > 0 && html`<details><summary>Details</summary>${alert.details.map((line, at) => html`<p key=${at}>${line}</p>`)}</details>`}</div>`)}</div>`;
+}
+
+// Turning the switcher off is a danger action, at the bottom of the page behind a confirm; turning it on is the page's one primary action, at the top.
+function DisableSwitcher({ store }) {
+  const disable = async () => {
+    if (await confirmDialog('Disable the account switcher? Profiles stay as they are, but switching accounts and the automatic switching stop until you enable it again.', { title: 'Disable account switcher', confirm: 'Disable', danger: true })) store.mutateSwitcher(() => store.source.enable(false));
+  };
+  return html`<div class="settings-actions usage-switcher-danger"><button type="button" class="btn btn-danger" id="usage-switcher-disable" onClick=${disable}>Disable account switcher</button></div>`;
 }
 
 export function SwitcherControls({ store }) {
@@ -74,8 +85,9 @@ export function SwitcherControls({ store }) {
   if (!state.owner) return null;
   const alerts = usage?.credential_alerts;
   return html`
-    <button type="button" class=${state.enabled ? 'btn' : 'btn btn-primary'} onClick=${() => store.mutateSwitcher(() => store.source.enable(!state.enabled))}>${state.enabled ? 'Disable account switcher' : 'Enable account switcher'}</button>
+    ${!state.enabled && html`<button type="button" class="btn btn-primary" id="usage-switcher-enable" onClick=${() => store.mutateSwitcher(() => store.source.enable(true))}>Enable account switcher</button>`}
     ${Array.isArray(alerts) && alerts.length > 0 && html`<${CredentialAlerts} alerts=${alerts} />`}
     <${UsageConfig} key=${store.revision.value} store=${store} settings=${usage?.settings} />
+    ${state.enabled && html`<${DisableSwitcher} store=${store} />`}
   `;
 }

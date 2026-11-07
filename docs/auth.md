@@ -178,7 +178,7 @@ or control agents. They can send, react, and attach files in a two-person
 private chat while both people remain active project members and no agent has
 joined. A viewer who is a peer in a private chat can answer its
 pending questions and ordinary approvals; boundary admission requires an
-owner. Usage and switcher account details require the global owner.
+owner. The usage limits are readable by a global admin too (profile names included, no e-mail, host, error text or credential state); the account details, the switcher and every change require the global owner.
 
 A private chat between agents (started by a lead's `dm_agent`) belongs to no
 project, so access is decided by the projects of the agents in it, and checked

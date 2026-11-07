@@ -64,8 +64,9 @@ export class SettingsPanel {
     const before = this.shell.store.section.value;
     this.shell.store.setRights({ owner, admin });
     if (this.shell.store.section.value !== before) this.selectSection(this.shell.store.section.value); // the section's tab went: General opens in its place
-    // Provider usages and the account switcher are the owner's alone.
-    document.querySelector('#usages-toggle').hidden = !owner;
+    // An admin reads the provider usages (the limits, with no account names); the account switcher and every change are the owner's alone.
+    this.usages.setOwner(owner);
+    document.querySelector('#usages-toggle').hidden = !(owner || admin);
   }
   setUser(userID) {
     this.userID = userID;
@@ -86,7 +87,7 @@ export class SettingsPanel {
     this.usersSettings.prepare().catch(() => this.usersSettings.settle(true));
     // The default daily limits do not depend on the switcher or the usage snapshots, so they load on their own.
     void this.usages.syncDefault();
-    if (!rights.owner) { if (!this.usagesSection.hidden) this.selectSection('general'); return; } // nothing of the usages is theirs to load
+    if (!rights.owner && !rights.admin) { if (!this.usagesSection.hidden) this.selectSection('general'); return; } // nothing of the usages is theirs to load
     try { await this.usages.load(); }
     catch (error) {
       if (error.status === 403) {
@@ -102,6 +103,8 @@ export class SettingsPanel {
   // The session ended: every page is cleared, edits not yet saved included (release() keeps those for the person who made them; the next person must not
   // find them).
   resetSession() {
+    this.usages.setOwner(false); // and with it everything the usages page held
+    this.usages.forget();
     for (const [section, page] of Object.entries(this.pages)) {
       if (section === 'harnesses') this.harnessSettings.clear(); else page.clear();
     }

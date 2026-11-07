@@ -3,8 +3,8 @@
 Settings → Usages shows five provider cards: Codex, Claude Code, GitHub
 Copilot, Mistral, and Ollama Cloud. The owner can enable providers, change
 their order, set the refresh interval (default 120 seconds, minimum 15),
-choose percent left or used, and refresh snapshots on demand. The cards and
-account details are visible only to the owner. Disabled providers keep their credentials until the
+choose percent left or used, and refresh snapshots on demand. The cards are visible to the
+owner and, redacted, to global admins; account details are visible only to the owner. Disabled providers keep their credentials until the
 owner explicitly clears them. `AIMEBU2_USAGES=0` disables local credential
 reads and usage requests, and `/api/usages` returns 503.
 
@@ -16,7 +16,7 @@ critical). Each fresh, successful provider window that reaches a threshold
 opens a global Inbox alert for the owner and global admins. The alert shows
 the provider, profile name, window, remaining percentage, and reset time
 inline. The owner alone gets an **Open Usages** action; the Usages cards and
-`GET /api/usages` remain owner-only. Inbox alerts omit email and credentials.
+`GET /api/usages` is the owner's whole snapshot; a global admin reads a redacted one (the limits and the profile names, nothing that names an account or how it signs in) and sees the cards read-only, and every change stays owner-only. Inbox alerts omit email and credentials.
 They trigger the normal Inbox sound and hidden-tab browser notification.
 
 The server records one alert per threshold for each provider, account,
@@ -252,7 +252,7 @@ in this browser. Each profile shows v1's token-expiry icon (healthy, expiring, e
 `GET /api/credentials/targets`, owner only) and, when the account switcher is on, a SWITCH pill on
 the inactive ones that confirms and calls `POST /api/switcher/{tool}/use`.
 
-The top-bar usages column (owner only) follows the same push while it is
+The top-bar usages column (the owner and global admins; Refresh and Switch are the owner's) follows the same push while it is
 open, and its Refresh button calls the same forced refresh as Settings → Usages
 (`POST /api/usages/refresh`), then re-reads the overview. Inside the cooldown it
 keeps what it shows and says how long to wait; the cooldown is shared with
