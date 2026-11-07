@@ -149,7 +149,9 @@ makes the agent's worktree (`<project>/.aimebu/worktrees/<room-id>-<name>`, see
 `new_room`), has the machine copy the session (the transcript and the
 session's own directory) under the Claude project directory of that folder, and
 the first turn forks the copy there. The original and its folder are untouched, and a
-copy made before is reused. A request that fails after that takes the worktree away
+copy made before is reused once it checks out: a regular file of yours that agrees with the original as far as both go (Claude appends to a copy it
+resumes, and the original may carry on, so one may be longer); a link, someone else's file or a different transcript is refused rather than used or overwritten. The copy is written without
+following links (the folder, the transcript and its `.partial` are created exclusively), so nothing planted in the projects folder can redirect it. A request that fails after that takes the worktree away
 again but keeps its branch, as every removal does, and leaves the copy of the session:
 a failed copy into a new room can leave an unused branch and a session copy behind, both
 small, and nothing here deletes work. A project with worktrees off, or a folder that is not a
