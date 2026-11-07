@@ -17,7 +17,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/tlsclient"
 )
 
-func pairSupervisorCommand(ctx context.Context, serverURL, token string, stderr io.Writer) int {
+func pairSupervisorCommand(ctx context.Context, serverURL, token string, insecure bool, stderr io.Writer) int {
 	if tlsclient.InsecureSkipVerify() {
 		fmt.Fprintln(stderr, "WARNING: AIMEBU2_INSECURE_SKIP_VERIFY disables server certificate verification")
 	}
@@ -25,6 +25,13 @@ func pairSupervisorCommand(ctx context.Context, serverURL, token string, stderr 
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		fmt.Fprintln(stderr, "pairing requires an http(s) server origin")
 		return 2
+	}
+	if err := tlsclient.CheckTransport(serverURL, insecure); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if insecure && tlsclient.PlainHTTPToARemoteHost(serverURL) {
+		fmt.Fprintln(stderr, "WARNING: --insecure: the pairing token and the machine key it returns cross the network over plain http to "+serverURL)
 	}
 	config, err := resolveServerConfig()
 	if err != nil {
@@ -46,7 +53,7 @@ func pairSupervisorCommand(ctx context.Context, serverURL, token string, stderr 
 		return 1
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := tlsclient.NewHTTPClient(15 * time.Second)
+	client := tlsclient.NewTransportCheckedClient(15*time.Second, insecure)
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -74,7 +81,7 @@ func pairSupervisorCommand(ctx context.Context, serverURL, token string, stderr 
 		return 1
 	}
 	fmt.Fprintf(stderr, "Machine %s paired; waiting for owner approval.\n", answer.MachineID)
-	return supervisorCommand(ctx, stderr)
+	return supervisorCommand(ctx, insecure, stderr)
 }
 
 func writeRemoteMachineKey(path string, c hostMachineCredential) error {
@@ -101,8 +108,8 @@ func writeRemoteMachineKey(path string, c hostMachineCredential) error {
 	return os.Link(file.Name(), path)
 }
 
-func waitForMachineApproval(ctx context.Context, serverURL string, c hostMachineCredential, stderr io.Writer) error {
-	client := tlsclient.NewHTTPClient(10 * time.Second)
+func waitForMachineApproval(ctx context.Context, serverURL string, c hostMachineCredential, insecure bool, stderr io.Writer) error {
+	client := tlsclient.NewTransportCheckedClient(10*time.Second, insecure)
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(serverURL, "/")+"/api/machines/"+url.PathEscape(c.MachineID)+"/pair-status", nil)
 		if err != nil {

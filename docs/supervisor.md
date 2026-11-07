@@ -30,6 +30,18 @@ The command's server URL is `AIMEBU2_PUBLIC_URL` when set (for a server
 behind a reverse proxy; see [HTTPS](tls.md#reverse-proxy)), otherwise the
 scheme and host the browser used to reach the server.
 
+The supervisor refuses to pair, or to run, against a plain-`http` server at an address other than
+this machine's (loopback): the pairing token, the machine key it returns and every frame
+the supervisor then exchanges would cross the network in the clear. Use an `https` address, or accept the
+risk with `aimebu supervisor --insecure --pair '<url>' '<token>'` (and `--insecure` on later runs). The
+**Add machine** dialog says so, and its command carries `--insecure`, when the server was reached over plain http at such an address.
+
+A remote supervisor that already runs against a plain-`http` server (paired before this check) stops with that message after the
+upgrade. Either move the server to HTTPS and re-pair (or edit the saved URL, `supervisor/machine.key`, or set `AIMEBU2_URL`), or
+start it with `--insecure`. The pairing request and the approval wait re-check the transport on every redirect they are sent along, so a
+redirect from https to plain http on another host is refused too. The server's own embedded supervisor is exempt: it dials the address
+the server itself listens on, so nothing it sends leaves the machine.
+
 The remote supervisor redeems the token through the server allowlist and
 saves its machine ID, private key, and server URL in
 `supervisor/machine.key` under its local v2 config root (mode 0600). The

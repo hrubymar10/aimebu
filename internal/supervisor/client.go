@@ -30,9 +30,11 @@ import (
 )
 
 type Client struct {
-	MachineID               string
-	MachineKey              string
-	ServerURL               string
+	MachineID  string
+	MachineKey string
+	ServerURL  string
+	// AllowPlainHTTP lets this supervisor reach a server on another machine over plain http (the --insecure flag); without it only https, or this machine, is used.
+	AllowPlainHTTP          bool
 	HTTPClient              *http.Client
 	SupervisorVersion       string
 	CapabilityReports       []protocol.CapabilityReport
@@ -171,6 +173,9 @@ func (c *Client) Run(ctx context.Context) error {
 func (c *Client) RunOnce(ctx context.Context) error {
 	parsed, err := url.Parse(c.ServerURL)
 	if err != nil {
+		return err
+	}
+	if err := tlsclient.CheckTransport(c.ServerURL, c.AllowPlainHTTP); err != nil {
 		return err
 	}
 	switch parsed.Scheme {

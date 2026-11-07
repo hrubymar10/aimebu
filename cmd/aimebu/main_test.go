@@ -16,11 +16,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/auth"
 	"github.com/hrubymar10/aimebu/internal/server"
 	"github.com/hrubymar10/aimebu/internal/sqliteutil"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/internal/tlsclient"
 )
 
 // watchServing returns a channel that is closed when the server a test starts next is serving. The listeners are open long before that: a
@@ -649,5 +651,21 @@ func TestListenErrorDoesNotBlameV1ForAnyBusyPort(t *testing.T) {
 	other := listenError("127.0.0.1", 80, &net.OpError{Op: "listen", Err: &os.SyscallError{Syscall: "bind", Err: syscall.EACCES}})
 	if strings.Contains(other, "v1") {
 		t.Errorf("a permission error must not mention v1: %q", other)
+	}
+}
+
+// With AIMEBU2_BIND set to a LAN or VPN address the embedded supervisor dials that address, which is not loopback: it is still this machine,
+// so the refusal of plain http to another machine must not apply to it, or the host machine stays offline.
+func TestEmbeddedSupervisorMayUsePlainHTTPOnItsOwnNonLoopbackAddress(t *testing.T) {
+	client := newEmbeddedSupervisor("machine", "key", "192.168.1.20", 9897, nil, adapter.NewFake())
+	if client.ServerURL != "http://192.168.1.20:9897" || !client.AllowPlainHTTP {
+		t.Fatalf("url=%q allowPlain=%v", client.ServerURL, client.AllowPlainHTTP)
+	}
+	if err := tlsclient.CheckTransport(client.ServerURL, client.AllowPlainHTTP); err != nil {
+		t.Fatalf("the embedded supervisor is refused: %v", err)
+	}
+	// The same address for a supervisor that was not told it is this machine is refused.
+	if err := tlsclient.CheckTransport("http://192.168.1.20:9897", false); err == nil {
+		t.Fatal("plain http to a LAN address was allowed for a remote supervisor")
 	}
 }

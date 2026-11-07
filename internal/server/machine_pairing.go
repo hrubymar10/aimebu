@@ -12,6 +12,7 @@ import (
 
 	"github.com/hrubymar10/aimebu/internal/auth"
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/tlsclient"
 	"github.com/hrubymar10/aimebu/internal/worktree"
 )
 
@@ -206,7 +207,16 @@ func (s *Server) machinePairing(w http.ResponseWriter, r *http.Request) {
 		url = scheme + "://" + r.Host
 	}
 	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
-	writeJSON(w, 201, map[string]any{"token": token, "expires_at": expires, "command": "aimebu supervisor --pair " + quote(url) + " " + quote(token)})
+	answer := map[string]any{"token": token, "expires_at": expires}
+	command := "aimebu supervisor --pair " + quote(url) + " " + quote(token)
+	if tlsclient.PlainHTTPToARemoteHost(url) {
+		// The supervisor refuses this origin unless it is told to accept it, so the command says so, and the dialog says why that is a choice to make.
+		answer["insecure_transport"] = true
+		answer["warning"] = "This server is reached over plain http, so the pairing token, the machine key it returns and everything the agents on that machine say would cross the network unencrypted. Serve it over https (docs/tls.md) to avoid that; the command below has --insecure only because it will not run without it."
+		command = "aimebu supervisor --insecure --pair " + quote(url) + " " + quote(token)
+	}
+	answer["command"] = command
+	writeJSON(w, 201, answer)
 }
 
 func (s *Server) redeemMachinePairing(w http.ResponseWriter, r *http.Request) {

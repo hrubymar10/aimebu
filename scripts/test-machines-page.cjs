@@ -146,6 +146,20 @@ async function main() {
       await refused.waitForFunction(() => document.querySelector('#machines-error').textContent === 'Only the owner');
       await refused.close();
     }
+    // A server reached over plain http on another machine says so in the dialog: the warning is shown and the command carries --insecure.
+    {
+      const warning = 'This server is reached over plain http, so the pairing token would cross the network unencrypted.';
+      const page = await mount({ auto: { [MACHINES]: { machines: [host] }, 'POST /api/machine-pairings': { command: "aimebu supervisor --insecure --pair 'http://10.0.0.5:9897' 'amp_x'", warning, insecure_transport: true, expires_at: '2026-02-03T04:05:06Z' } } });
+      await cards(page);
+      await page.$eval('#machine-add', el => el.click());
+      await page.waitForFunction(() => document.querySelector('#machine-pair-dialog').open);
+      await page.type('[name=name]', 'Remote');
+      await page.$eval('#machine-pair-form button[type=submit]', el => el.click());
+      await page.waitForFunction(() => !document.querySelector('#machine-pair-result').hidden);
+      assert.deepEqual(await page.evaluate(() => { const note = document.querySelector('#machine-pair-warning'); return [note.hidden, note.textContent, note.getAttribute('role'), document.querySelector('#machine-pair-command').textContent.startsWith('aimebu supervisor --insecure --pair')]; }),
+        [false, warning, 'alert', true], 'a plain-http origin is warned about where the command is shown');
+      await page.close();
+    }
     // Pairing: the dialog opens empty and focused, makes the command, copies it, and a copy that settles last decides what is shown.
     {
       const page = await mount({ auto: { [MACHINES]: { machines: [host] }, 'POST /api/machine-pairings': { command: "aimebu supervisor --pair 'amp_x'", expires_at: '2026-02-03T04:05:06Z' } } });
@@ -167,6 +181,7 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#machine-pair-copy').title, document.querySelector('#machine-pair-error').textContent]), ['Copy command', 'Copy failed. Select the command and copy it manually.'], 'a failed copy resets the button');
       await copyWith(page, 'async () => {}');
       assert.equal(await page.$eval('#machine-pair-error', el => el.textContent), '', 'a copy that works clears the failure');
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#machine-pair-warning').hidden, document.querySelector('#machine-pair-warning').textContent]), [true, ''], 'an https or local server gets no warning');
       await page.$eval('#machine-pair-done', el => el.click());
       await page.waitForFunction(() => !document.querySelector('#machine-pair-dialog').open);
       await page.$eval('#machine-add', el => el.click());

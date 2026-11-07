@@ -117,6 +117,41 @@ func TestMachinePairingCommandUsesPublicURL(t *testing.T) {
 	}
 }
 
+// A pairing for a server that is reached over plain http on a network says so: the answer carries the warning, and the command carries --insecure, since the
+// supervisor will not run without it. An https address or this machine's own gets neither.
+func TestMachinePairingWarnsAboutPlainHTTPToAnotherMachine(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	pair := func() (map[string]any, string) {
+		t.Helper()
+		resp := f.request("POST", "/api/machine-pairings", map[string]string{"name": "laptop"}, true)
+		defer resp.Body.Close()
+		var out map[string]any
+		if resp.StatusCode != 201 || json.NewDecoder(resp.Body).Decode(&out) != nil {
+			t.Fatalf("create pairing: %d", resp.StatusCode)
+		}
+		command, _ := out["command"].(string)
+		return out, command
+	}
+	out, command := pair() // the test server is on loopback
+	if _, warned := out["warning"]; warned || out["insecure_transport"] != nil || strings.Contains(command, "--insecure") {
+		t.Fatalf("a local server is warned about: %v", out)
+	}
+	f.srv.Auth.PublicURL = "https://aimebu.example.com"
+	if out, command = pair(); out["warning"] != nil || strings.Contains(command, "--insecure") {
+		t.Fatalf("https is warned about: %v", out)
+	}
+	f.srv.Auth.PublicURL = "http://10.0.0.5:9897"
+	out, command = pair()
+	warning, _ := out["warning"].(string)
+	if out["insecure_transport"] != true || !strings.Contains(warning, "plain http") || !strings.Contains(warning, "https") {
+		t.Fatalf("plain http to another machine is not warned about: %v", out)
+	}
+	if want := "aimebu supervisor --insecure --pair 'http://10.0.0.5:9897' 'amp_"; !strings.HasPrefix(command, want) {
+		t.Fatalf("command=%q, want prefix %q", command, want)
+	}
+}
+
 func TestProjectMemberMachineListExcludesPendingAndRevoked(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

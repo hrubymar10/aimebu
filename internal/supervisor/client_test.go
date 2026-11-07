@@ -311,3 +311,20 @@ func TestLaunchSpellingIsUsedOnlyForTheCheckoutItself(t *testing.T) {
 		}
 	}
 }
+
+// A supervisor reaches a server on another machine over plain http only when told to; the refusal comes before anything is sent.
+func TestSupervisorRefusesPlainHTTPToAnotherMachineUnlessAllowed(t *testing.T) {
+	t.Parallel()
+	client := &Client{MachineID: "mch_x", MachineKey: "key", ServerURL: "http://203.0.113.9:9897"}
+	err := client.RunOnce(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "plain http") || !strings.Contains(err.Error(), "--insecure") {
+		t.Fatalf("a plain-http remote origin must be refused: %v", err)
+	}
+	// Told to allow it, it goes on to dial (and fails here because nothing listens): not with the refusal.
+	client.AllowPlainHTTP = true
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := client.RunOnce(ctx); err != nil && strings.Contains(err.Error(), "plain http to another machine") {
+		t.Fatalf("an allowed origin is still refused: %v", err)
+	}
+}

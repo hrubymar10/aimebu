@@ -20,6 +20,7 @@ export function PairDialog({ store, dialog }) {
       <div class="dialog-actions"><button id="machine-pair-cancel" type="button" class="btn" onClick=${() => store.closePairing()}>Cancel</button><button type="submit" class="btn btn-primary" disabled=${store.pairBusy.value}>Create pairing command</button></div>
     </form>
     <div id="machine-pair-result" hidden=${!pairing}>
+      <p id="machine-pair-warning" class="error" role="alert" hidden=${!pairing?.warning}>${pairing?.warning || ''}</p>
       <p>Run this command on the other machine before the token expires:</p>
       <code id="machine-pair-command">${pairing?.command || ''}</code>
       <p id="machine-pair-expiry">${pairing?.expires || ''}</p>

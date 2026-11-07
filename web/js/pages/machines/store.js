@@ -74,7 +74,7 @@ export class MachinesStore {
     try {
       const result = await request('/api/machine-pairings', { method: 'POST', body: { name: this.name.value.trim() } });
       if (!this.alive) return;
-      this.pairing.value = { command: result.command, expires: `Expires ${new Date(result.expires_at).toLocaleString()}. The token can be used once.` };
+      this.pairing.value = { command: result.command, warning: result.warning || '', expires: `Expires ${new Date(result.expires_at).toLocaleString()}. The token can be used once.` };
       await this.load();
     } catch (failure) { if (this.alive) this.pairError.value = failure.message; }
     finally { if (this.alive) this.pairBusy.value = false; }

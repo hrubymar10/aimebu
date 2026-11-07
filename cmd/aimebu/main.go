@@ -151,14 +151,15 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		return serverCommand(ctx, stdout, stderr)
 	case "supervisor":
-		if len(args) == 4 && args[1] == "--pair" {
-			return pairSupervisorCommand(ctx, args[2], args[3], stderr)
+		rest, insecure := withoutFlag(args[1:], "--insecure")
+		if len(rest) == 3 && rest[0] == "--pair" {
+			return pairSupervisorCommand(ctx, rest[1], rest[2], insecure, stderr)
 		}
-		if len(args) != 1 {
-			fmt.Fprintln(stderr, "usage: aimebu supervisor [--pair <server-url> <token>]")
+		if len(rest) != 0 {
+			fmt.Fprintln(stderr, "usage: aimebu supervisor [--insecure] [--pair <server-url> <token>]")
 			return 2
 		}
-		return supervisorCommand(ctx, stderr)
+		return supervisorCommand(ctx, insecure, stderr)
 	case "agent-tools":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: aimebu agent-tools")
@@ -227,7 +228,7 @@ Usage: aimebu <command> [args]
 Server:
   server                              Run the server in the foreground (embedded supervisor)
   server start|stop|status            Run the server in the background (pid file, log in server/aimebu.log)
-  supervisor [--pair <url> <token>]   Run a standalone host supervisor, or pair it with a server
+  supervisor [--insecure] [--pair <url> <token>]   Run a standalone host supervisor, or pair it with a server (plain http to another machine needs --insecure)
   agent-tools                         Managed agent toolbox over stdio (needs AIMEBU2_URL, AIMEBU2_AGENT_KEY)
 
 Utilities:
@@ -249,7 +250,21 @@ Humans use the web UI for bus conversations. See docs/ for per-command guides.
 `)
 }
 
-func supervisorCommand(ctx context.Context, stderr io.Writer) int {
+// withoutFlag takes one flag out of an argument list and says whether it was there.
+func withoutFlag(args []string, flag string) ([]string, bool) {
+	var rest []string
+	found := false
+	for _, arg := range args {
+		if arg == flag {
+			found = true
+			continue
+		}
+		rest = append(rest, arg)
+	}
+	return rest, found
+}
+
+func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int {
 	if tlsclient.InsecureSkipVerify() {
 		fmt.Fprintln(stderr, "WARNING: AIMEBU2_INSECURE_SKIP_VERIFY disables server certificate verification")
 	}
@@ -280,8 +295,15 @@ func supervisorCommand(ctx context.Context, stderr io.Writer) int {
 			serverURL = "http://127.0.0.1:" + strconv.Itoa(config.port)
 		}
 	}
+	if err := tlsclient.CheckTransport(serverURL, insecure); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if insecure && tlsclient.PlainHTTPToARemoteHost(serverURL) {
+		fmt.Fprintln(stderr, "WARNING: --insecure: the machine key and every agent turn cross the network over plain http to "+serverURL)
+	}
 	if credential.ServerURL != "" {
-		if err := waitForMachineApproval(ctx, serverURL, credential, stderr); err != nil {
+		if err := waitForMachineApproval(ctx, serverURL, credential, insecure, stderr); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -296,6 +318,7 @@ func supervisorCommand(ctx context.Context, stderr io.Writer) int {
 	client := supervisor.NewClient(credential.MachineID, credential.Key, serverURL, journal,
 		adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), opencode.NewDocker(), vibe.New(filepath.Join(config.root, "supervisor", "vibe")), vibe.NewDocker()))
 	client.OnError = func(err error) { fmt.Fprintln(stderr, err) }
+	client.AllowPlainHTTP = insecure
 	client.TurnLimits = turnLimits
 	client.ConfigDir = config.root
 	if err := client.Run(ctx); err != nil {
@@ -676,8 +699,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		}
 		fake := adapter.NewFake()
 		fake.SetEchoDefault(true)
-		client := supervisor.NewClient(credential.MachineID, credential.Key,
-			"http://"+net.JoinHostPort(embeddedAddress, strconv.Itoa(config.port)), opened,
+		client := newEmbeddedSupervisor(credential.MachineID, credential.Key, embeddedAddress, config.port, opened,
 			adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), opencode.NewDocker(), vibe.New(filepath.Join(config.root, "supervisor", "vibe")), vibe.NewDocker()))
 		client.OnError = func(err error) { fmt.Fprintln(stderr, "supervisor:", err) }
 		client.TurnLimits = turnLimits
@@ -914,6 +936,15 @@ func logAllowStartup(w io.Writer, config serverConfig, address string) {
 
 // The embedded supervisor must reach its own listener even when remote peers
 // are excluded by the configured allowlist.
+// newEmbeddedSupervisor is the supervisor the server runs for its own machine. It dials the address the server itself listens on, which may be
+// a LAN or VPN address (AIMEBU2_BIND) and not loopback, so plain http is allowed for it: nothing it sends leaves this machine, which is what
+// the refusal of plain http to another machine is about.
+func newEmbeddedSupervisor(machineID, key, address string, port int, journal *supervisor.Journal, harnesses adapter.Adapter) *supervisor.Client {
+	client := supervisor.NewClient(machineID, key, "http://"+net.JoinHostPort(address, strconv.Itoa(port)), journal, harnesses)
+	client.AllowPlainHTTP = true
+	return client
+}
+
 func allowEmbeddedSupervisor(config *serverConfig) string {
 	address := config.bind
 	switch address {
