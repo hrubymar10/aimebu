@@ -11,12 +11,14 @@ Reporting is decided in this order:
 
 1. **`AIMEBU2_SENTRY_DSN` in the server's environment wins.** A DSN turns reporting on with that project; `off` (or an empty value)
    turns it off. When it is set, Settings cannot change it and no popup is shown.
-2. Otherwise **Settings → Telemetry** decides: a toggle and a DSN field (the same two fields as the popup below). The
-   field is always filled with the effective DSN: the one you chose, else the default this build ships (if any). A "Reset to default DSN" icon
-   button to the left of the field puts the default back (it is off while the field already holds it, and absent when the build ships no
-   default). Turning telemetry off disables the field and the button; it does not hide them, and an off save stores only the switch. A save applies to
-   the server at once, with no restart; a page already open starts or stops its own reporting after a reload. Only the owner and
-   admins can change it.
+2. Otherwise **Settings → Telemetry** decides. It is one card: the master switch **"Send telemetry"** first (it applies at once, with no Save),
+   then the Sentry DSN field, then the person's own identity (see below). The DSN field is always filled with the effective DSN: the one you chose,
+   else the default this build ships (if any); a "Reset to default DSN" icon button to its left puts the default back (off while the field already
+   holds it, absent when the build ships no default), and its own **Save** applies a new DSN. **With the switch off, everything under it is disabled
+   and muted** (the DSN, reset, Save, the identity field, copy, dice, the name switch and the volume facts), in every theme: dimmed, and in
+   high contrast (which keeps disabled controls at full opacity) by the muted colour and dashed borders. A change applies to the server at once,
+   with no restart; a page already open starts or stops its own reporting after a reload. Only the owner and admins see the switch, the DSN and the
+   volume facts; everyone else sees their identity rows only.
 3. **Nothing is reported until the owner has answered the popup.** On a new install the owner sees a one-time "Telemetry" popup
    after the welcome, and on the first sign-in after an update that brought telemetry. It holds the toggle (on when this build
    ships a default DSN, otherwise off), the DSN field (filled in, with the same reset button; greyed out while the toggle is off), and one sentence on what is and is not sent. **Save** keeps what is shown; **Not
@@ -78,7 +80,7 @@ owner can tell their own reports from a tester's.
 fingerprint", that replaces it with a fresh random one. The switch **"Send my user name instead of a fingerprint"** (per person, off by default)
 makes `user.id` the login name instead, and the field shows that name instead of the hash until the switch is turned off or the fingerprint is rolled: never both. Rolling while the switch is on asks first ("Rolling a new fingerprint turns off sending your
 user name and gives you a new anonymous id."); confirming turns the switch off and rolls, cancelling changes nothing. A change reaches the server
-at once and the page's own SDK without a reload. The DSN and the on/off switch above stay with the owner and the admins.
+at once and the page's own SDK without a reload. The DSN and the on/off switch stay with the owner and the admins.
 
 API: `GET`/`PUT /api/me/telemetry` (`{send_name}`) and `POST /api/me/telemetry/fingerprint`, each answering
 `{fingerprint, send_name, login, report_id}`; `GET /api/buildinfo` adds `sentry.user_id` (the `report_id`) for the page.

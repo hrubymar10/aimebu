@@ -123,13 +123,16 @@ async function on() {
       assert.ok(event, `${message} reached Sentry`);
       return event.user;
     };
+    // Event timing (the INP's source): every press on this page, with the SDK running and the CPU four times slower, is handled and painted fast.
+    await page.evaluate(() => { window.__timing = []; new PerformanceObserver(list => { for (const entry of list.getEntries()) window.__timing.push([entry.name, entry.target?.id || '', entry.duration]); }).observe({ type: 'event', durationThreshold: 16 }); });
+    const cdp = await page.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
     await page.evaluate(() => document.querySelector('#settings-toggle').click());
     await page.click('#settings-telemetry-tab');
     await page.waitForFunction(() => document.querySelector('#telemetry-fingerprint')?.value);
     assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, readOnly: document.querySelector('#telemetry-fingerprint').readOnly, sendName: document.querySelector('#telemetry-send-name').checked })), { value: fingerprint, readOnly: true, sendName: false }, 'the field shows the fingerprint, read-only; the name is off by default');
     await page.click('#telemetry-send-name');
-    await page.waitForFunction(() => /user name/.test(document.querySelector('#telemetry-identity-status').textContent));
-    assert.match(await page.evaluate(() => document.querySelector('#settings-telemetry .settings-intro').textContent), /login name/, 'the intro describes the name mode');
+    await page.waitForFunction(() => /user name/.test(document.querySelector('#telemetry-status').textContent));
+    assert.match(await page.evaluate(() => document.querySelector('#telemetry-fingerprint-desc').textContent), /login name/, 'the row describes the name mode');
     assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, readOnly: document.querySelector('#telemetry-fingerprint').readOnly, label: document.querySelector('label[for=telemetry-fingerprint]').textContent, copy: document.querySelector('#telemetry-fingerprint-copy').getAttribute('aria-label') })),
       { value: 'owner', readOnly: true, label: 'User name', copy: 'Copy user name' }, 'with the name on, the field shows the user name, not the hash');
     assert.ok(!await page.evaluate(fp => document.querySelector('#settings-telemetry').textContent.includes(fp) || [...document.querySelectorAll('#settings-telemetry input')].some(input => input.value === fp), fingerprint), 'the hash is not on the page while the name is on');
@@ -159,6 +162,10 @@ async function on() {
     await page.click('#telemetry-fingerprint-roll');
     await page.waitForFunction(old => document.querySelector('#telemetry-fingerprint').value !== old, {}, rolled);
     assert.equal(await page.evaluate(() => !!document.querySelector('#app-dialog[open]')), false, 'no question when the name is off');
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    const presses = (await page.evaluate(() => window.__timing)).filter(([name]) => name === 'click' || name === 'keydown' || name === 'pointerdown');
+    assert.ok(presses.some(([, id]) => id === 'telemetry-send-name') && presses.some(([, id]) => id === 'telemetry-fingerprint-roll'), `the presses were measured: ${JSON.stringify(presses)}`);
+    assert.ok(presses.every(([, , duration]) => duration < 200), `every press is handled and painted in under 200 ms: ${JSON.stringify(presses.filter(([, , duration]) => duration >= 200))}`);
     // Whatever was sent, a user is only ever an id (and the browser's explicitly absent address).
     for (const item of parsedItems()) if (item.user) assert.ok(Object.keys(item.user).every(key => key === 'id' || key === 'ip_address'), `a user is only an id: ${JSON.stringify(item.user)}`);
   } finally { await server.stop(); sentry.close(); }
@@ -224,7 +231,10 @@ async function popup() {
     await page.click('#settings-telemetry-tab');
     await page.waitForSelector('#telemetry-dsn');
     assert.equal(await page.evaluate(() => document.querySelector('#settings-title').textContent), 'Telemetry');
-    assert.match(await page.evaluate(() => [...document.querySelectorAll('#settings-telemetry .settings-intro')].map(node => node.textContent).join(' ')), /Settings → Telemetry/, 'the text points at this section');
+    // One card, the master switch first, then what depends on it; no heading of its own repeating the page title.
+    assert.deepEqual(await page.evaluate(() => ({ first: document.querySelector('#settings-telemetry .settings-row input').id, groups: document.querySelectorAll('#settings-telemetry .settings-group').length, headings: document.querySelectorAll('#settings-telemetry h3').length,
+      order: [...document.querySelectorAll('#settings-telemetry .settings-row')].map(row => (row.querySelector('input') || row.querySelector('button')).id) })),
+      { first: 'telemetry-enabled', groups: 1, headings: 0, order: ['telemetry-enabled', 'telemetry-dsn', 'telemetry-fingerprint', 'telemetry-send-name'] }, 'the master switch comes first, in one card');
     // What bounds the volume is shown as facts, and they are the server's numbers.
     const facts = (await server.api(page, '/api/telemetry/settings')).body;
     assert.deepEqual([facts.traces_sample_rate, facts.max_db_spans], [1, 50], 'the defaults: every request, 50 database spans per request');
@@ -239,6 +249,7 @@ async function popup() {
     assert.equal(await page.$eval('#telemetry-dsn', el => el.value), 'http://pagekey@127.0.0.1:9/5', 'read again on the next open');
     assert.equal(await page.$eval('#telemetry-dsn', el => el.value), 'http://pagekey@127.0.0.1:9/5');
     assert.equal(await page.$eval('#telemetry-enabled', el => el.checked), true);
+    const toggleMaster = async () => { await page.click('#telemetry-enabled'); await page.waitForFunction(() => !document.querySelector('#telemetry-enabled').disabled); };
     const settingsState = () => page.evaluate(() => {
       const input = document.querySelector('#telemetry-dsn'), reset = document.querySelector('#telemetry-dsn-reset');
       return { value: input.value, fieldDisabled: input.disabled, reset: reset && { disabled: reset.disabled, label: reset.getAttribute('aria-label'), title: reset.title, left: reset.getBoundingClientRect().right <= input.getBoundingClientRect().left } };
@@ -247,27 +258,43 @@ async function popup() {
     await page.click('#telemetry-dsn-reset');
     assert.deepEqual(await settingsState(), { value: before.default_dsn, fieldDisabled: false, reset: { disabled: true, label: 'Reset to default DSN', title: 'Reset to default DSN', left: true } }, 'Reset puts the default in the field and turns itself off');
     await page.type('#telemetry-dsn', 'x'); assert.equal((await settingsState()).reset.disabled, false);
-    await page.click('#telemetry-enabled'); // off while the field holds a custom value
+    await toggleMaster(); // off while the field holds a custom value
     assert.deepEqual(await page.evaluate(() => ({ field: document.querySelector('#telemetry-dsn').disabled, reset: document.querySelector('#telemetry-dsn-reset').disabled })), { field: true, reset: true }, 'off with a custom DSN: field and reset both disabled');
-    await page.click('#telemetry-enabled');
+    await toggleMaster();
     assert.equal((await settingsState()).reset.disabled, false, 'on again: the reset button is back');
     await page.click('#telemetry-dsn-reset');
-    // Off disables the field and the button but keeps them in the page.
-    await page.click('#telemetry-enabled');
-    assert.deepEqual(await settingsState(), { value: before.default_dsn, fieldDisabled: true, reset: { disabled: true, label: 'Reset to default DSN', title: 'Reset to default DSN', left: true } }, 'off: disabled, not hidden');
-    // The switched-off DSN field is dimmed, and only it (not the read-only fingerprint field), and not in high contrast.
-    const opacities = () => page.evaluate(() => ({ dsn: getComputedStyle(document.querySelector('#telemetry-dsn')).opacity, fingerprint: getComputedStyle(document.querySelector('#telemetry-fingerprint')).opacity }));
-    assert.deepEqual(await opacities(), { dsn: '0.5', fingerprint: '1' }, 'only the DSN field is dimmed');
-    await page.evaluate(() => { document.documentElement.dataset.theme = 'high-contrast-dark'; });
-    assert.equal((await opacities()).dsn, '1', 'high contrast keeps disabled controls at full opacity');
-    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
-    await page.click('#telemetry-save');
+    // The master switch applies at once; off disables and mutes everything that depends on it, in every theme, and keeps it in the page.
+    const everything = ['#telemetry-dsn', '#telemetry-dsn-reset', '#telemetry-save', '#telemetry-fingerprint', '#telemetry-fingerprint-copy', '#telemetry-fingerprint-roll', '#telemetry-send-name'];
+    const dependent = () => page.evaluate(everything => ({
+      disabled: everything.map(selector => document.querySelector(selector).disabled),
+      muted: [...document.querySelectorAll('#settings-telemetry .settings-row')].map(row => row.classList.contains('telemetry-muted')), factsMuted: document.querySelector('#telemetry-facts').classList.contains('telemetry-muted'),
+      opacity: getComputedStyle(document.querySelector('#telemetry-dsn').closest('.settings-row')).opacity,
+      masterLabel: getComputedStyle(document.querySelector('label[for=telemetry-enabled]')).color, mutedLabel: getComputedStyle(document.querySelector('label[for=telemetry-dsn]')).color,
+      dashed: ['#telemetry-dsn', '#telemetry-save', '#telemetry-fingerprint', '#telemetry-fingerprint-roll'].map(selector => getComputedStyle(document.querySelector(selector)).borderTopStyle),
+      masterEnabled: !document.querySelector('#telemetry-enabled').disabled,
+    }), everything);
+    await toggleMaster();
     await page.waitForFunction(() => /Telemetry is off/.test(document.querySelector('#telemetry-status').textContent));
-    assert.equal((await server.api(page, '/api/telemetry/settings')).body.active, false, 'turning it off in Settings stops reporting at once');
-    // An off save keeps only the switch: what the field held while greyed out is not stored, so the DSN chosen in the popup is still there.
-    assert.equal(await page.$eval('#telemetry-dsn', el => el.value), 'http://pagekey@127.0.0.1:9/5', 'an off save leaves the stored DSN alone');
+    assert.equal((await server.api(page, '/api/telemetry/settings')).body.active, false, 'turning it off in Settings stops reporting at once, with no Save');
+    assert.deepEqual(await settingsState(), { value: 'http://pagekey@127.0.0.1:9/5', fieldDisabled: true, reset: { disabled: true, label: 'Reset to default DSN', title: 'Reset to default DSN', left: true } }, 'off: disabled, not hidden, the unsaved text put back to what is stored');
+    let off = await dependent();
+    assert.deepEqual(off.disabled, everything.map(() => true), 'off: the DSN, reset, Save, identity field, copy, dice and name switch are all disabled');
+    assert.deepEqual(off.muted, [false, true, true, true], 'off: everything but the master switch is muted'); assert.equal(off.factsMuted, true, 'the volume facts too');
+    assert.equal(off.masterEnabled, true, 'the master switch stays usable'); assert.notEqual(off.mutedLabel, off.masterLabel, 'a muted label has the muted colour');
+    assert.equal(off.opacity, '0.5', 'dimmed where opacity is allowed'); assert.deepEqual(off.dashed, ['dashed', 'dashed', 'dashed', 'dashed'], 'and dashed');
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'high-contrast-dark'; });
+    off = await dependent();
+    assert.equal(off.opacity, '1', 'high contrast keeps full opacity...'); assert.notEqual(off.mutedLabel, off.masterLabel, '...and mutes by colour');
+    assert.deepEqual(off.dashed, ['dashed', 'dashed', 'dashed', 'dashed'], '...and dashed borders');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#telemetry-dsn').closest('.settings-row')).borderLeftStyle), 'dashed', '...and a dashed rule at the row\'s edge');
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
+    // An off switch keeps only the switch: the DSN chosen in the popup is still there.
+    assert.equal(await page.$eval('#telemetry-dsn', el => el.value), 'http://pagekey@127.0.0.1:9/5', 'turning it off leaves the stored DSN alone');
     assert.equal((await server.api(page, '/api/telemetry/settings')).body.dsn, 'http://pagekey@127.0.0.1:9/5');
-    await page.click('#telemetry-enabled'); // on again: editable
+    await toggleMaster(); // on again: everything is enabled again and unmuted
+    const on = await dependent();
+    assert.deepEqual(on.disabled, everything.map(() => false), 'on: all enabled again'); assert.deepEqual(on.muted, [false, false, false, false]); assert.equal(on.factsMuted, false);
+    assert.equal(on.opacity, '1');
     await page.$eval('#telemetry-dsn', el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
     await page.type('#telemetry-dsn', 'nope');
     await page.click('#telemetry-save');
