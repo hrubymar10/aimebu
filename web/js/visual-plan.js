@@ -100,6 +100,11 @@ function restoreMermaidSource(node, source, error) {
   node.append(element('span', 'visual-plan-render-error', `Diagram failed to render: ${error.message || error}`));
   node.append(element('code', '', source));
 }
+// A diagram is a picture: a `click NODE href "…"` line makes mermaid draw the node inside a live <a>, a same-tab link to any address the author
+// wrote (a phishing link under a harmless label), which the strict level allows. Every link is taken out and its drawing kept.
+function stripDiagramLinks(node) {
+  for (const link of [...node.querySelectorAll('a')]) link.replaceWith(...link.childNodes);
+}
 function queueMermaid(node, source) {
   requestAnimationFrame(() => {
     if (!node.isConnected) return;
@@ -107,7 +112,10 @@ function queueMermaid(node, source) {
       const mermaid = await loadMermaid();
       if (!node.isConnected) return;
       const theme = /(?:^|-)dark$/.test(document.documentElement.dataset.theme || '') ? 'dark' : 'default';
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme });
+      // Labels are drawn as SVG text, never as HTML (a label's markup is not trusted, however a diagram asks), and a diagram's own %%{init}%% block may not
+      // turn that back on: `secure` lists the keys it cannot change, and htmlLabels is one of them.
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, htmlLabels: false, flowchart: { htmlLabels: false },
+        secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges', 'htmlLabels', 'flowchart', 'dompurifyConfig'] });
       // A first render sometimes ends in mermaid's own error graphic; one retry from the original source clears that.
       for (let attempt = 0; ; attempt++) {
         node.classList.add('mermaid');
@@ -115,6 +123,7 @@ function queueMermaid(node, source) {
         node.removeAttribute('data-processed');
         node.textContent = source;
         await mermaid.run({ nodes: [node] }).catch(error => { if (attempt) throw error; });
+        stripDiagramLinks(node);
         if (node.querySelector('svg') && !node.querySelector('.error-icon, .error-text')) break;
         if (attempt) throw new Error('invalid diagram');
       }

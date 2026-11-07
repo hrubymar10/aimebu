@@ -1774,6 +1774,29 @@ async function main() {
     });
     assert.deepEqual(prependedThreadOrder, [1, 2, 3, 4], 'older replies arrived out of order in an open thread');
     assert.equal(await first.evaluate(() => Boolean(document.querySelector('script[src="/vendor/mermaid.min.js"]'))), false, 'Mermaid stays unloaded without diagrams');
+    // Mermaid with its real library: a label that is HTML, in the diagram or through its own %%{init}%% block that tries to turn HTML labels on or the
+    // security level down, is drawn as text. No form, image or script of the diagram's making is in the page, and nothing ran.
+    const mermaidSafety = await first.evaluate(async () => {
+      const { renderVisualPlan } = await import('/js/visual-plan.js');
+      const payload = '<form action="https://evil.example"><input name=x></form><img src=x onerror="window.__mermaidXss=1">';
+      const sources = [
+        `flowchart LR\n A["${payload}"] --> B["plain"]`,
+        `%%{init: {"securityLevel": "loose", "htmlLabels": true, "flowchart": {"htmlLabels": true}}}%%\nflowchart LR\n A["${payload}"] --> B["plain"]`,
+        `%%{init: {"flowchart": {"htmlLabels": true}, "dompurifyConfig": {"ADD_TAGS": ["form", "img"], "ADD_ATTR": ["onerror"]}}}%%\nflowchart LR\n A["${payload}"] --> B["plain"]`,
+        // A click line would draw the node inside a live link to any address; the picture stays and the link does not.
+        `flowchart LR\n A["${payload}"] --> B["plain"]\n click A href "https://phish.example/login" _self\n click B href "javascript:window.__mermaidXss=1" _self`,
+      ];
+      const out = [];
+      for (const source of sources) {
+        const diagram = renderVisualPlan({ visual_plan: [{ type: 'diagram', data: { mermaid: source } }] }); document.body.append(diagram);
+        for (let i = 0; i < 200 && !diagram.querySelector('svg,.visual-plan-render-error'); i++) await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, 150));
+        out.push({ svg: Boolean(diagram.querySelector('svg')), active: diagram.querySelectorAll('form, input, img, script, iframe, foreignObject, [onerror], [onclick]').length, links: diagram.querySelectorAll('a, [href]:not(use)').length, asText: diagram.textContent.includes('<form'), ran: Boolean(window.__mermaidXss) });
+        diagram.remove();
+      }
+      return out;
+    });
+    assert.deepEqual(mermaidSafety, [1, 2, 3, 4].map(() => ({ svg: true, active: 0, links: 0, asText: true, ran: false })), 'a Mermaid label must be text: HTML in it, or an init block turning HTML labels on, must not reach the page');
     const planSafety = await first.evaluate(async () => {
       const { renderVisualPlan } = await import('/js/visual-plan.js');
       const attack = '<img src=x onerror="window.__planXss=1"><script>window.__planXss=1</script>';
