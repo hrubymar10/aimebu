@@ -2106,6 +2106,35 @@ async function main() {
       assert.deepEqual([...new Set(scopeIcons.map(icon => icon.action))].sort(), ['pause', 'resume', 'stop'], 'every scope control is present');
       assert.equal(/\bbtn-danger\b/.test(sizes.stop) && !/\bbtn-danger\b/.test(sizes.pause), true, 'Stop is the danger button, Pause is secondary');
     }
+    // The 'roomsettings' experiment: A is the card, B the full-height pane with a title bar and a close button; the same dialog and controls in both.
+    {
+      const setVariant = letter => first.evaluate(async letter => {
+        const pill = [...document.querySelectorAll('.ui-variant-toggle')].find(button => /Room settings/.test(button.title));
+        for (let i = 0; i < 4 && pill.dataset.active !== letter; i++) pill.click();
+        return pill.dataset.active;
+      }, letter);
+      const shape = () => first.evaluate(() => {
+        const dialog = document.querySelector('#room-info-dialog'), box = dialog.getBoundingClientRect(), x = document.querySelector('#room-info-x'), close = document.querySelector('#room-info-close');
+        const header = document.querySelector('.room-info-header').getBoundingClientRect();
+        return { width: Math.round(box.width), full: Math.round(box.height) === innerHeight && Math.round(box.top) === 0, xShown: !!x.offsetParent, closeShown: !!close.offsetParent, headerTop: Math.round(header.top - box.top), title: document.querySelector('#room-info-title').textContent };
+      });
+      assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('.ui-variant-toggle')].filter(button => !button.hidden && /Room settings/.test(button.title)).length), 1, 'the experiment has its pill');
+      assert.equal(await setVariant('a'), 'a');
+      const card = await shape();
+      assert.deepEqual([card.width <= 420, card.full, card.xShown, card.closeShown, card.title], [true, false, false, true, 'Room settings'], `A is the card: ${JSON.stringify(card)}`);
+      assert.equal(await setVariant('b'), 'b');
+      const pane = await shape();
+      assert.deepEqual([pane.width > 420 && pane.width <= 620, pane.full, pane.xShown, pane.closeShown, pane.title], [true, true, true, false, 'Room settings'], `B is the pane: ${JSON.stringify(pane)}`);
+      // The title bar stays at the top while the pane scrolls, and the controls of the card are all still in it.
+      assert.deepEqual(await first.evaluate(() => { const dialog = document.querySelector('#room-info-dialog'); dialog.scrollTop = 120; const scrolled = dialog.scrollTop > 0, top = document.querySelector('.room-info-header').getBoundingClientRect().top - dialog.getBoundingClientRect().top; dialog.scrollTop = 0; return [scrolled, Math.abs(top) <= 1]; }), [true, true], 'the pane scrolls under its title bar');
+      assert.equal(await first.evaluate(() => ['#room-rename-title', '#room-member-list', '#room-schedules', '.room-info-actions'].every(selector => !!document.querySelector(`#room-info-dialog ${selector}`))), true, 'the pane has everything the card has');
+      await first.focus('#room-info-x'); await first.keyboard.press('Enter');
+      await first.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
+      await domClick(first, '#room-info');
+      await first.waitForFunction(() => document.querySelector('#room-info-dialog').open);
+      assert.equal(await setVariant('a'), 'a');
+      assert.equal((await shape()).closeShown, true, 'back to A, the Close button is there');
+    }
     await first.waitForFunction(() => !document.querySelector('.room-memory-setting select')?.disabled);
     await first.select('.room-memory-setting select', 'off');
     await first.waitForFunction(() => document.querySelector('.room-memory-setting p')?.textContent === 'Room message memory is off.');
@@ -2345,11 +2374,12 @@ async function main() {
       });
       assert.equal(html, 'thanks 🙏 and :nope_not_real: at 10:30:15 <code>:pray:</code> <a href="#">:pray:</a>', 'shortcodes in message text become emoji outside code and links');
     }
-    // No experiment is running: the pill stays hidden.
+    // The pill: hidden when no experiment is running, else one visible pill per running experiment.
     // Message width: text, code, tables and plans all use the whole bubble (no line-length cap).
     {
-      assert.deepEqual(await first.$$eval('.topbar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'with no experiment running the pill is hidden');
-      assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].some(name => name.startsWith('data-ui-'))), false, 'and no experiment option is set');
+      const pills = await first.evaluate(async () => ({ running: (await import('/js/ui-variant.js')).ACTIVE.length, shown: [...document.querySelectorAll('.topbar .ui-variant-toggle')].filter(el => !el.hidden).length }));
+      assert.equal(pills.shown, pills.running, 'no pill shows with no experiment running, and one shows for each experiment that runs');
+      assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].filter(name => name.startsWith('data-ui-') && name !== 'data-ui-experiment').length), pills.running, 'and an option is set only for each experiment that runs');
       const widths = await first.evaluate(async () => {
         const { renderMarkdown } = await import('/js/markdown.js');
         const host = document.createElement('div'); host.className = 'chat-msg-body md-rendered'; host.style.width = '1200px';
@@ -3067,7 +3097,7 @@ async function main() {
       await domClick(first, '#spawn-open');
       await first.waitForFunction(() => document.querySelector('#spawn-dialog').open && !document.querySelector('#spawn-sessions').hidden);
       assert.equal(await first.$eval('#spawn-sessions', el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()]).then(list => list.join('|')), 'Continue a Claude Code session|Continue a Claude Code session|Continue a session…', 'the session entry is a labelled button, not a bare glyph');
-      assert.deepEqual(await first.evaluate(() => { const button = document.querySelector('#spawn-sessions'), model = document.querySelector('#spawn-form [name=machine]'); return { enabled: !button.disabled, note: document.querySelector('#spawn-sessions-note').hidden, text: !!button.textContent.trim(), tall: button.getBoundingClientRect().height >= 24 && !!model }; }), { enabled: true, note: true, text: true, tall: true }, 'the session entry is usable with a launcher that can continue a session, and says nothing then');
+      assert.deepEqual(await first.evaluate(() => { const button = document.querySelector('#spawn-sessions'), model = document.querySelector('#spawn-form [name=machine]'); return { enabled: !button.disabled, note: document.querySelector('#spawn-sessions-note').hidden, text: !!button.textContent.trim(), inTitle: !!button.closest('.spawn-title-row') && !!model }; }), { enabled: true, note: true, text: true, inTitle: true }, 'the session entry is usable with a launcher that can continue a session, and says nothing then');
       await domClick(first, '#spawn-sessions');
       await first.waitForFunction(() => document.querySelector('#cc-sessions-dialog').open && document.querySelectorAll('#cc-sessions-list .cc-session').length === 3 && !document.querySelector('#spawn-dialog').open);
       assert.deepEqual(await first.$$eval('#cc-sessions-list .cc-session', rows => rows.map(row => [row.dataset.sessionId, row.querySelector('.cc-session-title').textContent, [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)]).sort()),
@@ -3108,7 +3138,7 @@ async function main() {
       assert.deepEqual(await first.evaluate(() => ({
         title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
         name: document.querySelector('.spawn-name').hidden, startIn: !document.querySelector('#spawn-start-in').hidden, room: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent,
-        sessions: document.querySelector('#spawn-sessions').hidden, worktree: document.querySelector('.spawn-worktree-option').hidden,
+        sessions: !document.querySelector('#spawn-sessions')?.offsetParent, worktree: document.querySelector('.spawn-worktree-option').hidden,
         mode: document.querySelector('#spawn-resume-mode').hidden ? 'hidden' : document.querySelector('#spawn-form [name=resume_mode]:checked').value,
       })), { title: 'Continue a Claude Code session', text: 'This continues the session. It carries on from where it stopped, in the same transcript.',
         confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true, mode: 'continue' }, 'the Spawn dialog opens for the picked session, continuing by default');
@@ -6329,6 +6359,8 @@ async function main() {
     const checkHeaderGeometry = async theme => {
       for (const width of [1440, 1100, 800]) {
         await first.setViewport({ width, height: 800 });
+        // This is about the controls the product keeps: the experiment pills (testing aids, one per running experiment, so they can crowd an 800px bar) are set aside and put back.
+        await first.evaluate(() => { for (const pill of document.querySelectorAll('.topbar .ui-variant-toggle')) { pill.dataset.wasHidden = String(pill.hidden); pill.hidden = true; } });
         const layout = await first.evaluate(() => {
           const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
           const visible = element => !element.hidden && getComputedStyle(element).display !== 'none';
@@ -6340,6 +6372,7 @@ async function main() {
         assert.ok(layout.topButtons.every(box => box.top >= 0 && box.bottom <= layout.bar.bottom && box.right <= width && Math.abs(box.height - (box.icon ? 30 : 28)) < 1) && layout.connection.right <= width && noOverlap(layout.topButtons), `${theme} top bar clips, overlaps, or has uneven button heights at ${width}: ${JSON.stringify(layout)}`);
         assert.ok(layout.header.right <= layout.panel.left + 1 && layout.toolbar.right <= layout.header.right + 1 && noOverlap(layout.buttons), `${theme} room toolbar overlaps at ${width}: ${JSON.stringify(layout)}`);
       }
+      await first.evaluate(() => { for (const pill of document.querySelectorAll('.topbar .ui-variant-toggle')) { pill.hidden = pill.dataset.wasHidden === 'true'; delete pill.dataset.wasHidden; } });
       await first.setViewport(originalViewport);
     };
     await checkHeaderGeometry('High Contrast Dark');

@@ -1,5 +1,6 @@
-import { html } from '../../ui.js';
+import { html, useState, useEffect, useRef } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
+import { activeVariant, defineExperiment } from '../../ui-variant.js';
 import { toolRows } from '../../spawn-model.js';
 import { MachineFields } from './machine-fields.js';
 
@@ -9,19 +10,63 @@ function Reason({ id, className, text, store, host }) {
   return html`<p id=${id} class=${className}>${parts.link ? html`${parts.before}<button type="button" class="inline-link" onClick=${() => host.openSettings(store.machine.id.peek())}>${parts.link}</button>${parts.after}` : parts.text}</p>`;
 }
 
+// Experiment (ui-variant.js, listed in ACTIVE): how small the "Continue a session" entry of the Spawn dialog can be. A is a muted text link and B an
+// icon in the title row, C a ⋯ menu with one item, D drops it: no other entry point exists (the agent cards and the session history reopen an agent that
+// was already started, and Import Claude Code sessions makes agents from many sessions at once), so D shows nothing in Spawn.
+defineExperiment('continue', 'Continue a session', ['text link', 'icon', '\u22ef menu', 'hidden']);
+
+// The variant of the experiment, redrawn when the pill changes it.
+function useContinueVariant() {
+  const [variant, setVariant] = useState(() => activeVariant('continue'));
+  useEffect(() => {
+    const change = () => setVariant(activeVariant('continue'));
+    document.addEventListener('ui-variant-change', change);
+    change();
+    return () => document.removeEventListener('ui-variant-change', change);
+  }, []);
+  return variant;
+}
+
+// Variant C: a ⋯ button that opens a menu of one item. Arrow keys have nowhere to go with one item; Escape closes the menu (not the dialog) and
+// gives focus back to the button, Tab or a click outside closes it.
+function ContinueMenu({ enabled, onContinue }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef(null), item = useRef(null), toggle = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    item.current?.focus();
+    const outside = event => { if (!root.current?.contains(event.target)) setOpen(false); };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [open]);
+  const keys = event => {
+    if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); toggle.current?.focus(); }
+    else if (event.key === 'Tab' && open) setOpen(false);
+  };
+  return html`<span class="spawn-continue-menu" ref=${root} onKeyDown=${keys}>
+    <button type="button" id="spawn-sessions-menu" ref=${toggle} class="btn-icon" title="More" aria-label="More" aria-haspopup="menu" aria-expanded=${String(open)} onClick=${() => setOpen(!open)}><span class="icon-mask icon-mask-more" aria-hidden="true"></span></button>
+    <div class="spawn-continue-list" role="menu" hidden=${!open}><button type="button" id="spawn-sessions" ref=${item} role="menuitem" class="row-btn" disabled=${!enabled} onClick=${() => { setOpen(false); onContinue(); }}>Continue a session…</button></div>
+  </span>`;
+}
+
 // The Spawn dialog's form. The dialog element and its static frame stay in index.html; the adapter shows and closes it.
 export function SpawnForm({ store, host }) {
   const resume = store.resume.value, continuing = resume?.kind === 'claude_session', banner = store.banner.value, machine = store.machine, view = store.worktreeView.value;
   const room = host.room, disabled = store.toolsDisabled.value, tools = toolRows(store.catalog.value, disabled), sessions = store.sessions.value;
-  const sessionsHidden = !!resume || room?.kind === 'dm';
+  const variant = useContinueVariant();
+  const sessionsHidden = !!resume || room?.kind === 'dm' || variant === 'd';
   const swap = sessions.switchTo >= 0 ? store.catalog.value[sessions.switchTo] : null;
   const submit = event => {
     event.preventDefault();
     const form = event.currentTarget;
     store.submit({ name: form.elements.name.value, baseRef: form.elements.base_ref.value, mode: form.elements.resume_mode.value, confirmed: form.querySelector('#spawn-resume-confirm').checked });
   };
-  return html`<form id="spawn-form" onSubmit=${submit}><h2>${banner.title}</h2>
-    <button type="button" id="spawn-sessions" class="btn spawn-sessions" hidden=${sessionsHidden} disabled=${!sessions.enabled} title="Continue a Claude Code session" aria-label="Continue a Claude Code session" onClick=${() => store.openSessionPicker()}><span class="icon-mask icon-mask-reopen" aria-hidden="true"></span>${' Continue a session…'}</button>
+  const open = () => store.openSessionPicker();
+  const entry = sessionsHidden ? null
+    : variant === 'b' ? html`<${IconButton} name="reopen" label="Continue a session" id="spawn-sessions" disabled=${!sessions.enabled} onClick=${open} />`
+    : variant === 'c' ? html`<${ContinueMenu} enabled=${sessions.enabled} onContinue=${open} />`
+    : html`<button type="button" id="spawn-sessions" class="row-btn spawn-sessions-link" disabled=${!sessions.enabled} title="Continue a Claude Code session" aria-label="Continue a Claude Code session" onClick=${open}>Continue a session…</button>`;
+  return html`<form id="spawn-form" onSubmit=${submit}><div class="spawn-title-row"><h2>${banner.title}</h2>${entry}</div>
     <p id="spawn-sessions-note" class="spawn-sessions-note" role="status" hidden=${sessionsHidden || !sessions.note}><span id="spawn-sessions-note-text">${(() => { const parts = store.hint(sessions.note); return parts.link ? html`${parts.before}<button type="button" class="inline-link" onClick=${() => host.openSettings(store.machine.id.peek())}>${parts.link}</button>${parts.after}` : parts.text; })()}</span>${' '}<button type="button" id="spawn-sessions-switch" class="btn" hidden=${!swap} onClick=${() => store.useTool(sessions.switchTo)}>${swap ? `Use ${swap.label || 'the native launcher'}` : ''}</button></p>
     <${MachineFields} machine=${machine} prefix="spawn" />
     <div id="spawn-resume" class="spawn-resume" hidden=${banner.hidden}><p id="spawn-resume-text">${banner.text}</p>

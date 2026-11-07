@@ -474,6 +474,65 @@ async function main() {
     await page.close();
   }
 
+  // The 'continue' experiment: each variant of the entry opens the same session picker, and D shows no entry at all.
+  {
+    const sessions = { sessions: [{ id: '11111111-aaaa-4aaa-8aaa-000000000001', title: 'Fix the login bug', cwd: '/work/project', modified_at: at, size: 2048, git_branch: 'main' }] };
+    const choose = (page, letter) => page.evaluate(letter => { document.documentElement.setAttribute('data-ui-continue', letter); document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { variant: letter, experiment: 'continue' } })); }, letter);
+    // The entry as it looks: the element that opens the flow, where it sits, and what it says.
+    const entry = page => page.evaluate(() => {
+      const node = document.querySelector('#spawn-sessions'), row = document.querySelector('#spawn-form .spawn-title-row');
+      return { present: !!node && !node.hidden && !!node.offsetParent, inTitleRow: !!node && row.contains(node), label: node ? (node.getAttribute('aria-label') || node.textContent.trim()) : null, tip: node ? node.title : null, boxed: node ? node.classList.contains("btn") : null, text: node ? node.textContent.trim() : null };
+    });
+    for (const [letter, expected] of [
+      ['a', { present: true, inTitleRow: true, label: 'Continue a Claude Code session', text: 'Continue a session…', boxed: false }],
+      ['b', { present: true, inTitleRow: true, label: 'Continue a session', tip: 'Continue a session', text: '' }],
+    ]) {
+      const page = await mount({ auto: stable({ 'GET /api/projects/p1/claude-sessions?machine_id=m1&launcher_id=l2': sessions }) });
+      await open(page); await ready(page);
+      await select(page, 'tool', '1');
+      await choose(page, letter); await settle(page);
+      const got = await entry(page);
+      for (const [key, value] of Object.entries(expected)) assert.equal(got[key], value, `variant ${letter}: ${key}`);
+      await page.focus('#spawn-sessions');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.querySelector('#cc-sessions-dialog').open && !document.querySelector('#spawn-dialog').open);
+      await page.waitForSelector('#cc-sessions-list .cc-session-pick');
+      await page.close();
+    }
+    {
+      // C: a ⋯ button opens a menu of one item; Escape closes the menu (not the dialog) and returns focus; the item opens the picker.
+      const page = await mount({ auto: stable({ 'GET /api/projects/p1/claude-sessions?machine_id=m1&launcher_id=l2': sessions }) });
+      await open(page); await ready(page);
+      await select(page, 'tool', '1');
+      await choose(page, 'c'); await settle(page);
+      const menu = () => page.evaluate(() => ({ expanded: document.querySelector('#spawn-sessions-menu').getAttribute('aria-expanded'), shown: !!document.querySelector('#spawn-sessions')?.offsetParent, focus: document.activeElement?.id, dialog: document.querySelector('#spawn-dialog').open, inRow: document.querySelector('#spawn-form .spawn-title-row').contains(document.querySelector('#spawn-sessions-menu')) }));
+      assert.deepEqual(await menu().then(({ expanded, shown, dialog, inRow }) => ({ expanded, shown, dialog, inRow })), { expanded: 'false', shown: false, dialog: true, inRow: true }, 'C starts closed');
+      await page.focus('#spawn-sessions-menu'); await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.activeElement?.id === 'spawn-sessions');
+      assert.deepEqual(await menu(), { expanded: 'true', shown: true, focus: 'spawn-sessions', dialog: true, inRow: true }, 'the menu opens on its item');
+      assert.equal(await page.$eval('#spawn-sessions', node => node.textContent.trim()), 'Continue a session…');
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => document.activeElement?.id === 'spawn-sessions-menu');
+      assert.deepEqual(await menu(), { expanded: 'false', shown: false, focus: 'spawn-sessions-menu', dialog: true, inRow: true }, 'Escape closes the menu, keeps the dialog and returns focus');
+      await page.focus('#spawn-sessions-menu'); await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.activeElement?.id === 'spawn-sessions');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.querySelector('#cc-sessions-dialog').open && !document.querySelector('#spawn-dialog').open);
+      await page.waitForSelector('#cc-sessions-list .cc-session-pick');
+      await page.close();
+    }
+    {
+      // D: nothing in Spawn, nor the note that explains a disabled entry; back to A it returns.
+      const page = await mount({ auto: stable({}) });
+      await open(page); await ready(page);
+      await choose(page, 'd'); await settle(page);
+      assert.deepEqual(await page.evaluate(() => [!!document.querySelector('#spawn-sessions')?.offsetParent, !!document.querySelector('#spawn-sessions-menu'), document.querySelector('#spawn-sessions-note').hidden]), [false, false, true], 'D shows no entry');
+      await choose(page, 'a'); await settle(page);
+      assert.equal(await page.evaluate(() => !!document.querySelector('#spawn-sessions')?.offsetParent), true, 'A brings it back');
+      await page.close();
+    }
+  }
+
   // The Switch dialog opens on the agent's own tool and model, says so while nothing differs, sends what is picked with the card's revision and
   // the room, closes on success and shows a refusal; it is closed by a change of room, and an answer that arrives after that fills nothing.
   {

@@ -262,3 +262,27 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 
 /* The sender's name is a <strong> here (v1's is a span inside a weight-700 wrapper): a strong inside bold text would go to 900. */
 .chat-msg-from-name { font-weight: inherit; }
+
+/* The Spawn dialog's "Continue a session" entry sits in the title row (experiment 'continue', see spawn-dialog.js): a muted link, an icon or a one-item menu. */
+.spawn-title-row { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.spawn-title-row h2 { flex: 1 1 auto; min-width: 0; margin: 0; }
+.spawn-title-row .spawn-sessions-link { flex: none; padding: 2px 6px; }
+.spawn-title-row .spawn-sessions-link:disabled { opacity: .5; }
+.spawn-continue-menu { position: relative; flex: none; }
+.spawn-continue-list { position: absolute; top: 100%; right: 0; z-index: 30; min-width: 190px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+.spawn-continue-list[hidden] { display: none; }
+.spawn-continue-list .row-btn { display: block; width: 100%; padding: 6px 10px; text-align: left; white-space: nowrap; }
+
+/* Experiment 'roomsettings' (see room-panel/page.js). The title bar is a plain row in the card (A), with no close button there: the Close button below stays. */
+.room-info-header { display: contents; }
+#room-info-dialog .room-info-x { display: none; }
+/* B: the dialog wears v1's settings pane: full height, 560px (620px in the home room), side borders, a sticky title bar with the close button at its end,
+   and no separate Close button at the bottom. Same elements and ids as the card, so every control and test reaches it the same way. */
+html[data-ui-roomsettings="b"] #room-info-dialog { box-sizing: border-box; width: min(96vw, 560px); height: 100dvh; max-height: 100dvh; margin: auto; padding: 0 20px 20px; border: 0; border-left: 1px solid var(--border); border-right: 1px solid var(--border); border-radius: 0; background: var(--bg-primary); box-shadow: 0 0 40px rgba(0, 0, 0, .5); overflow-y: auto; }
+html[data-ui-roomsettings="b"] #room-info-dialog.room-info-home { width: min(96vw, 620px); }
+html[data-ui-roomsettings="b"] #room-info-dialog .room-info-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; margin: 0 -20px 16px; padding: 14px 20px 12px; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
+html[data-ui-roomsettings="b"] #room-info-dialog .room-info-header h2 { margin: 0; font-size: .9rem; font-weight: 600; }
+html[data-ui-roomsettings="b"] #room-info-dialog .room-info-x { display: inline-flex; flex: none; }
+html[data-ui-roomsettings="b"] #room-info-dialog #room-info-close { display: none; }
+html[data-ui-roomsettings="b"] #room-info-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+@media (max-width: 700px) { html[data-ui-roomsettings="b"] #room-info-dialog[open] { min-height: 100dvh; } }
