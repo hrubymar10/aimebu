@@ -46,7 +46,13 @@ async function on() {
   try {
     const page = await server.open();
     const requests = [];
+    // The page runs under its Content-Security-Policy, which names the ingest origin of the DSN while reporting is on: the SDK loads, the error and
+    // the transaction below reach the stand-in, and the browser reports no violation of the policy on the way.
+    await page.evaluateOnNewDocument(() => { window.__csp = []; document.addEventListener('securitypolicyviolation', event => window.__csp.push(`${event.violatedDirective} ${event.blockedURI}`)); });
     await visit(server, page, requests);
+    const policy = await page.evaluate(async () => (await fetch('/')).headers.get('content-security-policy'));
+    assert.ok(policy.includes(`connect-src 'self'`) && policy.includes(`http://127.0.0.1:${sentry.address().port}`), `the policy names the ingest origin: ${policy}`);
+    assert.ok(policy.includes(`worker-src 'self' blob:`), policy);
     const info = await server.api(page, '/api/buildinfo');
     assert.equal(info.body.sentry.dsn, dsn); assert.equal(info.body.sentry.environment, 'page-test');
     await page.waitForFunction(() => typeof window.Sentry?.getClient === 'function' && window.Sentry.getClient(), { timeout: 30000 });
@@ -70,6 +76,7 @@ async function on() {
     const browserTransaction = () => received.some(item => item.body.includes('sentry.javascript.browser') && item.body.includes('"type":"transaction"'));
     for (let i = 0; i < 100 && !browserTransaction(); i++) await new Promise(resolve => setTimeout(resolve, 200));
     assert.ok(browserTransaction(), 'the browser sent a transaction (static lifecycle: the scrubber sees its spans)');
+    assert.deepEqual(await page.evaluate(() => window.__csp), [], 'the policy blocked nothing the page did');
     assert.ok(!received.some(item => item.body.includes('sentry.javascript.browser') && item.body.includes('"type":"span"')), 'no spans are sent on their own (stream lifecycle skips the scrubber)');
     const host = new URL(server.origin).host;
     for (const item of received) {

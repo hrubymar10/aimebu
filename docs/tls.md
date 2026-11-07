@@ -28,6 +28,19 @@ Open the
 web UI in a secure context (HTTPS, or `localhost`) to enable its browser
 notification permission button.
 
+## Content-Security-Policy
+
+The web app is served with a `Content-Security-Policy` that allows scripts only
+from the server itself and from the page's own inline scripts, each by its SHA-256
+(computed from the page actually served, so it cannot drift), connections only to
+the server itself (HTTP and WebSocket) plus, only while error reporting is on, the
+ingest origin (scheme and host, not the key or project) of the DSN the page reports
+to (see [telemetry](telemetry.md)); the event socket's own origin is named only for a
+`Host` the server answers to, no framing (`frame-ancestors 'none'`, with
+`X-Frame-Options: DENY`), no plugins and no `<base>`. Styles allow inline
+`style` attributes, which the UI sets. The page also sends
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+
 ## Local certificate with mkcert
 
 ```bash

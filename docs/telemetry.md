@@ -90,6 +90,9 @@ Both sides scrub every event before it is sent, in code that does not depend on 
 The DSN is just a URL, so any Sentry-compatible server works: run [self-hosted Sentry](https://develop.sentry.dev/self-hosted/), create a
 project, and use its DSN. Events then never leave your network. Note the page sends its events to the DSN's host **from the browser**,
 so that host must be reachable from the browsers that use aimebu, and (for a browser on another origin) allow CORS as Sentry does.
+The app page is served with a Content-Security-Policy ([HTTPS](tls.md#content-security-policy)): while reporting is on its `connect-src`
+names that DSN's origin (scheme and host), and with reporting off it names no other origin, so a page of a server that does not report may
+talk to nobody but the server.
 
 ## The vendored SDK
 

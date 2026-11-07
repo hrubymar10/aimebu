@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"path"
@@ -8,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 func TestStaticAssetsUseContentVersionAndRevalidateHTML(t *testing.T) {
@@ -143,5 +147,111 @@ func TestPrepareWebAssetsPreloadsEveryModuleTheEntryReaches(t *testing.T) {
 	}
 	if hints, entry := strings.Index(page, `rel="modulepreload"`), strings.Index(page, `<script type="module" src="/js/app.js`+v); hints < 0 || entry < hints {
 		t.Fatalf("the hints must come before the entry script: %s", page)
+	}
+}
+
+// The app page carries a Content-Security-Policy that allows its two inline scripts by hash and nothing else inline, and that keeps the page on this server.
+func TestAppPageCarriesAContentSecurityPolicyThatMatchesItsInlineScripts(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	for _, path := range []string{"/", "/index.html", "/some/client/route"} {
+		response, err := http.Get(f.http.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy := response.Header.Get("Content-Security-Policy")
+		if policy == "" {
+			t.Fatalf("%s: the page has no Content-Security-Policy", path)
+		}
+		// Every inline script of the page is allowed by the hash the browser would compute, and every hash in the policy belongs to one.
+		bodies := inlineScript.FindAllStringSubmatch(string(body), -1)
+		var withBody int
+		for _, match := range bodies {
+			if strings.Contains(match[1], "src=") {
+				continue
+			}
+			withBody++
+			sum := sha256.Sum256([]byte(match[2]))
+			want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+			if !strings.Contains(policy, want) {
+				t.Fatalf("%s: the inline script %.60q is not allowed by hash %s in %q", path, match[2], want, policy)
+			}
+		}
+		if withBody != 2 || strings.Count(policy, "'sha256-") != withBody {
+			t.Fatalf("%s: %d inline scripts but %d hashes: %q", path, withBody, strings.Count(policy, "'sha256-"), policy)
+		}
+		host := strings.TrimPrefix(f.http.URL, "http://")
+		for _, want := range []string{"default-src 'self'", "script-src 'self' 'sha256-", "connect-src 'self' ws://" + host + " wss://" + host, "frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'", "form-action 'self'"} {
+			if !strings.Contains(policy, want) {
+				t.Fatalf("%s: the policy lacks %q: %q", path, want, policy)
+			}
+		}
+		for _, bad := range []string{"unsafe-eval", "script-src 'unsafe-inline'", "script-src *", "default-src *", "http:", "https:"} {
+			if strings.Contains(policy, bad) {
+				t.Fatalf("%s: the policy allows too much (%q): %q", path, bad, policy)
+			}
+		}
+		for header, want := range map[string]string{"X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"} {
+			if got := response.Header.Get(header); got != want {
+				t.Fatalf("%s: %s = %q, want %q", path, header, got, want)
+			}
+		}
+	}
+	// A file is not the page: it carries no policy of its own, and an API answer is not given one.
+	response, err := http.Get(f.http.URL + "/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if got := response.Header.Get("Content-Security-Policy"); got != "" {
+		t.Fatalf("a stylesheet carries a page policy: %q", got)
+	}
+}
+
+func TestInlineScriptHashesIgnoreScriptsWithASourceAndEmptyOnes(t *testing.T) {
+	t.Parallel()
+	page := `<script>a()</script><script type="module" src="/x.js"></script><script type="importmap">{"imports":{}}</script><script>   </script>`
+	got := inlineScriptHashes(page)
+	if len(got) != 2 {
+		t.Fatalf("hashes = %v", got)
+	}
+	sum := sha256.Sum256([]byte("a()"))
+	if want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"; got[0] != want {
+		t.Fatalf("first hash %s, want %s", got[0], want)
+	}
+}
+
+// The page may send error reports to the ingest origin of the DSN it is told to report to, while reporting is on and not otherwise, and a
+// browser error still reaches that origin under the policy (the worker Sentry's SDK uses needs blob:, which the policy allows).
+func TestPolicyAllowsTheErrorReportOriginOnlyWhileReportingIsOn(t *testing.T) {
+	f := newFixture(t)
+	policy := func() string {
+		response, err := http.Get(f.http.URL + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.Header.Get("Content-Security-Policy")
+	}
+	if got := policy(); strings.Contains(got, "ingest") || strings.Contains(got, "https:") {
+		t.Fatalf("reporting off: %q", got)
+	}
+	if _, err := telemetry.Init(telemetry.Config{DSN: "https://public@o4510.ingest.de.sentry.io/4511", Environment: "test"}, discardTransport{}); err != nil {
+		t.Fatal(err)
+	}
+	defer telemetry.Current().Close()
+	on := policy()
+	for _, want := range []string{"connect-src 'self'", "https://o4510.ingest.de.sentry.io", "worker-src 'self' blob:", "script-src 'self' 'sha256-"} {
+		if !strings.Contains(on, want) {
+			t.Fatalf("reporting on lacks %q: %q", want, on)
+		}
+	}
+	if strings.Contains(on, "public@") || strings.Contains(on, "/4511") {
+		t.Fatalf("only the origin of the DSN may appear, not its key or project: %q", on)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -358,9 +359,7 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		if name == "" || name == "index.html" {
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(web.index))
+			s.serveAppPage(w, r, web)
 			return
 		}
 		if _, err := fs.Stat(assets, name); err == nil {
@@ -384,11 +383,37 @@ func (s *Server) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(web.index))
+		s.serveAppPage(w, r, web)
 	})
 	return telemetry.Middleware(allowMiddleware(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(mux))), s.Allow))
+}
+
+// serveAppPage answers with the app's one HTML page and the headers that keep it to this server: a Content-Security-Policy (see contentSecurityPolicy),
+// no framing, no sniffing and no referrer.
+func (s *Server) serveAppPage(w http.ResponseWriter, r *http.Request, web webAssets) {
+	h := w.Header()
+	h.Set("Cache-Control", "no-cache")
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Security-Policy", web.contentSecurityPolicy(r.Host, s.cspConnectExtra()))
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(web.index))
+}
+
+// cspConnectExtra lists the origins besides this server that the page may send requests to: the error-report ingest origin (the scheme and host
+// of the DSN the page is told to report to), and only while reporting is on, so a page of a server that does not report may talk to nobody else.
+func (s *Server) cspConnectExtra() []string {
+	browser := telemetry.Current().BrowserConfig()
+	if browser == nil {
+		return nil
+	}
+	dsn, _ := browser["dsn"].(string)
+	parsed, err := url.Parse(dsn)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return nil
+	}
+	return []string{parsed.Scheme + "://" + parsed.Host}
 }
 
 func (s *Server) maintenanceMiddleware(next http.Handler) http.Handler {

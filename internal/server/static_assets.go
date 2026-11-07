@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"path"
@@ -27,6 +28,54 @@ type webAssets struct {
 	version string
 	index   []byte
 	scripts map[string][]byte
+	// scriptHashes are the 'sha256-…' sources of the page's inline scripts (the theme script and the import map), which its Content-Security-Policy allows
+	// by hash because it allows no inline script otherwise.
+	scriptHashes []string
+}
+
+// inlineScript is a <script> element with a body of its own (one with a src has none to allow).
+var inlineScript = regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`)
+
+// inlineScriptHashes lists the CSP hash source of every inline script of a page, in the form the browser computes it: the base64 SHA-256 of the exact body.
+func inlineScriptHashes(page string) []string {
+	var out []string
+	for _, match := range inlineScript.FindAllStringSubmatch(page, -1) {
+		if strings.Contains(match[1], "src=") || strings.TrimSpace(match[2]) == "" {
+			continue
+		}
+		sum := sha256.Sum256([]byte(match[2]))
+		out = append(out, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+	}
+	return out
+}
+
+// contentSecurityPolicy is the policy of the app's own pages: what the page loads and talks to is this server and nothing else, scripts run only from
+// its files or by the hash of the page's two inline ones (never eval or an injected inline script), it may not be framed, and a form or <base> cannot
+// send it elsewhere. Styles may be inline (the page sets element styles and Mermaid writes its own), images may be data: or blob: (a pasted picture before
+// it is uploaded), and the live event stream is a WebSocket to the host the page came from. extraConnect names what else the page may reach (the
+// error-report endpoint, when one is set), and a worker may be a blob (the session recorder's).
+func (a webAssets) contentSecurityPolicy(host string, extraConnect []string) string {
+	connect := []string{"'self'"}
+	if host != "" {
+		connect = append(connect, "ws://"+host, "wss://"+host)
+	}
+	connect = append(connect, extraConnect...)
+	script := append([]string{"'self'"}, a.scriptHashes...)
+	return strings.Join([]string{
+		"default-src 'self'",
+		"script-src " + strings.Join(script, " "),
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: blob:",
+		"media-src 'self'",
+		"font-src 'self' data:",
+		"connect-src " + strings.Join(connect, " "),
+		"worker-src 'self' blob:",
+		"manifest-src 'self'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+		"object-src 'none'",
+		"base-uri 'none'",
+	}, "; ")
 }
 
 func prepareWebAssets(files fs.FS) (webAssets, error) {
@@ -64,7 +113,7 @@ func prepareWebAssets(files fs.FS) (webAssets, error) {
 		return importMapEntry.ReplaceAllString(block, "${1}?v="+version+"${2}")
 	})
 	page = preloadModules(page, raw, version)
-	assets := webAssets{version: version, index: []byte(page), scripts: make(map[string][]byte)}
+	assets := webAssets{version: version, index: []byte(page), scripts: make(map[string][]byte), scriptHashes: inlineScriptHashes(page)}
 	for name, data := range raw {
 		if strings.HasPrefix(name, "js/") && strings.HasSuffix(name, ".js") {
 			assets.scripts[name] = moduleImport.ReplaceAll(data, []byte("${1}?v="+version+"${2}"))
