@@ -223,8 +223,11 @@ CIDRs; its default is `127.0.0.0/8,::1/128`. When binding to a non-loopback
 address, include the remote network explicitly, for example
 `AIMEBU2_BIND=0.0.0.0 AIMEBU2_ALLOW=127.0.0.0/8,::1/128,192.168.1.0/24`.
 Set `AIMEBU2_TLS_CERT` and `AIMEBU2_TLS_KEY` together to add HTTPS on
-`AIMEBU2_TLS_PORT` (default `9896`) while retaining HTTP. Both listeners use
-the same bind and allowlist. See [HTTPS setup](docs/tls.md) for certificates,
+`AIMEBU2_TLS_PORT` (default `9896`) while retaining HTTP; the HTTP listener then
+redirects other machines to HTTPS. Both listeners use the same bind and allowlist.
+Sign-in, setup, invites and pairing answer only a `Host` of `localhost`, an IP address,
+the public URL's host or a name in `AIMEBU2_ALLOWED_HOSTS` (comma-separated), which
+you set when you reach the server by a LAN name. See [HTTPS setup](docs/tls.md) for certificates,
 remote supervisors, and a Caddy example. Behind such a proxy, set
 `AIMEBU2_TRUSTED_PROXIES` to the proxy's IPs or CIDRs (default empty) so login
 throttling tells clients apart by `X-Forwarded-For`; the allowlist never

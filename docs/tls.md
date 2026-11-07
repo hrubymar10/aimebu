@@ -28,6 +28,45 @@ Open the
 web UI in a secure context (HTTPS, or `localhost`) to enable its browser
 notification permission button.
 
+## Plain HTTP next to HTTPS
+
+With a certificate configured, the plain-HTTP listener answers a request from
+another machine with a `308` redirect to the same address on `AIMEBU2_TLS_PORT`
+(the method and the whole path and query are kept), so nothing a person types or
+a supervisor sends crosses the network in the clear by default. A request from
+this machine itself, from a loopback address or from the address the connection was
+accepted on, is served as before: that is how the embedded supervisor and the
+command line reach the server, and nothing there crosses a network. The agents'
+toolbox calls (`/api/agent/...`) and the machine routes (`/api/machine...`: a
+supervisor's socket, its pairing and approval wait) are served as they are
+from any peer the allowlist admits, never redirected: a Docker agent on a Linux
+bridge reaches the server as `host.docker.internal` from a bridge address that is
+neither loopback nor the server's own, and nothing says a certificate covers that
+name; those callers authenticate with their key, and a remote supervisor refuses plain http to
+another machine by itself unless told otherwise. A peer that `AIMEBU2_ALLOW`
+does not admit gets the same 403 as anywhere else, before any redirect. The redirect goes only to a host this server
+answers to (see below); another `Host` gets `421`. A response served over HTTPS
+on the standard port (443), or by a proxy for an `https` `AIMEBU2_PUBLIC_URL`,
+carries `Strict-Transport-Security: max-age=31536000`, so a browser goes to
+HTTPS first afterwards. It is not sent on another TLS port (a browser keeps the
+port when it upgrades, so a later `http://name:<plain port>` would become a TLS
+attempt against the plain listener) and never for `localhost`.
+
+## Host names
+
+A page on another site can make a browser send requests under the page's own name
+after pointing that name at this server's address (DNS rebinding). The routes
+that need no login (sign-in, the first-run setup, invites, machine pairing) therefore answer
+only a request whose `Host` is one this server expects: `localhost` (and
+`*.localhost`), any IP address, the host of `AIMEBU2_PUBLIC_URL`, and the names in
+`AIMEBU2_ALLOWED_HOSTS` (comma-separated host names, no scheme, port or path). Any
+other `Host` gets `421 unexpected_host`, with the message naming the variable.
+If you reach the server by a LAN name such as `studio.local`, list it there:
+
+```bash
+export AIMEBU2_ALLOWED_HOSTS=studio.local
+```
+
 ## Content-Security-Policy
 
 The web app is served with a `Content-Security-Policy` that allows scripts only

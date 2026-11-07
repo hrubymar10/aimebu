@@ -26,6 +26,9 @@ var environment = []envVar{
 	{[]string{"AIMEBU2_TRUSTED_PROXIES"}, []string{
 		"Comma-separated proxy IPs/CIDRs whose X-Forwarded-For separates clients",
 		"for login throttling only (default: none)"}},
+	{[]string{"AIMEBU2_ALLOWED_HOSTS"}, []string{
+		"Comma-separated host names (besides localhost, IP addresses and the public",
+		"URL's host) that sign-in, setup, invite and pairing answer to (default: none)"}},
 	{[]string{"AIMEBU2_PUBLIC_URL"}, []string{"HTTP(S) origin the server advertises when it sits behind a proxy"}},
 	{[]string{"AIMEBU2_URL"}, []string{"Server URL for the supervisor and agent-tools"}},
 	{[]string{"AIMEBU2_AGENT_ID", "AIMEBU2_AGENT_KEY"}, []string{

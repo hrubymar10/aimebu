@@ -625,6 +625,12 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	service.Allow = config.allow
 	service.TrustedProxies = config.trusted
+	allowedHosts, err := server.ResolveAllowedHosts(os.Getenv("AIMEBU2_ALLOWED_HOSTS"))
+	if err != nil {
+		fmt.Fprintln(stderr, "AIMEBU2_ALLOWED_HOSTS:", err)
+		return 1
+	}
+	service.AllowedHosts = allowedHosts
 	logAllowStartup(stderr, config, listener.Addr().String())
 	logProxyStartup(stderr, publicURL, config.trusted)
 	if tlsListener != nil {
@@ -659,7 +665,9 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	service.StartTokenCopies(tokenCtx)
 	service.StartQuotaSwitcher(ctx)
 	handler := service.Handler()
-	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	// With https configured the plain listener sends other machines to it; this machine's own clients (the embedded supervisor, the command
+	// line) keep using it.
+	httpServer := &http.Server{Handler: service.RedirectPlainToHTTPS(handler), ReadHeaderTimeout: 10 * time.Second}
 	var httpsServer *http.Server
 	if tlsListener != nil {
 		httpsServer = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}

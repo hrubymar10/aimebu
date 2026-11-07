@@ -109,6 +109,7 @@ type Server struct {
 	threadCountsQuery    func(context.Context, string, []store.Message) (map[string]int, error)
 	Allow                []netip.Prefix
 	TrustedProxies       []netip.Prefix // AIMEBU2_TRUSTED_PROXIES; see clientIP
+	AllowedHosts         []string       // AIMEBU2_ALLOWED_HOSTS: host names, besides localhost, IPs and the public URL's, the routes that need no login answer to
 	doctorKey            string         // set by EnableDoctorKey; empty keeps GET /api/doctor closed
 	machineMu            sync.Mutex
 	machines             map[string]*machineConn
@@ -130,14 +131,14 @@ func (s *Server) Handler() http.Handler {
 		s.Usages.SetUpdateHook(s.usagesChanged)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/login", s.login)
+	mux.HandleFunc("POST /api/login", s.hostChecked(s.login))
 	mux.Handle("GET /api/telemetry/settings", s.Auth.RequireUser(http.HandlerFunc(s.telemetrySettings)))
 	mux.Handle("PUT /api/telemetry/settings", s.Auth.RequireUser(http.HandlerFunc(s.telemetrySettings)))
-	mux.HandleFunc("GET /api/setup/status", s.setupStatus)
-	mux.HandleFunc("POST /api/setup/token", s.setupToken)
-	mux.HandleFunc("POST /api/setup", s.setupOwner)
-	mux.HandleFunc("POST /api/invites/redeem", s.redeemUserInvite)
-	mux.HandleFunc("POST /api/invites/inspect", s.inspectUserInvite)
+	mux.HandleFunc("GET /api/setup/status", s.hostChecked(s.setupStatus))
+	mux.HandleFunc("POST /api/setup/token", s.hostChecked(s.setupToken))
+	mux.HandleFunc("POST /api/setup", s.hostChecked(s.setupOwner))
+	mux.HandleFunc("POST /api/invites/redeem", s.hostChecked(s.redeemUserInvite))
+	mux.HandleFunc("POST /api/invites/inspect", s.hostChecked(s.inspectUserInvite))
 	mux.Handle("POST /api/logout", s.Auth.RequireUser(http.HandlerFunc(s.logout)))
 	mux.Handle("GET /api/me", s.Auth.RequireUser(http.HandlerFunc(s.me)))
 	mux.Handle("GET /api/buildinfo", s.Auth.RequireUser(http.HandlerFunc(s.buildInfo)))
@@ -204,7 +205,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/machines/{id}/launchers/detect", s.Auth.RequireUser(http.HandlerFunc(s.machineHarnessDetect)))
 	mux.Handle("POST /api/machines/{id}/launchers/{launcher}/models/detect", s.Auth.RequireUser(http.HandlerFunc(s.machineHarnessModelsDetect)))
 	mux.Handle("POST /api/machine-pairings", s.Auth.RequireUser(http.HandlerFunc(s.machinePairing)))
-	mux.HandleFunc("POST /api/machine-pairings/redeem", s.redeemMachinePairing)
+	mux.HandleFunc("POST /api/machine-pairings/redeem", s.hostChecked(s.redeemMachinePairing))
 	mux.HandleFunc("GET /api/machines/{id}/pair-status", s.machinePairStatus)
 	mux.Handle("POST /api/machines/{id}/agents/stop", s.Auth.RequireUser(http.HandlerFunc(s.machineStopAgents)))
 	mux.Handle("POST /api/machines/{id}/approve", s.Auth.RequireUser(http.HandlerFunc(s.machineApproval)))
@@ -386,7 +387,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.serveAppPage(w, r, web)
 	})
-	return telemetry.Middleware(allowMiddleware(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(mux))), s.Allow))
+	return telemetry.Middleware(allowMiddleware(s.withHSTS(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(mux)))), s.Allow))
 }
 
 // serveAppPage answers with the app's one HTML page and the headers that keep it to this server: a Content-Security-Policy (see contentSecurityPolicy),
@@ -395,7 +396,13 @@ func (s *Server) serveAppPage(w http.ResponseWriter, r *http.Request, web webAss
 	h := w.Header()
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", web.contentSecurityPolicy(r.Host, s.cspConnectExtra()))
+	// The page's own origin for the event socket is named from the Host header only when this server answers to that host: a made-up Host
+	// would otherwise write itself into the policy (it could only change the policy of its own response, but there is no reason to let it).
+	host := ""
+	if s.hostAllowed(r) {
+		host = r.Host
+	}
+	h.Set("Content-Security-Policy", web.contentSecurityPolicy(host, s.cspConnectExtra()))
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
