@@ -7,11 +7,12 @@ import { ShellStore } from './store.js';
 export class SettingsShell {
   constructor(dialog, sections, { users, onSelect, onClose }) {
     this.store = new ShellStore({ users });
-    this.header = mountPreactPage(dialog.querySelector('header'), () => html`<${SettingsHeader} store=${this.store} onClose=${onClose} />`);
-    this.nav = mountPreactPage(dialog.querySelector('nav'), () => html`<${SettingsNav} store=${this.store} onSelect=${onSelect} />`);
+    this.header = mountPreactPage(dialog.querySelector('header'), () => html`<${SettingsHeader} store=${this.store} onClose=${onClose} onBack=${() => this.store.showList()} />`);
+    this.nav = mountPreactPage(dialog.querySelector('nav'), () => html`<${SettingsNav} store=${this.store} onSelect=${onSelect} onClose=${onClose} />`);
     this.stop = effect(() => {
       const current = this.store.section.value;
-      dialog.dataset.section = current; // the Harnesses page is wide: its layouts need the room (see theme-v1.css)
+      dialog.dataset.section = current;
+      dialog.dataset.view = this.store.view.value; // a phone shows the list of sections or one section (see v2-only.css)
       for (const [key, element] of Object.entries(sections)) { element.hidden = key !== current; element.classList.toggle('active', key === current); }
     });
   }

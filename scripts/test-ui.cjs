@@ -151,6 +151,8 @@ async function main() {
     // gap before every section, and on a phone a "Settings" title.
     for (const [width, height] of [[1100, 720], [390, 740]]) {
       await first.setViewport({ width, height });
+      // On a phone Settings opens on its list of sections; the General tab shows the section.
+      if (width < 700) await first.evaluate(() => document.querySelector('#settings-general-tab').click());
       await first.waitForFunction(() => !document.querySelector('#settings-general').hidden && document.querySelector('#message-expiry-save').getBoundingClientRect().width > 0);
       const general = await first.evaluate(() => {
         const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; };
@@ -163,6 +165,12 @@ async function main() {
       assert.ok(general.saveBesideInput, `${width}px: the expiry Save sits beside its input: ${JSON.stringify(general)}`);
       assert.ok(general.gaps.length >= 3 && Math.max(...general.gaps) - Math.min(...general.gaps) <= 2, `${width}px: the gap before each section is the same: ${JSON.stringify(general.gaps)}`);
       assert.equal(general.caption, true, `${width}px: the nav keeps v1's Settings caption on a phone too`);
+      if (width < 700) {
+        // The list of sections is the phone's first screen: the caption is seen there, and the back arrow of a section returns to it.
+        await first.evaluate(() => document.querySelector('#settings-back').click());
+        assert.deepEqual(await first.evaluate(() => [document.querySelector('#settings-dialog .settings-nav-title').getBoundingClientRect().width > 0, getComputedStyle(document.querySelector('#settings-dialog .settings-body')).display]), [true, 'none'], 'the back arrow shows the list of sections');
+        await first.evaluate(() => document.querySelector('#settings-general-tab').click());
+      }
     }
     await first.setViewport({ width: 1100, height: 720 });
     // Settings backup (owner): Export downloads valid JSON of the instance's settings, and Import previews before it saves anything.
@@ -233,9 +241,9 @@ async function main() {
     assert.match(await first.$eval('#macros-import-summary', node => node.textContent), /Will add 1 new and overwrite 1 existing.*Skipped 1: 9bad/);
     assert.equal(await first.$eval('#macros-list', node => node.textContent.includes('Alpha text')), false, 'preview saves nothing');
     await domClick(first, '#macros-import-apply');
-    await macroStep('import applied', () => first.waitForFunction(() => { const text = document.querySelector('#macros-list')?.textContent || ''; return text.includes('<ALPHA>') && text.includes('Changed body') && document.querySelector('#macros-import').hidden; }, { timeout: 20000 }));
+    await macroStep('import applied', () => first.waitForFunction(() => { const text = document.querySelector('#macros-list')?.textContent || ''; return text.includes('<alpha>') && text.includes('Changed body') && document.querySelector('#macros-import').hidden; }, { timeout: 20000 }));
     await first.locator('#macros-search').fill('alph');
-    assert.deepEqual(await first.$$eval('#macros-list .snippet-row strong', nodes => nodes.map(node => node.textContent)), ['<ALPHA>'], 'search narrows the list');
+    assert.deepEqual(await first.$$eval('#macros-list .snippet-row strong', nodes => nodes.map(node => node.textContent)), ['<alpha>'], 'search narrows the list');
     await first.locator('#macros-search').fill('zzz');
     assert.match(await first.$eval('#macros-list', node => node.textContent), /No macros match the search/);
     await first.evaluate(() => { const box = document.querySelector('#macros-search'); box.value = ''; box.dispatchEvent(new Event('input')); });
@@ -252,7 +260,7 @@ async function main() {
       await domClick(first, '#macros-list button.btn-danger');
       await macroStep(`macro ${key} deleted`, () => first.waitForFunction(count => document.querySelectorAll('#macros-list .snippet-row').length === count, { timeout: 20000 }, key === 'alpha' ? 1 : 0));
     }
-    await macroStep('macro deleted', () => first.waitForFunction(() => !document.querySelector('#macros-list')?.textContent.includes('<REVIEW>'), { timeout: 20000 }));
+    await macroStep('macro deleted', () => first.waitForFunction(() => !document.querySelector('#macros-list')?.textContent.includes('<review>'), { timeout: 20000 }));
     // Harnesses: nothing is seeded, so add Codex by hand, give it models in the UI, and see them reach the spawn catalog.
     {
       const machineID = await first.evaluate(async () => (await (await fetch('/api/machines')).json()).machines?.[0]?.id || (await (await fetch('/api/machines')).json())[0]?.id);
@@ -1647,12 +1655,12 @@ async function main() {
       assert.deepEqual([...new Set(scopeIcons.map(icon => icon.action))].sort(), ['pause', 'resume', 'stop'], 'every scope control is present');
       assert.equal(/\bbtn-danger\b/.test(sizes.stop) && !/\bbtn-danger\b/.test(sizes.pause), true, 'Stop is the danger button, Pause is secondary');
     }
-    // Room settings is v1's pane: full height, 560px wide, a title bar that stays at the top while the sections scroll under it, and a close button in
+    // Room settings is v1's pane, from the bottom of the top bar to the bottom of the window, 560px wide, a title bar that stays at the top while the sections scroll under it, and a close button in
     // that bar (there is no Close button at the bottom).
     {
       const shape = () => first.evaluate(() => {
         const dialog = document.querySelector('#room-info-dialog'), box = dialog.getBoundingClientRect(), close = document.querySelector('#room-info-close');
-        return { width: Math.round(box.width), full: Math.round(box.height) === innerHeight && Math.round(box.top) === 0, closeInHeader: !!close.closest('.room-info-header') && !!close.offsetParent, closeButtons: dialog.querySelectorAll('#room-info-close, .room-info-actions .btn').length, title: document.querySelector('#room-info-title').textContent };
+        return { width: Math.round(box.width), full: Math.round(box.bottom) === innerHeight && Math.round(box.top) === Math.round(document.querySelector('.topbar').getBoundingClientRect().bottom), closeInHeader: !!close.closest('.room-info-header') && !!close.offsetParent, closeButtons: dialog.querySelectorAll('#room-info-close, .room-info-actions .btn').length, title: document.querySelector('#room-info-title').textContent };
       });
       const pane = await shape();
       assert.deepEqual([pane.width > 420 && pane.width <= 620, pane.full, pane.closeInHeader, pane.closeButtons, pane.title], [true, true, true, 1, 'Room settings'], `Room settings is a pane with its close button in the title bar: ${JSON.stringify(pane)}`);
@@ -1698,7 +1706,7 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#knowledge-records textarea')?.value === 'Shared note from smoke');
     await first.waitForFunction(() => {
       const button = document.querySelector('#knowledge-records .knowledge-actions button:last-child');
-      if (button?.getAttribute('aria-label') !== 'Deactivate' || button.title !== 'Deactivate' || !button.querySelector('.icon-mask-stop')) return false;
+      if (button?.getAttribute('aria-label') !== 'Deactivate' || button.title !== 'Deactivate' || !button.querySelector('.icon-mask-pause')) return false;
       button.click(); // Find and click in one browser task so refresh cannot detach it.
       return true;
     });
@@ -1790,7 +1798,7 @@ async function main() {
       return result;
     });
     assert.deepEqual(panelParity, {
-      label: ['9.8px', '14.7px'], room: [50, '10px'],
+      label: ['9.8px', '14.7px'], room: [38, '10px'],
       unread: ['700', '9.1px', '1px 7px', 'rgb(47, 129, 247)', 'rgb(255, 255, 255)'],
       preview: ['10.5px', '15.75px'], header: [43, '12px', '0px 16px'],
       count: [22, 'rgb(28, 33, 40)', '9.1px'],
@@ -1994,7 +2002,7 @@ async function main() {
     assert.equal(await first.$eval('#reply-chip', el => el.hidden), false, 'jumping to the parent keeps the reply pending');
     await first.locator('#composer textarea').fill('Reply body'); await first.locator('#composer button[type=submit]').click();
     await first.waitForFunction(() => document.querySelectorAll('.chat-msg').length === 2);
-    assert.equal(await first.$eval('article.chat-msg:nth-of-type(2) .quote', el => /^↪ #\d+ (You|owner): \S/.test(el.textContent)), true, 'a reply quotes a snippet of its parent');
+    assert.equal(await first.$eval('article.chat-msg:nth-of-type(2) .quote', el => /^↪ #\d+ (owner): \S/.test(el.textContent)), true, 'a reply quotes a snippet of its parent');
     assert.deepEqual(await first.evaluate(async () => {
       const { messageSnippet } = await import('/js/chat.js' + new URL(document.querySelector('script[type=module]').src).search);
       return [messageSnippet({ body: '  a\n\n  b   c ' }), messageSnippet({ body: '', attachments: [{}] }), messageSnippet({ body: 'x'.repeat(200) }).length, messageSnippet({ body: 'word '.repeat(40) }).endsWith('…'), messageSnippet({ body: '' }), messageSnippet(undefined), messageSnippet({ body: '**Done** with `code`, [a link](http://x), _soft_ and snake_case_name\n> quoted' }), messageSnippet({ body: '#42 and #general\n## Heading' })];
@@ -2008,7 +2016,8 @@ async function main() {
     const sendLook = selector => first.evaluate(selector => {
       const button = document.querySelector(selector), svg = button.querySelector('svg'), rect = button.getBoundingClientRect(), icon = svg.getBoundingClientRect(), cs = getComputedStyle(button);
       const probe = document.createElement('i'); probe.style.background = 'var(--green)'; document.body.append(probe); const green = getComputedStyle(probe).backgroundColor; probe.remove();
-      return { square: Math.abs(rect.width - rect.height) <= 1, dx: Math.abs((icon.x + icon.width / 2) - (rect.x + rect.width / 2)), dy: Math.abs((icon.y + icon.height / 2) - (rect.y + rect.height / 2)), green: cs.backgroundColor === green && cs.borderTopColor === green, text: button.textContent.trim() };
+      return { square: Math.abs(rect.width - rect.height) <= 1, dx: Math.abs((icon.x + icon.width / 2) - (rect.x + rect.width / 2)), dy: Math.abs((icon.y + icon.height / 2) - (rect.y + rect.height / 2)),
+      green: cs.backgroundColor === green && cs.borderTopColor === green, text: button.textContent.trim() };
     }, selector);
     await first.mouse.move(2, 2); // not hovered: the hover colour is the lighter green
     for (const theme of ['', 'high-contrast-dark', 'high-contrast-light']) {
@@ -2068,7 +2077,7 @@ async function main() {
     });
     assert.deepEqual(announcerRules, { others: ['t1'], heldWhileSending: ['t2'], ownDroppedOnResponse: ['t2'], ownEventAfterResponse: [], otherTabNoSend: ['x1'], otherTabReleased: ['x2'], failedSendReleases: ['x3'], heldUntilAllSendsFinish: [], releasedAtEnd: ['x4'], spokenAfterReset: '' }, 'own messages are silenced by id; same-account messages from another tab are announced');
     await post('Live update'); await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent === 'Live update'));
-    await first.waitForFunction(() => document.querySelector('#live-announcer').textContent === 'New message from You: Live update', {}).catch(async () => { throw new Error(`live announcement was ${JSON.stringify(await first.$eval('#live-announcer', el => el.textContent))}`); });
+    await first.waitForFunction(() => document.querySelector('#live-announcer').textContent === 'New message from owner: Live update', {}).catch(async () => { throw new Error(`live announcement was ${JSON.stringify(await first.$eval('#live-announcer', el => el.textContent))}`); });
     assert.equal(await first.$eval('#live-announcer', el => el.getAttribute('aria-live') + el.getAttribute('role')), 'politestatus');
     const after = await first.$('.chat-msg[data-message-id="' + id + '"]');
     assert.equal(await first.evaluate((x, y) => x === y, before, after), true, 'message node identity changed');
@@ -2078,7 +2087,7 @@ async function main() {
     await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent === 'Own message'));
     await post('Other tab');
     await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent === 'Other tab'));
-    await first.waitForFunction(() => document.querySelector('#live-announcer').textContent === 'New message from You: Other tab', {}).catch(async () => { throw new Error(`same-account announcement was ${JSON.stringify(await first.$eval('#live-announcer', el => el.textContent))}`); });
+    await first.waitForFunction(() => document.querySelector('#live-announcer').textContent === 'New message from owner: Other tab', {}).catch(async () => { throw new Error(`same-account announcement was ${JSON.stringify(await first.$eval('#live-announcer', el => el.textContent))}`); });
     for (let i = 0; i < 22; i++) await post(`Filler ${i}`);
     await first.waitForFunction(() => document.querySelectorAll('.chat-msg').length >= 25);
     await first.$eval('#messages', el => { el.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); el.scrollTop = 100; });
@@ -3382,7 +3391,7 @@ async function main() {
     await domClick(settingsPage, '#notification-text');
     await settingsPage.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.notification_text === '0');
     const rowAudit = [];
-    for (const tab of await settingsPage.$$eval('#settings-dialog nav button', els => els.filter(el => !el.hidden).map(el => el.id))) {
+    for (const tab of await settingsPage.$$eval('#settings-dialog nav .settings-nav-item', els => els.filter(el => !el.hidden).map(el => el.id))) {
       if (tab === 'settings-import-tab') continue;
       await domClick(settingsPage, `#${tab}`);
       const section = tab.replace(/-tab$/, '');
@@ -3437,14 +3446,18 @@ async function main() {
         return { touching, cramped, textActions, badIcons };
       };
       // Machines and Models are being replaced by a page of their own and keep their current layout until then.
-      const tabs = await settingsPage.$$eval('#settings-dialog nav button', els => els.filter(el => !el.hidden && !['settings-import-tab', 'settings-machines-tab', 'settings-models-tab'].includes(el.id)).map(el => el.id));
+      const tabs = await settingsPage.$$eval('#settings-dialog nav .settings-nav-item', els => els.filter(el => !el.hidden && !['settings-import-tab', 'settings-machines-tab', 'settings-models-tab'].includes(el.id)).map(el => el.id));
       for (const [width, height] of [[1100, 720], [390, 844]]) {
         await settingsPage.setViewport({ width, height });
+        // A phone shows the list of sections or one section: the list is the first screen, and a section's back arrow returns to it.
+        const showList = () => width < 700 ? settingsPage.evaluate(() => document.querySelector('#settings-back')?.click()) : null;
+        await showList();
         // The owner's full nav in both groups; on a phone the captions are gone but the gap before Machines stays.
         const nav = await settingsNav(settingsPage);
         assert.deepEqual(nav.items, ['SETTINGS', 'general', 'usages', 'notifications', 'telemetry', 'roles', 'users', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], `Settings nav order at ${width}px`);
         assert.ok(!nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS group is set apart at ${width}px: ${JSON.stringify(nav)}`);
         for (const tab of tabs) {
+          await showList();
           await domClick(settingsPage, `#${tab}`);
           const section = tab.replace(/-tab$/, '');
           // Sections fill in as their requests answer; the layout is judged once it has settled.
@@ -3766,7 +3779,7 @@ async function main() {
       });
       await settingsPage.click('#settings-harnesses-tab');
       await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
-      assert.equal(await settingsPage.$eval('#settings-harnesses > h3', el => el.textContent.trim()), 'Harnesses', 'the page has no experiment badge');
+      assert.equal(await settingsPage.$('#settings-harnesses > h3'), null, 'the page does not repeat the section title the dialog header shows, and has no experiment badge');
       assert.deepEqual(await settingsPage.evaluate(() => [document.querySelectorAll('#settings-harnesses').length, document.querySelectorAll('#settings-harnesses-tab').length]), [1, 1], 'exactly one Harnesses page is built');
       assert.equal(await settingsPage.$eval('.machine-harness[data-variant="native"] [name=enabled]', el => el.disabled), false, 'owner must be able to enable native launcher');
       assert.equal(await settingsPage.$eval('.machine-harness[data-variant="native"] .machine-harness-status', el => el.textContent), 'Disabled');
@@ -3863,7 +3876,7 @@ async function main() {
     await reopenSettings();
     await settingsPage.setViewport({ width: 390, height: 780 });
     assert.equal(await settingsPage.$eval('#settings-dialog', el => Math.abs(el.getBoundingClientRect().height - innerHeight) < 1), true);
-    await settingsPage.click('#settings-close');
+    await settingsPage.click('#settings-nav-close'); // a phone opens on the list of sections, which has a close button of its own
     assert.equal(await settingsPage.$eval('#settings-dialog', el => el.open), false);
     const recoveryContext = await browser.createBrowserContext(), recoveryPage = await recoveryContext.newPage();
     await login(recoveryPage, `${origin}/?mock_recovery=1`);
@@ -4386,9 +4399,9 @@ async function main() {
     await agentPage.evaluate(() => { window.__healthListMode = 'normal'; window.__mockAgentsPanel.source.notify(); });
     await agentPage.waitForFunction(() => document.querySelector('#agents-panel').classList.contains('profile-open') && document.querySelector('#agents-panel header h2').textContent === 'Agent profile');
     assert.equal(await agentPage.$eval('#health-popover', el => el.hidden), true, 'choosing a health entry closes the list');
-    // The button that closes the open profile is an X, not the chevron that opens it.
-    assert.deepEqual(await agentPage.$eval('.agent-card.expanded .agent-expand', button => ({ glyph: button.querySelector('.icon-mask')?.className.replace('icon-mask ', ''), title: button.title, label: button.getAttribute('aria-label') })),
-      { glyph: 'icon-mask-close', title: 'Close agent profile', label: 'Close agent profile' }, 'the open profile is closed by an X');
+    // An open profile is closed by the panel's back arrow, the only close control: no X on the card, no edge arrow beside it.
+    assert.deepEqual(await agentPage.evaluate(() => ({ card: document.querySelectorAll('.agent-card.expanded .agent-expand').length, back: (button => ({ glyph: button.querySelector('.icon-mask')?.className.replace('icon-mask ', ''), title: button.title, label: button.getAttribute('aria-label'), shown: getComputedStyle(button).display !== 'none' }))(document.querySelector('#agent-profile-close')), edge: getComputedStyle(document.querySelector('#edge-agents')).display })),
+      { card: 0, back: { glyph: 'icon-mask-left', title: 'Back to members', label: 'Back to members', shown: true }, edge: 'none' }, 'the open profile is closed by a back arrow');
     await agentPage.keyboard.press('Escape');
     await agentPage.waitForFunction(() => !document.querySelector('#agents-panel').classList.contains('profile-open'));
     await agentPage.evaluate(() => { window.__healthListMode = 'missing'; window.__healthWaits = 0; });
@@ -4548,7 +4561,7 @@ async function main() {
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => getComputedStyle(el).opacity), '1', 'hovering a member shows its buttons');
     await domClick(agentPage, '[data-agent-id="agt_mock_worker"] .agent-name');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-switch', el => el.offsetParent !== null), true, 'clicking the row opens its profile');
-    assert.deepEqual(await agentPage.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, closeShown: !document.querySelector('#agent-profile-close').hidden, closeIsX: !!document.querySelector('#agent-profile-close .icon-mask-close') && document.querySelector('#agent-profile-close').getAttribute('aria-label') === 'Close agent profile' && document.querySelector('#agent-profile-close').title === 'Close agent profile' && document.querySelector('#agent-profile-close').textContent.trim() === '', others: [...document.querySelectorAll('#agents-list .agent-card:not(.expanded)')].every(card => getComputedStyle(card).display === 'none'), humans: getComputedStyle(document.querySelector('#agents-humans')).display })), { title: 'Agent profile', closeShown: true, closeIsX: true, others: true, humans: 'none' }, 'the profile replaces the members list');
+    assert.deepEqual(await agentPage.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, closeShown: !document.querySelector('#agent-profile-close').hidden, backArrow: !!document.querySelector('#agent-profile-close .icon-mask-left') && document.querySelector('#agent-profile-close').getAttribute('aria-label') === 'Back to members' && document.querySelector('#agent-profile-close').title === 'Back to members' && document.querySelector('#agent-profile-close').textContent.trim() === '', others: [...document.querySelectorAll('#agents-list .agent-card:not(.expanded)')].every(card => getComputedStyle(card).display === 'none'), humans: getComputedStyle(document.querySelector('#agents-humans')).display })), { title: 'Agent profile', closeShown: true, backArrow: true, others: true, humans: 'none' }, 'the profile replaces the members list');
     // The state reads like v1, "working 0:12": the state and how long it has lasted, in a readable pill (not tiny mono text).
     assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-state-pill', el => { const cs = getComputedStyle(el); return { text: el.textContent.replace(/\s+/g, ' ').trim().replace(/\d+:\d\d$/, 'M:SS'), size: parseFloat(cs.fontSize) >= 12, sans: !/mono/i.test(cs.fontFamily), pill: parseFloat(cs.borderTopWidth) === 1 && parseFloat(cs.borderTopLeftRadius) > 10 }; }), { text: 'working M:SS', size: true, sans: true, pill: true }, 'the profile state is "state age" in a readable pill');
     const ageBefore = await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-state-age', el => el.textContent);
@@ -4563,11 +4576,12 @@ async function main() {
     await agentPage.setViewport({ width: 1100, height: 720 });
     // The profile's actions are labelled buttons; Stop is the danger one, Pause a plain one, and the row's hover icons are not repeated.
     assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-actions button', els => els.map(el => [el.getAttribute('aria-label'), el.textContent, el.classList.contains('btn-icon'), el.classList.contains('icon-btn-danger')])), [['Message', '', true, false], ['Pause', '', true, false], ['Stop', '', true, true], ['Switch', '', true, false], ['Reactivate', '', true, false], ['Remove', '', true, true]], 'the agent actions are icon buttons named by aria-label, with no text');
-    assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => [...el.children].filter(child => getComputedStyle(child).display !== 'none').length), 1, 'the open profile keeps only its close button in the row');
+    assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => [...el.children].filter(child => getComputedStyle(child).display !== 'none').length), 0, 'the open profile has no button in the row: the panel\'s back arrow is its one close control');
     // A disabled action says why: in its tooltip and in a line under the buttons.
     assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const button = card.querySelector('.agent-reactivate'), hint = card.querySelector(`#${button.getAttribute('aria-describedby')}`); return { disabled: button.disabled, title: button.title, hint: hint?.textContent, shown: !!hint?.offsetParent, pauseTitle: card.querySelector('.agent-act-pause').title, pauseDescribed: card.querySelector('.agent-act-pause').hasAttribute('aria-describedby') }; }), { disabled: true, title: 'Reactivate is unavailable: it is already active', hint: 'Reactivate is unavailable: it is already active.', shown: true, pauseTitle: 'Pause: finish the current turn, then accept no new work', pauseDescribed: false });
     const factLabels = await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .profile-fact-label', els => els.map(el => el.textContent));
-    for (const label of ['Status', 'Presence', 'Runtime', 'Role', 'Agent ID']) assert.ok(factLabels.includes(label), `the profile lacks ${label}: ${factLabels}`);
+    for (const label of ['Runtime', 'Role', 'Agent ID']) assert.ok(factLabels.includes(label), `the profile lacks ${label}: ${factLabels}`);
+    for (const label of ['Status', 'Presence', 'Last seen']) assert.ok(!factLabels.includes(label), `the profile repeats the card's state line as ${label}`);
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .profile-fact-value code, [data-agent-id="agt_mock_worker"] code.profile-fact-value', el => el.textContent), 'agt_mock_worker', 'ids are monospace');
     await domClick(agentPage, '#agent-profile-close');
     assert.deepEqual(await agentPage.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, list: getComputedStyle(document.querySelector('[data-agent-id="agt_mock_worker"]')).display !== 'none', closeShown: !document.querySelector('#agent-profile-close').hidden })), { title: 'Members', list: true, closeShown: false }, 'the close button brings the members back');
@@ -4654,13 +4668,17 @@ async function main() {
       assert.equal(await agentPage.$eval('#room-menu-toggle', el => el.getClientRects().length === 0), true, `the overflow button is hidden at ${width}px`);
     }
     await agentPage.setViewport({ width: 1100, height: 720 });
-    // The glyphs of a room row's small buttons (the + under a room, the move icon) sit on the row's centre line, with the room name.
+    // The glyphs of a room row's small buttons (the + under a room, the move icon) sit on the centre line of the row's name line (the + and the move icon have a
+    // slot at the end of the name; the chevron is centred on the row), with the room name.
     const rowAxis = await agentPage.evaluate(() => {
       const centre = node => { const box = node.getBoundingClientRect(); return box.top + box.height / 2; };
       const off = [];
       for (const row of document.querySelectorAll('.room-item')) {
         if (!row.getClientRects().length) continue;
-        for (const glyph of row.querySelectorAll(':is(.add-room, .project-move, .branch, .room-pin, .room-hide) .icon-mask')) if (glyph.getClientRects().length && Math.abs(centre(glyph) - centre(row)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(row)).toFixed(1)}`);
+        for (const glyph of row.querySelectorAll(':is(.add-room, .project-move, .branch, .room-pin, .room-hide) .icon-mask')) {
+          const axis = glyph.closest('.room-item-actions-slot') ? row.querySelector('.room-item-top') : row;
+          if (glyph.getClientRects().length && Math.abs(centre(glyph) - centre(axis)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(axis)).toFixed(1)}`);
+        }
       }
       return { checked: document.querySelectorAll('.room-item .add-room .icon-mask').length, off };
     });
@@ -4710,7 +4728,7 @@ async function main() {
     await agentPage.click('#edge-agents-expand');
     assert.notEqual(await agentPage.$eval('#agents-panel', el => getComputedStyle(el).display), 'none');
     await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-recovery', el => el.scrollIntoView({ block: 'center' }));
-    assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-recovery', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-health'), el.textContent]), ['Recovery needed', 'Recovery needed', true, '']);
+    assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-recovery', el => [el.textContent.trim(), !!el.querySelector('.icon-mask-health')]), ['Review in Inbox', true]);
     await agentPage.waitForFunction(() => {
       const button = document.querySelector('[data-agent-id="agt_mock_reviewer"] .agent-recovery');
       if (!button || button.hidden || getComputedStyle(button).visibility !== 'visible') return false;
@@ -5152,7 +5170,7 @@ async function main() {
       assert.equal(listed.controls, 0, 'the member list is read-only: no controls');
       assert.equal(listed.emojiHidden, true);
       assert.equal(listed.status, '');
-      assert.deepEqual(listed.lists, ['People in this room', 'Agents in this room', 'Singleton roles']);
+      assert.deepEqual(listed.lists, ['People in this room', 'Agents in this room', 'One-holder roles']);
       // Hostile names stay text, and a slow answer for a room that was reset is dropped.
       const inert = await first.evaluate(async () => {
         const { RoomMembers } = await import('/js/pages/members/page.js');
@@ -5916,6 +5934,7 @@ async function main() {
           const out = {};
           try {
             box.value = 'DRAFT NOT SAVED'; box.dispatchEvent(new Event('input'));
+            await until(() => !document.querySelector('.prompt-slot[data-key=tail] .prompt-save').disabled, 'Save to turn on for the edit');
             failWith(500); document.querySelector('.prompt-slot[data-key=tail] .prompt-save').click();
             await until(() => alertText() !== '' && !section().hasAttribute('aria-busy'), 'the failed save to be reported');
             out.failed = { same: document.querySelector('#prompt-tail') === box, value: box.value, error: document.querySelector('#settings-prompts [role=alert]').textContent };
@@ -7273,7 +7292,7 @@ async function main() {
     await domClick(first, '#room-info');
     assert.equal(await first.$('#room-pin'), null, 'room settings have no Pin room button');
     assert.equal(await first.$$eval(`[data-room-id="${roomID}"] > .room-item .room-pin, [data-room-id="${roomID}"] > .room-item .room-hide, [data-room-id="${roomID}"] > .room-item .room-pinned`, nodes => nodes.length), 0, 'the rows carry no pin or hide buttons and no star');
-    assert.deepEqual(await first.$eval('#room-hide', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-eye-off'), el.textContent, el.classList.contains('btn-icon')]), ['Hide room', 'Hide room', true, '', true], 'Hide room is an eye-off icon with a tooltip');
+    assert.deepEqual(await first.$eval('#room-hide', el => [el.textContent.trim(), el.title, !!el.querySelector('.icon-mask-eye-off'), el.classList.contains('btn-icon')]), ['Hide room', 'Hide this room from your list. It stays for everyone else.', true, false], 'Hide room is a labelled button (an eye-off icon and its name) with a tooltip saying what it does');
     await domClick(first, '#room-hide');
     await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`) && !!document.querySelector('.hidden-rooms') && !document.querySelector('#room-info-dialog').open, {}, roomID);
     await first.click('.hidden-rooms summary');
@@ -7952,7 +7971,7 @@ async function main() {
         const receipts = new ReadReceipts(chat);
         await receipts.refresh();
         const strips = id => [...chat.nodes.get(id).querySelectorAll(':scope > .message-receipts .receipt-avatar')].map(el => el.title);
-        // The markers sit at the message's right edge, whoever wrote it, 14px each.
+        // The markers sit at the message's right edge, whoever wrote it, 22px each.
         const edge = id => { const node = chat.nodes.get(id), avatars = node.querySelectorAll(':scope > .message-receipts .receipt-avatar'), last = avatars[avatars.length - 1].getBoundingClientRect(), box = node.getBoundingClientRect(), cs = getComputedStyle(node); return { gap: Math.round(box.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth) - last.right), size: Math.round(last.width) }; };
         return { m1: strips('m1'), m2: strips('m2'), m3: strips('m3'), label: chat.nodes.get('m3').querySelector('.message-receipts')?.getAttribute('aria-label'), edge2: edge('m2'), edge3: edge('m3') };
       } finally { window.fetch = originalFetch; list.remove(); }
@@ -7969,10 +7988,18 @@ async function main() {
         }
         strip.remove(); return out;
       });
-      for (const item of fits) assert.deepEqual([item.size, item.fits, item.noWrap, item.clipped], [[14, 14], true, true, true], `seen-by initials "${item.text}" do not fit their circle at ${width}px: ${JSON.stringify(item)}`);
+      for (const item of fits) assert.deepEqual([item.size, item.fits, item.noWrap, item.clipped], [[22, 22], true, true, true], `seen-by initials "${item.text}" do not fit their circle at ${width}px: ${JSON.stringify(item)}`);
+    }
+    // Legible: the initials are at least 9px and in the primary text colour; high contrast outlines the circle in the theme's outline colour, as v1 does.
+    for (const theme of ['', 'high-contrast-dark']) {
+      await receiptsPage.evaluate(theme => { if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme; }, theme);
+      const look = await receiptsPage.evaluate(() => { const strip = document.createElement('div'); strip.className = 'message-receipts'; const avatar = document.createElement('span'); avatar.className = 'receipt-avatar'; avatar.textContent = 'MA'; strip.append(avatar); document.body.append(strip);
+        const style = getComputedStyle(avatar), primary = getComputedStyle(document.body).getPropertyValue('--text-primary').trim(); const resolve = value => { const probe = document.createElement('i'); probe.style.color = value; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color; }; const out = { font: parseFloat(style.fontSize), text: style.color, border: style.borderTopColor, primary: resolve(primary), outline: resolve(getComputedStyle(document.body).getPropertyValue('--border').trim()) }; strip.remove(); return out; });
+      assert.ok(look.font >= 9, `the initials are at least 9px (${theme || 'default'}): ${look.font}`); assert.equal(look.text, look.primary, `the initials are in the primary text colour (${theme || 'default'})`);
+      if (theme) assert.equal(look.border, look.outline, 'high contrast outlines the circle in the theme\'s outline colour');
     }
     await receiptsContext.close();
-    assert.deepEqual(receiptStrips, { m1: [], m2: ['Seen by you', 'Seen by ada'], m3: ['Seen by me'], label: 'Seen by me', edge2: { gap: 2, size: 14 }, edge3: { gap: 2, size: 14 } }, 'read receipts mark every member (humans, agents and the viewer) on the newest message at or before their position, their own messages included');
+    assert.deepEqual(receiptStrips, { m1: [], m2: ['Seen by you', 'Seen by ada'], m3: ['Seen by me'], label: 'Seen by me', edge2: { gap: 2, size: 22 }, edge3: { gap: 2, size: 22 } }, 'read receipts mark every member (humans, agents and the viewer) on the newest message at or before their position, their own messages included');
     const archiveContext = await browser.createBrowserContext();
     const archivePage = await archiveContext.newPage();
     await archivePage.goto(origin);

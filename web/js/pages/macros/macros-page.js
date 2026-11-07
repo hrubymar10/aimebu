@@ -21,7 +21,6 @@ export function MacrosPage({ openToken, onDirty = () => {} }) {
 
   return html`
     <${Fragment}>
-      <h3>Macros</h3>
       <p class="settings-intro">${INTRO}</p>
       <div class="macro-toolbar">
         <${SettingsGroup} label="Find macros">

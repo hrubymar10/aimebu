@@ -62,7 +62,6 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
 
   return html`
     <${IdPrefix.Provider} value=${idPrefix}>
-      <h3>Harnesses</h3>
       <p class="settings-intro">A harness is a coding tool installed on a machine, with the models it can start agents with. Nothing is listed until you add it. Pick a machine, add its harnesses (or auto-detect them), then give each harness its models: exactly one is the default, which an agent falls back to when its own model is removed.</p>
       <${SettingsGroup} label="Harness machine">
         <${SettingsRow} label="Machine" desc="The supervisor whose harnesses and recent changes are shown below." id=${`${idPrefix}harness-machine`}>

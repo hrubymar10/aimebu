@@ -22,6 +22,7 @@ assert.equal(formatSize(120 * 1024 * 1024), '120 MB');
 assert.deepEqual(Array.from(sessionFacts({ id: 'aaaaaaaa-1111', git_branch: 'main', modified_at: '2026-10-24T10:00:00Z', size: 2048 })),
   ['main', 'used ago(2026-10-24T10:00:00Z)', '2 KB', 'aaaaaaaa']);
 assert.deepEqual(Array.from(sessionFacts({ id: 'bbbbbbbb-2222', size: 10 })), ['10 B', 'bbbbbbbb']);
+assert.deepEqual(Array.from(sessionFacts({ id: 'cccccccc-3333', git_branch: 'HEAD', size: 10 })), ['10 B', 'cccccccc'], '"HEAD" is no branch (a detached HEAD, or no repository): it is not shown');
 
 // The flags: an agent that continues it only rules out a second continuation (a copy is still possible), so every flag warns or notes.
 const flag = session => Array.from(sessionFlags(session), item => Array.from(item));

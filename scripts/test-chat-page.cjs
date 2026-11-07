@@ -449,6 +449,57 @@ async function main() {
   const addFile = (page, name = 'a.txt', size = 5) => page.evaluate((name, size) => { window.__adding = window.__chat.addFiles([new File(['x'.repeat(size)], name, { type: 'text/plain' })]); }, name, size);
   const pending = page => page.evaluate(() => [...document.querySelectorAll('#pending-attachments .attachment-pending-item')].map(node => node.querySelector('.attachment-pending-name, .attachment-pending-status').textContent.trim()));
 
+  // The thread beside the room (UX review F1-F4): the composer toolbar stays one row in the narrowed column, the thread's composer offers the same attach and
+  // emoji controls (with files sent along with the reply), a reply looks like a message in the room (the bubble, bold not link blue), and a system line keeps its
+  // time on its own line.
+  {
+    const page = await mount({ openPage: 100 });
+    await page.evaluate(() => {
+      const list = window.__data.rooms.rm_a.messages;
+      list.find(message => message.id === 'rm_a_m120').body = 'room **bold** text';
+      list.push({ id: 'rm_a_t1', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_me', author_name: 'me', body: 'reply **bold** text', created_at: '2026-01-10T12:00:00Z', reply_to: 'rm_a_m120', thread_root: 'rm_a_m120' });
+      list.push({ id: 'rm_a_sys', seq: 132, no: 132, room_id: 'rm_a', author_kind: 'system', author_id: '', author_name: 'system', body: 'hana joined as worker; spawned per role default: claude/docker/claude-sonnet-5-5 and a good deal more words to make it wrap', created_at: '2026-01-10T12:01:00Z', reply_to: '', thread_root: '' });
+    });
+    await page.setViewport({ width: 1100, height: 900 });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => { window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); }); await page.evaluate(() => window.__open); await settle(page);
+    // F1: one row of tools, however narrow the column.
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.composer-toolbar')].filter(bar => bar.offsetParent).map(bar => { const tops = new Set([...bar.querySelectorAll('.composer-format')].map(button => Math.round(button.getBoundingClientRect().top))); return [bar.closest('form').id, tops.size]; })),
+      [['composer', 1], ['thread-composer', 1]], 'the toolbar is one row in both composers with the thread open');
+    await page.setViewport({ width: 800, height: 900 }); await settle(page);
+    assert.equal(await page.evaluate(() => { const tops = new Set([...document.querySelectorAll('#composer .composer-format')].map(button => Math.round(button.getBoundingClientRect().top))); return tops.size; }), 1, 'and still one row in a narrower column (it scrolls)');
+    await page.setViewport({ width: 1100, height: 900 }); await settle(page);
+    // F2: the thread's toolbar carries attach and emoji, as the room's does.
+    assert.deepEqual(await page.evaluate(() => ['#composer', '#thread-composer'].map(form => [...document.querySelectorAll(`${form} .composer-toolbar > .attachment-picker-btn`)].map(node => node.getAttribute('aria-label')))), [['Attach files', 'Insert emoji'], ['Attach files', 'Insert emoji']], 'attach and emoji in both toolbars');
+    await page.evaluate(() => { document.querySelector('#thread-composer textarea').focus(); });
+    await page.click('#thread-emoji-button'); await page.waitForSelector('.emoji-picker');
+    assert.equal(await page.evaluate(() => document.querySelector('#thread-emoji-button').getAttribute('aria-expanded')), 'true', 'the emoji button of the thread opens the picker');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.__chat.insertEmoji('🎉', document.querySelector('#thread-composer textarea'))); await settle(page);
+    assert.equal(await page.evaluate(() => /\p{Extended_Pictographic}/u.test(document.querySelector('#thread-composer textarea').value)), true, 'an emoji picked from the thread goes into the reply');
+    await page.evaluate(() => { const draft = document.querySelector('#thread-composer textarea'); draft.value = ''; draft.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.evaluate(() => { window.__adding = window.__chat.store.addThreadFiles([new File(['x'.repeat(5)], 'note.txt', { type: 'text/plain' })]); }); await page.evaluate(() => window.__adding); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#thread-pending-attachments .attachment-pending-item')].map(node => node.textContent.trim())).then(list => list.length), 1, 'a file picked in the thread waits under it');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#pending-attachments .attachment-pending-item').length), 0, 'and is not the room composer\'s');
+    await page.evaluate(() => document.querySelector('#thread-composer').requestSubmit()); await settle(page);
+    assert.deepEqual((await page.evaluate(() => window.__posted)).at(-1), { body: '', thread_root: 'rm_a_m120', reply_to: 'rm_a_m120', attachments: ['att_1'] }, 'a reply of only a file is sent in the thread with it');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#thread-pending-attachments .attachment-pending-item').length), 0, 'the strip empties');
+    await page.evaluate(() => { window.__adding = window.__chat.store.addThreadFiles([new File(['y'], 'gone.txt', { type: 'text/plain' })]); }); await page.evaluate(() => window.__adding); await settle(page);
+    await page.evaluate(() => window.__chat.closeThread()); await settle(page);
+    assert.equal(await count(page, 'DELETE', '/attachments/att_2$'), 1, 'closing the thread drops its waiting file');
+    // F3: a reply is drawn like a room message: the same bubble (own messages green), bold in the text colour.
+    await page.evaluate(() => { window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); }); await page.evaluate(() => window.__open); await settle(page);
+    assert.deepEqual(await page.evaluate(() => {
+      const style = (node, props) => props.map(prop => getComputedStyle(node)[prop]);
+      const reply = document.querySelector('#thread-messages .thread-entry[data-message-id=rm_a_t1]'), room = document.querySelector('#messages [data-message-id=rm_a_m120]');
+      return { sameBubble: JSON.stringify(style(reply.querySelector('.chat-msg-bubble'), ['borderTopWidth', 'borderTopStyle', 'borderRadius', 'backgroundColor'])) === JSON.stringify(style(room.querySelector('.chat-msg-bubble'), ['borderTopWidth', 'borderTopStyle', 'borderRadius', 'backgroundColor'])),
+        bold: getComputedStyle(reply.querySelector('.chat-msg-body strong')).color === getComputedStyle(room.querySelector('.chat-msg-body strong')).color, name: getComputedStyle(reply.querySelector('.chat-msg-from-name')).color === getComputedStyle(room.querySelector('.chat-msg-from-name')).color };
+    }), { sameBubble: true, bold: true, name: true }, 'a reply has the bubble, the bold and the name colour of a message in the room');
+    // F4: the time of a system line stays beside its text.
+    assert.deepEqual(await page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_sys] .chat-msg-system-row'), body = row.firstElementChild, stamp = row.querySelector('.chat-msg-time'); const b = body.getBoundingClientRect(), s = stamp.getBoundingClientRect(); return { sideBySide: s.left >= b.right - 1 && s.top < b.bottom, nowrap: getComputedStyle(row).flexWrap }; }), { sideBySide: true, nowrap: 'nowrap' }, 'the time of a system line is beside its text, not alone on a line below');
+    await page.close();
+  }
+
   // Sending: the text goes to the open room and the draft empties, the reply chip goes, the message is drawn at the bottom; a failure keeps the draft and
   // says why in the composer.
   {
@@ -456,6 +507,10 @@ async function main() {
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     await typeDraft(page, 'hello there'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
     assert.deepEqual([await posts(page), await draftText(page), await ids(page).then(list => list.at(-1)), await page.evaluate(() => { const list = document.querySelector('#messages'); return list.scrollHeight - list.scrollTop - list.clientHeight < 2; })], [[{ body: 'hello there', attachments: [] }], '', 'rm_a_m131', true]);
+    // Your own message carries your name like anyone's, not "You" (the bubble is still the own-message one): in the list, in the quote of a reply to it, and in the chip.
+    assert.deepEqual(await page.evaluate(() => { const own = document.querySelector('#messages > article.chat-msg:last-of-type'); return [own.classList.contains('self'), own.querySelector('.chat-msg-from-name').textContent.trim()]; }), [true, 'me'], 'an own message is named by its author, not "You"');
+    await page.evaluate(() => { const own = window.__chat.messages.get('rm_a_m131'); window.__chat.setReply(own); });
+    assert.equal(await page.evaluate(() => document.querySelector('#reply-chip-jump').textContent.startsWith('Replying to me: ')), true, 'the chip names you by your name');
     await page.evaluate(() => { const message = window.__chat.messages.get('rm_a_m120'); window.__chat.setReply(message); });
     assert.deepEqual(await page.evaluate(() => [document.querySelector('#reply-chip').hidden, document.querySelector('#reply-chip-jump').textContent]), [false, 'Replying to ann: rm_a message 120']);
     await typeDraft(page, 'a reply'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
@@ -1090,6 +1145,10 @@ async function main() {
     const page = await panelRoom();
     await page.evaluate(() => { window.__hidden = []; window.__chat.setRoomPreference = async (room, field, value) => { window.__hidden.push([room.id, field, value]); return true; }; window.__chat.showRoomInfo(); });
     await settle(page);
+    // The pane starts where the top bar ends instead of covering it, and Hide room is a button that says what it is (an icon and its name), with a tooltip.
+    // (This page has no laid-out top bar; the app's is 53px high, which is where the pane starts.)
+    assert.deepEqual(await page.evaluate(() => { const pane = document.querySelector('#room-info-dialog').getBoundingClientRect(); return [Math.round(pane.top), Math.round(pane.bottom) === innerHeight]; }), [53, true], 'the room settings pane starts below the 53px top bar and ends at the bottom of the window');
+    assert.deepEqual(await page.$eval('#room-hide', el => [el.textContent.trim(), !!el.querySelector('.icon-mask-eye-off'), el.title.length > 10, el.classList.contains('btn-icon')]), ['Hide room', true, true, false]);
     await page.$eval('#room-hide', node => node.click()); await settle(page);
     assert.deepEqual(await page.evaluate(() => [window.__hidden, document.querySelector('#room-info-dialog').open, document.querySelector('#room-hide').disabled]), [[['rm_a', 'hidden', true]], false, false]);
     await page.evaluate(() => { window.__chat.setRoomPreference = () => new Promise(resolve => { window.__hideDone = resolve; }); window.__chat.showRoomInfo(); });

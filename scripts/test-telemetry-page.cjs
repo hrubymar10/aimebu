@@ -133,8 +133,8 @@ async function on() {
     await page.click('#telemetry-send-name');
     await page.waitForFunction(() => /user name/.test(document.querySelector('#telemetry-status').textContent));
     assert.match(await page.evaluate(() => document.querySelector('#telemetry-fingerprint-desc').textContent), /login name/, 'the row describes the name mode');
-    assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, readOnly: document.querySelector('#telemetry-fingerprint').readOnly, label: document.querySelector('label[for=telemetry-fingerprint]').textContent, copy: document.querySelector('#telemetry-fingerprint-copy').getAttribute('aria-label') })),
-      { value: 'owner', readOnly: true, label: 'User name', copy: 'Copy user name' }, 'with the name on, the field shows the user name, not the hash');
+    assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, readOnly: document.querySelector('#telemetry-fingerprint').readOnly, label: document.querySelector('label[for=telemetry-fingerprint]').textContent, copy: document.querySelector('#telemetry-fingerprint-copy'), dice: document.querySelector('#telemetry-fingerprint-roll').getAttribute('aria-label') })),
+      { value: 'owner', readOnly: true, label: 'User name', copy: null, dice: 'Use a random fingerprint instead' }, 'with the name on, the field shows the user name, there is nothing to copy, and the dice says what it does');
     assert.ok(!await page.evaluate(fp => document.querySelector('#settings-telemetry').textContent.includes(fp) || [...document.querySelectorAll('#settings-telemetry input')].some(input => input.value === fp), fingerprint), 'the hash is not on the page while the name is on');
     assert.deepEqual(await errorUser('after-name boom'), { id: 'owner', ip_address: null }, 'with the name on, user.id is the login (not the fingerprint), and nothing else');
     assert.ok(!parsedItems().some(item => item.exception && JSON.stringify(item.exception).includes('after-name') && JSON.stringify(item).includes(fingerprint)), 'never both');
@@ -282,12 +282,51 @@ async function popup() {
     assert.deepEqual(off.muted, [false, true, true, true], 'off: everything but the master switch is muted'); assert.equal(off.factsMuted, true, 'the volume facts too');
     assert.equal(off.masterEnabled, true, 'the master switch stays usable'); assert.notEqual(off.mutedLabel, off.masterLabel, 'a muted label has the muted colour');
     assert.equal(off.opacity, '0.5', 'dimmed where opacity is allowed'); assert.deepEqual(off.dashed, ['dashed', 'dashed', 'dashed', 'dashed'], 'and dashed');
+    // High contrast has no opacity, so the off state is the theme's own muted text colour (v1's --text-muted): text, values, icons and borders all that grey, nothing in the accent or
+    // the theme's cyan outline, and no stripe at the edge.
     await page.evaluate(() => { document.documentElement.dataset.theme = 'high-contrast-dark'; });
+    await new Promise(resolve => setTimeout(resolve, 500)); // the controls' colours transition
     off = await dependent();
     assert.equal(off.opacity, '1', 'high contrast keeps full opacity...'); assert.notEqual(off.mutedLabel, off.masterLabel, '...and mutes by colour');
-    assert.deepEqual(off.dashed, ['dashed', 'dashed', 'dashed', 'dashed'], '...and dashed borders');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#telemetry-dsn').closest('.settings-row')).borderLeftStyle), 'dashed', '...and a dashed rule at the row\'s edge');
+    const grey = await page.evaluate(everything => {
+      const rgb = value => value.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number), lum = value => { const [r, g, b] = rgb(value).map(c => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const root = getComputedStyle(document.documentElement), token = name => { const probe = document.createElement('i'); probe.style.color = root.getPropertyValue(name).trim(); document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color; };
+      const text = ['label[for=telemetry-dsn]', '#telemetry-dsn-desc', '#telemetry-dsn', '#telemetry-fingerprint', '#telemetry-save', '#telemetry-fingerprint-roll', '#telemetry-sample-rate', '#telemetry-facts dt'].map(selector => getComputedStyle(document.querySelector(selector)).color);
+      const icon = ['#telemetry-fingerprint-roll', '#telemetry-dsn-reset'].map(selector => getComputedStyle(document.querySelector(`${selector} .icon-mask`)).backgroundColor);
+      const borders = everything.filter(selector => selector !== '#telemetry-send-name').map(selector => getComputedStyle(document.querySelector(selector)).borderTopColor);
+      const contrast = color => (lum(color) + 0.05) / 0.05; // on the black of this theme
+      return { muted: token('--telemetry-off'), line: token('--telemetry-off-line'), accent: token('--accent'), cyan: token('--border'), text, icon, borders, rowStripe: getComputedStyle(document.querySelector('#telemetry-dsn').closest('.settings-row')).borderLeftWidth, textContrast: Math.min(...text.map(contrast)) };
+    }, everything);
+    assert.ok(grey.text.every(color => color === grey.muted), `labels, help text, values, buttons and the facts are all the muted grey: ${JSON.stringify(grey.text)} vs ${grey.muted}`);
+    assert.ok(grey.icon.every(color => color === grey.muted), `the icons are muted too: ${JSON.stringify(grey.icon)}`);
+    assert.ok(grey.borders.every(color => color === grey.line && color !== grey.accent && color !== grey.cyan), `control borders are the muted line, never the accent or the cyan outline: ${JSON.stringify(grey.borders)}`);
+    assert.ok(grey.textContrast >= 4.5, `the muted text still reads on black (${grey.textContrast.toFixed(1)}:1)`);
+    assert.equal(grey.rowStripe, '0px', 'no stripe at the edge of a muted row'); assert.deepEqual(off.dashed, ['dashed', 'dashed', 'dashed', 'dashed']);
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
+    // Pressing the switch does not move the page: the rows and the facts keep their places whether the status line says something or not (no stripe, no
+    // line pushed in), and a value too long for its field ends in an ellipsis.
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const places = () => page.evaluate(() => ({ rows: [...document.querySelectorAll('#settings-telemetry .settings-row')].map(row => Math.round(row.getBoundingClientRect().top)), facts: Math.round(document.querySelector('#telemetry-facts').getBoundingClientRect().top), left: Math.round(document.querySelector('#telemetry-dsn').getBoundingClientRect().left), status: document.querySelector('#telemetry-status').textContent }));
+    // The page as it opens (nothing said yet) against the page after the switch has been pressed twice (something said): nothing moved.
+    await page.click('#settings-close');
+    await page.waitForFunction(() => !document.querySelector('#settings-dialog').open && document.querySelector('#settings-telemetry').childElementCount === 0);
+    await page.evaluate(() => document.querySelector('#settings-toggle').click());
+    await page.click('#settings-telemetry-tab'); await page.waitForSelector('#telemetry-dsn'); await page.waitForFunction(() => !document.querySelector('#telemetry-enabled').disabled); await new Promise(resolve => setTimeout(resolve, 300));
+    const quiet = await places();
+    assert.equal(quiet.status, '', 'nothing has been said yet');
+    await toggleMaster();
+    const said = await places();
+    assert.ok(/Saved/.test(said.status), 'the switch has said something');
+    assert.deepEqual([said.rows, said.facts, said.left], [quiet.rows, quiet.facts, quiet.left], 'switching moves nothing (rows, facts and the field\'s left edge stay put, the status line has its room already)');
+    await toggleMaster();
+    assert.equal(await page.$eval('#telemetry-dsn', el => getComputedStyle(el).textOverflow), 'ellipsis', 'a clipped DSN ends in an ellipsis');
+    // On a phone the DSN and the fingerprint get a full-width line of their own, with their buttons after them.
+    await page.setViewport({ width: 390, height: 844 }); await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual(await page.evaluate(() => { const box = selector => document.querySelector(selector).getBoundingClientRect(), row = selector => document.querySelector(selector).closest('.settings-control').getBoundingClientRect();
+      return ['#telemetry-dsn', '#telemetry-fingerprint'].map(input => { const field = box(input), control = row(input), buttons = [...document.querySelector(input).closest('.settings-control').querySelectorAll('button')].map(button => button.getBoundingClientRect());
+        return { fullWidth: field.width >= control.width - 2, buttonsAfter: buttons.every(button => button.top >= field.bottom - 1) }; }); }), [{ fullWidth: true, buttonsAfter: true }, { fullWidth: true, buttonsAfter: true }], 'on a phone each field has its own line and its buttons follow');
+    await page.setViewport({ width: 1280, height: 900 }); await new Promise(resolve => setTimeout(resolve, 300));
     // An off switch keeps only the switch: the DSN chosen in the popup is still there.
     assert.equal(await page.$eval('#telemetry-dsn', el => el.value), 'http://pagekey@127.0.0.1:9/5', 'turning it off leaves the stored DSN alone');
     assert.equal((await server.api(page, '/api/telemetry/settings')).body.dsn, 'http://pagekey@127.0.0.1:9/5');

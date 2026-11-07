@@ -52,6 +52,9 @@ async function main() {
     const place = await page.evaluate(() => { const picker = document.querySelector('.emoji-picker').getBoundingClientRect(), anchor = document.querySelector('#emoji-button').getBoundingClientRect(); return { pickerLeft: Math.round(picker.left), anchorLeft: Math.round(anchor.left), inside: picker.left >= 0 && picker.top >= 0 && picker.right <= innerWidth && picker.bottom <= innerHeight, above: picker.bottom <= anchor.top + 1 }; });
     assert.deepEqual([place.inside, place.pickerLeft >= place.anchorLeft - 1, place.above], [true, true, true], `the picker opens to the right of its button, above it, inside the window: ${JSON.stringify(place)}`);
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('emoji-search')), true, 'the search box has the focus');
+    // One border on the focused search field (its own, no outline ring beside it), and the idle "Pick an emoji" is a hint, not a bold name.
+    assert.deepEqual(await page.evaluate(() => { const search = getComputedStyle(document.querySelector('.emoji-search')), name = document.querySelector('.emoji-preview-name'); return { outline: search.outlineStyle, border: search.borderTopWidth, ring: search.boxShadow.includes('0px 0px 0px 1px'), hint: [name.textContent, getComputedStyle(name).fontWeight] }; }),
+      { outline: 'none', border: '1px', ring: true, hint: ['Pick an emoji', '400'] }, 'the search field has one border and the idle name is not bold');
 
     // Every emoji can be reached: scrolling the grid through draws them all, never many at once.
     const seen = new Set(); let most = 0;

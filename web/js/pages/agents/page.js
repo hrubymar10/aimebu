@@ -31,9 +31,14 @@ export class AgentsPanel {
     this.spawnDialog.addEventListener('close', () => this.spawn.closed());
     document.querySelector('#spawn-open').onclick = () => this.openSpawn();
     document.querySelector('#spawn-open').disabled = !source.available;
-    document.querySelector('#agents-toggle').onclick = () => matchMedia('(max-width: 700px)').matches
-      ? this.setMobileOpen(!this.panel.classList.contains('mobile-open'))
-      : this.setDesktopOpen(document.querySelector('.chat').classList.contains('agents-collapsed'));
+    document.querySelector('#agents-toggle').onclick = () => {
+      if (!matchMedia('(max-width: 700px)').matches) return this.setDesktopOpen(document.querySelector('.chat').classList.contains('agents-collapsed'));
+      // On a phone the Agents tab (and the top-bar button) open the members list. A profile left open from an earlier visit would be what it showed instead,
+      // and the person asked for the members: it opens only by a tap on a member (or a link that names one).
+      const open = !this.panel.classList.contains('mobile-open');
+      if (open) this.store.closeProfile();
+      this.setMobileOpen(open);
+    };
     document.querySelector('#agents-close').onclick = () => matchMedia('(max-width: 700px)').matches ? this.setMobileOpen(false) : this.setDesktopOpen(false);
     document.querySelector('#edge-agents').onclick = () => this.setDesktopOpen(false);
     document.querySelector('#edge-agents-expand').onclick = () => this.setDesktopOpen(true);
@@ -126,7 +131,9 @@ export class AgentsPanel {
   openProfile(id) { if (this.store.openProfile(id)) { this.panel.scrollTop = 0; this.list.scrollTop = 0; if (this.list.parentElement) this.list.parentElement.scrollTop = 0; } }
   closeProfile() {
     const id = this.store.closeProfile();
-    if (id) this.list.querySelector(`[data-agent-id="${CSS.escape(id)}"] .agent-expand`)?.focus();
+    // The card's open button is back once the list has drawn the closed card (an open card has none: the panel's back arrow closes the profile).
+    // The focus goes back only if it is still in the panel (or nowhere): a frame later the person may already be typing elsewhere, and must not be pulled away.
+    if (id) requestAnimationFrame(() => { const at = document.activeElement; if (at && at !== document.body && !this.panel.contains(at)) return; this.list.querySelector(`[data-agent-id="${CSS.escape(id)}"] .agent-expand`)?.focus(); });
   }
   // What an agent's harness printed to stderr is for a project's owner or an admin: it can hold whatever its tools printed.
   canReadOutput() { return !!this.room && (rights.admin || this.projectRole?.(this.room.project_id) === 'owner'); }

@@ -1,6 +1,6 @@
 import { html, useRef } from '../../ui.js';
 import { useIdPrefix } from './id-prefix.js';
-import { harnessStatus, harnessTitle, tabTitle, tabKeyTarget } from './model.js';
+import { modelCount, harnessStatus, harnessTitle, tabTitle, tabKeyTarget } from './model.js';
 
 // A vertical tab list of the machine's harnesses; the card of the selected one is shown beside it.
 export function MasterList({ rows, selected, onSelect }) {
@@ -33,7 +33,7 @@ export function MasterList({ rows, selected, onSelect }) {
         >
           <span class=${`harness-master-dot${harnessStatus(harness) === 'Available' ? ' is-available' : ''}`}></span>
           <span class="harness-master-name">${harnessTitle(harness)}</span>
-          <span class="harness-master-count">${`${(harness.models || []).length}`}</span>
+          <span class="harness-master-count">${modelCount(harness)}</span>
         </button>
       `)}
     </div>

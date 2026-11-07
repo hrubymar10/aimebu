@@ -11,7 +11,7 @@ export class ChatStore {
     this.openGeneration = 0; this.sessionGeneration = 0; this.jumpGeneration = 0; this.pageSize = 100; this.openPageSize = globalThis.__openPageSize || 25; this.olderPageSize = 50;
     this.threadGeneration = 0; this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadPageSize = 100; this.threadOlderPageSize = 50;
     this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map(); this.prefetched = null;
-    this.pendingAttachments = []; this.pendingUploads = 0; this.uploadRequests = new Set();
+    this.pendingAttachments = []; this.pendingUploads = 0; this.uploadRequests = new Set(); this.threadPending = []; this.threadUploads = 0;
     this.rows = []; this.quotes = new Map(); this.rowBatching = false; this.rowPending = []; this.expiry = { expired: new Set(), divider: null }; this.expiryQueued = false;
     this.threadEntries = []; this.threadEntryIDs = new Set(); this.threadBatching = false; this.threadNewReplyIDs = new Set(); this.answerItems = new Map();
     this.clearRoom();
@@ -411,7 +411,49 @@ export class ChatStore {
     this.threadCounts.delete(id); this.serverThreadCounts.delete(id);
   }
 
+  // The files waiting to go with a reply in the thread: the same four-file rule and room endpoint as the composer's, kept apart from it. A thread
+  // closed, or another one opened, drops them (the room's attachment is deleted, as a removed one is).
+  discardThreadAttachments() {
+    const roomID = this.host.room?.id, dropped = this.threadPending;
+    this.threadPending = [];
+    if (roomID) for (const attachment of dropped) request(`/api/rooms/${roomID}/attachments/${attachment.id}`, { method: 'DELETE' }).catch(() => {});
+    this.host.renderThreadPending?.();
+  }
+
+  async addThreadFiles(files) {
+    const room = this.host.room, root = this.host.threadRoot?.id;
+    if (!this.alive || !room || !root || room.lifecycle !== 'open') return;
+    this.host.threadNotice.clear();
+    const roomID = room.id, session = this.sessionGeneration, thread = this.threadGeneration;
+    const live = () => this.current(session, roomID) && thread === this.threadGeneration;
+    for (const file of files) {
+      if (!live()) return;
+      const name = file.name || 'The file';
+      if (this.threadPending.length + this.threadUploads >= 4) { this.host.threadNotice.show('Up to four files per message.', { append: true }); break; }
+      if (!file.size) { this.host.threadNotice.show(`${name} is empty.`, { append: true }); continue; }
+      if (file.size > 10 * 1024 * 1024) { this.host.threadNotice.show(`${name} is too big (${megabytes(file.size)}). Use files up to 10 MB.`, { append: true }); continue; }
+      this.threadUploads++; this.host.renderThreadPending();
+      try {
+        const attachment = await upload(`/api/rooms/${roomID}/attachments`, file);
+        if (live()) this.threadPending = [...this.threadPending, attachment];
+        else await request(`/api/rooms/${roomID}/attachments/${attachment.id}`, { method: 'DELETE' }).catch(() => {});
+      } catch (error) { if (live()) this.host.threadNotice.show(`${name}: ${error.message}`, { append: true }); }
+      finally { if (this.alive) { this.threadUploads--; this.host.renderThreadPending(); } }
+    }
+  }
+
+  async removeThreadAttachment(attachment) {
+    if (!this.alive || !this.host.room) return;
+    const roomID = this.host.room.id, thread = this.threadGeneration;
+    try {
+      await request(`/api/rooms/${roomID}/attachments/${attachment.id}`, { method: 'DELETE' });
+      if (thread !== this.threadGeneration) return;
+      this.threadPending = this.threadPending.filter(item => item.id !== attachment.id); this.host.renderThreadPending();
+    } catch (error) { if (thread === this.threadGeneration) this.host.threadNotice.show(error.message); }
+  }
+
   closeThread() {
+    this.discardThreadAttachments();
     this.releaseThread();
     this.threadGeneration++;
     this.threadEntryIDs = new Set(); this.threadEntries = []; this.threadNewReplyIDs = new Set();
@@ -469,7 +511,7 @@ export class ChatStore {
   async openThread(root, focus = null) {
     if (!this.alive) return;
     const roomID = this.host.room?.id, thread = ++this.threadGeneration;
-    if (this.host.threadRoot?.id !== root.id) this.releaseThread();
+    if (this.host.threadRoot?.id !== root.id) { this.releaseThread(); this.discardThreadAttachments(); }
     this.threadEntries = [root]; this.threadEntryIDs = new Set([root.id]); this.threadNewReplyIDs = new Set();
     this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false;
     if (Number.isInteger(root.thread_count)) this.serverThreadCounts.set(root.id, Math.max(this.serverThreadCounts.get(root.id) || 0, root.thread_count));
@@ -512,12 +554,13 @@ export class ChatStore {
   }
 
   async sendThread() {
-    if (!this.alive || !this.host.threadRoot || !this.host.threadDraft.value.trim()) return;
-    const room = this.host.room.id, root = this.host.threadRoot.id, body = this.host.threadDraft.value, generation = this.openGeneration;
+    if (!this.alive || !this.host.threadRoot || this.threadUploads || (!this.host.threadDraft.value.trim() && !this.threadPending.length)) return;
+    const room = this.host.room.id, root = this.host.threadRoot.id, body = this.host.threadDraft.value, generation = this.openGeneration, attachments = this.threadPending.map(item => item.id);
     this.host.beginThreadSend();
     try {
-      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, thread_root: root, reply_to: root } });
+      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, thread_root: root, reply_to: root, ...(attachments.length ? { attachments } : {}) } });
       if (generation === this.openGeneration && this.host.threadRoot?.id === root) {
+        this.threadPending = []; this.host.renderThreadPending();
         this.host.sentThreadReply();
         const atEnd = this.host.threadLatestHidden();
         if (atEnd) this.add(message); else this.markNewThreadReply(message);

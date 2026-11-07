@@ -79,7 +79,7 @@ async function main() {
   }));
   const locks = page => page.evaluate(() => ({
     scope: document.querySelector('#prompt-scope').disabled, inline: document.querySelector('#prompt-inline-plan').disabled,
-    boxes: [...document.querySelectorAll('#prompt-list textarea')].every(box => box.disabled), buttons: [...document.querySelectorAll('#prompt-list button')].every(button => button.disabled),
+    boxes: [...document.querySelectorAll('#prompt-list textarea')].every(box => box.disabled), buttons: document.querySelector('#prompt-list').dataset.locked === 'true' && [...document.querySelectorAll('#prompt-list button')].every(button => button.disabled),
     busy: document.querySelector('#settings-prompts').hasAttribute('aria-busy'),
   }));
   const count = (page, method) => page.evaluate(method => window.__requests.filter(request => request.method === method).length, method);
@@ -130,6 +130,15 @@ async function main() {
     // Any other failure leaves the page as it is: the same box, the draft, the message, and no read.
     {
       const page = await mount();
+      // Save waits for an edit (and goes back off when the text is put back), and Inline plans is a group of its own, outside the scope card.
+      const saveOff = () => page.$eval('.prompt-slot[data-key=tail] .prompt-save', el => el.disabled);
+      assert.equal(await saveOff(), true, 'nothing to save yet');
+      const original = await page.$eval('#prompt-tail', el => el.value);
+      await type(page, 'tail', 'KEEP ME');
+      assert.equal(await saveOff(), false, 'an edit can be saved');
+      await type(page, 'tail', original);
+      assert.equal(await saveOff(), true, 'the original text is nothing to save');
+      assert.equal(await page.$eval('#prompt-inline-plan', el => !el.closest('.settings-group, section, fieldset')?.querySelector('#prompt-scope')), true, 'Inline plans is not in the Scope card');
       await type(page, 'tail', 'KEEP ME');
       const box = await page.$('#prompt-tail');
       const reads = await count(page, 'GET');

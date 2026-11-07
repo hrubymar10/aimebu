@@ -26,8 +26,7 @@ export function RolesPage({ openToken, onDirty = () => {} }) {
 
   return html`
     <${Fragment}>
-      <h3>Roles</h3>
-      <div class="settings-group" role="group" aria-label="Role selection">
+      <div class="settings-group" role="group" aria-label="Role selection" hidden>
         <div class="settings-row" hidden>
           <div class="settings-row-info"><label class="settings-label" for="roles-list">Role</label><span class="settings-desc" id="roles-list-desc">The role to edit. Choose <em>New role</em> to define another.</span></div>
           <div class="settings-control">

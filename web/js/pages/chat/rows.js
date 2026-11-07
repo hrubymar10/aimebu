@@ -79,8 +79,8 @@ export function AnswerSlot({ message, view, host, listed = '' }) {
 }
 
 export function ThreadEntry({ message, view, host }) {
-  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${view.needsAttention ? 'thread-entry needs-attention' : 'thread-entry'} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)}>
-    <${MessageMeta} message=${message} view=${view} /><${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${AnswerSlot} message=${message} view=${view} host=${host} />
+  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${['thread-entry', view.needsAttention ? 'needs-attention' : '', /\bself\b/.test(view.articleClass || '') ? 'thread-self' : ''].filter(Boolean).join(' ')} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)}>
+    <${MessageMeta} message=${message} view=${view} /><div class="chat-msg-bubble"><${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /></div><${AnswerSlot} message=${message} view=${view} host=${host} />
   </article>`}<//>`;
 }
 

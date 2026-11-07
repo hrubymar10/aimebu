@@ -77,7 +77,7 @@ recorded it), `git_branch`, `version`, `entrypoint`, `modified_at`, `size`, and:
   own Claude session it is). Such a session cannot be *continued* again, but it
   can still be copied (see below).
 
-In the web UI the Spawn dialog has a ⋯ button in its title row; its menu has one item, **Continue a session…**.
+In the web UI the Spawn dialog has a ⋯ button in its title row; its menu has one item, **Continue a Claude Code session…** (named for the tool, because Claude Code is the only one whose sessions can be continued).
 With a launcher that cannot continue a session selected (a container with a
 Claude home of its own), the dialog says so before anything is picked, and offers
 the launcher that can (the native one, or a Docker launcher that shares the

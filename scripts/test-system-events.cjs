@@ -80,6 +80,25 @@ assert.equal(describe(quota('limit_guard_soft', { tool: 'codex', profile: 'b', p
 assert.equal(describe(quota('limit_guard_hard', { tool: 'codex', profile: 'b', percent: '97', window: 'session', next: 'held' })).details, 'codex · b · 97% session · new turns stay held');
 assert.equal(describe(quota('limit_guard_clear', { tool: 'codex', profile: 'b', percent: '5', window: 'weekly' })).text, 'Usage back under the limit: new turns resume');
 
+// Who an id is: the server names the ids of an event (an agent as slug@project, a user by login), so the feed does not show agt_… or usr_…. The server's name
+// is used for an agent of a room that is not open; what the open room knows is the fallback; the id is the last resort.
+const named = (kind, payload, names, extra = {}) => ({ kind, payload_json: JSON.stringify(payload), names, ...extra });
+assert.equal(describe(named('agent_spawn_confirmed', {}, { agt_1: 'hana@tmp' }, { agent_id: 'agt_1' })).where, 'hana@tmp');
+assert.equal(describe(named('turn_process_exit', { exit_code: 0 }, { agt_1: 'hana@tmp' }, { agent_id: 'agt_1', room_id: 'r1' }), { agentName: () => 'Other', roomTitle: () => 'general' }).where, 'hana@tmp · general', 'the server\'s name wins over a card\'s');
+assert.equal(describe(named('agent_created', {}, undefined, { agent_id: 'agt_1' }), { agentName: () => 'hana' }).where, 'hana', 'no server name: the open room\'s card');
+assert.equal(describe(named('agent_created', {}, {}, { agent_id: 'agt_1' })).where, 'agt_1', 'no name at all: the id');
+// The people of an account event.
+assert.equal(describe(named('user_invite_redeemed', { invite_id: 'inv_1', user_id: 'usr_1' }, { usr_1: 'wren' })).text, 'Invite redeemed by wren');
+assert.equal(describe(named('user_invite_redeemed', { invite_id: 'inv_1', user_id: 'usr_1' }, {})).text, 'Invite redeemed', 'an account nobody can name: the plain label');
+assert.deepEqual([describe(named('user_invite_created', { invite_id: 'inv_1', kind: 'join', by: 'usr_2' }, { usr_2: 'owner' })).text, describe(named('user_invite_created', { invite_id: 'inv_1', kind: 'join', by: 'usr_2' }, { usr_2: 'owner' })).details], ['Invite created by owner', 'join link']);
+assert.equal(describe(named('user_invite_created', { invite_id: 'inv_0', kind: 'join' }, {})).text, 'Invite created', 'an invite from before the payload said who made it');
+assert.equal(describe(named('user_created', { user_id: 'usr_1' }, { usr_1: 'wren' })).text, 'User created: wren');
+assert.equal(describe(named('user_deactivated', { user_id: 'usr_1' }, { usr_1: 'wren' })).text, 'User deactivated: wren');
+assert.equal(describe(named('user_admin_changed', { user_id: 'usr_1', admin: 'true', by: 'usr_2' }, { usr_1: 'wren', usr_2: 'owner' })).text, 'Admin changed: wren is now an admin, by owner');
+assert.equal(describe(named('user_admin_changed', { user_id: 'usr_1', admin: 'false' }, { usr_1: 'wren' })).text, 'Admin changed: wren is no longer an admin');
+// A name is text, never markup.
+assert.equal(describe(named('user_created', { user_id: 'usr_1' }, { usr_1: '<b>x</b>' })).text, 'User created: <b>x</b>');
+
 // Every other kind keeps its own label.
 assert.equal(describe({ kind: 'agent_stopped', payload_json: '{}' }).text, 'Agent stopped');
 console.log('system events describe test passed');

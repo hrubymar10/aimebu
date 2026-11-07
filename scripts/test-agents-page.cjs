@@ -99,6 +99,9 @@ async function main() {
     await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn' }), agent('a2', 'bert', { desired: 'stopped', observed: 'stopped' }), agent('a3', 'cleo', { desired: 'not_accepting' })]);
     assert.deepEqual(await cards(page), [['a1', 'ada', 'working'], ['a2', 'bert', 'stopped'], ['a3', 'cleo', 'paused']]);
     assert.deepEqual(await humans(page), [['usr_me', 'me', 'owner', true, false], ['usr_bob', 'bob', 'viewer', false, true]]);
+    // The role label ends at the same right edge on every person's card, yours (no private-chat button) and another's (with one).
+    const edges = await page.$$eval('#agents-humans .human-card .human-role', nodes => nodes.map(node => Math.round(node.getBoundingClientRect().right * 10) / 10));
+    assert.ok(edges.length === 2 && edges[0] === edges[1], `role labels share a right edge: ${edges}`);
     const row = id => page.$eval(`[data-agent-id=${id}]`, node => ({ activity: node.querySelector('.agent-activity').textContent, dot: node.querySelector('.agent-dot').dataset.state,
       pause: [node.querySelector('.agent-act-pause').disabled, node.querySelector('.agent-act-pause').title], stop: node.querySelector('.agent-act-stop').disabled, reactivate: node.querySelector('.agent-reactivate').disabled,
       hint: [...node.querySelectorAll('.agent-action-hint:not([hidden])')].map(hint => hint.textContent) }));
@@ -134,7 +137,7 @@ async function main() {
     const look = id => page.$eval(`[data-agent-id=${id}]`, node => ({ label: node.querySelector('.agent-state-label').textContent, dot: node.querySelector('.agent-dot').dataset.state, state: node.querySelector('.agent-state').dataset.state,
       activity: node.querySelector('.agent-activity').textContent, color: getComputedStyle(node.querySelector('.agent-dot')).backgroundColor, stateColor: getComputedStyle(node.querySelector('.agent-state-badge')).color }));
     const [ordinary, decision, held] = [await look('a1'), await look('a2'), await look('a3')];
-    assert.deepEqual([ordinary.label, ordinary.dot, ordinary.activity], ['idle', 'idle', 'No recent activity']);
+    assert.deepEqual([ordinary.label, ordinary.dot, ordinary.activity], ['idle', 'idle', '']);
     assert.deepEqual([decision.label, decision.dot, decision.state], ['needs decision', 'attention', 'attention']);
     assert.match(decision.activity, /^Needs your decision: .*decide what to do in Inbox\.$/);
     assert.deepEqual([held.label, held.dot, held.state, held.activity], ['held: claude session 95%', 'attention', 'attention', hold.detail]);
@@ -147,7 +150,7 @@ async function main() {
     assert.equal(closed.row, 'relative', 'a collapsed card centres its hover buttons on the name row, not on the whole card');
     await page.$eval('[data-agent-id=a2] .agent-expand', button => button.click()); await settle(page);
     assert.equal((await box('a2')).row, 'static', 'an open card keeps the card as their box');
-    await page.$eval('[data-agent-id=a2] .agent-expand', button => button.click()); await settle(page);
+    await page.$eval('#agent-profile-close', button => button.click()); await settle(page);
     assert.notEqual(decision.color, ordinary.color, 'and it is not the green of an idle agent');
     assert.notEqual(decision.stateColor, ordinary.stateColor, 'the state text is not green either');
     await page.close();
@@ -258,6 +261,60 @@ async function main() {
     await page.close();
   }
 
+  // An open profile has one way out: the back arrow, first in the panel's header. The edge arrow and the phone's close button wait until it is closed, and
+  // the card has no button of its own; a path or an id is cut at its separators and has the whole width; the phone's Agents tab opens the members, not the
+  // profile left open from before.
+  {
+    const page = await mount();
+    await page.setViewport({ width: 1280, height: 800 });
+    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn' }), agent('a2', 'bert')]);
+    const controls = () => page.evaluate(() => {
+      const visible = el => !!el && !el.hidden && getComputedStyle(el).display !== 'none';
+      const header = [...document.querySelectorAll('#agents-panel > header > *')].filter(visible).map(el => el.id || el.tagName.toLowerCase());
+      const card = document.querySelector('[data-agent-id=a1]');
+      return { header, back: [document.querySelector('#agent-profile-close').getAttribute('aria-label'), !!document.querySelector('#agent-profile-close .icon-mask-left')], cardButton: !!card.querySelector('.agent-expand'), closeLooking: [...document.querySelectorAll('#agents-panel button')].filter(visible).filter(button => /close|hide|back/i.test(button.getAttribute('aria-label') || '')).map(button => button.id || button.getAttribute('aria-label')) };
+    });
+    assert.deepEqual((await controls()).header.slice(0, 1), ['edge-agents'], 'with the members list shown the edge arrow hides the panel');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    const profile = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
+    await answer(page, profile, 200, { native_session_id: '2c081365-8e68-4ebb-9d7f-a083a581d530', cwd: '/Users/someone/work/some-project/tmp', machine_name: 'Host' }); await settle(page);
+    const open = await controls();
+    assert.deepEqual([open.header[0], open.header.includes('edge-agents'), open.header.includes('agents-close'), open.back, open.cardButton, open.closeLooking], ['agent-profile-close', false, false, ['Back to members', true], false, ['agent-profile-close']], `one way out of a profile, first in the header: ${JSON.stringify(open)}`);
+    // The path and the id: cut after / - _ . only, whole width under the label, text unchanged.
+    const facts = await page.$$eval('[data-agent-id=a1] .profile-fact-mono', rows => rows.map(row => {
+      const label = row.querySelector('.profile-fact-label').getBoundingClientRect(), value = row.querySelector('.profile-fact-value');
+      const box = value.getBoundingClientRect(), panel = document.querySelector('#agents-panel').getBoundingClientRect();
+      return { label: row.querySelector('.profile-fact-label').textContent, text: value.textContent, breaks: value.querySelectorAll('wbr').length, below: box.top >= label.bottom - 1, left: Math.round(box.left - label.left), fits: box.right <= panel.right + 1,
+        after: [...value.querySelectorAll('wbr')].every(mark => /[/\-_.]$/.test(mark.previousSibling?.textContent || '')) };
+    }));
+    const by = name => facts.find(fact => fact.label === name);
+    assert.deepEqual([by('CWD').text, by('CWD').breaks, by('CWD').after], ['/Users/someone/work/some-project/tmp', 6, true], 'the path can break after each slash and hyphen, and the text is the same');
+    assert.deepEqual([by('Session').text, by('Session').after, by('Agent ID').text, by('Agent ID').after], ['2c081365-8e68-4ebb-9d7f-a083a581d530', true, 'a1', true]);
+    for (const fact of facts) assert.deepEqual([fact.below, fact.left, fact.fits], [true, 0, true], `${fact.label} has the width under its label`);
+    // No line of the path ends in the middle of a name: every line starts after a separator.
+    const lines = await page.evaluate(() => {
+      const value = [...document.querySelectorAll('[data-agent-id=a1] .profile-fact-mono')].find(row => row.querySelector('.profile-fact-label').textContent === 'CWD').querySelector('.profile-fact-value');
+      const range = document.createRange(), text = value.firstChild, rows = new Map();
+      for (let node of value.childNodes) { if (node.nodeType !== 3) continue; for (let i = 0; i < node.length; i++) { range.setStart(node, i); range.setEnd(node, i + 1); const rect = range.getBoundingClientRect(); const top = Math.round(rect.top); if (!rows.has(top)) rows.set(top, ''); rows.set(top, rows.get(top) + node.data[i]); } }
+      return [...rows.values()];
+    });
+    assert.ok(lines.slice(0, -1).every(line => /[/\-_.]$/.test(line)), `a line of the path ends inside a name: ${JSON.stringify(lines)}`);
+    // The back arrow closes it and the focus goes back to the card's open button.
+    await page.$eval('#agent-profile-close', node => node.click()); await settle(page);
+    assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')), true, 'the focus is back on the card');
+    // A phone: the Agents tab opens the members list even when a profile was left open.
+    await page.setViewport({ width: 390, height: 800 });
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click()); await settle(page);
+    assert.equal(await page.evaluate(() => document.querySelector('#agents-panel').classList.contains('profile-open')), true);
+    await page.$eval('#agents-toggle', node => node.click()); // opens the drawer
+    await settle(page);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#agents-panel').classList.contains('mobile-open'), document.querySelector('#agents-panel').classList.contains('profile-open'), document.querySelector('#agents-panel header h2').textContent]), [true, false, 'Members'], 'the Agents tab shows the members, not a profile left open');
+    // A tap on a member in the drawer opens its profile, which has the back arrow, and the drawer stays open.
+    await page.$eval('[data-agent-id=a2] .agent-expand', node => node.click()); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#agents-panel').classList.contains('mobile-open'), document.querySelector('#agents-panel').classList.contains('profile-open'), getComputedStyle(document.querySelector('#agent-profile-close')).display !== 'none']), [true, true, true]);
+    await page.close();
+  }
+
   // Answers for a room the panel has left draw nothing: the agents, the people of the room, and everything after reset().
   {
     const page = await mount();
@@ -355,7 +412,7 @@ async function main() {
     const page = await mount();
     await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn', role_emoji: '🔧' }), agent('a2', 'bert')]);
     const state = () => page.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, closeHidden: document.querySelector('#agent-profile-close').hidden, open: document.querySelector('#agents-panel').classList.contains('profile-open'),
-      expanded: [...document.querySelectorAll('[data-agent-id]')].map(card => [card.dataset.agentId, card.classList.contains('expanded'), card.querySelector('.agent-expand').getAttribute('aria-expanded'), card.querySelector('.agent-expand').getAttribute('aria-label')]),
+      expanded: [...document.querySelectorAll('[data-agent-id]')].map(card => [card.dataset.agentId, card.classList.contains('expanded'), card.querySelector('.agent-expand')?.getAttribute('aria-expanded') ?? null, card.querySelector('.agent-expand')?.getAttribute('aria-label') ?? null]),
       facts: [...document.querySelectorAll('[data-agent-id=a1] .profile-fact')].map(row => [row.querySelector('.profile-fact-label').textContent, row.querySelector('.profile-fact-value').textContent]) }));
     const closed = await state();
     assert.deepEqual([closed.title, closed.closeHidden, closed.open], ['Members', true, false]);
@@ -364,23 +421,23 @@ async function main() {
     const profile = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
     const opened = await state();
     assert.deepEqual([opened.title, opened.closeHidden, opened.open], ['Agent profile', false, true]);
-    assert.deepEqual(opened.expanded, [['a1', true, 'true', 'Close agent profile'], ['a2', false, 'false', 'Open agent profile']]);
+    assert.deepEqual(opened.expanded, [['a1', true, null, null], ['a2', false, 'false', 'Open agent profile']], 'an open card has no button of its own: the panel\'s back arrow is the one way out');
     const labels = opened.facts.map(fact => fact[0]);
-    assert.deepEqual(labels, ['Status', 'Presence', 'Last seen', 'Runtime', 'Role', 'Agent ID'], 'the card alone gives these until the profile is read');
-    assert.deepEqual(opened.facts.find(fact => fact[0] === 'Status'), ['Status', 'Working']); assert.deepEqual(opened.facts.find(fact => fact[0] === 'Role'), ['Role', '🔧 worker']);
+    assert.deepEqual(labels, ['Runtime', 'Role', 'Agent ID'], 'the card alone gives these until the profile is read');
+    assert.deepEqual(opened.facts.find(fact => fact[0] === 'Role'), ['Role', '🔧 worker']);
     await answer(page, profile, 200, { native_session_id: 'sess-1', resume_command: 'codex resume sess-1', cwd: '/work', branch: 'main', machine_name: 'Host', project_name: 'Alpha', spawned_by: 'owner', turns_today: 3, cost_today: 0.42 });
     await settle(page);
     const full = await state();
-    assert.deepEqual(full.facts.map(fact => fact[0]), ['Status', 'Presence', 'Last seen', 'Runtime', 'Role', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Project', 'Spawned', 'Last 24 h', 'Agent ID']);
+    assert.deepEqual(full.facts.map(fact => fact[0]), ['Runtime', 'Role', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Project', 'Spawned', 'Last 24 h', 'Agent ID']);
     assert.deepEqual(full.facts.find(fact => fact[0] === 'Last 24 h'), ['Last 24 h', '3 turns · $0.42']);
     assert.equal(await page.$eval('[data-agent-id=a1] .profile-copy', node => node.getAttribute('aria-label')), 'Copy resume');
     await page.$eval('#agent-profile-close', node => node.click());
     assert.deepEqual((await state()).title, 'Members');
     assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')), true, 'closing returns the focus to the card');
-    // The same button closes it again; a click on the card outside its buttons opens it.
+    // The back arrow closes it again; a click on the card outside its buttons opens it.
     await page.$eval('[data-agent-id=a2]', node => node.click());
     assert.equal((await state()).open, true);
-    await page.$eval('[data-agent-id=a2] .agent-expand', node => node.click());
+    await page.$eval('#agent-profile-close', node => node.click());
     assert.equal((await state()).open, false);
     // Escape closes it, unless a dialog is open.
     await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());

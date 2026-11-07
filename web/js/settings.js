@@ -61,7 +61,9 @@ export class SettingsPanel {
   // edit their harnesses (pairing, approving and revoking machines stay the owner's). For anyone else those tabs are gone instead of opening onto a 403.
   setRights({ owner, admin }) {
     this.general.setRights({ owner, admin });
+    const before = this.shell.store.section.value;
     this.shell.store.setRights({ owner, admin });
+    if (this.shell.store.section.value !== before) this.selectSection(this.shell.store.section.value); // the section's tab went: General opens in its place
     // Provider usages and the account switcher are the owner's alone.
     document.querySelector('#usages-toggle').hidden = !owner;
   }
@@ -72,10 +74,13 @@ export class SettingsPanel {
     this.general.setUser(userID);
   }
   // Settings opens on General; the usages column's own Settings button asks for the Usages section.
-  async open(section = 'general', options = {}) {
+  async open(section = '', options = {}) {
+    const wanted = section; // a phone shows the list of sections unless a section was asked for
+    section = section || 'general';
     if (!this.dialog.open) this.dialog.showModal();
     if (options.machineID) this.harnessSettings.wanted = options.machineID; // Harnesses opens on this machine
     this.selectSection(section); // the dialog shows at once; what the account may do is read again right after
+    if (!wanted) this.shell.store.showList();
     this.usages.setError(''); // before the wait: whatever the person does in the meantime may write here, and must not be wiped
     try { await refreshRights(); this.setRights(rights); this.onRights?.(rights); } catch { /* keep what sign-in said */ }
     this.usersSettings.prepare().catch(() => this.usersSettings.settle(true));
@@ -109,6 +114,7 @@ export class SettingsPanel {
   }
   selectSection(section) {
     this.shell.store.select(section);
+    section = this.shell.store.section.value; // a section the account has no tab for is General
     this.pages[section]?.show();
     if (section === 'general') this.general.open();
     if (section === 'users') this.usersSettings.open();

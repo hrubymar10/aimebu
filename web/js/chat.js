@@ -61,6 +61,11 @@ export class Chat {
     this.chip = document.querySelector('#reply-chip'); this.chipText = this.chip.querySelector('#reply-chip-jump'); this.chipText.onclick = () => { if (this.reply) this.jumpToMessage(this.reply.id); }; this.error = document.querySelector('#chat-error'); this.nodes = new Map();
     this.pendingNode = document.querySelector('#pending-attachments'); this.pendingNode.replaceChildren(); this.pendingView = mountPreactPage(this.pendingNode, props => html`<${PendingAttachments} ...${props} />`, { onError: error => console.error('pending attachments failed', error) }); this.attachmentInput = document.querySelector('#attachment-input');
     this.attachmentInput.onchange = () => { this.addFiles([...this.attachmentInput.files]); this.attachmentInput.value = ''; };
+    // The thread's composer offers the same attach and emoji controls, over its own list of waiting files.
+    this.threadPendingNode = document.querySelector('#thread-pending-attachments'); this.threadPendingNode.replaceChildren();
+    this.threadPendingView = mountPreactPage(this.threadPendingNode, props => html`<${PendingAttachments} ...${props} />`, { onError: error => console.error('thread pending attachments failed', error) });
+    this.threadAttachmentInput = document.querySelector('#thread-attachment-input');
+    this.threadAttachmentInput.onchange = () => { this.store.addThreadFiles([...this.threadAttachmentInput.files]); this.threadAttachmentInput.value = ''; };
     this.draft.addEventListener('input', () => this.resizeDraft());
     document.addEventListener('click', event => { const ref = event.target.closest?.('a.msg-ref'); if (!ref || event.defaultPrevented || event.button) return; event.preventDefault(); this.jumpToMessage(Number(ref.dataset.no)); });
     this.draft.addEventListener('paste', event => { const files = [...event.clipboardData?.files || []]; if (files.length) { event.preventDefault(); this.addFiles(files); } });
@@ -105,6 +110,7 @@ export class Chat {
     this.notice = new Notice(this.form, 'composer-notice'); this.threadNotice = new Notice(this.threadForm, 'thread-notice'); this.mentionAutocomplete = new MentionAutocomplete(this.formatting.input); this.threadMentionAutocomplete = new MentionAutocomplete(this.threadFormatting.input); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
     this.emojiAutocomplete = new EmojiAutocomplete(this.formatting.input); this.threadEmojiAutocomplete = new EmojiAutocomplete(this.threadFormatting.input);
     this.emojiButton = document.querySelector('#emoji-button'); this.emojiButton.onclick = () => openEmojiPicker({ anchor: this.emojiButton, onPick: glyph => this.insertEmoji(glyph) });
+    this.threadEmojiButton = document.querySelector('#thread-emoji-button'); this.threadEmojiButton.onclick = () => openEmojiPicker({ anchor: this.threadEmojiButton, onPick: glyph => this.insertEmoji(glyph, this.threadDraft) });
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
     retention.onChange(() => this.store.scheduleExpiry());
     setInterval(() => this.store.syncExpiry(), 30000);
@@ -298,8 +304,8 @@ export class Chat {
   }
   updateAnswerControls(items) { return this.store.updateAnswerControls(items); }
   // Inserts at the caret through execCommand so the edit stays undoable; the range assignment is the fallback.
-  insertEmoji(glyph) {
-    const draft = this.draft; if (draft.disabled) return;
+  insertEmoji(glyph, draft = this.draft) {
+    if (draft.disabled) return;
     draft.focus();
     if (!document.execCommand?.('insertText', false, glyph)) { draft.setRangeText(glyph, draft.selectionStart, draft.selectionEnd, 'end'); draft.dispatchEvent(new Event('input', { bubbles: true })); }
   }
@@ -325,7 +331,7 @@ export class Chat {
     this.draft.disabled = !writable; this.emojiButton.disabled = !writable;
     this.form.querySelector('button[type=submit]').disabled = !writable || this.pendingUploads > 0;
     this.attachmentInput.disabled = !writable;
-    this.threadDraft.disabled = !writable;
+    this.threadDraft.disabled = !writable; this.threadEmojiButton.disabled = !writable; this.threadAttachmentInput.disabled = !writable;
     this.threadForm.querySelector('button[type=submit], button:not([type])').disabled = !writable;
     const spawn = document.querySelector('#spawn-open');
     spawn.disabled = !open || room.kind === 'dm' || viewer;
@@ -422,6 +428,10 @@ export class Chat {
     element.append(strip);
   }
   addFiles(files) { return this.store.addFiles(files); }
+  renderThreadPending() {
+    this.threadPendingView.update({ attachments: this.store.threadPending, uploads: this.store.threadUploads, onRemove: attachment => this.store.removeThreadAttachment(attachment) });
+    this.threadForm.querySelector('button[type=submit], button:not([type])').disabled = this.store.threadUploads > 0 || this.room?.lifecycle !== 'open';
+  }
   renderPending() {
     this.pendingView.update({ attachments: this.pendingAttachments, uploads: this.pendingUploads, onRemove: attachment => this.store.removeAttachment(attachment) });
     this.form.querySelector('button[type=submit]').disabled = this.pendingUploads > 0 || this.room?.lifecycle !== 'open';
@@ -495,7 +505,7 @@ export class Chat {
   }
   authorName(message) {
     if (message.author_kind === 'system') return 'System';
-    if (message.author_kind === 'user') return message.author_id === currentUser ? 'You' : message.author_name || (String(message.author_id).startsWith('usr_') ? 'Someone' : message.author_id); // never the raw account id
+    if (message.author_kind === 'user') return message.author_name || (message.author_id === currentUser && currentLogin) || (String(message.author_id).startsWith('usr_') ? 'Someone' : message.author_id); // your own messages carry your name like anyone's, not "You" // never the raw account id
     const agent = this.agents.get(message.author_id);
     if (agent?.name || agent?.slug) return agentLabel(agent);
     // An agent that was removed: the server sends the name it had (and its project), and the row says so.
@@ -634,7 +644,7 @@ export class Chat {
   restoreThreadDraft(draft) { this.threadDraft.value = draft; this.draft.focus(); }
   // Whether the person has typed or attached something that is not sent: the message and the thread reply, whichever way the composer is
   // showing them (the formatted editor keeps the textarea in step), and files waiting to go with the message.
-  hasDraft() { return !!(this.draft.value.trim() || this.threadDraft.value.trim() || this.pendingAttachments?.length || this.pendingUploads); }
+  hasDraft() { return !!(this.draft.value.trim() || this.threadDraft.value.trim() || this.pendingAttachments?.length || this.pendingUploads || this.store.threadPending?.length || this.store.threadUploads); }
   sendInput() {
     if (this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return null;
     return { body: this.draft.value, reply: this.reply, attachments: this.pendingAttachments.map(a => a.id) };

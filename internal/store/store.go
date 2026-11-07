@@ -282,6 +282,9 @@ type Event struct {
 	TurnID      string `json:"turn_id,omitempty"`
 	PayloadJSON string `json:"payload_json"`
 	CreatedAt   string `json:"created_at"`
+	// Names says who the ids of the event are (its agent, and the users its payload names: user_id, by), for the feed that shows the event to a person;
+	// only NameEvents fills it, and an event that is stored or compared has none. Agents are slug@project (a removed agent keeps the name it had), users their login.
+	Names map[string]string `json:"names,omitempty"`
 }
 
 func (tx *Tx) AppendEvent(event Event) (Event, error) {

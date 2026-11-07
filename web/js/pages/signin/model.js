@@ -4,6 +4,10 @@ export const THROTTLED_LEAD = 'Too many tries. Wait a moment and reload this lin
 
 export function inviteToken(hash) { return new URLSearchParams(String(hash).replace(/^#/, '')).get('invite') || ''; }
 
+// Whether the signed-in "Use invitation" dialog asks for a new password: only a reset link needs one. When the link was never inspected (or could not be)
+// the dialog cannot tell a reset from an invite, so it asks rather than leave a reset link unusable.
+export const dialogAsksPassword = info => !info || !!info.error || info.kind === 'reset';
+
 // What the invitation card shows: for a link that cannot be used, only a way back to the sign-in; for a reset, the account it belongs to;
 // once redeemed, only the sign-in with the account that was made.
 export function cardView(info, redeemedLogin) {

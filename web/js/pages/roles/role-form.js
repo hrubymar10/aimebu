@@ -47,12 +47,12 @@ export function RoleForm({ hidden, roles, role, form, options, busy, resolved, o
       </div>
       <${SettingsRow} label="Cardinality" desc="Whether several agents can hold this role at once, or only one. Cannot change while live agents use the role." id="role-cardinality">
         <select class="settings-select" name="cardinality" value=${form.cardinality} onChange=${event => set('cardinality', event.currentTarget.value)}>
-          <option value="multi">Multiple</option><option value="singleton">Singleton</option>
+          <option value="multi">Many holders</option><option value="singleton">One holder</option>
         </select>
       <//>
       <${Toggle} label="Lead" desc="Holders are the target of handoffs and of scheduled tasks that name no agent." id="role-lead" name=${CAPS[0]} form=${form} set=${set} />
       <${Toggle} label="Can spawn" desc="Holders may start more agents, within the project's spawn limits." id="role-spawn" name=${CAPS[1]} form=${form} set=${set} />
-      <${Toggle} label="Singleton writer" desc="Only one agent with this capability can hold write access to a checkout at a time; others wait or cannot write." id="role-writer" name=${CAPS[2]} form=${form} set=${set} />
+      <${Toggle} label="Single writer" desc="Only one agent with this capability can hold write access to a checkout at a time; others wait or cannot write." id="role-writer" name=${CAPS[2]} form=${form} set=${set} />
     <//>
     <${SpawnDefaults} items=${form.default_agents} mode=${form.pick_mode} options=${options} onChange=${onDefaults} />
     <div class="dialog-actions">

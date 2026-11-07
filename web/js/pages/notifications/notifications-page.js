@@ -58,9 +58,8 @@ export function NotificationsPage({ openToken, notifications }) {
   };
 
   const volume = notifications.volume;
-  const permission = permissionView(notifications.available, notifications.available ? Notification.permission : 'denied');
+  const permission = permissionView(notifications.available, notifications.available ? Notification.permission : 'default');
   return html`
-    <h3>Notifications</h3>
     <p class="settings-intro">New items in your inbox</p>
     <${SettingsGroup} label="Inbox alerts">
       <${SettingsRow} label="Mute inbox sound" desc="A short chime plays for new inbox items, and for chat messages that address you, after you interact with this tab. Turn this on to keep it silent everywhere; each room can also be quieter on its own (Room settings → Notifications)." id="notification-muted" className="settings-row-toggle">

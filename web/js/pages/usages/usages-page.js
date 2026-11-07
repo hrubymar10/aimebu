@@ -19,7 +19,6 @@ export function UsagesPage({ page, onDirty = () => {} }) {
   useLayoutEffect(() => { setTyped(false); }, [revision, defaults]);
   useDirty(onDirty, 'usages-typed', typed);
   return html`<div class="usages-page" style="display: contents" onInput=${event => { if (isTyping(event)) setTyped(true); }}>
-    <h3>Usages</h3>
     <p class="settings-intro">Provider limits and account profiles</p>
     <p id="usages-error" class="error" role="alert">${page.store.error.value}</p>
     <div class="usage-switcher-controls" id="usages-switcher"><${SwitcherControls} store=${page.store} /></div>

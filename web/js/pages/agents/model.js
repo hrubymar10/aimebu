@@ -54,7 +54,9 @@ export const stateDot = kind => ({ idle: 'active', working: 'active', paused: 's
 
 export function activityOf(agent, state) {
   const woken = agent.woken_by === 'reply' ? 'Woken by reply · ' : '';
-  const text = state.why || woken + (agent.activity || (state.observed === 'Working' ? 'Working…' : 'No recent activity'));
+  // An idle agent that has done nothing has nothing to say here: the pill already says idle and for how long.
+  const said = agent.activity || (state.observed === 'Working' ? 'Working…' : '');
+  const text = state.why || (said ? woken + said : woken ? 'Woken by reply' : '');
   const last = agent.last_activity_at || agent.activity_at, seen = agent.machine_last_seen;
   return { text, last, seen };
 }
@@ -111,13 +113,12 @@ export function actionsOf(agent, { down = '', lifecycle = 'open' } = {}) {
 // The rows of an open profile: what the card knows, then what the profile read added. Each is [label, value, { mono, copy }].
 export function profileRows(agent, profile, { harness, relative }) {
   const data = profile || {};
-  const status = agent.desired === 'stopped' ? 'Stopped' : agent.desired === 'not_accepting' ? 'Paused' : agent.observed === 'in_turn' ? 'Working' : agent.observed === 'lost' ? 'Lost' : agent.observed === 'stopped' ? 'Stopped' : 'Online';
-  const seen = agent.last_activity_at || agent.machine_last_seen;
   const variant = agent.variant && agent.variant !== agent.tool ? `${harness(agent.tool)}/${agent.variant}` : harness(agent.tool);
   const today = data.turns_today || data.cost_today ? `${data.turns_today || 0} turn${data.turns_today === 1 ? '' : 's'}${data.cost_today ? ` · $${data.cost_today.toFixed(data.cost_today < 0.01 ? 4 : 2)}${data.cost_today_estimated ? ' estimated' : ''}` : ''}` : '';
+  // No Status, Presence or Last seen rows: the card's pill is the one status line (its state and how long it has been in it), and the line under it says what
+  // the agent is doing when it is doing something.
   const rows = [
-    ['Status', status], ['Presence', agent.activity || (agent.observed === 'in_turn' ? 'Working on a turn' : agent.observed === 'lost' ? 'Unconfirmed; recovery needed' : 'Idle')],
-    ['Last seen', seen ? relative(seen) : ''], ['Runtime', `${agent.model || 'unknown'} · ${variant || 'unknown'}`],
+    ['Runtime', `${agent.model || 'unknown'} · ${variant || 'unknown'}`],
     ['Role', `${agent.role_emoji ? agent.role_emoji + ' ' : ''}${agent.role_key || agent.role || ''}`.trim()],
     ['Session', data.native_session_id, { mono: true }], ['Resume', data.resume_command, { mono: true, copy: true }],
     ['CWD', data.cwd, { mono: true }], ['Branch', data.branch, { mono: true }],

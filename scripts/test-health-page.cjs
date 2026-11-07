@@ -179,8 +179,10 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => ({ head: document.querySelector('.health-disk-head').textContent, projects: [...document.querySelectorAll('.health-disk-projects li')].map(li => [li.dataset.project, li.querySelector('.health-disk-name').textContent, li.querySelector('.health-disk-size').textContent, li.title]),
         kinds: [...document.querySelectorAll('.health-disk-kinds li')].map(li => li.textContent), trees: [...document.querySelectorAll('.health-disk-worktrees li')].map(li => [li.dataset.state, li.textContent, li.title]), foot: document.querySelector('.health-disk-foot').textContent, label: document.querySelector('#health-disk').getAttribute('aria-label'),
         settings: [document.querySelector('#cleanup-enabled').checked, document.querySelector('#cleanup-hour').value, document.querySelector('#cleanup-attachment-days').value] })),
-        { head: 'Disk4.00 KBClean now', projects: [['p1', 'Alpha', '2.93 KB', 'Attachments 1000 B · Worktrees 1.95 KB']], kinds: ['Attachments1000 B'], trees: [['dirty', 'taskUncommitted work (3 files)1.95 KB', '/tmp/w/task']],
+        { head: 'Disk4.00 KBClean now', projects: [['p1', 'Alpha', '2.93 KB', 'Attachments 1000 B · Worktrees 1.95 KB'], ['', 'Other', '1.07 KB', 'Database, sounds, logs and anything that belongs to no project']], kinds: ['Attachments1000 B'], trees: [['dirty', 'taskUncommitted work (3 files)1.95 KB', '/tmp/w/task']],
           foot: '5.00 GB free of 100 GB. No cleanup has removed anything yet.', label: 'Disk usage', settings: [true, '4', '90'] });
+      const cols = await page.$$eval('.health-disk-projects li', rows => rows.map(li => ['.health-disk-bar', '.health-disk-size'].map(sel => Math.round(li.querySelector(sel).getBoundingClientRect().left))));
+      assert.ok(cols.length === 2 && cols.every(c => c[0] === cols[0][0] && c[1] === cols[0][1]), `bar and value columns line up: ${JSON.stringify(cols)}`);
       await page.close();
     }
     // A second writer's worktree is listed under its agent and has a Remove button (off while an agent still works in it); a room's own has none.

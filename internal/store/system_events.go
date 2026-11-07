@@ -39,6 +39,16 @@ var systemEventKinds = []string{
 	"limit_guard_soft", "limit_guard_hard", "limit_guard_clear",
 }
 
+// IsSystemEventKind says whether an event of this kind is in the system-events feed.
+func IsSystemEventKind(kind string) bool {
+	for _, known := range systemEventKinds {
+		if known == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // SystemEventKinds lists the event kinds the system-events feed shows, so the
 // web client can filter the live stream with the same set.
 func SystemEventKinds() []string { return append([]string(nil), systemEventKinds...) }
@@ -255,4 +265,96 @@ func truncateRunes(text string) string {
 func rawOrStringJSON(text string) json.RawMessage {
 	encoded, _ := json.Marshal(rawOrString(text))
 	return encoded
+}
+
+// eventNameKeys are the payload fields that hold a user's id, in the events that have one (an invite redeemed, an admin changed, a user deactivated).
+var eventNameKeys = []string{"user_id", "by"}
+
+// NameEvents fills Names of the events with who their ids are (see Event.Names), with one query for the agents and one for the users of the whole batch, so
+// a feed shows "hana@tmp" and "wren" and not agt_01M6MDS… and usr_… . An id nobody can be found for is left out, and the client falls back to what it knew.
+// The people who may see an event already see the ids in it, and a name is no more than that.
+func (s *Store) NameEvents(ctx context.Context, events []Event) error {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return err
+	}
+	agents, users := map[string]bool{}, map[string]bool{}
+	for _, event := range events {
+		if event.AgentID != "" {
+			agents[event.AgentID] = true
+		}
+		if !strings.Contains(event.PayloadJSON, "_id\"") && !strings.Contains(event.PayloadJSON, "\"by\"") {
+			continue
+		}
+		var payload map[string]any
+		if json.Unmarshal([]byte(event.PayloadJSON), &payload) != nil {
+			continue
+		}
+		for _, key := range eventNameKeys {
+			if id, ok := payload[key].(string); ok && id != "" {
+				users[id] = true
+			}
+		}
+	}
+	names := map[string]string{}
+	lookup := func(ids map[string]bool, query string, scan func(*sql.Rows) (string, string, error)) error {
+		if len(ids) == 0 {
+			return nil
+		}
+		args := make([]any, 0, len(ids))
+		for id := range ids {
+			args = append(args, id)
+		}
+		rows, err := s.readDB.QueryContext(ctx, strings.Replace(query, "(?)", "("+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+")", 1), args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			id, name, err := scan(rows)
+			if err != nil {
+				return err
+			}
+			names[id] = name
+		}
+		return rows.Err()
+	}
+	if err := lookup(agents, `SELECT a.id, COALESCE(NULLIF(a.removed_slug,''),a.slug), COALESCE(p.name,''), a.removed_slug IS NOT NULL AND a.removed_slug<>'' FROM agent a LEFT JOIN project p ON p.id=a.project_id WHERE a.id IN (?)`,
+		func(rows *sql.Rows) (string, string, error) {
+			var id, slug, project string
+			var removed bool
+			if err := rows.Scan(&id, &slug, &project, &removed); err != nil {
+				return "", "", err
+			}
+			name := slug
+			if project != "" {
+				name += "@" + project
+			}
+			if removed {
+				name += " (removed)"
+			}
+			return id, name, nil
+		}); err != nil {
+		return err
+	}
+	if err := lookup(users, `SELECT id, login FROM user WHERE id IN (?)`, func(rows *sql.Rows) (string, string, error) {
+		var id, login string
+		err := rows.Scan(&id, &login)
+		return id, login, err
+	}); err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	for i := range events {
+		for id, name := range names {
+			if events[i].AgentID == id || strings.Contains(events[i].PayloadJSON, id) {
+				if events[i].Names == nil {
+					events[i].Names = map[string]string{}
+				}
+				events[i].Names[id] = name
+			}
+		}
+	}
+	return nil
 }

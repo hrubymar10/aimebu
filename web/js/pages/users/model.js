@@ -17,6 +17,14 @@ export function accountActions(user, { globalOwner, currentUser }) {
   };
 }
 
+// Whether a member can be taken off the project from this row, and if not, why: nobody removes themselves (they would lock themselves out),
+// and a project keeps at least one owner. The server still has the last word.
+export function memberRemoval(user, members, currentUser) {
+  if (user.id === currentUser) return { disabled: true, reason: 'You cannot remove yourself from the project' };
+  if (user.role === 'owner' && members.filter(member => member.role === 'owner').length < 2) return { disabled: true, reason: 'A project needs at least one owner' };
+  return { disabled: false, reason: '' };
+}
+
 // A link made on this computer only works here, and the person it is for is usually elsewhere.
 export function inviteHint(url) {
   let host = '';

@@ -165,7 +165,10 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* Rooms sidebar. v1's .room-item (icon column, name, count, unread, preview) draws the row; this is what v2 adds around it: the project tree
    (chevron, nested children), the project chip and health flag on a row, the project menu, drag marks and the hover buttons. */
 .room-item > :is(.branch, .branch-spacer, .reopen-room, .agent-chat-join) { align-self: center; }
-.room-item .branch, .room-item .branch-spacer { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 25px; width: 25px; min-height: 30px; margin-right: 4px; }
+/* The row is as tall as its text: the chevron is 18px tall like a line of the name (a touch screen gets a larger target from the ::after below, which takes no room), and the
+   gaps between chevron, icon and name are small and even instead of v1's 10px twice plus a margin. */
+.room-item { gap: 6px; }
+.room-item .branch, .room-item .branch-spacer { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; min-height: 18px; padding: 0; margin-right: 0; }
 .room-item .branch { border: 0; background: transparent; }
 .room-item .room-collapse svg { display: block; }
 /* The name is a button (it opens the room): v1's name look (size, weight, colour, the active and unread states) applies; what is stated here is that it is
@@ -195,15 +198,17 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .room-item.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .room-item.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 [data-theme="high-contrast-dark"] .room-item :is(.branch, .add-room) { border: 0; background: transparent; }
-/* The row's hover controls (the project menu and the + for a new room) are an overlay at the row's end, centred on it, fading in on hover or focus like v1's agent
-   card actions. They take no room, so showing them never makes the row taller or moves its badges; they cover the end of the badges instead. */
+/* The row's hover controls (the project menu and the + for a new room) have a slot of their own: a zero-width anchor at the end of the name, from which they
+   open leftwards over the name's tail, fading in on hover or focus like v1's agent card actions. The slot takes no room, so showing them never makes the row taller
+   or moves anything, and they cover only the name (which is cut with an ellipsis anyway): never a badge, never the preview line. */
 .room-item { position: relative; }
+.room-item .room-item-actions-slot { position: relative; flex: none; width: 0; margin-right: -6px; /* the top line's gap before the next badge */ }
+.room-item .room-item-actions-slot:not(:has(button:not([hidden]))) { display: none; } /* a row with no controls has no slot */
 .room-item .room-item-actions { position: absolute; top: 50%; right: 6px; z-index: 1; display: flex; align-items: center; gap: 2px; padding-left: 8px; transform: translateY(-50%); background: var(--bg-tertiary); border-radius: var(--radius); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
 .room-item .room-item-actions::before { content: ""; position: absolute; top: 0; bottom: 0; left: -14px; width: 14px; background: linear-gradient(to right, transparent, var(--bg-tertiary)); pointer-events: none; }
-.room-item .room-item-actions:not(:has(button:not([hidden]))) { display: none; } /* a row with no controls has no overlay patch */
 .room-item:hover .room-item-actions, .room-item:focus-within .room-item-actions, .room-item .room-item-actions:has(.project-menu.is-open) { opacity: 1; pointer-events: auto; }
-/* No hover on a touch screen: the controls are part of the row. */
-@media (hover: none) and (pointer: coarse) { .room-item .room-item-actions { position: static; transform: none; padding-left: 0; background: none; opacity: 1; pointer-events: auto; transition: none; } .room-item .room-item-actions::before { display: none; } }
+/* No hover on a touch screen: the slot is part of the row's top line, a place of its own after the name. */
+@media (hover: none) and (pointer: coarse) { .room-item .room-item-actions-slot { width: auto; margin-right: 0; } .room-item .room-item-actions { position: static; transform: none; padding-left: 0; background: none; opacity: 1; pointer-events: auto; transition: none; } .room-item .room-item-actions::before { display: none; } }
 
 
 /* Markdown in a message. v1 styles a body that carries .md-rendered (headings 1-3, inline code, <pre>, lists, quotes, links, tables, the copy button and
@@ -310,6 +315,11 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* A harness's fields and panels turn off as one for someone who may look but not change (fieldset disabled); the fieldset adds no box of its own. */
 .machine-harness-readonly { border: 0; margin: 0; padding: 0; min-width: 0; }
 .machine-harness-fields { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 9px; }
+/* Read-only mode: every control of a harness looks switched off the same way. Buttons were dimmed and inputs, checkboxes and radios were not, so the
+   fieldsets dim as a whole (their buttons keep full opacity inside, or they would be dimmed twice), and so do the controls beside the title. */
+:is(.machine-harness-fields, .machine-harness-readonly):disabled { opacity: .5; }
+:is(.machine-harness-fields, .machine-harness-readonly):disabled :is(button, input, select, textarea) { opacity: 1; cursor: default; }
+.machine-harness-controls :is(input, select):disabled { opacity: .5; cursor: default; }
 
 /* Settings -> Telemetry's read-only facts: a name and its value, side by side while there is room. */
 .settings-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 12px; font-size: .75rem; }
@@ -326,5 +336,143 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .telemetry-muted { opacity: .5; }
 .telemetry-muted :is(.settings-label, .settings-desc, dt, dd) { color: var(--text-muted); }
 .telemetry-muted :is(input, button):disabled { border-style: dashed; color: var(--text-muted); cursor: default; }
-:root[data-theme="high-contrast-dark"] .telemetry-muted { opacity: 1; border-left: 3px dashed var(--border); }
-:root[data-theme="high-contrast-dark"] .telemetry-muted :is(input, button):disabled { background: var(--bg-primary); border-color: var(--border); }
+
+/* A system line ("hana joined as worker; spawned…") keeps its time on the line it ends on: the text wraps inside its own box and the time stays beside it,
+   instead of the whole row wrapping and leaving the time alone on a centred line of its own. */
+.chat-msg-system-row { flex-wrap: nowrap; align-items: center; align-items: last baseline; max-width: 100%; }
+.chat-msg-system-row > :first-child { flex: 0 1 auto; min-width: 0; }
+.chat-msg-system-row > :not(:first-child) { flex: none; white-space: nowrap; }
+
+/* A menu item shows the focus ring only for the keyboard: a menu opened by a click puts focus on its first item (so the arrow keys work), which must not
+   draw the ring (js/input-modality.js sets data-input on <html>; high contrast keeps its own ring either way). */
+:root[data-input="pointer"]:not([data-theme="high-contrast-dark"]) :is(.room-menu-item, .project-menu-item, .spawn-continue-list [role="menuitem"], .sort-item):focus { outline: none; }
+
+/* An Inbox recovery card: the summary line and the decision first, what the harness left behind folded under Details. */
+.inbox-card .inbox-summary { margin: 6px 0 10px; color: var(--text-primary); font-size: 14px; }
+.inbox-card .inbox-details { margin-top: 10px; color: var(--text-secondary); font-size: 12px; }
+.inbox-card .inbox-details > summary { cursor: pointer; }
+.inbox-card .inbox-detail small { display: block; margin: 8px 0 3px; color: var(--text-muted); }
+.inbox-card .inbox-detail pre { margin: 0; }
+
+/* An agent profile: a path or an id (session, cwd, repo, resume command, agent id) gets the whole width under its label, so it breaks at its / - _ . and
+   mostly fits on a line, instead of sharing a narrow column with the label and breaking in the middle of a name. */
+.profile-fact-mono .profile-fact-label { grid-column: 1 / -1; margin-top: 4px; }
+.profile-fact-mono .profile-fact-value { grid-column: 1 / -1; }
+.profile-fact-mono .profile-copy { grid-column: 1 / -1; }
+/* An agent with nothing to say about what it is doing has no line for it (the state pill says idle, and for how long). */
+.agent-card .agent-activity:empty { display: none !important; }
+
+/* Notifications: the inbox sound's select and Preview sit apart, and the upload's native file input looks like the other buttons. */
+.notification-sound-choice { display: flex; align-items: center; gap: 8px; }
+#notification-sound-upload { max-width: 100%; color: var(--text-secondary); font-size: 12px; }
+#notification-sound-upload::file-selector-button { margin-right: 10px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font: inherit; cursor: pointer; }
+#notification-sound-upload::file-selector-button:hover { background: var(--bg-tertiary); border-color: var(--text-primary); }
+#notification-sound-upload:disabled::file-selector-button { opacity: .5; cursor: default; }
+
+/* Macros: the example in an empty field is dimmer than a value, so it cannot be mistaken for one. */
+:is(#macro-editor, #macros-import-text)::placeholder, #macro-editor ::placeholder { color: var(--text-muted); opacity: .55; }
+
+/* The settings and onboarding rule that gives a harness card 10px of margin (one id selector) beat the split's own "margin: 0", so the card started lower than the list beside it. */
+:is(#settings-dialog, #onboarding-harnesses) .harness-split .machine-harness { margin: 0; }
+
+/* High contrast keeps full opacity, so the off state is the theme's own muted text colour (v1's --text-muted) instead of the theme's colours: text, icons and borders alike (no accent, no cyan
+   outline, no stripe at the edge); the dashed edge and the disabled controls carry the rest. */
+:root[data-theme^="high-contrast"] { --telemetry-off: var(--text-muted); --telemetry-off-line: var(--text-muted); }
+:root[data-theme^="high-contrast"] .telemetry-muted { opacity: 1; }
+:root[data-theme^="high-contrast"] #settings-telemetry .telemetry-muted :is(.settings-label, .settings-desc, dt, dd, input, button, button.btn-primary):disabled, :root[data-theme^="high-contrast"] #settings-telemetry .telemetry-muted :is(.settings-label, .settings-desc, dt, dd) { color: var(--telemetry-off); }
+:root[data-theme^="high-contrast"] #settings-telemetry .telemetry-muted :is(input, button):disabled { background: var(--bg-primary); border-color: var(--telemetry-off-line); }
+:root[data-theme^="high-contrast"] #settings-telemetry .telemetry-muted button:disabled .icon-mask { background-color: var(--telemetry-off); }
+
+/* Settings -> Telemetry never moves when the switch is pressed: the status line has its room whether or not it says anything, and its text stays on
+   one line of that room. A DSN or fingerprint that does not fit its field ends in an ellipsis (the whole value is still copied). */
+#settings-telemetry #telemetry-status { min-height: 1.5em; margin: 6px 0 10px; }
+#settings-telemetry #telemetry-status:empty { display: block; }
+#settings-telemetry .settings-text-input { text-overflow: ellipsis; }
+/* On a phone the DSN and the fingerprint get a full-width line of their own, with their buttons grouped after them. */
+@media (max-width: 700px) {
+  #settings-telemetry .settings-inline-control { flex-wrap: wrap; }
+  #settings-telemetry .settings-inline-control > input { order: -1; flex: 1 1 100%; }
+}
+
+/* High contrast looks as v1's does wherever v1 has the element (its palette, its buttons, its orange links and names, its cyan outlines); what v2 added is
+   set in that palette. The buttons below are v1's, state by state (rest, hover, disabled), checked against a v1 instance. The one deliberate addition is
+   the focus ring: v1 has none and v2 must (the audits check it), so the ring of the base rules stays.
+   - Primary: --green fill and edge, white text (black on the brighter green in the dark theme, white in the light one); disabled is the same at half
+     opacity. The blanket "every button is black with a light outline" rule above took the fill away, so Spawn looked like Cancel.
+   - A plain .btn is the browser's own button (light fill, black text) with the theme's outline, and does not change on hover; disabled it is the same
+     at 30%. .btn-icon is see-through, takes the tertiary fill and the strong edge on hover, and does not change when disabled. .btn-danger is v1's
+     translucent red, and its text turns to the theme's --red on hover.
+   - Badges (v2 only): black on the amber, which is well over 4.5:1 (the text colour is set here so a button's own colour can never reach it).
+   - Composer: attach, emoji, the format buttons and "Aa" are all v1's attach button (cyan edge, --bg-tertiary fill); a pressed format button takes the
+     look of a reaction you made in v1 (accent edge and tint). */
+[data-theme^="high-contrast"] button.btn-primary:not(:disabled) { background: var(--green); color: var(--button-text); border-color: var(--green); }
+[data-theme^="high-contrast"] button.btn-primary:is(:hover, :focus-visible):not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
+[data-theme="high-contrast-dark"] button.btn-primary:is(:hover, :focus-visible):not(:disabled) { color: #000000; }
+[data-theme^="high-contrast"] button.btn-primary:disabled { opacity: .5; background: var(--green); color: var(--button-text); border-color: var(--green); }
+[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle) { background: #efefef; color: #000000; border-color: var(--border); }
+[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle):is(:hover, :focus-visible):not(:disabled) { background: #efefef; color: #000000; border-color: var(--border); }
+[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle):disabled { opacity: 1; background: rgba(239, 239, 239, 0.3); color: rgba(16, 16, 16, 0.3); border-color: var(--border); }
+[data-theme^="high-contrast"] button.btn-icon { background: transparent; }
+[data-theme^="high-contrast"] button.btn-icon:is(:hover, :focus-visible):not(:disabled) { background: var(--bg-tertiary); border-color: var(--text-primary); color: var(--text-primary); }
+[data-theme^="high-contrast"] button.btn-icon:disabled { opacity: 1; background: transparent; color: var(--text-primary); border-color: var(--border); }
+[data-theme^="high-contrast"] button.btn-danger { background: rgba(220, 38, 38, 0.15); color: #ef4444; border-color: rgba(220, 38, 38, 0.35); }
+[data-theme^="high-contrast"] button.btn-danger:is(:hover, :focus-visible):not(:disabled) { background: rgba(220, 38, 38, 0.25); color: var(--red); border-color: var(--red); }
+[data-theme^="high-contrast"] button.btn-danger:disabled { opacity: 1; background: rgba(220, 38, 38, 0.15); color: #ef4444; border-color: rgba(220, 38, 38, 0.35); }
+[data-theme="high-contrast-dark"] .topbar nav .badge, [data-theme="high-contrast-dark"] .badge { background: var(--accent); color: #000000; }
+[data-theme^="high-contrast"] #composer :is(.attachment-picker-btn, #emoji-button, .composer-format, .composer-aa) { border: 1px solid var(--border); background: var(--bg-tertiary); }
+[data-theme^="high-contrast"] #composer .composer-format[aria-pressed="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
+[data-theme="high-contrast-light"] :is(.room-health, .health-flag) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
+
+
+/* Health popover: it takes the height the window has (it was 60vh, which cut the last card off with only a thin scrollbar to say so), and a bar's marks are explained. */
+.health-popover { max-height: calc(100dvh - 72px); }
+.health-popover p.health-limit-legend { margin: 0; font-size: 11px; color: var(--text-muted); }
+.harness-detail-roles-hint { margin: 0; font-size: 11px; }
+.usages-legend { margin: 8px 0 0; font-size: 11px; color: var(--text-muted); }
+
+/* Settings on a phone is two screens: the list of sections, then one section with a way back (data-view on the dialog, set by the shell). From 701px the
+   dialog shows both, so the back arrow and the list's own close button are for a phone only. */
+.settings-nav-head { display: block; }
+#settings-dialog .settings-nav-close, #settings-dialog .settings-back-btn { display: none; }
+.settings-body-header .settings-section-title { flex: 1 1 auto; min-width: 0; }
+@media (max-width: 700px) {
+  .settings-nav-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #settings-dialog .settings-nav-close { display: inline-flex; }
+  #settings-dialog[data-view="list"] .settings-body { display: none; }
+  #settings-dialog[data-view="list"] .settings-nav { width: 100%; padding: 12px 14px; border-right: 0; }
+  #settings-dialog[data-view="list"] .settings-nav-item { min-height: 48px; font-size: 0.95rem; }
+  #settings-dialog[data-view="section"] .settings-nav { display: none; }
+  #settings-dialog[data-view="section"] .settings-back-btn { display: inline-flex; flex: none; margin-right: 8px; }
+}
+/* A select cut by its column says so with an ellipsis instead of clipping the last letter. */
+#settings-dialog select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+@media (max-width: 700px) {
+  /* Users: a member is one row, the name giving way to the role and the remove button. */
+  #settings-dialog .user-member-row { flex-wrap: nowrap; }
+  #settings-dialog .user-member-row strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #settings-dialog .user-member-row select { flex: 0 1 auto; max-width: 42%; }
+  #settings-dialog .user-row span:empty { display: none; }
+  /* Harnesses: the list of harnesses is a column under the machine, not a strip that scrolls out of sight. */
+  #settings-dialog .harness-master { display: grid; overflow: visible; padding-bottom: 0; }
+  #settings-dialog button.harness-master-item { width: 100%; }
+  /* Roles: the edit button sits on the title's line, and the chips and the summary use the card's whole width. */
+  #settings-dialog .role-card-edit { grid-row: 1; }
+  #settings-dialog :is(.role-card-chips, .role-card-summary) { grid-column: 1 / -1; }
+  #settings-dialog .role-card-head { flex-wrap: wrap; row-gap: 0; }
+}
+/* A role's key is one word: it moves to the next line whole instead of breaking at its hyphen. */
+.role-card-key, .harness-role-key { white-space: nowrap; }
+
+/* While the Inbox (or another view that is not a room) is open, no room is the selected one: its highlight goes, and the view's own button in the top bar
+   is the marked one (aria-pressed, set by the Inbox page). */
+#app-view.inbox-open .sidebar .room-item.active { background: transparent; outline-color: transparent; }
+#app-view.inbox-open .sidebar .room-item.active:hover { background: var(--bg-hover); }
+#app-view.inbox-open .sidebar .room-item.active .room-item-name { color: var(--text-primary); }
+.app > .topbar nav #inbox-toggle[aria-pressed="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* The rooms drawer on a phone: a close control of its own (the scrim and the tab bar also close it), and the chevron sits next to its icon instead of a wide
+   gap away. Wider screens have the edge toggle and no drawer. */
+#app-view .sidebar header .rooms-close { display: none; }
+@media (max-width: 700px) {
+  #app-view .sidebar header .rooms-close { display: inline-flex; }
+}

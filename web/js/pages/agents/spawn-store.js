@@ -53,11 +53,12 @@ export class SpawnStore {
       const resume = this.resume.value, option = this.models.value.find(model => model.value === this.model.value);
       return resumeBanner({ resume, mode: this.mode.value, hasRoom: !!this.target.value, toolNote: this.toolNote.value, warning: resume ? modelChangeWarning(resume.model, option) : '', relative: relativeTime, history: this.historyNote.value });
     });
-    // A writer role finds the folder's writer slot taken by another agent: the dialog says so, and that the new one starts in a worktree of its own.
+    // A writer role finds the folder's writer slot taken by another agent and no worktree can be made for it: the dialog says so, in plain words. With a
+    // worktree available the new writer just starts in its own, and nothing is said.
     this.writerBlock = computed(() => {
       const writerRoles = this.writerRoles.value, agents = [...(this.host.store?.agents.value?.values() || [])];
-      const holder = writerHolder({ writer: !this.resume.value && writerRoles.has(this.role.value), agents, writerRoles, machineID: this.machine.id.value, worktree: this.worktree.value });
-      return holder ? writerHolderText(holder) : '';
+      const holder = writerHolder({ writer: !this.resume.value && writerRoles.has(this.role.value), agents, writerRoles, machineID: this.machine.id.value, worktree: this.worktree.value, worktreeRefused: this.worktreeView.value.refused });
+      return holder ? writerHolderText(holder, this.worktreeView.value.note) : '';
     });
     this.submitDisabled = computed(() => !this.rolesReady.value || (!!this.resume.value && !this.target.value) || (!this.resume.value?.resumable && !this.machine.ready) || !this.tool.value?.available || !this.models.value.length);
   }

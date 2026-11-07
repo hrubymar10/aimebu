@@ -208,6 +208,7 @@ async function main() {
       await page.$eval('#login-form', form => form.requestSubmit());
       await enterApp(page);
       await page.waitForSelector('.invite-dialog[open]');
+      assert.equal(await page.$eval('.invite-dialog [name=password]', el => el.closest('label').hidden), true, 'a plain invitation asks for no password');
       await page.$eval('.invite-dialog form', form => form.requestSubmit());
       await page.waitForFunction(() => !document.querySelector('.invite-dialog').open);
       assert.equal(await page.evaluate(() => location.hash.includes('invite')), false, 'using the link in the dialog clears it');

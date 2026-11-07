@@ -57,11 +57,12 @@ for (const patch of [{ observed: 'in_turn' }, { desired: 'stopped', observed: 's
   assert.equal(other.why, undefined, JSON.stringify(patch));
 }
 assert.equal(state({ observed: 'lost' }).kind, 'error', 'a lost process is still red');
-assert.equal(m.activityOf({}, state({})).text, 'No recent activity', 'an ordinary idle agent is unchanged');
+assert.equal(m.activityOf({}, state({})).text, '', 'an idle agent that has done nothing has no line (the pill says idle, and for how long)');
 
 assert.equal(m.activityOf({ woken_by: 'reply', activity: 'tool inspect' }, state({})).text, 'Woken by reply · tool inspect');
 assert.equal(m.activityOf({}, state({ observed: 'in_turn' })).text, 'Working…');
-assert.equal(m.activityOf({}, state({})).text, 'No recent activity');
+assert.equal(m.activityOf({}, state({})).text, '');
+assert.equal(m.activityOf({ woken_by: 'reply' }, state({})).text, 'Woken by reply', 'no dangling separator when it only says it was woken');
 assert.deepEqual(plain(m.switchStatusOf({ boundary_pending: true }, String)), { hidden: false, text: 'Folder or machine approval needed · Open Inbox', inbox: true });
 assert.deepEqual(plain(m.switchStatusOf({ switch: { state: 'failed', tool: 'claude', model: 'opus', error: 'no room' } }, String)), { hidden: false, text: 'Switch failed: claude · opus — no room', inbox: false });
 assert.deepEqual(plain(m.switchStatusOf({ switch: { state: 'draining', tool: 'claude', model: 'opus' } }, tool => tool.toUpperCase())), { hidden: false, text: 'Finishing current turn: CLAUDE · opus', inbox: false });
@@ -115,18 +116,17 @@ assert.deepEqual([message.title, pause.title, pause.label, pause.hint], ['Send t
 const harness = tool => ({ codex: 'Codex' }[tool] || tool), relative = value => `rel(${value})`;
 const rows = (agent, profile) => plain(m.profileRows(agent, profile, { harness, relative }));
 const base = { id: 'a1', tool: 'codex', variant: 'native', model: 'gpt-6-sol', role_key: 'worker', role_emoji: '🔧', desired: 'active', observed: 'in_turn', last_activity_at: at };
-assert.deepEqual(rows(base, null).map(row => row[0]), ['Status', 'Presence', 'Last seen', 'Runtime', 'Role', 'Agent ID']);
-assert.deepEqual(rows(base, null).slice(0, 5).map(row => row[1]), ['Working', 'Working on a turn', `rel(${at})`, 'gpt-6-sol · Codex/native', '🔧 worker']);
-assert.equal(rows({ ...base, variant: 'docker' }, null)[3][1], 'gpt-6-sol · Codex/docker');
-assert.equal(rows({ ...base, variant: 'codex' }, null)[3][1], 'gpt-6-sol · Codex', 'a variant that is the tool itself adds nothing');
+assert.deepEqual(rows(base, null).map(row => row[0]), ['Runtime', 'Role', 'Agent ID']);
+assert.deepEqual(rows(base, null).slice(0, 2).map(row => row[1]), ['gpt-6-sol · Codex/native', '🔧 worker']);
+assert.equal(rows({ ...base, variant: 'docker' }, null)[0][1], 'gpt-6-sol · Codex/docker');
+assert.equal(rows({ ...base, variant: 'codex' }, null)[0][1], 'gpt-6-sol · Codex', 'a variant that is the tool itself adds nothing');
+// The state is not a row: the card's pill is the one status line, so Status, Presence and Last seen are not repeated.
+assert.deepEqual(['Status', 'Presence', 'Last seen'].filter(label => rows(base, null).some(row => row[0] === label)), []);
 const full = rows(base, { native_session_id: 's1', resume_command: 'codex resume s1', cwd: '/w', branch: 'main', machine_name: 'Host', launcher_name: 'Codex', project_name: 'Alpha', repo_url: 'git@x', spawned_by: 'owner', spawned_at: at, resumed_from: 'old-bot', turns_today: 1, cost_today: 0.004, cost_today_estimated: true });
-assert.deepEqual(full.map(row => row[0]), ['Status', 'Presence', 'Last seen', 'Runtime', 'Role', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Launcher', 'Project', 'Repo', 'Spawned', 'Continues', 'Last 24 h', 'Agent ID']);
+assert.deepEqual(full.map(row => row[0]), ['Runtime', 'Role', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Launcher', 'Project', 'Repo', 'Spawned', 'Continues', 'Last 24 h', 'Agent ID']);
 assert.deepEqual(full.find(row => row[0] === 'Resume'), ['Resume', 'codex resume s1', { mono: true, copy: true }]);
 assert.equal(full.find(row => row[0] === 'Last 24 h')[1], '1 turn · $0.0040 estimated');
 assert.equal(full.find(row => row[0] === 'Spawned')[1], `owner · rel(${at})`);
-assert.equal(rows({ ...base, desired: 'not_accepting' }, null)[0][1], 'Paused');
-assert.equal(rows({ ...base, observed: 'lost' }, null)[1][1], 'Unconfirmed; recovery needed');
-assert.equal(rows({ ...base, observed: 'idle' }, null)[0][1], 'Online');
 
 assert.equal(m.outputStatus({ text: '' }), 'No output has been captured for this agent yet.');
 assert.equal(m.outputStatus({ text: 'x', truncated: true }), 'Earlier output is not shown.');

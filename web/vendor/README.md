@@ -32,8 +32,8 @@ Vendored frontend dependency:
   page, so there is no file here; this entry is where its licence notice lives.
 
 - Navbar icons, in `web/icons/` and drawn through a CSS mask in the current colour (so each is replaceable by replacing its
-  file): `inbox.svg`, `health.svg` and `spawn.svg` (the owner's "new-indicator" file), and `left.svg` and `right.svg` (copies of
-  the icons of the same names in aimebu v1). The project owner confirmed on 2026-10-19 that all five are **MIT** licensed, and
+  file): `inbox.svg` and `spawn.svg` (the owner's "new-indicator" file), and `left.svg` and `right.svg` (copies of
+  the icons of the same names in aimebu v1). The project owner confirmed on 2026-10-19 that these four are **MIT** licensed, and
   that is recorded here as their licence. They were cleaned (the download's header comment, title, fixed size and element ids
   removed, fixed colours changed to `currentColor`); their paths are otherwise unchanged.
 
@@ -62,6 +62,10 @@ Vendored frontend dependency:
   (ISC licence, Copyright (c) 2026 Lucide Icons and Contributors; the licence text is `web/icons/LICENSE-lucide.txt`), release
   `1.59.0`, from `https://github.com/lucide-icons/lucide/tree/1.59.0/icons`. The only change is dropping the fixed
   `width="24" height="24"` and the line breaks; they are drawn through a CSS mask in the current colour.
+
+- `web/icons/health.svg` is the SVG Repo "heart pulse" icon (svgrepo.com/svg/529638), **CC0** (public domain dedication), chosen by the
+  owner. The paths are unchanged; the black strokes and fills use `currentColor`, and the download's header is not carried. It is
+  drawn through a CSS mask: it is the Health button in the top bar.
 
 - `web/icons/bell.svg` and `web/icons/bell-disabled.svg` are the SVG Repo "bell" and "bell disabled" icons, MIT per the owner. Their
   geometry is unchanged; the downloads' XML declaration, header comment and fixed size were removed, and the black strokes use

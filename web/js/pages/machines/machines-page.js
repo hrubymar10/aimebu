@@ -17,7 +17,7 @@ function MachineCard({ store, machine }) {
 
 export function MachinesPage({ store }) {
   const machines = store.machines.value;
-  return html`<h3>Machines</h3>
+  return html`
     <p class="settings-intro">Pair a supervisor, approve it, and map project folders before spawning there. The coding tools on a machine are set up under Harnesses.</p>
     <div class="machine-actions">
       <button id="machine-add" type="button" class="btn btn-primary" hidden=${store.addHidden.value} disabled=${!!store.addDisabled.value} title=${store.addDisabled.value === null ? undefined : store.addDisabled.value ? 'Only the owner can pair machines' : ''} onClick=${() => store.openPairing()}>Add machine</button>

@@ -37,9 +37,24 @@ const detailKeys = ['reason', 'held_reason', 'exit_code', 'desired', 'reset_at',
 export function describeEvent(event, names = {}) {
   let payload = {}; try { payload = JSON.parse(event.payload_json || '{}') || {}; } catch {}
   const parts = [labels[event.kind] || event.kind.replaceAll('_', ' ')];
-  const agent = event.agent_id && (names.agentName?.(event.agent_id) || event.agent_id);
+  // Who an id is: what the server named it for this event (an agent as slug@project, a user by login, whichever room it is in), else what the open room knows.
+  const agent = event.agent_id && (event.names?.[event.agent_id] || names.agentName?.(event.agent_id) || event.agent_id);
   const room = event.room_id && names.roomTitle?.(event.room_id);
   const where = [agent, room].filter(Boolean).join(' · ');
+  const person = id => (id && event.names?.[id]) || '';
+  if (event.kind.startsWith('user_')) {
+    // The people of an account event, named (the payload holds ids): "Invite redeemed by wren", "Admin changed: wren is now an admin, by owner".
+    const subject = person(payload.user_id), by = person(payload.by);
+    const text = {
+      user_invite_redeemed: subject && `${parts[0]} by ${subject}`,
+      user_invite_created: by && `${parts[0]} by ${by}`,
+      user_created: subject && `${parts[0]}: ${subject}`,
+      user_deactivated: subject && `${parts[0]}: ${subject}`,
+      user_admin_changed: subject && `${parts[0]}: ${subject} is ${payload.admin === 'true' ? 'now an admin' : 'no longer an admin'}${by ? `, by ${by}` : ''}`,
+    }[event.kind] || parts[0];
+    const kind = event.kind === 'user_invite_created' && payload.kind ? `${String(payload.kind).replaceAll('_', ' ')} link` : '';
+    return { text, where, details: kind };
+  }
   if (event.kind === 'credential_alert') {
     // The payload is {kind, detail}: `kind` names the alert (login imported, refresh
     // needs a human, expiring, ...) and `detail` is already redacted by the server.

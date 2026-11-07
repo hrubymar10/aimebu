@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'inbox', 'model.js'), 'utf8');
 const context = vm.createContext({ JSON, Array, Object, Map, String, Number });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { humanize, readablePreview, readableReport, deliveryEvidence, resolvedItems, bulkLabel, countView, groupItems, groupTitle, cardKey, decisionOptions, retryWarning, evidenceText, boundaryText, recoveryResult };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { humanize, readablePreview, readableReport, deliveryEvidence, resolvedItems, bulkLabel, countView, groupItems, groupTitle, cardKey, decisionOptions, retryWarning, evidenceText, boundaryText, recoveryResult, evidenceSummary, recoveryView };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -55,5 +55,22 @@ assert.equal(m.recoveryResult(item({ kind: 'delivery_failed', result_text: 'x' }
 assert.deepEqual([m.retryWarning(item()), m.retryWarning(item({ turn_id: 't' })).startsWith('Resume may repeat'), m.retryWarning(item({ recovery_phase: 'quiescence_wait' })).startsWith('The old process')], ['', true, true]);
 assert.deepEqual([m.evidenceText(item({ kind: 'recovery', evidence: 'Seen.' })), m.evidenceText(item({ kind: 'recovery', diagnostic_report: {} })), m.evidenceText(item({ kind: 'recovery', turn_exec: 'lost' })), m.evidenceText(item({ kind: 'recovery' })), m.evidenceText(item({ kind: 'delivery_failed' }))],
   ['Seen.', 'A diagnostic report is available below.', 'The previous process may still be running; no diagnostic was run.', 'No diagnostic report is available yet.', 'The reply was held; view the room for context.']);
+// A recovery card's first line is made from the raw output when the harness gave no sentence: the exit code, and its own words from the JSON inside.
+const wall = 'Process exited with code 1.\nSessionEnd hook failed: /bin/sh: node: command not found\nCodex error event: {"is_error":true,"result":"Failed to authenticate: OAuth session expired","usage":{"input_tokens":0}}';
+assert.equal(m.evidenceSummary(wall), "The agent's process exited with code 1: Failed to authenticate: OAuth session expired");
+assert.equal(m.evidenceSummary('Process exited with code 137.'), "The agent's process exited with code 137.");
+assert.equal(m.evidenceSummary('Something broke\nand more'), 'Something broke', 'the first line when there is nothing better');
+assert.equal(m.evidenceSummary('The server said: {"result":"Out of credit"}'), 'Out of credit', 'the harness\'s words win over the rest of the line');
+assert.equal(m.evidenceSummary('x'.repeat(500)).length, 200, 'a long line is cut');
+assert.deepEqual([m.evidenceSummary(''), m.evidenceSummary(null)], ['', '']);
+assert.equal(m.evidenceSummary('Process exited with code 2.\nx {"result":"' + 'y'.repeat(400) + '"}').length <= 200, true);
+const noSentence = plain(m.recoveryView(item({ kind: 'recovery', turn_id: 't', evidence: wall })));
+assert.deepEqual([noSentence.summary, noSentence.details.map(d => d.label), noSentence.details[0].text], ["The agent's process exited with code 1: Failed to authenticate: OAuth session expired", ['Output'], wall], 'the line first, all of the output behind it');
+assert.deepEqual(plain(m.recoveryView(item({ kind: 'recovery', evidence: 'Seen.' }))), { summary: 'Seen.', details: [] }, 'nothing more to fold when the output is the summary');
+assert.deepEqual(plain(m.recoveryView(item({ kind: 'recovery', turn_exec: 'lost' }))), { summary: 'The previous process may still be running; no diagnostic was run.', details: [] }, 'no output: what is known of the turn');
+const withReport = plain(m.recoveryView(item({ kind: 'recovery', evidence: 'Seen.', diagnostic_report: { status: 'clean' } })));
+assert.deepEqual([withReport.summary, withReport.details.map(d => [d.label, d.text])], ['Seen.', [['Diagnostic report', 'status: clean']]]);
+const withSentence = plain(m.recoveryView(failed));
+assert.deepEqual([withSentence.summary, withSentence.details.map(d => d.label)], ['Failed to authenticate: OAuth session expired · Please run /login', ['Raw output']], 'the harness sentence is the summary and the raw output is behind it');
 assert.equal(m.boundaryText(item({ boundary_requester: 'lead', boundary_machine: 'Remote', boundary_path: '/w' })), 'Requested by lead · Machine Remote · Folder /w');
 console.log('inbox model tests passed');

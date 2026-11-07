@@ -2,7 +2,7 @@ import { html, useLayoutEffect, useRef, useState } from '../../ui.js';
 import { rights } from '../../api.js';
 import { IconButton } from '../../components/icon-button.js';
 import { answerControls } from '../../answer-controls.js';
-import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, readablePreview, readableReport, recoveryResult, resolvedItems, retryWarning } from './model.js';
+import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
 
 // answerControls is shared with the chat, so its DOM is built by that function and held in this island; the wrapper takes no space of its own.
 function AnswerIsland({ item, store, pending }) {
@@ -42,14 +42,19 @@ function Card({ item, store, rooms, onJump, openUsages }) {
     return wrap(html`<p class="inbox-evidence">${boundaryText(item)}</p>${item.can_decide ? html`<div class="inbox-decisions">${[['Approve', 'approve'], ['Deny', 'deny']].map(([label, choice]) => button(label, () => store.decide(item, choice)))}</div>` : html`<p class="inbox-evidence">The project owner must decide this request.</p>`}`);
   }
   const jump = rooms.has(item.room_id) && html`<${IconButton} name="external-link" label="View in room" className="inbox-jump" disabled=${pending} onClick=${() => onJump(item)} />`;
-  const evidence = (kind === 'recovery' || kind === 'delivery_failed') && html`<p class="inbox-evidence">${evidenceText(item)}</p>
-    ${kind === 'delivery_failed' && item.candidate_preview && html`<p class="inbox-evidence inbox-preview">${readablePreview(item.candidate_preview)}</p>`}
-    ${recoveryResult(item)?.raw && html`<details class="inbox-diagnostic inbox-raw"><summary>Raw output</summary><pre>${recoveryResult(item).raw}</pre></details>`}
-    ${kind === 'recovery' && item.diagnostic_report && html`<details class="inbox-diagnostic"><summary>Diagnostic report</summary><pre>${readableReport(item.diagnostic_report)}</pre></details>`}`;
-  if (kind === 'recovery' || kind === 'usage_limit') {
-    if (kind === 'recovery' && item.can_decide === false) return wrap(html`${jump}${evidence}<p class="inbox-evidence">A project owner or operator must decide this recovery item.</p>`);
+  const evidence = kind === 'delivery_failed' && html`<p class="inbox-evidence">${evidenceText(item)}</p>
+    ${item.candidate_preview && html`<p class="inbox-evidence inbox-preview">${readablePreview(item.candidate_preview)}</p>`}`;
+  if (kind === 'recovery') {
+    // The summary and the decision come first and fit on a screen; whatever the harness left behind is folded under Details.
+    const view = recoveryView(item), warning = item.can_decide === false ? '' : retryWarning(item);
+    const details = view.details.length > 0 && html`<details class="inbox-details"><summary>Details</summary>${view.details.map(detail => html`<div class="inbox-detail inbox-diagnostic" key=${detail.label}><small>${detail.label}</small><pre>${detail.text}</pre></div>`)}</details>`;
+    const summary = html`<p class="inbox-evidence inbox-summary">${view.summary}</p>`;
+    if (item.can_decide === false) return wrap(html`${jump}${summary}<p class="inbox-evidence">A project owner or operator must decide this recovery item.</p>${details}`);
+    return wrap(html`${jump}${summary}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => store.decide(item, choice), choice === 'abandon' ? 'btn btn-danger' : 'btn'))}</div>${warning && html`<small class="inbox-retry-warning">${warning}</small>`}${details}`);
+  }
+  if (kind === 'usage_limit') {
     const warning = retryWarning(item);
-    return wrap(html`${jump}${evidence}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => store.decide(item, choice), choice === 'abandon' ? 'btn btn-danger' : 'btn'))}</div>${warning && html`<small class="inbox-retry-warning">${warning}</small>`}`);
+    return wrap(html`${jump}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => store.decide(item, choice), choice === 'abandon' ? 'btn btn-danger' : 'btn'))}</div>${warning && html`<small class="inbox-retry-warning">${warning}</small>`}`);
   }
   if (kind === 'usage_info') return wrap(html`${jump}${(item.options || []).includes('Retry now') && button('Retry now', () => store.decide(item, 'retry'), 'btn btn-primary')}`);
   if (kind === 'delivery_failed') return wrap(html`${jump}${evidence}${item.can_decide && html`<${IconButton} name="close" label="Dismiss" disabled=${pending} onClick=${() => store.dismiss(item)} />`}`);

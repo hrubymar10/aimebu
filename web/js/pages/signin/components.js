@@ -1,5 +1,5 @@
 import { html, useLayoutEffect, useRef } from '../../ui.js';
-import { cardView } from './model.js';
+import { cardView, dialogAsksPassword } from './model.js';
 
 const submitter = send => event => { event.preventDefault(); const fields = event.currentTarget.elements; send(fields); };
 
@@ -37,7 +37,7 @@ export function SigninPage({ store }) {
 }
 
 export function InviteDialogBody({ store }) {
-  return html`<h2>Use invitation</h2><p>Join this project with your signed-in account. If this is a password reset link, enter a new password.</p>
-    <form onSubmit=${submitter(fields => store.submitDialog(fields.password.value))}><label>New password (reset links only)<input name="password" type="password" autocomplete="new-password" /></label><div class="dialog-actions"><button type="button" class="btn invite-cancel" onClick=${() => store.closeDialog()}>Cancel</button><button type="submit" class="btn btn-primary">Use invitation</button></div></form>
+  return html`<h2>Use invitation</h2><p>Join this project with your signed-in account. ${dialogAsksPassword(store.info.value) ? ' If this is a password reset link, enter a new password.' : ''}</p>
+    <form onSubmit=${submitter(fields => store.submitDialog(fields.password.value))}><label hidden=${!dialogAsksPassword(store.info.value)}>New password<input name="password" type="password" autocomplete="new-password" /></label><div class="dialog-actions"><button type="button" class="btn invite-cancel" onClick=${() => store.closeDialog()}>Cancel</button><button type="submit" class="btn btn-primary">Use invitation</button></div></form>
     <p class="error" role="alert">${store.dialogError.value}</p>`;
 }

@@ -95,8 +95,9 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('.inbox-empty').textContent, document.querySelector('#inbox-count').hidden, document.querySelector('#inbox-count').textContent, document.querySelector('#inbox-toggle').title, document.querySelector('#inbox-toggle').getAttribute('aria-label'), document.title, window.__onItems]),
         ['All caught up', true, '0', 'Inbox', 'Inbox', 'aimebu', [[]]]);
       await page.evaluate(() => window.__inbox.show());
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-view').hidden, document.querySelector('.chat').hidden, document.querySelector('#app-view').classList.contains('inbox-open')]), [false, true, true]);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-view').hidden, document.querySelector('.chat').hidden, document.querySelector('#app-view').classList.contains('inbox-open'), document.querySelector('#inbox-toggle').getAttribute('aria-pressed')]), [false, true, true, 'true'], 'the Inbox button is the marked one while the Inbox is open');
       await page.evaluate(() => window.__inbox.hide());
+      assert.equal(await page.evaluate(() => document.querySelector('#inbox-toggle').getAttribute('aria-pressed')), 'false', 'and not once it is closed');
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-view').hidden, document.querySelector('.chat').hidden, document.querySelector('.sidebar').hidden, document.querySelector('#app-view').classList.contains('inbox-open')]), [true, false, false, false]);
       await page.close();
     }
@@ -110,14 +111,40 @@ async function main() {
       const page = await mount({ list: [failed] });
       await waitList(page);
       const card = await page.$eval('[data-inbox-id=def1]', node => ({ question: node.querySelector('h3').textContent, buttons: [...node.querySelectorAll('.inbox-decisions button')].map(b => b.textContent),
-        evidence: [...node.querySelectorAll('.inbox-evidence')].map(p => p.textContent), summary: node.querySelector('details.inbox-raw summary')?.textContent, raw: node.querySelector('details.inbox-raw pre')?.textContent,
-        open: node.querySelector('details.inbox-raw')?.open, warning: node.querySelector('.inbox-retry-warning')?.textContent }));
+        evidence: [...node.querySelectorAll('.inbox-evidence')].map(p => p.textContent), summary: node.querySelector('details.inbox-details summary')?.textContent, raw: node.querySelector('details.inbox-details pre')?.textContent,
+        label: node.querySelector('details.inbox-details small')?.textContent, open: node.querySelector('details.inbox-details')?.open, warning: node.querySelector('.inbox-retry-warning')?.textContent }));
       assert.match(card.question, /^Same failure again — fix the cause first/);
       assert.deepEqual(card.buttons, ['Retry', 'Abandon']);
       assert.deepEqual(card.evidence, [sentence], 'the card reads the harness sentence, not the raw JSON');
-      assert.deepEqual([card.summary, card.open], ['Raw output', false], 'the raw output is folded away');
+      assert.deepEqual([card.summary, card.label, card.open], ['Details', 'Raw output', false], 'the raw output is folded away under Details');
       assert.equal(card.raw, raw);
       assert.match(card.warning, /^Retry is safe: the turn failed before it did anything/);
+      await page.close();
+    }
+    // A recovery card whose harness gave no sentence of its own, only a wall of output: one line made from it comes first, the decision is next, and the
+    // output (all of it) is folded under Details, so Resume, Retry and Abandon are on screen without scrolling past it.
+    {
+      const wall = ['Process exited with code 1.', 'SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/scripts/x.mjs"] failed: /bin/sh: node: command not found',
+        'Codex error event: {"is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed","type":"result","usage":{"input_tokens":0}}', 'x'.repeat(3000)].join('\n');
+      const uncertain = { ...base, id: 'wall1', kind: 'recovery', turn_id: 't7', question: 'An agent turn has an uncertain outcome. Review the evidence before continuing.', evidence: wall };
+      const page = await mount({ list: [uncertain] });
+      await waitList(page);
+      await page.setViewport({ width: 1280, height: 800 });
+      await page.evaluate(() => window.__inbox.show()); // shown, so the layout is real
+      const shown = await page.$eval('[data-inbox-id=wall1]', node => {
+        const card = node.getBoundingClientRect(), details = node.querySelector('details.inbox-details'), summary = node.querySelector('.inbox-summary'), decisions = node.querySelector('.inbox-decisions');
+        return { summary: summary.textContent, buttons: [...decisions.querySelectorAll('button')].map(b => b.textContent), open: details.open, label: details.querySelector('small').textContent, text: details.querySelector('pre').textContent,
+          order: [summary, decisions, details].map(el => Math.round(el.getBoundingClientRect().top)), cardHeight: Math.round(card.height), decisionsBottom: Math.round(decisions.getBoundingClientRect().bottom - card.top) };
+      });
+      assert.equal(shown.summary, "The agent's process exited with code 1: Failed to authenticate: OAuth session expired and could not be refreshed");
+      assert.deepEqual([shown.buttons, shown.open, shown.label], [['Resume', 'Retry', 'Abandon'], false, 'Output'], 'the decision is shown and the output is folded');
+      assert.equal(shown.text, wall, 'and all of the output is behind Details');
+      assert.deepEqual([...shown.order].sort((a, b) => a - b), shown.order, 'summary, then the decision, then Details');
+      assert.ok(shown.decisionsBottom < 420 && shown.cardHeight < 520, `the decision is near the top of the card: its bottom edge is at ${shown.decisionsBottom}px of a card ${shown.cardHeight}px tall`);
+      // Opening Details shows it.
+      await page.click('[data-inbox-id=wall1] details.inbox-details summary');
+      await page.waitForFunction(() => document.querySelector('[data-inbox-id=wall1] details.inbox-details')?.open === true, { timeout: 5000 });
+      assert.equal(await page.$eval('[data-inbox-id=wall1] details.inbox-details pre', el => el.offsetParent !== null && el.getBoundingClientRect().height > 20), true);
       await page.close();
     }
     // A shared agent note waiting for approval: the words of the note, Approve and Decline; Approve decides "approve", Decline decides "deny".
@@ -149,7 +176,7 @@ async function main() {
       assert.deepEqual([by('ap1').kind, by('ap1').buttons, by('ap1').extra[6]], ['Approval', ['View in room', 'Approve', 'Revise'], true]);
       assert.deepEqual([by('ro1').buttons, by('ro1').extra[4]], [['View in room'], true]);
       assert.deepEqual([by('rec1').kind, by('rec1').buttons, by('rec1').evidence, by('rec1').extra.slice(0, 3)], ['Recovery', ['View in room', 'Resume', 'Retry', 'Abandon'], ['Work may have partially completed.'],
-        ['Resume may repeat an action if the diagnostic missed an effect. Retry repeats the task.', 'Diagnostic report', 'status: clean\nchecked: Yes\nfiles: 3']]);
+        ['Resume may repeat an action if the diagnostic missed an effect. Retry repeats the task.', 'Details', 'status: clean\nchecked: Yes\nfiles: 3']]); // the diagnostic report is the first labelled text under Details
       assert.deepEqual([by('rec2').buttons, by('rec2').extra[0]], [['View in room', 'Override', 'Abandon'], 'The old process may still be running. Override can overlap it and repeat an action.']);
       assert.deepEqual([by('rec3').buttons, by('rec3').evidence], [['View in room'], ['No diagnostic report is available yet.', 'A project owner or operator must decide this recovery item.']]);
       assert.deepEqual([by('del1').kind, by('del1').kindClass, by('del1').buttons, by('del1').evidence, by('del1').extra[3]], ['Delivery failed', 'inbox-kind-error', ['View in room', 'Dismiss'], ['The room was archived before this reply could be posted.', 'Hello there'], 'In archived room']);

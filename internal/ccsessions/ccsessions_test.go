@@ -469,3 +469,23 @@ func TestAttributeSkipsAnOversizedLine(t *testing.T) {
 		t.Fatalf("attribution around a huge line: %+v %v", got, err)
 	}
 }
+
+// A session an aimebu turn started has the JSON the turn is handed as its prompt: shown as an aimebu turn with its first message, never as JSON.
+func TestReadableTitleNeverShowsATurnsJSON(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct{ in, want string }{
+		"a message":      {`{"turn_id":"turn_1","notes":[{"note_id":"n1","from":"owner","body":"please  review\nthe plan"}],"context":{}}`, "aimebu turn: owner: please review the plan"},
+		"no sender":      {`{"turn_id":"turn_1","notes":[{"note_id":"n1","body":"hello"}]}`, "aimebu turn: hello"},
+		"no messages":    {`{"turn_id":"turn_1","notes":[]}`, "aimebu turn"},
+		"cut off":        {`{"turn_id":"turn_01M6V236RF9S764ZB7TGMAKK2P","notes":[{"note_id":"note_01`, "aimebu turn"},
+		"plain":          {"Refactor the API", "Refactor the API"},
+		"someone's JSON": {`{"a":1}`, `{"a":1}`},
+	} {
+		if got := readableTitle(c.in); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+	if long := readableTitle(`{"turn_id":"t","notes":[{"from":"x","body":"` + strings.Repeat("word ", 100) + `"}]}`); len([]rune(long)) > TitleRunes+1 || strings.Contains(long, "{") {
+		t.Errorf("a long first message is cut like any title: %q", long)
+	}
+}

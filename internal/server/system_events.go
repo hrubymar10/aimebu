@@ -22,6 +22,9 @@ func (s *Server) systemEvents(w http.ResponseWriter, r *http.Request) {
 		limit = value
 	}
 	events, err := s.Store.RecentSystemEvents(r.Context(), userID(r), limit)
+	if err == nil {
+		err = s.Store.NameEvents(r.Context(), events) // who the ids are, so the feed reads "hana@tmp" and not agt_…
+	}
 	if err != nil {
 		fail(w, err)
 		return

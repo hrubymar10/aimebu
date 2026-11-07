@@ -1,7 +1,7 @@
 // Import-free: scripts/test-macros-model.cjs runs this module in a vm. The rules themselves stay in macro-import.js; the hook passes in
 // what they found.
 
-export const label = key => `<${key.toUpperCase()}>`;
+export const label = key => `<${key}>`;
 export const blankForm = () => ({ key: '', body: '' });
 export const formDirty = (form, editing, macros) => (editing ? form.key !== editing || form.body !== macros[editing] : Boolean(form.key || form.body));
 

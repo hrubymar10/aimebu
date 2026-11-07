@@ -8,7 +8,15 @@ export function agentState(agent) {
   return control === observed ? control : `${control} · ${observed}`;
 }
 
+// The server calls a singleton role vacant once its agent is stopped (a new one may be started in its place), but the list above names that agent with the
+// role, so "vacant" beside it reads as a contradiction: a stopped agent of the role in this room is named as the holder, marked stopped.
+export function stoppedHolder(role, agents) {
+  const agent = (agents || []).find(item => item.role_key === role.role_key && !item.revoked);
+  return agent ? { slug: agent.slug, stopped: true } : null;
+}
+
 // Who holds a singleton role, as the list says it.
 export function holderText(holder) {
-  return holder ? `held by ${holder.slug}${holder.in_this_room ? '' : ' (another room)'}` : 'vacant';
+  if (!holder) return 'vacant';
+  return `held by ${holder.slug}${holder.stopped ? ' (stopped)' : holder.in_this_room ? '' : ' (another room)'}`;
 }

@@ -198,13 +198,13 @@ async function main() {
     assert.deepEqual((await state()).defaults.worker, ['gpt-6-sol', 'sonnet', 'haiku']);
     assert.deepEqual(pageErrors, [], 'no script errors so far');
 
-    // A phone width: the harness list becomes a row of chips above the detail, and nothing overflows sideways.
+    // A phone width: the harness list becomes a column of full-width buttons above the detail (a strip would scroll the rest out of sight), and nothing overflows sideways.
     await page.setViewport(PHONE);
     const fits = () => page.evaluate(() => {
       const dialog = document.querySelector('#settings-dialog'), split = document.querySelector('.harness-split'), master = document.querySelector('.harness-master');
       return { dialog: dialog.scrollWidth <= dialog.clientWidth + 1, split: split.scrollWidth <= split.clientWidth + 1, row: getComputedStyle(master).display, masterTop: master.getBoundingClientRect().bottom <= document.querySelector('.harness-detail').getBoundingClientRect().top + 1 };
     });
-    assert.deepEqual(await fits(), { dialog: true, split: true, row: 'flex', masterTop: true }, 'the harness list sits above the detail and fits at 390 px');
+    assert.deepEqual(await fits(), { dialog: true, split: true, row: 'grid', masterTop: true }, 'the harness list sits above the detail and fits at 390 px');
     // A model row is one line at 390 px too: the default radio, the star, the id and the remove button share it.
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#harnesses-list .machine-harness:not([hidden]) .harness-detail-top')].map(top => { const radio = top.querySelector('input[type=radio]').getBoundingClientRect(), slug = top.querySelector('.harness-model-slug').getBoundingClientRect(), trash = top.querySelector('.harness-model-remove').getBoundingClientRect(); return [Math.abs(radio.top + radio.height / 2 - (trash.top + trash.height / 2)) < 4, Math.abs(slug.top + slug.height / 2 - (trash.top + trash.height / 2)) < 4]; }).every(row => row.every(Boolean))), true, 'the model rows are one line on a phone');
     await shot('phone', PHONE);

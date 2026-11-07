@@ -97,10 +97,10 @@ async function main() {
       const second = await page.evaluate(() => window.__requests.findLastIndex(request => !request.answered));
       assert.deepEqual(await locks(page), { ...OPEN, save: true, rows: true, preview: true }, 'nothing writes while a read is held, though the form can be typed in');
       await answer(page, second, 200, { newer: 'N' });
-      await page.waitForFunction(() => document.querySelector('#macros-list').textContent.includes('<NEWER>'));
+      await page.waitForFunction(() => document.querySelector('#macros-list').textContent.includes('<newer>'));
       await answer(page, first, 500, { message: 'stale failure' });
       await settle(page);
-      assert.deepEqual([(await shown(page)).keys, (await shown(page)).error], [['<NEWER>'], ''], 'only the newest read draws');
+      assert.deepEqual([(await shown(page)).keys, (await shown(page)).error], [['<newer>'], ''], 'only the newest read draws');
       await page.close();
     }
     // A failed read locks every write. The legacy page shows "No macros yet." and its next Save replaces the stored map with one macro.
@@ -115,7 +115,7 @@ async function main() {
       assert.deepEqual([await count(page, 'PUT'), (await shown(page)).list, await locks(page)], [0, '', { ...OPEN, save: true, rows: true, preview: true }], 'nothing is sent after a failed read');
       await page.evaluate(start => { window.__auto['GET /api/macros'] = start; window.__page.open(); }, START);
       await page.waitForFunction(() => !document.querySelector('#macro-editor [type=submit]').disabled);
-      assert.deepEqual([(await shown(page)).keys, (await shown(page)).key], [['<BYE>', '<GREET>'], ''], 'a reopen reads again, and drops the form as every open does');
+      assert.deepEqual([(await shown(page)).keys, (await shown(page)).key], [['<bye>', '<greet>'], ''], 'a reopen reads again, and drops the form as every open does');
       await page.close();
     }
     // One write at a time: while a delete is held every write control is locked and a second delete sends nothing; the map drawn after
@@ -133,7 +133,7 @@ async function main() {
       assert.equal(await count(page, 'PUT'), 1, 'a second write is not sent while one is held');
       await answer(page, put, 200, { greet: 'Hello', fromserver: 'S' });
       await page.waitForFunction(() => !document.querySelector('#macro-editor [type=submit]').disabled);
-      assert.deepEqual((await shown(page)).keys, ['<FROMSERVER>', '<GREET>']);
+      assert.deepEqual((await shown(page)).keys, ['<fromserver>', '<greet>']);
       assert.deepEqual(await page.$eval('#macros-import-summary', el => el.textContent), '', 'a preview computed against the old map is dropped');
       assert.deepEqual(await locks(page), OPEN);
       await page.close();
@@ -154,7 +154,7 @@ async function main() {
       assert.deepEqual(await body(page, put), { bye: 'Goodbye', hi: 'Hello' });
       await answer(page, put, 200, { bye: 'Goodbye', hi: 'Hello' });
       await page.waitForFunction(() => document.querySelector('#macro-editor [name=key]').value === '');
-      assert.deepEqual([(await shown(page)).keys, await page.$eval('#macro-editor [type=button]', el => el.hidden), await page.evaluate(() => window.__page.hasUnsavedChanges())], [['<BYE>', '<HI>'], true, false]);
+      assert.deepEqual([(await shown(page)).keys, await page.$eval('#macro-editor [type=button]', el => el.hidden), await page.evaluate(() => window.__page.hasUnsavedChanges())], [['<bye>', '<hi>'], true, false]);
       await saveForm(page, 'bye', 'dup');
       assert.deepEqual([(await shown(page)).error, await count(page, 'PUT')], ['A macro with that key already exists.', 2], 'a local refusal sends nothing');
       await page.close();
@@ -178,7 +178,7 @@ async function main() {
       const second = await pending(page, 'PUT');
       await answer(page, second, 200, await body(page, second));
       await page.waitForFunction(() => document.querySelector('#macros-import').hidden);
-      assert.deepEqual([(await shown(page)).keys, await page.$eval('#macros-import-text', el => el.value), await page.$eval('#macros-import-open', el => el.hidden)], [['<ALPHA>', '<BYE>', '<GREET>'], '', false]);
+      assert.deepEqual([(await shown(page)).keys, await page.$eval('#macros-import-text', el => el.value), await page.$eval('#macros-import-open', el => el.hidden)], [['<alpha>', '<bye>', '<greet>'], '', false]);
       await page.close();
     }
     // A save between Preview and Apply drops the preview, so Apply cannot send a merge computed against the older map.
@@ -188,7 +188,7 @@ async function main() {
       await saveForm(page, 'zed', 'Z');
       const put = await pending(page, 'PUT');
       await answer(page, put, 200, await body(page, put));
-      await page.waitForFunction(() => document.querySelector('#macros-list').textContent.includes('<ZED>'));
+      await page.waitForFunction(() => document.querySelector('#macros-list').textContent.includes('<zed>'));
       assert.deepEqual([(await locks(page)).apply, await page.$eval('#macros-import-summary', el => el.textContent)], [true, '']);
       await page.close();
     }
@@ -209,7 +209,7 @@ async function main() {
       assert.deepEqual(await locks(page), LOCKED, `still locked until the read after the write answers (${outcome})`);
       await answer(page, after, 200, outcome === 'success' ? { ...START, held: 'H' } : START);
       await page.waitForFunction(() => !document.querySelector('#macro-editor [type=submit]').disabled);
-      assert.deepEqual([(await shown(page)).keys.includes('<HELD>'), (await shown(page)).error, await locks(page)], [outcome === 'success', '', OPEN], `the fresh map draws, the obsolete write reports nothing, and the page unlocks (${outcome})`);
+      assert.deepEqual([(await shown(page)).keys.includes('<held>'), (await shown(page)).error, await locks(page)], [outcome === 'success', '', OPEN], `the fresh map draws, the obsolete write reports nothing, and the page unlocks (${outcome})`);
       await page.close();
     }
     // Hide does nothing to a write in flight (its answer draws into the hidden page) nor to drafts. An open drops the form and the import
@@ -220,7 +220,7 @@ async function main() {
       const put = await pending(page, 'PUT');
       await page.evaluate(() => { window.__page.section.hidden = true; });
       await answer(page, put, 200, { ...START, hidden: 'H' });
-      await page.waitForFunction(() => document.querySelector('#macros-list').textContent.includes('<HIDDEN>') && document.querySelector('#macro-editor [name=key]').value === '');
+      await page.waitForFunction(() => document.querySelector('#macros-list').textContent.includes('<hidden>') && document.querySelector('#macro-editor [name=key]').value === '');
       await type(page, '#macro-editor [name=key]', 'before'); await openImport(page, '{"x":"y"}');
       await page.evaluate(() => { window.__page.section.hidden = true; });
       await page.evaluate(() => { window.__page.section.hidden = false; window.__page.section.classList.add('active'); });

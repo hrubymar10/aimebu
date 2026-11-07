@@ -10,10 +10,10 @@ export function SlotCard({ slot, scope, max, draft, locked, onDraft, onSave, onR
     <p class="settings-intro">${slot.desc}</p>
     <textarea class="settings-text-input settings-textarea" rows="4" maxLength=${max} id=${`prompt-${slot.key}`} aria-label=${slot.title} disabled=${locked} value=${value} onInput=${event => onDraft(slot, event.currentTarget.value)}></textarea>
     <div class="dialog-actions">
-      <button type="button" class="btn btn-primary prompt-save" disabled=${locked} onClick=${() => onSave(slot)}>Save</button>
+      <button type="button" class="btn btn-primary prompt-save" disabled=${locked || draft === undefined || draft === slot.effective} onClick=${() => onSave(slot)}>Save</button>
       <button type="button" class="btn prompt-reset" disabled=${locked || !layerOf(slot, scope)} onClick=${() => onReset(slot)}>${resetLabel(scope)}</button>
       <span class="prompt-count">${countText(value, max)}</span>
     </div>
-    <details class="prompt-shipped"><summary>Shipped text</summary><p>${slot.default}</p></details>
+    <details class="prompt-shipped"><summary>Show the shipped default</summary><p>${slot.default}</p></details>
   </div>`;
 }

@@ -229,3 +229,6 @@ export function addSuggestions(providers, picked) {
 
 // What a machine runs (a harness's command, models and providers) is the owner's alone: an admin sees it, and the controls that are off say why.
 export const OWNER_ONLY = 'Only the owner can change what a machine runs.';
+
+// The count beside a harness in the list: a bare number could mean anything, so it says what it counts.
+export const modelCount = harness => { const count = (harness.models || []).length; return `${count} ${count === 1 ? 'model' : 'models'}`; };

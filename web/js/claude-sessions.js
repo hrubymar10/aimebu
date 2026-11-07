@@ -15,7 +15,7 @@ export function formatSize(bytes) {
 // The facts shown under a session's title, in order.
 export function sessionFacts(session) {
   const facts = [];
-  if (session.git_branch) facts.push(session.git_branch);
+  if (session.git_branch && session.git_branch !== 'HEAD') facts.push(session.git_branch); // "HEAD" is no branch: a detached HEAD, or a folder that is not a repository
   if (session.modified_at) facts.push(`used ${relativeTime(session.modified_at)}`);
   facts.push(formatSize(session.size || 0));
   facts.push(session.id.slice(0, 8));

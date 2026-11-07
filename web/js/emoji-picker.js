@@ -176,6 +176,7 @@ class EmojiPicker {
 
   previewEntry(entry) {
     this.hovered = entry;
+    this.previewName.classList.toggle('emoji-preview-idle', !entry); // the invitation to pick is a hint, not a name
     if (!entry) { this.previewGlyph.textContent = ''; this.previewName.textContent = 'Pick an emoji'; this.previewCode.textContent = ''; return; }
     this.previewGlyph.textContent = withTone(entry, this.tone); this.previewName.textContent = entry.name;
     const alias = this.query ? matchedAlias(entry, this.query) : entry.aliases[0]; this.previewCode.textContent = `:${alias}:`;

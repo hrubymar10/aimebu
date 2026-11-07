@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'signin', 'model.js'), 'utf8');
 const context = vm.createContext({ URLSearchParams, String });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { inviteToken, cardView, INVALID_LEAD, THROTTLED_LEAD };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { inviteToken, cardView, dialogAsksPassword, INVALID_LEAD, THROTTLED_LEAD };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -32,4 +32,5 @@ assert.equal(m.cardView({ error: { status: 429 } }, '').switchHidden, false);
 const done = m.cardView(join, 'newcomer');
 assert.deepEqual([done.submitText, done.readOnly, done.loginValue, done.switchHidden, done.loginRequired], ['Sign in', true, 'newcomer', true, false]);
 assert.deepEqual([m.cardView(null, '').lead, m.cardView(null, '').submitText], ['', '']);
+assert.deepEqual([{ kind: 'reset' }, { kind: 'invite' }, { kind: 'join' }, { error: { status: 404 } }, null].map(info => m.dialogAsksPassword(info)), [true, false, false, true, true], 'only a reset (or an invitation nobody could inspect) asks for a password');
 console.log('signin-model: ok');

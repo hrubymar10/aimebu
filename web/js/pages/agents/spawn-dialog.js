@@ -29,7 +29,7 @@ function ContinueMenu({ enabled, onContinue }) {
   };
   return html`<span class="spawn-continue-menu" ref=${root} onKeyDown=${keys}>
     <button type="button" id="spawn-sessions-menu" ref=${toggle} class="btn-icon" title="More" aria-label="More" aria-haspopup="menu" aria-expanded=${String(open)} onClick=${() => setOpen(!open)}><span class="icon-mask icon-mask-more" aria-hidden="true"></span></button>
-    <div class="spawn-continue-list" role="menu" hidden=${!open}><button type="button" id="spawn-sessions" ref=${item} role="menuitem" class="row-btn" disabled=${!enabled} onClick=${() => { setOpen(false); onContinue(); }}>Continue a session…</button></div>
+    <div class="spawn-continue-list" role="menu" hidden=${!open}><button type="button" id="spawn-sessions" ref=${item} role="menuitem" class="row-btn" disabled=${!enabled} onClick=${() => { setOpen(false); onContinue(); }}>Continue a Claude Code session…</button></div>
   </span>`;
 }
 

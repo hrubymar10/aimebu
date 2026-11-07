@@ -232,7 +232,7 @@ func (s *Store) CreateUserInvite(ctx context.Context, actorID, kind, projectID, 
 		if err != nil {
 			return err
 		}
-		_, err = tx.AppendEvent(Event{Kind: "user_invite_created", ProjectID: projectID, PayloadJSON: payloadJSON(map[string]string{"invite_id": id, "kind": kind})})
+		_, err = tx.AppendEvent(Event{Kind: "user_invite_created", ProjectID: projectID, PayloadJSON: payloadJSON(map[string]string{"invite_id": id, "kind": kind, "by": actorID})})
 		return err
 	})
 	return invite, err

@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'users', 'model.js'), 'utf8');
 const context = vm.createContext({ URL });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { ROLES, chosenProject, uniqueAccounts, accountActions, inviteHint };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { ROLES, chosenProject, uniqueAccounts, accountActions, memberRemoval, inviteHint };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -34,3 +34,10 @@ assert.match(m.inviteHint('http://[::1]:1/#invite=x'), /only works/);
 assert.equal(m.inviteHint('https://aimebu.example/#invite=x'), '');
 assert.equal(m.inviteHint('not a url'), '', 'a link that does not parse gets no hint');
 console.log('users model tests passed');
+
+const removal = (user, members, me) => plain(m.memberRemoval(user, members, me));
+const team = [{ id: 'o', role: 'owner' }, { id: 'p', role: 'owner' }, { id: 'v', role: 'viewer' }];
+assert.equal(removal(team[0], team, 'o').disabled, true, 'not yourself');
+assert.equal(removal(team[1], team, 'o').disabled, false, 'another owner when there are two');
+assert.equal(removal(team[2], team, 'o').disabled, false, 'a viewer');
+assert.deepEqual(removal(team[0], [team[0], team[2]], 'x'), { disabled: true, reason: 'A project needs at least one owner' }, 'the last owner');

@@ -40,10 +40,12 @@ import { formDialog, cancelAppDialogs } from './dialogs.js';
 import { UpdateBar } from './update-bar.js';
 import { ColumnResize } from './column-resize.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
+import { trackInputModality } from './input-modality.js';
 
 
 initUIVariants();
 
+trackInputModality();
 const loginView = document.querySelector('#login-view'), appView = document.querySelector('#app-view');
 const bootView = document.querySelector('#boot-view');
 const startupStatus = document.createElement('div');
@@ -255,7 +257,7 @@ settings.project.onLifecycle = async projectID => {
 };
 settings.project.onRemoved = async projectID => { await projectRemoved(projectID); };
 settings.onRights = () => applyRights();
-document.addEventListener('aimebu:open-settings', event => settings.open(event.detail?.section || 'general', event.detail));
+document.addEventListener('aimebu:open-settings', event => settings.open(event.detail?.section || '', event.detail));
 const importWizard = new ImportV1Wizard(() => {
   const generation = sessionGeneration;
   return () => generation === sessionGeneration;
@@ -661,6 +663,7 @@ const storedLeft = localStorage.getItem('aimebu_left_collapsed');
 if (storedLeft === 'true') setRoomsCollapsed(true);
 else if (storedLeft === null && matchMedia('(min-width: 701px) and (max-width: 900px)').matches) setRoomsCollapsed(true, false);
 document.querySelector('#edge-rooms').onclick = () => setRoomsCollapsed(true);
+document.querySelector('#rooms-close').onclick = () => setRoomsOpen(false); // the drawer's own close, on a phone
 document.querySelector('#edge-rooms-expand').onclick = () => setRoomsCollapsed(false);
 document.querySelector('#back').onclick = () => setRoomsOpen(!appView.classList.contains('rooms-open'));
 document.querySelector('#rooms-scrim').onclick = () => setRoomsOpen(false);

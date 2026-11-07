@@ -41,9 +41,10 @@ export class Inbox {
     // On desktop the room list stays beside the Inbox (the view replaces only the chat column), so any room is one click away;
     // on a phone the list is a drawer and stays closed.
     this.view.hidden = false; document.querySelector('.chat').hidden = true; document.querySelector('.sidebar').hidden = matchMedia('(max-width: 700px)').matches; document.querySelector('#app-view').classList.add('inbox-open');
+    document.querySelector('#inbox-toggle')?.setAttribute('aria-pressed', 'true');
   }
 
-  hide() { this.view.hidden = true; document.querySelector('.chat').hidden = false; document.querySelector('.sidebar').hidden = false; document.querySelector('#app-view').classList.remove('inbox-open'); }
+  hide() { this.view.hidden = true; document.querySelector('.chat').hidden = false; document.querySelector('.sidebar').hidden = false; document.querySelector('#app-view').classList.remove('inbox-open'); document.querySelector('#inbox-toggle')?.setAttribute('aria-pressed', 'false'); }
   setRoom(room) { this.activeRoom = room?.id; }
   setError(message) { this.store.setError(message); }
 

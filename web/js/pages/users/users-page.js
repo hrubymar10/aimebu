@@ -3,19 +3,20 @@ import { currentUser } from '../../api.js';
 import { confirmDialog } from '../../dialogs.js';
 import { SettingsGroup, SettingsRow } from '../../components/settings-row.js';
 import { IconButton } from '../../components/icon-button.js';
-import { ROLES, accountActions, uniqueAccounts } from './model.js';
+import { ROLES, accountActions, memberRemoval, uniqueAccounts } from './model.js';
 
-const roleOptions = () => ROLES.map(value => html`<option value=${value}>${value}</option>`);
+const roleOptions = () => ROLES.map(value => html`<option value=${value}>${value[0].toUpperCase() + value.slice(1)}</option>`);
 
-function MemberRow({ store, user }) {
+function MemberRow({ store, user, members }) {
+  const removal = memberRemoval(user, members, currentUser);
   const change = event => { const select = event.currentTarget; store.setRole(user, select.value, () => { select.value = user.role; }); };
   const remove = async () => {
     if (!await confirmDialog(`Remove ${user.login} from this project?`, { title: 'Remove member', confirm: 'Remove', danger: true })) return;
     store.removeMember(user);
   };
-  return html`<div class="user-row"><strong>${user.login}</strong><span>${user.disabled ? 'Deactivated' : ''}</span>
+  return html`<div class="user-row user-member-row"><strong>${user.login}</strong><span>${user.disabled ? 'Deactivated' : ''}</span>
     <select class="settings-select" aria-label=${`Role for ${user.login}`} value=${user.role} onChange=${change}>${roleOptions()}</select>
-    <${IconButton} name="trash" label=${`Remove ${user.login} from this project`} danger onClick=${remove} /></div>`;
+    <${IconButton} name="trash" label=${removal.disabled ? removal.reason : `Remove ${user.login} from this project`} danger disabled=${removal.disabled} onClick=${remove} /></div>`;
 }
 
 function AccountRow({ store, user }) {
@@ -35,10 +36,10 @@ function AccountRow({ store, user }) {
     store.deactivate(user);
   };
   return html`<div class="user-row" data-user-id=${user.id}><strong>${user.login}</strong><span>${user.disabled ? 'Deactivated' : ''}</span>
-    ${can.badge && html`<span class=${`user-badge user-badge-${can.badge.toLowerCase()}`}>${can.badge}</span>`}
+    ${can.badge && !(can.badge === 'Admin' && can.adminToggle) && html`<span class=${`user-badge user-badge-${can.badge.toLowerCase()}`}>${can.badge}</span>`}
     ${can.adminToggle && html`<label class="user-admin-toggle"><input type="checkbox" checked=${!!user.admin} aria-label=${`${user.login} is an admin`} onChange=${toggle} /> Admin</label>`}
-    ${can.reset && html`<button type="button" class="btn" onClick=${() => store.resetLink(user)}>Reset link</button>`}
-    ${can.deactivate && html`<button type="button" class="btn" onClick=${deactivate}>Deactivate</button>`}</div>`;
+    ${can.reset && html`<button type="button" class="btn" onClick=${() => store.resetLink(user)}>Password reset link</button>`}
+    ${can.deactivate && html`<button type="button" class="btn btn-danger" onClick=${deactivate}>Deactivate</button>`}</div>`;
 }
 
 export function UsersPage({ store }) {
@@ -56,6 +57,6 @@ export function UsersPage({ store }) {
     </form>
     <input class="settings-text-input" readonly hidden=${!shown} aria-label="Invitation link" value=${shown?.url || ''} ref=${link} />
     <p class="settings-intro invite-link-hint" hidden=${!shown?.hint}>${shown?.hint || ''}</p>
-    <div class="user-members">${members && html`<h4>Project members</h4>${members.map(user => html`<${MemberRow} key=${user.id} store=${store} user=${user} />`)}`}</div>
+    <div class="user-members">${members && html`<h4>Project members</h4>${members.map(user => html`<${MemberRow} key=${user.id} store=${store} user=${user} members=${members} />`)}`}</div>
     <div class="user-accounts">${accounts && store.globalAdmin && html`<h4>Accounts</h4>${uniqueAccounts(accounts).map(user => html`<${AccountRow} key=${user.id} store=${store} user=${user} />`)}`}</div>`;
 }

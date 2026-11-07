@@ -102,6 +102,18 @@ function Plan({ disk, plan }) {
     : plan.done ? html`<p class="health-disk-summary">${plan.done}</p>` : html`<${Preview} disk=${disk} plan=${plan} />`)}</div>`;
 }
 
+// The rows of the per-project bars. The projects alone rarely add up to the total (the database, sounds and logs belong to none), so the rest is a row of its
+// own, "Other", and the parts then sum to the total shown above. A bar is drawn from 4% of its track, so a tiny share is still visible, and not at all for nothing.
+export function projectRows(report, peak) {
+  const rows = (report.projects || []).map(project => ({ id: project.project_id, name: project.name || project.project_id, bytes: project.bytes,
+    title: `Attachments ${formatBytes(project.attachments)} · Worktrees ${formatBytes(project.worktrees)}`, share: 0 }));
+  const rest = (report.total_bytes || 0) - rows.reduce((sum, row) => sum + row.bytes, 0);
+  if (rest > 0) rows.push({ id: '', name: 'Other', bytes: rest, title: 'Database, sounds, logs and anything that belongs to no project', share: 0 });
+  const top = Math.max(peak, rest, 1);
+  for (const row of rows) row.share = row.bytes > 0 ? Math.max(4, Math.round(row.bytes / top * 100)) : 0;
+  return rows;
+}
+
 export function DiskSection({ disk }) {
   const report = disk.report.value, plan = disk.plan.value;
   if (!report) return html`<section class="health-disk" id="health-disk" aria-label="Disk usage" hidden></section>`;
@@ -111,8 +123,8 @@ export function DiskSection({ disk }) {
     <div class="health-disk-head"><strong>Disk</strong><span class="health-disk-total">${formatBytes(report.total_bytes)}</span><button type="button" class="btn health-disk-clean" onClick=${() => disk.preview()}>Clean now</button></div>
     ${report.low_disk && html`<p class="health-disk-warning">${`Only ${formatBytes(report.free_bytes)} free on this disk.`}</p>`}
     ${(report.warnings || []).map(warning => html`<p class="health-disk-warning">${warning}</p>`)}
-    ${report.projects?.length ? html`<ul class="health-disk-projects" aria-label="Disk used by project">${report.projects.map(project => html`<li data-project=${project.project_id} title=${`Attachments ${formatBytes(project.attachments)} · Worktrees ${formatBytes(project.worktrees)}`}>
-      <span class="health-disk-name">${project.name || project.project_id}</span><span class="health-disk-bar" style=${`--share:${Math.max(2, Math.round(project.bytes / peak * 100))}%`}></span><span class="health-disk-size">${formatBytes(project.bytes)}</span></li>`)}</ul>` : null}
+    ${report.projects?.length ? html`<ul class="health-disk-projects" aria-label="Disk used by project">${projectRows(report, peak).map(row => html`<li data-project=${row.id} title=${row.title}>
+      <span class="health-disk-name">${row.name}</span><span class="health-disk-bar" style=${`--share:${row.share}%`}></span><span class="health-disk-size">${formatBytes(row.bytes)}</span></li>`)}</ul>` : null}
     <details class="health-disk-details"><summary>Breakdown</summary>
       <ul class="health-disk-kinds">${(report.categories || []).map(category => html`<li><span>${category.label}</span><span class="health-disk-size">${formatBytes(category.bytes)}</span></li>`)}</ul>
       ${report.machines?.length ? html`<h4>Agent logs on other machines</h4><ul class="health-disk-machines" aria-label="Agent logs on other machines">${report.machines.map(machine => html`<li data-machine=${machine.machine_id}><span>${machine.name || machine.machine_id}</span>

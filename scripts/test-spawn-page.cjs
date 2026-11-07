@@ -163,22 +163,39 @@ async function main() {
     await free.close(); await page.close();
   }
 
-  // A singleton-writer role finds the room's folder held by another live agent: the dialog says so, and that the new one starts in a worktree of
-  // its own; Spawn stays available. Another role, or a Git worktree for the room, is free of it.
+  // A singleton-writer role finds the room's folder held by another live agent. That only matters when no worktree can be made for the newcomer (a
+  // folder that is not a Git repository): then the dialog says so in plain words, and Spawn stays available. With a worktree available, with another role,
+  // or with a worktree ticked for the room, there is nothing to say.
   {
     const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
-    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles }), withCard: true });
+    const hint = page => page.evaluate(() => ({ text: document.querySelector('#spawn-writer-hint').textContent, hidden: document.querySelector('#spawn-writer-hint').hidden, off: document.querySelector('#spawn-form button[type=submit]').disabled }));
+    const free = await mount({ auto: stable({ 'GET /api/roles': writerRoles }), withCard: true });
+    await open(free);
+    await free.evaluate(() => window.__opening); await settle(free);
+    assert.equal((await hint(free)).hidden, true, 'a worktree can be made: the newcomer gets one, so nothing blocks and nothing is said');
+    await free.close();
+    const refused = machines.machines.map(machine => (machine.id === 'm1' ? { ...machine, project_worktree: { ok: false, reason: 'the folder is not a git repository' } } : machine));
+    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles, 'GET /api/machines?project_id=p1': { machines: refused } }), withCard: true });
     await open(page);
     await page.evaluate(() => window.__opening); await settle(page);
-    const hint = () => page.evaluate(() => ({ text: document.querySelector('#spawn-writer-hint').textContent, hidden: document.querySelector('#spawn-writer-hint').hidden, off: document.querySelector('#spawn-form button[type=submit]').disabled }));
-    const held = await hint();
-    assert.deepEqual([held.hidden, held.off, held.text.startsWith('ada is a writer in this room: if it holds the folder, a new writer starts in a worktree of its own')], [false, false, true], 'a writer role is told the room\'s live writer holds the folder, and can still be spawned');
+    const held = await hint(page);
+    assert.deepEqual([held.hidden, held.off, held.text], [false, false, 'ada is already working in this folder, and a separate copy of it cannot be made (the folder is not a git repository), so a new writer here will be refused until ada is stopped.'], 'with no worktree possible a writer role is told, in plain words, that the live writer holds the folder, and can still be tried');
     await select(page, 'role', 'lead');
-    assert.equal((await hint()).hidden, true, 'another role is not');
+    assert.equal((await hint(page)).hidden, true, 'another role is not');
     await select(page, 'role', 'worker');
-    await page.evaluate(() => { const box = document.querySelector('#spawn-form [name=worktree]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); });
-    assert.equal((await hint()).hidden, true, 'a worktree for the room is a checkout of its own');
+    assert.equal((await hint(page)).hidden, false);
+    // The worktree box that cannot be ticked looks disabled; the control height is one for the name, the selects and the dice.
+    assert.deepEqual(await page.evaluate(() => { const label = document.querySelector('#spawn-form .spawn-worktree-option'), box = label.querySelector('input'), words = label.querySelector('span'), note = label.querySelector('.spawn-worktree-note');
+      const heights = [...document.querySelectorAll('#spawn-form input:not([type=checkbox]):not([type=radio]), #spawn-form select, #spawn-name-dice')].filter(node => node.offsetParent).map(node => Math.round(node.getBoundingClientRect().height));
+      return { disabled: box.disabled, box: getComputedStyle(box).opacity, words: getComputedStyle(words).opacity, cursor: getComputedStyle(box).cursor, note: getComputedStyle(note).opacity, oneHeight: new Set(heights).size === 1 && heights.length >= 4 }; }),
+      { disabled: true, box: '0.5', words: '0.5', cursor: 'not-allowed', note: '1', oneHeight: true }, 'the disabled worktree box and its words are dimmed (its note is not), and every control is one height');
     await page.close();
+    const ticked = await mount({ auto: stable({ 'GET /api/roles': writerRoles }), withCard: true });
+    await open(ticked);
+    await ticked.evaluate(() => window.__opening); await settle(ticked);
+    await ticked.evaluate(() => { const box = document.querySelector('#spawn-form [name=worktree]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); });
+    assert.equal((await hint(ticked)).hidden, true, 'a worktree for the room is a checkout of its own');
+    await ticked.close();
   }
 
   // Answers meant for an earlier opening fill nothing: the roles of a dialog that was closed and opened again, a name that arrives after the
@@ -485,10 +502,21 @@ async function main() {
     await select(page, 'tool', '1');
     const menu = () => page.evaluate(() => ({ expanded: document.querySelector('#spawn-sessions-menu').getAttribute('aria-expanded'), itemShown: !!document.querySelector('#spawn-sessions')?.offsetParent, focus: document.activeElement?.id, dialog: document.querySelector('#spawn-dialog').open, inTitleRow: document.querySelector('#spawn-form .spawn-title-row').contains(document.querySelector('#spawn-sessions-menu')), button: [document.querySelector('#spawn-sessions-menu').getAttribute('aria-label'), document.querySelector('#spawn-sessions-menu').classList.contains('btn-icon'), document.querySelector('#spawn-sessions-menu').getAttribute('aria-haspopup')] }));
     assert.deepEqual(await menu().then(state => ({ ...state, focus: undefined })), { expanded: 'false', itemShown: false, focus: undefined, dialog: true, inTitleRow: true, button: ['More', true, 'menu'] }, 'at rest the title row has the ⋯ button and no entry');
+    await page.evaluate(async () => { const { trackInputModality } = await import('/js/input-modality.js'); trackInputModality(); });
     await page.focus('#spawn-sessions-menu'); await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.activeElement?.id === 'spawn-sessions');
     assert.deepEqual(await menu().then(state => ({ expanded: state.expanded, itemShown: state.itemShown, focus: state.focus, dialog: state.dialog })), { expanded: 'true', itemShown: true, focus: 'spawn-sessions', dialog: true }, 'the menu opens on its item');
-    assert.equal(await page.$eval('#spawn-sessions', node => node.textContent.trim()), 'Continue a session…');
+    assert.equal(await page.$eval('#spawn-sessions', node => node.textContent.trim()), 'Continue a Claude Code session…');
+    // The ring on the item is for the keyboard: opened with a click it is focused for the arrow keys but draws no outline.
+    const ring = () => page.$eval('#spawn-sessions', node => ({ style: getComputedStyle(node).outlineStyle, input: document.documentElement.dataset.input }));
+    assert.equal((await ring()).input, 'keyboard', 'opened with the keyboard: the page knows the last input was a key (the ring is the browser\'s own :focus-visible)');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.activeElement?.id === 'spawn-sessions-menu');
+    await page.click('#spawn-sessions-menu');
+    await page.waitForFunction(() => document.activeElement?.id === 'spawn-sessions');
+    assert.deepEqual(await ring(), { style: 'none', input: 'pointer' }, 'opened with a click: focused for the arrow keys, but no ring');
+    await page.keyboard.press('ArrowDown');
+    assert.equal((await ring()).input, 'keyboard', 'a key press switches back to the keyboard');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.activeElement?.id === 'spawn-sessions-menu');
     assert.deepEqual(await menu().then(state => ({ expanded: state.expanded, itemShown: state.itemShown, focus: state.focus, dialog: state.dialog })), { expanded: 'false', itemShown: false, focus: 'spawn-sessions-menu', dialog: true }, 'Escape closes the menu, keeps the dialog and returns the focus');

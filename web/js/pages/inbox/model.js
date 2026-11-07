@@ -127,6 +127,41 @@ export function recoveryResult(item) {
   return { text: humanize(item.result_text), raw: humanize(item.evidence || '') };
 }
 
+// One line of what went wrong, for the top of a recovery card, taken from the raw text a harness left when it gave no sentence of its own: the exit
+// code the process ended with, and the harness's own words from the JSON result inside the output when there are some; else the first line of the
+// text, cut short. The whole text goes behind the card's Details.
+export function evidenceSummary(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return '';
+  const exit = /^Process exited with code (-?\d+)/i.exec(clean);
+  let cause = '';
+  const result = /"result"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(clean);
+  if (result) { try { cause = JSON.parse(`"${result[1]}"`); } catch { cause = result[1]; } cause = cause.replace(/\s+/g, ' ').trim(); }
+  const cut = (value, length) => (value.length > length ? `${value.slice(0, length - 1).trimEnd()}…` : value);
+  if (exit) return cause ? `The agent's process exited with code ${exit[1]}: ${cut(cause, 160)}` : `The agent's process exited with code ${exit[1]}.`;
+  if (cause) return cut(cause, 200);
+  return cut(clean.split('\n').find(line => line.trim()).trim().replace(/\s+/g, ' '), 200);
+}
+
+// What a recovery card says: `summary` is the line shown first (the harness's sentence when it gave one, else a line made from its output, else what
+// is known about the turn), and `details` are the labelled texts folded behind the card's Details (the raw output when it says more than the summary,
+// and the diagnostic report), so the decision is on screen without scrolling past a wall of output.
+export function recoveryView(item) {
+  const result = recoveryResult(item);
+  const evidence = humanize(item.evidence || '');
+  const details = [];
+  let summary;
+  if (result) {
+    summary = result.text;
+    if (result.raw) details.push({ label: 'Raw output', text: result.raw });
+  } else {
+    summary = evidenceSummary(evidence) || evidenceText(item);
+    if (evidence && evidence.trim() !== summary) details.push({ label: 'Output', text: evidence });
+  }
+  if (item.diagnostic_report) details.push({ label: 'Diagnostic report', text: readableReport(item.diagnostic_report) });
+  return { summary, details };
+}
+
 export function evidenceText(item) {
   const result = recoveryResult(item);
   if (result) return result.text;

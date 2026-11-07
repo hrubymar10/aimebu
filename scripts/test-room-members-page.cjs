@@ -84,10 +84,24 @@ async function main() {
     assert.equal(agents[0], 'Agents (8)'); assert.equal(agents[1], 'Agents in this room');
     assert.deepEqual(agents[2][0], ['room-member-emoji:🔧', 'room-member-name:ada', 'room-member-role:Worker', 'room-member-state:Active · Working']);
     assert.deepEqual(agents[2].slice(1).map(row => row.map(cell => cell.replace(/^[a-z-]+:/, ''))), [
-      ['bert', 'reviewer', 'singleton', 'Active · Idle'], ['cleo', 'Worker', 'Not accepting · Idle'], ['dara', 'Worker', 'role removed', 'Stopped'], ['eli', 'Worker', 'Active · Lost'],
+      ['bert', 'reviewer', 'one holder', 'Active · Idle'], ['cleo', 'Worker', 'Not accepting · Idle'], ['dara', 'Worker', 'role removed', 'Stopped'], ['eli', 'Worker', 'Active · Lost'],
       ['gus', 'Worker', 'Interrupt requested · Working'], ['ivy', 'Worker', 'Interrupt requested · Interrupting'], ['old', 'Worker', 'Revoked']]);
-    assert.deepEqual(singletons, ['Singleton roles (3)', 'Singleton roles', [['room-member-emoji:🧭', 'room-member-name:Lead', 'room-member-state:held by zeno'], ['room-member-name:reviewer', 'room-member-state:held by rex (another room)'], ['room-member-name:Tester', 'room-member-state:vacant']]]);
+    assert.deepEqual(singletons, ['One-holder roles (3)', 'One-holder roles', [['room-member-emoji:🧭', 'room-member-name:Lead', 'room-member-state:held by zeno'], ['room-member-name:reviewer', 'room-member-state:held by rex (another room)'], ['room-member-name:Tester', 'room-member-state:vacant']]]);
     assert.equal(await page.$eval('#room-member-list .room-member-emoji', node => node.getAttribute('aria-hidden')), 'true');
+    await page.close();
+  }
+
+  // A singleton role whose agent is stopped is not "vacant" beside that agent in the list above it: the server says vacant (a new agent may take the role),
+  // the list names the stopped agent as the holder, marked stopped.
+  {
+    const page = await mount();
+    await load(page, 'r1');
+    await answer(page, 0, 200, { humans: [{ login: 'owner', role: 'owner' }], agents: [{ slug: 'opal', role_key: 'lead', role_label: 'Lead', singleton: true, desired: 'stopped', observed: 'stopped' }],
+      singletons: [{ role_key: 'lead', label: 'Lead', emoji: '👑', held_by: null }, { role_key: 'tester', label: 'Tester', held_by: null }] });
+    await page.evaluate(() => window.__loading);
+    const [, agents, singletons] = await groups(page);
+    assert.deepEqual(agents[2][0].map(cell => cell.replace(/^[a-z-]+:/, '')), ['opal', 'Lead', 'one holder', 'Stopped']);
+    assert.deepEqual(singletons[2].map(row => row.filter(cell => cell.startsWith('room-member-state')).map(cell => cell.replace(/^[a-z-]+:/, ''))), [['held by opal (stopped)'], ['vacant']], 'the stopped lead is named, a role nobody has stays vacant');
     await page.close();
   }
 

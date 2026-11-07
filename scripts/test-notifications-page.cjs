@@ -13,7 +13,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css"><link rel="stylesheet" href="/v2-only.css">${importMap}</head>
 <body><dialog id="settings-dialog" open><section id="settings-notifications" class="settings-section active"></section></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -80,7 +80,7 @@ async function main() {
     {
       const page = await mount();
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#settings-notifications').children].map(node => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}${node.getAttribute('aria-label') ? `[${node.getAttribute('aria-label')}]` : ''}`)),
-        ['h3', 'p', 'div[Inbox alerts]', 'div[Inbox sound]', 'p', 'p#notification-status']);
+        ['p', 'div[Inbox alerts]', 'div[Inbox sound]', 'p', 'p#notification-status']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-notifications .settings-row')].map(row => { const field = row.querySelector('input, select, button'); return [field.id, row.querySelector('label').htmlFor === field.id, field.getAttribute('aria-describedby') === `${field.id}-desc`, row.hidden]; })),
         [['notification-muted', true, true, false], ['notification-permission', true, true, false], ['notification-text', true, true, false], ['notification-sound', true, true, false], ['notification-volume', true, true, false], ['notification-sound-upload', true, true, false]]);
       assert.deepEqual(await page.evaluate(() => ({ options: [...document.querySelectorAll('#notification-sound option')].map(option => option.textContent), value: document.querySelector('#notification-sound').value, volume: [document.querySelector('#notification-volume').value, document.querySelector('#notification-volume-value').textContent,
@@ -112,6 +112,8 @@ async function main() {
     // The browser-notification button follows what the browser says, and asking changes it.
     {
       const page = await mount({ permission: 'default', asks: 'granted' });
+      const gap = await page.evaluate(() => document.querySelector('#notification-sound-preview').getBoundingClientRect().left - document.querySelector('#notification-sound').getBoundingClientRect().right);
+      assert.ok(gap >= 6, `the sound select and Preview are apart: ${gap}px`);
       const button = () => page.$eval('#notification-permission', el => [el.disabled, el.textContent]);
       assert.deepEqual(await button(), [false, 'Enable browser notifications']);
       await page.$eval('#notification-permission', el => el.click());
@@ -119,7 +121,7 @@ async function main() {
       assert.deepEqual([await button(), (await statuses(page)).at(-1)], [[true, 'Enabled'], 'Browser permission: granted.']);
       await page.close();
       const denied = await mount({ permission: 'denied' });
-      assert.deepEqual([await denied.$eval('#notification-permission', el => [el.disabled, el.textContent]), (await statuses(denied)).at(-1)], [[true, 'Enable browser notifications'], 'Browser permission: denied.']);
+      assert.deepEqual([await denied.$eval('#notification-permission', el => [el.disabled, el.textContent]), (await statuses(denied)).at(-1)], [[true, 'Blocked in browser settings'], 'Browser permission: denied.']);
       await denied.close();
       const refused = await mount({ permission: 'default', asks: 'throws' });
       await refused.$eval('#notification-permission', el => el.click());

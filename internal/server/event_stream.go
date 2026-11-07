@@ -25,7 +25,29 @@ func (s *Server) batch(ctx context.Context, user string, after, through int64) (
 	if query == nil {
 		query = s.Store.EventsBatchAfter
 	}
-	return retryBusy(ctx, func() ([]store.Event, error) { return query(ctx, user, after, through, eventBatchSize) })
+	events, err := retryBusy(ctx, func() ([]store.Event, error) { return query(ctx, user, after, through, eventBatchSize) })
+	if err != nil {
+		return nil, err
+	}
+	// The events the system-events feed shows carry who their ids are (see store.Event.Names). Only those: naming every message and receipt of a busy room
+	// would be two more queries per poll for nobody.
+	var feed []store.Event
+	var at []int
+	for i, event := range events {
+		if store.IsSystemEventKind(event.Kind) {
+			feed = append(feed, event)
+			at = append(at, i)
+		}
+	}
+	if len(feed) > 0 {
+		if err := s.Store.NameEvents(ctx, feed); err != nil {
+			return nil, err
+		}
+		for k, i := range at {
+			events[i].Names = feed[k].Names
+		}
+	}
+	return events, nil
 }
 
 func retryBusy[T any](ctx context.Context, fn func() (T, error)) (T, error) {

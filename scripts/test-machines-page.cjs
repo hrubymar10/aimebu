@@ -80,7 +80,7 @@ async function main() {
     {
       const page = await mount({ auto: {} });
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#settings-machines').children].map(node => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}`)),
-        ['h3', 'p', 'div', 'p#machines-error', 'p#machines-note', 'div#machines-list']);
+        ['p', 'div', 'p#machines-error', 'p#machines-note', 'div#machines-list'], 'the page starts with its own text: the dialog header already names the section');
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#machines-list').textContent, document.querySelector('#machine-add').hidden, document.querySelector('#machine-add').disabled, document.querySelector('#machines-error').getAttribute('role'), document.querySelector('#machines-note').getAttribute('role')]),
         ['Loading machines…', false, false, 'alert', 'status']);
       await answer(page, await waitRequest(page, 'GET', '/api/machines'), 200, { machines: [host, pending, away, old] });

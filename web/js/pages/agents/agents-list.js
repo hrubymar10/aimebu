@@ -46,9 +46,14 @@ function CopyButton({ value, label, target }) {
   return html`<${IconButton} name=${state === 'check' ? 'check' : 'copy'} label=${state === 'check' ? 'Copied' : state === 'failed' ? 'Copy failed: press Ctrl or ⌘ C' : copyLabel} className="profile-copy" onClick=${click} />`;
 }
 
+// A path or an id is cut at its separators, never in the middle of a name: a break opportunity after each of / - _ . (the characters of the text itself are
+// untouched, so selecting and copying give the same string).
+const BREAKS = new Set(['/', '-', '_', '.']);
+export const breakable = text => String(text).split(/([/\-_.])/).filter(part => part !== '').flatMap(part => (BREAKS.has(part) ? [part, html`<wbr />`] : [part]));
+
 function Fact({ label, value, mono, copy }) {
   const target = useRef(null);
-  return html`<div class="profile-fact"><span class="profile-fact-label">${label}</span>${mono ? html`<code class="profile-fact-value" ref=${target}>${String(value)}</code>` : html`<strong class="profile-fact-value" ref=${target}>${String(value)}</strong>`}${copy && html`<${CopyButton} value=${value} label=${label} target=${target} />`}</div>`;
+  return html`<div class=${mono ? 'profile-fact profile-fact-mono' : 'profile-fact'}><span class="profile-fact-label">${label}</span>${mono ? html`<code class="profile-fact-value" ref=${target}>${breakable(value)}</code>` : html`<strong class="profile-fact-value" ref=${target}>${String(value)}</strong>`}${copy && html`<${CopyButton} value=${value} label=${label} target=${target} />`}</div>`;
 }
 
 function Output({ agent, state, store }) {
@@ -95,7 +100,7 @@ export class AgentCard extends Component {
         <div class="agent-card-actions agent-quick"><${QuickButton} className="agent-private" label=${dm} icon="dm" onClick=${() => api.onPrivate(agent)} />
           <${QuickButton} className="agent-pause" label="Pause" icon="pause" disabled=${reason('act-pause').disabled} onClick=${() => api.store.control(agent.id, 'pause')} />
           <${QuickButton} className="agent-stop icon-btn-danger" label="Stop" icon="stop" disabled=${reason('act-stop').disabled} onClick=${() => api.store.control(agent.id, 'stop')} />
-          <${IconButton} name=${expanded ? 'close' : 'chevron-right'} label=${expanded ? 'Close agent profile' : 'Open agent profile'} className="agent-expand" aria-expanded=${String(expanded)} onClick=${toggle} /></div></div>
+          ${!expanded && html`<${IconButton} name="chevron-right" label="Open agent profile" className="agent-expand" aria-expanded="false" onClick=${toggle} />`}</div></div>
       <small class="agent-meta">${`${harnessName(agent.tool) || 'unknown'} · ${agent.model || 'unknown'}`}</small>
       <small class="agent-role-update">${agent.role_updated ? 'Role updated · respawn to apply' : ''}</small>
       <div class="agent-health">${(agent.health_flags || []).map((flag, index) => html`<span key=${`${flag.code}${index}`} class=${`health-flag health-${flag.code}`} title=${healthLabel(flag)}>${healthLabel(flag)}</span>`)}</div>
@@ -104,7 +109,7 @@ export class AgentCard extends Component {
       <small class="agent-boundary-grants" hidden=${grants.hidden}>${grants.text}</small>
       <div class="agent-context" title=${context.title} aria-label=${`Memory: ${context.title}`}><span>Memory</span><span class="agent-context-track" hidden=${!context.known}><span class="agent-context-fill" style=${`width:${context.width}`}></span></span><span class="agent-context-value">${context.value}</span></div>
       <${LiveChip} store=${api.store} live=${live} />
-      <${IconButton} name="health" label="Recovery needed" className="agent-recovery" hidden=${!agent.recovery_block} onClick=${() => api.onRecovery(agent)} />
+      <button type="button" class="btn agent-recovery" title="This agent needs a decision: open it in the Inbox" hidden=${!agent.recovery_block} onClick=${() => api.onRecovery(agent)}><span class="icon-mask icon-mask-health" aria-hidden="true"></span> Review in Inbox</button>
       <div class="agent-profile-facts">${expanded && html`<${Profile} agent=${agent} profile=${profile} output=${output} readOutput=${readOutput} store=${api.store} />`}</div>
       <div class="agent-actions">${actions.map(action => html`<button key=${action.name} type="button" class=${`btn-icon ${action.name === 'act-stop' || action.name === 'remove' ? 'icon-btn-danger ' : ''}agent-act agent-${action.name}`} disabled=${action.disabled} title=${action.title} aria-label=${action.label} aria-describedby=${action.disabled ? `agent-hint-${agent.id}-${action.name}` : null}
         onClick=${() => ({ message: () => api.onPrivate(agent), 'act-pause': () => api.store.control(agent.id, 'pause'), 'act-stop': () => api.store.control(agent.id, 'stop'), switch: () => api.openSwitch(agent.id), reactivate: () => api.store.control(agent.id, 'reactivate'), remove: () => api.store.remove(agent) })[action.name]()}><span class=${`icon-mask icon-mask-${{ message: 'message', 'act-pause': 'pause', 'act-stop': 'stop', switch: 'switch', reactivate: 'play', remove: 'trash' }[action.name]}`} aria-hidden="true"></span></button>`)}</div>
@@ -115,8 +120,7 @@ export class AgentCard extends Component {
 function Human({ human, kind, api }) {
   const mine = human.id === currentUser;
   return html`<article class=${mine ? 'agent-card agent-card-compact human-card is-you' : 'agent-card agent-card-compact human-card'} data-human-id=${human.id}><div class="agent-id agent-title"><span class="agent-online-dot active" aria-hidden="true" data-state="idle"></span>
-    <img class="harness-icon agent-harness-icon" src="/icons/human.svg" alt="" title="human" aria-hidden="true" /><span class="agent-id-text agent-name human-name" ...${mine ? { title: 'You' } : {}}>${human.login}</span><small class="human-role">${human.role || ''}</small>
-    <div class="agent-card-actions agent-quick">${!mine && kind !== 'dm' && html`<${QuickButton} className="human-dm" label=${`Message ${human.login} privately`} icon="dm" onClick=${() => api.onPrivateHuman?.(human)} />`}</div></div></article>`;
+    <img class="harness-icon agent-harness-icon" src="/icons/human.svg" alt="" title="human" aria-hidden="true" /><span class="agent-id-text agent-name human-name" ...${mine ? { title: 'You' } : {}}>${human.login}</span><div class="agent-card-actions agent-quick">${!mine && kind !== 'dm' && html`<${QuickButton} className="human-dm" label=${`Message ${human.login} privately`} icon="dm" onClick=${() => api.onPrivateHuman?.(human)} />`}</div><small class="human-role">${human.role || ''}</small></div></article>`;
 }
 
 export function HumansList({ store, api }) {

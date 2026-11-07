@@ -17,5 +17,8 @@ export const soundPath = sound => `/api/sounds/${encodeURIComponent(sound.id.sli
 
 // What the browser-notification button shows and whether it can be pressed, from what the browser offers.
 export function permissionView(available, permission) {
-  return { disabled: !available || permission !== 'default', label: available && permission === 'granted' ? 'Enabled' : 'Enable browser notifications' };
+  if (!available) return { disabled: true, label: 'Not available in this browser' };
+  if (permission === 'granted') return { disabled: true, label: 'Enabled' };
+  if (permission === 'denied') return { disabled: true, label: 'Blocked in browser settings' };
+  return { disabled: false, label: 'Enable browser notifications' };
 }

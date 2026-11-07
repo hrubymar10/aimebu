@@ -21,7 +21,7 @@ const rules = load('macro-import.js', 'parseMacroImport, describeMerge, isMacroK
 const plain = value => JSON.parse(JSON.stringify(value));
 const macros = { greet: 'Hello', bye: 'Goodbye' };
 
-assert.equal(m.label('greet'), '<GREET>');
+assert.equal(m.label('greet'), '<greet>');
 
 // Unsaved: any text in a new macro; a change from the stored key or body while editing.
 assert.equal(m.formDirty(m.blankForm(), null, macros), false);

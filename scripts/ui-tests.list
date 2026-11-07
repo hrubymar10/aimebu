@@ -17,6 +17,7 @@ node scripts/test-notifications-page.cjs
 node scripts/test-usages-page.cjs
 node scripts/test-quota-page.cjs
 node scripts/test-users-page.cjs
+node scripts/test-settings-phone-page.cjs
 node scripts/test-machines-page.cjs
 node scripts/test-project-page.cjs
 node scripts/test-claude-import-page.cjs
@@ -46,3 +47,4 @@ node scripts/test-telemetry-page.cjs
 node scripts/test-phone-pass-page.cjs
 node scripts/test-offline-page.cjs
 node scripts/test-bundle-page.cjs
+node scripts/test-hc-page.cjs

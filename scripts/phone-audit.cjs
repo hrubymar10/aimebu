@@ -66,16 +66,19 @@ function audit(MIN) {
   article.classList.remove('actions-open');
 
   // Settings navigation
-  const dialog = document.querySelector('#settings-dialog'); dialog.setAttribute('open', '');
+  const dialog = document.querySelector('#settings-dialog'); dialog.setAttribute('open', ''); dialog.dataset.view = 'list'; // a phone's first screen: the list of sections
   const tabs = dialog.querySelector('nav'); tabs.style.height = ''; 
-  const tabButtons = [...tabs.querySelectorAll('button')].filter(button => !button.hidden);
+  const tabButtons = [...tabs.querySelectorAll('button:not(.settings-nav-close)')].filter(button => !button.hidden);
   const sample = document.createElement('button'); sample.className = 'settings-nav-item'; sample.textContent = 'Sample extra tab'; tabs.append(sample);
-  const tabsRect = box(tabs), contentRect = box(dialog.querySelector('.settings-section.active') || dialog.querySelector('.settings-section'));
-  const vertical = new Set([...tabs.querySelectorAll('button')].filter(button => box(button).width).map(button => Math.round(box(button).left))).size === 1;
+  const tabsRect = box(tabs);
+  const vertical = new Set([...tabs.querySelectorAll('button:not(.settings-nav-close)')].filter(button => box(button).width).map(button => Math.round(box(button).left))).size === 1;
   if (!vertical) findings.push(`settings: the tab list is not a vertical column (${tabButtons.length + 1} tabs, nav ${Math.round(tabsRect.width)}x${Math.round(tabsRect.height)})`);
   for (const button of tabs.querySelectorAll('button')) { const rect = box(button); if (rect.width && Math.min(rect.width, rect.height) < MIN) findings.push(`settings: tab ${name(button)} is ${Math.round(rect.width)}x${Math.round(rect.height)}`); if (rect.right > tabsRect.right + 1) findings.push(`settings: tab ${name(button)} is clipped by the nav`); }
+  sample.remove();
+  dialog.dataset.view = 'section'; // and the second: a section with the whole width
+  const contentRect = box(dialog.querySelector('.settings-section.active') || dialog.querySelector('.settings-section'));
   if (contentRect.width < 200) findings.push(`settings: content column is only ${Math.round(contentRect.width)}px wide`);
-  sample.remove(); dialog.removeAttribute('open');
+  dialog.removeAttribute('open');
 
   // Code block copy button must not sit on the code text, even when the line scrolls
   const pre = document.querySelector('.chat-msg[data-fixture=plain] .md-codeblock pre'), copy = pre.closest('.md-codeblock').querySelector('.md-copy-btn'), code = pre.querySelector('code');

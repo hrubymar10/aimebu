@@ -88,16 +88,17 @@ async function main() {
       const read = scope => page.$$eval(`#settings-users ${scope} .user-row`, rows => rows.map(row => ({ login: row.querySelector('strong').textContent, off: row.querySelector('span').textContent, badge: row.querySelector('.user-badge')?.textContent || null, toggle: row.querySelector('.user-admin-toggle input')?.checked ?? null,
         buttons: [...row.querySelectorAll('button')].map(b => b.textContent || b.getAttribute('aria-label')), select: row.querySelector('select')?.value ?? null })));
       assert.deepEqual(await read('.user-members'), [
-        { login: 'owner', off: '', badge: null, toggle: null, buttons: ['Remove owner from this project'], select: 'owner' },
+        { login: 'owner', off: '', badge: null, toggle: null, buttons: ['You cannot remove yourself from the project'], select: 'owner' },
         { login: 'bob', off: '', badge: null, toggle: null, buttons: ['Remove bob from this project'], select: 'viewer' },
         { login: 'off', off: 'Deactivated', badge: null, toggle: null, buttons: ['Remove off from this project'], select: 'operator' }]);
       assert.deepEqual(await read('.user-accounts'), [
-        { login: 'owner', off: '', badge: 'Owner', toggle: null, buttons: ['Reset link'], select: null },
-        { login: 'bob', off: '', badge: null, toggle: false, buttons: ['Reset link', 'Deactivate'], select: null },
-        { login: 'amy', off: '', badge: 'Admin', toggle: true, buttons: ['Reset link', 'Deactivate'], select: null },
+        { login: 'owner', off: '', badge: 'Owner', toggle: null, buttons: ['Password reset link'], select: null },
+        { login: 'bob', off: '', badge: null, toggle: false, buttons: ['Password reset link', 'Deactivate'], select: null },
+        { login: 'amy', off: '', badge: null, toggle: true, buttons: ['Password reset link', 'Deactivate'], select: null },
         { login: 'off', off: 'Deactivated', badge: null, toggle: null, buttons: [], select: null }], 'an account is listed once; the owner is never deactivated and a deactivated account has no actions');
       assert.deepEqual(await page.$$eval('#settings-users h4', nodes => nodes.map(node => node.textContent)), ['Project members', 'Accounts']);
-      assert.deepEqual(await page.$eval('#settings-users .user-members .btn-icon', el => [el.title, el.querySelector('.icon-mask-trash') !== null, el.classList.contains('btn-danger')]), ['Remove owner from this project', true, true]);
+      assert.deepEqual(await page.$eval('#settings-users .user-members .btn-icon', el => [el.title, el.querySelector('.icon-mask-trash') !== null, el.classList.contains('btn-danger')]), ['You cannot remove yourself from the project', true, true]);
+      assert.deepEqual(await page.$$eval('#settings-users .user-members .btn-icon', els => els.map(el => el.disabled)), [true, false, false], 'your own row (and the last owner) cannot be removed; the others can');
       await page.close();
     }
     // Choosing another project reads its members; a role change and a removal write, then read the lists again.
@@ -177,11 +178,12 @@ async function main() {
       const page = await mount({ auto: { ...everything, 'POST /api/invites': { url: 'https://aimebu.example/#invite=aui_reset' }, 'POST /api/users/usr_bob/deactivate': {} } });
       await ready(page);
       const bobRow = await rowOf(page, '.user-accounts', 'bob');
-      await bobRow.$$eval('button', buttons => buttons.find(b => b.textContent === 'Reset link').click());
+      await bobRow.$$eval('button', buttons => buttons.find(b => b.textContent === 'Password reset link').click());
       await page.waitForFunction(() => !document.querySelector('input[aria-label="Invitation link"]').hidden);
       assert.deepEqual(await page.evaluate(() => { const input = document.querySelector('input[aria-label="Invitation link"]'); return [input.value, input.readOnly, document.activeElement === input || input.selectionEnd - input.selectionStart === input.value.length, document.querySelector('.invite-link-hint').hidden]; }),
         ['https://aimebu.example/#invite=aui_reset', true, true, true]);
       assert.deepEqual((await calls(page, 'POST'))[0], ['/api/invites', { kind: 'reset', target_user_id: 'usr_bob' }]);
+      assert.equal(await bobRow.$$eval('button', buttons => buttons.find(b => b.textContent === 'Deactivate').classList.contains('btn-danger')), true, 'Deactivate is a danger action');
       await bobRow.$$eval('button', buttons => buttons.find(b => b.textContent === 'Deactivate').click());
       assert.ok((await page.$eval('#app-dialog', el => el.textContent)).includes('Deactivate bob across all projects?'));
       await page.$eval('#app-dialog .app-dialog-cancel', el => el.click());

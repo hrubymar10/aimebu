@@ -260,6 +260,18 @@ async function main() {
     const hovered = await measure();
     assert.deepEqual([hovered.menu, hovered.add, hovered.extra, hovered.overlay], [true, true, 0, ['absolute', '1', 'auto']]);
     assert.ok(idle.badges.length > 0, 'the project row has a badge to keep in place');
+    // The controls have a slot of their own at the end of the name: shown, they cover the name's tail and nothing else (no badge, not the preview line), and they
+    // open from the slot, so a short name does not push them over the row's badges.
+    const overlap = () => page.$eval('[data-room-id=rm_ah] > .room-item', row => {
+      const box = node => { const rect = node.getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }; };
+      const actions = box(row.querySelector('.room-item-actions')), name = box(row.querySelector('.room-item-name'));
+      const hits = [...row.querySelectorAll('.room-item-count, .room-item-attention, .room-item-unread, .room-health, .room-muted, .room-item-preview')].filter(node => node.getBoundingClientRect().width > 0)
+        .filter(node => { const other = box(node); return actions.left < other.right && other.left < actions.right && actions.top < other.bottom && other.top < actions.bottom; }).map(node => node.className);
+      return { hits, actionsRight: actions.right, nameRight: name.right };
+    });
+    const shown = await overlap();
+    assert.deepEqual(shown.hits, [], `the hover controls cover no badge and no preview: ${JSON.stringify(shown)}`);
+    assert.ok(shown.actionsRight <= shown.nameRight + 1, `they end where the name ends: ${JSON.stringify(shown)}`);
     assert.deepEqual([hovered.rowHeight, hovered.info, hovered.nameWidth, hovered.badges], [idle.rowHeight, idle.info, idle.nameWidth, idle.badges], 'showing the controls changes neither the row nor its columns: they are laid over its end');
     await page.mouse.move(1100, 700);
     await page.focus('[data-room-id=rm_ah] .room-item-name'); await overlayShown();
@@ -369,6 +381,17 @@ async function main() {
     assert.equal((await active()).previews.length, 1);
     assert.equal((await active()).previews[0][0], 'rm_gen');
     assert.deepEqual(await rows(page).then(list => list.find(row => row[0] === 'rm_gen').slice(2, 3)), [''], 'the open room counts as read');
+    // While the Inbox (a view that is no room) is open, no room is the marked one: its highlight and its accent name colour are gone, and come back with the room.
+    const mark = () => page.$eval('[data-room-id=rm_gen] > .room-item', row => ({ background: getComputedStyle(row).backgroundColor, name: getComputedStyle(row.querySelector('.room-item-name')).color }));
+    const marked = await mark();
+    await page.evaluate(() => document.querySelector('#app-view').classList.add('inbox-open'));
+    const unmarked = await mark();
+    assert.ok(unmarked.background === 'rgba(0, 0, 0, 0)' && unmarked.background !== marked.background && unmarked.name !== marked.name, `the open room is not highlighted under the Inbox: ${JSON.stringify({ marked, unmarked })}`);
+    await page.evaluate(() => document.querySelector('#app-view').classList.remove('inbox-open'));
+    assert.deepEqual(await mark(), marked, 'the highlight returns with the room view');
+    // The open room says so to assistive tech, and the member count says what it counts.
+    assert.deepEqual(await page.$$eval('.room-item-name[aria-current]', nodes => nodes.map(node => node.closest('[data-room-id]').dataset.roomId)), ['rm_gen']);
+    assert.equal(await page.$eval('[data-room-id=rm_gen] .room-item-count', node => node.getAttribute('aria-label')), '2 members');
     await page.evaluate(() => { localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1'); document.dispatchEvent(new CustomEvent('aimebu:sidebar-preview')); });
     assert.equal((await active()).previews.length > 5, true, 'every room previews');
     assert.equal((await active()).previews.find(item => item[0] === 'rm_api')[1], 'No messages yet');
@@ -477,6 +500,19 @@ async function main() {
       return { over, ellipsis: css.textOverflow === 'ellipsis' && css.overflow === 'hidden', truncated: name.scrollWidth > name.clientWidth, kinds, list: document.querySelector('#projects').scrollWidth <= document.querySelector('#projects').clientWidth };
     });
     assert.deepEqual([fit.over, fit.ellipsis, fit.truncated, fit.list], [[], true, true, true], `${label}: a row's badges stay inside it and the name is cut with an ellipsis: ${JSON.stringify(fit)}`);
+    // A row is as tall as its text: the project row, which has the fold chevron, is not taller than a row of one line without it (the chevron was 30px tall, a line
+    // of the name is 18px), and the name starts close to the icon, which is close to the chevron (it did not: two 10px gaps and a margin).
+    const sizes = await page.evaluate(() => {
+      const row = document.querySelector('[data-room-id=rm_ah] > .room-item'), chevron = row.querySelector('.room-collapse').getBoundingClientRect(), icon = row.querySelector('.room-item-icon').getBoundingClientRect(), name = row.querySelector('.room-item-name').getBoundingClientRect();
+      return { row: Math.round(row.getBoundingClientRect().height), line: Math.round(row.querySelector('.room-item-top').getBoundingClientRect().height), chevronToIcon: Math.round(icon.left - chevron.right), iconToName: Math.round(name.left - icon.right), chevronHeight: Math.round(chevron.height) };
+    });
+    assert.ok(sizes.row <= sizes.line + 24 && sizes.chevronToIcon <= 8 && sizes.iconToName <= 8 && sizes.chevronHeight <= 20, `${label}: a row is as tall as its text, and chevron, icon and name sit close: ${JSON.stringify(sizes)}`);
+    const drawer = await page.evaluate(() => {
+      const row = document.querySelector('[data-room-id=rm_ah] > .room-item'), chevron = row.querySelector('.room-collapse').getBoundingClientRect(), icon = row.querySelector('.room-item-icon').getBoundingClientRect();
+      return { gap: Math.round(icon.left + icon.width / 2 - (chevron.left + chevron.width / 2)), close: getComputedStyle(document.querySelector('#rooms-close')).display, closeLabel: document.querySelector('#rooms-close').getAttribute('aria-label') };
+    });
+    if (label === 'phone') assert.ok(drawer.gap <= 28 && drawer.close !== 'none' && drawer.closeLabel === 'Close rooms', `phone: the chevron sits next to its icon and the drawer has a close control: ${JSON.stringify(drawer)}`);
+    else assert.equal(drawer.close, 'none', 'a desktop width has no drawer, so no drawer close control');
     assert.deepEqual(fit.kinds, ['.room-health', '.room-item-attention', '.room-item-unread'], `${label}: the pills that ask for attention stay; the count and the mute bell give way when the row is that narrow: ${JSON.stringify(fit.kinds)}`);
     await page.close();
   }

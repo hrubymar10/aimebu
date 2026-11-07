@@ -181,3 +181,30 @@ func TestMessageDebugCapsBodyOnARuneBoundaryAndScopesEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestNameEventsResolvesAgentsAndUsers(t *testing.T) {
+	t.Parallel()
+	s, f, owner := recoveryFixture(t, false)
+	ctx := context.Background()
+	events := []Event{
+		{Kind: "provider_limit_detected", AgentID: f.agent.ID, PayloadJSON: "{}"},
+		{Kind: "user_invite_redeemed", PayloadJSON: `{"user_id":"` + owner + `","by":"usr_unknown"}`},
+		{Kind: "room_member_joined", AgentID: "agt_unknown", PayloadJSON: "not json but has _id\""},
+	}
+	if err := s.NameEvents(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+	agentName := events[0].Names[f.agent.ID]
+	if agentName == "" || !strings.Contains(agentName, "@") {
+		t.Fatalf("an agent is named slug@project: %q", agentName)
+	}
+	if events[1].Names[owner] != "owner" {
+		t.Fatalf("a user is named by login: %+v", events[1].Names)
+	}
+	if _, ok := events[1].Names["usr_unknown"]; ok {
+		t.Fatalf("an unknown id gets no name: %+v", events[1].Names)
+	}
+	if len(events[2].Names) != 0 {
+		t.Fatalf("unknown agent and bad payload: %+v", events[2].Names)
+	}
+}

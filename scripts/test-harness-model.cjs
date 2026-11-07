@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 
 assert.ok(!/^import /m.test(source), 'model.js stays import-free so it can run here');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { PROVIDERS_MAX, emptyProvider, editableProvider, addProvider, removeProvider, updateProvider, providersError, providersBody, providerInUse, removeWithModelsLabel, inUseMessage, keyState, suggestionState, addSuggestions, MODELS_MAX, familyName, harnessLabel, addFoundModels, detectionFailure, lines, pairs, harnessFromLauncher, harnessStatus, harnessTitle, persistedDefinition, formFromHarness, launcherBody, enabledBody, createBody, addModel, removeModel, setDefaultModel, updateModel, modelsError, initialModels, detectNotes, machineSummary, FAMILIES, tabTitle, staleModelsMessage, chosenHarness, tabKeyTarget, defaultLabel };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelCount, modelCount, PROVIDERS_MAX, emptyProvider, editableProvider, addProvider, removeProvider, updateProvider, providersError, providersBody, providerInUse, removeWithModelsLabel, inUseMessage, keyState, suggestionState, addSuggestions, MODELS_MAX, familyName, harnessLabel, addFoundModels, detectionFailure, lines, pairs, harnessFromLauncher, harnessStatus, harnessTitle, persistedDefinition, formFromHarness, launcherBody, enabledBody, createBody, addModel, removeModel, setDefaultModel, updateModel, modelsError, initialModels, detectNotes, machineSummary, FAMILIES, tabTitle, staleModelsMessage, chosenHarness, tabKeyTarget, defaultLabel };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -88,6 +88,7 @@ assert.equal(m.harnessFromLauncher(row).models_rev, '', 'a row without a revisio
 assert.ok(!('models_rev' in plain(m.persistedDefinition(m.harnessFromLauncher({ ...row, models_rev: 'r7' })))), 'the revision is never sent back with the harness definition');
 
 // The tab of a harness in the list beside the detail.
+assert.deepEqual([0, 1, 13].map(n => m.modelCount({ models: Array(n).fill({}) })), ['0 models', '1 model', '13 models']);
 assert.equal(m.tabTitle({ ...harness, label: 'Docker Codex' }), 'Docker Codex: Available, 1 models');
 assert.equal(m.tabTitle({ ...harness, enabled: false, models: [] }), 'harness-docker: Disabled, 0 models');
 assert.equal(m.chosenHarness([{ id: 'a' }, { id: 'b' }], 'b'), 'b', 'the chosen harness stays chosen');

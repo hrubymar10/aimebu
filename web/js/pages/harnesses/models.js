@@ -204,6 +204,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
                 }}
               />
             </div>
+            <p class="harness-detail-roles-hint settings-desc">Default for: tick a role to make this model one of its spawn defaults (the number is its place in that role's list). With none ticked it is never picked automatically, but you can still choose it when you spawn by hand.</p>
             <div class="harness-detail-roles" role="group" aria-label=${`Default for roles: ${model.label || model.slug}`}>
               ${roles.map(role => html`
                 <${RoleSwitch} key=${role.id} role=${role} modelLabel=${model.label || model.slug} state=${roleState(role, model)} onToggle=${on => toggleRole(role, model, on)} />

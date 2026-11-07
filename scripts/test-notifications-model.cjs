@@ -24,6 +24,6 @@ assert.equal(m.soundPath(ping), '/api/sounds/abc%201', 'the path names the part 
 // The permission button: pressable only while the browser has not been asked.
 assert.deepEqual(plain(m.permissionView(true, 'default')), { disabled: false, label: 'Enable browser notifications' });
 assert.deepEqual(plain(m.permissionView(true, 'granted')), { disabled: true, label: 'Enabled' });
-assert.deepEqual(plain(m.permissionView(true, 'denied')), { disabled: true, label: 'Enable browser notifications' });
-assert.deepEqual(plain(m.permissionView(false, 'granted')), { disabled: true, label: 'Enable browser notifications' }, 'without the API nothing is enabled');
+assert.deepEqual(plain(m.permissionView(true, 'denied')), { disabled: true, label: 'Blocked in browser settings' });
+assert.deepEqual(plain(m.permissionView(false, 'granted')), { disabled: true, label: 'Not available in this browser' }, 'without the API nothing is enabled');
 console.log('notifications model tests passed');

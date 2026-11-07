@@ -5,6 +5,7 @@ import { confirmDialog } from '../../dialogs.js';
 import { setTelemetryUser } from '../../telemetry.js';
 
 export const ROLL_LABEL = 'Generate a new fingerprint';
+export const ROLL_LABEL_NAME = 'Use a random fingerprint instead';
 export const ROLL_CONFIRM = 'Rolling a new fingerprint turns off sending your user name and gives you a new anonymous id.';
 
 // How this person's reports name them: a random fingerprint by default (stored per person, not derived from the account); with the switch on, their
@@ -38,7 +39,7 @@ export function useIdentity(alive, report) {
   // The field shows what the reports carry now: the user name while that switch is on, otherwise the fingerprint (again after a roll or the switch off).
   const shown = identity ? (identity.send_name ? identity.login : identity.fingerprint) : '';
   const roll = async () => {
-    if (identity.send_name && !(await confirmDialog(ROLL_CONFIRM, { title: ROLL_LABEL, confirm: 'Roll' }))) return; // cancelled: nothing changes
+    if (identity.send_name && !(await confirmDialog(ROLL_CONFIRM, { title: ROLL_LABEL_NAME, confirm: 'Use a random fingerprint' }))) return; // cancelled: nothing changes
     await change('POST', '/api/me/telemetry/fingerprint', {}, () => 'You have a new fingerprint.');
   };
   const copy = async () => {
@@ -57,8 +58,8 @@ export function IdentityRows({ state, off, muted }) {
       <div class="settings-row-info"><label class="settings-label" for="telemetry-fingerprint">${identity?.send_name ? 'User name' : 'Fingerprint'}</label><span class="settings-desc" id="telemetry-fingerprint-desc">${identity?.send_name ? 'Your login name, which your reports carry while the switch below is on. Rolling turns it off and gives you a new random fingerprint.' : 'Random, kept for you only, and not derived from your account. Roll it to get a new one.'}</span></div>
       <div class="settings-control"><div class="settings-inline-control">
         <input class="settings-text-input" id="telemetry-fingerprint" aria-describedby="telemetry-fingerprint-desc" type="text" readonly disabled=${off} spellcheck="false" value=${shown} />
-        <${IconButton} id="telemetry-fingerprint-copy" name="copy" label=${identity?.send_name ? 'Copy user name' : 'Copy fingerprint'} disabled=${!identity || off} onClick=${copy} />
-        <${IconButton} id="telemetry-fingerprint-roll" name="dice" label=${ROLL_LABEL} disabled=${disabled} onClick=${roll} />
+        ${!identity?.send_name && html`<${IconButton} id="telemetry-fingerprint-copy" name="copy" label="Copy fingerprint" disabled=${!identity || off} onClick=${copy} />`}
+        <${IconButton} id="telemetry-fingerprint-roll" name="dice" label=${identity?.send_name ? ROLL_LABEL_NAME : ROLL_LABEL} disabled=${disabled} onClick=${roll} />
       </div></div>
     </div>
     <div class=${`settings-row${muted}`}>

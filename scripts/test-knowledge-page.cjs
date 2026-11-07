@@ -132,7 +132,9 @@ async function main() {
       await page.waitForFunction(() => window.__requests.some(request => request.method === 'POST'));
       assert.deepEqual((await calls(page, 'POST'))[0], [PROJECT, { body: 'A new fact' }]);
       await page.waitForFunction(() => document.querySelector('#knowledge-add').elements.body.value === '');
-      await page.$eval('.knowledge-record:first-child textarea', el => { el.value = 'Edited'; });
+      assert.equal(await page.$eval('.knowledge-record:first-child .btn-primary', el => el.disabled), true, 'Save waits for an edit');
+      await page.$eval('.knowledge-record:first-child textarea', el => { el.value = 'Edited'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.waitForFunction(() => !document.querySelector('.knowledge-record:first-child .btn-primary').disabled);
       await page.$eval('.knowledge-record:first-child .btn-primary', el => el.click());
       await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT'));
       assert.deepEqual((await calls(page, 'PUT'))[0], [`${PROJECT}/k1`, { body: 'Edited', rev: 2, scope_key: 'p1' }]);
@@ -156,6 +158,8 @@ async function main() {
       await opened(failing, 'project');
       await failing.evaluate(() => { const form = document.querySelector('#knowledge-add'); form.elements.body.value = 'x'; form.requestSubmit(); });
       await failing.waitForFunction(() => document.querySelector('#knowledge-error').textContent === 'Too long');
+      await failing.$eval('.knowledge-record:first-child textarea', el => { el.value = 'changed'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await failing.waitForFunction(() => !document.querySelector('.knowledge-record:first-child .btn-primary').disabled);
       await failing.$eval('.knowledge-record:first-child .btn-primary', el => el.click());
       await failing.waitForFunction(() => document.querySelector('#knowledge-error').textContent === 'Revision is stale');
       await failing.$eval('#knowledge-clean', el => el.click());

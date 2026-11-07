@@ -396,11 +396,11 @@ func inspect(path string, info os.FileInfo, accept func(cwd string) bool) (Sessi
 		ModifiedAt: info.ModTime().UTC(), Size: info.Size()}
 	switch {
 	case h.title != "":
-		session.Title = cleanTitle(h.title)
+		session.Title = readableTitle(h.title)
 	case h.last != "":
-		session.Title = cleanTitle(h.last)
+		session.Title = readableTitle(h.last)
 	default:
-		session.Title = cleanTitle(h.firstPrompt)
+		session.Title = readableTitle(h.firstPrompt)
 	}
 	return session, inspected
 }
@@ -459,6 +459,33 @@ func promptText(raw json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// readableTitle is cleanTitle for a prompt that may be the JSON an aimebu turn is handed on standard input ({"turn_id":…,"notes":[…],…}): that is
+// not something a person wrote, so it is shown as what it is, with the first message it carried when that can be read.
+func readableTitle(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "{") || !strings.Contains(trimmed, `"turn_id"`) {
+		return cleanTitle(text)
+	}
+	var turn struct {
+		TurnID string `json:"turn_id"`
+		Notes  []struct {
+			From string `json:"from"`
+			Body string `json:"body"`
+		} `json:"notes"`
+	}
+	if json.Unmarshal([]byte(trimmed), &turn) == nil && turn.TurnID != "" {
+		for _, note := range turn.Notes {
+			if body := cleanTitle(note.Body); body != "" {
+				if note.From != "" {
+					return cleanTitle("aimebu turn: " + note.From + ": " + body)
+				}
+				return cleanTitle("aimebu turn: " + body)
+			}
+		}
+	}
+	return "aimebu turn" // cut off (Claude shortens what it remembers of the last prompt) or without a message: still not shown as JSON
 }
 
 // cleanTitle makes a prompt fit one line: whitespace collapsed, control characters dropped, cut at TitleRunes.

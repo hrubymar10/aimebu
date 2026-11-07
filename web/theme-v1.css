@@ -110,6 +110,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
    room's own. */
 #room-info-dialog { box-sizing: border-box; width: min(96vw, 560px); height: 100dvh; max-height: 100dvh; margin: auto; padding: 0 20px 20px; border: 0; border-left: 1px solid var(--border); border-right: 1px solid var(--border); border-radius: 0; background: var(--bg-primary); box-shadow: 0 0 40px rgba(0, 0, 0, .5); overflow-y: auto; }
 #room-info-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+/* Below the top bar, not over it: the pane starts where the bar ends, on a desktop width (a phone's pane is the whole screen). */
+@media (min-width: 701px) { #room-info-dialog { height: calc(100dvh - 53px); max-height: calc(100dvh - 53px); margin: 53px auto 0; } }
 #room-info-dialog .room-info-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; margin: 0 -20px 16px; padding: 14px 20px 12px; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
 #room-info-dialog .room-info-header h2 { margin: 0; font-size: .9rem; font-weight: 600; }
 #room-info-close { flex: none; }
@@ -185,7 +187,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .thread-panel header { background: var(--bg-secondary); border-color: var(--border); }
 .thread-panel h2 { font-size: 14px; }
 .thread-entry { border-color: var(--border); }
-.thread-entry strong { color: var(--accent); }
+/* A reply in the thread looks like a message in the room: the same bubble and the same border (green for the viewer's own), the sender's name in
+   the accent colour, and bold text in the body as in the room, not link blue. */
+.thread-entry .chat-msg-from-name { color: var(--accent); }
+.thread-entry.thread-self .chat-msg-bubble { background: var(--bg-tertiary); border-color: var(--green); }
+.thread-entry.thread-self .chat-msg-bubble:hover { border-color: var(--green-text); }
+.thread-entry .chat-msg-body.md-rendered strong { color: var(--text-primary); }
 .thread-panel form { background: var(--bg-secondary); border-color: var(--border); }
 .thread-panel textarea { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
 
@@ -203,7 +210,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-role { color: var(--accent); font-size: 10px; }
 .agent-role-update { display: block; color: var(--warning); font-size: 10px; margin-top: 3px; }
 .agent-meta, .agent-activity { color: var(--text-muted); font-size: 10px; }
-.agent-recovery { color: var(--orange); }
+.agent-recovery { color: var(--orange); display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.agent-recovery[hidden] { display: none; }
 .agent-switch-status { margin: 4px 0; color: var(--orange); font-size: 11px; }
 .agent-actions { border-color: var(--border); flex-wrap: wrap; }
 .agent-context { display: flex; align-items: center; gap: 5px; margin: 4px 0; color: var(--text-secondary); font-size: 10px; }
@@ -249,7 +257,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .machine-harness-reason { color: var(--orange); }
 .machine-harness-form { display: grid; gap: 9px; }
 .machine-harness-enabled { display: flex; align-items: center; gap: 7px; font-size: 12px; }
-.machine-harness-enabled input { accent-color: var(--accent); }
+.machine-harness-enabled input { margin: 0; }
 .machine-harness-path-label { display: grid; gap: 5px; font-size: 11px; color: var(--text-secondary); }
 .machine-harness-path-label input, .machine-harness-path-label textarea, .machine-harness-path-label select { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: inherit; }
 .machine-harness-path-label textarea { min-height: 46px; resize: vertical; }
@@ -264,7 +272,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .harness-model-rows { display: grid; gap: 8px; }
 .harness-model-row { display: grid; grid-template-columns: auto minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: center; }
 .harness-model-default { display: flex; align-items: center; gap: 5px; min-width: 98px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; cursor: pointer; }
-.harness-model-default input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.harness-model-default input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
 .harness-model-default.is-default { color: var(--accent); font-weight: 600; }
 .harness-model-star { width: 16px; height: 16px; flex: none; fill: none; }
 .harness-model-default.is-default .harness-model-star { fill: var(--accent); }
@@ -293,9 +301,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 :has(> .btn) > .btn-icon:not(.edge-toggle) { width: 32px; height: 32px; }
 /* Settings → Harnesses: a list of harnesses beside the chosen one. */
 .harness-models .settings-desc:empty, .harness-detect-models:empty { display: none; }
-@media (min-width: 701px) {
-  #settings-dialog[data-section="harnesses"] .settings-pane { width: min(1120px, 96vw); }
-}
+/* One width for every section (v1's 760px, the pane's own rule): a page that wants more room (Harnesses) lays itself out in the room it has, so the dialog never
+   grows over the top bar. */
 #settings-dialog .harness-split .machine-harness-summary, #onboarding-harnesses .harness-split .machine-harness-summary { flex-direction: column; align-items: stretch; gap: 8px; }
 #settings-dialog .harness-split .machine-harness-summary .settings-control, #onboarding-harnesses .harness-split .machine-harness-summary .settings-control { justify-content: flex-start; }
 .harness-split { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); gap: 14px; align-items: start; }
@@ -319,7 +326,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .harness-detail-roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
 .harness-role-switch { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; font-size: 12px; cursor: pointer; }
 .harness-role-switch.is-on { background: var(--accent-dim); }
-.harness-role-switch input { margin: 0; accent-color: var(--accent); }
+.harness-role-switch input { margin: 0; }
 .harness-role-switch-position { margin-left: auto; color: var(--accent); font-size: 10px; font-weight: 700; }
 .harness-roles { display: grid; gap: 8px; margin-top: 22px; }
 .harness-roles h4, .harness-roles p { margin: 0; }
@@ -372,7 +379,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .project-settings-selector { display: grid; gap: 7px; max-width: 340px; margin: 22px 0; color: var(--text-secondary); font-size: 12px; }
 .project-settings-selector select { width: 100%; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); }
 .project-settings-toggle { display: flex; align-items: center; gap: 9px; color: var(--text-primary); font-size: 13px; }
-.project-settings-toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+.project-settings-toggle input { width: 16px; height: 16px; }
 .settings-risk { max-width: 540px; margin: 11px 0; color: var(--orange); font-size: 12px; line-height: 1.5; }
 #usages-error:empty { display: none; }
 #usages-list { display: grid; gap: 12px; }
@@ -462,6 +469,8 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 
 [data-theme$="light"] { color-scheme: light; --button-text: #ffffff; --overlay-shadow: #0002; }
 [data-theme$="dark"] { color-scheme: dark; --button-text: #ffffff; --overlay-shadow: #0008; }
+/* High contrast looks as v1's does where v1 has the element: v1's palette (v1.css), orange links, mentions and names in the dark theme, blue in the light one,
+   cyan outlines. v2-only elements are set in that palette. */
 [data-theme="high-contrast-dark"] { --button-text: #ffffff; --overlay-shadow: #fff4; }
 [data-theme="high-contrast-light"] { --button-text: #ffffff; }
 :is([data-theme="high-contrast-dark"], [data-theme="high-contrast-light"]) #build-version { opacity: 1; }
@@ -474,7 +483,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn) { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
 [data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn):hover { background: var(--bg-hover); color: var(--text-primary); }
 [data-theme="high-contrast-dark"] button:disabled { opacity: 1; background: var(--bg-primary); border-color: var(--border); color: var(--text-muted); }
-[data-theme="high-contrast-dark"] .reaction-pill[aria-pressed=true] { background: var(--bg-primary); }
+[data-theme="high-contrast-dark"] .reaction-pill[aria-pressed=true] { background: var(--accent-dim); }
 [data-theme="high-contrast-dark"] :is(button,input,textarea,select):focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
 /* Shared chat chrome follows the compact v1 layout. */
@@ -831,9 +840,11 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .usage-spark-line { stroke: currentColor; stroke-width: 1.25; stroke-linejoin: round; stroke-linecap: round; opacity: 0.85; }
 .usage-spark-dot { fill: currentColor; }
 
-/* Seen-by markers sit under every message at its right edge, 14px each (a deliberate change from v1, which right-aligns only the viewer's own). */
-.message-receipts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px; margin-top: 4px; padding: 0 2px 0 0; }
-.receipt-avatar { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: none; width: 14px; height: 14px; padding: 0; overflow: hidden; white-space: nowrap; line-height: 1; letter-spacing: -0.05em; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border); font-size: 6.5px; font-weight: 600; user-select: none; }
+/* Seen-by markers sit under every message at its right edge, 22px each (a deliberate change from v1, which right-aligns only the viewer's own): big
+   enough to read the two initials without squinting. The tooltip names who saw it. */
+.message-receipts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; margin-top: 4px; padding: 0 2px 0 0; }
+.receipt-avatar { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: none; width: 22px; height: 22px; padding: 0; overflow: hidden; white-space: nowrap; line-height: 1; letter-spacing: -0.02em; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-hover); font-size: 9.5px; font-weight: 600; user-select: none; }
+[data-theme^="high-contrast"] .receipt-avatar { border-color: var(--border); }
 
 /* Full-width messages (as in v1): no 75% cap and no shrink-wrap; the bubble fills the column. */
 /* The viewer's own messages sit on the right, as in v1: shrink-wrapped, at most 75% wide, the header line (name, #id, time) right-aligned
@@ -905,6 +916,8 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 /* Agent profile (v1): the opened member replaces the members list; the card is the profile. */
 .agents-panel.profile-open #agents-humans, .agents-panel.profile-open .agents-empty, .agents-panel.profile-open #spawn-open, .agents-panel.profile-open .agent-card:not(.expanded) { display: none; }
 #agent-profile-close { padding: 2px 8px; font-size: 16px; line-height: 1; }
+/* With a profile open the one way out is its back arrow, first in the header (it comes before the title in the page, so the focus order is the visual one): the panel's own hide controls (the edge arrow, the phone's close) wait until it is closed. */
+.agents-panel.profile-open #edge-agents, .agents-panel.profile-open #agents-close { display: none; }
 #agent-profile-close[hidden] { display: none; }
 .agent-card.expanded { cursor: default; padding: 10px; }
 .agent-card.expanded .agent-id-text { font-size: 13px; }
@@ -914,7 +927,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .profile-facts-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; align-items: baseline; }
 .profile-fact { display: contents; }
 .profile-fact-label { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
-.profile-fact-value { min-width: 0; overflow-wrap: anywhere; font-size: 11.5px; font-weight: 600; color: var(--text-primary); }
+.profile-fact-value { min-width: 0; overflow-wrap: break-word; font-size: 11.5px; font-weight: 600; color: var(--text-primary); }
 code.profile-fact-value { font: 400 11px/1.4 var(--font-mono); background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px; }
 .profile-copy { grid-column: 2; justify-self: start; min-height: 22px; padding: 1px 8px; font-size: 10px; }
 
@@ -1172,6 +1185,10 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
 .emoji-preview-text { display: flex; flex-direction: column; min-width: 0; }
 .emoji-preview-name, .emoji-preview-code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .emoji-preview-code { color: var(--text-secondary); font: 11px var(--font-mono); }
+.emoji-preview-name.emoji-preview-idle { font-weight: 400; color: var(--text-muted); }
+/* One border on the search field: its own, in the accent colour (2px with the shadow) while focused, not that and the page's outline ring beside it. */
+.emoji-search:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); } /* the border thickens; no second ring outside it */
+[data-theme="high-contrast-dark"] .emoji-search:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 .emoji-tones { flex: 0 0 auto; display: flex; gap: 1px; }
 .emoji-tone { width: 24px; height: 24px; padding: 0; font-size: 13px; line-height: 1; border-radius: 6px; }
 .emoji-tone[aria-pressed="true"] { border-color: var(--accent); background: var(--bg-hover); }
@@ -1240,13 +1257,18 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 
 /* The composer: the toolbar is a full-width row over the input; attach and emoji are its first items, quiet like the format buttons,
    and the bottom row is the input and send. The thread composer has no attach or emoji, so for it the toolbar is the same row. */
-.composer-toolbar > .attachment-picker-btn, .composer-toolbar > #emoji-button { flex: none; width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; display: inline-grid; place-items: center; border-color: transparent; background: transparent; box-shadow: none; color: var(--text-muted); }
-#composer .composer-toolbar > .attachment-picker-btn, #composer .composer-toolbar > #emoji-button { width: 26px; height: 26px; min-height: 26px; flex: none; border-color: transparent; background: transparent; border-radius: 6px; }
-[data-theme="high-contrast-dark"] #composer .composer-toolbar > .attachment-picker-btn { border-color: transparent; }
-.composer-toolbar > .attachment-picker-btn svg, .composer-toolbar > #emoji-button svg { width: 15px; height: 15px; }
-.composer-toolbar > .attachment-picker-btn:hover, .composer-toolbar > #emoji-button:hover:not(:disabled), .composer-toolbar > #emoji-button:focus-visible { color: var(--text-primary); background: var(--bg-tertiary); }
+.composer-toolbar > .attachment-picker-btn { flex: none; width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; display: inline-grid; place-items: center; border-color: transparent; background: transparent; box-shadow: none; color: var(--text-muted); }
+:is(#composer, #thread-composer) .composer-toolbar > .attachment-picker-btn { width: 26px; height: 26px; min-height: 26px; flex: none; border-color: transparent; background: transparent; border-radius: 6px; }
+.composer-toolbar > .attachment-picker-btn svg { width: 15px; height: 15px; }
+.composer-toolbar > .attachment-picker-btn:hover:not(:disabled), .composer-toolbar > .attachment-picker-btn:focus-visible { color: var(--text-primary); background: var(--bg-tertiary); }
 .composer-field > .composer-toolbar { order: 0; flex: none; padding: 3px 40px 3px 6px; border-bottom: 1px solid var(--border); }
 .composer-field > .composer-link { order: 0; flex: none; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+
+/* On a touch screen every control of the toolbar is a thumb-sized square, the attach and emoji buttons and the "Aa" included (the format buttons already are). */
+@media (max-width: 700px), (pointer: coarse) {
+  :is(#composer, #thread-composer) .composer-toolbar > .attachment-picker-btn { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
+  .composer-toolbar > .composer-aa { height: 40px; min-height: 40px; }
+}
 
 /* A phone held sideways has no height to spare: the toolbar (with its "Aa") gives way to the thread's replies; formatting stays on. */
 @media (max-height: 520px) {
@@ -1280,6 +1302,10 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 :is(#thread-composer button, #spawn-open, .btn-send).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
 :is(#thread-composer button, #spawn-open, .btn-send).btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 :is(#thread-composer button).btn-primary svg { transform: translate(-.8px, .8px); }
+/* The thread composer's attach and emoji buttons, while they sit in its bottom row (no toolbar: a phone, a touch tablet, formatting off): the same
+   size as the room composer's, a thumb-sized square on touch. In the toolbar they are the 26px quiet buttons the rule further down gives them. */
+#thread-composer > .attachment-picker-btn { flex: none; align-self: flex-end; box-sizing: border-box; width: 34px; height: 38px; min-height: 0; padding: 0; display: inline-grid; place-items: center; }
+@media (max-width: 700px), (pointer: coarse) { #thread-composer > .attachment-picker-btn { width: 40px; height: 40px; min-width: 40px; min-height: 40px; } }
 /* The high-contrast themes restyle every .btn/.btn-icon as an outlined box on the page colour; Send stays green there, as in v1
    (dark green fill, white glyph; the bright green with a dark glyph on hover). */
 [data-theme^="high-contrast"] :is(#thread-composer button, #spawn-open, .btn-send).btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
@@ -1454,8 +1480,10 @@ dialog:focus, dialog:focus-visible { outline: none; }
 :is(#settings-dialog, #onboarding-harnesses) .settings-section :is(.settings-intro, .error):empty { display: none; }
 /* A room name takes the space first: the project pill shrinks away before the name is cut. */
 
-/* The formatting toolbar wraps instead of being cut off in a narrow chat column (an iPad with both side panels open). */
-.composer-tools { flex-wrap: wrap; overflow: visible; }
+/* The formatting toolbar is always one row: in a narrow chat column (the thread open, an iPad with both side panels open) it scrolls sideways
+   instead of wrapping into two. */
+.composer-tools { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
+.composer-tools::-webkit-scrollbar { display: none; }
 /* On a phone or a touch tablet the toolbar is one row that scrolls sideways (snapping to a button), never several rows. */
 @media (max-width: 520px), (max-width: 900px) and (pointer: coarse) {
   .composer-tools { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; scrollbar-width: none; overscroll-behavior-x: contain; }
@@ -1565,7 +1593,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .health-disk-total { color: var(--text-secondary); flex: 1; }
 .health-disk-warning { margin: 0; color: var(--red); }
 .health-disk ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.health-disk-projects li { display: grid; grid-template-columns: minmax(0, 1fr) 70px auto; align-items: center; gap: 8px; }
+.health-disk-projects li { display: grid; grid-template-columns: minmax(0, 1fr) 70px 64px; align-items: center; gap: 8px; }
 .health-disk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
 .health-disk-bar { height: 6px; border-radius: 3px; background: var(--bg-tertiary); position: relative; overflow: hidden; }
 .health-disk-bar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--share, 0); background: var(--accent); border-radius: 3px; }
@@ -1665,6 +1693,14 @@ dialog:focus, dialog:focus-visible { outline: none; }
 /* The worktree choice in the Spawn dialog: the box beside its text, not centred above a bold label. */
 #spawn-dialog .spawn-worktree-option { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 10px 0; font-weight: 400; }
 #spawn-dialog .spawn-worktree-option input { width: auto; margin: 0; }
+/* A worktree box that cannot be ticked looks it: the box and its words are dimmed and the pointer says no (the note under it stays readable). */
+#spawn-dialog .spawn-worktree-option:has(> input:disabled) > :is(input, span) { opacity: .5; cursor: not-allowed; }
+#spawn-dialog .spawn-worktree-option:has(> input:disabled) > span { color: var(--text-muted); }
+[data-theme="high-contrast-dark"] #spawn-dialog .spawn-worktree-option:has(> input:disabled) > :is(input, span) { opacity: 1; }
+[data-theme="high-contrast-dark"] #spawn-dialog .spawn-worktree-option:has(> input:disabled) > span { text-decoration: line-through; }
+/* One control height: a Name input, the selects and the dice button are all 40px, whatever the browser does with a native select. */
+#spawn-dialog :is(input:not([type=checkbox], [type=radio]), select) { box-sizing: border-box; height: 40px; }
+#spawn-dialog .spawn-name-row .btn-icon { height: 40px; align-self: auto; }
 #spawn-dialog .spawn-worktree-note { flex-basis: 100%; color: var(--text-muted); font-size: 12px; }
 /* The agent's name in the Spawn dialog: the field with a dice button beside it, and a refusal of the name right under it. */
 /* The Name field reads like Machine, Role, Tool and Model: the same label, the same gap to its control, and the dice button as tall as the input. */
@@ -1746,7 +1782,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .spawn-sessions-note[hidden] { display: none; }
 .cc-sessions { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; }
 .cc-sessions-intro { margin: 0 0 12px; color: var(--text-muted); font-size: 12.5px; }
-.cc-sessions-find { display: flex; gap: 6px; margin: 0 0 8px; }
+.cc-sessions-find { display: flex; gap: 6px; margin: 10px 0 0; } /* the alternative to the list, under it */
 .cc-sessions-find input { flex: 1 1 auto; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-family: ui-monospace, monospace; font-size: 12px; }
 .cc-sessions-status { margin: 0 0 6px; color: var(--text-muted); font-size: 12px; min-height: 1.4em; }
 .cc-sessions-list { display: flex; flex-direction: column; gap: 4px; }
@@ -1755,7 +1791,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .cc-session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
 .cc-session-facts, .cc-session-cwd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11.5px; }
 .cc-session-cwd { font-family: ui-monospace, monospace; }
-.cc-session-flags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 40%; }
+.cc-session-flags { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: 0 0 auto; } /* one column, right edges aligned, the same on every row */
 .cc-session-flag { padding: 1px 7px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-muted); font-size: 10.5px; white-space: nowrap; }
 .cc-session-flag-warn { color: var(--warning, #d29922); border-color: currentColor; }
 .cc-session-flag-stop { color: var(--text-muted); }
@@ -1768,7 +1804,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .cc-import-role { flex: 0 0 auto; max-width: 130px; }
 .cc-import-state { flex: 0 0 auto; min-width: 0; max-width: 200px; font-size: 11.5px; color: var(--text-muted); }
 .cc-import-state.error { color: var(--danger, #f85149); }
-@media (max-width: 700px) { .cc-session { flex-wrap: wrap; } .cc-session-flags { max-width: none; justify-content: flex-start; } }
+@media (max-width: 700px) { .cc-session { flex-wrap: wrap; } .cc-session-flags { flex-direction: row; flex-wrap: wrap; align-items: flex-start; justify-content: flex-start; } }
 
 /* The path beside the room title, before it: project › room › … Crumbs are quiet buttons that shrink first; the title keeps its width. On a phone only the nearest
    crumb stays beside the title. */
@@ -1825,3 +1861,16 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .chat.usages-open > .col-resizer-agents, .chat.agents-collapsed > .col-resizer-agents { display: none; }
 html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-select: none !important; }
 @media (max-width: 700px) { .col-resizer { display: none; } }
+
+/* The alerts about token refresh: in the column v1's own red box; Settings -> Usages (v2's page) draws the same box with the same values. Their reasons are folded under Details. */
+.usage-credential-alerts { margin: 6px 0 2px; padding: 6px 8px; border: 1px solid var(--red); border-radius: 6px; display: grid; gap: 4px; }
+.usage-credential-alert { color: var(--red); font-size: 0.72rem; line-height: 1.35; }
+.usage-credential-alert p, .usages-credential-alert p { margin: 0; }
+.usage-credential-alert details, .usages-credential-alert details { margin-top: 3px; color: var(--text-secondary); }
+.usage-credential-alert summary, .usages-credential-alert summary { cursor: pointer; }
+.usage-credential-alert details p, .usages-credential-alert details p { overflow-wrap: anywhere; font-size: 0.68rem; }
+/* Data older than twice the refresh interval is grey, and says how old it is. */
+.usage-profile.is-stale, .usages-popover-profile.is-stale { --usage-color: var(--text-muted); }
+.usage-profile.is-stale .usage-pace-marker, .usages-popover-profile.is-stale .usage-pace-marker, .usage-profile.is-stale .usage-spark-line, .usages-popover-profile.is-stale .usage-spark-line { opacity: .45; }
+.usage-profile-stale { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
+.usage-profile-stale .usage-refresh { min-height: 0; height: auto; padding: 1px 8px; font-size: 11px; }

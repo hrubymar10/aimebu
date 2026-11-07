@@ -10,7 +10,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css"><link rel="stylesheet" href="/v2-only.css">${importMap}</head>
 <body><dialog id="settings-dialog" open><nav></nav></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -86,6 +86,21 @@ async function main() {
       }), card('a1'));
       if (owner) assert.deepEqual(state, { note: false, add: [false, ''], detect: false, enabled: false, fields: false, panels: false, reason: '' }, 'the owner can change harnesses');
       else assert.deepEqual(state, { note: true, add: [true, 'Only the owner can change what a machine runs.'], detect: true, enabled: true, fields: true, panels: true, reason: 'Only the owner can change what a machine runs.' }, 'an admin cannot, and is told why');
+      if (!owner) {
+        // Every disabled control looks disabled the same way: its own opacity times its ancestors' is one value (buttons used to be dimmed and inputs not).
+        const seen = await page.evaluate(card => [...document.querySelectorAll(`${card} :is(input, select, textarea, button):disabled, ${card} .machine-harness-readonly :is(input, select, textarea, button)`)].map(el => {
+          let opacity = 1; for (let node = el; node && node.id !== 'harnesses-list'; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+          return `${el.tagName}.${el.className}#${el.name || el.id}=${Math.round(opacity * 100) / 100}`;
+        }), card('a1'));
+        assert.ok(seen.length > 3 && seen.every(value => value.endsWith("=0.5")), `read-only controls dim alike: ${JSON.stringify(seen)}`);
+      }
+      await page.close();
+    }
+    // The list of harnesses and the card of the selected one start at the same height.
+    {
+      const page = await mount({}, { owner: true });
+      const edges = await page.evaluate(() => [document.querySelector('.harness-master'), document.querySelector('.harness-split .machine-harness')].map(el => Math.round(el.getBoundingClientRect().top)));
+      assert.equal(edges[0], edges[1], `top edges line up: ${JSON.stringify(edges)}`);
       await page.close();
     }
     // A late save on machine A, answered after B was chosen, leaves B's page alone: no read of A, B's own pending read still draws.
@@ -154,10 +169,12 @@ async function main() {
       await type(page, `${card('a2')} .harness-model-add [name=slug]`, 'model-one');
       await page.$eval(`${card('a2')} .harness-model-add button[type=submit]`, el => el.click());
       await page.waitForSelector(`${card('a2')} .harness-model-row[data-slug="model-one"]`);
+      const roleHint = await page.$eval(`${card('a2')} .harness-model-row[data-slug="model-one"] .harness-detail-roles-hint`, el => el.textContent);
+      assert.ok(/none ticked/.test(roleHint) && /spawn by hand/.test(roleHint), `the role switches are explained: ${roleHint}`);
       await page.$eval(`${card('a2')} .harness-models .btn-primary`, el => el.click());
       await answer(page, await pending(page, 'PUT', '/api/machines/mch_a/launchers/a2/models'), 200, {});
       await answer(page, await pending(page, 'GET', '/api/machines/mch_a/launchers'), 500, { message: 'read failed' });
-      await page.waitForFunction(sel => document.querySelector('#harness-tab-a2 .harness-master-count').textContent === '1', {});
+      await page.waitForFunction(sel => document.querySelector('#harness-tab-a2 .harness-master-count').textContent === '1 model', {});
       await settle(page);
       assert.ok(await page.$(`${card('a2')} .harness-model-row[data-slug="model-one"]`), 'a failed re-read keeps the saved model list');
       assert.deepEqual(await page.evaluate(() => [...window.__page.page.unsaved]), [], 'what was saved is not reported as unsaved (no draft left)');
@@ -343,7 +360,7 @@ async function main() {
     ];
     for (const draft of drafts) {
       const page = await mount(detectAuto);
-      assert.equal(await page.$eval('#settings-harnesses > h3', el => el.textContent), 'Harnesses', 'the page has no experiment badge');
+      assert.equal(await page.$('#settings-harnesses > h3'), null, 'the page does not repeat the section title the dialog header shows, and has no experiment badge');
       assert.equal(await page.evaluate(() => window.__page.hasUnsavedChanges()), false, `nothing is unsaved before ${draft.name}`);
       await draft.setup(page);
       await settle(page);
