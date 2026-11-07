@@ -43,18 +43,22 @@ export function Identity() {
     await change('POST', '/api/me/telemetry/fingerprint', {}, () => 'You have a new fingerprint.');
   };
   const copy = async () => {
-    try { await navigator.clipboard.writeText(identity.fingerprint); setStatus('Copied.'); setError(''); } catch { setError('Could not copy; select the fingerprint and copy it.'); }
+    try { await navigator.clipboard.writeText(shown); setStatus('Copied.'); setError(''); } catch { setError(`Could not copy; select the ${identity.send_name ? 'user name' : 'fingerprint'} and copy it.`); }
   };
   const off = !identity || busy;
+  // The field shows what the reports carry now: the user name while that switch is on, otherwise the fingerprint (again after a roll or the switch off).
+  const shown = identity ? (identity.send_name ? identity.login : identity.fingerprint) : '';
   return html`
     <h3>You in reports</h3>
-    <p class="settings-intro">Reports name you by a random fingerprint, so Sentry can count affected people and you can tell your own reports from someone else's. Only while telemetry is on.</p>
+    <p class="settings-intro">${identity?.send_name
+      ? 'Reports name you by your login name, because you chose that below; roll the fingerprint or switch it off to be anonymous again. Only while telemetry is on.'
+      : 'Reports name you by a random fingerprint, so Sentry can count affected people and you can tell your own reports from someone else\'s. Only while telemetry is on.'}</p>
     <${SettingsGroup} label="Your identity in reports">
       <div class="settings-row">
-        <div class="settings-row-info"><label class="settings-label" for="telemetry-fingerprint">Fingerprint</label><span class="settings-desc" id="telemetry-fingerprint-desc">Random, kept for you only, and not derived from your account. Roll it to get a new one.</span></div>
+        <div class="settings-row-info"><label class="settings-label" for="telemetry-fingerprint">${identity?.send_name ? 'User name' : 'Fingerprint'}</label><span class="settings-desc" id="telemetry-fingerprint-desc">${identity?.send_name ? 'Your login name, which your reports carry while the switch below is on. Rolling turns it off and gives you a new random fingerprint.' : 'Random, kept for you only, and not derived from your account. Roll it to get a new one.'}</span></div>
         <div class="settings-control"><div class="settings-inline-control">
-          <input class="settings-text-input" id="telemetry-fingerprint" aria-describedby="telemetry-fingerprint-desc" type="text" readonly spellcheck="false" value=${identity?.fingerprint || ''} />
-          <${IconButton} id="telemetry-fingerprint-copy" name="copy" label="Copy fingerprint" disabled=${!identity} onClick=${copy} />
+          <input class="settings-text-input" id="telemetry-fingerprint" aria-describedby="telemetry-fingerprint-desc" type="text" readonly spellcheck="false" value=${shown} />
+          <${IconButton} id="telemetry-fingerprint-copy" name="copy" label=${identity?.send_name ? 'Copy user name' : 'Copy fingerprint'} disabled=${!identity} onClick=${copy} />
           <${IconButton} id="telemetry-fingerprint-roll" name="dice" label=${ROLL_LABEL} disabled=${off} onClick=${roll} />
         </div></div>
       </div>

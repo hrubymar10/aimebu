@@ -577,7 +577,11 @@ export class Chat {
   answerView(message) {
     const id = message.id, item = this.answerItems?.get(id);
     if (answerEligible(item)) { return { kind: 'controls', item, parent: message, key: `c:${item.id}:${item.rev}` }; }
-    const answered = Boolean(this.answeredMessages.has(id) || this.repliedTo.has(id)), area = answerArea(item, message, answered);
+    const repliedByOther = this.store.repliedByOther(message);
+    const answered = Boolean(this.answeredMessages.has(id) || repliedByOther);
+    // The quiet "Answered" is for a message that asked for an answer (it needed attention, or its question was answered here); an ordinary message that
+    // somebody replied to is not "answered".
+    const doneOk = Boolean(this.answeredMessages.has(id) || (repliedByOther && message.needs_attention)), area = answerArea(item, message, doneOk);
     if (area === 'history') return { kind: 'history', answered, key: `h:${answered}` };
     if (area === 'done') return { kind: 'done', answered, key: 'd' };
     return { kind: 'none', answered, key: '' };

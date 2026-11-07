@@ -311,3 +311,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .settings-facts dt { color: var(--text-secondary); }
 .settings-facts dd { margin: 0; color: var(--text-primary); }
 @media (max-width: 700px) { .settings-facts { grid-template-columns: 1fr; } .settings-facts dd { margin-bottom: 6px; } }
+
+/* The DSN field, when switched off, looks as off as its reset button does (the browser's own look for a disabled text field is barely visible).
+   Only that field, and not in high contrast, whose disabled controls keep full opacity on purpose. */
+:root:not([data-theme="high-contrast-dark"]) :is(#telemetry-dsn, #app-dialog .app-dialog-input-row > input):disabled { opacity: .5; cursor: default; }

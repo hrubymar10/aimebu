@@ -1067,7 +1067,7 @@ async function main() {
       const main = document.createElement('div'); document.body.append(main);
       const chat = window.__fixtureChat(main); chat.inbox = { answer: async () => true };
       chat.renderBody = (node, message) => { node.textContent = message.body || ''; };
-      chat.answeredMessages = new Set(); chat.repliedTo = new Set();
+      chat.answeredMessages = new Set(); chat.repliedTo = new Map();
       const base = { seq: 1, no: 1, body: 'q', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
       chat.store.add({ ...base, id: 'ask-1', proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] });
       chat.store.add({ ...base, id: 'plain', seq: 2, no: 2, body: 'hi' });
@@ -1079,7 +1079,7 @@ async function main() {
       chat.listUpdate();
       const same = bubble.querySelector(':scope > .answer-history') === block;
       // A person replies to it: the next draw says Answered.
-      chat.repliedTo.add('ask-1'); chat.listUpdate();
+      chat.repliedTo.set('ask-1', new Set(['someone'])); chat.listUpdate();
       const answered = read(bubble);
       // It becomes open again: the live buttons replace the history.
       chat.updateAnswerControls([{ id: 'inb', message_id: 'ask-1', kind: 'question', rev: 0, proposed_answers: ['Proceed'], free_text: true, can_decide: true }]);
@@ -1098,6 +1098,38 @@ async function main() {
     assert.deepEqual(askHistory.placed, { below: true, outside: true }, 'the answers sit under the message card, outside it, aligned with its left edge');
     assert.deepEqual([askHistory.answered.status, askHistory.answered.buttons.every(([, disabled, title]) => disabled && title === 'Answered'), askHistory.answered.blocks], ['', true, 1], 'a replied-to ask is its dimmed buttons, with no label of their own (their tooltip says Answered)');
     assert.deepEqual([askHistory.reopened, askHistory.plain], [{ history: 0, live: 1 }, 0], 'an open ask swaps the history for live buttons; a message without an ask gets nothing');
+    // A reply is not an answer to an ordinary message, and a question's own author replying to it does not answer it; another person's reply to a
+    // message that asked does, whatever order the reply and its parent were loaded in, and for the proposed answers and open questions too.
+    const replyKinds = await first.evaluate(async () => {
+      const main = document.createElement('div'); document.body.append(main);
+      const chat = window.__fixtureChat(main); chat.inbox = { answer: async () => true };
+      chat.renderBody = (node, message) => { node.textContent = message.body || ''; };
+      chat.answeredMessages = new Set(); chat.repliedTo = new Map();
+      const base = { seq: 1, no: 1, body: 'q', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
+      let seq = 0;
+      const add = fields => chat.store.add({ ...base, seq: ++seq, no: seq, ...fields });
+      // Parents first.
+      add({ id: 'plain', body: 'hi' });
+      add({ id: 'att', body: 'asks', needs_attention: true });
+      add({ id: 'att-self', body: 'asks too', needs_attention: true });
+      add({ id: 'pa-other', proposed_answers: ['Proceed'] });
+      add({ id: 'pa-self', proposed_answers: ['Proceed'] });
+      add({ id: 'reply-plain', author_id: 'someone', reply_to: 'plain' });
+      add({ id: 'reply-att', author_id: 'someone', reply_to: 'att' });
+      add({ id: 'reply-self', reply_to: 'att-self', thread_root: 'att-self' });
+      add({ id: 'reply-pa-other', author_id: 'someone', reply_to: 'pa-other' });
+      add({ id: 'reply-pa-self', reply_to: 'pa-self', thread_root: 'pa-self' });
+      // Replies first, their parents after (scrolling back, a jump, a thread opened before its root).
+      add({ id: 'late-reply-att', author_id: 'someone', reply_to: 'late-att' });
+      add({ id: 'late-reply-self', reply_to: 'late-self', thread_root: 'late-self' });
+      add({ id: 'late-att', body: 'asks late', needs_attention: true });
+      add({ id: 'late-self', body: 'asks late too', needs_attention: true });
+      const view = id => { const answer = chat.answerView(chat.messages.get(id)); return `${answer.kind}${answer.kind === 'history' ? `:${answer.answered}` : ''}`; };
+      const kinds = Object.fromEntries(['plain', 'att', 'att-self', 'pa-other', 'pa-self', 'late-att', 'late-self'].map(id => [id, view(id)]));
+      main.remove();
+      return kinds;
+    });
+    assert.deepEqual(replyKinds, { plain: 'none', att: 'done', 'att-self': 'none', 'pa-other': 'history:true', 'pa-self': 'history:false', 'late-att': 'done', 'late-self': 'none' }, 'a reply does not make an ordinary message "Answered"; only another person\'s reply does, to a message that asked, whichever of the two loaded first, and a self-reply never');
     // A thumbnail with a known size keeps its shape: a panorama and a portrait are scaled into the box, not letterboxed in it.
     const thumbs = await first.evaluate(async () => {
       const picture = (width, height) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="gray"/></svg>`);
@@ -1179,7 +1211,7 @@ async function main() {
     });
     assert.match(identityHeader.quotes[0][0], /^↪ #77 \S+: quoted text$/, 'a parent outside the loaded window is quoted from the preview');
     assert.equal(identityHeader.quotes[0][1], 'Go to #77');
-    assert.deepEqual(identityHeader.usageButton, { present: true, title: 'Usage: 1,200 in \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', label: 'Usage: 1,200 in \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', glyph: true, text: '', withoutUsage: true });
+    assert.deepEqual(identityHeader.usageButton, { present: true, title: 'Usage: 6,200 in (1,200 new, 5,000 cache read) \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', label: 'Usage: 6,200 in (1,200 new, 5,000 cache read) \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', glyph: true, text: '', withoutUsage: true });
     assert.deepEqual(identityHeader.usagePopover.rows, [['Model', 'claude-haiku-4-5'], ['Input', '1,200'], ['Output', '34'], ['Cache read', '5,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$0.0042']], 'the popover lists every figure, a dash for the one nobody reported');
     assert.deepEqual([identityHeader.usagePopover.focused, identityHeader.usagePopover.expanded, identityHeader.usagePopover.role, identityHeader.usagePopover.inside], [true, 'true', 'dialog', true]);
     assert.match(identityHeader.usagePopover.notes, /wrote 3 messages; this is 2 of 3.*floor/, 'the popover says it is 2 of 3 and partial');
@@ -7903,13 +7935,15 @@ async function main() {
         const node = document.createElement('article'); node.className = 'chat-msg'; list.append(node);
         chat.nodes.set(id, node); chat.messages.set(id, { id, seq, author_id: author });
       }
+      // A reply in a thread of m3 is loaded but has no row, and the viewer's own read mark reaches it: the mark stays on m3.
+      chat.messages.set('m4', { id: 'm4', seq: 4, author_id: 'usr_me', thread_root: 'm3', reply_to: 'm3' });
       const originalFetch = window.fetch;
       window.fetch = (input, options) => {
         if (String(input) === '/api/rooms/receipt-room/read-receipts') {
           return Promise.resolve(new Response(JSON.stringify([
             { member_kind: 'user', member_id: 'usr_you', label: 'you', seq: 2 },
             { member_kind: 'agent', member_id: 'agt_a', label: 'ada', seq: 2 },
-            { member_kind: 'user', member_id: 'usr_me', label: 'me', seq: 3 },
+            { member_kind: 'user', member_id: 'usr_me', label: 'me', seq: 4 },
           ]), { headers: { 'Content-Type': 'application/json' } }));
         }
         return originalFetch(input, options);

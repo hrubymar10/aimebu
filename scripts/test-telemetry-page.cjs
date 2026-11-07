@@ -127,6 +127,10 @@ async function on() {
     assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, readOnly: document.querySelector('#telemetry-fingerprint').readOnly, sendName: document.querySelector('#telemetry-send-name').checked })), { value: fingerprint, readOnly: true, sendName: false }, 'the field shows the fingerprint, read-only; the name is off by default');
     await page.click('#telemetry-send-name');
     await page.waitForFunction(() => /user name/.test(document.querySelector('#telemetry-identity-status').textContent));
+    assert.match(await page.evaluate(() => document.querySelector('#settings-telemetry .settings-intro').textContent), /login name/, 'the intro describes the name mode');
+    assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, readOnly: document.querySelector('#telemetry-fingerprint').readOnly, label: document.querySelector('label[for=telemetry-fingerprint]').textContent, copy: document.querySelector('#telemetry-fingerprint-copy').getAttribute('aria-label') })),
+      { value: 'owner', readOnly: true, label: 'User name', copy: 'Copy user name' }, 'with the name on, the field shows the user name, not the hash');
+    assert.ok(!await page.evaluate(fp => document.querySelector('#settings-telemetry').textContent.includes(fp) || [...document.querySelectorAll('#settings-telemetry input')].some(input => input.value === fp), fingerprint), 'the hash is not on the page while the name is on');
     assert.deepEqual(await errorUser('after-name boom'), { id: 'owner', ip_address: null }, 'with the name on, user.id is the login (not the fingerprint), and nothing else');
     assert.ok(!parsedItems().some(item => item.exception && JSON.stringify(item.exception).includes('after-name') && JSON.stringify(item).includes(fingerprint)), 'never both');
     // Rolling with the name on asks first; cancelling changes nothing.
@@ -136,16 +140,19 @@ async function on() {
     await page.click('.app-dialog-cancel');
     await page.waitForFunction(() => !document.querySelector('#app-dialog[open]'));
     assert.deepEqual((await server.api(page, '/api/me/telemetry')).body.fingerprint, fingerprint, 'cancel: the same fingerprint');
-    assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, sendName: document.querySelector('#telemetry-send-name').checked })), { value: fingerprint, sendName: true }, 'cancel leaves everything as it was');
+    assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, sendName: document.querySelector('#telemetry-send-name').checked })), { value: 'owner', sendName: true }, 'cancel leaves everything as it was (the name still shown)');
     // Confirming does both: the name goes off and the fingerprint is a new one.
     await page.click('#telemetry-fingerprint-roll');
     await page.waitForSelector('#app-dialog[open]');
     await page.click('.app-dialog-ok');
-    await page.waitForFunction(old => document.querySelector('#telemetry-fingerprint').value !== old, {}, fingerprint);
+    await page.waitForFunction(() => document.querySelector('#telemetry-fingerprint').value !== 'owner');
     const rolled = await page.$eval('#telemetry-fingerprint', el => el.value);
     assert.match(rolled, /^[0-9a-f]{16}$/);
     assert.equal(await page.$eval('#telemetry-send-name', el => el.checked), false, 'the name is off after a confirmed roll');
     assert.deepEqual(await errorUser('after-roll boom'), { id: rolled, ip_address: null }, 'the new fingerprint, no reload needed');
+    // Switching the name on and off again: the name while on, the hash again when off.
+    await page.click('#telemetry-send-name'); await page.waitForFunction(() => document.querySelector('#telemetry-fingerprint').value === 'owner');
+    await page.click('#telemetry-send-name'); await page.waitForFunction(rolledValue => document.querySelector('#telemetry-fingerprint').value === rolledValue, {}, rolled);
     // Rolling with the name off needs no question.
     await page.click('#telemetry-fingerprint-roll');
     await page.waitForFunction(old => document.querySelector('#telemetry-fingerprint').value !== old, {}, rolled);
@@ -193,6 +200,11 @@ async function popup() {
     assert.equal((await dsnState()).value, before.default_dsn, 'Reset puts the default back'); assert.equal((await dsnState()).resetDisabled, true);
     await page.$eval('#app-dialog input[type=text]', el => { el.value = ''; });
     await page.type('#app-dialog input[type=text]', 'http://pagekey@127.0.0.1:9/5');
+    // Off disables the reset button too even though the field holds something other than the default (so the button would otherwise be useful).
+    await page.click('#app-dialog input[type=checkbox]');
+    assert.deepEqual(await page.evaluate(() => ({ field: document.querySelector('#app-dialog input[type=text]').disabled, reset: document.querySelector('#app-dialog .app-dialog-reset').disabled, value: document.querySelector('#app-dialog input[type=text]').value })), { field: true, reset: true, value: 'http://pagekey@127.0.0.1:9/5' }, 'off with a custom DSN: field and reset both disabled');
+    await page.click('#app-dialog input[type=checkbox]');
+    assert.equal((await dsnState()).resetDisabled, false, 'on again: the reset button is back');
     await page.click('.app-dialog-ok');
     await page.waitForFunction(() => !document.querySelector('#app-view').hidden, { timeout: 30000 });
     const saved = (await server.api(page, '/api/telemetry/settings')).body;
@@ -232,10 +244,21 @@ async function popup() {
     assert.deepEqual(await settingsState(), { value: 'http://pagekey@127.0.0.1:9/5', fieldDisabled: false, reset: { disabled: false, label: 'Reset to default DSN', title: 'Reset to default DSN', left: true } }, 'a chosen DSN can be reset');
     await page.click('#telemetry-dsn-reset');
     assert.deepEqual(await settingsState(), { value: before.default_dsn, fieldDisabled: false, reset: { disabled: true, label: 'Reset to default DSN', title: 'Reset to default DSN', left: true } }, 'Reset puts the default in the field and turns itself off');
-    await page.type('#telemetry-dsn', 'x'); assert.equal((await settingsState()).reset.disabled, false); await page.click('#telemetry-dsn-reset');
+    await page.type('#telemetry-dsn', 'x'); assert.equal((await settingsState()).reset.disabled, false);
+    await page.click('#telemetry-enabled'); // off while the field holds a custom value
+    assert.deepEqual(await page.evaluate(() => ({ field: document.querySelector('#telemetry-dsn').disabled, reset: document.querySelector('#telemetry-dsn-reset').disabled })), { field: true, reset: true }, 'off with a custom DSN: field and reset both disabled');
+    await page.click('#telemetry-enabled');
+    assert.equal((await settingsState()).reset.disabled, false, 'on again: the reset button is back');
+    await page.click('#telemetry-dsn-reset');
     // Off disables the field and the button but keeps them in the page.
     await page.click('#telemetry-enabled');
     assert.deepEqual(await settingsState(), { value: before.default_dsn, fieldDisabled: true, reset: { disabled: true, label: 'Reset to default DSN', title: 'Reset to default DSN', left: true } }, 'off: disabled, not hidden');
+    // The switched-off DSN field is dimmed, and only it (not the read-only fingerprint field), and not in high contrast.
+    const opacities = () => page.evaluate(() => ({ dsn: getComputedStyle(document.querySelector('#telemetry-dsn')).opacity, fingerprint: getComputedStyle(document.querySelector('#telemetry-fingerprint')).opacity }));
+    assert.deepEqual(await opacities(), { dsn: '0.5', fingerprint: '1' }, 'only the DSN field is dimmed');
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'high-contrast-dark'; });
+    assert.equal((await opacities()).dsn, '1', 'high contrast keeps disabled controls at full opacity');
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     await page.click('#telemetry-save');
     await page.waitForFunction(() => /Telemetry is off/.test(document.querySelector('#telemetry-status').textContent));
     assert.equal((await server.api(page, '/api/telemetry/settings')).body.active, false, 'turning it off in Settings stops reporting at once');

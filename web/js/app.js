@@ -35,7 +35,7 @@ import { DiskUsage } from './pages/health/disk.js';
 import { showBuildVersion } from './build-version.js';
 import { startTelemetry } from './telemetry.js';
 import { askTelemetryConsent } from './telemetry-consent.js';
-import { formDialog } from './dialogs.js';
+import { formDialog, cancelAppDialogs } from './dialogs.js';
 import { UpdateBar } from './update-bar.js';
 import { ColumnResize } from './column-resize.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
@@ -311,9 +311,9 @@ const onboarding = new Onboarding({ create: createFirstProject, spawn: () => age
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
 importWizard.dialog.addEventListener('close', () => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'));
-new TopbarMenu();
+const topbarMenu = new TopbarMenu();
 new ColumnResize();
-new RoomMenu();
+const roomMenu = new RoomMenu();
 const knowledge = new KnowledgePanel(() => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), () => chat.room);
 chat.openProjectMemory = projectID => knowledge.openProjectFacts(projectID);
 chat.openTaskNotes = () => knowledge.openTask();
@@ -336,6 +336,22 @@ function resetWorkspace() {
   health.ticket++;
   systemEvents.reset(); messageDebug.reset();
   onboarding.close(); // its card covers the viewport, so it must not outlive the session (it would sit over the sign-in page)
+  closeEverythingOpen();
+}
+
+// Signing out (or a 401 that sends the person to the sign-in page) leaves nothing of the session on screen: a modal dialog (Settings, a form) would stay
+// :modal over the sign-in view and keep showing signed-in content, and an open popover, menu or drawer is part of the session too. The shared question
+// dialog is answered "no" (closing it from outside would leave its promise pending), and Settings pages are cleared, unsaved edits included.
+function closeEverythingOpen() {
+  cancelAppDialogs();
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  usagesPopover.close();
+  health.setOpen(false);
+  topbarMenu.store.setOpen(false);
+  roomMenu.store.close();
+  setRoomsOpen(false);
+  agents.setMobileOpen(false);
+  settings.resetSession();
 }
 
 function setRoomsOpen(open) {

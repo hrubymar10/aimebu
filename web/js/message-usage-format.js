@@ -43,7 +43,18 @@ export function usageNotes(usage) {
 // One line for the button's tooltip.
 export function usageTooltip(usage) {
   const parts = [];
-  if (Number.isFinite(usage?.tokens_in)) parts.push(`${formatTokens(usage.tokens_in)} in`);
+  // The input is what the model read, and most of it is usually cached: a harness reports the new tokens (tokens_in), the ones read from the cache and
+  // the ones written to it separately, and "2 in" for a turn that read forty thousand tokens looks wrong. So "in" is all of them, with the split
+  // (named as the popover names its rows) when there is more than the new tokens.
+  const input = [usage?.tokens_in, usage?.tokens_cache_read, usage?.tokens_cache_write].filter(Number.isFinite);
+  if (input.length) {
+    const total = input.reduce((sum, value) => sum + value, 0);
+    const split = [];
+    if (Number.isFinite(usage.tokens_in)) split.push(`${formatTokens(usage.tokens_in)} new`);
+    if (usage.tokens_cache_read > 0) split.push(`${formatTokens(usage.tokens_cache_read)} cache read`);
+    if (usage.tokens_cache_write > 0) split.push(`${formatTokens(usage.tokens_cache_write)} cache written`);
+    parts.push(`${formatTokens(total)} in${split.length > 1 || (split.length === 1 && !Number.isFinite(usage.tokens_in)) ? ` (${split.join(', ')})` : ''}`);
+  }
   if (Number.isFinite(usage?.tokens_out)) parts.push(`${formatTokens(usage.tokens_out)} out`);
   if (Number.isFinite(usage?.cost)) parts.push(formatCost(usage.cost) + (usage?.cost_source === 'estimated' ? ' estimated' : ''));
   const count = Number(usage?.count) || 1;

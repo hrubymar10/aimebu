@@ -94,6 +94,13 @@ export class SettingsPanel {
     }
   }
   usagesChanged() { return this.usages.changed(); }
+  // The session ended: every page is cleared, edits not yet saved included (release() keeps those for the person who made them; the next person must not
+  // find them).
+  resetSession() {
+    for (const [section, page] of Object.entries(this.pages)) {
+      if (section === 'harnesses') this.harnessSettings.clear(); else page.clear();
+    }
+  }
   release() {
     for (const [section, page] of Object.entries(this.pages)) {
       if (page.hasUnsavedChanges()) continue;

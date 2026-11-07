@@ -18,7 +18,8 @@ export class ChatStore {
   }
 
   clearRoom() {
-    this.answeredMessages = new Set(); this.repliedTo = new Set(); this.messages = new Map(); this.historicalAuthors = new Set(); this.reactions = new Map();
+    // repliedTo: parent id -> the ids of the people who replied to it.
+    this.answeredMessages = new Set(); this.repliedTo = new Map(); this.messages = new Map(); this.historicalAuthors = new Set(); this.reactions = new Map();
     this.threadCounts = new Map(); this.serverThreadCounts = new Map(); this.missedIDs = new Set(); this.announcedIDs = null;
     this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.loadingNewer = false; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0;
   }
@@ -277,6 +278,11 @@ export class ChatStore {
   }
 
   // A prepended (older) or paged (newer, in a history window) message leaves the scroll position alone; only a live append follows the bottom.
+  // Whether anyone but the message's own author has replied to it.
+  repliedByOther(message) {
+    for (const author of this.repliedTo.get(message.id) || []) if (author !== message.author_id) return true;
+    return false;
+  }
   add(message, prepend = false, paged = false) {
     if (Number.isInteger(message.thread_count)) {
       const rootID = message.thread_root || message.id;
@@ -286,8 +292,13 @@ export class ChatStore {
     if (this.messages.has(message.id)) return;
     this.noteAuthor(message);
     this.messages.set(message.id, message);
-    // A person replying to a question is its answer, for the history block under that question (the next update draws it).
-    if (message.reply_to && message.author_kind === 'user') this.repliedTo.add(message.reply_to);
+    // A person replying to a question is its answer, for the history block under that question (the next update draws it). Who replied is kept, and
+    // whether it counts is decided when the message is drawn (repliedByOther): the question's own author talking to themselves answers nothing, and that
+    // must not depend on whether the reply or its parent was loaded first.
+    if (message.reply_to && message.author_kind === 'user') {
+      if (!this.repliedTo.has(message.reply_to)) this.repliedTo.set(message.reply_to, new Set());
+      this.repliedTo.get(message.reply_to).add(message.author_id);
+    }
     if (this.missedIDs.delete(message.id)) this.host.updateLatestLabel();
     if (message.thread_root) {
       const count = (this.threadCounts.get(message.thread_root) || 0) + 1;

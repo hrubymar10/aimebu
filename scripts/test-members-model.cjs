@@ -14,7 +14,7 @@ const state = patch => agentState({ desired: 'active', observed: 'idle', ...patc
 assert.equal(state({}), 'Active · Idle');
 assert.equal(state({ observed: 'in_turn' }), 'Active · Working');
 assert.equal(state({ desired: 'not_accepting' }), 'Not accepting · Idle');
-assert.equal(state({ desired: 'stopped', observed: 'stopped' }), 'Stopped · Stopped');
+assert.equal(state({ desired: 'stopped', observed: 'stopped' }), 'Stopped', 'a stopped agent that is stopped says so once');
 assert.equal(state({ desired: 'stopped', observed: 'in_turn' }), 'Interrupt requested · Working');
 assert.equal(state({ observed: 'interrupting' }), 'Interrupt requested · Interrupting');
 assert.equal(state({ observed: 'lost' }), 'Active · Lost');

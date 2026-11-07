@@ -37,6 +37,9 @@ export class ReadReceipts {
     if (this.chat.room?.id !== this.roomID) return;
     const targets = this.receipts.map(() => null);
     for (const message of this.chat.messages.values()) {
+      // A reply in a thread is loaded but has no row in the list: a read mark that reaches it belongs on the last row it did read, not on a row that is not
+      // there (the strip of the root vanished when somebody replied in its thread, their own mark then pointing at the reply).
+      if (message.thread_root && !this.chat.nodes.has(message.id)) continue;
       for (let i = 0; i < this.receipts.length; i++) {
         if (message.seq > this.receipts[i].seq) continue;
         if (!targets[i] || message.seq > targets[i].seq) targets[i] = message;

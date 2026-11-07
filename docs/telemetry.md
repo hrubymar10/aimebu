@@ -72,9 +72,9 @@ as `user.telemetry_fingerprint`, **not** derived from the account id). While tel
 as Sentry `user.id`, and nothing else about the person (no name, e-mail, address or place), so Sentry can count affected people and an
 owner can tell their own reports from a tester's.
 
-**Settings → Telemetry** shows every signed-in person their own fingerprint (read-only, with a copy button) and a 🎲 button, "Generate a new
+**Settings → Telemetry** shows every signed-in person their own fingerprint, or their login name while the switch below is on (read-only, labelled accordingly, with a copy button) and a 🎲 button, "Generate a new
 fingerprint", that replaces it with a fresh random one. The switch **"Send my user name instead of a fingerprint"** (per person, off by default)
-makes `user.id` the login name instead: never both. Rolling while the switch is on asks first ("Rolling a new fingerprint turns off sending your
+makes `user.id` the login name instead, and the field shows that name instead of the hash until the switch is turned off or the fingerprint is rolled: never both. Rolling while the switch is on asks first ("Rolling a new fingerprint turns off sending your
 user name and gives you a new anonymous id."); confirming turns the switch off and rolls, cancelling changes nothing. A change reaches the server
 at once and the page's own SDK without a reload. The DSN and the on/off switch above stay with the owner and the admins.
 

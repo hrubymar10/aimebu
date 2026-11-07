@@ -45,7 +45,13 @@ assert.equal(partial.length, 2);
 assert.match(partial[1], /floor/);
 
 // The tooltip: one line, only what is known.
-assert.equal(usageTooltip(full), 'Usage: 12 in · 3 out · $0.0040');
+// "in" is all the input the model read, with the split the popover shows: the real case was a turn of 2 new tokens that read tens of thousands from the cache.
+assert.equal(usageTooltip(full), 'Usage: 106 in (12 new, 90 cache read, 4 cache written) · 3 out · $0.0040');
+assert.equal(usageTooltip({ tokens_in: 2, tokens_out: 233, tokens_cache_read: 41250, tokens_cache_write: 0, cost: 0.16 }), 'Usage: 41,252 in (2 new, 41,250 cache read) · 233 out · $0.16');
+assert.equal(usageTooltip({ tokens_in: 12, tokens_cache_read: 0, tokens_cache_write: 0, tokens_out: 3 }), 'Usage: 12 in · 3 out', 'nothing cached: just the input');
+assert.equal(usageTooltip({ tokens_cache_read: 500, tokens_out: 3 }), 'Usage: 500 in (500 cache read) · 3 out', 'only the cached figures were reported');
+assert.equal(usageTooltip({ tokens_in: 12, tokens_cache_read: 90 }), 'Usage: 102 in (12 new, 90 cache read)');
+assert.equal(usageTooltip({ tokens_in: 12, tokens_out: 3, cost: 0.004 }).includes('new'), false, 'a harness that reports no cache figures gets the plain number');
 assert.match(usageTooltip({ cost: 0.003, cost_source: 'estimated' }), /estimated/);
 assert.match(usageNotes({ cost_source: 'estimated' }).at(-1), /dated model price list/);
 assert.equal(usageTooltip({ count: 3, tokens_in: 12 }), 'Usage: 12 in (turn of 3 messages)');

@@ -45,7 +45,48 @@ async function main() {
       await enterApp(page);
       assert.equal(posts.length, 1, 'one submit sends one sign-in');
       assert.deepEqual([await state(page).then(value => [value.login, value.app]), (await session(page)).login], [[false, true], OWNER.login], 'and signs in');
-      // sign out returns to the form, which signs in again
+      // Signing out leaves nothing of the session on screen, and nothing the old session asked is put in front of the next one: on a phone, with the rooms
+      // drawer, the Usages popover and Settings open (with an edit not yet saved) and a question from the shared dialog on top of it, then signed in again.
+      await page.setViewport({ width: 390, height: 844 });
+      await page.$eval('#rooms-toggle', button => button.click());
+      await page.$eval('#usages-toggle', button => button.click());
+      await page.$eval('#settings-toggle', button => button.click());
+      await page.waitForSelector('#settings-dialog[open]');
+      await page.$eval('#settings-telemetry-tab', button => button.click());
+      await page.waitForSelector('#telemetry-dsn');
+      await page.$eval('#telemetry-dsn', input => { input.value = 'https://half-typed@example.invalid/9'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.evaluate(async () => {
+        const { confirmDialog } = await import(`/js/dialogs.js${new URL(document.querySelector('script[type=module]').src).search}`);
+        window.__asked = { first: undefined, queued: undefined }; // answered when the session ends, not left pending
+        confirmDialog('Remove something?').then(answer => { window.__asked.first = answer; });
+        confirmDialog('A second question that waits behind it').then(answer => { window.__asked.queued = answer; });
+      });
+      await page.waitForSelector('#app-dialog[open]');
+      assert.deepEqual(await page.evaluate(() => ({ rooms: document.querySelector('#app-view').classList.contains('rooms-open'), usages: !document.querySelector('#usages-popover').hidden })), { rooms: true, usages: true }, 'the drawer and the popover are open before signing out');
+      await page.$eval('#logout', button => button.click());
+      await page.waitForSelector('#login-view:not([hidden])');
+      assert.deepEqual(await page.evaluate(() => ({ dialogs: document.querySelectorAll('dialog[open]').length, modal: document.querySelectorAll('dialog:modal').length, appHidden: document.querySelector('#app-view').hidden, roomsOpen: document.querySelector('#app-view').classList.contains('rooms-open'), usagesOpen: !document.querySelector('#usages-popover').hidden, asked: window.__asked })), { dialogs: 0, modal: 0, appHidden: true, roomsOpen: false, usagesOpen: false, asked: { first: false, queued: false } }, 'signing out leaves no dialog, popover or drawer, and answers the open question and the one behind it "no"');
+      await page.waitForSelector('#login-form:not([hidden])');
+      await page.$$eval('#login-form input', inputs => inputs.forEach(input => { input.value = ''; }));
+      await page.type('#login-form [name=login]', OWNER.login); await page.type('#login-form [name=password]', OWNER.password);
+      await page.$eval('#login-form', form => form.requestSubmit());
+      await enterApp(page);
+      // The next session's dialogs work (the queue was not left waiting on the one that was closed), and its Settings holds nothing half-typed.
+      const next = page.evaluate(async () => {
+        const { confirmDialog } = await import(`/js/dialogs.js${new URL(document.querySelector('script[type=module]').src).search}`);
+        return confirmDialog('A question of the next session');
+      });
+      await page.waitForSelector('#app-dialog[open]');
+      await page.$eval('#app-dialog .app-dialog-ok', button => button.click());
+      assert.equal(await next, true, 'a dialog of the next session opens and is answered');
+      await page.$eval('#settings-toggle', button => button.click());
+      await page.waitForSelector('#settings-dialog[open]');
+      await page.$eval('#settings-telemetry-tab', button => button.click());
+      await page.waitForSelector('#telemetry-dsn');
+      assert.notEqual(await page.$eval('#telemetry-dsn', input => input.value), 'https://half-typed@example.invalid/9', 'the previous session\'s unsaved edit is not in the next session\'s Settings');
+      await page.keyboard.press('Escape');
+      await page.setViewport({ width: 1280, height: 800 });
+      await enterApp(page);
       await page.$eval('#logout', button => button.click());
       await page.waitForSelector('#login-view:not([hidden])');
       assert.deepEqual(await state(page).then(value => [value.login, value.app, value.form]), [true, false, true], 'signing out shows the sign-in form again');

@@ -84,7 +84,7 @@ async function main() {
     assert.equal(agents[0], 'Agents (8)'); assert.equal(agents[1], 'Agents in this room');
     assert.deepEqual(agents[2][0], ['room-member-emoji:🔧', 'room-member-name:ada', 'room-member-role:Worker', 'room-member-state:Active · Working']);
     assert.deepEqual(agents[2].slice(1).map(row => row.map(cell => cell.replace(/^[a-z-]+:/, ''))), [
-      ['bert', 'reviewer', 'singleton', 'Active · Idle'], ['cleo', 'Worker', 'Not accepting · Idle'], ['dara', 'Worker', 'role removed', 'Stopped · Stopped'], ['eli', 'Worker', 'Active · Lost'],
+      ['bert', 'reviewer', 'singleton', 'Active · Idle'], ['cleo', 'Worker', 'Not accepting · Idle'], ['dara', 'Worker', 'role removed', 'Stopped'], ['eli', 'Worker', 'Active · Lost'],
       ['gus', 'Worker', 'Interrupt requested · Working'], ['ivy', 'Worker', 'Interrupt requested · Interrupting'], ['old', 'Worker', 'Revoked']]);
     assert.deepEqual(singletons, ['Singleton roles (3)', 'Singleton roles', [['room-member-emoji:🧭', 'room-member-name:Lead', 'room-member-state:held by zeno'], ['room-member-name:reviewer', 'room-member-state:held by rex (another room)'], ['room-member-name:Tester', 'room-member-state:vacant']]]);
     assert.equal(await page.$eval('#room-member-list .room-member-emoji', node => node.getAttribute('aria-hidden')), 'true');

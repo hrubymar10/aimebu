@@ -2,7 +2,7 @@
 // alert(). Each function returns a promise: confirm -> true/false, prompt -> the text or null, form -> the values or null, notice -> void.
 // One dialog is open at a time; a second request waits for the first. Escape or Cancel answers "no".
 import { iconButton } from './icon-button.js';
-let dialog = null, queue = Promise.resolve();
+let dialog = null, queue = Promise.resolve(), generation = 0, cancelActive = null;
 
 function build() {
   const node = document.createElement('dialog'); node.id = 'app-dialog'; node.className = 'app-dialog dialog-card dialog-card-primary';
@@ -62,7 +62,8 @@ function run({ title, message, fields = [], confirm = 'OK', cancel = 'Cancel', d
   sync();
   const opener = document.activeElement;
   return new Promise(resolve => {
-    const finish = result => { node.onclose = null; node.oncancel = null; form.onsubmit = null; no.onclick = null; if (node.open) node.close(); opener?.focus?.(); resolve(result); };
+    const finish = result => { node.onclose = null; node.oncancel = null; form.onsubmit = null; no.onclick = null; cancelActive = null; if (node.open) node.close(); opener?.focus?.(); resolve(result); };
+    cancelActive = () => finish(fields.length ? null : false);
     form.onsubmit = event => {
       event.preventDefault();
       const now = values();
@@ -78,8 +79,17 @@ function run({ title, message, fields = [], confirm = 'OK', cancel = 'Cancel', d
   });
 }
 
+// The session ended (sign-out, or a 401 on the way to the sign-in page): the open dialog is answered "no" the way Escape would, and what waits behind it is
+// answered "no" without being shown, so nothing the old session asked is put in front of the next one and no promise is left pending (a dialog closed from
+// outside would leave the queue waiting on it for good).
+export function cancelAppDialogs() {
+  generation++;
+  cancelActive?.();
+}
+
 function enqueue(options) {
-  const next = queue.then(() => run(options));
+  const asked = generation;
+  const next = queue.then(() => (asked === generation ? run(options) : (options.fields?.length ? null : false)));
   queue = next.catch(() => {});
   return next;
 }
