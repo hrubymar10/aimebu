@@ -91,7 +91,7 @@ func TestTelemetryIdentityAPIAndReports(t *testing.T) {
 		return users[len(users)-1]
 	}
 	identityCall(t, f, "GET", "/api/me/telemetry", nil)
-	if user := lastUser(); user.ID != first.Fingerprint || user.Email != "" || user.Username != "" || user.IPAddress != "" || user.Name != "" {
+	if user := lastUser(); user.ID != first.Fingerprint || user.Email != "" || user.Username != "" || user.IPAddress != "0.0.0.0" || user.Name != "" {
 		t.Fatalf("transactions name the person by the fingerprint only: %+v", user)
 	}
 

@@ -83,6 +83,9 @@ var allowedSpanData = map[string]bool{
 	"http.request.method": true, "http.response.status_code": true, "http.route": true,
 }
 
+// noIP is the user address every event carries: the unspecified address, which no geo database places anywhere.
+const noIP = "0.0.0.0"
+
 // Event scrubs an error or transaction event in place and returns it. It is both BeforeSend and BeforeSendTransaction.
 func (s Scrubber) Event(event *sentry.Event) *sentry.Event {
 	if event == nil {
@@ -90,7 +93,10 @@ func (s Scrubber) Event(event *sentry.Event) *sentry.Event {
 	}
 	// Who and where: no user, no host name, no request detail beyond the method and the path.
 	// Of a user only the id survives (the fingerprint, or the login when its owner chose to send it): no name, email or address.
-	event.User, event.ServerName, event.Modules = sentry.User{ID: trimUserID(event.User.ID)}, "", nil
+	// The address is set on purpose: sentry-go leaves an empty one out of the payload, and then Sentry takes the connecting IP, this
+	// server's, and derives a location from it. An explicit non-routable value is the one thing this SDK can send that stops that
+	// (it has no infer_ip setting); it resolves to no location.
+	event.User, event.ServerName, event.Modules = sentry.User{ID: trimUserID(event.User.ID), IPAddress: noIP}, "", nil
 	delete(event.Tags, "server_name")
 	if event.Request != nil {
 		event.Request = &sentry.Request{Method: event.Request.Method, URL: s.URL(event.Request.URL)}

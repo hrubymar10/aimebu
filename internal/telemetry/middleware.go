@@ -52,9 +52,19 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return http.NewResponseController(w.ResponseWriter).Hijack()
 }
 
+// tracedPath says whether a request is worth a trace of its own: the API, and the pages the app is opened by (the shell, which the same handler
+// serves as "/" and "/index.html", and the first-run setup). Everything else the catch-all route answers is a file of the app: the ~240 scripts, styles
+// and icons of one page load. Traced, each is a transaction named "GET /", a page load makes hundreds of them, and they were 60% of a server's
+// transactions with nothing to learn from any of them. (The reasons a request is not traced: a streaming one, see Middleware, and this.) A panic or
+// a 5xx in a file is still reported: only the trace is left out. The path is only read here, never recorded.
+func tracedPath(path string) bool {
+	return strings.HasPrefix(path, "/api/") || path == "/" || path == "/index.html" || path == "/setup"
+}
+
 // Middleware wraps h (a request passes straight through while reporting is off): a panic is reported (and then re-raised, so net/http answers it as it always did), a 5xx answer is reported, and
-// each request is a trace span ("http.server") carrying the method, the route pattern and the status; never the path, the query, a header or a body. A
-// long-lived request (an event stream, a WebSocket upgrade) is not traced, since its span would last as long as the connection.
+// each API request and page is a trace span ("http.server") carrying the method, the route pattern and the status; never the path, the query, a header or
+// a body. A static file of the app is not traced (see tracedPath), nor is a long-lived request (an event stream, a WebSocket upgrade): its span would last
+// as long as the connection.
 func Middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t := Current() // read per request: Settings can turn reporting on or off while the server runs
@@ -66,7 +76,7 @@ func Middleware(h http.Handler) http.Handler {
 		ctx := r.Context()
 		var span trace.Span
 		streaming := r.Header.Get("Upgrade") != "" || strings.Contains(r.Header.Get("Accept"), "text/event-stream")
-		if !streaming {
+		if !streaming && tracedPath(r.URL.Path) {
 			// Named by the route pattern once the mux has matched it; the raw path never goes in (it can hold names a person chose).
 			ctx, span = t.tracer.Start(ctx, r.Method+" (unrouted)", trace.WithSpanKind(trace.SpanKindServer),
 				trace.WithAttributes(attribute.String(OpKey, "http.server"), attribute.String("http.request.method", r.Method)))

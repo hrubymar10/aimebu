@@ -19,9 +19,10 @@ import (
 // from default_dsn.go, a separate file so that removing it leaves a build that is off until a DSN comes from the environment or Settings.
 var DefaultDSN string
 
-// DefaultTracesSampleRate is the share of requests (and of page loads) that are traced when AIMEBU2_SENTRY_TRACES_SAMPLE_RATE does not say: half of
-// them. The same number serves the server and the browser.
-const DefaultTracesSampleRate = 0.5
+// DefaultTracesSampleRate is the share of requests (and of page loads) that are traced when AIMEBU2_SENTRY_TRACES_SAMPLE_RATE does not say: all of
+// them. What keeps the volume down is what is traced, not how many: the files of the app are not, a request has at most MaxDBSpans database spans,
+// and a sampled page load is a handful of spans. The same number serves the server and the browser.
+const DefaultTracesSampleRate float64 = 1
 
 // Config is what the environment and Settings say. The zero value (no DSN) is "telemetry off".
 type Config struct {

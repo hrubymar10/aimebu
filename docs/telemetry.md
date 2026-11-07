@@ -30,7 +30,7 @@ Other variables (all optional):
 |---|---|---|
 | `AIMEBU2_SENTRY_DSN` | A DSN, or `off`/empty to disable; overrides Settings. | unset |
 | `AIMEBU2_SENTRY_ENV` | The Sentry environment name. | `dev` |
-| `AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (server) and of page loads traced (browser), 0 to 1. Settings → Telemetry shows the value in effect. | `0.5` |
+| `AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (server) and of page loads traced (browser), 0 to 1. Settings → Telemetry shows the value in effect. | `1` |
 
 A DSN must be https (http only for a Sentry on this machine: localhost, 127.x, ::1); anything else is refused. A rate outside 0 to 1 (or not a number) is reported on stderr and the process runs with telemetry **off**; it never refuses to start
 over it. The server says `telemetry on: ...` at startup when it is on. The release is the build's version (`aimebu version`, the same
@@ -52,7 +52,9 @@ transport inside a test binary.
   and then raised again, so the process behaves exactly as it would without telemetry.
 - Panics at the entry points of the subcommands (server, supervisor, CLI).
 - Traces: one transaction per HTTP request (method, route, status, duration), with one span per SQLite statement made while serving it:
-  the SQL text **with its `?` placeholders**, the duration and the number of rows. Never an argument value. Event streams and
+  the SQL text **with its `?` placeholders**, the duration and the number of rows. Never an argument value. The files of the app (the ~240 scripts, styles and icons one page load fetches) are not
+  traced either: only the API and the pages the app is opened by (`/`, `/index.html`, `/setup`) are, because each file used to be a transaction named
+  `GET /` and together they were most of the server's transactions (a panic or a 5xx in a file is still reported). Event streams and
   WebSocket connections are not traced (their span would last as long as the connection). At most 50 statements of one request get a span
   (`telemetry.MaxDBSpans`); the transaction then carries `db.calls` (how many ran) and `db.calls_dropped` (how many were left out), so a request that
   asks per row shows up without every iteration costing a span.
@@ -83,8 +85,8 @@ API: `GET`/`PUT /api/me/telemetry` (`{send_name}`) and `POST /api/me/telemetry/f
 
 ## Volume
 
-The free Sentry plan counts spans (5 million a month), so the number of spans per use is bounded: half of the requests and page loads are traced by
-default (`AIMEBU2_SENTRY_TRACES_SAMPLE_RATE`), a request carries at most 50 database spans, and a sampled page load is a handful of spans. Settings → Telemetry
+The free Sentry plan counts spans (5 million a month), so the number of spans per use is bounded by what is traced, not by how many requests: every request and page load is traced by
+default (`AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` lowers the share), a request carries at most 50 database spans, a sampled page load is a handful of spans, and the files of the app are not traced at all. Settings → Telemetry
 shows these numbers read-only (`GET /api/telemetry/settings` carries `traces_sample_rate` and `max_db_spans`); the rate is the server's environment's to change.
 - **No Session Replay.** The vendored browser bundle is the tracing-only one and contains no Replay code, so it cannot be turned on by a setting. A
   recording of the screen would carry link targets, names in attributes and page URLs that the SDK offers no hook to scrub, so it is left out until
@@ -106,6 +108,9 @@ Both sides scrub every event before it is sent, in code that does not depend on 
   `sdk.settings.infer_ip: "never"` with an explicitly empty `user.ip_address`, the browser sends **no session** (the SDK's session envelope carries
   `ip_address: "{{auto}}"`, which asks Sentry to infer it) and no client reports, and the page test fails on any `{{auto}}` or on any other item type
   that could carry one. This does not depend on Sentry's own "Prevent Storing of IP Addresses" project setting;
+  the Go server cannot say `infer_ip` (sentry-go has no such setting, and leaves an empty address out of the payload, so Sentry would use this
+  server's connecting IP and derive a location), so every server event and transaction carries the unspecified address `0.0.0.0`, which resolves to no
+  location; a test pins it;
 - no URL in the form a person typed it: the server names a request by its **route pattern** (`GET /api/rooms/{room}/messages`), and the
   browser reduces a URL to its resource (`/api/rooms/…`); no host, no query string, no fragment, and no ids or names chosen by a person
   (a profile name is part of some paths). 

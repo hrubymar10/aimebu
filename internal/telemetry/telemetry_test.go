@@ -73,8 +73,8 @@ func TestFromEnv(t *testing.T) {
 	if err != nil || !on.Enabled() || !on.EnvSet || on.DSN != "https://k@h/1" || on.Environment != "prod" || on.TracesSampleRate != 0.5 || on.Release != "v2.0.0-3-gabc_x_y" {
 		t.Fatalf("%+v %v", on, err)
 	}
-	if off.TracesSampleRate != 0.5 || DefaultTracesSampleRate != 0.5 {
-		t.Fatalf("the sample rate defaults to half of the requests: %v", off.TracesSampleRate)
+	if off.TracesSampleRate != 1 || DefaultTracesSampleRate != 1 {
+		t.Fatalf("the sample rate defaults to all of the requests: %v", off.TracesSampleRate)
 	}
 	for _, disabled := range []string{"off", "OFF", "", "  "} {
 		config, err := FromEnv(lookup(map[string]string{"AIMEBU2_SENTRY_DSN": disabled}), "v")
@@ -211,7 +211,7 @@ func TestScrubEvent(t *testing.T) {
 			t.Errorf("%q must survive: %s", kept, out)
 		}
 	}
-	if user, _ := json.Marshal(s.Event(event).User); string(user) != `{"id":"1"}` {
+	if user, _ := json.Marshal(s.Event(event).User); string(user) != `{"id":"1","ip_address":"0.0.0.0"}` {
 		t.Errorf("of a user only the id survives: %s", user)
 	}
 	if s.Event(nil) != nil {
@@ -460,7 +460,7 @@ func TestRequestsCarryOnlyThePersonsReportID(t *testing.T) {
 			t.Errorf("the user attribute must not reach the span data: %s", marshal(t, event))
 		}
 	}
-	want := map[string]bool{"GET /api/a {\"id\":\"0123456789abcdef\"}": true, "GET /api/b {\"id\":\"carol\"}": true, "GET /api/anon {}": true}
+	want := map[string]bool{"GET /api/a {\"id\":\"0123456789abcdef\",\"ip_address\":\"0.0.0.0\"}": true, "GET /api/b {\"id\":\"carol\",\"ip_address\":\"0.0.0.0\"}": true, "GET /api/anon {\"ip_address\":\"0.0.0.0\"}": true}
 	for _, got := range seen["transaction"] {
 		delete(want, got)
 	}
@@ -471,7 +471,7 @@ func TestRequestsCarryOnlyThePersonsReportID(t *testing.T) {
 	for _, event := range transport.sent() {
 		if event.Type != "transaction" && (strings.HasPrefix(event.Message, "HTTP 500") || event.Message == "kaboom") {
 			reports++
-			if user, _ := json.Marshal(event.User); string(user) != `{"id":"0123456789abcdef"}` {
+			if user, _ := json.Marshal(event.User); string(user) != `{"id":"0123456789abcdef","ip_address":"0.0.0.0"}` {
 				t.Errorf("a 5xx or panic report names its person by the id only: %s", user)
 			}
 		}
@@ -523,13 +523,65 @@ func TestInitKeepsTheRunningReporterForTheSameConfig(t *testing.T) {
 	}
 }
 
+// A page load fetches ~240 files of the app through the catch-all route; each was a transaction named "GET /" and together they were 60% of a server's
+// transactions. The API and the pages the app is opened by are traced, the files are not, and a failure in a file is still reported.
+func TestStaticFilesOfTheAppAreNotTraced(t *testing.T) {
+	_, transport := startTest(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ok", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("fine")) })
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/js/broken.js" {
+			http.Error(w, "nope", 500)
+			return
+		}
+		_, _ = w.Write([]byte("file"))
+	})
+	handler := Middleware(mux)
+	files := []string{"/js/app.js?v=abc123", "/js/pages/chat/store.js", "/style.css", "/theme-v1.css", "/icons/close.svg", "/vendor/sentry/bundle.tracing.min.js", "/favicon.svg", "/manifest.webmanifest", "/js/broken.js"}
+	for _, path := range files {
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", path, nil))
+	}
+	traced := []string{"/", "/index.html", "/setup", "/api/ok"}
+	for _, path := range traced {
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", path, nil))
+	}
+	Current().Flush(time.Second)
+	var transactions []string
+	var messages int
+	for _, event := range transport.sent() {
+		switch {
+		case event.Type == "transaction":
+			transactions = append(transactions, event.Transaction)
+		case strings.HasPrefix(event.Message, "HTTP 500"):
+			messages++
+		}
+	}
+	if len(transactions) != len(traced) {
+		t.Fatalf("want a transaction for each of the %d pages and API calls and none for the %d files, got %d: %v", len(traced), len(files), len(transactions), transactions)
+	}
+	if messages != 1 {
+		t.Fatalf("a 500 from a file is still reported: %d messages", messages)
+	}
+}
+
+func TestTracedPath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/api/rooms/x/agents": true, "/api/events": true, "/": true, "/index.html": true, "/setup": true,
+		"/js/app.js": false, "/css/a.css": false, "/icons/a.svg": false, "/vendor/x.js": false, "/favicon.svg": false, "/api": false, "/apix": false, "/robots.txt": false,
+	} {
+		if got := tracedPath(path); got != want {
+			t.Errorf("tracedPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestMiddlewareNamesRequestsByRouteNeverByPath(t *testing.T) {
 	_, transport := startTest(t)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/switcher/{tool}/profiles/{name}", func(w http.ResponseWriter, r *http.Request) {})
 	handler := Middleware(mux)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/switcher/claude/profiles/my-private-profile?x=1", nil))
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/no/such/secret-thing", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/no/such/secret-thing", nil))
 	Current().Flush(time.Second)
 	var names []string
 	for _, event := range transport.sent() {
@@ -599,17 +651,17 @@ func TestTransactionKeepsItsTraceIdentity(t *testing.T) {
 func TestErrorsAreLinkedToTheirRequestsTrace(t *testing.T) {
 	_, transport := startTest(t)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /boom", func(http.ResponseWriter, *http.Request) { panic("kaboom") })
-	mux.HandleFunc("GET /fail", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/boom", func(http.ResponseWriter, *http.Request) { panic("kaboom") })
+	mux.HandleFunc("GET /api/fail", func(w http.ResponseWriter, r *http.Request) {
 		Current().CaptureError(r.Context(), errors.New("handled error"))
 		http.Error(w, "x", 500)
 	})
 	handler := Middleware(mux)
 	func() {
 		defer func() { _ = recover() }()
-		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/boom", nil))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/boom", nil))
 	}()
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/fail", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/fail", nil))
 	Current().Flush(time.Second)
 	transactionTrace := map[string]string{} // transaction name -> trace id
 	for _, event := range transport.sent() {
@@ -635,7 +687,7 @@ func TestErrorsAreLinkedToTheirRequestsTrace(t *testing.T) {
 	if len(linked) != 3 {
 		t.Fatalf("want a panic, an error and a 5xx event, got %v", linked)
 	}
-	for kind, want := range map[string]string{"panic": transactionTrace["GET /boom"], "error": transactionTrace["GET /fail"], "5xx": transactionTrace["GET /fail"]} {
+	for kind, want := range map[string]string{"panic": transactionTrace["GET /api/boom"], "error": transactionTrace["GET /api/fail"], "5xx": transactionTrace["GET /api/fail"]} {
 		if want == "" || linked[kind] != want {
 			t.Errorf("the %s event is not in its request's trace: event %q, transaction %q", kind, linked[kind], want)
 		}
@@ -715,6 +767,17 @@ func TestScrubberPathsAreMachineIndependent(t *testing.T) {
 	} {
 		if got := s.path(in); got != want {
 			t.Errorf("path(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Sentry derives a location from the connecting IP when the payload has no user address, so every event and transaction names one.
+func TestEventsCarryNonRoutableAddress(t *testing.T) {
+	s := Scrubber{}
+	for _, event := range []*sentry.Event{{Message: "boom"}, {Type: "transaction", Transaction: "GET /x"}, {Message: "x", User: sentry.User{IPAddress: "203.0.113.9"}}} {
+		out := marshal(t, s.Event(event))
+		if !strings.Contains(out, `"ip_address":"0.0.0.0"`) || strings.Contains(out, "203.0.113.9") {
+			t.Errorf("the user address must be the non-routable one: %s", out)
 		}
 	}
 }

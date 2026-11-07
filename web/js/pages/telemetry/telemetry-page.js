@@ -7,7 +7,7 @@ import { IconButton } from '../../components/icon-button.js';
 import { Identity } from './identity.js';
 import { CONSENT_TEXT, DSN_PLACEHOLDER, RESET_DSN_LABEL, dsnProblem } from '../../telemetry-consent.js';
 
-// 0.5 -> "50%"; a share under a tenth of a percent still shows as such rather than as 0.
+// 0.5 -> "50%", 1 -> "100%"; a share under a tenth of a percent still shows as such rather than as 0.
 function sampleRate(rate) {
   const percent = Number(rate) * 100;
   return `${Number.isInteger(percent) ? percent : Math.round(percent * 10) / 10}%`;
@@ -88,6 +88,7 @@ function Controls({ onDirty }) {
       <dl class="settings-facts" id="telemetry-facts">
         <dt>Trace sample rate</dt><dd id="telemetry-sample-rate">${sampleRate(view.traces_sample_rate)} of server requests and of page loads. AIMEBU2_SENTRY_TRACES_SAMPLE_RATE changes it.</dd>
         <dt>Database spans</dt><dd id="telemetry-db-spans">At most ${view.max_db_spans} per request; the rest are counted on the request, not traced.</dd>
+        <dt>Server file loads</dt><dd id="telemetry-static-files">Not traced: the scripts, styles and icons the server hands out are not requests of their own; the API and the pages are.</dd>
         <dt>Browser file loads</dt><dd id="telemetry-resource-spans">Not traced: no span per script, stylesheet or image, and a page load keeps only its request and response phases.</dd>
       </dl>`}
   `;

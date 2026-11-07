@@ -91,7 +91,9 @@ async function on() {
     assert.deepEqual(await page.evaluate(() => window.__csp), [], 'the policy blocked nothing the page did');
     assert.ok(!received.some(item => item.body.includes('sentry.javascript.browser') && item.body.includes('"type":"span"')), 'no spans are sent on their own (stream lifecycle skips the scrubber)');
     const host = new URL(server.origin).host;
-    for (const item of received) {
+    for (const received_item of received) {
+      // The Go server names the unspecified address on purpose (it stops Sentry placing the event by the server's IP); any other address is a leak.
+      const item = { ...received_item, body: received_item.body.replaceAll('"ip_address":"0.0.0.0"', '') };
       for (const leak of ['hunter2', '/Users/alice', 'Authorization', 'Cookie', 'cookie:', '?token', 'X-CSRF', 'SECRET-QUERY-VALUE', 'SECRET-FRAGMENT', host, 'HeadlessChrome', 'User-Agent', 'user_agent', '"ip_address":"', 'server.address', '/api/buildinfo?'])
         assert.ok(!item.body.includes(leak), `${leak} must not be sent: ...${item.body.slice(Math.max(0, item.body.indexOf(leak) - 160), item.body.indexOf(leak) + 120)}...`);
       for (const infer of item.body.match(/"infer_ip":"[a-z]+"/g) || []) assert.equal(infer, '"infer_ip":"never"', 'the IP address is never inferred');
@@ -112,7 +114,7 @@ async function on() {
     const parsedItems = () => received.flatMap(item => item.body.split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } }));
     for (let i = 0; i < 100 && !parsedItems().some(item => item.platform === 'go' && item.transaction === 'GET /api/me/telemetry'); i++) await new Promise(resolve => setTimeout(resolve, 100));
     const serverTransaction = parsedItems().find(item => item.platform === 'go' && item.transaction === 'GET /api/me/telemetry');
-    assert.ok(serverTransaction, 'the server reported the identity request'); assert.deepEqual(serverTransaction.user, { id: fingerprint }, 'a server report names its person by the fingerprint and nothing else');
+    assert.ok(serverTransaction, 'the server reported the identity request'); assert.deepEqual(serverTransaction.user, { id: fingerprint, ip_address: '0.0.0.0' }, 'a server report names its person by the fingerprint and the unspecified address, nothing else');
     // The page follows a change at once, without a reload: the user name when chosen, the new fingerprint after a roll.
     const errorUser = async message => {
       await page.evaluate(text => { setTimeout(() => { throw new Error(text); }, 0); }, message);
@@ -225,9 +227,9 @@ async function popup() {
     assert.match(await page.evaluate(() => [...document.querySelectorAll('#settings-telemetry .settings-intro')].map(node => node.textContent).join(' ')), /Settings → Telemetry/, 'the text points at this section');
     // What bounds the volume is shown as facts, and they are the server's numbers.
     const facts = (await server.api(page, '/api/telemetry/settings')).body;
-    assert.deepEqual([facts.traces_sample_rate, facts.max_db_spans], [0.5, 50], 'the defaults: half of the requests, 50 database spans per request');
-    assert.deepEqual(await page.evaluate(() => ({ rate: document.querySelector('#telemetry-sample-rate').textContent, db: document.querySelector('#telemetry-db-spans').textContent, files: document.querySelector('#telemetry-resource-spans').textContent, inputs: document.querySelectorAll('#telemetry-facts input, #telemetry-facts button').length })),
-      { rate: '50% of server requests and of page loads. AIMEBU2_SENTRY_TRACES_SAMPLE_RATE changes it.', db: 'At most 50 per request; the rest are counted on the request, not traced.', files: 'Not traced: no span per script, stylesheet or image, and a page load keeps only its request and response phases.', inputs: 0 }, 'the facts, read-only');
+    assert.deepEqual([facts.traces_sample_rate, facts.max_db_spans], [1, 50], 'the defaults: every request, 50 database spans per request');
+    assert.deepEqual(await page.evaluate(() => ({ rate: document.querySelector('#telemetry-sample-rate').textContent, db: document.querySelector('#telemetry-db-spans').textContent, files: document.querySelector('#telemetry-resource-spans').textContent, served: document.querySelector('#telemetry-static-files').textContent, inputs: document.querySelectorAll('#telemetry-facts input, #telemetry-facts button').length })),
+      { rate: '100% of server requests and of page loads. AIMEBU2_SENTRY_TRACES_SAMPLE_RATE changes it.', db: 'At most 50 per request; the rest are counted on the request, not traced.', files: 'Not traced: no span per script, stylesheet or image, and a page load keeps only its request and response phases.', served: 'Not traced: the scripts, styles and icons the server hands out are not requests of their own; the API and the pages are.', inputs: 0 }, 'the facts, read-only');
     // Closing Settings takes a clean section out of the page, and opening it again reads the settings again.
     await page.click('#settings-close');
     await page.waitForFunction(() => !document.querySelector('#settings-dialog').open && document.querySelector('#settings-telemetry').childElementCount === 0);
