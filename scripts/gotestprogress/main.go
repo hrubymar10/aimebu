@@ -8,6 +8,7 @@
 //
 //	go run ./scripts/gotestprogress [flags] -- [go test arguments]
 //
+// With -shards (or GO_TEST_SHARDS) a big package's tests are split over several go test processes that run side by side (see shard.go).
 // The exit status is go test's, or 1 when a failure was reported while go test said 0. Send SIGUSR1 to this process to make the test
 // binaries of packages with a test that has been running for a while dump their goroutines (SIGQUIT), see -quiet.
 package main
@@ -24,6 +25,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -467,39 +469,132 @@ func countPackages(goTestArgs []string) int {
 	return len(strings.Fields(string(out)))
 }
 
+// job is one go test process: its arguments, and what is added to the package name of its events (a shard's " [shard 2/4]").
+type job struct {
+	args   []string
+	suffix string
+}
+
+// goList expands package patterns to import paths.
+func goList(pats []string) ([]string, error) {
+	out, err := exec.Command("go", append([]string{"list", "-e", "-f", "{{.ImportPath}}"}, pats...)...).Output()
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(string(out)), nil
+}
+
+// plan turns go test's arguments into the processes to run and the number of packages (shards count as packages) they cover. Without
+// shards it is the one process the user asked for. Every package that cannot be sharded (no -list answer, one test) stays in the plain
+// process, so sharding never loses a package.
+func plan(goTestArgs []string, specs []shardSpec, w weights, note func(string)) ([]job, int) {
+	flags, pats := splitArgs(goTestArgs)
+	if len(specs) == 0 || hasFlag(flags, "-run") {
+		if len(specs) > 0 {
+			note("-run is set, so the packages are not sharded")
+		}
+		return []job{{args: goTestArgs}}, countPackages(goTestArgs)
+	}
+	if len(pats) == 0 {
+		pats = []string{"."}
+	}
+	pkgs, err := goList(pats)
+	if err != nil || len(pkgs) == 0 {
+		return []job{{args: goTestArgs}}, countPackages(goTestArgs)
+	}
+	var jobs []job
+	var plain []string
+	total := 0
+	for _, pkg := range pkgs {
+		n := shardsFor(specs, pkg)
+		if n > 1 {
+			if tests, err := listTests(flags, pkg); err != nil {
+				note(fmt.Sprintf("%s: cannot list its tests (%v), running it in one piece", pkg, err))
+			} else if groups := partition(tests, w.forPackage(pkg), n); len(groups) > 1 {
+				for k, group := range groups {
+					jobs = append(jobs, job{args: append(append(append([]string(nil), flags...), "-run", runPattern(group)), pkg), suffix: fmt.Sprintf(" [shard %d/%d]", k+1, len(groups))})
+					total++
+				}
+				continue
+			}
+		}
+		plain = append(plain, pkg)
+		total++
+	}
+	if len(plain) > 0 {
+		jobs = append([]job{{args: append(append([]string(nil), flags...), plain...)}}, jobs...)
+	}
+	return jobs, total
+}
+
+// basePackage is a package's name without its shard suffix.
+func basePackage(name string) string {
+	base, _, _ := strings.Cut(name, " [shard")
+	return base
+}
+
 func main() {
 	var opts options
+	var shardText, weightsPath string
 	flag.DurationVar(&opts.quiet, "quiet", 30*time.Second, "report what is running when nothing has happened for this long")
 	flag.DurationVar(&opts.slow, "slow", 30*time.Second, "report a passing test that took at least this long")
 	flag.DurationVar(&opts.hang, "hang", 5*time.Minute, "call a test possibly hung after it has been running this long")
 	flag.BoolVar(&opts.quitOnHang, "quit-on-hang", false, "send SIGQUIT to the test binary of a package whose test passes -hang (it dumps all goroutines and exits)")
+	flag.StringVar(&shardText, "shards", os.Getenv("GO_TEST_SHARDS"), "split these packages over several go test processes: package=count,package=count (default $GO_TEST_SHARDS)")
+	flag.StringVar(&weightsPath, "weights", "scripts/shard-weights.json", "known durations of top-level tests, to balance the shards (see scripts/shard-weights.cjs)")
 	flag.Parse()
 	goTestArgs := flag.Args()
-
-	opts.total = countPackages(goTestArgs)
-	cmd := exec.Command("go", append([]string{"test", "-json"}, goTestArgs...)...)
-	cmd.Stderr = os.Stderr
-	stdout, err := cmd.StdoutPipe()
+	specs, err := parseShards(shardText)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gotestprogress:", err)
-		os.Exit(1)
+		os.Exit(2)
 	}
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintln(os.Stderr, "gotestprogress:", err)
-		os.Exit(1)
+
+	jobs, total := plan(goTestArgs, specs, loadWeights(weightsPath), func(text string) { fmt.Fprintln(os.Stderr, "gotestprogress:", text) })
+	opts.total = total
+	type process struct {
+		cmd    *exec.Cmd
+		stdout io.ReadCloser
+		suffix string
+	}
+	var procs []process
+	for _, j := range jobs {
+		cmd := exec.Command("go", append([]string{"test", "-json"}, j.args...)...)
+		cmd.Stderr = os.Stderr
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gotestprogress:", err)
+			os.Exit(1)
+		}
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "gotestprogress:", err)
+			os.Exit(1)
+		}
+		procs = append(procs, process{cmd, stdout, j.suffix})
+	}
+	if len(procs) > 1 {
+		fmt.Printf("[%s] %d go test processes: the plain packages and %d shards\n", time.Now().Format("15:04:05"), len(procs), len(procs)-1)
 	}
 
 	now := time.Now()
 	tr := newTracker(os.Stdout, opts, now)
 	tr.selfPID = os.Getpid()
-	tr.binariesForReport = func() []procInfo { return testBinaries(cmd.Process.Pid) }
+	binaries := func() []procInfo {
+		var all []procInfo
+		for _, p := range procs {
+			all = append(all, testBinaries(p.cmd.Process.Pid)...)
+		}
+		return all
+	}
+	tr.binariesForReport = binaries
 	quit := func(pkg string) string {
-		binaries := binaryFor(testBinaries(cmd.Process.Pid), pkg)
-		if len(binaries) == 0 {
+		pkg = basePackage(pkg)
+		found := binaryFor(binaries(), pkg)
+		if len(found) == 0 {
 			return "no test binary of " + pkg + " found to quit"
 		}
 		var done []string
-		for _, b := range binaries {
+		for _, b := range found {
 			if err := syscall.Kill(b.pid, syscall.SIGQUIT); err == nil {
 				done = append(done, strconv.Itoa(b.pid))
 			}
@@ -512,24 +607,32 @@ func main() {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
 	events := make(chan event, 256)
 	lines := make(chan string, 16)
-	go func() {
-		reader := bufio.NewReaderSize(stdout, 1<<20)
-		for {
-			line, err := reader.ReadBytes('\n')
-			if len(line) > 0 {
-				var ev event
-				if jerr := json.Unmarshal(line, &ev); jerr != nil || ev.Action == "" {
-					lines <- string(line)
-				} else {
-					events <- ev
+	var readers sync.WaitGroup
+	for _, p := range procs {
+		readers.Add(1)
+		go func(stdout io.Reader, suffix string) {
+			defer readers.Done()
+			reader := bufio.NewReaderSize(stdout, 1<<20)
+			for {
+				line, err := reader.ReadBytes('\n')
+				if len(line) > 0 {
+					var ev event
+					if jerr := json.Unmarshal(line, &ev); jerr != nil || ev.Action == "" {
+						lines <- string(line)
+					} else {
+						if suffix != "" && ev.Package != "" {
+							ev.Package += suffix
+						}
+						events <- ev
+					}
+				}
+				if err != nil {
+					return
 				}
 			}
-			if err != nil {
-				close(events)
-				return
-			}
-		}
-	}()
+		}(p.stdout, p.suffix)
+	}
+	go func() { readers.Wait(); close(events) }()
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -566,7 +669,9 @@ loop:
 				}
 			default:
 				interrupted = true
-				_ = cmd.Process.Signal(sig)
+				for _, p := range procs {
+					_ = p.cmd.Process.Signal(sig)
+				}
 			}
 		}
 	}
@@ -580,11 +685,13 @@ loop:
 		break
 	}
 	exit := 0
-	if err := cmd.Wait(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			exit = ee.ExitCode()
-		} else {
-			exit = 1
+	for _, p := range procs {
+		if err := p.cmd.Wait(); err != nil && exit == 0 {
+			if ee, ok := err.(*exec.ExitError); ok {
+				exit = ee.ExitCode()
+			} else {
+				exit = 1
+			}
 		}
 	}
 	if exit == 0 && tr.sawFailure {

@@ -1,0 +1,50 @@
+{
+ "cmd/aimebu": {
+  "TestServerAnswersBeforeTheEmbeddedSupervisorIsUp": 12.1,
+  "*": 0.82
+ },
+ "internal/server": {
+  "TestSpawnContinuesASessionMadeUnderALink": 52.1,
+  "TestResetLinksAreRecheckedWhenUsed": 32.2,
+  "TestNoImportedMessageLeftoversInTheUIOrTheAPI": 13,
+  "TestImportV1ChoiceClosesTheOfferForGood": 12.5,
+  "TestImportV1CommitIsRefusedWhenASkipLandsFirst": 11.2,
+  "TestDiskReportDoesNotWaitLongForASilentMachine": 11,
+  "TestFakeLeadCoordinatesTaskFromHomeToArchive": 10.7,
+  "*": 3.55
+ },
+ "internal/store": {
+  "TestMigration24To25AddsImportAndActivationSchema": 74.3,
+  "TestProviderLimitIsRecordedForEveryToolWithLimitWording": 62,
+  "TestWelcomeMigrationMarksOnlyExistingInstallsAsSeen": 62,
+  "TestV1ImportRandomRoleChainsNeverFail": 60.5,
+  "TestMigrationTwoToThreePreservesSessions": 59.9,
+  "TestMigrationRefusesToNumberExistingMessages": 59.5,
+  "TestRoomLimitLinesDescribeEachDroppedLimitInFull": 53.7,
+  "TestMigrationFiftyOneRestoresRecordsTheOwnerSwitchedOff": 53.1,
+  "TestMigrationEightyThreeAddsVibeToTheProviderLimitTools": 52.6,
+  "TestMigrationTwentyOneUpgradesExistingTwentyDatabase": 52,
+  "TestStoreStartupRetriesSQLiteBusy": 50.8,
+  "TestMigrationTwentyTwoPreservesExistingAttachment": 49.7,
+  "TestMigrationTwentySixUpgradesImportedDatabase": 49.5,
+  "TestMigrationTwentySevenUpgradesExistingTwentySixDatabase": 48.4,
+  "TestMigrationFourteenBackfillsHomeAndScopeHold": 47.4,
+  "TestMigrationEightyNineKeepsAnEmojiTheOwnerChose": 44,
+  "TestMigrationEightyNineChangesAnUntouchedLeadCompass": 43.6,
+  "TestMigrationMakesLimitsPerProjectAndDropsRoomLimits": 40.8,
+  "TestMigrationEightySixKeepsImportedSessionsAsContinued": 34.6,
+  "TestMigrationSixtyNineTurnsLaunchersIntoHarnesses": 33.1,
+  "TestMigrationKeepsTheNativeHarnessForAnEditedList": 32.5,
+  "TestHarnessMigrationFactsDescribeWhatChanges": 30,
+  "TestMigrationOneToTwoPreservesContent": 27.1,
+  "TestV1PreviewCountsPeopleOutsideConversationRows": 23.7,
+  "TestV1ImportReusesOnlyAnOpenGeneralRoom": 21,
+  "TestMigrationFortySixRebuildKeepsRowsAndWidensTool": 17.8,
+  "TestMigrateLogsTheDroppedRoomLimitsOnceCommitted": 15.6,
+  "TestV1ImportRefusesBadNewAccounts": 14,
+  "TestHotReadWorkload50k": 10.5,
+  "TestWhatCountsAsTheSameFailure": 10.5,
+  "TestV1ImportMemoryOffFollowsAnyMergedRoom": 10,
+  "*": 1.59
+ }
+}

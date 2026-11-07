@@ -20,6 +20,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/auth"
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
 type fixture struct {
@@ -67,6 +68,17 @@ func newFixture(t *testing.T) *fixture {
 	s.WriteTimeout = 100 * time.Millisecond
 	h := httptest.NewServer(s.Handler())
 	t.Cleanup(h.Close)
+	// A test that started the token-copy goroutines cancels their context when it returns (its defer runs before cleanups); this joins them, so
+	// none is still writing into the test's directories when those are removed. It returns at once when they were never started.
+	t.Cleanup(func() {
+		joined := make(chan struct{})
+		go func() { s.WaitTokenCopies(); close(joined) }()
+		select {
+		case <-joined:
+		case <-time.After(30 * time.Second):
+			t.Error("the token-copy goroutines did not stop after the test's context was cancelled")
+		}
+	})
 	f := &fixture{t: t, db: db, srv: s, http: h, machineID: machineID, machineKey: machineKey}
 	resp := f.request(http.MethodPost, "/api/login", map[string]string{"login": "owner", "password": "correct horse battery staple"}, false)
 	if resp.StatusCode != 200 {
@@ -81,6 +93,25 @@ func newFixture(t *testing.T) *fixture {
 	f.csrf = login.CSRFToken
 	return f
 }
+
+// offlineTransport answers every request with an error at once: a fixture's provider credentials are made up, and a test must never reach the
+// provider's real servers (the refresh a switch starts would otherwise call them, with retries and back-off, long after the test is over).
+type offlineTransport struct{}
+
+func (offlineTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("the network is off in tests")
+}
+
+// useUsages gives the server a usages reader that cannot reach the network and, when the test is over, waits for the refreshes a switch
+// started in the background (refreshSwitchedUsage), so none can write into the reader's directory while the test's temp directories are
+// removed. Call it after the reader's directory exists: cleanups run last-in first-out, so this one then runs before that directory is removed.
+func (f *fixture) useUsages(reader *usages.Reader) {
+	f.t.Helper()
+	reader.SetHTTPClient(&http.Client{Transport: offlineTransport{}})
+	f.srv.Usages = reader
+	f.t.Cleanup(f.srv.WaitUsageRefreshes)
+}
+
 func (f *fixture) request(method, path string, body any, csrf bool) *http.Response {
 	f.t.Helper()
 	var data []byte

@@ -52,6 +52,7 @@ type Server struct {
 	Auth           *auth.Service
 	Usages         *usages.Reader
 	refresherMu    sync.Mutex
+	usageRefreshes sync.WaitGroup // the usage refreshes a switch started in the background (see refreshSwitchedUsage)
 	refresher      *usages.TargetRefresher
 	claimsDone     chan struct{} // closed once the live-file claims are released after shutdown
 	liveClaims     *switcher.LiveClaims

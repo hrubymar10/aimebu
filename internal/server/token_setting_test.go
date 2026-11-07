@@ -59,7 +59,7 @@ func settingEnv(t *testing.T, left time.Duration, clock *settingClock, runningCo
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.Usages = reader
+	f.useUsages(reader)
 	f.srv.TokenAutoRefreshAvailable = func() bool { return true }
 	if clock != nil {
 		f.srv.TokenSettingClock = clock.Now

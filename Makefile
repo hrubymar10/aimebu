@@ -1,4 +1,4 @@
-.PHONY: test test-race vet fmt fmt-check test-full test-ui test-web dev
+.PHONY: test test-race vet fmt fmt-check test-full test-ui test-web gate dev
 
 # A bare `make` runs the Go tests, as it did before the progress runner.
 .DEFAULT_GOAL := test
@@ -12,6 +12,12 @@ PROGRESS_FLAGS ?=
 # Go's own limit for one package's test binary is 10 minutes, which a slow runner (CI's two CPUs) can pass under -race without any test being
 # wrong; the progress runner's HANG? line, not this limit, is what finds a stuck test. GO_TEST_TIMEOUT=10m goes back to Go's default.
 GO_TEST_TIMEOUT ?= 25m
+# The big packages are split over several go test processes that run side by side, so one package is no longer the whole run's length: the
+# tests of a package otherwise run mostly one after the other. GO_TEST_SHARDS=package=count,... picks them (see scripts/gotestprogress and
+# scripts/shard-weights.json); the default is for a machine with CPUs to spare and is empty below 8 of them, where more processes only compete.
+# GO_TEST_SHARDS= (empty) runs every package in one piece, as CI does.
+GO_TEST_SHARDS ?= $(shell node -e 'console.log(require("os").cpus().length >= 8 ? "internal/server=4,internal/store=3,cmd/aimebu=2" : "")')
+export GO_TEST_SHARDS
 
 $(GOTESTPROGRESS): $(wildcard scripts/gotestprogress/*.go) go.mod
 	@mkdir -p tmp
@@ -39,7 +45,7 @@ fmt-check: ## Fail if Go source is unformatted
 
 test-full: fmt-check vet test-race test-web ## Full local and CI gate
 
-WEB_TESTS := chat-model room-panel-model sidebar-model claude-sessions claude-session-import system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown composer-paste markdown import-tree quick-commands message-usage role-defaults harness-model prompts-model macros-model roles-model general-model notifications-model usages-model quota-model users-model machines-model project-model shell-model health-model knowledge-model inbox-model agents-model members-model sender-profile-model preact-vendor spawn-model harness-version workspace-folder build-version import-problems signin-model setup-model onboarding-model topbar-model telemetry telemetry-consent
+WEB_TESTS := run-jobs chat-model room-panel-model sidebar-model claude-sessions claude-session-import system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown composer-paste markdown import-tree quick-commands message-usage role-defaults harness-model prompts-model macros-model roles-model general-model notifications-model usages-model quota-model users-model machines-model project-model shell-model health-model knowledge-model inbox-model agents-model members-model sender-profile-model preact-vendor spawn-model harness-version workspace-folder build-version import-problems signin-model setup-model onboarding-model topbar-model telemetry telemetry-consent
 
 # The web tests are plain node scripts, with no npm dependencies. By default they run in Docker, from a digest-pinned image, so that every
 # machine runs the same toolchain: the repository is mounted read-only at /src, copied to a tmpfs, and run from there with no network
@@ -47,6 +53,8 @@ WEB_TESTS := chat-model room-panel-model sidebar-model claude-sessions claude-se
 # The pin must pass scripts/check-node-ca.cjs (no compromised CA roots (2026-10) in node's bundled or the system store): `make test-web` runs it first.
 WEB_TEST_NODE_IMAGE ?= node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
 WEB_TEST_RUNNER ?= docker
+# How many of the test-ui scripts run at once. 1 is the slowest and the quietest; the default is a quarter of the CPUs, at most 4.
+UI_JOBS ?= $(shell node -e 'console.log(Math.max(1, Math.min(4, Math.floor(require("os").cpus().length / 4))))')
 
 test-web: ## Run the browser-free web unit tests (vm over the module source), in Docker (WEB_TEST_RUNNER=local for local node)
 	@set -e; \
@@ -66,46 +74,11 @@ test-web: ## Run the browser-free web unit tests (vm over the module source), in
 	*) echo "make test-web: WEB_TEST_RUNNER must be docker or local, not '$(WEB_TEST_RUNNER)'" >&2; exit 1 ;; \
 	esac
 
-test-ui: ## Check web/v1.css against v1, run Chromium smoke against a scratch server, then the Preact page tests
-	node scripts/sync-v1-css.cjs --check
-	node scripts/test-ui.cjs
-	node scripts/test-harness-page.cjs
-	node scripts/test-prompts-page.cjs
-	node scripts/test-macros-page.cjs
-	node scripts/test-roles-page.cjs
-	node scripts/test-general-page.cjs
-	node scripts/test-notifications-page.cjs
-	node scripts/test-usages-page.cjs
-	node scripts/test-quota-page.cjs
-	node scripts/test-users-page.cjs
-	node scripts/test-machines-page.cjs
-	node scripts/test-project-page.cjs
-	node scripts/test-claude-import-page.cjs
-	node scripts/test-shell-page.cjs
-	node scripts/test-health-page.cjs
-	node scripts/test-knowledge-page.cjs
-	node scripts/test-inbox-page.cjs
-	node scripts/test-agents-page.cjs
-	node scripts/test-spawn-page.cjs
-	node scripts/test-room-members-page.cjs
-	node scripts/test-sender-profile-page.cjs
-	node scripts/test-sidebar-page.cjs
-	node scripts/test-room-menu-page.cjs
-	node scripts/test-mobile-tabs-page.cjs
-	node scripts/test-chat-page.cjs
-	node scripts/test-scroll-page.cjs
-	node scripts/test-icons.cjs
-	node scripts/test-emoji-page.cjs
-	node scripts/test-events-page.cjs
-	node scripts/test-columns-page.cjs
-	node scripts/test-settings-release-page.cjs
-	node scripts/test-signin-page.cjs
-	node scripts/test-setup-page.cjs
-	node scripts/test-onboarding-page.cjs
-	node scripts/test-topbar-page.cjs
-	node scripts/test-backdrop-page.cjs
-	node scripts/test-telemetry-page.cjs
-	node scripts/test-phone-pass-page.cjs
+test-ui: ## Check web/v1.css against v1, run Chromium smoke against a scratch server, then the Preact page tests (UI_JOBS=n runs n at once)
+	node scripts/run-jobs.cjs -j $(UI_JOBS) --label ui --report tmp/ui-report-%p.json scripts/ui-tests.list
+
+gate: ## The full gate: test-full and test-ui (GATE_UI_RUNS times, default 2) as two lanes side by side
+	@sh scripts/gate.sh
 
 dev: ## Run the server with live reload
 	go tool air -c .air.toml

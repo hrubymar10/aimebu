@@ -85,14 +85,40 @@ For UI work without agents, the web app has mock switches such as
 | --- | --- | --- |
 | `make test` | `go test ./...`, with progress output | while iterating on Go code |
 | `make test-web` | the browser-free web unit tests (`scripts/test-*.cjs`, run in Node's `vm` over the module source), in Docker (`WEB_TEST_RUNNER=local` for the local node) | while iterating on `web/js`; fast, no browser |
-| `make test-ui` | builds the server, starts a scratch one and drives Chromium through the UI; then `scripts/test-harness-page.cjs`, the Preact Harnesses page in Chromium with held, reordered and failing responses | after any visible UI change; needs Chromium and `puppeteer-core` |
+| `make test-ui` | the scripts listed in `scripts/ui-tests.list`, a few at a time (`UI_JOBS=n`): the v1 CSS check, the smoke that builds the server, starts a scratch one and drives Chromium through the UI, and a page test for each Preact page | after any visible UI change; needs Chromium and `puppeteer-core` |
 | `make test-race` | `go test -race ./...`, with progress output | after touching concurrency, the store, WebSocket or supervisor code |
 | `make test-full` | `fmt-check`, `vet`, `test-race`, `test-web` | before every commit; it is also what CI runs |
+| `make gate` | `test-full` and `test-ui` as two lanes side by side (`GATE_UI_RUNS=2` runs of `test-ui` in its lane), a log for each under `tmp/` | on the tip that is about to be pushed |
 
 `make test` and `make test-race` (so `make test-full` and CI) run Go with `-timeout 25m` instead of Go's 10
 minutes per package: a package such as `cmd/aimebu` can pass 10 minutes under `-race` on CI's two CPUs without
 any test being wrong. `GO_TEST_TIMEOUT=10m` restores Go's limit; a stuck test is found by the `HANG?` line
 described below, not by this limit.
+
+### Running tests side by side
+
+Every test owns its ports (an ephemeral one, asked for when it starts) and its temporary directories (`testenv`
+for Go, `mkdtemp` for the scripts), so two runs, or the parts of one run, can share a machine without sharing a
+path. That is what the parallel runs rely on, so a new test must keep it: no fixed port, no fixed path.
+
+- **`make test-ui`** runs the lines of `scripts/ui-tests.list` through `scripts/run-jobs.cjs`, `UI_JOBS` of them at
+  once (default: a quarter of the CPUs, at most 4; `UI_JOBS=1` is the old one-after-the-other run). Each job has a
+  `TMPDIR` of its own, its output is printed whole when it ends, and a failure stops new jobs from starting. The end
+  says how long the run took against the sum of the jobs, and `tmp/ui-report-<pid>.json` has every job's result and
+  duration. `node scripts/run-jobs.cjs --only chat --label ui scripts/ui-tests.list` runs part of the list, and
+  `--shard i/n` takes every n-th line, for splitting a list over machines. The slowest jobs are `test-ui.cjs` itself
+  (one long smoke over one server, which cannot be split without a rewrite) and `test-chat-page.cjs`; the run is as
+  long as the smoke.
+- **`make gate`** runs `make test-full` and `make test-ui` (twice, as `AGENTS.md` asks of a tip that is pushed) as two lanes
+  at the same time: the lanes share nothing, so the whole gate takes about as long as the UI lane.
+- **`make test-race` and `make test`** split the biggest Go packages over several `go test` processes
+  (`GO_TEST_SHARDS=internal/server=4,internal/store=3,cmd/aimebu=2`, the default on a machine with 8 or more CPUs;
+  `GO_TEST_SHARDS=` runs every package in one piece, as CI does on its two CPUs, where sharding does not help). A
+  shard runs `-run '^(A|B|...)$'` for its share of the package's top-level tests and shows as its own package
+  (`internal/server [shard 2/4]`). The groups are balanced with the durations in `scripts/shard-weights.json`; a test it
+  does not list counts as the package's average, so a stale file only balances worse. Regenerate it from any run:
+  `go test -race -json ./internal/server ./internal/store ./cmd/aimebu > /tmp/events.json; node scripts/shard-weights.cjs
+  /tmp/events.json > scripts/shard-weights.json`.
 
 `test-ui` is not part of `test-full`, so run it yourself for UI changes. Two
 more scripts check the UI without a server and exit non-zero on findings:
@@ -102,6 +128,7 @@ contrast, focus rings).
 
 A new web unit test is a `scripts/test-<name>.cjs` file; add it to the
 `WEB_TESTS` list in the `Makefile`, or it never runs.
+A new page test (one that starts Chromium) is added as a line of `scripts/ui-tests.list`.
 
 ### Reading the test output
 

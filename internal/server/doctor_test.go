@@ -195,40 +195,51 @@ func TestDoctorAuthorizedUsesTheConnectionsLocalAddress(t *testing.T) {
 	}
 }
 
-// ownNonLoopbackAddress returns an address of this machine that is not loopback, or "" when it has none (a container without a network).
-func ownNonLoopbackAddress() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ""
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() && !ipnet.IP.IsLinkLocalUnicast() {
-			return ipnet.IP.String()
-		}
-	}
-	return ""
+// addressListener serves a real socket on loopback but reports every connection as one from `remote` to a server at `local`. With the two equal
+// that is what the server sees when `aimebu doctor --live` dials a VPN or LAN bind and the kernel uses the dialled address as the source too.
+// Everything above the socket (net/http filling in the connection's local address, the allowlist, the doctor gate) runs as it does on that
+// bind, but no packet leaves loopback: a real socket on a LAN address is what a macOS application firewall filters for a fresh unsigned test
+// binary, so a dial through one times out until someone clicks Allow.
+type addressListener struct {
+	net.Listener
+	local, remote netip.Addr
 }
 
-// The real thing: a server listening on a non-loopback address of this machine, called through that address, as `doctor --live` does
-// with AIMEBU2_BIND set to a VPN address.
-func TestDoctorLiveOverANonLoopbackBind(t *testing.T) {
-	address := ownNonLoopbackAddress()
-	if address == "" {
-		t.Skip("this machine has no non-loopback IPv4 address")
+func (l addressListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
 	}
+	port := uint16(conn.RemoteAddr().(*net.TCPAddr).Port)
+	return addressConn{Conn: conn, local: net.TCPAddrFromAddrPort(netip.AddrPortFrom(l.local, 9997)), remote: net.TCPAddrFromAddrPort(netip.AddrPortFrom(l.remote, port))}, nil
+}
+
+type addressConn struct {
+	net.Conn
+	local, remote net.Addr
+}
+
+func (c addressConn) LocalAddr() net.Addr  { return c.local }
+func (c addressConn) RemoteAddr() net.Addr { return c.remote }
+
+// A server bound to a non-loopback address of this machine, called through that address, as `doctor --live` does with AIMEBU2_BIND set to
+// a VPN address: the request's peer is the server's own address, and the doctor key then decides. The address is made up (a documentation
+// range), so the test needs no network and runs in a container without one.
+func TestDoctorLiveOverANonLoopbackBind(t *testing.T) {
+	address := netip.MustParseAddr("192.0.2.7")
 	f := newFixture(t)
 	if _, err := f.srv.EnableDoctorKey(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	// Binding to such an address needs AIMEBU2_ALLOW to let it in, as the setup docs say; the allowlist is a separate gate from the key.
-	f.srv.Allow = append(f.srv.Allow, netip.MustParsePrefix(address+"/32"))
-	listener, err := net.Listen("tcp", net.JoinHostPort(address, "0"))
+	f.srv.Allow = append(f.srv.Allow, netip.PrefixFrom(address, 32))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("cannot listen on %s: %v", address, err)
+		t.Fatal(err)
 	}
 	server := httptest.NewUnstartedServer(f.srv.Handler())
 	server.Listener.Close()
-	server.Listener = listener
+	server.Listener = addressListener{Listener: listener, local: address, remote: address}
 	server.Start()
 	defer server.Close()
 	get := func(key string) int {
@@ -242,10 +253,39 @@ func TestDoctorLiveOverANonLoopbackBind(t *testing.T) {
 		return resp.StatusCode
 	}
 	if status := get(f.srv.doctorKey); status != 200 {
-		t.Fatalf("right key through %s: %d", server.URL, status)
+		t.Fatalf("right key through %s: %d", address, status)
 	}
 	if status := get(strings.Repeat("0", 64)); status != 403 {
-		t.Fatalf("wrong key through %s: %d", server.URL, status)
+		t.Fatalf("wrong key through %s: %d", address, status)
+	}
+}
+
+// The same listener for a peer that is not the server's own address: another host on the network is refused even with the right key.
+func TestDoctorLiveRefusesAnotherHostOnANonLoopbackBind(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.srv.EnableDoctorKey(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	local, remote := netip.MustParseAddr("192.0.2.7"), netip.MustParseAddr("192.0.2.8")
+	f.srv.Allow = append(f.srv.Allow, netip.PrefixFrom(remote, 32))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(f.srv.Handler())
+	server.Listener.Close()
+	server.Listener = addressListener{Listener: listener, local: local, remote: remote}
+	server.Start()
+	defer server.Close()
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/doctor", nil)
+	req.Header.Set("Authorization", "Bearer "+f.srv.doctorKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("another host with the right key: %d, want 403", resp.StatusCode)
 	}
 }
 

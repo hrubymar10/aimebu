@@ -345,7 +345,7 @@ func TestUsagesResponseCarriesCredentialAlertsOnlyWhenTheRefresherIsOn(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.Usages = reader
+	f.useUsages(reader)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	f.srv.StartTokenCopies(ctx, func(tr *usages.TargetRefresher) {

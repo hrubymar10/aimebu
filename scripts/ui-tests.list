@@ -1,0 +1,43 @@
+# The commands `make test-ui` runs, one per line (scripts/run-jobs.cjs runs them, a few at a time). Each one owns its ports (an ephemeral
+# port, asked for at start) and its temporary directories, so any of them can run beside any other; keep it that way: a new test must not
+# listen on a fixed port or write to a fixed path. The two long ones (the smoke and the chat page) come first, so a parallel run starts them at
+# once; the whole run is about as long as the smoke.
+node scripts/test-ui.cjs
+node scripts/test-chat-page.cjs
+node scripts/sync-v1-css.cjs --check
+node scripts/test-harness-page.cjs
+node scripts/test-prompts-page.cjs
+node scripts/test-macros-page.cjs
+node scripts/test-roles-page.cjs
+node scripts/test-general-page.cjs
+node scripts/test-notifications-page.cjs
+node scripts/test-usages-page.cjs
+node scripts/test-quota-page.cjs
+node scripts/test-users-page.cjs
+node scripts/test-machines-page.cjs
+node scripts/test-project-page.cjs
+node scripts/test-claude-import-page.cjs
+node scripts/test-shell-page.cjs
+node scripts/test-health-page.cjs
+node scripts/test-knowledge-page.cjs
+node scripts/test-inbox-page.cjs
+node scripts/test-agents-page.cjs
+node scripts/test-spawn-page.cjs
+node scripts/test-room-members-page.cjs
+node scripts/test-sender-profile-page.cjs
+node scripts/test-sidebar-page.cjs
+node scripts/test-room-menu-page.cjs
+node scripts/test-mobile-tabs-page.cjs
+node scripts/test-scroll-page.cjs
+node scripts/test-icons.cjs
+node scripts/test-emoji-page.cjs
+node scripts/test-events-page.cjs
+node scripts/test-columns-page.cjs
+node scripts/test-settings-release-page.cjs
+node scripts/test-signin-page.cjs
+node scripts/test-setup-page.cjs
+node scripts/test-onboarding-page.cjs
+node scripts/test-topbar-page.cjs
+node scripts/test-backdrop-page.cjs
+node scripts/test-telemetry-page.cjs
+node scripts/test-phone-pass-page.cjs

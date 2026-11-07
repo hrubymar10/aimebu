@@ -40,7 +40,7 @@ func quotaEnv(t *testing.T) (f *fixture, m *switcher.Manager, live string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.Usages = reader
+	f.useUsages(reader)
 	return f, m, live
 }
 
@@ -547,7 +547,7 @@ func TestQuotaSourceMapsTheUsageSnapshotAndTheSwitcher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.Usages = reader
+	f.useUsages(reader)
 	obs, err := quotaSource{f.srv}.Observe(context.Background(), switcher.ToolClaude)
 	if err != nil {
 		t.Fatal(err)

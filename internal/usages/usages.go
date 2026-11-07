@@ -276,6 +276,14 @@ func (r *Reader) SetTokenSetting(t *TokenSetting) {
 	r.mu.Unlock()
 }
 
+// SetHTTPClient replaces the client that the provider fetches go through. A test that wants refreshes but not the provider's real servers (a
+// fixture's credentials are made up) installs one that answers locally; the production client, with its timeout and retries, is the default. Set it before the first refresh.
+func (r *Reader) SetHTTPClient(client *http.Client) {
+	r.mu.Lock()
+	r.client = client
+	r.mu.Unlock()
+}
+
 // Invalidate clears the one local snapshot after a credential swap. The next
 // refresh must fetch limits with the newly active account.
 func (r *Reader) Invalidate(provider string) {

@@ -239,8 +239,17 @@ func (s *Server) refreshSwitchedUsage(tool string) {
 		return
 	}
 	s.Usages.Invalidate(usageProvider(tool))
-	go s.Usages.Refresh(context.Background())
+	s.usageRefreshes.Add(1)
+	go func() {
+		defer s.usageRefreshes.Done()
+		s.Usages.Refresh(context.Background())
+	}()
 }
+
+// WaitUsageRefreshes blocks until the usage refreshes that switches started in the background have finished. A refresh writes the usage
+// cache into the usages directory, so whoever is about to remove or replace that directory (a test's cleanup) waits first; a refresh that was
+// not waited for can recreate the directory, or land a file in it while it is being removed ("directory not empty").
+func (s *Server) WaitUsageRefreshes() { s.usageRefreshes.Wait() }
 
 func (s *Server) switcherQuiescent(w http.ResponseWriter, r *http.Request, tool string) bool {
 	running, err := s.runningAgents(r.Context(), tool)
