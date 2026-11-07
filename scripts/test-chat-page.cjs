@@ -213,12 +213,12 @@ async function main() {
   // instead of asking again, once; another room, or a later open, asks for its own.
   {
     const page = await mount({ openPage: 0 });
-    const pageOf = id => `rooms/${id}/messages\\?limit=40`;
+    const pageOf = id => `rooms/${id}/messages\\?limit=25`;
     await page.evaluate(() => window.__chat.prefetchLatest('rm_a'));
     assert.equal(await count(page, 'GET', pageOf('rm_a')), 1, 'the page is read at once');
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     assert.equal(await count(page, 'GET', pageOf('rm_a')), 1, 'opening that room used the page it had read');
-    assert.deepEqual(await ids(page).then(list => [list.length, list[0], list.at(-1)]), [40, 'rm_a_m91', 'rm_a_m130'], 'and drew it');
+    assert.deepEqual(await ids(page).then(list => [list.length, list[0], list.at(-1)]), [25, 'rm_a_m106', 'rm_a_m130'], 'and drew it');
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     assert.equal(await count(page, 'GET', pageOf('rm_a')), 2, 'the page is taken once: the next open asks again');
     await page.evaluate(() => window.__chat.prefetchLatest('rm_a'));
@@ -282,23 +282,43 @@ async function main() {
     await page.close();
   }
 
-  // A room opens on its newest 40 messages (fewer rows to build, style and lay out before the first paint), and the older ones follow as the list is
+  // A room opens on its newest 25 messages (fewer rows to build, style and lay out before the first paint), and the older ones follow as the list is
   // scrolled to the top, 50 at a time.
   {
     const page = await mount({ openPage: 0 });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     const state = await page.evaluate(() => { const list = document.querySelector('#messages'); return { first: list.firstElementChild.dataset.messageId, last: list.lastElementChild.dataset.messageId, rows: list.querySelectorAll(':scope > article.chat-msg').length, atBottom: list.scrollHeight - list.scrollTop - list.clientHeight < 3, hasOlder: list.dataset.hasOlder }; });
-    assert.deepEqual(state, { first: 'rm_a_m91', last: 'rm_a_m130', rows: 40, atBottom: true, hasOlder: 'true' });
-    assert.equal(await count(page, 'GET', 'messages\\?limit=40'), 1);
-    await page.evaluate(() => { window.__anchor = document.querySelector('[data-message-id=rm_a_m95]'); window.__list = document.querySelector('#messages'); window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; window.__before = window.__anchor.getBoundingClientRect().top; });
-    await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m41');
+    assert.deepEqual(state, { first: 'rm_a_m106', last: 'rm_a_m130', rows: 25, atBottom: true, hasOlder: 'true' });
+    assert.equal(await count(page, 'GET', 'messages\\?limit=25'), 1);
+    await page.evaluate(() => { window.__anchor = document.querySelector('[data-message-id=rm_a_m110]'); window.__list = document.querySelector('#messages'); window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; window.__before = window.__anchor.getBoundingClientRect().top; });
+    await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m56');
     await settle(page);
-    assert.equal(await count(page, 'GET', 'messages\\?before=91&limit=50'), 1);
+    assert.equal(await count(page, 'GET', 'messages\\?before=106&limit=50'), 1);
     assert.equal(await page.evaluate(() => Math.abs(window.__anchor.getBoundingClientRect().top - window.__before) < 3), true, 'what the reader looks at stayed put');
-    await page.evaluate(() => { window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; });
-    await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1');
-    await settle(page);
+    // Each scroll to the top asks for the page before the oldest row: 106 -> 56 -> 6, and the last one is short, so nothing is behind it.
+    for (const first of ['rm_a_m6', 'rm_a_m1']) {
+      await page.evaluate(() => { window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; });
+      await page.waitForFunction(first => document.querySelector('#messages > article:first-child')?.dataset.messageId === first, {}, first);
+      await settle(page);
+    }
+    assert.equal(await count(page, 'GET', 'messages\\?before=56&limit=50'), 1); assert.equal(await count(page, 'GET', 'messages\\?before=6&limit=50'), 1);
     assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages > article.chat-msg').length, document.querySelector('#messages').dataset.hasOlder]), [130, 'false'], 'all 130 rows, nothing more behind');
+    await page.close();
+  }
+
+  // A message outside the first page (a link to it, a search hit, an inbox item) is still reachable: the page around it is read, shown as a history
+  // window, and Back to latest returns to the newest page.
+  {
+    const page = await mount({ openPage: 0 });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.equal(await page.evaluate(() => [document.querySelectorAll('#messages > article.chat-msg').length, !!document.querySelector('[data-message-id=rm_a_m10]')]).then(JSON.stringify), JSON.stringify([25, false]), 'the first page is the newest 25 and does not hold message 10');
+    await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10'));
+    await page.waitForFunction(() => !!document.querySelector('[data-message-id=rm_a_m10]'), { timeout: 5000 });
+    await settle(page);
+    assert.equal(await count(page, 'GET', 'messages\\?around='), 1, 'the page around it was read');
+    assert.deepEqual(await page.evaluate(() => [window.__chat.contextMode, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden]), [true, false], 'a history window, with Back to latest offered');
+    await page.evaluate(() => document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').click());
+    await page.waitForFunction(() => !!document.querySelector('[data-message-id=rm_a_m130]') && !document.querySelector('[data-message-id=rm_a_m10]'), { timeout: 5000 });
     await page.close();
   }
 

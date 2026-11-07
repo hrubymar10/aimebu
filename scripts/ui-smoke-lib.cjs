@@ -101,7 +101,7 @@ async function start() {
     browser.process()?.once('exit', (code, signal) => { if (!browserClosing) console.error(`Chromium exited before the smoke finished (code ${code}, signal ${signal}); a pending wait fails as "frame got detached"`); });
     // The smoke exercises threads, copy and links through the compact toolbar (style C); style A, the product default, has
     // its own steps. Every page starts with that choice stored, before any navigation.
-    const prepare = async page => { await page.evaluateOnNewDocument(() => { window.__openPageSize = 100; // the smoke's rooms were written for a first page of 100 messages (test-chat-page checks the default of 40)
+    const prepare = async page => { await page.evaluateOnNewDocument(() => { window.__openPageSize = 100; // the smoke's rooms were written for a first page of 100 messages (test-chat-page checks the default of 25)
       try { if (!localStorage.getItem('aimebu2.ui.variant')) localStorage.setItem('aimebu2.ui.variant', 'c'); } catch {}
       // Browser notifications are not asked for: every smoke page reports the permission as refused, so the bar that offers them never shows
       // over unrelated flows. The page that tests the bar replaces this with a permission that has not been asked yet.

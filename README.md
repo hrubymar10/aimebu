@@ -438,7 +438,7 @@ their role emoji and label, and each singleton role with the agent holding it
 or "vacant"), message-number
 jump, raw Markdown view, and Markdown/JSON export. A jump lands on its message (a `#N` link, a reply quote, jump-to or an Inbox item, in another room too) and highlights it for about 1.5 seconds: a ring that fades out, or a plain outline when reduced motion is preferred. Archiving confirms that
 agents homed in the room stop and open questions are withdrawn; its history
-stays readable. Chat opens the latest 40 messages, loads 50 older messages
+stays readable. Chat opens the latest 25 messages, loads 50 older messages
 when scrolled to the top, and fetches context for jumps to older messages.
 At most 800 messages stay rendered: scrolling back past that drops the newest
 ones and turns the view into a history window, as a jump to an older message

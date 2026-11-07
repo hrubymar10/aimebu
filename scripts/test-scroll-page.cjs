@@ -48,7 +48,7 @@ async function main() {
       await page.waitForSelector(`[data-room-id="${id}"] .room-item-name`);
       await page.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-item-name`).click(), id);
       await page.waitForFunction(title => document.querySelector('#room-title')?.textContent === title, {}, title);
-      await page.waitForFunction(() => document.querySelectorAll('#messages .chat-msg').length >= 40);
+      await page.waitForFunction(() => document.querySelectorAll('#messages .chat-msg').length >= 25);
       await quiet();
     };
     for (let round = 0; round < 3; round++) {

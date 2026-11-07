@@ -8,7 +8,7 @@ import { answerEligible, liveArrival, liveRoute, messageSnippet, overCap, thread
 export class ChatStore {
   constructor(host) {
     this.host = host; this.alive = true;
-    this.openGeneration = 0; this.sessionGeneration = 0; this.jumpGeneration = 0; this.pageSize = 100; this.openPageSize = globalThis.__openPageSize || 40; this.olderPageSize = 50;
+    this.openGeneration = 0; this.sessionGeneration = 0; this.jumpGeneration = 0; this.pageSize = 100; this.openPageSize = globalThis.__openPageSize || 25; this.olderPageSize = 50;
     this.threadGeneration = 0; this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadPageSize = 100; this.threadOlderPageSize = 50;
     this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map(); this.prefetched = null;
     this.pendingAttachments = []; this.pendingUploads = 0; this.uploadRequests = new Set();
