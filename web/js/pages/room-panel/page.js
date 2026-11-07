@@ -8,11 +8,6 @@ import { RoomScopeControl, RoomUsage } from '../project/room-panels.js';
 import { InfoError, MemorySection, NotesSection, RenameForm, RoomActions, RoomFacts, ViewActions, WorktreeSection } from './room-panel.js';
 import { canRename, headerStatus, kindIcon, membersLabel, notesView, roomPath } from './model.js';
 import { RoomPanelStore } from './store.js';
-import { defineExperiment } from '../../ui-variant.js';
-
-// Experiment (ui-variant.js, listed in ACTIVE): the room's settings as today's 420px card (A) or as v1's full-height pane with a title bar and a close button (B).
-// B is only a skin on the same dialog (theme in v2-only.css, under data-ui-roomsettings=b); the title bar's close button is there in both and shown only by B.
-defineExperiment('roomsettings', 'Room settings', ['card', 'pane']);
 
 const section = (className, label) => { const node = document.createElement('section'); node.className = className; if (label) node.setAttribute('aria-labelledby', label); return node; };
 
@@ -40,7 +35,7 @@ export class RoomPanel {
       mount(this.renameForm, () => html`<${RenameForm} store=${store} />`),
       mount(document.querySelector('#room-info-facts'), () => html`<${RoomFacts} store=${store} />`),
       mount(document.querySelector('#room-view-actions'), () => html`<${ViewActions} store=${store} />`),
-      mount(document.querySelector('.room-info-actions'), () => html`<${RoomActions} store=${store} onClose=${() => this.infoDialog.close()} />`),
+      mount(document.querySelector('.room-info-actions'), () => html`<${RoomActions} store=${store} />`),
       mount(error, () => html`<${InfoError} store=${store} />`),
       mount(this.worktreeSection, () => html`<${WorktreeSection} store=${store} />`),
       mount(this.memorySection, () => html`<${MemorySection} store=${store} />`),
@@ -55,7 +50,7 @@ export class RoomPanel {
     document.querySelector('#room-info').onclick = () => this.show();
     this.onInfoClose = () => chat.projectSettings?.release(this.projectSection);
     this.infoDialog.addEventListener('close', this.onInfoClose);
-    document.querySelector('#room-info-x').onclick = () => this.infoDialog.close();
+    document.querySelector('#room-info-close').onclick = () => this.infoDialog.close();
     document.querySelector('#room-export').onclick = () => this.exportDialog.showModal();
     document.querySelector('#room-export-close').onclick = () => this.exportDialog.close();
     for (const button of this.exportDialog.querySelectorAll('[data-format]')) button.onclick = () => this.exportRoom(button.dataset.format);

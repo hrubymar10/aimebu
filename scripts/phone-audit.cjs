@@ -163,13 +163,10 @@ async function menuAudit(page, vw) {
     if (width === 440) {
       const nav = document.querySelector('.topbar nav');
       const brand = document.querySelector('.topbar-left').getBoundingClientRect();
-      // This width is about the seven controls having room: the experiment pill (a testing aid, on while an experiment runs, and tested at the other widths) is left out.
-      for (const pill of nav.querySelectorAll('.ui-variant-toggle')) pill.hidden = true;
-      await new Promise(resolve => setTimeout(resolve, 100));
       const buttons = [...nav.querySelectorAll('button')].filter(button => !button.hidden && button.getBoundingClientRect().width);
       if (getComputedStyle(toggle).display !== 'none') findings.push('menu: overflow shows with room for every button at 440px');
       const connection = document.querySelector('#connection').getBoundingClientRect();
-      if (buttons.length !== 7 || buttons[0].getBoundingClientRect().left < brand.right + 20 || getComputedStyle(nav).justifyContent !== 'flex-end' || width - connection.right > 16) findings.push(`menu: controls are missing or not right-aligned at 440px (${buttons.length} buttons, first at ${Math.round(buttons[0].getBoundingClientRect().left)} vs brand ${Math.round(brand.right)}, ${getComputedStyle(nav).justifyContent}, gap ${Math.round(width - connection.right)})`);
+      if (buttons.length !== 7 || buttons[0].getBoundingClientRect().left < brand.right + 20 || getComputedStyle(nav).justifyContent !== 'flex-end' || width - connection.right > 16) findings.push('menu: controls are missing or not right-aligned at 440px');
       document.querySelector('#health-toggle').classList.add('has-issues');
       const logout = document.querySelector('#logout');
       logout.style.flexBasis = logout.style.width = logout.style.minWidth = '112px';

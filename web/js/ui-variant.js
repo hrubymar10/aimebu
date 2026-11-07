@@ -19,7 +19,7 @@ export function chooseVariant(key, variant) { choosers[key]?.(variant, true); }
 export function defineExperiment(key, name, labels, { hidden = false } = {}) { experiments[key] = { name, labels, hidden }; }
 
 // The experiments that are on right now (each gets its own pill), or [] for none.
-export const ACTIVE = ['continue', 'roomsettings'];
+export const ACTIVE = [];
 
 // The option of experiment `key`: its pill's choice while it runs ('a' otherwise). Each experiment keeps its own attribute on <html>
 // (data-ui-<key>), so several can run at once; data-ui and data-ui-experiment still say which pill was set last.

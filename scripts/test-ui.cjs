@@ -1615,34 +1615,22 @@ async function main() {
       assert.deepEqual([...new Set(scopeIcons.map(icon => icon.action))].sort(), ['pause', 'resume', 'stop'], 'every scope control is present');
       assert.equal(/\bbtn-danger\b/.test(sizes.stop) && !/\bbtn-danger\b/.test(sizes.pause), true, 'Stop is the danger button, Pause is secondary');
     }
-    // The 'roomsettings' experiment: A is the card, B the full-height pane with a title bar and a close button; the same dialog and controls in both.
+    // Room settings is v1's pane: full height, 560px wide, a title bar that stays at the top while the sections scroll under it, and a close button in
+    // that bar (there is no Close button at the bottom).
     {
-      const setVariant = letter => first.evaluate(async letter => {
-        const pill = [...document.querySelectorAll('.ui-variant-toggle')].find(button => /Room settings/.test(button.title));
-        for (let i = 0; i < 4 && pill.dataset.active !== letter; i++) pill.click();
-        return pill.dataset.active;
-      }, letter);
       const shape = () => first.evaluate(() => {
-        const dialog = document.querySelector('#room-info-dialog'), box = dialog.getBoundingClientRect(), x = document.querySelector('#room-info-x'), close = document.querySelector('#room-info-close');
-        const header = document.querySelector('.room-info-header').getBoundingClientRect();
-        return { width: Math.round(box.width), full: Math.round(box.height) === innerHeight && Math.round(box.top) === 0, xShown: !!x.offsetParent, closeShown: !!close.offsetParent, headerTop: Math.round(header.top - box.top), title: document.querySelector('#room-info-title').textContent };
+        const dialog = document.querySelector('#room-info-dialog'), box = dialog.getBoundingClientRect(), close = document.querySelector('#room-info-close');
+        return { width: Math.round(box.width), full: Math.round(box.height) === innerHeight && Math.round(box.top) === 0, closeInHeader: !!close.closest('.room-info-header') && !!close.offsetParent, closeButtons: dialog.querySelectorAll('#room-info-close, .room-info-actions .btn').length, title: document.querySelector('#room-info-title').textContent };
       });
-      assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('.ui-variant-toggle')].filter(button => !button.hidden && /Room settings/.test(button.title)).length), 1, 'the experiment has its pill');
-      assert.equal(await setVariant('a'), 'a');
-      const card = await shape();
-      assert.deepEqual([card.width <= 420, card.full, card.xShown, card.closeShown, card.title], [true, false, false, true, 'Room settings'], `A is the card: ${JSON.stringify(card)}`);
-      assert.equal(await setVariant('b'), 'b');
       const pane = await shape();
-      assert.deepEqual([pane.width > 420 && pane.width <= 620, pane.full, pane.xShown, pane.closeShown, pane.title], [true, true, true, false, 'Room settings'], `B is the pane: ${JSON.stringify(pane)}`);
-      // The title bar stays at the top while the pane scrolls, and the controls of the card are all still in it.
+      assert.deepEqual([pane.width > 420 && pane.width <= 620, pane.full, pane.closeInHeader, pane.closeButtons, pane.title], [true, true, true, 1, 'Room settings'], `Room settings is a pane with its close button in the title bar: ${JSON.stringify(pane)}`);
+      // The title bar stays at the top while the pane scrolls, and every section is still in it.
       assert.deepEqual(await first.evaluate(() => { const dialog = document.querySelector('#room-info-dialog'); dialog.scrollTop = 120; const scrolled = dialog.scrollTop > 0, top = document.querySelector('.room-info-header').getBoundingClientRect().top - dialog.getBoundingClientRect().top; dialog.scrollTop = 0; return [scrolled, Math.abs(top) <= 1]; }), [true, true], 'the pane scrolls under its title bar');
-      assert.equal(await first.evaluate(() => ['#room-rename-title', '#room-member-list', '#room-schedules', '.room-info-actions'].every(selector => !!document.querySelector(`#room-info-dialog ${selector}`))), true, 'the pane has everything the card has');
-      await first.focus('#room-info-x'); await first.keyboard.press('Enter');
+      assert.equal(await first.evaluate(() => ['#room-rename-title', '#room-member-list', '#room-schedules', '.room-info-actions'].every(selector => !!document.querySelector(`#room-info-dialog ${selector}`))), true, 'the pane has every section');
+      await first.focus('#room-info-close'); await first.keyboard.press('Enter');
       await first.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
       await domClick(first, '#room-info');
       await first.waitForFunction(() => document.querySelector('#room-info-dialog').open);
-      assert.equal(await setVariant('a'), 'a');
-      assert.equal((await shape()).closeShown, true, 'back to A, the Close button is there');
     }
     await first.waitForFunction(() => !document.querySelector('.room-memory-setting select')?.disabled);
     await first.select('.room-memory-setting select', 'off');
@@ -1833,10 +1821,11 @@ async function main() {
     assert.equal(await first.$eval('.chat-msg:first-child .message-actions', el => !el.dataset.built && el.querySelectorAll('button:not(.message-actions-wake)').length === 0 && getComputedStyle(el).width === '1px'), true, 'the message actions are not even made until the message is hovered or focused');
     await first.hover('.chat-msg:first-child');
     await first.waitForFunction(() => getComputedStyle(document.querySelector('.chat-msg:first-child .message-actions')).opacity === '1');
-    assert.deepEqual(await first.evaluate(() => { const bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), bar = document.querySelector('.chat-msg:first-child .message-actions').getBoundingClientRect(); const items = [...document.querySelector('.chat-msg:first-child .chat-msg-header').children].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()); const clear = items.every(meta => bar.right <= meta.left || bar.left >= meta.right || bar.bottom <= meta.top || bar.top >= meta.bottom); const text = document.querySelector('.chat-msg:first-child .chat-msg-body').getBoundingClientRect(); const clearOfText = bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom; const beside = bar.right <= bubble.left + 1, corner = bar.right <= bubble.right && bubble.right - bar.right < 12 && bar.top < bubble.top + 4 && bubble.top - bar.top < 24; return { onTheBubble: corner, clearOfTheText: clearOfText, clearOfTheSenderLine: clear, buttons: document.querySelectorAll('.chat-msg:first-child .message-actions > .message-action').length }; }), { onTheBubble: true, clearOfTheText: true, clearOfTheSenderLine: true, buttons: 6 }, 'the toolbar (react, more reactions, reply, thread, copy, link) sits at the right end of the sender line over the bubble corner, whoever sent the message, and covers neither the message text nor the sender, the number or the time');
-    // v1 parity of the message frame: the bubble sits right under the sender line (the hover toolbar reserves no space), and the sender's
-    // name is plain text until it is hovered or focused.
-    assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.chat-msg:first-child .chat-msg-header').getBoundingClientRect(), bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), author = document.querySelector('.chat-msg:first-child .chat-msg-from-name'); return { gap: Math.round(bubble.top - meta.bottom), own: document.querySelector('.chat-msg:first-child').classList.contains('self'), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 22, own: true, underline: 'none' }, 'the bubble is under the sender line (22px for the viewer\'s own message, whose line leaves room for the toolbar; 2px for anyone else\'s) and the sender name has no permanent underline');
+    // The toolbar floats over the message's header line, at its right end, and covers it while it is shown; it reaches no text of the message.
+    assert.deepEqual(await first.evaluate(() => { const bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), bar = document.querySelector('.chat-msg:first-child .message-actions').getBoundingClientRect(); const header = document.querySelector('.chat-msg:first-child .chat-msg-header').getBoundingClientRect(); const items = [...document.querySelector('.chat-msg:first-child .chat-msg-header').children].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()); const coversHeader = items.some(meta => bar.right > meta.left && bar.left < meta.right && bar.bottom > meta.top && bar.top < meta.bottom); const level = bar.top < header.bottom && bar.bottom > header.top; const text = document.querySelector('.chat-msg:first-child .chat-msg-body').getBoundingClientRect(); const clearOfText = bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom; const atTheEnd = bar.right <= bubble.right && bubble.right - bar.right < 12; return { levelWithTheHeader: level, coversTheSenderLine: coversHeader, atTheRightEnd: atTheEnd, clearOfTheText: clearOfText, buttons: document.querySelectorAll('.chat-msg:first-child .message-actions > .message-action').length }; }), { levelWithTheHeader: true, coversTheSenderLine: true, atTheRightEnd: true, clearOfTheText: true, buttons: 6 }, 'the toolbar (react, more reactions, reply, thread, copy, link) floats over the right end of the message header line and covers the viewer\'s own sender line while it is shown, but covers no message text');
+    // v1 parity of the message frame: the bubble sits right under the sender line, at v1's gap, for the viewer's own message too (the hover toolbar
+    // reserves no space), and the sender's name is plain text until it is hovered or focused.
+    assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.chat-msg:first-child .chat-msg-header').getBoundingClientRect(), bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), author = document.querySelector('.chat-msg:first-child .chat-msg-from-name'); return { gap: Math.round(bubble.top - meta.bottom), own: document.querySelector('.chat-msg:first-child').classList.contains('self'), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 2, own: true, underline: 'none' }, 'the bubble is 2px under the sender line (v1\'s gap) for the viewer\'s own message too, and the sender name has no permanent underline');
     // The shared in-app dialog (the page's own flows have it answered for them above): focus, Escape, Enter, validation, one at a time.
     {
       const page = second;
@@ -1883,12 +1872,11 @@ async function main() {
       });
       assert.equal(html, 'thanks 🙏 and :nope_not_real: at 10:30:15 <code>:pray:</code> <a href="#">:pray:</a>', 'shortcodes in message text become emoji outside code and links');
     }
-    // The pill: hidden when no experiment is running, else one visible pill per running experiment.
+    // No experiment is running: the pill stays hidden.
     // Message width: text, code, tables and plans all use the whole bubble (no line-length cap).
     {
-      const pills = await first.evaluate(async () => ({ running: (await import('/js/ui-variant.js')).ACTIVE.length, shown: [...document.querySelectorAll('.topbar .ui-variant-toggle')].filter(el => !el.hidden).length }));
-      assert.equal(pills.shown, pills.running, 'no pill shows with no experiment running, and one shows for each experiment that runs');
-      assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].filter(name => name.startsWith('data-ui-') && name !== 'data-ui-experiment').length), pills.running, 'and an option is set only for each experiment that runs');
+      assert.deepEqual(await first.$$eval('.topbar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'with no experiment running the pill is hidden');
+      assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].some(name => name.startsWith('data-ui-'))), false, 'and no experiment option is set');
       const widths = await first.evaluate(async () => {
         const { renderMarkdown } = await import('/js/markdown.js');
         const host = document.createElement('div'); host.className = 'chat-msg-body md-rendered'; host.style.width = '1200px';
@@ -2140,9 +2128,9 @@ async function main() {
             const box = node => node.getBoundingClientRect(), hit = (a, b) => !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
             const list = box(document.querySelector('#messages')), root = document.querySelector(selector), bubble = box(root.querySelector('.chat-msg-bubble')), bar = box(root.querySelector('.message-actions')), text = box(root.querySelector('.chat-msg-body'));
             const items = [...root.querySelector('.chat-msg-header').children].filter(node => node.getClientRects().length).map(box);
-            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.chat-msg-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), clearOfSenderLine: !items.some(item => hit(bar, item)), overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2, list: Math.round(list.width), bubble: Math.round(bubble.width) };
+            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.chat-msg-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), levelWithHeader: hit(bar, box(root.querySelector('.chat-msg-header'))), overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2, list: Math.round(list.width), bubble: Math.round(bubble.width) };
           }, message);
-          assert.deepEqual([geometry.readable, geometry.insideList, geometry.clearOfText, geometry.clearOfSenderLine, geometry.overlapsTopEdge, geometry.atTopRightCorner], [true, true, true, true, true, true], `${kind} message at ${width}px (the toolbar overlaps the bubble's top edge at its top-right corner, for an own message as for someone else's): ${JSON.stringify(geometry)}`);
+          assert.deepEqual([geometry.readable, geometry.insideList, geometry.clearOfText, geometry.levelWithHeader, geometry.overlapsTopEdge, geometry.atTopRightCorner], [true, true, true, true, true, true], `${kind} message at ${width}px (the toolbar floats over the header line at the bubble's top-right corner and over the bubble's top edge, for an own message as for someone else's): ${JSON.stringify(geometry)}`);
         }
       }
       // The same on a touch tablet (hover: none, a coarse pointer, 701px or wider), whose 46px-tall toolbar appears on a selected message: in a column
@@ -5655,8 +5643,6 @@ async function main() {
     const checkHeaderGeometry = async theme => {
       for (const width of [1440, 1100, 800]) {
         await first.setViewport({ width, height: 800 });
-        // This is about the controls the product keeps: the experiment pills (testing aids, one per running experiment, so they can crowd an 800px bar) are set aside and put back.
-        await first.evaluate(() => { for (const pill of document.querySelectorAll('.topbar .ui-variant-toggle')) { pill.dataset.wasHidden = String(pill.hidden); pill.hidden = true; } });
         const layout = await first.evaluate(() => {
           const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
           const visible = element => !element.hidden && getComputedStyle(element).display !== 'none';
@@ -5668,7 +5654,6 @@ async function main() {
         assert.ok(layout.topButtons.every(box => box.top >= 0 && box.bottom <= layout.bar.bottom && box.right <= width && Math.abs(box.height - (box.icon ? 30 : 28)) < 1) && layout.connection.right <= width && noOverlap(layout.topButtons), `${theme} top bar clips, overlaps, or has uneven button heights at ${width}: ${JSON.stringify(layout)}`);
         assert.ok(layout.header.right <= layout.panel.left + 1 && layout.toolbar.right <= layout.header.right + 1 && noOverlap(layout.buttons), `${theme} room toolbar overlaps at ${width}: ${JSON.stringify(layout)}`);
       }
-      await first.evaluate(() => { for (const pill of document.querySelectorAll('.topbar .ui-variant-toggle')) { pill.hidden = pill.dataset.wasHidden === 'true'; delete pill.dataset.wasHidden; } });
       await first.setViewport(originalViewport);
     };
     await checkHeaderGeometry('High Contrast Dark');

@@ -14,11 +14,16 @@ export async function refreshRights() {
   rights = { owner: !!me.owner, admin: !!me.admin, hostHome: me.host_home || '' };
   return rights;
 }
+// A request that got no answer at all (the server restarting, the link down) rejects from fetch with a TypeError the browser words itself ("Failed
+// to fetch", "Load failed"). It is marked, so work that nobody waits for can tell it from an answer the server gave (a 4xx or 5xx, which has a
+// status) or from a request the page cancelled (app.js drops it for work on a timer, and says it for a room a person opened).
+function unreached(error) { if (error && error.name !== 'AbortError') error.network = true; return error; }
+export const isNetworkError = error => !!error?.network;
 export async function request(path, options = {}) {
   const headers = { ...options.headers };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.method && !['GET', 'HEAD'].includes(options.method)) headers['X-CSRF-Token'] = csrf;
-  const response = await fetch(path, { credentials: 'same-origin', ...options, headers, body: options.body === undefined ? undefined : JSON.stringify(options.body) });
+  const response = await fetch(path, { credentials: 'same-origin', ...options, headers, body: options.body === undefined ? undefined : JSON.stringify(options.body) }).catch(error => { throw unreached(error); });
   if (!response.ok) {
     let problem = {};
     try { problem = await response.json(); } catch {}
@@ -35,7 +40,7 @@ export async function request(path, options = {}) {
 
 // Fetches a file the server builds (a room export): the bytes and the name the server gave it in Content-Disposition.
 export async function download(path) {
-  const response = await fetch(path, { credentials: 'same-origin' });
+  const response = await fetch(path, { credentials: 'same-origin' }).catch(error => { throw unreached(error); });
   if (!response.ok) {
     let problem = {}; try { problem = await response.json(); } catch {}
     const error = new Error(problem.message || `Download failed (${response.status})`); error.status = response.status; error.code = problem.error; throw error;
@@ -46,7 +51,7 @@ export async function download(path) {
 
 export async function upload(path, file, { signal } = {}) {
   const body = new FormData(); body.append('file', file);
-  const response = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf }, body, signal });
+  const response = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf }, body, signal }).catch(error => { throw unreached(error); });
   if (!response.ok) {
     let problem = {}; try { problem = await response.json(); } catch {}
     const error = new Error(problem.message || `Upload failed (${response.status})`); error.status = response.status; error.code = problem.error; throw error;

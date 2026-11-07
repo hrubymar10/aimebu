@@ -416,7 +416,8 @@ shows the room kind glyph and a member-count chip, with the full count in its
 tooltip, with the Room settings button right beside it (on a phone it is the first entry of the room's overflow menu instead), and
 the room's icon buttons (task notes (v1's brain; in task rooms, and in the home room it
 opens the project's memory instead), go to
-message, raw Markdown, export). Every room has the same Room settings dialog with
+message, raw Markdown, export). Every room has the same Room settings dialog, a full-height pane
+with a title bar and a close button (v1's settings pane), with
 the sections that apply to it. Its **Title** field (for owners and operators; a
 private chat has none) is the only place a room is renamed: the header and the
 room list follow at once, and the home room's title is the project's name, so
@@ -588,7 +589,7 @@ project, who spawned it, the last 24 hours' turns and cost, memory; the state sh
 buttons: Message, Pause, Stop (the red one), Switch…, Reactivate and Remove (the red trash can: a project owner or operator removes a **stopped** agent for good after a confirmation; it leaves its rooms, its name and role slot are free, its worktree of its own is removed by the worktree rules, and its messages stay, shown as "name (removed)"), each with a tooltip saying what it does and, when
 unavailable, why (also written under the buttons);
 a project viewer does not get the session id, resume command or working directory; a project owner or an admin also gets an **Output** section with the end of what the agent's harness printed to stderr, read from its machine on demand and kept there for 14 days, see [the supervisor](docs/supervisor.md#agent-output));
-the × button or Escape returns to the members. The Spawn dialog's **Continue a Claude Code session** button lists the Claude Code sessions a machine already has for the project's folder (or one by id) and starts an agent that continues the chosen one with `claude --resume` (or works on a copy of it with `--fork-session`, your choice), in a room of its own by default; no history is copied. The home room's settings → Project can import many sessions at once, one room and one copy-working agent per session. See [continuing a Claude Code session](docs/claude-sessions.md). Settings opens on General. Agent rows show the latest turn activity from the live event
+the × button or Escape returns to the members. The Spawn dialog's **Continue a session…** entry (the one item of the ⋯ menu in its title row) lists the Claude Code sessions a machine already has for the project's folder (or one by id) and starts an agent that continues the chosen one with `claude --resume` (or works on a copy of it with `--fork-session`, your choice), in a room of its own by default; no history is copied. The home room's settings → Project can import many sessions at once, one room and one copy-working agent per session. See [continuing a Claude Code session](docs/claude-sessions.md). Settings opens on General. Agent rows show the latest turn activity from the live event
 stream. Open `/?mock_agents=1` to preview cards and controls
 without spawning. Run `make test-ui` against an isolated scratch server; it
 requires Chromium or Chrome (set `CHROMIUM_PATH` if needed) and globally

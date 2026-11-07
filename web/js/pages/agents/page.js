@@ -73,7 +73,10 @@ export class AgentsPanel {
     if (open && TABLET.matches) document.dispatchEvent(new CustomEvent('side-panel-open', { detail: 'agents' }));
   }
   async setRoom(room) {
-    this.setRoomFacts(room); this.setMobileOpen(false);
+    // The members drawer closes when the person moves to another room, not when the same room is selected again (a second selection of it
+    // is still finishing, or a refresh): that would take the drawer away from someone who has just opened it.
+    this.setRoomFacts(room);
+    if (this.drawerRoomID !== room.id) { this.setMobileOpen(false); this.drawerRoomID = room.id; }
     await this.refresh();
   }
   waitForCard(id, roomID, timeout = 2000) {
@@ -90,6 +93,7 @@ export class AgentsPanel {
   notifyCards() { for (const listener of this.cardListeners) listener(); }
   reset() {
     this.store.reset();
+    this.drawerRoomID = null;
     this.setMobileOpen(false); this.spawn.invalidate(); this.switch.invalidate(); document.querySelector('#spawn-open').disabled = true;
   }
   setRoomFacts(room) {

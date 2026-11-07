@@ -19,15 +19,14 @@ export function ViewActions({ store }) {
   return html`<${IconButton} id="room-hide" name="eye-off" label="Hide room" disabled=${store.busy.value.hide} onClick=${() => store.hide()} />`;
 }
 
-export function RoomActions({ store, onClose }) {
+export function RoomActions({ store }) {
   store.version.value;
   const room = store.room.value, busy = store.busy.value;
   const life = room ? lifecycleControl(room) : { hidden: true, disabled: false, glyph: 'archive', label: 'Archive room' };
   const remove = room ? removeControl(room, store.host.role(room.project_id)) : { hidden: true, disabled: true, title: '' };
   return html`<${IconButton} id="room-lifecycle" name=${life.glyph} label=${life.label} hidden=${life.hidden} disabled=${life.disabled || busy.lifecycle} onClick=${() => store.changeLifecycle()} />
     <${IconButton} id="room-leave" name="left" label="Leave chat" hidden=${!room || !canLeave(room)} disabled=${busy.leave} onClick=${() => store.leave()} />
-    <${IconButton} id="room-remove" name="trash" label="Remove room" danger title=${remove.title} hidden=${remove.hidden} disabled=${remove.disabled || busy.remove} onClick=${() => store.remove()} />
-    <button id="room-info-close" type="button" class="btn" onClick=${onClose}>Close</button>`;
+    <${IconButton} id="room-remove" name="trash" label="Remove room" danger title=${remove.title} hidden=${remove.hidden} disabled=${remove.disabled || busy.remove} onClick=${() => store.remove()} />`;
 }
 
 export const InfoError = ({ store }) => store.infoError.value;

@@ -232,6 +232,32 @@ async function main() {
     await page.close();
   }
 
+  // The phone's members drawer stays open when the same room is selected again (a late second selection, a refresh) and closes when the person
+  // moves to another room, or the session is reset.
+  {
+    const page = await mount();
+    const drawer = () => page.evaluate(() => [document.querySelector('#agents-panel').classList.contains('mobile-open'), document.querySelector('.chat').classList.contains('agents-open'), document.querySelector('#agents-toggle').getAttribute('aria-expanded')]);
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    await page.evaluate(() => window.__panel.setMobileOpen(true));
+    assert.deepEqual(await drawer(), [true, true, 'true'], 'the drawer is open');
+    await show(page, 'r1', [agent('a1', 'ada')]); // the same room again
+    assert.deepEqual(await drawer(), [true, true, 'true'], 'selecting the same room again leaves the drawer open');
+    await refresh(page, 'r1', [agent('a1', 'ada')]);
+    assert.deepEqual(await drawer(), [true, true, 'true'], 'a refresh leaves it open');
+    await show(page, 'r2', [agent('b1', 'bea', { room_id: 'r2' })]);
+    assert.deepEqual(await drawer(), [false, false, 'false'], 'another room closes it');
+    await page.evaluate(() => window.__panel.setMobileOpen(true));
+    await show(page, 'r2', []);
+    assert.deepEqual((await drawer())[0], true, 'open again, and the same room still leaves it');
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    assert.deepEqual((await drawer())[0], false, 'going back to the first room is a move too');
+    await page.evaluate(() => window.__panel.setMobileOpen(true)); await page.evaluate(() => window.__panel.reset());
+    assert.deepEqual((await drawer())[0], false, 'a reset closes it');
+    await show(page, 'r1', [agent('a1', 'ada')]); await page.evaluate(() => window.__panel.setMobileOpen(true)); await show(page, 'r1', [agent('a1', 'ada')]);
+    assert.deepEqual((await drawer())[0], true, 'after a reset the room is new to the panel: the first selection closes it, the next one leaves it');
+    await page.close();
+  }
+
   // Answers for a room the panel has left draw nothing: the agents, the people of the room, and everything after reset().
   {
     const page = await mount();

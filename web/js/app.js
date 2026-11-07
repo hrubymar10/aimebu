@@ -1,6 +1,6 @@
 import './dialog-focus.js';
 import './backdrop-close.js';
-import { request, setSession, clearSession, currentUser, rights } from './api.js';
+import { request, setSession, clearSession, currentUser, rights, isNetworkError } from './api.js';
 import { Sidebar } from './pages/sidebar/page.js';
 import { Chat } from './chat.js';
 import { setProjectNames } from './sender-identity.js';
@@ -81,7 +81,7 @@ const chat = new Chat(async room => {
   chat.setRoomFacts(current); agents.setRoomFacts(current);
 });
 const receipts = new ReadReceipts(chat);
-const sidebar = new Sidebar(document.querySelector('#projects'), (room, messageID) => selectRoom(room, messageID));
+const sidebar = new Sidebar(document.querySelector('#projects'), (room, messageID) => selectByPerson(room, messageID));
 sidebar.watchPreview();
 // Pin and hide are set from the room settings; the room lists keep the per-user state.
 chat.roomView = id => sidebar.rooms.get(id);
@@ -89,7 +89,7 @@ chat.setRoomPreference = (room, field, value) => sidebar.setPreference(room, fie
 sidebar.bindSort(document.querySelector('#rooms-sort'));
 sidebar.bindCollapseAll(document.querySelector('#rooms-fold'));
 chat.roomPath = { room: id => sidebar.rooms.get(id), project: id => sidebar.projects.get(id), home: projectID => [...sidebar.rooms.values()].find(item => item.project_id === projectID && item.kind === 'home') };
-chat.openCrumb = id => { const target = sidebar.rooms.get(id); if (target) void selectRoom(target); };
+chat.openCrumb = id => { const target = sidebar.rooms.get(id); if (target) void selectByPerson(target); };
 chat.projectRole = projectID => sidebar.projects.get(projectID)?.role;
 chat.projectArchived = projectID => !!sidebar.projects.get(projectID)?.archived_at;
 setProjectNames(projectID => sidebar.projects.get(projectID)?.name || '');
@@ -152,7 +152,7 @@ const updateBar = new UpdateBar({ hasDraft: () => chat.hasDraft() });
 const notifications = new InboxNotifications(item => {
   inbox.show();
   requestAnimationFrame(() => document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' }));
-}, (room, messageID) => { void selectRoom(sidebar.rooms.get(room.id) || room, messageID); });
+}, (room, messageID) => { void selectByPerson(sidebar.rooms.get(room.id) || room, messageID); });
 // The bar that offers browser notifications the first time something needs the person's attention; dismissing it is the account's choice.
 const notificationBanner = new NotificationBanner({ notifications, saveDismissed: () => request('/api/me/preferences', { method: 'PUT', body: { preferences: { [BANNER_DISMISSED_PREFERENCE]: '1' } } }) });
 notifications.onAttention = () => notificationBanner.attention();
@@ -215,11 +215,21 @@ const messageDebug = new MessageDebug();
 chat.setDebugInspector(message => messageDebug.open(message));
 // The inspector walks the room's messages (v1's previous and next) and carries the actions the message bubble leaves out in style A.
 messageDebug.setContext({ messages: () => chat.orderedMessages(), thread: message => chat.openThread(message), copy: text => copyText(text) });
+// Work on a timer that nobody waits for. A refresh the network refused (the server restarting, the link down) is not an error worth a report or a
+// message: it is remembered and done again as soon as the event stream is live again, and failing that at the next tick. Any other failure (the
+// server refused, a bug) still rejects, as it always did. The health refresh already keeps its own failures to itself.
+const backgroundRefreshes = { agents: () => agents.refresh() };
+const retryOnLive = new Set();
+function refreshInBackground(name) {
+  return backgroundRefreshes[name]().catch(error => { if (!isNetworkError(error)) throw error; retryOnLive.add(name); });
+}
+function retryStale() { for (const name of [...retryOnLive]) { retryOnLive.delete(name); void refreshInBackground(name); } }
+// A tick is 30 s; a test shortens it.
 setInterval(() => {
   if (appView.hidden) return;
   health.refresh();
-  agents.refresh();
-}, 30000);
+  void refreshInBackground('agents');
+}, globalThis.__backgroundTickMs || 30000);
 chat.setSpawnOpener(() => agents.openSpawn());
 chat.setLegacyActions(start => agents.openSpawn({ resume: start }), id => { agents.setMobileOpen(true); agents.openProfile(id); });
 agents.projectRole = chat.projectRole;
@@ -337,6 +347,15 @@ function setRoomsOpen(open) {
 // The room the address names, or '' when it names none (or is not a valid escape sequence).
 function roomInAddress() { try { return decodeURIComponent(location.hash.slice(1)); } catch { return ''; } }
 function rememberedRoom() { try { return localStorage.getItem('aimebu2.lastRoom') || ''; } catch { return ''; } }
+// A person's click on a room (the list, a breadcrumb, a notification). A room that cannot be opened because the server cannot be reached says so on the
+// chat's error line, in words, and the person tries again; left to reject, it would be an unhandled error and no message at all.
+function selectByPerson(room, messageID) {
+  return selectRoom(room, messageID).catch(error => {
+    if (!isNetworkError(error)) throw error;
+    chat.error.textContent = 'The server cannot be reached. Try again in a moment.';
+    return false;
+  });
+}
 async function selectRoom(room, messageID, options) {
   selectionsInFlight++;
   try { return await openRoom(room, messageID, options); } finally { selectionsInFlight--; }
@@ -526,6 +545,7 @@ async function signedIn(session) {
       if (!active()) return;
       const dot = document.querySelector('#connection');
       const label = state === 'Live' ? 'Connected' : 'Disconnected';
+      if (state === 'Live') retryStale();
       dot.classList.toggle('connected', label === 'Connected');
       dot.classList.toggle('disconnected', label !== 'Connected');
       dot.title = label; dot.setAttribute('aria-label', label);

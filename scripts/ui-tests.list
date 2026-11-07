@@ -44,3 +44,4 @@ node scripts/test-topbar-page.cjs
 node scripts/test-backdrop-page.cjs
 node scripts/test-telemetry-page.cjs
 node scripts/test-phone-pass-page.cjs
+node scripts/test-offline-page.cjs

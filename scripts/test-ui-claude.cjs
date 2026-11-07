@@ -50,10 +50,13 @@ async function main() {
       // that shares the host's Claude home), so wait for the catalog the dialog will read to do so.
       await first.waitForFunction(async () => (await (await fetch('/api/spawn-catalog')).json()).tools?.some(tool => tool.tool === 'claude' && tool.available && !(tool.containerized && !tool.shares_claude_home)), { polling: 500, timeout: 30000 }).catch(() => {});
       await domClick(first, '#spawn-open');
-      await first.waitForFunction(() => document.querySelector('#spawn-dialog').open && !document.querySelector('#spawn-sessions').hidden);
-      assert.equal(await first.$eval('#spawn-sessions', el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()]).then(list => list.join('|')), 'Continue a Claude Code session|Continue a Claude Code session|Continue a session…', 'the session entry is a labelled button, not a bare glyph');
-      assert.deepEqual(await first.evaluate(() => { const button = document.querySelector('#spawn-sessions'), model = document.querySelector('#spawn-form [name=machine]'); return { enabled: !button.disabled, note: document.querySelector('#spawn-sessions-note').hidden, text: !!button.textContent.trim(), inTitle: !!button.closest('.spawn-title-row') && !!model }; }), { enabled: true, note: true, text: true, inTitle: true }, 'the session entry is usable with a launcher that can continue a session, and says nothing then');
-      await domClick(first, '#spawn-sessions');
+      await first.waitForFunction(() => document.querySelector('#spawn-dialog').open && document.querySelector('#spawn-sessions-menu') && !document.querySelector('#spawn-sessions').hidden);
+      // The entry is the item of the ⋯ menu in the title row: a labelled button, a menu that is closed at rest, and an item that says what it does.
+      assert.deepEqual(await first.evaluate(() => { const menu = document.querySelector('#spawn-sessions-menu'), item = document.querySelector('#spawn-sessions'); return [menu.title, menu.getAttribute('aria-label'), menu.getAttribute('aria-expanded'), item.textContent.trim(), !!item.offsetParent]; }), ['More', 'More', 'false', 'Continue a session…', false], 'the session entry is a labelled ⋯ button with a closed menu, and its item says what it does');
+      assert.deepEqual(await first.evaluate(() => { const item = document.querySelector('#spawn-sessions'), menu = document.querySelector('#spawn-sessions-menu'), model = document.querySelector('#spawn-form [name=machine]'); return { enabled: !item.disabled, note: document.querySelector('#spawn-sessions-note').hidden, text: !!item.textContent.trim(), inTitle: !!menu.closest('.spawn-title-row') && !!model }; }), { enabled: true, note: true, text: true, inTitle: true }, 'the session entry is usable with a launcher that can continue a session, and says nothing then');
+      // The menu opens on its item; the item opens the picker.
+      const continueSession = async () => { await domClick(first, '#spawn-sessions-menu'); await first.waitForSelector('#spawn-sessions', { visible: true }); await domClick(first, '#spawn-sessions'); };
+      await continueSession();
       await first.waitForFunction(() => document.querySelector('#cc-sessions-dialog').open && document.querySelectorAll('#cc-sessions-list .cc-session').length === 3 && !document.querySelector('#spawn-dialog').open);
       assert.deepEqual(await first.$$eval('#cc-sessions-list .cc-session', rows => rows.map(row => [row.dataset.sessionId, row.querySelector('.cc-session-title').textContent, [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)]).sort()),
         [[idOne, 'Fix the login bug', []], [idActive, 'Open in a terminal', ['open in a terminal']], [idAgent, 'Made by an agent', ['started by an agent']]], 'the picker lists the folder\'s sessions with their flags');
@@ -71,7 +74,7 @@ async function main() {
       await domClick(first, '#cc-sessions-close');
       await domClick(first, '#spawn-open');
       await first.waitForFunction(() => document.querySelector('#spawn-dialog').open);
-      await domClick(first, '#spawn-sessions');
+      await continueSession();
       await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
       await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idOne}"] .cc-session-pick`);
       await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
@@ -93,7 +96,7 @@ async function main() {
       assert.deepEqual(await first.evaluate(() => ({
         title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
         name: document.querySelector('.spawn-name').hidden, startIn: !document.querySelector('#spawn-start-in').hidden, room: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent,
-        sessions: !document.querySelector('#spawn-sessions')?.offsetParent, worktree: document.querySelector('.spawn-worktree-option').hidden,
+        sessions: !document.querySelector('#spawn-sessions-menu'), worktree: document.querySelector('.spawn-worktree-option').hidden,
         mode: document.querySelector('#spawn-resume-mode').hidden ? 'hidden' : document.querySelector('#spawn-form [name=resume_mode]:checked').value,
       })), { title: 'Continue a Claude Code session', text: 'This continues the session. It carries on from where it stopped, in the same transcript.',
         confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true, mode: 'continue' }, 'the Spawn dialog opens for the picked session, continuing by default');
@@ -105,7 +108,7 @@ async function main() {
       // A session a live process has open asks for a confirmation before it can be continued.
       await domClick(first, '#spawn-open');
       await first.waitForFunction(() => document.querySelector('#spawn-dialog').open);
-      await domClick(first, '#spawn-sessions');
+      await continueSession();
       await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
       await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idActive}"] .cc-session-pick`);
       await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
