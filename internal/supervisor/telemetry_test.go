@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,7 +87,7 @@ func TestSupervisorTakesTelemetrySettingsFromHelloAckAndFrames(t *testing.T) {
 
 // The telemetry variables reach the agent-tools bridge through the environment of its MCP config entry, never its arguments, in a config written
 // now and in the ones that exist (the agent's key stays), and an empty set takes them out again.
-func TestTelemetryEnvReachesTheBridgeThroughItsConfigEnvironment(t *testing.T) {
+func TestTelemetryEnvReachesTheBridgeThroughItsEnvironment(t *testing.T) {
 	j, err := OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -97,45 +96,29 @@ func TestTelemetryEnvReachesTheBridgeThroughItsConfigEnvironment(t *testing.T) {
 	c := NewClient("machine", "key", "http://127.0.0.1:9897", j, adapter.NewFake())
 	c.OnError = func(error) {}
 	key := "aak_" + strings.Repeat("k", 43)
-	if err := c.writeAgentToolsConfig("agt_old", key); err != nil {
+	if err := c.setAgentKey("agt_old", key); err != nil {
 		t.Fatal(err)
 	}
 	env := map[string]string{"AIMEBU2_SENTRY_DSN": "https://key@o1.ingest.example/1", "AIMEBU2_SENTRY_ENV": "dev", "AIMEBU2_SENTRY_TRACES_SAMPLE_RATE": "0.5"}
 	c.SetTelemetryEnv(env)
-	read := func(agent string) (map[string]any, []any) {
-		t.Helper()
-		data, err := os.ReadFile(c.agentToolsPath(agent))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var config struct {
-			Servers map[string]struct {
-				Args []any          `json:"args"`
-				Env  map[string]any `json:"env"`
-			} `json:"mcpServers"`
-		}
-		if err := json.Unmarshal(data, &config); err != nil {
-			t.Fatal(err)
-		}
-		return config.Servers["aimebu"].Env, config.Servers["aimebu"].Args
+	access, err := c.agentToolsAccess("agt_old")
+	if err != nil || access == nil {
+		t.Fatalf("access=%+v err=%v", access, err)
 	}
-	envNow, args := read("agt_old")
-	if envNow["AIMEBU2_SENTRY_DSN"] != env["AIMEBU2_SENTRY_DSN"] || envNow["AIMEBU2_AGENT_KEY"] != key || envNow["AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"] != "0.5" {
-		t.Fatalf("an existing config: %v", envNow)
+	if access.Env["AIMEBU2_SENTRY_DSN"] != env["AIMEBU2_SENTRY_DSN"] || access.Env["AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"] != "0.5" || access.Key != key {
+		t.Fatalf("an existing agent's next turn: %+v", access)
 	}
-	for _, arg := range args {
-		if strings.Contains(arg.(string), "sentry") || strings.Contains(arg.(string), "ingest") {
-			t.Fatalf("telemetry in the bridge's arguments: %v", args)
-		}
+	if _, held := access.Env["AIMEBU2_AGENT_KEY"]; held {
+		t.Fatalf("the key is not part of the bridge's extra environment: %v", access.Env)
 	}
-	if err := c.writeAgentToolsConfig("agt_new", "aak_"+strings.Repeat("n", 43)); err != nil {
+	if err := c.setAgentKey("agt_new", "aak_"+strings.Repeat("n", 43)); err != nil {
 		t.Fatal(err)
 	}
-	if envNew, _ := read("agt_new"); envNew["AIMEBU2_SENTRY_DSN"] != env["AIMEBU2_SENTRY_DSN"] {
-		t.Fatalf("a config written afterwards: %v", envNew)
+	if fresh, _ := c.agentToolsAccess("agt_new"); fresh == nil || fresh.Env["AIMEBU2_SENTRY_DSN"] != env["AIMEBU2_SENTRY_DSN"] {
+		t.Fatalf("an agent started afterwards: %+v", fresh)
 	}
 	c.SetTelemetryEnv(nil)
-	if envNow, _ = read("agt_old"); envNow["AIMEBU2_SENTRY_DSN"] != nil || envNow["AIMEBU2_AGENT_KEY"] != key {
-		t.Fatalf("after an empty set: %v", envNow)
+	if after, _ := c.agentToolsAccess("agt_old"); after == nil || after.Env["AIMEBU2_SENTRY_DSN"] != "" || after.Key != key {
+		t.Fatalf("after an empty set: %+v", after)
 	}
 }

@@ -33,10 +33,7 @@ func TestTurnPromptSeparatesInboxAskFromAttention(t *testing.T) {
 
 func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 	root := t.TempDir()
-	config := filepath.Join(root, "private.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_test","AIMEBU2_AGENT_KEY":"aak_secret"}}}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 	path := filepath.Join(root, "codex-docker")
 	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CODEX_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\"}'\n"
@@ -44,7 +41,7 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path, Variant: "docker"}
-	spec := adapter.TurnSpec{TurnID: "docker", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "codex", Variant: "docker", Model: "gpt-6-sol"}, CheckoutPath: root, VisibleCheckoutPath: "/workspace/project", Mode: adapter.ModeNormal, AgentToolsConfigPath: config, NotesJSON: json.RawMessage(`[]`)}
+	spec := adapter.TurnSpec{TurnID: "docker", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "codex", Variant: "docker", Model: "gpt-6-sol"}, CheckoutPath: root, VisibleCheckoutPath: "/workspace/project", Mode: adapter.ModeNormal, AgentTools: config, NotesJSON: json.RawMessage(`[]`)}
 	turn, err := a.Start(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -175,17 +172,13 @@ func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
 	}
 	capture := filepath.Join(root, "args")
 	script := filepath.Join(root, "codex")
-	body := "#!/bin/sh\nprintf '%s' \"$*\" > " + capture + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"turn.started\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}" + "\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}'\n"
+	body := "#!/bin/sh\nprintf '%s' \"$*\" > " + capture + "\nprintf '%s' \"$AIMEBU2_AGENT_KEY\" > " + capture + ".key\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"turn.started\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}" + "\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}'\n"
 	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a.Command = script
-	toolConfig := filepath.Join(root, "agent-tools.json")
-	config := `{"mcpServers":{"aimebu":{"command":"/usr/bin/aimebu","args":["agent-tools"],"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_test","AIMEBU2_AGENT_KEY":"aak_secret","AIMEBU2_INSECURE_SKIP_VERIFY":"1"}}}}`
-	if err := os.WriteFile(toolConfig, []byte(config), 0600); err != nil {
-		t.Fatal(err)
-	}
-	spec := adapter.TurnSpec{TurnID: "resume", Agent: adapter.AgentSpec{ID: "agt_test", Model: "gpt-6-luna"}, Mode: adapter.ModeNormal, CheckoutPath: root, NativeSessionStarted: true, NativeSessionHandle: "thread-1", AgentToolsConfigPath: toolConfig, NotesJSON: json.RawMessage(`[]`)}
+	toolConfig := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu", Env: map[string]string{"AIMEBU2_INSECURE_SKIP_VERIFY": "1"}}
+	spec := adapter.TurnSpec{TurnID: "resume", Agent: adapter.AgentSpec{ID: "agt_test", Model: "gpt-6-luna"}, Mode: adapter.ModeNormal, CheckoutPath: root, NativeSessionStarted: true, NativeSessionHandle: "thread-1", AgentTools: toolConfig, NotesJSON: json.RawMessage(`[]`)}
 	turn, err := a.Start(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -212,8 +205,11 @@ func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(stored), "AIMEBU2_AGENT_KEY = \"aak_secret\"") {
-		t.Fatal("private MCP config did not contain agent key")
+	if strings.Contains(string(stored), "aak_secret") || !strings.Contains(string(stored), `env_vars = ["AIMEBU2_AGENT_KEY"]`) {
+		t.Fatalf("the private MCP config must name the key variable and never hold the key:\n%s", stored)
+	}
+	if key, err := os.ReadFile(capture + ".key"); err != nil || string(key) != "aak_secret" {
+		t.Fatalf("the key reaches Codex only in its environment: %q err=%v", key, err)
 	}
 	if !strings.Contains(string(stored), "AIMEBU2_INSECURE_SKIP_VERIFY = \"1\"") {
 		t.Fatal("private MCP config did not propagate TLS verification opt-in")
@@ -227,7 +223,7 @@ func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
 	}
 	// A diagnostic rewrites the private config without any MCP server.
 	spec.Mode = adapter.ModeDiagnostic
-	spec.AgentToolsConfigPath = ""
+	spec.AgentTools = nil
 	if _, err := a.prepareRuntime(spec, userMCP{}); err != nil {
 		t.Fatal(err)
 	}
@@ -328,15 +324,11 @@ func TestLiveCanary(t *testing.T) {
 	}
 	a := New(filepath.Join(t.TempDir(), "runtime"))
 	variant := "native"
-	config := ""
+	var config *adapter.AgentToolsAccess
 	if docker {
 		a = NewDocker()
 		variant = "docker"
-		config = filepath.Join(t.TempDir(), "tools.json")
-		data := `{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_live_codex","AIMEBU2_AGENT_KEY":"aak_canary"}}}}`
-		if err := os.WriteFile(config, []byte(data), 0600); err != nil {
-			t.Fatal(err)
-		}
+		config = &adapter.AgentToolsAccess{AgentID: "agt_live_codex", ServerURL: "http://127.0.0.1:9897", Key: "aak_canary", Command: "/usr/bin/aimebu"}
 	} else {
 		t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
 		a.AllowNative = true
@@ -350,7 +342,7 @@ func TestLiveCanary(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := hex.EncodeToString(random[:])
-	first := adapter.TurnSpec{TurnID: "live-codex-first", Agent: adapter.AgentSpec{ID: "agt_live_codex", Variant: variant, Model: "gpt-6-luna"}, Mode: adapter.ModeNormal, CheckoutPath: checkout, AgentToolsConfigPath: config,
+	first := adapter.TurnSpec{TurnID: "live-codex-first", Agent: adapter.AgentSpec{ID: "agt_live_codex", Variant: variant, Model: "gpt-6-luna"}, Mode: adapter.ModeNormal, CheckoutPath: checkout, AgentTools: config,
 		NotesJSON: json.RawMessage(`[{"room_id":"canary","body":"Remember nonce ` + nonce + `. Reply with a JSON message to room canary saying remembered."}]`), ContextJSON: json.RawMessage(`{"room":"canary"}`)}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

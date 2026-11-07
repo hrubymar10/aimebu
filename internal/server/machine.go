@@ -53,6 +53,7 @@ type machineConn struct {
 	supportsAgentLogSize       bool
 	supportsStopReplay         bool
 	supportsTelemetryConfig    bool
+	supportsAgentKeys          bool
 	harnessMu                  sync.Mutex
 	harnessSetMu               sync.Mutex
 	harnesses                  []protocol.HarnessRow
@@ -302,7 +303,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, supportsTelemetryConfig: hello.SupportsTelemetryConfig, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	s.machineMu.Lock()
 	old := s.machines[machineID]
@@ -337,7 +338,12 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Telemetry: s.telemetryForMachine(ctx, c), Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
+	grants, err := s.grantAgentKeys(ctx, c, hello.HeldKeys)
+	if err != nil {
+		conn.Close(websocket.StatusInternalError, "agent key error")
+		return
+	}
+	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Telemetry: s.telemetryForMachine(ctx, c), AgentKeys: grants, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
 		return
 	}
 	if err := s.enqueuePendingSpawns(ctx, c); err != nil {
@@ -723,6 +729,17 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	// A supervisor that does not know providers would start OpenCode without the endpoint its model names.
 	if len(delivery.Providers) > 0 && !c.supportsProviders {
 		return ErrSupervisorUpdateNeeded
+	}
+	refused, err := s.refusedAgent(ctx, agent.MachineID, delivery.Agent.Tool, delivery.Agent.Variant, delivery.Agent.LauncherID)
+	if err != nil {
+		return err
+	}
+	if refused {
+		return errDockerOnly
+	}
+	delivery.DockerOnly, err = s.dockerOnly(ctx)
+	if err != nil {
+		return err
 	}
 	c.boundMu.RLock()
 	generation, ok := c.bound[delivery.AgentID]

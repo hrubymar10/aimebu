@@ -148,9 +148,10 @@ its lock is only tested, not taken.
   a supervisor holds its lock right now (with its pid), and a read-only
   `quick_check` bounded like the backup one (512 MiB, 10 seconds). A damaged
   journal fails.
-- **agent tools config** — the per-agent toolbox configs in
-  `supervisor/agent-tools/` hold an agent key, so the folder must be 0700 and
-  each file 0600; looser modes warn.
+- **agent tools config** — agent keys are kept in the supervisor's memory
+  only. An `agent-tools/` folder in `supervisor/` is what an older supervisor
+  left (a config per agent, each holding a key); the check warns when it still
+  has files, and starting the supervisor deletes it.
 - **agent logs** — the size of the captured agent output in
   `supervisor/agent-logs/` against the daily sweep's 256 MiB cap; warns at 80%.
 - **harnesses** — the native `claude`, `codex`, `pi`, `opencode` and `vibe`

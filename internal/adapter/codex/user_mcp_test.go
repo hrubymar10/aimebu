@@ -182,12 +182,7 @@ func TestNativeTurnCarriesThePersonsOwnServersNextToAimebu(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	tools := filepath.Join(root, "tools.json")
-	command := filepath.Join(root, "aimebu")
-	raw, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"aimebu": map[string]any{"command": command, "args": []string{"mcp"}, "env": map[string]string{"AIMEBU2_URL": "http://127.0.0.1:9", "AIMEBU2_AGENT_ID": "agt_test", "AIMEBU2_AGENT_KEY": "aak_k"}}}})
-	if err := os.WriteFile(tools, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
+	tools := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9", Key: "aak_k", Command: filepath.Join(root, "aimebu")}
 	capture := filepath.Join(root, "captured")
 	script := filepath.Join(root, "codex")
 	body := "#!/bin/sh\ncat \"$CODEX_HOME/config.toml\" > " + capture + ".toml\nenv | grep -E '^(DOCS_TOKEN|UNRELATED|TEAM_ID|CODEX_HOME)=' | sort > " + capture + ".env\ncat >/dev/null\n" +
@@ -200,7 +195,7 @@ func TestNativeTurnCarriesThePersonsOwnServersNextToAimebu(t *testing.T) {
 		a := New(filepath.Join(root, "runtime-"+string(mode)))
 		a.Command, a.AuthPath = script, filepath.Join(userHome, "auth.json")
 		turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "own-" + string(mode), Agent: adapter.AgentSpec{ID: "agt_test", Model: "gpt-6-luna"}, Mode: mode,
-			CheckoutPath: root, AgentToolsConfigPath: tools, NotesJSON: json.RawMessage(`[]`)})
+			CheckoutPath: root, AgentTools: tools, NotesJSON: json.RawMessage(`[]`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -367,10 +362,7 @@ func TestDockerTurnPassesThePersonsRemoteServersAsOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_HOME", userHome)
-	config := filepath.Join(root, "private.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_test","AIMEBU2_AGENT_KEY":"aak_secret"}}}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 	path := filepath.Join(root, "codex-docker")
 	argsPath := filepath.Join(root, "args")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}'\n"
@@ -381,7 +373,7 @@ func TestDockerTurnPassesThePersonsRemoteServersAsOverrides(t *testing.T) {
 	run := func(mode adapter.Mode) string {
 		t.Helper()
 		turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "docker-" + string(mode), Agent: adapter.AgentSpec{ID: "agt_test", Tool: "codex", Variant: "docker", Model: "gpt-6-sol"}, CheckoutPath: root, Mode: mode,
-			AgentToolsConfigPath: config, NotesJSON: json.RawMessage(`[]`)})
+			AgentTools: config, NotesJSON: json.RawMessage(`[]`)})
 		if err != nil {
 			t.Fatal(err)
 		}

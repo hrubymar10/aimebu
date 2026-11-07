@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/goccy/go-json"
-
 	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 )
 
@@ -210,14 +208,14 @@ func ExcludeRuntimeState(checkout string) error {
 	return err
 }
 
-// DockerMCP reads the supervisor-private credential on the host. Docker turns
-// pass an HTTP MCP endpoint inline and the key in a forwarded variable, so no key-bearing file enters a checkout.
-func DockerMCP(path, agentID string) (endpoint, authorization string, err error) {
-	return DockerMCPAt(path, agentID, "")
+// DockerMCP turns the turn's own agent access into an HTTP MCP endpoint and bearer. Docker turns pass the endpoint inline and the key in a
+// forwarded variable, so no key-bearing file enters a checkout.
+func DockerMCP(access *AgentToolsAccess, agentID string) (endpoint, authorization string, err error) {
+	return DockerMCPAt(access, agentID, "")
 }
 
-func DockerMCPAt(path, agentID, visibleServerURL string) (endpoint, authorization string, err error) {
-	endpoint, authorization, err = agentHTTPMCP(path, agentID, visibleServerURL == "")
+func DockerMCPAt(access *AgentToolsAccess, agentID, visibleServerURL string) (endpoint, authorization string, err error) {
+	endpoint, authorization, err = agentHTTPMCP(access, agentID, visibleServerURL == "")
 	if err != nil || visibleServerURL == "" {
 		return endpoint, authorization, err
 	}
@@ -230,31 +228,18 @@ func DockerMCPAt(path, agentID, visibleServerURL string) (endpoint, authorizatio
 	return visible.String(), authorization, nil
 }
 
-// NativeMCP uses the same validated private credential without rewriting the
-// server address for a container.
-func NativeMCP(path, agentID string) (endpoint, authorization string, err error) {
-	return agentHTTPMCP(path, agentID, false)
+// NativeMCP validates the same access without rewriting the server address for a container.
+func NativeMCP(access *AgentToolsAccess, agentID string) (endpoint, authorization string, err error) {
+	return agentHTTPMCP(access, agentID, false)
 }
 
-func agentHTTPMCP(path, agentID string, docker bool) (endpoint, authorization string, err error) {
-	if path == "" {
-		return "", "", errors.New("normal turn requires agent tools config")
+func agentHTTPMCP(access *AgentToolsAccess, agentID string, docker bool) (endpoint, authorization string, err error) {
+	if access == nil {
+		return "", "", errors.New("normal turn requires agent tools access")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", "", err
-	}
-	var config struct {
-		Servers map[string]struct {
-			Env map[string]string `json:"env"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return "", "", err
-	}
-	env := config.Servers["aimebu"].Env
-	if env["AIMEBU2_AGENT_ID"] != agentID || !strings.HasPrefix(env["AIMEBU2_AGENT_KEY"], "aak_") {
-		return "", "", errors.New("invalid private aimebu MCP config")
+	env := map[string]string{"AIMEBU2_URL": access.ServerURL, "AIMEBU2_AGENT_ID": access.AgentID, AgentKeyEnv: access.Key}
+	if env["AIMEBU2_AGENT_ID"] != agentID || !strings.HasPrefix(env[AgentKeyEnv], "aak_") {
+		return "", "", errors.New("invalid agent tools access")
 	}
 	u, err := url.Parse(env["AIMEBU2_URL"])
 	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Hostname() == "" {
@@ -270,5 +255,28 @@ func agentHTTPMCP(path, agentID string, docker bool) (endpoint, authorization st
 	u.Path = "/api/agent/mcp"
 	u.RawQuery = ""
 	u.Fragment = ""
-	return u.String(), "Bearer " + env["AIMEBU2_AGENT_KEY"], nil
+	return u.String(), "Bearer " + env[AgentKeyEnv], nil
+}
+
+// BridgeEntry is the stdio MCP entry of `aimebu agent-tools` for a native turn: the server address, the agent's id and the rest of the bridge's
+// environment, but never the key. The key is NamedKey in the entry's environment, which the harness expands (or forwards) from its own, where
+// the turn put it, so it is in neither the entry nor any file.
+func BridgeEntry(access *AgentToolsAccess, agentID, namedKey string) (command string, args []string, env map[string]string, err error) {
+	if access == nil {
+		return "", nil, nil, errors.New("normal turn requires agent tools access")
+	}
+	if _, _, err := agentHTTPMCP(access, agentID, false); err != nil {
+		return "", nil, nil, err
+	}
+	if !filepath.IsAbs(access.Command) {
+		return "", nil, nil, errors.New("invalid agent tools access")
+	}
+	env = map[string]string{"AIMEBU2_URL": access.ServerURL, "AIMEBU2_AGENT_ID": access.AgentID}
+	for name, value := range access.Env {
+		env[name] = value
+	}
+	if namedKey != "" {
+		env[AgentKeyEnv] = namedKey
+	}
+	return access.Command, []string{"agent-tools"}, env, nil
 }

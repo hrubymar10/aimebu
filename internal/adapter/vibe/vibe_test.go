@@ -22,14 +22,9 @@ import (
 // 2.25.0: message, reasoning and effect entries, camelCase, one per line); the tests run a scripted `vibe` and never the real one.
 const testSession = "0c3e1f4a-8b2d-4a6e-9f10-5d7c2b1a9e33"
 
-func testToolsConfig(t *testing.T, agent string) string {
+func testToolsConfig(t *testing.T, agent string) *adapter.AgentToolsAccess {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "tools.json")
-	data := `{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"` + agent + `","AIMEBU2_AGENT_KEY":"aak_test"}}}}`
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return &adapter.AgentToolsAccess{AgentID: agent, ServerURL: "http://127.0.0.1:9897", Key: "aak_test", Command: "/usr/bin/aimebu"}
 }
 
 func fixture(t *testing.T, name string) string {
@@ -43,7 +38,7 @@ func fixture(t *testing.T, name string) string {
 
 func spec(t *testing.T, checkout string) adapter.TurnSpec {
 	return adapter.TurnSpec{TurnID: "turn_1", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "vibe", Variant: "native", Model: "mistral-medium-3.5"},
-		CheckoutPath: checkout, AgentToolsConfigPath: testToolsConfig(t, "agt_test"), Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}
+		CheckoutPath: checkout, AgentTools: testToolsConfig(t, "agt_test"), Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}
 }
 
 // adapterFor makes an adapter that runs the script at path, with a user home of its own.
@@ -163,7 +158,7 @@ esac
 		}
 		a, _ := adapterFor(t, t.TempDir(), path)
 		return a, adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Model: "mistral-medium-3.5"},
-			CheckoutPath: checkout, AgentToolsConfigPath: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}, effected
+			CheckoutPath: checkout, AgentTools: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}, effected
 	}, adaptertest.ChildProcess())
 }
 

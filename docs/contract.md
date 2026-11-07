@@ -858,7 +858,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
   supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?,
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}]}`
@@ -875,6 +875,10 @@ it never silently reruns a turn with uncertain effects.
   field); the server's own embedded supervisor does not announce it, being the server's process. The supervisor starts, replaces or stops its own reporting
   by it, and sets the environment of the `agent-tools` bridge it spawns (see [Telemetry](telemetry.md#supervisors)). A DSN in the supervisor machine's own
   environment (`AIMEBU2_SENTRY_DSN`, a DSN or `off`) wins over it.
+- `hello_ack` also carries `agent_keys[{agent_id, generation, key}]`: a new `aak_` key for each agent the supervisor should run and, per its
+  `held_keys`, holds no key for (it keeps keys in memory only, so a restarted one holds none). Issuing one replaces the agent's stored key hash, so the
+  key the old process held stops authenticating. Only a supervisor that announced `supports_agent_keys=true` is sent any. `spawn` and `deliver`
+  carry `docker_only` when the instance runs agents only in docker (see [the supervisor](supervisor.md)); a supervisor refuses a native launcher then.
 - S→M `harness_set{v, req_id, harness_setting:{tool,variant,enabled,override_path}}`;
   M→S `harness_result{v,req_id,harness?,code?,message?}` validates and applies
   the setting on that supervisor. M→S

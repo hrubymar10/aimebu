@@ -50,19 +50,16 @@ whole of the harness's stderr into `TurnSpec.StderrSink` when the supervisor
 sets one (the per-agent output log, see
 [the supervisor](supervisor.md#agent-output)); a sink that fails never stops
 the stderr pipe from being read.
-Normal turns may carry `AgentToolsConfigPath`, a supervisor-owned 0600 MCP
-config file path. A real adapter can pass that file to its CLI's MCP config
-flag without placing the agent key in argv or the prompt. Docker variants read
-it on the host and pass an authenticated HTTP MCP endpoint inline in the
-CLI arguments; the key is visible to local process inspection during a turn.
-No key-bearing file is written in the checkout: agents homed in the same task
-room share a checkout, and a co-tenant Docker agent running as the same
-container user could read another agent's bearer and act as it. Both Claude
-Docker (`--mcp-config`) and Codex Docker (`-c`) therefore pass the bearer in
-argv until the Docker launcher supports a private per-turn channel, such as
-environment passthrough or a mount that is not shared between agents.
-Correction and
-diagnostic turns leave this path empty; no messaging tools live there.
+Normal turns carry `AgentTools` (`adapter.AgentToolsAccess`): the server address, the agent's own id and `aak_` key, the path of the `aimebu`
+executable and the rest of the bridge's environment (telemetry). It is built per turn from the supervisor's memory, never journaled (`json:"-"`) and
+never written to a file, and it holds no other agent's key. An adapter gives the key to the harness through the harness's **environment**
+(`AIMEBU2_AGENT_KEY`), never through its argument list (`ps` shows that to every local user): Claude gets an inline stdio MCP entry whose key is
+`${AIMEBU2_AGENT_KEY}`, Codex's private config names the variable (`env_vars`), Pi's header is `Bearer ${AIMEBU2_AGENT_KEY}`, and the Docker variants build
+their HTTP endpoint from the same access and forward the variable by name (`HARNESS_DOCKER_FORWARD_ENV`). `adapter.BridgeEntry`, `NativeMCP` and
+`DockerMCPAt` validate the access (the agent id must match the turn's) and build those entries. No key-bearing file is written in the checkout:
+agents homed in the same task room share a checkout, and a co-tenant Docker agent running as the same container user could read another agent's
+bearer and act as it. A key in a process's environment is still readable by a same-user process that can read its environment (see
+[the supervisor](supervisor.md)). Correction and diagnostic turns have no access; no messaging tools are given to them.
 
 The in-process `Fake` consumes a script keyed by turn ID. Scripts can emit
 events, append a file or run an effect hook, wait on a gate, hang until
@@ -174,8 +171,8 @@ non-terminal exit instead of waiting on a child blocked on its unread pipe.
 The catalog probes `claude --version` at supervisor startup and advertises it
 only when the executable is available. CLI version is discovery data, not a
 model choice: the server's spawn catalog separately bounds Claude models to
-the owner-editable list (default `haiku`, `sonnet`, and `opus`). Normal turns receive the private MCP config
-through `--mcp-config` and are not strict: the person's own MCP servers and connectors
+the owner-editable list (default `haiku`, `sonnet`, and `opus`). Normal turns receive the aimebu MCP entry
+inline through `--mcp-config` and are not strict: the person's own MCP servers and connectors
 (user, project and local scope, claude.ai) stay available to the agent, as in their
 terminal. The aimebu entry takes precedence over a server of the same name in any
 scope, so a v1 bus the person has configured under that name never reaches a v2

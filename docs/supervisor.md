@@ -125,29 +125,60 @@ The server sends `spawn` after an agent, session, room membership, and writer
 reservation commit. The supervisor binds that agent's generation and replies
 with `spawn_result`. A spawn carries a stable request ID per agent generation.
 Before acknowledging a spawn, the supervisor checks that its checkout path
-is an existing directory on this machine, then writes a private MCP config at
-`supervisor/agent-tools/<agent-id-hash>.json` with mode 0600. It contains the
-server URL and that agent's `aak_` key in the MCP child environment
-(`AIMEBU2_URL`, `AIMEBU2_AGENT_ID`, `AIMEBU2_AGENT_KEY`), plus an
-absolute path to `aimebu agent-tools`. Only the config path enters a normal
-turn's adapter spec and journal; the raw key does not. Correction and
-diagnostic turns have no toolbox config. The file persists across supervisor
-restarts and is replaced atomically when the server sends a new key (it issues one every
-time the agent starts). The supervisor deletes it, and the config an adapter
-generated from it (Codex's `config.toml`, Pi's `mcp.json` under the runtime
-root), when the agent is stopped (once its running turn has ended), so nothing a stopped or removed
-agent leaves behind can authenticate.
-Claude and Codex Docker adapters read this private host-side file and use the
-HTTP toolbox; they never copy the file into the shared checkout. The key is not in the harness's
-argument list (`ps` shows that to every local user): the MCP entry names a variable
+is an existing directory on this machine, then holds that agent's `aak_` key **in memory only**:
+no file under the supervisor's or an adapter's directory has it, so an agent that reads those
+directories finds no key, its own or another's. A turn is handed its own agent's key and no other's
+(`adapter.AgentToolsAccess`, built from memory per turn; it is never journaled), and the adapter gives
+the harness the key in the harness's environment (`AIMEBU2_AGENT_KEY`), never in its argument list
+(`ps` shows that to every local user):
+
+The bridge (`aimebu agent-tools`) reads `AIMEBU2_URL`, `AIMEBU2_AGENT_ID` and `AIMEBU2_AGENT_KEY` from the environment it is started with; the first two
+are in its MCP entry, the key is the variable the harness fills from its own environment:
+
+- Claude: the `aimebu` MCP entry is inline (`--mcp-config <json>`), a stdio entry for `aimebu agent-tools`
+  whose environment says `AIMEBU2_AGENT_KEY=${AIMEBU2_AGENT_KEY}`, which Claude expands from its own environment.
+- Codex: the private `config.toml` names the bridge with `env_vars = ["AIMEBU2_AGENT_KEY"]`; the key is only in Codex's environment.
+- Pi: the private `mcp.json` has `Authorization: Bearer ${AIMEBU2_AGENT_KEY}`, which Pi expands.
+- OpenCode and Vibe: as before, the bearer is in the harness's environment or inline configuration for the turn, never in a file.
+
+**What this does and does not protect.** The key is in no file, but while a turn runs it is in the harness process's environment, so a native agent
+(which runs as the same user as the supervisor and has that user's files within reach) can read the environment of a running sibling agent's process
+(`ps eww`, `/proc/<pid>/environ` on Linux, `sysctl kern.procargs2` on macOS) and act as that agent while its turn lasts. Keeping keys out of files removes the
+easy path (the old shared directory, left-over configs, a backup of the home folder) and shortens a key's life to a turn plus a restart; it is not a
+sandbox. **Only run agents in docker (below) is the real boundary**: a Docker launcher does not mount the supervisor's directories and the container has its
+own process table. Turn it on for an install where more than one person can start agents.
+
+Correction and diagnostic turns have no toolbox. The supervisor drops the key, and deletes the
+config an adapter generated for the agent (Codex's `config.toml`, Pi's `mcp.json` under the runtime root),
+when the agent is stopped (once its running turn has ended), so nothing a stopped or removed agent leaves
+behind can authenticate. A supervisor that starts removes the `supervisor/agent-tools/` folder an
+older version wrote, and the generated adapter configs that held a key.
+
+A supervisor that restarts has lost its keys, and a confirmed spawn is not sent again. It says
+`supports_agent_keys=true` in `hello` and lists the agents whose key it holds (`held_keys`); the server
+answers in `hello_ack` with `agent_keys` (agent id, generation, a **new** key) for every agent the
+supervisor should run and holds no key for. Issuing the key replaces the stored hash, so the key
+the old process held stops authenticating (keys rotate on a supervisor restart). A supervisor that does not
+say so (an older one, which keeps keys on disk) is sent none.
+
+Claude and Codex Docker adapters build the HTTP toolbox entry from the same in-memory access; nothing is copied into the shared checkout. The key is not in the harness's
+argument list: the MCP entry names a variable
 (`Authorization: Bearer ${AIMEBU2_AGENT_KEY}` for Claude, `bearer_token_env_var` for
 Codex) and the launcher hands the variable over by name through `HARNESS_DOCKER_FORWARD_ENV`, so a Docker
 launcher without that feature (`forward_env`) is refused with the way out. The HTTP endpoint uses the
 same agent-key authorization and scope as the stdio toolbox's API calls.
 Docker's container must be able to reach `host.docker.internal` and the
 server's allowlist must admit its source IP. A stale spawn is rejected before
-this write; a write failure sends a failed
+the key is kept; an invalid key sends a failed
 `spawn_result` for that agent while the machine connection stays open.
+
+**Only run agents in docker.** An instance setting (Settings → General → Agents, owner or admin, off by default;
+`GET`/`PUT /api/agent-isolation`) that refuses native launchers. A native agent runs as the person who runs the
+supervisor, with that person's files and other agents' folders within reach; a Docker launcher does not mount the
+supervisor's directories. With it on, the server refuses to create or switch an agent onto a native launcher (409
+`docker_only`, naming the setting), holds an agent already on one before any turn is made for it (the dispatcher says why once in its rooms, the card shows a
+`docker_only` hold, queued messages wait and no turn row is created; `Dispatch` refuses it too, as a backstop), and sends `docker_only` on every spawn and delivery so the supervisor
+refuses it too (a stale or older server cannot bypass it). The test agent never runs a harness and is not refused.
 
 A container launcher's version is asked from the project folders of the machine, in turn, until
 one answers, within one deadline per launcher (3 seconds when its row is made, 20 on the retry after

@@ -54,10 +54,7 @@ func TestLiveForkCanary(t *testing.T) {
 		t.Skip("set ANTHROPIC_API_KEY or AIMEBU2_LIVE_CLAUDE_CREDENTIALS")
 	}
 	root := t.TempDir()
-	tools := filepath.Join(t.TempDir(), "tools.json")
-	if err := os.WriteFile(tools, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	tools := &adapter.AgentToolsAccess{AgentID: "agt_live_fork", ServerURL: "http://127.0.0.1:9897", Key: "aak_canary", Command: "/usr/bin/aimebu"}
 	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
 	implementation := New()
 	implementation.AllowNative = true
@@ -73,7 +70,7 @@ func TestLiveForkCanary(t *testing.T) {
 	run := func(id string, started, fork bool, body string) (answer, session string) {
 		notes, _ := json.Marshal([]map[string]string{{"body": body}})
 		turn, err := implementation.Start(ctx, adapter.TurnSpec{TurnID: id, Agent: adapter.AgentSpec{ID: "agt_live_fork", Variant: "native", Model: "haiku"}, CheckoutPath: root,
-			AgentToolsConfigPath: tools, NativeSessionHandle: original, NativeSessionStarted: started, ForkSession: fork, Mode: adapter.ModeNormal, NotesJSON: notes,
+			AgentTools: tools, NativeSessionHandle: original, NativeSessionStarted: started, ForkSession: fork, Mode: adapter.ModeNormal, NotesJSON: notes,
 			ContextJSON: json.RawMessage(`{"role_body":"Follow the user note exactly."}`)})
 		if err != nil {
 			t.Fatal(err)

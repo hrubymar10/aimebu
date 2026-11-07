@@ -144,7 +144,7 @@ func TestStartFailureIsJournaledAndKeepsMachineConnection(t *testing.T) {
 			defer j.Close()
 			c := NewClient("machine", "key", peer.server.URL, j, tc.adapter)
 			c.OnError = func(error) {}
-			if err := c.writeAgentToolsConfig(agentID, "aak_"+strings.Repeat("s", 43)); err != nil {
+			if err := c.setAgentKey(agentID, "aak_"+strings.Repeat("s", 43)); err != nil {
 				t.Fatal(err)
 			}
 			for i := range c.Harnesses {

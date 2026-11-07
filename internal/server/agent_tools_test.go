@@ -769,6 +769,9 @@ func TestLeadToolCannotEscalateOrActAfterStop(t *testing.T) {
 	}
 	defer journal.Close()
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, adapter.NewFake())
+	if err := client.SetAgentKey(lead.ID, key); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -852,6 +855,9 @@ func TestLeadToolSpawnStopAndUsageHeadroom(t *testing.T) {
 	defer journal.Close()
 	fake := adapter.NewFake()
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, fake)
+	if err := client.SetAgentKey(lead.ID, key); err != nil {
+		t.Fatal(err)
+	}
 	client.OnReady = func() {}
 	before, err := f.db.ProjectToolHeadroom(t.Context(), f.project.ID)
 	if err != nil {

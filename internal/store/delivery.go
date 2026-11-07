@@ -15,6 +15,9 @@ type AgentRuntime struct {
 	Observed      string
 	RecoveryBlock bool
 	Revoked       bool
+	Tool          string
+	Variant       string
+	LauncherID    string
 }
 
 func (s *Store) AgentRuntimeByID(ctx context.Context, id string) (AgentRuntime, error) {
@@ -23,7 +26,7 @@ func (s *Store) AgentRuntimeByID(ctx context.Context, id string) (AgentRuntime, 
 	}
 	var agent AgentRuntime
 	var revoked sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id,project_id,machine_id,generation,desired,desired_rev,observed,recovery_block,revoked_at FROM agent WHERE id=?`, id).Scan(&agent.ID, &agent.ProjectID, &agent.MachineID, &agent.Generation, &agent.Desired, &agent.DesiredRev, &agent.Observed, &agent.RecoveryBlock, &revoked)
+	err := s.db.QueryRowContext(ctx, `SELECT id,project_id,machine_id,generation,desired,desired_rev,observed,recovery_block,revoked_at,tool,variant,COALESCE(launcher_id,'') FROM agent WHERE id=?`, id).Scan(&agent.ID, &agent.ProjectID, &agent.MachineID, &agent.Generation, &agent.Desired, &agent.DesiredRev, &agent.Observed, &agent.RecoveryBlock, &revoked, &agent.Tool, &agent.Variant, &agent.LauncherID)
 	agent.Revoked = revoked.Valid
 	return agent, err
 }

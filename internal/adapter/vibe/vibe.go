@@ -180,9 +180,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		args = append(args, "--resume", spec.NativeSessionHandle)
 	}
 	if normal {
-		endpoint, authorization, err := adapter.NativeMCP(spec.AgentToolsConfigPath, spec.Agent.ID)
+		endpoint, authorization, err := adapter.NativeMCP(spec.AgentTools, spec.Agent.ID)
 		if docker {
-			endpoint, authorization, err = adapter.DockerMCPAt(spec.AgentToolsConfigPath, spec.Agent.ID, spec.AgentServerURL)
+			endpoint, authorization, err = adapter.DockerMCPAt(spec.AgentTools, spec.Agent.ID, spec.AgentServerURL)
 		}
 		if err != nil {
 			return nil, err

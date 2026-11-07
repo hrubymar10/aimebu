@@ -64,7 +64,7 @@ func TestNativeTurnLoadsThePersonsOwnMCPServers(t *testing.T) {
 	}
 	a := &Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}
 	turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "own", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
-		CheckoutPath: t.TempDir(), AgentToolsConfigPath: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal})
+		CheckoutPath: t.TempDir(), AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal})
 	if err != nil {
 		t.Fatal(err)
 	}

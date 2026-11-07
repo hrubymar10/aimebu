@@ -26,7 +26,7 @@ import (
 
 // `aimebu doctor --machine` is for a host that runs only the supervisor, with
 // no server or database of its own. It reads what lives on this machine: the
-// pairing credential, the supervisor's journal, its private agent-tools config
+// pairing credential, the supervisor's journal, the agent-tools folder an older supervisor left
 // and agent logs, the harness executables and Docker, each Docker launcher's
 // feature probe, and what the paired server says about this machine.
 
@@ -155,40 +155,28 @@ func journalHolder(lockPath string) (string, bool) {
 	return "", false
 }
 
-// checkAgentToolsConfig verifies the per-agent toolbox configs the supervisor
-// writes hold an agent key: the folder must be private (0700) and each file
-// 0600, so another user on the machine cannot read an agent's credential.
+// checkAgentToolsConfig looks for the per-agent toolbox configs an older supervisor wrote, each with an agent's key in it. The supervisor keeps keys in
+// memory only now and removes that folder when it starts, so any file here is a key on the disk that a running supervisor has not cleaned up yet.
 func checkAgentToolsConfig(dir string) doctorCheck {
 	const name = "agent tools config"
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
-		return doctorCheck{Name: name, Status: statusOK, Description: "none yet (written when an agent starts)"}
+		return doctorCheck{Name: name, Status: statusOK, Description: "none (the supervisor keeps agent keys in memory only)"}
 	}
 	if err != nil {
 		return doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("read %s: %v", dir, err)}
 	}
-	var loose []string
-	if info, err := os.Stat(dir); err == nil && info.Mode().Perm()&0o077 != 0 {
-		loose = append(loose, fmt.Sprintf("folder mode %o", info.Mode().Perm()))
-	}
 	files := 0
 	for _, entry := range entries {
-		if !entry.Type().IsRegular() {
-			continue
-		}
-		files++
-		if info, err := entry.Info(); err == nil && info.Mode().Perm()&0o077 != 0 {
-			loose = append(loose, fmt.Sprintf("%s mode %o", entry.Name(), info.Mode().Perm()))
+		if entry.Type().IsRegular() {
+			files++
 		}
 	}
-	if len(loose) > 0 {
-		if len(loose) > 5 {
-			loose = append(loose[:5], "…")
-		}
-		return doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("%d config(s); readable by others: %s", files, strings.Join(loose, ", ")),
-			Hint: "chmod -R go-rwx " + dir + " (they hold agent keys)."}
+	if files == 0 {
+		return doctorCheck{Name: name, Status: statusOK, Description: "none (the supervisor keeps agent keys in memory only)"}
 	}
-	return doctorCheck{Name: name, Status: statusOK, Description: fmt.Sprintf("%d config(s), private (0700/0600)", files)}
+	return doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("%d old agent config(s) in %s hold agent keys", files, dir),
+		Hint: "Start the supervisor (it deletes them), or rm -r " + dir + "."}
 }
 
 // checkAgentLogs reports the size of the captured agent output against the

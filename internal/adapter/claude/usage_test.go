@@ -27,11 +27,8 @@ func usageEvents(t *testing.T, lines ...string) []*adapter.Usage {
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := filepath.Join(t.TempDir(), "tools.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "usage", Agent: adapter.AgentSpec{ID: "agt_usage", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	config := &adapter.AgentToolsAccess{AgentID: "agt_usage", ServerURL: "http://127.0.0.1:9897", Key: "aak_canary", Command: "/usr/bin/aimebu"}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "usage", Agent: adapter.AgentSpec{ID: "agt_usage", Model: "haiku"}, CheckoutPath: root, AgentTools: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

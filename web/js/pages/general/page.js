@@ -1,6 +1,7 @@
 import { html, signal } from '../../ui.js';
 import { savePreference } from '../../preferences.js';
 import { retention } from '../../retention.js';
+import { agentIsolation } from '../../agent-isolation.js';
 import { chatPreferences } from '../../chat-preferences.js';
 import { mountPreactPage } from '../mount-page.js';
 import { GeneralPage } from './general-page.js';
@@ -51,6 +52,7 @@ export class GeneralSettings {
   open() {
     this.readChat();
     retention.load();
+    agentIsolation.load();
   }
 
   chooseTheme(theme) {

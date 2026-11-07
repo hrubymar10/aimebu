@@ -69,6 +69,7 @@ type Client struct {
 	active         map[string]string
 	running        map[string]adapter.Turn
 	pendingStopAck map[string]protocol.Frame
+	agentKeys      map[string]string // each agent's key, in memory only (see agent_tools.go)
 	telemetryEnv   map[string]string // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
 	currentConn    *websocket.Conn
 	stopping       bool
@@ -86,6 +87,9 @@ func NewClient(machineID, machineKey, serverURL string, journal *Journal, implem
 	}
 	return client
 }
+
+// errDockerOnly is what a supervisor says when the instance runs agents only in docker and the agent's launcher is native.
+var errDockerOnly = errors.New("Only run agents in docker is on for this instance (Settings -> General), so a native launcher is refused: use a Docker launcher, or ask an admin to turn the setting off")
 
 func (c *Client) refreshCapabilities() {
 	fromRows, ok := c.Adapter.(interface {
@@ -153,6 +157,7 @@ func (c *Client) capabilityReportsSnapshot() []protocol.CapabilityReport {
 }
 
 func (c *Client) Run(ctx context.Context) error {
+	c.SweepLegacyKeys()
 	go c.sweepAgentLogs(ctx)
 	for {
 		err := c.RunOnce(ctx)
@@ -229,7 +234,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -238,6 +243,12 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	if ack.V != protocol.Version || ack.Type != protocol.HelloAck {
 		return fmt.Errorf("expected hello_ack, got %q", ack.Type)
+	}
+	// New keys first, before anything that could start a turn: an agent that lost its key with a restart gets another here.
+	for _, grant := range ack.AgentKeys {
+		if err := c.setAgentKey(grant.AgentID, grant.Key); err != nil && c.OnError != nil {
+			c.OnError(fmt.Errorf("key for agent %s: %w", grant.AgentID, err))
+		}
 	}
 	c.mu.Lock()
 	c.harnessProbeDir = ack.HarnessProbeDir
@@ -663,6 +674,16 @@ func (c *Client) applySpawn(frame protocol.Frame) protocol.Frame {
 		result.Result, result.Message = "error", "checkout path must be canonical on this machine: "+frame.CheckoutPath
 		return result
 	}
+	if frame.DockerOnly && frame.Agent != nil && frame.Agent.Tool != "fake" {
+		containerized := frame.Agent.Variant == "docker"
+		if frame.Agent.LauncherID != "" {
+			containerized = c.launcherRow(frame.Agent.LauncherID).Containerized
+		}
+		if !containerized {
+			result.Result, result.Message = "error", errDockerOnly.Error()
+			return result
+		}
+	}
 	if frame.Agent != nil && frame.Agent.LauncherID != "" {
 		row := c.launcherRow(frame.Agent.LauncherID)
 		if row.ID == "" {
@@ -690,7 +711,7 @@ func (c *Client) applySpawn(frame protocol.Frame) protocol.Frame {
 			return result
 		}
 	}
-	if err := c.writeAgentToolsConfig(frame.AgentID, frame.AgentKey); err != nil {
+	if err := c.setAgentKey(frame.AgentID, frame.AgentKey); err != nil {
 		c.report(fmt.Errorf("agent tools config for %s: %w", frame.AgentID, err))
 		result.Result, result.Message = "error", err.Error()
 		return result
@@ -796,6 +817,9 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		spec.AgentServerURL = row.AgentServerURL
 		containerized = row.Containerized
 	}
+	if delivery.DockerOnly && !containerized && delivery.Agent.Tool != "fake" {
+		return errDockerOnly
+	}
 	if delivery.Agent.Tool == "pi" && containerized && delivery.AttachmentBearer != "" {
 		serverURL := c.ServerURL
 		if spec.AgentServerURL != "" {
@@ -820,12 +844,11 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		}
 	}
 	if delivery.Mode == adapter.ModeNormal {
-		path := c.agentToolsPath(delivery.AgentID)
-		if _, err := os.Stat(path); err == nil {
-			spec.AgentToolsConfigPath = path
-		} else if !os.IsNotExist(err) {
+		access, err := c.agentToolsAccess(delivery.AgentID)
+		if err != nil {
 			return err
 		}
+		spec.AgentTools = access
 	}
 	notes, err := json.Marshal(delivery.Notes)
 	if err != nil {

@@ -19,6 +19,7 @@ import { KnowledgePanel } from './pages/knowledge/page.js';
 import { Health } from './pages/health/page.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
+import { agentIsolation } from './agent-isolation.js';
 import { Signin } from './pages/signin/page.js';
 import { showWelcome } from './pages/setup/welcome.js';
 import { ownerSetup } from './pages/setup/page.js';
@@ -488,7 +489,7 @@ async function signedIn(session) {
   // before it could miss. (The first sign-in waits behind the welcome, which can take long, so it starts nothing early.)
   const cursor = session.first_run ? undefined : request('/api/events/cursor');
   cursor?.then(() => chat.prefetchLatest(roomInAddress() || rememberedRoom()), () => {});
-  setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
+  setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); void agentIsolation.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   // The owner is asked about error reports once (after the welcome on a new install, or on the first sign-in after an update brought them).

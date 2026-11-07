@@ -19,6 +19,8 @@ type Dispatcher struct {
 	lastRoom               map[string]string
 	inFlight               map[string]specialFlight
 	failures               map[string]dispatchFailure
+	dockerHeld             map[string]bool         // agents held by Only run agents in docker (a native launcher), said once in their rooms
+	dockerUnchecked        map[string]bool         // agents held because their launcher could not be read, said once (apart from dockerHeld, so the native-launcher note is never swallowed)
 	forkHeld               map[string]*machineConn // agents whose copy-of-a-session turn waits for a supervisor that can fork, and the connection told so
 	lastProviderLimitSweep time.Time
 	cleanupMu              sync.Mutex
@@ -50,7 +52,7 @@ func dispatchBackoff(failures int) time.Duration {
 }
 
 func NewDispatcher(server *Server) *Dispatcher {
-	return &Dispatcher{Server: server, lastRoom: make(map[string]string), inFlight: make(map[string]specialFlight), failures: make(map[string]dispatchFailure), forkHeld: make(map[string]*machineConn)}
+	return &Dispatcher{Server: server, lastRoom: make(map[string]string), inFlight: make(map[string]specialFlight), failures: make(map[string]dispatchFailure), forkHeld: make(map[string]*machineConn), dockerHeld: make(map[string]bool), dockerUnchecked: make(map[string]bool)}
 }
 
 func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
@@ -197,6 +199,36 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 			}
 		}
 		delete(d.forkHeld, id)
+		// Only run agents in docker: an agent on a native launcher is held before a turn is made for it, so its queued messages wait without a turn row being
+		// created and cancelled on every pass (Dispatch refuses it too, as a backstop). Said once in its rooms.
+		refused, err := d.Server.refusedAgent(ctx, agent.MachineID, agent.Tool, agent.Variant, agent.LauncherID)
+		if err != nil {
+			// Held, not sent: with the setting on, an agent whose launcher cannot be read may be a native one. Said once in its rooms, logged on every pass.
+			log.Printf("dispatch: is %s on a native launcher: %v", id, err)
+			if on, onErr := d.Server.dockerOnly(ctx); onErr == nil && on {
+				if !d.dockerUnchecked[id] {
+					if noteErr := d.Server.Store.NoteDockerOnlyUnchecked(ctx, id); noteErr != nil {
+						log.Printf("dispatch: saying why %s is held: %v", id, noteErr)
+					} else {
+						d.dockerUnchecked[id] = true
+					}
+				}
+				continue
+			}
+			continue
+		}
+		if refused {
+			if !d.dockerHeld[id] {
+				if err := d.Server.Store.NoteDockerOnlyHeld(ctx, id); err != nil {
+					log.Printf("dispatch: saying why %s is held: %v", id, err)
+					continue
+				}
+				d.dockerHeld[id] = true
+			}
+			continue
+		}
+		delete(d.dockerHeld, id)
+		delete(d.dockerUnchecked, id)
 		delivery, ready, err := d.Server.Store.PrepareDispatch(ctx, id, d.lastRoom[id])
 		if err != nil {
 			return count, err

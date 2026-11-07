@@ -75,3 +75,17 @@ once. See [the contract](contract.md) (global memory).
 - A paired machine must be admitted for a project before its folder is read or a worktree is made there; the project's owner (or an admin)
   admits it from the spawn dialog or with `POST /api/projects/{project}/machine-folders/{machine}/admit`.
 - A Copilot sign-in only links an `https` verification address.
+
+## Agent keys are kept in memory
+
+A supervisor no longer writes an agent's key to disk. The `supervisor/agent-tools/` folder an older supervisor wrote (one config per agent, each
+holding a key), and the keys in Codex's `config.toml` and Pi's `mcp.json` under the runtime directories, are deleted when the new supervisor
+starts. A supervisor that restarts is sent a **new** key for each agent it should run when it reconnects, and the old key stops working, so the
+agents keep running across a restart with rotated keys. This needs the server and the supervisor both upgraded: an older supervisor keeps its
+keys on disk and is sent none. Upgrade the server first. See [Supervisor](supervisor.md).
+
+## "Only run agents in docker" (opt-in)
+
+Settings → General → Agents has a new switch, off by default, that refuses native launchers: no agent is started or switched onto one, and an
+agent already on one gets no turns until it is moved to a Docker launcher. Turn it on for an install that others can spawn agents on. See
+[Supervisor](supervisor.md).

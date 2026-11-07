@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -130,8 +131,12 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	args := []string{"-C", visibleCheckout}
 	var agentKey []string
+	if a.variant() == "native" && spec.Mode == adapter.ModeNormal && spec.AgentTools != nil {
+		// The private config names the variable (env_vars), and the key itself is only in this process's environment.
+		agentKey = []string{adapter.AgentKeyEnv + "=" + spec.AgentTools.Key}
+	}
 	if a.variant() == "docker" && spec.Mode == adapter.ModeNormal {
-		endpoint, header, err := adapter.DockerMCPAt(spec.AgentToolsConfigPath, spec.Agent.ID, spec.AgentServerURL)
+		endpoint, header, err := adapter.DockerMCPAt(spec.AgentTools, spec.Agent.ID, spec.AgentServerURL)
 		if err != nil {
 			return nil, err
 		}
@@ -276,6 +281,18 @@ func (a *Adapter) ForgetAgent(agentID string) {
 	_ = os.Remove(filepath.Join(a.RuntimeRoot, hex.EncodeToString(hash[:]), "config.toml"))
 }
 
+// SweepKeys deletes every generated config under the runtime root. An older supervisor wrote the agent's key into one; the next turn of an
+// agent writes its config again, without a key.
+func (a *Adapter) SweepKeys() {
+	if a.RuntimeRoot == "" {
+		return
+	}
+	matches, _ := filepath.Glob(filepath.Join(a.RuntimeRoot, "*", "config.toml"))
+	for _, path := range matches {
+		_ = os.Remove(path)
+	}
+}
+
 func (a *Adapter) prepareRuntime(spec adapter.TurnSpec, own userMCP) (string, error) {
 	hash := sha256.Sum256([]byte(spec.Agent.ID))
 	root := a.RuntimeRoot
@@ -330,46 +347,35 @@ func (a *Adapter) prepareRuntime(spec adapter.TurnSpec, own userMCP) (string, er
 }
 
 func codexConfig(spec adapter.TurnSpec) ([]byte, error) {
-	if spec.Mode != adapter.ModeNormal || spec.AgentToolsConfigPath == "" {
+	if spec.Mode != adapter.ModeNormal || spec.AgentTools == nil {
 		return []byte("# aimebu private Codex runtime\n"), nil
 	}
-	data, err := os.ReadFile(spec.AgentToolsConfigPath)
+	command, args, env, err := adapter.BridgeEntry(spec.AgentTools, spec.Agent.ID, "")
 	if err != nil {
 		return nil, err
 	}
-	var source struct {
-		Servers map[string]struct {
-			Command string            `json:"command"`
-			Args    []string          `json:"args"`
-			Env     map[string]string `json:"env"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(data, &source); err != nil {
-		return nil, err
-	}
-	server, ok := source.Servers["aimebu"]
-	if !ok || !filepath.IsAbs(server.Command) || server.Env["AIMEBU2_URL"] == "" || server.Env["AIMEBU2_AGENT_KEY"] == "" || server.Env["AIMEBU2_AGENT_ID"] != spec.Agent.ID {
-		return nil, errors.New("invalid private aimebu MCP config")
-	}
 	var b strings.Builder
 	b.WriteString("[mcp_servers.aimebu]\ncommand = ")
-	b.WriteString(strconv.Quote(server.Command))
+	b.WriteString(strconv.Quote(command))
 	b.WriteString("\nargs = [")
-	for i, arg := range server.Args {
+	for i, arg := range args {
 		if i > 0 {
 			b.WriteString(", ")
 		}
 		b.WriteString(strconv.Quote(arg))
 	}
-	b.WriteString("]\n[mcp_servers.aimebu.env]\n")
-	for _, key := range []string{"AIMEBU2_URL", "AIMEBU2_AGENT_ID", "AIMEBU2_AGENT_KEY"} {
-		b.WriteString(key)
-		b.WriteString(" = ")
-		b.WriteString(strconv.Quote(server.Env[key]))
-		b.WriteByte('\n')
+	// The key is not in this file: Codex hands the bridge the variable of that name from its own environment.
+	b.WriteString("]\nenv_vars = [" + strconv.Quote(adapter.AgentKeyEnv) + "]\n[mcp_servers.aimebu.env]\n")
+	names := make([]string, 0, len(env))
+	for name := range env {
+		names = append(names, name)
 	}
-	if server.Env["AIMEBU2_INSECURE_SKIP_VERIFY"] == "1" {
-		b.WriteString("AIMEBU2_INSECURE_SKIP_VERIFY = \"1\"\n")
+	sort.Strings(names)
+	for _, name := range names {
+		b.WriteString(name)
+		b.WriteString(" = ")
+		b.WriteString(strconv.Quote(env[name]))
+		b.WriteByte('\n')
 	}
 	return []byte(b.String()), nil
 }

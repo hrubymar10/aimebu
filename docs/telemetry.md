@@ -132,7 +132,7 @@ the effective configuration: whether reporting is on, the DSN, the environment n
 [the contract](contract.md)). The supervisor starts, replaces or stops its own reporting by it; its events carry no user, no host name and no IP address,
 like the server's. The `aimebu agent-tools` bridge that a harness starts for an agent gets the same through the environment of its MCP config entry
 (`AIMEBU2_SENTRY_DSN`, `AIMEBU2_SENTRY_ENV`, `AIMEBU2_SENTRY_TRACES_SAMPLE_RATE`; `AIMEBU2_SENTRY_DSN=off` when reporting is off), never through its
-arguments; the files are rewritten when the settings change, so the next bridge an agent starts has them, and one that is already running keeps what it
+arguments; the next turn of any agent builds its entry with the current settings, so the next bridge an agent starts has them, and one that is already running keeps what it
 started with.
 
 A DSN in the supervisor machine's own environment (`AIMEBU2_SENTRY_DSN`, a DSN or `off`) wins over the server's settings, for the supervisor and for its

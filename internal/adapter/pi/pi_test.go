@@ -41,14 +41,9 @@ func TestTurnInputIncludesScopedDockerAttachmentAccess(t *testing.T) {
 	}
 }
 
-func testToolsConfig(t *testing.T, agent string) string {
+func testToolsConfig(t *testing.T, agent string) *adapter.AgentToolsAccess {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "tools.json")
-	data := `{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"` + agent + `","AIMEBU2_AGENT_KEY":"aak_test"}}}}`
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return &adapter.AgentToolsAccess{AgentID: agent, ServerURL: "http://127.0.0.1:9897", Key: "aak_test", Command: "/usr/bin/aimebu"}
 }
 
 func TestConformance(t *testing.T) {
@@ -94,7 +89,7 @@ esac
 		}
 		return &Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")},
 			adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
-				CheckoutPath: checkout, AgentToolsConfigPath: config, NativeSessionHandle: testSession, Mode: adapter.ModeNormal,
+				CheckoutPath: checkout, AgentTools: config, NativeSessionHandle: testSession, Mode: adapter.ModeNormal,
 				NotesJSON: json.RawMessage(`[]`)}, effected
 	}, adaptertest.ChildProcess())
 }
@@ -108,7 +103,8 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s' \"${PI_CODING_AGENT_DIR:-}\" > " + envPath + "\ncat " + fixture + "\n"
+	keyPath := filepath.Join(root, "key")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s' \"${PI_CODING_AGENT_DIR:-}\" > " + envPath + "\nprintf '%s' \"${AIMEBU2_AGENT_KEY:-}\" > " + keyPath + "\ncat " + fixture + "\n"
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +114,7 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 			checkout := t.TempDir()
 			a := &Adapter{Command: path, Variant: variant, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}
 			turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: variant, Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
-				CheckoutPath: checkout, AgentToolsConfigPath: config, NativeSessionHandle: testSession, Mode: adapter.ModeNormal})
+				CheckoutPath: checkout, AgentTools: config, NativeSessionHandle: testSession, Mode: adapter.ModeNormal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,6 +152,13 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 				if err != nil || !strings.Contains(string(data), "127.0.0.1:9897/api/agent/mcp") {
 					t.Fatalf("private Pi endpoint=%q err=%v", data, err)
 				}
+				// The key is not in the file, nor in the arguments: the header names the variable Pi expands, and the key is in Pi's environment.
+				if strings.Contains(string(data), config.Key) || !strings.Contains(string(data), "Bearer ${AIMEBU2_AGENT_KEY}") || strings.Contains(string(args), config.Key) {
+					t.Fatalf("the key must not be in the private Pi config or the arguments: %s / %q", data, args)
+				}
+				if key, err := os.ReadFile(keyPath); err != nil || string(key) != config.Key {
+					t.Fatalf("the key reaches Pi only in its environment: %q err=%v", key, err)
+				}
 			} else if !strings.Contains(string(args), "--no-mcp\n") || strings.Contains(string(args), "--mcp-config") || len(envDir) != 0 {
 				t.Fatalf("docker toolbox args=%q", args)
 			} else if _, err := os.Stat(filepath.Join(checkout, ".aimebu", "mcp.json")); !os.IsNotExist(err) {
@@ -188,7 +191,7 @@ func TestLargeTurnPromptUsesStdin(t *testing.T) {
 	}
 	a := &Adapter{Command: command, Variant: "native", AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}
 	turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "pi-large", Agent: adapter.AgentSpec{ID: "agt_large_pi", Model: "ollama-cloud/gemma4:31b"},
-		CheckoutPath: t.TempDir(), AgentToolsConfigPath: testToolsConfig(t, "agt_large_pi"), NativeSessionHandle: testSession,
+		CheckoutPath: t.TempDir(), AgentTools: testToolsConfig(t, "agt_large_pi"), NativeSessionHandle: testSession,
 		Mode: adapter.ModeNormal, NotesJSON: notes})
 	if err != nil {
 		t.Fatal(err)
@@ -354,7 +357,7 @@ func TestLiveCanary(t *testing.T) {
 	run := func(id, note string, started bool) (string, bool) {
 		notes, _ := json.Marshal([]map[string]string{{"body": note}})
 		turn, err := a.Start(ctx, adapter.TurnSpec{TurnID: id, Agent: adapter.AgentSpec{ID: "agt_live_pi", Variant: variant, Model: "ollama-cloud/gemma4:31b"},
-			CheckoutPath: checkout, AgentToolsConfigPath: config, NativeSessionHandle: testSession, NativeSessionStarted: started,
+			CheckoutPath: checkout, AgentTools: config, NativeSessionHandle: testSession, NativeSessionStarted: started,
 			Mode: adapter.ModeNormal, NotesJSON: notes, ContextJSON: json.RawMessage(`{"rooms":[{"room_id":"canary"}]}`)})
 		if err != nil {
 			t.Fatal(err)
@@ -425,7 +428,7 @@ func TestRetriesExhaustedExitNamesTheProviderError(t *testing.T) {
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	turn, err := (&Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), adapter.TurnSpec{TurnID: "retries", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, AgentToolsConfigPath: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	turn, err := (&Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), adapter.TurnSpec{TurnID: "retries", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +455,7 @@ func TestSuccessfulRetryLeavesNoProviderError(t *testing.T) {
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	turn, err := (&Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), adapter.TurnSpec{TurnID: "recovered", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, AgentToolsConfigPath: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	turn, err := (&Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), adapter.TurnSpec{TurnID: "recovered", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

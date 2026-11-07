@@ -38,8 +38,8 @@ func TestDockerSpawnRejectsUnreachableCheckoutBeforeWritingKey(t *testing.T) {
 	if result.Result != "error" || !strings.Contains(result.Message, "not mounted") {
 		t.Fatalf("spawn result=%+v", result)
 	}
-	if _, err := os.Stat(c.agentToolsPath("agt_docker")); !os.IsNotExist(err) {
-		t.Fatalf("credential file exists or stat failed: %v", err)
+	if c.keyOf("agt_docker") != "" {
+		t.Fatalf("credential file exists or stat failed")
 	}
 }
 
@@ -122,7 +122,7 @@ func TestSpawnConfigFailureIsAgentScopedAndStaleSpawnCannotReplaceKey(t *testing
 	c := NewClient("machine", "key", "http://127.0.0.1:9897", j, adapter.NewFake())
 	c.OnError = func(error) {}
 	oldKey := "aak_" + strings.Repeat("o", 43)
-	if err := c.writeAgentToolsConfig("agt_test", oldKey); err != nil {
+	if err := c.setAgentKey("agt_test", oldKey); err != nil {
 		t.Fatal(err)
 	}
 	c.desired["agt_test"] = protocol.DesiredAgent{AgentID: "agt_test", Generation: 2, DesiredRev: 4, Desired: "active"}
@@ -131,9 +131,8 @@ func TestSpawnConfigFailureIsAgentScopedAndStaleSpawnCannotReplaceKey(t *testing
 	if result := c.applySpawn(spawn); result.Result != "error" {
 		t.Fatalf("stale spawn result=%+v", result)
 	}
-	data, err := os.ReadFile(c.agentToolsPath("agt_test"))
-	if err != nil || !strings.Contains(string(data), oldKey) {
-		t.Fatalf("stale spawn replaced credential: %q, %v", data, err)
+	if c.keyOf("agt_test") != oldKey {
+		t.Fatalf("stale spawn replaced the key: %q", c.keyOf("agt_test"))
 	}
 	spawn.Generation, spawn.ReqID, spawn.AgentKey = 3, "agt_test/3", "invalid-key"
 	if result := c.applySpawn(spawn); result.Result != "error" || result.Message == "" {
@@ -146,9 +145,8 @@ func TestSpawnConfigFailureIsAgentScopedAndStaleSpawnCannotReplaceKey(t *testing
 	if result := c.applySpawn(spawn); result.Result != "ok" {
 		t.Fatalf("subsequent valid spawn result=%+v", result)
 	}
-	data, err = os.ReadFile(c.agentToolsPath("agt_test"))
-	if err != nil || !strings.Contains(string(data), spawn.AgentKey) || c.desired["agt_test"].Generation != 3 {
-		t.Fatalf("subsequent spawn failed: config=%q desired=%+v err=%v", data, c.desired["agt_test"], err)
+	if c.keyOf("agt_test") != spawn.AgentKey || c.desired["agt_test"].Generation != 3 {
+		t.Fatalf("subsequent spawn failed: key=%q desired=%+v", c.keyOf("agt_test"), c.desired["agt_test"])
 	}
 }
 
@@ -164,8 +162,8 @@ func TestSpawnRejectsMissingCheckoutBeforeWritingAgentKey(t *testing.T) {
 	if result.Result != "error" || !strings.Contains(result.Message, "does not exist on this machine") {
 		t.Fatalf("result: %+v", result)
 	}
-	if _, err := os.Stat(c.agentToolsPath(frame.AgentID)); !os.IsNotExist(err) {
-		t.Fatalf("agent key written despite invalid checkout: %v", err)
+	if c.keyOf(frame.AgentID) != "" {
+		t.Fatalf("agent key written despite invalid checkout")
 	}
 }
 
@@ -185,8 +183,8 @@ func TestSpawnRejectsUnavailableLauncherForRestartAndReplay(t *testing.T) {
 		if result.Result != "error" || !strings.Contains(result.Message, "launcher unavailable") {
 			t.Fatalf("%s: %+v", name, result)
 		}
-		if _, err := os.Stat(c.agentToolsPath(frame.AgentID)); !os.IsNotExist(err) {
-			t.Fatalf("%s wrote credentials: %v", name, err)
+		if c.keyOf(frame.AgentID) != "" {
+			t.Fatalf("%s wrote credentials", name)
 		}
 	}
 }
@@ -350,14 +348,17 @@ func TestSpawnRejectsCheckoutAliasBeforeWritingAgentKey(t *testing.T) {
 	if result.Result != "error" || !strings.Contains(result.Message, "must be canonical") {
 		t.Fatalf("result: %+v", result)
 	}
-	if _, err := os.Stat(c.agentToolsPath(frame.AgentID)); !os.IsNotExist(err) {
-		t.Fatalf("agent key written despite checkout alias: %v", err)
+	if c.keyOf(frame.AgentID) != "" {
+		t.Fatalf("agent key written despite checkout alias")
 	}
 }
 
-func TestAgentToolsConfigIsPrivateAndOnlyPathInJournal(t *testing.T) {
+// A key is in the supervisor's memory and in no file: not the journal, not the supervisor's directory, and a turn's access carries it only in
+// memory (it is not part of the journaled spec).
+func TestAgentKeyIsInMemoryOnlyAndInNoFile(t *testing.T) {
 	t.Setenv("AIMEBU2_INSECURE_SKIP_VERIFY", "1")
-	path := filepath.Join(t.TempDir(), "journal.sqlite")
+	root := t.TempDir()
+	path := filepath.Join(root, "journal.sqlite")
 	j, err := OpenJournal(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
@@ -365,52 +366,71 @@ func TestAgentToolsConfigIsPrivateAndOnlyPathInJournal(t *testing.T) {
 	defer j.Close()
 	c := NewClient("machine", "machine-key", "http://127.0.0.1:9897", j, adapter.NewFake())
 	key := "aak_" + strings.Repeat("x", 43)
-	if err := c.writeAgentToolsConfig("agt_test", key); err != nil {
+	if err := c.setAgentKey("agt_test", key); err != nil {
 		t.Fatal(err)
 	}
-	configPath := c.agentToolsPath("agt_test")
-	info, err := os.Stat(configPath)
-	if err != nil {
-		t.Fatal(err)
+	access, err := c.agentToolsAccess("agt_test")
+	if err != nil || access == nil || access.Key != key || access.AgentID != "agt_test" || access.ServerURL != "http://127.0.0.1:9897" || !filepath.IsAbs(access.Command) || access.Env["AIMEBU2_INSECURE_SKIP_VERIFY"] != "1" {
+		t.Fatalf("access=%+v err=%v", access, err)
 	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("config mode=%o", info.Mode().Perm())
+	if other, err := c.agentToolsAccess("agt_other"); err != nil || other != nil {
+		t.Fatalf("another agent's turn must get no access: %+v err=%v", other, err)
 	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config struct {
-		Servers map[string]struct {
-			Command string            `json:"command"`
-			Args    []string          `json:"args"`
-			Env     map[string]string `json:"env"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
-		t.Fatal(err)
-	}
-	server := config.Servers["aimebu"]
-	if !filepath.IsAbs(server.Command) || len(server.Args) != 1 || server.Args[0] != "agent-tools" || server.Env["AIMEBU2_AGENT_KEY"] != key || server.Env["AIMEBU2_AGENT_ID"] != "agt_test" || server.Env["AIMEBU2_INSECURE_SKIP_VERIFY"] != "1" {
-		t.Fatalf("bad config: %+v", server)
-	}
-	journalData, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(journalData), key) {
-		t.Fatal("agent key leaked to journal")
+	if spec, _ := json.Marshal(adapter.TurnSpec{AgentTools: access}); strings.Contains(string(spec), key) {
+		t.Fatalf("the key is in the journaled spec: %s", spec)
 	}
 	newKey := "aak_" + strings.Repeat("y", 43)
-	if err := c.writeAgentToolsConfig("agt_test", newKey); err != nil {
+	if err := c.setAgentKey("agt_test", newKey); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := os.ReadFile(configPath)
+	if c.keyOf("agt_test") != newKey {
+		t.Fatal("a new key did not replace the old one")
+	}
+	assertNoFileHolds(t, root, key, newKey)
+}
+
+// assertNoFileHolds fails when any file under root contains one of the secrets.
+func assertNoFileHolds(t *testing.T, root string, secrets ...string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		for _, secret := range secrets {
+			if strings.Contains(string(data), secret) {
+				t.Errorf("%s holds a key", path)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(updated), key) || !strings.Contains(string(updated), newKey) {
-		t.Fatal("credential refresh did not atomically replace the config")
+}
+
+// A start removes what an older supervisor left: the agent-tools folder, each config in it holding a key.
+func TestStartRemovesTheAgentToolsFolderAnOlderSupervisorLeft(t *testing.T) {
+	root := t.TempDir()
+	j, err := OpenJournal(context.Background(), filepath.Join(root, "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	dir := filepath.Join(root, "agent-tools")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.json"), []byte(`{"key":"aak_`+strings.Repeat("o", 43)+`"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := NewClient("machine", "key", "http://127.0.0.1:9897", j, adapter.NewFake())
+	c.SweepLegacyKeys()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the agent-tools folder is still there: %v", err)
 	}
 }
 
@@ -600,7 +620,7 @@ func TestSessionScanAttributionReturnsOnlyIds(t *testing.T) {
 
 // The agent tools config holds the agent's key, so a stopped agent leaves none behind: it goes when the agent is stopped with no turn running,
 // and when the turn it was stopped during has ended. A start writes it again (with a new key, as the server issues one each time).
-func TestStoppingAnAgentDeletesTheFileThatHoldsItsKey(t *testing.T) {
+func TestStoppingAnAgentDropsItsKey(t *testing.T) {
 	j, err := OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -608,8 +628,8 @@ func TestStoppingAnAgentDeletesTheFileThatHoldsItsKey(t *testing.T) {
 	defer j.Close()
 	c := NewClient("machine", "key", "http://127.0.0.1:9897", j, adapter.NewFake())
 	c.OnError = func(error) {}
-	exists := func() bool { _, err := os.Stat(c.agentToolsPath("agt_test")); return err == nil }
-	if err := c.writeAgentToolsConfig("agt_test", "aak_"+strings.Repeat("k", 43)); err != nil {
+	exists := func() bool { return c.keyOf("agt_test") != "" }
+	if err := c.setAgentKey("agt_test", "aak_"+strings.Repeat("k", 43)); err != nil {
 		t.Fatal(err)
 	}
 	c.handleControl(protocol.Frame{AgentID: "agt_test", Generation: 1, DesiredState: "active", DesiredRev: 1})
@@ -621,7 +641,7 @@ func TestStoppingAnAgentDeletesTheFileThatHoldsItsKey(t *testing.T) {
 		t.Fatal("a stopped agent's key file is still on the disk")
 	}
 	// A stop that arrives during a turn leaves the file until that turn is over.
-	if err := c.writeAgentToolsConfig("agt_test", "aak_"+strings.Repeat("m", 43)); err != nil {
+	if err := c.setAgentKey("agt_test", "aak_"+strings.Repeat("m", 43)); err != nil {
 		t.Fatal(err)
 	}
 	c.handleControl(protocol.Frame{AgentID: "agt_test", Generation: 2, DesiredState: "active", DesiredRev: 3})

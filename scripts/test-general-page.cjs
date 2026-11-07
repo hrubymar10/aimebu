@@ -125,9 +125,9 @@ async function main() {
     {
       const page = await mount();
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general > div')].map(div => `${div.id}:${div.querySelector('h3').textContent}`)),
-        ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'settings-backup:Settings backup']);
+        ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'agent-isolation:Agents', 'settings-backup:Settings backup']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general .settings-row')].filter(row => !row.hidden).map(row => (row.querySelector('input, select, button')).id)),
-        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'settings-backup-export', 'settings-backup-file']);
+        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-docker-only', 'settings-backup-export', 'settings-backup-file']);
       await page.close();
     }
     // The chat switches show what this person has and change the page at once: the bell and the debug button follow them.
@@ -191,6 +191,32 @@ async function main() {
       await settle(gone);
       assert.equal(await gone.evaluate(() => document.querySelector('#settings-general').childElementCount), 0, 'a save answered after destroy draws nothing');
       await gone.close();
+    }
+    // Only run agents in docker: read when General is shown; an admin changes it with one click, saved at once; a refused save puts the switch back and says
+    // why; a person who may not edit sees it disabled and told so.
+    {
+      const page = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true } } });
+      await page.evaluate(() => window.__general.open());
+      await page.waitForFunction(() => !document.querySelector('#agent-docker-only').disabled);
+      assert.equal(await page.$eval('#agent-docker-only', el => el.checked), false, 'off by default');
+      await page.$eval('#agent-docker-only', el => el.click());
+      await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/agent-isolation' && !request.answered));
+      const put = await page.evaluate(() => window.__requests.findIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));
+      assert.deepEqual(await page.evaluate(index => [window.__requests[index].body, document.querySelector('#agent-docker-only').disabled], put), [{ docker_only: true }, true], 'one request, and the switch waits for it');
+      await page.evaluate(index => window.__answer(index, 400, { message: 'Not now' }), put);
+      await page.waitForFunction(() => document.querySelector('#agent-docker-only-error').textContent === 'Not now');
+      assert.equal(await page.$eval('#agent-docker-only', el => el.checked), false, 'a refused save puts the switch back');
+      await page.$eval('#agent-docker-only', el => el.click());
+      const again = await page.evaluate(() => window.__requests.findLastIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));
+      await page.evaluate(index => window.__answer(index, 200, { docker_only: true, can_edit: true }), again);
+      await page.waitForFunction(() => document.querySelector('#agent-docker-only').checked && !document.querySelector('#agent-docker-only').disabled);
+      assert.equal(await page.$eval('#agent-docker-only-error', el => el.textContent), '');
+      await page.close();
+      const viewer = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: true, can_edit: false } } });
+      await viewer.evaluate(() => window.__general.open());
+      await viewer.waitForFunction(() => document.querySelector('#agent-docker-only').checked);
+      assert.deepEqual(await viewer.evaluate(() => [document.querySelector('#agent-docker-only').disabled, document.querySelector('#agent-isolation [role=status]').textContent]), [true, 'Only the owner or an admin can change this.']);
+      await viewer.close();
     }
     // Settings backup: who sees it, export, and the two-step import with the order of answers chosen.
     {

@@ -91,6 +91,18 @@ func (a *Adapter) ForgetAgent(agentID string) {
 	_ = os.Remove(filepath.Join(a.RuntimeRoot, hex.EncodeToString(sum[:]), "mcp.json"))
 }
 
+// SweepKeys deletes every generated MCP config under the runtime root. An older supervisor wrote the agent's key into one; the next turn of an
+// agent writes its config again, which names a variable instead of holding the key.
+func (a *Adapter) SweepKeys() {
+	if a.RuntimeRoot == "" {
+		return
+	}
+	matches, _ := filepath.Glob(filepath.Join(a.RuntimeRoot, "*", "mcp.json"))
+	for _, path := range matches {
+		_ = os.Remove(path)
+	}
+}
+
 func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Turn, error) {
 	if a.variant() == "native" && !a.AllowNative {
 		return nil, errors.New("native execution disabled; use the docker variant")
@@ -139,7 +151,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			if err := os.Chmod(agentDir, 0700); err != nil {
 				return nil, err
 			}
-			endpoint, authorization, err := adapter.NativeMCP(spec.AgentToolsConfigPath, spec.Agent.ID)
+			endpoint, _, err := adapter.NativeMCP(spec.AgentTools, spec.Agent.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -154,7 +166,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 				// A server of the person's is exposed through Pi's codemode tool unless its entry says otherwise, and the allowlist must name it.
 				tools = append(tools, "codemode")
 			}
-			servers["aimebu"] = map[string]any{"url": endpoint, "headers": map[string]string{"Authorization": authorization}, "exposure": "direct"}
+			servers["aimebu"] = map[string]any{"url": endpoint, "headers": map[string]string{"Authorization": "Bearer ${" + adapter.AgentKeyEnv + "}"}, "exposure": "direct"}
 			config, err := json.Marshal(map[string]any{"mcpServers": servers})
 			if err != nil {
 				return nil, err
@@ -189,6 +201,10 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		cmd.Env = append(cmd.Env, "PI_LAUNCH_FLAGS=")
 	}
 	cmd.Env = adapter.LauncherEnv(cmd.Env, spec.LauncherEnvRefs)
+	if agentDir != "" && spec.AgentTools != nil {
+		// mcp.json names the variable in aimebu's Authorization header (Pi expands it), so the key is only in this process's environment.
+		cmd.Env = append(cmd.Env, adapter.AgentKeyEnv+"="+spec.AgentTools.Key)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

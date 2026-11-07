@@ -130,35 +130,19 @@ func TestCheckSupervisorJournal(t *testing.T) {
 func TestCheckAgentToolsConfig(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "agent-tools")
 	if check := checkAgentToolsConfig(dir); check.Status != statusOK {
-		t.Fatalf("none yet: %+v", check)
+		t.Fatalf("no folder: %+v", check)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if check := checkAgentToolsConfig(dir); check.Status != statusOK {
+		t.Fatalf("empty folder: %+v", check)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(dir, "a.json")
-	if err := os.WriteFile(file, []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if check := checkAgentToolsConfig(dir); check.Status != statusOK || !strings.Contains(check.Description, "1 config(s)") {
-		t.Fatalf("private: %+v", check)
-	}
-	if err := os.Chmod(file, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if check := checkAgentToolsConfig(dir); check.Status != statusWarn || !strings.Contains(check.Description, "a.json mode 644") || check.Hint == "" {
-		t.Fatalf("readable file: %+v", check)
-	}
-	if err := os.Chmod(file, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if check := checkAgentToolsConfig(dir); check.Status != statusWarn || !strings.Contains(check.Description, "folder mode 755") {
-		t.Fatalf("readable folder: %+v", check)
+	if check := checkAgentToolsConfig(dir); check.Status != statusWarn || !strings.Contains(check.Description, "1 old agent config(s)") || check.Hint == "" {
+		t.Fatalf("a left-over config holds a key: %+v", check)
 	}
 }
 

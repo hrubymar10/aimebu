@@ -1097,6 +1097,35 @@ func (s *Store) PendingSpawnsForMachine(ctx context.Context, machineID string) (
 	return out, s.settlePendingModels(ctx, out)
 }
 
+// KeyedAgent is an agent on a machine that should be running, by id and generation.
+type KeyedAgent struct {
+	AgentID    string
+	Generation int
+}
+
+// AgentsToKey lists the agents of a machine that a supervisor should be running and has a spawn settled for: not revoked, not stopped, and with no
+// spawn in flight (a pending spawn carries its own key). A supervisor that holds no key for one of these needs a new one.
+func (s *Store) AgentsToKey(ctx context.Context, machineID string) ([]KeyedAgent, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.generation FROM agent a WHERE a.machine_id=? AND a.revoked_at IS NULL AND a.desired!='stopped'
+		AND NOT (EXISTS(SELECT 1 FROM event e WHERE e.agent_id=a.id AND e.kind='agent_spawn_requested') AND NOT EXISTS(SELECT 1 FROM event e WHERE e.agent_id=a.id AND e.kind IN ('agent_spawn_confirmed','agent_spawn_failed') AND json_extract(e.payload_json,'$.generation')=a.generation)) ORDER BY a.id`, machineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KeyedAgent
+	for rows.Next() {
+		var item KeyedAgent
+		if err := rows.Scan(&item.AgentID, &item.Generation); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) AckAgentControl(ctx context.Context, id string, generation int, ref string) error {
 	rev, err := strconv.ParseInt(ref, 10, 64)
 	if err != nil {

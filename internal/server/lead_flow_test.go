@@ -55,6 +55,9 @@ func TestFakeLeadCoordinatesTaskFromHomeToArchive(t *testing.T) {
 	defer j.Close()
 	fake := adapter.NewFake()
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, j, fake)
+	if err := client.SetAgentKey(lead.ID, key); err != nil {
+		t.Fatal(err)
+	}
 	ready := make(chan struct{}, 1)
 	client.OnReady = func() { ready <- struct{}{} }
 	runCtx, cancel := context.WithCancel(ctx)

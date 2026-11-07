@@ -65,7 +65,6 @@ type TurnSpec struct {
 	NotesJSON             json.RawMessage
 	ContextJSON           json.RawMessage
 	AllowedTools          []string
-	AgentToolsConfigPath  string
 	LauncherPath          string
 	LauncherArgs          []string
 	LauncherEnvRefs       map[string]string
@@ -74,6 +73,9 @@ type TurnSpec struct {
 	AgentServerURL        string
 	// Providers are the custom providers the turn's model needs (OpenCode only): the one provider its model id names, or none.
 	Providers []CustomProvider
+	// AgentTools is how the turn reaches the bus: the agent's own key, never anyone else's. It is process-only like the capabilities below: it
+	// is never journaled and no file holds it; an adapter hands the key to the harness through the harness's environment.
+	AgentTools *AgentToolsAccess `json:"-"`
 	// These are process-only capabilities for Pi Docker. They must never enter
 	// the supervisor journal or its persisted turn spec.
 	AttachmentBaseURL string `json:"-"`
@@ -82,6 +84,17 @@ type TurnSpec struct {
 	// supervisor-owned and process-only like the capabilities above: it is never journaled, and the adapter tees into it beside the tail
 	// it keeps as exit evidence. A sink that fails changes nothing for the turn.
 	StderrSink io.Writer `json:"-"`
+}
+
+// AgentToolsAccess is what a turn needs to reach the bus as one agent. The supervisor builds it per turn from the key it holds in memory.
+type AgentToolsAccess struct {
+	AgentID   string
+	ServerURL string
+	Key       string // the agent's own aak_ key
+	// Command is the aimebu executable that runs the stdio bridge (`aimebu agent-tools`).
+	Command string
+	// Env is the rest of the bridge's environment (the telemetry variables, the insecure-TLS escape hatch); never the key.
+	Env map[string]string
 }
 
 type EventKind string

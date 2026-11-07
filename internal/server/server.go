@@ -229,6 +229,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{project}/role-spawn-defaults", s.Auth.RequireUser(http.HandlerFunc(s.projectRoleSpawnDefaults)))
 	mux.Handle("PUT /api/projects/{project}/role-spawn-defaults/{role}", s.Auth.RequireUser(http.HandlerFunc(s.projectRoleSpawnDefault)))
 	mux.Handle("GET /api/projects/{project}/role-spawn-defaults/{role}/next", s.Auth.RequireUser(http.HandlerFunc(s.projectRoleSpawnDefaultNext)))
+	mux.Handle("GET /api/agent-isolation", s.Auth.RequireUser(http.HandlerFunc(s.agentIsolation)))
+	mux.Handle("PUT /api/agent-isolation", s.Auth.RequireUser(http.HandlerFunc(s.agentIsolation)))
 	mux.Handle("GET /api/retention", s.Auth.RequireUser(http.HandlerFunc(s.retention)))
 	mux.Handle("PUT /api/retention", s.Auth.RequireUser(http.HandlerFunc(s.retention)))
 	mux.Handle("GET /api/prompts", s.Auth.RequireUser(http.HandlerFunc(s.prompts)))

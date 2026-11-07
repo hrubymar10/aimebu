@@ -9,18 +9,17 @@ import (
 	"time"
 )
 
-func TestDockerMCPReadsPrivateConfigWithoutCopyingIt(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	data := `{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_one","AIMEBU2_AGENT_KEY":"aak_secret"}}}}`
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
-	endpoint, header, err := DockerMCP(path, "agt_one")
+func TestDockerMCPUsesTheTurnsAccessWithoutAFile(t *testing.T) {
+	access := &AgentToolsAccess{AgentID: "agt_one", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	endpoint, header, err := DockerMCP(access, "agt_one")
 	if err != nil || endpoint != "http://host.docker.internal:9897/api/agent/mcp" || header != "Bearer aak_secret" {
 		t.Fatalf("endpoint=%q header=%q err=%v", endpoint, header, err)
 	}
-	if _, _, err := DockerMCP(path, "agt_other"); err == nil {
+	if _, _, err := DockerMCP(access, "agt_other"); err == nil {
 		t.Fatal("accepted a mismatched agent ID")
+	}
+	if _, _, err := DockerMCP(nil, "agt_one"); err == nil {
+		t.Fatal("accepted a turn with no access")
 	}
 }
 

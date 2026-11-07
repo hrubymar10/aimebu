@@ -58,6 +58,13 @@ type TelemetrySettings struct {
 	TracesSampleRate float64 `json:"traces_sample_rate,omitempty"`
 }
 
+// AgentKeyGrant is a fresh key for one agent. It is in a frame to the supervisor that runs the agent and nowhere else.
+type AgentKeyGrant struct {
+	AgentID    string `json:"agent_id"`
+	Generation int    `json:"generation"`
+	Key        string `json:"key"`
+}
+
 // Frame is the versioned machine socket envelope. Agent frames carry both
 // agent_id and generation; machine frames carry machine_id. The server binds
 // the socket from its authenticated machine key, never from frame claims.
@@ -86,52 +93,62 @@ type Frame struct {
 	// SupportsTelemetryConfig says the supervisor takes the server's telemetry settings (a telemetry_config frame, and Telemetry in hello_ack). One that
 	// does not never gets the frame, whose type an older supervisor does not know.
 	SupportsTelemetryConfig bool `json:"supports_telemetry_config,omitempty"`
+	// SupportsAgentKeys says the supervisor keeps each agent's key in memory only, tells the server which keys it holds (HeldKeys) and takes new
+	// ones in hello_ack (AgentKeys). The server grants keys only to a supervisor that says so; an older one keeps its keys on disk.
+	SupportsAgentKeys bool `json:"supports_agent_keys,omitempty"`
+	// HeldKeys, in hello, is the agents whose key the supervisor holds. A restarted supervisor holds none: it lost them with its memory.
+	HeldKeys []string `json:"held_keys,omitempty"`
+	// AgentKeys, in hello_ack, is a new key for each agent the supervisor should run but holds no key for. Granting one revokes the old key.
+	AgentKeys []AgentKeyGrant `json:"agent_keys,omitempty"`
 	// Telemetry is the effective telemetry configuration of the server, in hello_ack and in a telemetry_config frame.
-	Telemetry            *TelemetrySettings   `json:"telemetry,omitempty"`
-	Capabilities         []CapabilityReport   `json:"capabilities,omitempty"`
-	Harnesses            []HarnessRow         `json:"harnesses,omitempty"`
-	HarnessSettings      []HarnessSetting     `json:"harness_settings,omitempty"`
-	HarnessProbeDir      string               `json:"harness_probe_dir,omitempty"`
-	HarnessProbeDirs     []string             `json:"harness_probe_dirs,omitempty"`
-	Harness              *HarnessRow          `json:"harness,omitempty"`
-	HarnessSetting       *HarnessSetting      `json:"harness_setting,omitempty"`
-	Launchers            []LauncherRow        `json:"launchers,omitempty"`
-	LauncherDefinitions  []LauncherDefinition `json:"launcher_definitions,omitempty"`
-	LauncherDefinition   *LauncherDefinition  `json:"launcher_definition,omitempty"`
-	Launcher             *LauncherRow         `json:"launcher,omitempty"`
-	Detect               *DetectRequest       `json:"detect,omitempty"`
-	HarnessCandidates    []HarnessCandidate   `json:"harness_candidates,omitempty"`
-	ModelCandidates      []ModelCandidate     `json:"model_candidates,omitempty"`
-	DetectDir            string               `json:"detect_dir,omitempty"`
-	Agents               []HelloAgent         `json:"agents,omitempty"`
-	Desired              []DesiredAgent       `json:"desired,omitempty"`
-	Redeliver            []Delivery           `json:"redeliver,omitempty"`
-	ResendReceipts       []ReceiptBody        `json:"resend_receipts,omitempty"`
-	AgentID              string               `json:"agent_id,omitempty"`
-	LauncherID           string               `json:"launcher_id,omitempty"`
-	ReqID                string               `json:"req_id,omitempty"`
-	Generation           int                  `json:"generation,omitempty"`
-	DesiredRev           int64                `json:"desired_rev,omitempty"`
-	DesiredState         string               `json:"desired_state,omitempty"`
-	AgentKey             string               `json:"agent_key,omitempty"`
-	CheckoutPath         string               `json:"checkout_path,omitempty"`
-	CanonicalPath        string               `json:"canonical_path,omitempty"`
-	RoomID               string               `json:"room_id,omitempty"`
-	BaseRef              string               `json:"base_ref,omitempty"`
-	WorktreeAction       string               `json:"worktree_action,omitempty"`
-	WorktreeForce        bool                 `json:"worktree_force,omitempty"`
-	LogLines             int                  `json:"log_lines,omitempty"`
-	LogMaxBytes          int                  `json:"log_max_bytes,omitempty"`
-	AttachmentBearer     string               `json:"attachment_bearer,omitempty"`
-	TurnID               string               `json:"turn_id,omitempty"`
-	Mode                 adapter.Mode         `json:"mode,omitempty"`
-	ParentTurnID         string               `json:"parent_turn_id,omitempty"`
-	Notes                []DeliveryNote       `json:"notes,omitempty"`
-	Context              json.RawMessage      `json:"context,omitempty"`
-	AllowedTools         []string             `json:"allowed_tools,omitempty"`
-	Agent                *adapter.AgentSpec   `json:"agent,omitempty"`
-	NativeSessionHandle  string               `json:"native_session,omitempty"`
-	NativeSessionStarted bool                 `json:"native_session_started,omitempty"`
+	Telemetry           *TelemetrySettings   `json:"telemetry,omitempty"`
+	Capabilities        []CapabilityReport   `json:"capabilities,omitempty"`
+	Harnesses           []HarnessRow         `json:"harnesses,omitempty"`
+	HarnessSettings     []HarnessSetting     `json:"harness_settings,omitempty"`
+	HarnessProbeDir     string               `json:"harness_probe_dir,omitempty"`
+	HarnessProbeDirs    []string             `json:"harness_probe_dirs,omitempty"`
+	Harness             *HarnessRow          `json:"harness,omitempty"`
+	HarnessSetting      *HarnessSetting      `json:"harness_setting,omitempty"`
+	Launchers           []LauncherRow        `json:"launchers,omitempty"`
+	LauncherDefinitions []LauncherDefinition `json:"launcher_definitions,omitempty"`
+	LauncherDefinition  *LauncherDefinition  `json:"launcher_definition,omitempty"`
+	Launcher            *LauncherRow         `json:"launcher,omitempty"`
+	Detect              *DetectRequest       `json:"detect,omitempty"`
+	HarnessCandidates   []HarnessCandidate   `json:"harness_candidates,omitempty"`
+	ModelCandidates     []ModelCandidate     `json:"model_candidates,omitempty"`
+	DetectDir           string               `json:"detect_dir,omitempty"`
+	Agents              []HelloAgent         `json:"agents,omitempty"`
+	Desired             []DesiredAgent       `json:"desired,omitempty"`
+	Redeliver           []Delivery           `json:"redeliver,omitempty"`
+	ResendReceipts      []ReceiptBody        `json:"resend_receipts,omitempty"`
+	AgentID             string               `json:"agent_id,omitempty"`
+	LauncherID          string               `json:"launcher_id,omitempty"`
+	ReqID               string               `json:"req_id,omitempty"`
+	Generation          int                  `json:"generation,omitempty"`
+	DesiredRev          int64                `json:"desired_rev,omitempty"`
+	DesiredState        string               `json:"desired_state,omitempty"`
+	AgentKey            string               `json:"agent_key,omitempty"`
+	// DockerOnly, on a spawn and a delivery, says the instance runs agents only in docker: a supervisor refuses an agent whose launcher is not
+	// containerized. An older supervisor ignores the field, which is why the server refuses it too.
+	DockerOnly           bool               `json:"docker_only,omitempty"`
+	CheckoutPath         string             `json:"checkout_path,omitempty"`
+	CanonicalPath        string             `json:"canonical_path,omitempty"`
+	RoomID               string             `json:"room_id,omitempty"`
+	BaseRef              string             `json:"base_ref,omitempty"`
+	WorktreeAction       string             `json:"worktree_action,omitempty"`
+	WorktreeForce        bool               `json:"worktree_force,omitempty"`
+	LogLines             int                `json:"log_lines,omitempty"`
+	LogMaxBytes          int                `json:"log_max_bytes,omitempty"`
+	AttachmentBearer     string             `json:"attachment_bearer,omitempty"`
+	TurnID               string             `json:"turn_id,omitempty"`
+	Mode                 adapter.Mode       `json:"mode,omitempty"`
+	ParentTurnID         string             `json:"parent_turn_id,omitempty"`
+	Notes                []DeliveryNote     `json:"notes,omitempty"`
+	Context              json.RawMessage    `json:"context,omitempty"`
+	AllowedTools         []string           `json:"allowed_tools,omitempty"`
+	Agent                *adapter.AgentSpec `json:"agent,omitempty"`
+	NativeSessionHandle  string             `json:"native_session,omitempty"`
+	NativeSessionStarted bool               `json:"native_session_started,omitempty"`
 	// ForkSession says this turn resumes NativeSessionHandle as a copy: the harness saves it under a new id, which the turn reports as its
 	// native session.
 	ForkSession bool `json:"fork_session,omitempty"`
@@ -269,14 +286,14 @@ type CapabilityReport struct {
 
 func DeliverFrame(d Delivery) Frame {
 	agent := d.Agent
-	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers}
+	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers, DockerOnly: d.DockerOnly}
 }
 func (f Frame) Delivery() Delivery {
 	agent := adapter.AgentSpec{}
 	if f.Agent != nil {
 		agent = *f.Agent
 	}
-	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers}
+	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers, DockerOnly: f.DockerOnly}
 }
 
 type HelloAgent struct {
@@ -321,6 +338,8 @@ type Delivery struct {
 	AttachmentBearer string `json:"attachment_bearer,omitempty"`
 	// Providers are the custom providers an OpenCode turn's model needs: the one its model id names. Names of key variables only.
 	Providers []adapter.CustomProvider `json:"providers,omitempty"`
+	// DockerOnly: see Frame.DockerOnly.
+	DockerOnly bool `json:"docker_only,omitempty"`
 }
 
 type DeliveryNote struct {

@@ -20,10 +20,7 @@ import (
 
 func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	root := t.TempDir()
-	config := filepath.Join(root, "private.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_test","AIMEBU2_AGENT_KEY":"aak_secret"}}}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 	path := filepath.Join(root, "claude-docker")
 	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CLAUDE_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
@@ -31,7 +28,7 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Adapter{Command: path, Variant: "docker"}
-	spec := adapter.TurnSpec{TurnID: "docker", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Variant: "docker", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeNormal, AgentToolsConfigPath: config, NativeSessionStarted: true, NativeSessionHandle: "session-1", NotesJSON: json.RawMessage(`[]`)}
+	spec := adapter.TurnSpec{TurnID: "docker", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Variant: "docker", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeNormal, AgentTools: config, NativeSessionStarted: true, NativeSessionHandle: "session-1", NotesJSON: json.RawMessage(`[]`)}
 	turn, err := a.Start(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -77,10 +74,7 @@ func TestOnlyADiagnosticTurnIsStrictAboutMCP(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			config := filepath.Join(root, "private.json")
-			if err := os.WriteFile(config, []byte(`{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_test","AIMEBU2_AGENT_KEY":"aak_secret"}}}}`), 0600); err != nil {
-				t.Fatal(err)
-			}
+			config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 			path := filepath.Join(root, "claude")
 			argsPath := filepath.Join(root, "args")
 			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
@@ -88,7 +82,7 @@ func TestOnlyADiagnosticTurnIsStrictAboutMCP(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := &Adapter{Command: path, Variant: tc.variant, AllowNative: true}
-			spec := adapter.TurnSpec{TurnID: "strict", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Variant: tc.variant, Model: "haiku"}, CheckoutPath: root, Mode: tc.mode, AgentToolsConfigPath: config, NativeSessionHandle: "session-1", NotesJSON: json.RawMessage(`[]`)}
+			spec := adapter.TurnSpec{TurnID: "strict", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Variant: tc.variant, Model: "haiku"}, CheckoutPath: root, Mode: tc.mode, AgentTools: config, NativeSessionHandle: "session-1", NotesJSON: json.RawMessage(`[]`)}
 			turn, err := a.Start(context.Background(), spec)
 			if err != nil {
 				t.Fatal(err)
@@ -190,10 +184,7 @@ func TestConformance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claude")
 	marker := filepath.Join(t.TempDir(), "effect")
 	checkout := t.TempDir()
-	toolsConfig := filepath.Join(t.TempDir(), "tools.json")
-	if err := os.WriteFile(toolsConfig, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	toolsConfig := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 	script := `#!/bin/sh
 input=$(cat)
 case "$input" in
@@ -223,7 +214,7 @@ esac
 		} else {
 			close(effected)
 		}
-		return &Adapter{Command: path, AllowNative: true}, adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: checkout, AgentToolsConfigPath: toolsConfig, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}, effected
+		return &Adapter{Command: path, AllowNative: true}, adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: checkout, AgentTools: toolsConfig, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}, effected
 	}, adaptertest.ChildProcess())
 }
 
@@ -240,11 +231,8 @@ printf '%s\n' '{"type":"assistant","message":{"usage":{"input_tokens":11,"cache_
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := filepath.Join(t.TempDir(), "tools.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "usage", Agent: adapter.AgentSpec{ID: "agt_usage", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	config := &adapter.AgentToolsAccess{AgentID: "agt_usage", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "usage", Agent: adapter.AgentSpec{ID: "agt_usage", Model: "haiku"}, CheckoutPath: root, AgentTools: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,11 +262,8 @@ func TestResumeAndRawCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	implementation := &Adapter{Command: path, AllowNative: true}
-	toolsConfig := filepath.Join(t.TempDir(), "tools.json")
-	if err := os.WriteFile(toolsConfig, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	turn, err := implementation.Start(context.Background(), adapter.TurnSpec{TurnID: "resume", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: t.TempDir(), AgentToolsConfigPath: toolsConfig, NativeSessionHandle: "session-1", NativeSessionStarted: true, NotesJSON: json.RawMessage(`[]`)})
+	toolsConfig := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	turn, err := implementation.Start(context.Background(), adapter.TurnSpec{TurnID: "resume", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: t.TempDir(), AgentTools: toolsConfig, NativeSessionHandle: "session-1", NativeSessionStarted: true, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,11 +300,8 @@ func TestNewSessionReportsServerIssuedHandle(t *testing.T) {
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := filepath.Join(root, "tools.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "new", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, NativeSessionHandle: "4c014434-9712-45a7-9d2e-a7866ef8f8dc", Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`), ContextJSON: json.RawMessage(`{"role_body":"Reply concisely."}`)})
+	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "new", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentTools: config, NativeSessionHandle: "4c014434-9712-45a7-9d2e-a7866ef8f8dc", Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`), ContextJSON: json.RawMessage(`{"role_body":"Reply concisely."}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,11 +338,8 @@ func TestForkedTurnReportsTheCopyOfTheSession(t *testing.T) {
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := filepath.Join(root, "tools.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	spec := adapter.TurnSpec{TurnID: "fork", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config,
+	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	spec := adapter.TurnSpec{TurnID: "fork", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentTools: config,
 		NativeSessionHandle: original, NativeSessionStarted: true, ForkSession: true, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}
 	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), spec)
 	if err != nil {
@@ -416,11 +395,8 @@ func TestFailedFirstSessionDoesNotReportStarted(t *testing.T) {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 17\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := filepath.Join(root, "tools.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "failed", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, NativeSessionHandle: "4c014434-9712-45a7-9d2e-a7866ef8f8dc", Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "failed", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentTools: config, NativeSessionHandle: "4c014434-9712-45a7-9d2e-a7866ef8f8dc", Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,14 +441,7 @@ func TestLiveCanary(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = os.RemoveAll(root) })
 	}
-	config := filepath.Join(t.TempDir(), "tools.json")
-	configData := `{"mcpServers":{}}`
-	if docker {
-		configData = `{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_live","AIMEBU2_AGENT_KEY":"aak_canary"}}}}`
-	}
-	if err := os.WriteFile(config, []byte(configData), 0600); err != nil {
-		t.Fatal(err)
-	}
+	config := &adapter.AgentToolsAccess{AgentID: "agt_live", ServerURL: "http://127.0.0.1:9897", Key: "aak_canary", Command: "/usr/bin/aimebu"}
 	implementation := New()
 	var stderr bytes.Buffer
 	implementation.stderrCapture = &stderr
@@ -491,7 +460,7 @@ func TestLiveCanary(t *testing.T) {
 	const nonce = "aimebu-claude-two-turn-nonce"
 	run := func(id, handle string, started bool, body string) (string, string) {
 		notes, _ := json.Marshal([]map[string]string{{"body": body}})
-		turn, err := implementation.Start(ctx, adapter.TurnSpec{TurnID: id, Agent: adapter.AgentSpec{ID: "agt_live", Variant: variant, Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, NativeSessionHandle: handle, NativeSessionStarted: started, Mode: adapter.ModeNormal, NotesJSON: notes, ContextJSON: json.RawMessage(`{"role_body":"Follow the user note exactly."}`)})
+		turn, err := implementation.Start(ctx, adapter.TurnSpec{TurnID: id, Agent: adapter.AgentSpec{ID: "agt_live", Variant: variant, Model: "haiku"}, CheckoutPath: root, AgentTools: config, NativeSessionHandle: handle, NativeSessionStarted: started, Mode: adapter.ModeNormal, NotesJSON: notes, ContextJSON: json.RawMessage(`{"role_body":"Follow the user note exactly."}`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -535,11 +504,8 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := filepath.Join(t.TempDir(), "tools.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "tools", Agent: adapter.AgentSpec{ID: "agt_tools", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	config := &adapter.AgentToolsAccess{AgentID: "agt_tools", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "tools", Agent: adapter.AgentSpec{ID: "agt_tools", Model: "haiku"}, CheckoutPath: root, AgentTools: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,13 +585,10 @@ func TestLaunchPathIsTheFolderTheHarnessStartsIn(t *testing.T) {
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := filepath.Join(root, "tools.json")
-	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 	run := func(launch string) string {
 		t.Helper()
-		spec := adapter.TurnSpec{TurnID: "launch", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: real, LaunchPath: launch, AgentToolsConfigPath: config,
+		spec := adapter.TurnSpec{TurnID: "launch", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: real, LaunchPath: launch, AgentTools: config,
 			NativeSessionHandle: session, NativeSessionStarted: true, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}
 		turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), spec)
 		if err != nil {
@@ -699,5 +662,69 @@ func TestClaudeErrorResultIsADefiniteFailureOnlyWhenTheTurnDidNothing(t *testing
 		if name == "an ordinary success" && (exit.ErrorSummary != "" || exit.ErrorEvent != "") {
 			t.Errorf("%s: evidence of an error that was none: %+v", name, exit)
 		}
+	}
+}
+
+// A native turn hands the bridge's entry inline, with the key as a reference Claude expands from its own environment: the key is in the harness's
+// environment, in no argument and in no file under the checkout.
+func TestNativeTurnKeyIsInTheEnvironmentOnly(t *testing.T) {
+	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	root := t.TempDir()
+	captures := t.TempDir() // outside the tree that is searched for the key
+	path := filepath.Join(root, "claude")
+	argsPath, envPath := filepath.Join(captures, "args"), filepath.Join(captures, "env")
+	script := "#!/bin/sh\nprintf '%s' \"$AIMEBU2_AGENT_KEY\" > " + envPath + "\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	const key = "aak_native_claude_key"
+	access := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: key, Command: "/usr/bin/aimebu", Env: map[string]string{"AIMEBU2_SENTRY_DSN": "off"}}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "native", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeNormal, AgentTools: access, NativeSessionHandle: "4c014434-9712-45a7-9d2e-a7866ef8f8dc", NotesJSON: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range turn.Events() {
+	}
+	if exit, err := turn.Wait(); err != nil || !exit.TerminalEvent {
+		t.Fatalf("exit=%+v err=%v", exit, err)
+	}
+	args, _ := os.ReadFile(argsPath)
+	if strings.Contains(string(args), key) {
+		t.Fatalf("the key is in the argument list: %q", args)
+	}
+	if env, _ := os.ReadFile(envPath); string(env) != key {
+		t.Fatalf("the key must reach Claude in its environment, got %q", env)
+	}
+	lines := strings.Split(string(args), "\n")
+	var inline string
+	for i, line := range lines {
+		if line == "--mcp-config" && i+1 < len(lines) {
+			inline = lines[i+1]
+		}
+	}
+	var config struct {
+		Servers map[string]struct {
+			Command string            `json:"command"`
+			Args    []string          `json:"args"`
+			Env     map[string]string `json:"env"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(inline), &config); err != nil {
+		t.Fatalf("the MCP entry is not inline JSON: %q: %v", inline, err)
+	}
+	server := config.Servers["aimebu"]
+	if server.Command != "/usr/bin/aimebu" || len(server.Args) != 1 || server.Args[0] != "agent-tools" || server.Env["AIMEBU2_AGENT_KEY"] != "${AIMEBU2_AGENT_KEY}" || server.Env["AIMEBU2_AGENT_ID"] != "agt_test" || server.Env["AIMEBU2_URL"] != "http://127.0.0.1:9897" || server.Env["AIMEBU2_SENTRY_DSN"] != "off" {
+		t.Fatalf("bridge entry: %+v", server)
+	}
+	if err := filepath.WalkDir(root, func(p string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		if data, _ := os.ReadFile(p); strings.Contains(string(data), key) {
+			t.Errorf("%s holds the key", p)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

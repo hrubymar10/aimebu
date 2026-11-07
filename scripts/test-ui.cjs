@@ -73,7 +73,7 @@ async function main() {
       await first.click('#welcome-continue'); await first.evaluate(() => window.__welcomeDone);
       // The welcome is first-run only: Settings -> General has no section to play it again.
       await openSettings(first);
-      assert.deepEqual(await first.evaluate(() => ({ section: !!document.querySelector('#settings-welcome, #settings-welcome-play'), headings: [...document.querySelectorAll('#settings-general h3')].map(el => el.textContent.trim().toLowerCase()) })), { section: false, headings: ['appearance', 'chat', 'messages', 'settings backup'] }, 'Settings -> General has no Welcome section');
+      assert.deepEqual(await first.evaluate(() => ({ section: !!document.querySelector('#settings-welcome, #settings-welcome-play'), headings: [...document.querySelectorAll('#settings-general h3')].map(el => el.textContent.trim().toLowerCase()) })), { section: false, headings: ['appearance', 'chat', 'messages', 'agents', 'settings backup'] }, 'Settings -> General has no Welcome section');
       await first.evaluate(() => document.querySelector('#settings-dialog').close());
     }
     // v1's global shortcuts: Ctrl/Cmd+, opens Settings on General; Ctrl/Cmd+W closes it again; Shift in the chord does nothing.
@@ -3402,7 +3402,7 @@ async function main() {
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
     for (const id of ['settings-general', 'settings-usages', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
-    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, and the settings backup, all as rows');
+    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-docker-only', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, the docker-only switch, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
     // edge, and row actions such as move, remove and delete are icon buttons with a tooltip and an accessible name.

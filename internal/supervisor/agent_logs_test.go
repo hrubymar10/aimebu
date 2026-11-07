@@ -37,7 +37,7 @@ func TestAgentOutputIsCapturedAndServedOverTheMachineSocket(t *testing.T) {
 	if want := filepath.Join(dir, "agent-logs"); c.AgentLogs == nil || c.AgentLogs.Dir() != want {
 		t.Fatalf("the output store is not beside the journal: %+v", c.AgentLogs)
 	}
-	if err := c.writeAgentToolsConfig(agentID, "aak_"+strings.Repeat("s", 43)); err != nil {
+	if err := c.setAgentKey(agentID, "aak_"+strings.Repeat("s", 43)); err != nil {
 		t.Fatal(err)
 	}
 	for i := range c.Harnesses {

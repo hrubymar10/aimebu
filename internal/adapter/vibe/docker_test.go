@@ -91,7 +91,7 @@ esac
 		}
 		a, _ := dockerAdapter(t, t.TempDir(), path)
 		return a, adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Variant: "docker", Model: "mistral-medium-3.5"},
-			CheckoutPath: checkout, AgentToolsConfigPath: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}, effected
+			CheckoutPath: checkout, AgentTools: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}, effected
 	}, adaptertest.ChildProcess())
 }
 

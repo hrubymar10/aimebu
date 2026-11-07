@@ -159,7 +159,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			// is named aimebu like a v1 bus the person may have configured, and it takes precedence over a same-named server of any scope
 			// (user, project, local), so that bus never reaches a v2 agent.
 			if a.variant() == "docker" {
-				endpoint, header, err := adapter.DockerMCPAt(spec.AgentToolsConfigPath, spec.Agent.ID, spec.AgentServerURL)
+				endpoint, header, err := adapter.DockerMCPAt(spec.AgentTools, spec.Agent.ID, spec.AgentServerURL)
 				if err != nil {
 					return nil, err
 				}
@@ -172,10 +172,18 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 				}
 				args = append(args, "--mcp-config", string(config))
 			} else {
-				if spec.AgentToolsConfigPath == "" {
-					return nil, fmt.Errorf("normal turn requires agent tools config")
+				// The bridge's entry is inline, and its key is a reference Claude expands from its own environment, where the turn puts it:
+				// the key is in no argument list and no file.
+				command, bridgeArgs, bridgeEnv, err := adapter.BridgeEntry(spec.AgentTools, spec.Agent.ID, "${"+adapter.AgentKeyEnv+"}")
+				if err != nil {
+					return nil, err
 				}
-				args = append(args, "--mcp-config", spec.AgentToolsConfigPath)
+				config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"aimebu": map[string]any{"command": command, "args": bridgeArgs, "env": bridgeEnv}}})
+				if err != nil {
+					return nil, err
+				}
+				agentKey = []string{adapter.AgentKeyEnv + "=" + spec.AgentTools.Key}
+				args = append(args, "--mcp-config", string(config))
 			}
 		}
 		if len(spec.AllowedTools) > 0 {
@@ -198,8 +206,8 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	if a.variant() == "docker" {
 		cmd.Env = append(cmd.Env, "CLAUDE_LAUNCH_FLAGS=")
-		cmd.Env = append(cmd.Env, agentKey...)
 	}
+	cmd.Env = append(cmd.Env, agentKey...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

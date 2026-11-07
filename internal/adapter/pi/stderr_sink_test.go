@@ -47,7 +47,7 @@ func TestStderrSinkReceivesWhatTheHarnessPrints(t *testing.T) {
 	}
 	for name, sink := range map[string]io.Writer{"a sink": &lockedBuffer{}, "a broken sink": brokenSink{}} {
 		a := &Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}
-		turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "sink", Agent: adapter.AgentSpec{ID: "agt_test", Model: "fake-model"}, CheckoutPath: root, AgentToolsConfigPath: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, NotesJSON: []byte(`[]`), StderrSink: sink})
+		turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "sink", Agent: adapter.AgentSpec{ID: "agt_test", Model: "fake-model"}, CheckoutPath: root, AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, NotesJSON: []byte(`[]`), StderrSink: sink})
 		if err != nil {
 			t.Fatal(err)
 		}

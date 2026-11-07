@@ -81,6 +81,20 @@ func (m *Multi) ForgetAgent(agentID string) {
 	}
 }
 
+// SweepKeys asks each adapter that keeps generated configs to delete the ones an older version wrote with a key in them.
+func (m *Multi) SweepKeys() {
+	seen := map[Adapter]bool{}
+	for _, implementation := range m.adapters {
+		if seen[implementation] {
+			continue
+		}
+		seen[implementation] = true
+		if sweeper, ok := implementation.(interface{ SweepKeys() }); ok {
+			sweeper.SweepKeys()
+		}
+	}
+}
+
 func (m *Multi) Catalog() []CatalogEntry {
 	var items []CatalogEntry
 	for _, implementation := range m.adapters {

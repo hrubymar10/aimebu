@@ -492,7 +492,21 @@ func (s *Server) agentHolds(ctx context.Context, cards []store.AgentCard) map[st
 	holds := map[string]*agentHold{}
 	hostByMachine := map[string]bool{}
 	byTool := map[string]*agentHold{}
+	// "Only run agents in docker": an agent on a native launcher gets no turns, whatever it is doing, and says why.
+	if on, err := s.dockerOnly(ctx); err == nil && on {
+		for _, card := range cards {
+			if card.Desired == "stopped" {
+				continue
+			}
+			if refused, err := s.refusedAgent(ctx, card.MachineID, card.Tool, card.Variant, card.LauncherID); err == nil && refused {
+				holds[card.ID] = &agentHold{Code: "docker_only", Text: "native launcher refused", Detail: errDockerOnly.Error() + ". Queued messages wait."}
+			}
+		}
+	}
 	for _, card := range cards {
+		if holds[card.ID] != nil {
+			continue
+		}
 		if card.Desired != "active" || card.Observed != "idle" || card.RecoveryBlock || s.Store.ToolHold(card.Tool) == "" {
 			continue
 		}
@@ -793,6 +807,13 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		// What matters is whether the launcher runs in a container (its own home), not what it is called.
 		containerized = launcherKeepsOwnSessions(&launcher, req.Variant)
 		resolvedLauncher = &launcher
+	}
+	if refused, err := s.refusedNative(r.Context(), req.Tool, req.Variant, resolvedLauncher); err != nil {
+		fail(w, err)
+		return
+	} else if refused {
+		apiError(w, 409, "docker_only", errDockerOnly.Error())
+		return
 	}
 	{
 		model, ok, err := s.checkSpawnModel(r.Context(), machine.id, req.Tool, req.Variant, launcherID, req.Model)
@@ -1154,7 +1175,11 @@ func (s *Server) sendPendingSpawn(ctx context.Context, machine *machineConn, p s
 	machine.boundMu.Lock()
 	machine.bound[p.AgentID] = p.Generation
 	machine.boundMu.Unlock()
-	return machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Spawn, ReqID: fmt.Sprintf("%s/%d", p.AgentID, p.Generation), AgentID: p.AgentID, Generation: p.Generation, DesiredRev: p.DesiredRev, AgentKey: key, CheckoutPath: p.CheckoutPath, Agent: &adapter.AgentSpec{ID: p.AgentID, Tool: p.Tool, Variant: p.Variant, LauncherID: p.LauncherID, Model: p.Model, Provider: p.Provider}})
+	dockerOnly, err := s.dockerOnly(ctx)
+	if err != nil {
+		return err
+	}
+	return machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Spawn, ReqID: fmt.Sprintf("%s/%d", p.AgentID, p.Generation), AgentID: p.AgentID, Generation: p.Generation, DesiredRev: p.DesiredRev, AgentKey: key, DockerOnly: dockerOnly, CheckoutPath: p.CheckoutPath, Agent: &adapter.AgentSpec{ID: p.AgentID, Tool: p.Tool, Variant: p.Variant, LauncherID: p.LauncherID, Model: p.Model, Provider: p.Provider}})
 }
 
 func (s *Server) enqueuePendingSpawns(ctx context.Context, machine *machineConn) error {
@@ -1433,6 +1458,7 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	launcherID := ""
+	var switchLauncher *store.Launcher
 	if selectedConn.supportsLaunchers && req.Tool != "fake" {
 		launcher, err := s.resolveLauncher(r.Context(), targetID, req.Tool, req.Variant, req.LauncherID)
 		if err != nil {
@@ -1441,6 +1467,14 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 		}
 		launcherID = launcher.ID
 		req.Variant = launcherAlias(launcher.Name)
+		switchLauncher = &launcher
+	}
+	if refused, err := s.refusedNative(r.Context(), req.Tool, req.Variant, switchLauncher); err != nil {
+		fail(w, err)
+		return
+	} else if refused {
+		apiError(w, 409, "docker_only", errDockerOnly.Error())
+		return
 	}
 	{
 		model, ok, err := s.checkSpawnModel(r.Context(), targetID, req.Tool, req.Variant, launcherID, req.Model)
