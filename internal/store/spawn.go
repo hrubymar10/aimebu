@@ -558,6 +558,15 @@ func (s *Store) AgentSlugTaken(ctx context.Context, projectID, slug string) (boo
 	return taken[strings.ToLower(slug)], nil
 }
 
+// agentOwnActivitySQL selects, among the events that name an agent, the ones that are its own doing: its process starting and stopping, its turns and
+// answers, its supervisor's journal. The rest name it too but are things done to it or about it: a message queued for it, a note dropped, a turn
+// dispatch decided or cancelled, its role changed, its key rotated, a control asked of it, an inbox item opened on its behalf. An agent's last
+// activity is the newest event of the first kind only, because anyone posting in a room it belongs to queues a note for it, and a stopped agent whose
+// state age restarted at every message would look as if it had just done something. A kind not listed here is not its own doing until it is added.
+const agentOwnActivitySQL = `(e.kind IN ('agent_created','agent_spawn_confirmed','agent_spawn_failed','agent_stopped','agent_control_applied','agent_worktree_recorded',
+	'native_session_started','native_session_reset','provider_limit_detected','turn_recorded','turn_process_exit','turn_lost','turn_never_started')
+	OR e.kind LIKE 'turn\_ack\_%' ESCAPE '\' OR e.kind LIKE 'answer\_%' ESCAPE '\' OR e.kind LIKE 'supervisor\_%' ESCAPE '\')`
+
 func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCard, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
@@ -565,7 +574,7 @@ func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCa
 	rows, err := s.readDB.QueryContext(ctx, `SELECT a.id,a.slug,a.project_id,r.role_key,r.emoji,r.deleted_at IS NOT NULL,
 		EXISTS(SELECT 1 FROM role current WHERE current.project_id IS NULL AND current.role_key=r.role_key AND current.id<>r.id AND current.deleted_at IS NULL AND (current.body<>r.body OR current.extends<>r.extends OR current.label<>r.label OR current.emoji<>r.emoji OR current.cardinality<>r.cardinality OR current.cap_is_lead<>r.cap_is_lead OR current.cap_can_spawn<>r.cap_can_spawn OR current.cap_singleton_writer<>r.cap_singleton_writer)),
 		a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block,
-		COALESCE((SELECT MAX(e.created_at) FROM event e WHERE e.agent_id=a.id),''),COALESCE(machine.last_seen,''),
+		COALESCE((SELECT MAX(e.created_at) FROM event e WHERE e.agent_id=a.id AND `+agentOwnActivitySQL+`),''),COALESCE(machine.last_seen,''),
 		COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.outcome='unknown' ORDER BY t.id DESC LIMIT 1) AND e.kind='turn_process_exit' LIMIT 1),''),
 		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),'')
 		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL

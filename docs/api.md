@@ -519,8 +519,11 @@ text is shown for
 owner conflict review.
 Reaction entries include `member_name` for a readable tooltip while retaining
 `member_id` for identity and toggling.
-Room agent cards include optional `last_activity_at` (latest server event for
-that agent) and `machine_last_seen` (latest supervisor heartbeat). These are
+Room agent cards include optional `last_activity_at` (the newest event that is the
+agent's own doing: its process starting or stopping, its turns, answers and
+supervisor journal; not a message queued for it or a decision made about it, so
+other people's posts do not move it) and `machine_last_seen` (latest supervisor
+heartbeat). These are
 different clocks; the latter does not prove that the agent itself was active.
 Cards also include `health_flags`, each with `code` and optional `since` or
 `reset_at`. Codes are `stuck`, `out_of_quota`, `machine_offline`,

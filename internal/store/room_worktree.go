@@ -55,10 +55,18 @@ func (s *Store) CancelRoomWorktree(ctx context.Context, roomID string) error {
 		if _, err := tx.Exec(`DELETE FROM room_worktree_instance WHERE room_id=?`, roomID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM room_worktree WHERE room_id=?`, roomID); err != nil {
+		result, err := tx.Exec(`DELETE FROM room_worktree WHERE room_id=?`, roomID)
+		if err != nil {
 			return err
 		}
-		_, err := tx.AppendEvent(Event{Kind: "room_worktree_cancelled", ProjectID: projectID, RoomID: roomID,
+		// A spawn that tries a worktree on its own (the project's "auto" mode) and cannot make one (a folder that is not a git repository, a machine not
+		// admitted) clears whatever it started before it falls back to the project folder, and often started nothing: the check that fails comes before
+		// the request is written. Nothing was asked for and nothing is cancelled, so nothing is said: the system events are the person's record of what
+		// happened to their rooms, and "Worktree cancelled" for a worktree nobody requested is noise.
+		if removed, err := result.RowsAffected(); err != nil || removed == 0 {
+			return err
+		}
+		_, err = tx.AppendEvent(Event{Kind: "room_worktree_cancelled", ProjectID: projectID, RoomID: roomID,
 			PayloadJSON: payloadJSON(map[string]string{"room_id": roomID})})
 		return err
 	})

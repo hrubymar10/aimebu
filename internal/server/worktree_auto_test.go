@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 func initRepo(t *testing.T, root string) {
@@ -37,6 +39,23 @@ func TestTaskRoomsGetAWorktreeByDefaultOnlyWhereItApplies(t *testing.T) {
 	}
 	if _, found, err := f.db.RoomWorktree(t.Context(), f.room.ID, f.machineID); err != nil || found {
 		t.Fatalf("a fallback must not persist a worktree: found=%v err=%v", found, err)
+	}
+	// Nobody asked for a worktree, so the system events the person reads do not say one was requested or cancelled.
+	events := f.request(http.MethodGet, "/api/system-events?limit=200", nil, false)
+	var feed struct {
+		Events []struct {
+			Kind   string `json:"kind"`
+			RoomID string `json:"room_id"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(events.Body).Decode(&feed); err != nil || events.StatusCode != 200 {
+		t.Fatalf("system events: %d %v", events.StatusCode, err)
+	}
+	events.Body.Close()
+	for _, event := range feed.Events {
+		if event.RoomID == f.room.ID && (event.Kind == "room_worktree_cancelled" || event.Kind == "room_worktree_requested") {
+			t.Fatalf("a spawn that fell back to the project folder logged %s", event.Kind)
+		}
 	}
 	initRepo(t, root)
 	// The mode off keeps the folder even in a repository.
