@@ -132,9 +132,17 @@ server URL and that agent's `aak_` key in the MCP child environment
 absolute path to `aimebu agent-tools`. Only the config path enters a normal
 turn's adapter spec and journal; the raw key does not. Correction and
 diagnostic turns have no toolbox config. The file persists across supervisor
-restarts and is replaced atomically when the server sends a new key.
+restarts and is replaced atomically when the server sends a new key (it issues one every
+time the agent starts). The supervisor deletes it, and the config an adapter
+generated from it (Codex's `config.toml`, Pi's `mcp.json` under the runtime
+root), when the agent is stopped (once its running turn has ended), so nothing a stopped or removed
+agent leaves behind can authenticate.
 Claude and Codex Docker adapters read this private host-side file and use the
-HTTP toolbox; they never copy the file into the shared checkout. The HTTP endpoint uses the
+HTTP toolbox; they never copy the file into the shared checkout. The key is not in the harness's
+argument list (`ps` shows that to every local user): the MCP entry names a variable
+(`Authorization: Bearer ${AIMEBU2_AGENT_KEY}` for Claude, `bearer_token_env_var` for
+Codex) and the launcher hands the variable over by name through `HARNESS_DOCKER_FORWARD_ENV`, so a Docker
+launcher without that feature (`forward_env`) is refused with the way out. The HTTP endpoint uses the
 same agent-key authorization and scope as the stdio toolbox's API calls.
 Docker's container must be able to reach `host.docker.internal` and the
 server's allowlist must admit its source IP. A stale spawn is rejected before

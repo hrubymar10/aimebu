@@ -597,3 +597,46 @@ func TestSessionScanAttributionReturnsOnlyIds(t *testing.T) {
 		t.Fatalf("a bad since: %+v", bad)
 	}
 }
+
+// The agent tools config holds the agent's key, so a stopped agent leaves none behind: it goes when the agent is stopped with no turn running,
+// and when the turn it was stopped during has ended. A start writes it again (with a new key, as the server issues one each time).
+func TestStoppingAnAgentDeletesTheFileThatHoldsItsKey(t *testing.T) {
+	j, err := OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	c := NewClient("machine", "key", "http://127.0.0.1:9897", j, adapter.NewFake())
+	c.OnError = func(error) {}
+	exists := func() bool { _, err := os.Stat(c.agentToolsPath("agt_test")); return err == nil }
+	if err := c.writeAgentToolsConfig("agt_test", "aak_"+strings.Repeat("k", 43)); err != nil {
+		t.Fatal(err)
+	}
+	c.handleControl(protocol.Frame{AgentID: "agt_test", Generation: 1, DesiredState: "active", DesiredRev: 1})
+	if !exists() {
+		t.Fatal("an active agent's key file was removed")
+	}
+	c.handleControl(protocol.Frame{AgentID: "agt_test", Generation: 1, DesiredState: "stopped", DesiredRev: 2})
+	if exists() {
+		t.Fatal("a stopped agent's key file is still on the disk")
+	}
+	// A stop that arrives during a turn leaves the file until that turn is over.
+	if err := c.writeAgentToolsConfig("agt_test", "aak_"+strings.Repeat("m", 43)); err != nil {
+		t.Fatal(err)
+	}
+	c.handleControl(protocol.Frame{AgentID: "agt_test", Generation: 2, DesiredState: "active", DesiredRev: 3})
+	c.mu.Lock()
+	c.running["agt_test"] = &reconnectStopTurn{cancelled: make(chan struct{}, 1)}
+	c.mu.Unlock()
+	c.handleControl(protocol.Frame{AgentID: "agt_test", Generation: 2, DesiredState: "stopped", DesiredRev: 4})
+	if !exists() {
+		t.Fatal("the key file was removed under a running turn")
+	}
+	c.mu.Lock()
+	delete(c.running, "agt_test")
+	c.mu.Unlock()
+	c.sendDeferredStopAck(context.Background(), "agt_test")
+	if exists() {
+		t.Fatal("the key file outlived the turn it was stopped during")
+	}
+}

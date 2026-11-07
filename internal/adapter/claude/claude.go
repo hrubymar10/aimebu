@@ -122,6 +122,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if spec.NativeSessionStarted && spec.NativeSessionHandle == "" {
 		return nil, fmt.Errorf("resumed turn requires native session handle")
 	}
+	var agentKey []string
 	if a.variant() == "docker" {
 		if err := adapter.DockerCheckout(spec.CheckoutPath); err != nil {
 			return nil, err
@@ -162,7 +163,10 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 				if err != nil {
 					return nil, err
 				}
-				config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"aimebu": map[string]any{"type": "http", "url": endpoint, "headers": map[string]string{"Authorization": header}}}})
+				// Claude expands ${NAME} in a header from its own environment, so the key is not in the argument list: it travels in the
+				// forwarded variable.
+				agentKey = adapter.DockerAgentKeyEnv(header)
+				config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"aimebu": map[string]any{"type": "http", "url": endpoint, "headers": map[string]string{"Authorization": "Bearer ${" + adapter.AgentKeyEnv + "}"}}}})
 				if err != nil {
 					return nil, err
 				}
@@ -194,6 +198,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	if a.variant() == "docker" {
 		cmd.Env = append(cmd.Env, "CLAUDE_LAUNCH_FLAGS=")
+		cmd.Env = append(cmd.Env, agentKey...)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()

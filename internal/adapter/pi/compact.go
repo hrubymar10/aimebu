@@ -33,6 +33,9 @@ func (a *Adapter) Compact(ctx context.Context, spec adapter.TurnSpec) (adapter.C
 	}
 	sum := sha256.Sum256([]byte(spec.Agent.ID))
 	sessionDir := filepath.Join(spec.CheckoutPath, ".aimebu", "pi-sessions", hex.EncodeToString(sum[:]))
+	if err := adapter.ExcludeRuntimeState(spec.CheckoutPath); err != nil {
+		return adapter.Compaction{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	command := a.Command

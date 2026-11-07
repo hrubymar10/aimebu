@@ -17,7 +17,7 @@ func TestLauncherResolvesCommandAndVisibleCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := filepath.Join(root, "c-l-a-u-d-e")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\necho claude-code 2.0\n"), 0700); err != nil {
+	if err := os.WriteFile(command, []byte("#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\necho claude-code 2.0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	def := protocol.LauncherDefinition{ID: "mln_custom", Tool: "claude", Name: "custom", Command: command,

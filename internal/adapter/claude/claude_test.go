@@ -25,8 +25,8 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "claude-docker")
-	argsPath := filepath.Join(root, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$CLAUDE_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CLAUDE_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +45,20 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--resume\nsession-1", "--mcp-config\n", "host.docker.internal:9897/api/agent/mcp", "Bearer aak_secret"} {
+	for _, want := range []string{"--resume\nsession-1", "--mcp-config\n", "host.docker.internal:9897/api/agent/mcp", "Bearer ${AIMEBU2_AGENT_KEY}"} {
 		if !strings.Contains(string(args), want) {
 			t.Fatalf("missing %q in %q", want, args)
 		}
+	}
+	env, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(env) != "aak_secret\nAIMEBU2_AGENT_KEY\n" {
+		t.Fatalf("the key must reach the harness through the forwarded variable, got %q", env)
+	}
+	if strings.Contains(string(args), "aak_secret") {
+		t.Fatalf("the agent key is in the argument list, which ps shows to every local user: %q", args)
 	}
 }
 

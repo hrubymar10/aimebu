@@ -67,6 +67,20 @@ func (m *Multi) Start(ctx context.Context, spec TurnSpec) (Turn, error) {
 	return implementation.Start(ctx, spec)
 }
 
+// ForgetAgent deletes what each adapter keeps on disk for an agent that carries its key (a generated MCP config), for those that keep any.
+func (m *Multi) ForgetAgent(agentID string) {
+	seen := map[Adapter]bool{}
+	for _, implementation := range m.adapters {
+		if seen[implementation] {
+			continue
+		}
+		seen[implementation] = true
+		if forgetter, ok := implementation.(interface{ ForgetAgent(string) }); ok {
+			forgetter.ForgetAgent(agentID)
+		}
+	}
+}
+
 func (m *Multi) Catalog() []CatalogEntry {
 	var items []CatalogEntry
 	for _, implementation := range m.adapters {

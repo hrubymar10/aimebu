@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,8 +45,8 @@ func TestDockerPreflightRejectsUnmountedCheckout(t *testing.T) {
 // launcher into an unusable one. (The check also must not wait for the helper.)
 func TestDockerPreflightPassesForALauncherThatLeavesAHelperBehind(t *testing.T) {
 	root := t.TempDir()
-	launcher := filepath.Join(root, "claude-docker")
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\necho 'claude 1.0'\nsleep 4 &\nexit 0\n"), 0700); err != nil {
+	launcher := filepath.Join(root, "pi-docker")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\necho 'pi 1.0'\nsleep 4 &\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -54,7 +55,7 @@ func TestDockerPreflightPassesForALauncherThatLeavesAHelperBehind(t *testing.T) 
 		t.Fatal(err)
 	}
 	started := time.Now()
-	if err := DockerPreflight("claude", checkout); err != nil {
+	if err := DockerPreflight("pi", checkout); err != nil {
 		t.Fatalf("a launcher that exited 0 failed its preflight: %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > 3*time.Second {
@@ -96,7 +97,8 @@ func TestDockerFeaturesTellANewLauncherFromAnOldOne(t *testing.T) {
 	if _, err := DockerFeatures(t.Context(), failing, nil, root, os.Environ()); err == nil || !strings.Contains(err.Error(), "Docker is not running") {
 		t.Fatalf("a probe that fails says why: %v", err)
 	}
-	if !DockerNeedsForwardEnv("opencode") || !DockerNeedsForwardEnv("vibe") || DockerNeedsForwardEnv("claude") || DockerNeedsForwardEnv("pi") {
+	// The tools whose Docker turns configure the harness through the environment, or hand it the agent's key by name, need the feature.
+	if !DockerNeedsForwardEnv("opencode") || !DockerNeedsForwardEnv("vibe") || !DockerNeedsForwardEnv("claude") || !DockerNeedsForwardEnv("codex") || DockerNeedsForwardEnv("pi") {
 		t.Fatal("only the tools configured through the environment need the feature")
 	}
 }
@@ -122,5 +124,81 @@ func TestDockerPreflightOfOpenCodeNeedsALauncherThatForwards(t *testing.T) {
 	}
 	if err := DockerPreflight("cursor", checkout, old); err == nil {
 		t.Fatal("an unknown tool is refused")
+	}
+}
+
+// An agent's runtime state is kept out of the repository's index in the checkout it runs in and in a worktree of it, once however often it is
+// asked for, and a folder that is no git checkout is left alone.
+func TestExcludeRuntimeStateKeepsAimebuOutOfTheIndex(t *testing.T) {
+	root := t.TempDir()
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	run(repo, "init", "-q", "-b", "main")
+	run(repo, "commit", "-q", "--allow-empty", "-m", "first")
+	tree := filepath.Join(root, "tree")
+	run(repo, "worktree", "add", "-q", "-b", "other", tree)
+	for _, dir := range []string{repo, tree, repo} {
+		if err := os.MkdirAll(filepath.Join(dir, ".aimebu", "pi-sessions"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".aimebu", "pi-sessions", "transcript.jsonl"), []byte("secret"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ExcludeRuntimeState(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{repo, tree} {
+		status, err := exec.Command("git", "-C", dir, "status", "--porcelain", "--untracked-files=all").Output()
+		if err != nil || strings.Contains(string(status), ".aimebu") {
+			t.Fatalf("%s: the runtime state shows up as untracked: %q %v", dir, status, err)
+		}
+	}
+	exclude, err := os.ReadFile(filepath.Join(repo, ".git", "info", "exclude"))
+	if err != nil || strings.Count(string(exclude), ".aimebu/") != 1 {
+		t.Fatalf("the exclude file lists it %d times: %q %v", strings.Count(string(exclude), ".aimebu/"), exclude, err)
+	}
+	if err := ExcludeRuntimeState(t.TempDir()); err != nil {
+		t.Fatalf("a folder that is no git checkout: %v", err)
+	}
+}
+
+// An exclude file that is a link is not written through: it would append the line to whatever the link names.
+func TestExcludeRuntimeStateRefusesALinkedExcludeFile(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	victim := filepath.Join(root, "victim")
+	if err := os.WriteFile(victim, []byte("untouched\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	exclude := filepath.Join(repo, ".git", "info", "exclude")
+	if err := os.MkdirAll(filepath.Dir(exclude), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(exclude)
+	if err := os.Symlink(victim, exclude); err != nil {
+		t.Fatal(err)
+	}
+	if err := ExcludeRuntimeState(repo); err == nil {
+		t.Fatal("a linked exclude file was written through")
+	}
+	if data, _ := os.ReadFile(victim); string(data) != "untouched\n" {
+		t.Fatalf("the link's target was written: %q", data)
 	}
 }

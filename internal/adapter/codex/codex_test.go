@@ -38,8 +38,8 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "codex-docker")
-	argsPath := filepath.Join(root, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$CODEX_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\"}'\n"
+	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CODEX_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\"}'\n"
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +58,20 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"mcp_servers.aimebu_docker=", "host.docker.internal:9897/api/agent/mcp", "Bearer aak_secret", "-C\n/workspace/project\n", "exec\n--ignore-user-config\n", "--output-schema\n/workspace/project/.aimebu/codex-schemas/"} {
+	for _, want := range []string{"mcp_servers.aimebu_docker=", "host.docker.internal:9897/api/agent/mcp", `bearer_token_env_var="AIMEBU2_AGENT_KEY"`, "-C\n/workspace/project\n", "exec\n--ignore-user-config\n", "--output-schema\n/workspace/project/.aimebu/codex-schemas/"} {
 		if !strings.Contains(string(args), want) {
 			t.Fatalf("missing %q in %q", want, args)
 		}
+	}
+	env, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(env) != "aak_secret\nAIMEBU2_AGENT_KEY\n" {
+		t.Fatalf("the key must reach the harness through the forwarded variable, got %q", env)
+	}
+	if strings.Contains(string(args), "aak_secret") {
+		t.Fatalf("the agent key is in the argument list, which ps shows to every local user: %q", args)
 	}
 }
 

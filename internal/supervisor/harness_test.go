@@ -146,7 +146,8 @@ func TestDockerDiscoveryOutsideMirroredCheckout(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldDir) })
 	launcher := filepath.Join(root, "claude-docker")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$(pwd)\" >> \"$TEST_PROBE_LOG\"\nif [ \"$(pwd)\" != \"$TEST_MOUNT\" ]; then echo 'not mounted' >&2; exit 1; fi\necho claude 1.2.3\n"
+	// (The launcher answers the feature probe like a current one: Claude's Docker turns need forward_env.)
+	script := "#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\nprintf '%s\\n' \"$(pwd)\" >> \"$TEST_PROBE_LOG\"\nif [ \"$(pwd)\" != \"$TEST_MOUNT\" ]; then echo 'not mounted' >&2; exit 1; fi\necho claude 1.2.3\n"
 	if err := os.WriteFile(launcher, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}

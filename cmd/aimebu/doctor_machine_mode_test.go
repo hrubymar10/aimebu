@@ -202,8 +202,8 @@ func TestCheckDockerLauncherFeatures(t *testing.T) {
 		{Family: "opencode", Command: "/bin/opencode-docker", Containerized: true},
 		{Family: "vibe", Command: "/bin/vibe-docker", Containerized: true},
 		{Family: "opencode", Command: "/bin/broken-opencode-docker", Containerized: true},
-		{Family: "claude", Command: "/bin/claude-docker", Containerized: true}, // needs no feature: never run
-		{Family: "pi", Command: "/bin/pi-docker", Containerized: true},         // same
+		{Family: "claude", Command: "/bin/claude-docker", Containerized: true}, // hands the agent key over by name: needs forward_env
+		{Family: "pi", Command: "/bin/pi-docker", Containerized: true},         // needs no feature: never run
 		{Family: "codex", Command: "/bin/codex"},                               // native: never run
 	}
 	var probed []string
@@ -227,11 +227,11 @@ func TestCheckDockerLauncherFeatures(t *testing.T) {
 	for _, check := range checkDockerLauncherFeatures(context.Background(), candidates) {
 		byName[check.Name] = check
 	}
-	if strings.Join(probed, ",") != "opencode-docker,vibe-docker,broken-opencode-docker" {
+	if strings.Join(probed, ",") != "opencode-docker,vibe-docker,broken-opencode-docker,claude-docker" {
 		t.Fatalf("probed %v: only Docker launchers of tools that need a feature may be run", probed)
 	}
-	if len(byName) != 3 {
-		t.Fatalf("want three launcher checks, got %+v", byName)
+	if len(byName) != 4 {
+		t.Fatalf("want four launcher checks, got %+v", byName)
 	}
 	if c := byName["launcher opencode-docker"]; c.Status != statusOK || c.Description != "forward_env" {
 		t.Fatalf("opencode: %+v", c)

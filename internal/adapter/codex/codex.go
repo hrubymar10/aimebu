@@ -129,12 +129,15 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	args := []string{"-C", visibleCheckout}
+	var agentKey []string
 	if a.variant() == "docker" && spec.Mode == adapter.ModeNormal {
 		endpoint, header, err := adapter.DockerMCPAt(spec.AgentToolsConfigPath, spec.Agent.ID, spec.AgentServerURL)
 		if err != nil {
 			return nil, err
 		}
-		config := "mcp_servers.aimebu_docker={url=" + strconv.Quote(endpoint) + ",http_headers={Authorization=" + strconv.Quote(header) + "}}"
+		// The key is read from the forwarded variable, never put in the argument list (ps shows those to every local user).
+		agentKey = adapter.DockerAgentKeyEnv(header)
+		config := "mcp_servers.aimebu_docker={url=" + strconv.Quote(endpoint) + ",bearer_token_env_var=" + strconv.Quote(adapter.AgentKeyEnv) + "}"
 		// The person's own remote servers, as overrides of their own (the container's config.toml is ignored, see below), then aimebu's own two
 		// entries, last, so nothing before them can replace either.
 		for _, override := range userDockerOverrides() {
@@ -176,7 +179,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	} else {
 		cmd.Env = childEnv(runtimeDir, own.envVars...) // what the person's own MCP servers ask Codex to hand them
 	}
-	cmd.Env = adapter.LauncherEnv(cmd.Env, spec.LauncherEnvRefs)
+	cmd.Env = append(adapter.LauncherEnv(cmd.Env, spec.LauncherEnvRefs), agentKey...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -263,6 +266,15 @@ func childEnv(runtimeDir string, extra ...string) []string {
 var responseSchema = []byte(`{"type":"object","additionalProperties":false,"required":["messages"],"properties":{"messages":{"type":"array","maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["room","body","reply_to","thread_root","attachments","ask","handoff","visual_plan","appendix_pages","needs_attention","proposed_answers","open_questions"],"properties":{"room":{"type":"string"},"body":{"type":"string"},"reply_to":{"type":["string","null"]},"thread_root":{"type":["string","null"]},"attachments":{"type":["array","null"],"items":{"type":"string"}},"ask":{"type":["object","null"],"additionalProperties":false,"required":["kind","text","options","free_text"],"properties":{"kind":{"type":"string","enum":["question","approval"]},"text":{"type":"string"},"options":{"type":["array","null"],"items":{"type":"string"}},"free_text":{"type":["boolean","null"]}}},"handoff":{"type":["boolean","null"]},"visual_plan":{"type":["array","null"],"maxItems":80,"items":{"type":"object","additionalProperties":false,"required":["id","type","title","data","order"],"properties":{"id":{"type":["string","null"]},"type":{"type":"string"},"title":{"type":["string","null"]},"data":{"type":"string"},"order":{"type":["integer","null"]}}}},"appendix_pages":{"type":["array","null"],"maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":["string","null"]},"body":{"type":"string"}}}},"needs_attention":{"type":["boolean","null"]},"proposed_answers":{"type":["array","null"],"maxItems":4,"items":{"type":"string"}},"open_questions":{"type":["array","null"],"maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["question","description","options"],"properties":{"question":{"type":"string"},"description":{"type":["string","null"]},"options":{"type":"array","minItems":2,"maxItems":8,"items":{"type":"string"}}}}}}}}}}`)
 
 var diagnosticSchema = []byte(`{"type":"object","additionalProperties":false,"required":["messages","reconciliation"],"properties":{"messages":{"type":"array","maxItems":0,"items":{"type":"object","additionalProperties":false,"required":["room","body"],"properties":{"room":{"type":"string"},"body":{"type":"string"}}}},"reconciliation":{"type":"object","additionalProperties":false,"required":["status","findings"],"properties":{"status":{"type":"string","enum":["clean","uncertain"]},"findings":{"type":"array","items":{"type":"string"}}}}}}`)
+
+// ForgetAgent deletes the generated config that holds the agent's key. The next start writes it again.
+func (a *Adapter) ForgetAgent(agentID string) {
+	if a.RuntimeRoot == "" {
+		return
+	}
+	hash := sha256.Sum256([]byte(agentID))
+	_ = os.Remove(filepath.Join(a.RuntimeRoot, hex.EncodeToString(hash[:]), "config.toml"))
+}
 
 func (a *Adapter) prepareRuntime(spec adapter.TurnSpec, own userMCP) (string, error) {
 	hash := sha256.Sum256([]byte(spec.Agent.ID))

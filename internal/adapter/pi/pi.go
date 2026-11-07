@@ -82,6 +82,15 @@ func (a *Adapter) Capabilities(version string, environment adapter.Environment) 
 	return adapter.Capabilities{NoActionMode: true, CompactionEvents: true, Cost: true, CancelConfirmed: a.variant() == "native"}
 }
 
+// ForgetAgent deletes the generated MCP config that holds the agent's key. The next start writes it again.
+func (a *Adapter) ForgetAgent(agentID string) {
+	if a.RuntimeRoot == "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(agentID))
+	_ = os.Remove(filepath.Join(a.RuntimeRoot, hex.EncodeToString(sum[:]), "mcp.json"))
+}
+
 func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Turn, error) {
 	if a.variant() == "native" && !a.AllowNative {
 		return nil, errors.New("native execution disabled; use the docker variant")
@@ -97,6 +106,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	sum := sha256.Sum256([]byte(spec.Agent.ID))
 	sessionDir := filepath.Join(spec.CheckoutPath, ".aimebu", "pi-sessions", hex.EncodeToString(sum[:]))
 	if err := os.MkdirAll(sessionDir, 0700); err != nil {
+		return nil, err
+	}
+	if err := adapter.ExcludeRuntimeState(spec.CheckoutPath); err != nil {
 		return nil, err
 	}
 	visibleSessionDir, err := adapter.VisiblePath(spec, sessionDir)

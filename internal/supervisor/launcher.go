@@ -336,7 +336,8 @@ func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefin
 		row.Features = append(row.Features, feature)
 	}
 	sort.Strings(row.Features)
-	// Claude needs no forwarded variable: it asks for the features only to know whether its sessions are shared with the host.
+	// A tool that is handed a variable by name (the agent's key, or its configuration) needs forward_env; Claude asks for the features as well to know
+	// whether its sessions are shared with the host.
 	if adapter.DockerNeedsForwardEnv(def.Tool) && !features[adapter.FeatureForwardEnv] {
 		row.FeatureProblem = "launcher too old: it does not forward environment variables, which " + def.Tool + " needs (update harness-docker)"
 	}

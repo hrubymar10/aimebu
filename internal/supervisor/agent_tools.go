@@ -16,6 +16,18 @@ func (c *Client) agentToolsPath(agentID string) string {
 	return filepath.Join(filepath.Dir(c.Journal.path), "agent-tools", hex.EncodeToString(hash[:])+".json")
 }
 
+// forgetAgentKey deletes what holds an agent's key once the agent is stopped: the agent tools config and whatever generated config an adapter
+// wrote from it. The server issues a new key whenever the agent starts again and the spawn writes these anew, so nothing a stopped agent
+// leaves on the disk can authenticate, and nothing stays there after it is removed.
+func (c *Client) forgetAgentKey(agentID string) {
+	if err := os.Remove(c.agentToolsPath(agentID)); err != nil && !os.IsNotExist(err) {
+		c.report(fmt.Errorf("remove agent tools config for %s: %w", agentID, err))
+	}
+	if forgetter, ok := c.Adapter.(interface{ ForgetAgent(string) }); ok {
+		forgetter.ForgetAgent(agentID)
+	}
+}
+
 func (c *Client) writeAgentToolsConfig(agentID, key string) error {
 	if agentID == "" || len(key) != 47 || key[:4] != "aak_" {
 		return fmt.Errorf("invalid agent tools credential")

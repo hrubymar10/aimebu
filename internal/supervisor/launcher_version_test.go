@@ -205,9 +205,9 @@ func TestContainerLauncherFeaturesNeedNoProjectFolder(t *testing.T) {
 		t.Fatalf("the private folder was left behind: %v", err)
 	}
 	// An old launcher ignores the probe and would start the harness; in a folder its container does not mount it dies first, and that is
-	// all the row learns (Claude needs no feature, so there is nothing to complain about).
+	// all the row learns about its features: none, and since Claude's Docker turns need forward_env it says the launcher is too old.
 	old, _ := versionLauncher(t, `echo "Error: Directory '$PWD' is not mounted in the harness container." >&2; exit 1`)
-	if row, err := inspectLauncher(old, ""); err != nil || len(row.Features) != 0 || row.FeatureProblem != "" {
+	if row, err := inspectLauncher(old, ""); err != nil || len(row.Features) != 0 || !strings.Contains(row.FeatureProblem, "launcher too old") {
 		t.Fatalf("an old launcher: %+v %v", row, err)
 	}
 }

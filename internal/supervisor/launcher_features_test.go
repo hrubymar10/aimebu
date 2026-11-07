@@ -64,14 +64,21 @@ echo 2.0`)
 	if row, err = inspectLauncher(native, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil {
 		t.Fatalf("native: %+v %v", row, err)
 	}
-	// A Docker tool that needs no feature is asked once for the one it may have, and a launcher that cannot answer is no problem.
-	claude := def
-	claude.Tool = "claude"
-	if row, err = inspectLauncher(claude, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil || !row.Available {
-		t.Fatalf("a claude-docker launcher that fails the probe: %+v %v", row, err)
+	// A Docker tool that needs no feature (Pi) is not asked for one, and a launcher that cannot answer is no problem.
+	pi := def
+	pi.Tool = "pi"
+	pi.Toolbox = false
+	if row, err = inspectLauncher(pi, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil || !row.Available {
+		t.Fatalf("a pi-docker launcher that fails the probe: %+v %v", row, err)
 	}
 	write("echo 2.0") // predates the probe: nothing is known, and nothing is said
-	if row, err = inspectLauncher(claude, checkout); err != nil || row.FeatureProblem != "" || len(row.Features) != 0 || !row.Available {
+	if row, err = inspectLauncher(pi, checkout); err != nil || row.FeatureProblem != "" || len(row.Features) != 0 || !row.Available {
+		t.Fatalf("an old pi-docker launcher: %+v %v", row, err)
+	}
+	// Claude's Docker turns hand the agent's key over by name, so an old launcher is too old for it, like one for OpenCode.
+	claude := def
+	claude.Tool = "claude"
+	if row, err = inspectLauncher(claude, checkout); err != nil || !strings.Contains(row.FeatureProblem, "launcher too old") || !row.Available {
 		t.Fatalf("an old claude-docker launcher: %+v %v", row, err)
 	}
 	write(`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then printf 'forward_env\nclaude_home_shared\n'; exit 0; fi

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -75,7 +76,19 @@ const FeatureClaudeHomeShared = "claude_home_shared"
 
 // DockerNeedsForwardEnv says whether a tool's Docker turns configure the harness through forwarded environment variables, which an older
 // launcher would silently drop: the turn would then run without its isolated configuration or its toolbox.
-func DockerNeedsForwardEnv(tool string) bool { return tool == "opencode" || tool == "vibe" }
+func DockerNeedsForwardEnv(tool string) bool {
+	return tool == "opencode" || tool == "vibe" || tool == "claude" || tool == "codex"
+}
+
+// AgentKeyEnv is the variable that carries an agent's key into a Docker harness. The key never appears in an argument list (ps shows those
+// to every local user): the harness's MCP entry names this variable, and the launcher hands it over by name (HARNESS_DOCKER_FORWARD_ENV).
+const AgentKeyEnv = "AIMEBU2_AGENT_KEY"
+
+// DockerAgentKeyEnv is what a Docker turn adds to the launcher's environment so the harness can read the agent's key from AgentKeyEnv: the
+// variable itself and the forwarding list that names it. They are set last, so an owner's environment reference cannot replace either.
+func DockerAgentKeyEnv(authorization string) []string {
+	return []string{AgentKeyEnv + "=" + strings.TrimPrefix(authorization, "Bearer "), "HARNESS_DOCKER_FORWARD_ENV=" + AgentKeyEnv}
+}
 
 // DockerFeatures asks a Docker launcher which features it has. With HARNESS_DOCKER_PRINT_FEATURES=1 a launcher that knows the probe prints
 // them, one per line, and exits before it touches Docker. One that predates it runs the harness with the arguments instead, which is why
@@ -146,11 +159,59 @@ func DockerCheckout(checkout string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%s must be a real directory", path)
 	}
-	return nil
+	return ExcludeRuntimeState(checkout)
+}
+
+// ExcludeRuntimeState keeps an agent's runtime state (.aimebu/: session transcripts, generated configs) out of the repository's index, so an
+// agent's `git add -A && git push` cannot publish it. The exclude file is the repository's own (info/exclude, shared by its worktrees), which
+// no commit carries. A folder that is not a git checkout has nothing to exclude it from and is left alone.
+func ExcludeRuntimeState(checkout string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	out, err := cmdprobe.Output(cmd)
+	if err != nil {
+		return nil // not a git checkout (or git is not here): nothing to exclude it from
+	}
+	// The repository's shared directory (the same for a linked worktree), and the exclude file named under it here rather than by git, whose own
+	// answer for the file would already be the target of a link.
+	common := strings.TrimSpace(string(out))
+	if common == "" || !filepath.IsAbs(common) {
+		return nil
+	}
+	exclude := filepath.Join(common, "info", "exclude")
+	// The repository's own file, in a folder an agent can write to when it is mounted into its container: a link there would make this append the
+	// line to whatever the link names, so a link is refused and the file is opened without following one.
+	if info, err := os.Lstat(exclude); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a link; refusing to write the exclude line through it", exclude)
+	}
+	data, err := os.ReadFile(exclude)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == ".aimebu/" {
+			return nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(exclude), 0755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(exclude, os.O_CREATE|os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	line := ".aimebu/\n"
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		line = "\n" + line
+	}
+	_, err = file.WriteString(line)
+	return err
 }
 
 // DockerMCP reads the supervisor-private credential on the host. Docker turns
-// pass an HTTP MCP endpoint inline, so no key-bearing file enters a checkout.
+// pass an HTTP MCP endpoint inline and the key in a forwarded variable, so no key-bearing file enters a checkout.
 func DockerMCP(path, agentID string) (endpoint, authorization string, err error) {
 	return DockerMCPAt(path, agentID, "")
 }

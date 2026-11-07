@@ -41,9 +41,11 @@ Mention ranking uses the original message body and the same addressing rules
 as wake delivery. Mentions only in visual blocks or appendix pages do not
 affect roster order.
 On an exit without a final answer, both native and Docker adapters attach the
-last 4 KiB of launcher stderr to the exit evidence. Agent keys and bearer
-tokens are redacted before the tail enters the supervisor journal, server
-events, recovery inbox, or agent-card tooltip. Every adapter also tees the
+last 4 KiB of launcher stderr to the exit evidence. Agent, machine and session
+keys (`aak_`, `amk_`, `as_`), provider API keys (`sk-ant-…`, `sk-…`), bearer tokens,
+`x-api-key` values, cookie and set-cookie headers and `api_key`/`token`/`secret`
+assignments are redacted before the tail enters the supervisor journal, server
+events, recovery inbox, or agent-card tooltip (and before the per-agent output log is written). Every adapter also tees the
 whole of the harness's stderr into `TurnSpec.StderrSink` when the supervisor
 sets one (the per-agent output log, see
 [the supervisor](supervisor.md#agent-output)); a sink that fails never stops
@@ -553,7 +555,9 @@ and output schema paths to their container-visible locations; Pi translates
 its session directory. The supervisor runs a bounded
 launcher version probe from the requested checkout before recording the agent;
 an unmounted path fails spawn with the launcher's error. The adapters create
-`<checkout>/.aimebu/` for Codex's output schema and Pi sessions. The Docker
+`<checkout>/.aimebu/` for Codex's output schema and Pi sessions, and add `.aimebu/` to the
+repository's `info/exclude` (shared by its worktrees, carried by no commit) so an agent's `git add -A` cannot publish that
+runtime state. The Docker
 launcher version probe supplies the catalog version. The owner adds and enables
 native or containerized harnesses per machine in Settings → Harnesses; a new
 machine has none.

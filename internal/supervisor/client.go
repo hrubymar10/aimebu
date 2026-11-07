@@ -1162,7 +1162,11 @@ func (c *Client) sendDeferredStopAck(ctx context.Context, agentID string) {
 	c.mu.Lock()
 	ack, pending := c.pendingStopAck[agentID]
 	delete(c.pendingStopAck, agentID)
+	stopped := c.desired[agentID].Desired == "stopped" && c.running[agentID] == nil
 	c.mu.Unlock()
+	if stopped {
+		c.forgetAgentKey(agentID)
+	}
 	if pending {
 		if err := c.sendCurrent(ctx, ack); err != nil {
 			c.report(fmt.Errorf("agent %s stop ack after process exit: %w", agentID, err))
@@ -1228,6 +1232,9 @@ func (c *Client) handleControl(frame protocol.Frame) bool {
 		delete(c.pendingStopAck, frame.AgentID)
 	}
 	c.mu.Unlock()
+	if frame.DesiredState == "stopped" && turn == nil {
+		c.forgetAgentKey(frame.AgentID)
+	}
 	if frame.DesiredState == "stopped" && turn != nil {
 		_ = turn.Cancel()
 		time.AfterFunc(30*time.Second, func() {
