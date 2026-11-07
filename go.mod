@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/evanw/esbuild v0.28.2
 	github.com/getsentry/sentry-go v0.50.0
 	github.com/getsentry/sentry-go/otel v0.50.0
 	github.com/goccy/go-json v0.10.6

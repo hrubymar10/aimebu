@@ -28,6 +28,8 @@ type webAssets struct {
 	version string
 	index   []byte
 	scripts map[string][]byte
+	// bundle is the page's modules as one file (nil when AIMEBU2_WEB_BUNDLE turns it off, and then the page loads the modules themselves).
+	bundle *webBundle
 	// scriptHashes are the 'sha256-…' sources of the page's inline scripts (the theme script and the import map), which its Content-Security-Policy allows
 	// by hash because it allows no inline script otherwise.
 	scriptHashes []string
@@ -78,7 +80,9 @@ func (a webAssets) contentSecurityPolicy(host string, extraConnect []string) str
 	}, "; ")
 }
 
-func prepareWebAssets(files fs.FS) (webAssets, error) {
+// prepareWebAssets reads the embedded web files and makes the page and the modules ready; with `bundled` the page starts from the bundle of the modules
+// (see web_bundle.go), without it from the modules themselves.
+func prepareWebAssets(files fs.FS, bundled bool) (webAssets, error) {
 	raw := make(map[string][]byte)
 	hash := sha256.New()
 	err := fs.WalkDir(files, ".", func(name string, entry fs.DirEntry, walkErr error) error {
@@ -100,20 +104,39 @@ func prepareWebAssets(files fs.FS) (webAssets, error) {
 	if err != nil {
 		return webAssets{}, err
 	}
-	version := fmt.Sprintf("%x", hash.Sum(nil)[:8])
 	index, ok := raw["index.html"]
 	if !ok {
 		return webAssets{}, fmt.Errorf("embedded index.html is missing")
 	}
 	page := string(index)
+	var bundle *webBundle
+	if bundled {
+		built, err := buildWebBundle(raw)
+		if err != nil {
+			// The bundle is an optimisation: when it cannot be made the app is served as its modules, as it was before, and the failure is said
+			// loudly (the log, and Sentry when telemetry is on) rather than shipping a page that does not load.
+			reportBundleFailure(err)
+		} else {
+			bundle = &built
+			// The version is the sources' and the bundle's: the same sources bundled by another esbuild are another file, and must not be taken for the cached one.
+			hash.Write(built.js)
+		}
+	}
+	version := fmt.Sprintf("%x", hash.Sum(nil)[:8])
 	for _, path := range []string{"/v1.css", "/style.css", "/theme-v1.css", "/v2-only.css", "/js/app.js"} {
-		page = strings.ReplaceAll(page, path+`"`, path+"?v="+version+`"`)
+		replacement := path
+		if bundle != nil && path == "/js/app.js" {
+			replacement = "/" + bundleURL // the page starts from the bundle, not from the module that is its first file
+		}
+		page = strings.ReplaceAll(page, path+`"`, replacement+"?v="+version+`"`)
 	}
 	page = importMap.ReplaceAllStringFunc(page, func(block string) string {
 		return importMapEntry.ReplaceAllString(block, "${1}?v="+version+"${2}")
 	})
-	page = preloadModules(page, raw, version)
-	assets := webAssets{version: version, index: []byte(page), scripts: make(map[string][]byte), scriptHashes: inlineScriptHashes(page)}
+	if bundle == nil {
+		page = preloadModules(page, raw, version)
+	}
+	assets := webAssets{version: version, index: []byte(page), scripts: make(map[string][]byte), scriptHashes: inlineScriptHashes(page), bundle: bundle}
 	for name, data := range raw {
 		if strings.HasPrefix(name, "js/") && strings.HasSuffix(name, ".js") {
 			assets.scripts[name] = moduleImport.ReplaceAll(data, []byte("${1}?v="+version+"${2}"))

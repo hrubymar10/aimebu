@@ -17,6 +17,8 @@ Codex `config.toml`), and add each only when implementation needs it.
 only (GPL-3.0; it is never imported or linked into aimebu).
 `github.com/getsentry/sentry-go` and `.../sentry-go/otel` (MIT) and `go.opentelemetry.io/otel`, `.../otel/sdk` and `.../otel/trace` (Apache-2.0) are
 approved for `internal/telemetry` only (owner approval 2026-11-06), with the vendored Sentry browser bundle in `web/vendor/sentry/`.
+`github.com/evanw/esbuild` (MIT, v0.28.2) is approved for `internal/server/web_bundle.go`: the server bundles the web UI with it, as a library, when it starts
+(owner approval 2026-11-07).
 Ask before adding, removing, or updating any other dependency.
 
 For JSON, always import `github.com/goccy/go-json` (package `json`), never

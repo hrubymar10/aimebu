@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { scratch, OWNER } = require('./scratch-server.cjs');
+const { scratch, OWNER, MODULES } = require('./scratch-server.cjs');
 
 const APP = '#app-view:not([hidden])';
 
@@ -15,7 +15,7 @@ async function enterApp(page) {
 }
 
 async function main() {
-  const server = await scratch();
+  const server = await scratch({ env: MODULES });
   const { origin } = server;
   try {
     const owner = await server.ownerClient();

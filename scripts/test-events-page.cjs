@@ -6,10 +6,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { scratch, OWNER } = require('./scratch-server.cjs');
+const { scratch, OWNER, MODULES } = require('./scratch-server.cjs');
 
 async function main() {
-  const server = await scratch();
+  const server = await scratch({ env: MODULES });
   try {
     const page = await server.open({ width: 1000, height: 700, context: await server.context() });
     await page.goto(server.origin);

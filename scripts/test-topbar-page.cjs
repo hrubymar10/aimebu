@@ -2,12 +2,12 @@
 // "more" menu whose items forward to the real buttons. Opening, focus, the arrow keys, Escape, a click outside, forwarding, the health mark,
 // hidden and badge mirroring, and signing out through it. `AUTH_BINARY` shares a built binary.
 const assert = require('node:assert/strict');
-const { scratch, OWNER } = require('./scratch-server.cjs');
+const { scratch, OWNER, MODULES } = require('./scratch-server.cjs');
 
 const APP = '#app-view:not([hidden])';
 
 async function main() {
-  const server = await scratch();
+  const server = await scratch({ env: MODULES });
   try {
     const page = await server.open({ width: 390, height: 844, context: await server.context() });
     await page.goto(server.origin);

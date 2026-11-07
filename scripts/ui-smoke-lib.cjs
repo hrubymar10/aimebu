@@ -85,7 +85,7 @@ const installFixtureChat = page => page.evaluate(async () => {
 
 async function start() {
   // A start whose port was taken between picking it and binding it is tried again on another (see server-start.cjs).
-  const { child, port, origin, logs: serverLogs } = await startServer(binary, port => ({ ...isolatedEnv, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }), { label: 'smoke server' });
+  const { child, port, origin, logs: serverLogs } = await startServer(binary, port => ({ ...isolatedEnv, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_WEB_BUNDLE: 'off', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }), { label: 'smoke server' });
   let browser, supervisor, preserveFailure = false, browserClosing = false;
   const close = async failed => {
     browserClosing = true;

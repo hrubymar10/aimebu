@@ -45,6 +45,9 @@ var environment = []envVar{
 	{[]string{"AIMEBU2_SENTRY_ENV"}, []string{"Sentry environment name (default: dev)"}},
 	{[]string{"AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"}, []string{"Share of requests traced, 0 to 1 (default: 0.1)"}},
 	{[]string{"AIMEBU2_USAGES"}, []string{"Set to 0 to disable credential reads and provider usage requests"}},
+	{[]string{"AIMEBU2_WEB_BUNDLE"}, []string{
+		"Set to off to serve the web UI from its ~240 separate modules instead of the one",
+		"bundle the server builds when it starts (for debugging in a browser)"}},
 	{[]string{"AIMEBU_TOKEN_LEAD_CLAUDE", "AIMEBU_TOKEN_LEAD_CODEX"}, []string{
 		"How long before expiry the token refresher renews a profile (Go durations,",
 		"10m to 14d; defaults 60m Claude, 24h Codex); only with the token-copy model"}},

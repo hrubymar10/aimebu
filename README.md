@@ -272,7 +272,7 @@ open the detailed Usages view. See
 Its files use the v1 switcher format under the selected v2 config root:
 development remains under `~/.aimebu2`, while cutover to `~/.aimebu` uses
 the existing profiles in place.
-Set `AIMEBU2_USAGES=0` to disable credential reads and usage requests. The server starts its local supervisor automatically; set
+Set `AIMEBU2_USAGES=0` to disable credential reads and usage requests. The web UI is served as one script the server bundles when it starts (esbuild as a Go library, no node); `AIMEBU2_WEB_BUNDLE=off` serves its ~240 separate modules instead, for debugging in a browser. The server starts its local supervisor automatically; set
 `AIMEBU2_EMBEDDED_SUPERVISOR=0` for a remote-only server.
 Set `AIMEBU2_STUCK_MINUTES` to a whole number from 1 to 1440 to change the
 stuck-turn threshold (default 10 minutes). The server compares the running

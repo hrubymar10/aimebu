@@ -3,7 +3,7 @@
 // owner gets a server of its own, since there is only one first run. `AUTH_BINARY` shares a built binary.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { scratch } = require('./scratch-server.cjs');
+const { scratch, MODULES } = require('./scratch-server.cjs');
 
 const APP = '#app-view:not([hidden])';
 const PASSWORD = 'owner-password-12345';
@@ -17,7 +17,7 @@ const toWelcome = async server => { const page = await server.open({ context: aw
 const pass = async page => { await page.click('#welcome-continue'); await page.waitForSelector('#setup-token-view:not([hidden])'); };
 
 async function withServer(run) {
-  const server = await scratch({ owner: null });
+  const server = await scratch({ owner: null, env: MODULES });
   try { await run(server); assert.deepEqual(server.errors, [], `the pages reported errors: ${server.errors.join(' | ')}`); } finally { await server.stop(); }
 }
 

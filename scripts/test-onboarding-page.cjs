@@ -4,7 +4,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { scratch, OWNER } = require('./scratch-server.cjs');
+const { scratch, OWNER, MODULES } = require('./scratch-server.cjs');
 
 const APP = '#app-view:not([hidden])';
 const MISSING = 'No harness with a model yet. Tick a detected harness, or add one by hand and give it a model.';
@@ -22,7 +22,7 @@ async function signInAndEnter(page, origin) {
 }
 
 async function main() {
-  const server = await scratch();
+  const server = await scratch({ env: MODULES });
   const { origin } = server;
   try {
     const owner = await server.ownerClient();
@@ -104,7 +104,7 @@ async function main() {
     assert.deepEqual(server.errors, [], `the pages reported errors: ${server.errors.join(' | ')}`);
       // a double submit creates one project
     {
-      const second = await scratch();
+      const second = await scratch({ env: MODULES });
       try {
         const ownerTwo = await second.ownerClient();
         const page = await second.open({ context: await second.context() });

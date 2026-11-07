@@ -79,4 +79,9 @@ async function scratch({ owner = OWNER, env: extraEnv = {} } = {}) {
   return { origin, tmp, browser, open, api, signIn, ownerClient, context, stop, errors, logs: serverLogs, OWNER };
 }
 
-module.exports = { scratch, OWNER, freePort };
+// The app is served as one bundle by default (AIMEBU2_WEB_BUNDLE). A test that reaches into the app's own modules (import('/js/chat.js'), the
+// dialogs, a page's class) needs them served as modules, because the bundle has no module URLs and a second copy of a module would be a second instance:
+// it starts its server with `env: MODULES`. The ones that only drive the page run on the bundle, which is what people get.
+const MODULES = { AIMEBU2_WEB_BUNDLE: 'off' };
+
+module.exports = { scratch, OWNER, freePort, MODULES };

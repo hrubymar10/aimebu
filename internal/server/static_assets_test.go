@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"path"
 	"regexp"
 	"strings"
@@ -17,9 +18,13 @@ import (
 func TestStaticAssetsUseContentVersionAndRevalidateHTML(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
+	// This is about the modules and how they are versioned and hinted (web_bundle_test.go is about the bundle): a handler of its own serves the page from them.
+	f.srv.NoWebBundle = true
+	modules := httptest.NewServer(f.srv.Handler())
+	t.Cleanup(modules.Close)
 	get := func(path string) (*http.Response, string) {
 		t.Helper()
-		response, err := http.Get(f.http.URL + path)
+		response, err := http.Get(modules.URL + path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +83,7 @@ func TestPrepareWebAssetsVersionsParentImportsAndImportMap(t *testing.T) {
 		"js/pages/harnesses/page.js": {Data: []byte(`import { request } from '../../api.js';` + "\n" + `import { html } from "../../ui.js";` + "\n" + `import { Card } from './card.js';`)},
 		"vendor/preact/preact.mjs":   {Data: []byte(`export const h = 1;`)},
 	}
-	assets, err := prepareWebAssets(files)
+	assets, err := prepareWebAssets(files, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +124,7 @@ func TestPrepareWebAssetsPreloadsEveryModuleTheEntryReaches(t *testing.T) {
 		"js/pages/x/page.js":       {Data: []byte(`import { a } from '../../api.js';` + "\n" + `import { h } from 'preact';`)},
 		"vendor/preact/preact.mjs": {Data: []byte(`export const h = 1;`)},
 	}
-	assets, err := prepareWebAssets(files)
+	assets, err := prepareWebAssets(files, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ incremental, and gives contributors one shape to learn instead of one per module
 
 ## 2. Decision
 
-**Preact + htm, vendored as native ES modules, loaded through an import map, with no build step.**
+**Preact + htm, vendored as native ES modules, loaded through an import map, with no build step of your own** (the server bundles the modules for the page when it starts, with esbuild as a Go library; see CONTRIBUTING.md, "The `web/` layout").
 
 | Option | For | Against |
 | --- | --- | --- |

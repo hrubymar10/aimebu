@@ -37,6 +37,8 @@ import (
 
 type Server struct {
 	Store *store.Store
+	// NoWebBundle serves the page from its modules instead of the bundle (a test sets it; AIMEBU2_WEB_BUNDLE=off does the same for a whole process).
+	NoWebBundle bool
 	// legacyAttr caches which Claude Code session a v1 sender's work is in (see resolveLegacyStart), so opening a profile and then starting the
 	// agent from it reads the transcripts once.
 	legacyAttrMu    sync.Mutex
@@ -355,7 +357,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/agent/messages/{message}/reactions/{emoji}", s.requireAgentTool(http.HandlerFunc(s.agentToolReact)))
 	mux.Handle("DELETE /api/agent/messages/{message}/reactions/{emoji}", s.requireAgentTool(http.HandlerFunc(s.agentToolReact)))
 	assets := aimebu.Web()
-	web, err := prepareWebAssets(assets)
+	web, err := prepareWebAssets(assets, !s.NoWebBundle && webBundleEnabled())
 	if err != nil {
 		panic(err)
 	}
@@ -368,6 +370,10 @@ func (s *Server) Handler() http.Handler {
 		}
 		if name == "" || name == "index.html" {
 			s.serveAppPage(w, r, web)
+			return
+		}
+		if web.bundle != nil && (name == bundleURL || name == bundleURL+".map") {
+			serveWebBundle(w, r, web, name)
 			return
 		}
 		if _, err := fs.Stat(assets, name); err == nil {
@@ -394,6 +400,53 @@ func (s *Server) Handler() http.Handler {
 		s.serveAppPage(w, r, web)
 	})
 	return telemetry.Middleware(allowMiddleware(s.withHSTS(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(mux)))), s.Allow))
+}
+
+// serveWebBundle answers for the bundle (the page asks for it by a name that carries the version, so it is cached for good) or its source map, packed
+// with gzip for a browser that accepts it: the bundle is built once, so it is packed once. The map is only asked for by a browser's developer tools.
+func serveWebBundle(w http.ResponseWriter, r *http.Request, web webAssets, name string) {
+	h := w.Header()
+	if r.URL.Query().Get("v") == web.version {
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		h.Set("Cache-Control", "no-cache")
+	}
+	h.Add("Vary", "Accept-Encoding")
+	// An ETag lets a request that is not under the version (and so is revalidated) be answered 304; the packed file is another body and has its own.
+	body, kind, tag := web.bundle.js, "text/javascript; charset=utf-8", `"`+web.version+`"`
+	if strings.HasSuffix(name, ".map") {
+		body, kind, tag = web.bundle.smap, "application/json", `"`+web.version+`-map"`
+	} else if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		body, tag = web.bundle.jsGzip, `"`+web.version+`-gzip"`
+		h.Set("Content-Encoding", "gzip")
+	}
+	h.Set("ETag", tag)
+	h.Set("Content-Type", kind)
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
+}
+
+// acceptsGzip reads an Accept-Encoding header: gzip is accepted when it is listed with a quality above 0; "gzip;q=0" is a refusal even beside "*", and
+// "*" alone accepts it.
+func acceptsGzip(header string) bool {
+	star := false
+	for _, part := range strings.Split(header, ",") {
+		name, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "gzip" && name != "*" {
+			continue
+		}
+		accepted := true
+		if q, ok := strings.CutPrefix(strings.ReplaceAll(strings.ToLower(params), " ", ""), "q="); ok {
+			if value, err := strconv.ParseFloat(q, 64); err == nil && value <= 0 {
+				accepted = false
+			}
+		}
+		if name == "gzip" {
+			return accepted
+		}
+		star = accepted
+	}
+	return star
 }
 
 // serveAppPage answers with the app's one HTML page and the headers that keep it to this server: a Content-Security-Policy (see contentSecurityPolicy),

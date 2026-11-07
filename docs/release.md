@@ -68,8 +68,10 @@ such host here); run them on real machines before publishing.
 Notes:
 
 - The web UI is embedded with `//go:embed web` (`embed.go`) and `web/` is plain
-  files with no build step, so the Go build is the whole build. (`scripts/build-icons.cjs`
-  is a manual asset step, not part of the build.)
+  files with no build step, so the Go build is the whole build. The server bundles
+  the modules itself when it starts, with esbuild used as a Go library
+  (`github.com/evanw/esbuild`, MIT), so a release needs no node either.
+  (`scripts/build-icons.cjs` is a manual asset step, not part of the build.)
 - `go.mod` says `go 1.26.1`; CI uses `go-version-file: go.mod`, so releases build
   with the same toolchain as CI.
 - `github.com/air-verse/air` is a `tool` directive for `make dev` only. It is

@@ -63,7 +63,9 @@ transport inside a test binary.
 
 **Web UI (browser)**
 
-- Uncaught errors and unhandled promise rejections, with stack frames reduced to the script path.
+- Uncaught errors and unhandled promise rejections, with stack frames reduced to the script path. The page's own code is one bundled script
+  (`/bundle/app.js`), so the path says no more than that; the bundle keeps function and class names (esbuild's `keepNames`), so a frame still names
+  the function, and its source map is served beside it but is not uploaded anywhere.
 - Web Vitals and page-load / navigation traces, and the page's own requests as spans (method, route, status). Spans go out inside their
   transaction (`traceLifecycle: 'static'`), so the same scrubber sees them. **No span per loaded file** (script, stylesheet, image: about
   240 per page load), and of the page load's own timing spans only `browser.request` and `browser.response` stay; the vitals are measurements of the

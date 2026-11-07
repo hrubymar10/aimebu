@@ -223,12 +223,38 @@ Chromium and the local node.
 
 ## The `web/` layout
 
-The UI is ES modules with no bundler and no build step. Most of it is
-hand-written DOM code; pages are moving to Preact + htm one at a time (see
-[docs/design/frontend-preact.md](docs/design/frontend-preact.md)). `web/` is
-embedded into the Go binary (`embed.go`) and served as is; the server adds a
-content version to every relative module import (`./x.js`, `../x.js`) and to
-the import map, so each module has exactly one URL.
+The UI is ES modules with no build step of your own: you edit `web/js` and
+reload. Most of it is hand-written DOM code; pages are moving to Preact + htm
+one at a time (see [docs/design/frontend-preact.md](docs/design/frontend-preact.md)).
+`web/` is embedded into the Go binary (`embed.go`). When the server starts it
+bundles the ~240 modules into one script with esbuild, used as a Go library
+(`internal/server/web_bundle.go`; no node, no npm, no generated file): the
+page loads `/bundle/app.js?v=<content version>` (minified, gzipped, cached for
+a year under its version, with a source map beside it) instead of 240 modules,
+which is about 290 requests and 1.9 MB down to about 50 and 0.7 MB. The bundle
+is made in memory in about 60 ms, once per process, so `make dev` (which
+rebuilds and restarts the binary when a web file changes) gets a fresh one with
+it. The modules are still served as files, with a content version on every
+relative import (`./x.js`, `../x.js`) and on the import map, so each module has
+exactly one URL. To debug in a browser against the separate modules, start the
+server with `AIMEBU2_WEB_BUNDLE=off`; the page then starts from `/js/app.js`
+with `modulepreload` hints, as it did before the bundle. The bundle is an
+optimisation, so when it cannot be made (a file imports something that is not
+there) the server logs a WARNING, reports it to Sentry when telemetry is on, and
+serves the modules: a broken bundler never makes a broken page. The version in
+the page's URLs (`?v=`) includes the bundle's bytes, so a different esbuild
+bundling the same sources is not taken for the cached file, and the bundle and its
+map carry an ETag for revalidation. The bundle is made when the handler is built at
+start, never on a first request.
+
+Tests: the page tests that reach into the app's own modules (`import('/js/chat.js')`,
+a dialog or a page class; `test-ui`, the fixture page tests) run on the modules,
+because a bundle has no module URLs and a second copy of a module would be a second
+instance (their scratch server gets `env: MODULES`, see `scripts/scratch-server.cjs`).
+The other page tests drive the page and run on the bundle, which is what people get,
+and `scripts/test-bundle-page.cjs` checks the bundle itself: one script and no module of
+the app fetched, gzip and cache headers, the dialogs working from it, the source map, and
+the switch.
 
 - `web/index.html`: the page shell and the static markup of dialogs and
   panels. Its import map names the vendored Preact runtime; then it loads
