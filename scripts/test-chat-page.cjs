@@ -531,6 +531,18 @@ async function main() {
   }
 
   // A reply to a question open for this person that is one of its proposed answers answers it through the Inbox instead of posting a message; a refusal
+  // An agent that was removed has no record any more; the server sends the name it had, and its row and its quotes say it is removed.
+  {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page);
+    const names = await page.evaluate(() => {
+      window.__chat.agents = new Map();
+      const removed = { author_kind: 'agent', author_id: 'agt_gone', author_name: 'opal', author_project_id: '' };
+      return [window.__chat.authorName(removed), window.__chat.authorName({ author_kind: 'agent', author_id: 'agt_0123456789' }), window.__chat.authorName({ author_kind: 'agent', author_id: 'old-bot' })];
+    });
+    assert.deepEqual(names, ['opal (removed)', 'Agent 456789', 'old-bot'], 'a removed agent is named and marked; an agent with no name stays an id');
+    await page.close();
+  }
   // says so, keeps the text and posts nothing.
   {
     const page = await mount();

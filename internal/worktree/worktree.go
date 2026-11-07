@@ -340,6 +340,44 @@ func Remove(ctx context.Context, root, roomID, baseRef string, force bool) (Resu
 	})
 }
 
+// Retire sets the branch of a worktree that is gone aside under a name nothing will use again, so the name it had can be given to someone else: the work
+// on it is kept, and a worktree made later under the same name starts from the base and not from these commits. It renames aimebu/<name> to
+// aimebu/<name>-removed-<n>, n being the first number not taken, and reports the new name in Branch (empty when there was no branch to set aside).
+// It refuses while a worktree still stands at the name's path, and it is safe to call again.
+func Retire(ctx context.Context, root, roomID string) (Result, error) {
+	root, exclude, err := repo(ctx, root)
+	if err != nil {
+		return Result{}, err
+	}
+	return locked(exclude, func() (Result, error) {
+		path, branch, err := pathAndBranch(root, roomID)
+		if err != nil {
+			return Result{}, err
+		}
+		result := Result{Path: path, State: "removed"}
+		if _, err := os.Lstat(path); err == nil {
+			return Result{}, problem("worktree_exists", "the worktree is still there: remove it before its branch is set aside")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return Result{}, err
+		}
+		if _, err := git(ctx, root, "show-ref", "--verify", "--quiet", "refs/heads/"+branch); err != nil {
+			return result, nil // no branch: nothing to set aside
+		}
+		for n := 1; n < 1000; n++ {
+			next := fmt.Sprintf("%s-removed-%d", branch, n)
+			if _, err := git(ctx, root, "show-ref", "--verify", "--quiet", "refs/heads/"+next); err == nil {
+				continue
+			}
+			if _, err := git(ctx, root, "branch", "-m", "--", branch, next); err != nil {
+				return Result{}, problem("branch_rename_failed", err.Error())
+			}
+			result.Branch = next
+			return result, nil
+		}
+		return Result{}, problem("branch_rename_failed", "no free name to set the branch aside under")
+	})
+}
+
 // Inspect reports a room worktree without changing anything: whether it exists, how big it is, whether it has uncommitted or generated
 // files, where its branch stands against baseRef, and when it was last touched. It is what the cleanup decides on.
 func Inspect(ctx context.Context, root, roomID, baseRef string) (Result, error) {

@@ -207,11 +207,28 @@ func (s *Server) setExportHooks(size int, page func(ctx context.Context, roomID 
 // exportNames turns an author into the name a reader knows: a person's login, an agent's slug@project, "System", and for an agent whose record
 // is gone the readable id an import kept (or a short form of an opaque one), as the chat shows them.
 type exportNames struct {
-	ctx     context.Context
-	store   *store.Store
-	project string
-	byID    map[string]string // author id -> name
-	byMsg   map[string]string // message id -> author name, for naming the author of a reply's parent
+	ctx      context.Context
+	store    *store.Store
+	project  string
+	byID     map[string]string // author id -> name
+	byMsg    map[string]string // message id -> author name, for naming the author of a reply's parent
+	projects map[string]string // project id -> name, for an author that belonged to another project than the room's (an agent chat)
+}
+
+// projectNamed is the name of a project by its id, the fallback when it cannot be read.
+func (n *exportNames) projectNamed(id, fallback string) string {
+	if name, ok := n.projects[id]; ok {
+		return name
+	}
+	name := fallback
+	if project, err := n.store.ProjectByID(n.ctx, id); err == nil && project.Name != "" {
+		name = project.Name
+	}
+	if n.projects == nil {
+		n.projects = map[string]string{}
+	}
+	n.projects[id] = name
+	return name
 }
 
 func (n *exportNames) of(message store.Message) string {
@@ -226,6 +243,16 @@ func (n *exportNames) of(message store.Message) string {
 	}
 	if name, ok := n.byID[message.AuthorID]; ok {
 		return name
+	}
+	if message.AuthorName != "" { // an agent that was removed: named as a live one is, with the project it belonged to, and said so
+		name, project := message.AuthorName, n.project
+		if message.AuthorProjectID != "" {
+			project = n.projectNamed(message.AuthorProjectID, project)
+		}
+		if project != "" {
+			name += "@" + project
+		}
+		return name + " (removed)"
 	}
 	name := message.AuthorID
 	if card, err := n.store.AgentCardByID(n.ctx, message.AuthorID); err == nil && card.Slug != "" {

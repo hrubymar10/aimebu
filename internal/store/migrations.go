@@ -1563,6 +1563,10 @@ CREATE TABLE agent_worktree (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX agent_worktree_path ON agent_worktree(machine_id, canonical_path);
+`}, {93, `
+-- Removing an agent frees its name: slug (unique within the project) is rewritten to a tombstone, and removed_slug keeps the name it had, which the
+-- messages it wrote are shown under ("<name> (removed)"). Empty for every agent that was not removed.
+ALTER TABLE agent ADD COLUMN removed_slug TEXT NOT NULL DEFAULT '';
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

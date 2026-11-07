@@ -606,6 +606,39 @@ async function main() {
     await page.close();
   }
 
+  // Remove: only a stopped agent can be removed (the button says why otherwise), it asks first, naming the agent, and a refused removal stays on the
+  // panel; a removed agent leaves the list once the room is read again.
+  {
+    const page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada'), agent('a2', 'bert', { desired: 'stopped', observed: 'stopped' }), agent('a3', 'cleo', { desired: 'stopped', observed: 'stopped' })]);
+    const remove = id => page.$eval(`[data-agent-id=${id}] .agent-remove`, node => ({ disabled: node.disabled, title: node.title, label: node.getAttribute('aria-label'), glyph: node.querySelector('.icon-mask').className }));
+    assert.deepEqual(await remove('a1'), { disabled: true, title: 'Remove is unavailable: stop it first', label: 'Remove', glyph: 'icon-mask icon-mask-trash' });
+    assert.equal((await remove('a2')).disabled, false, 'a stopped agent can be removed');
+    const ask = async id => {
+      await page.$eval(`[data-agent-id=${id}] .agent-remove`, node => node.click());
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      return page.evaluate(() => ({ title: document.querySelector('#app-dialog-title').textContent, message: document.querySelector('.app-dialog-message').textContent, ok: document.querySelector('.app-dialog-ok').textContent }));
+    };
+    // Cancelling sends nothing.
+    assert.deepEqual(await ask('a2'), { title: 'Remove agent', message: "Remove bert? Its messages stay; it can't be started again.", ok: 'Remove' });
+    await page.$eval('.app-dialog-cancel', node => node.click()); await settle(page);
+    assert.equal(await count(page, 'DELETE', '/api/agents/a2'), 0);
+    // Confirming removes it, and the room is read again.
+    await ask('a2');
+    await page.$eval('.app-dialog-ok', node => node.click());
+    await answer(page, await waitRequest(page, 'DELETE', '/api/agents/a2'), 200, { agent_id: 'a2', slug: 'bert', worktree: {} });
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents'), 200, [agent('a1', 'ada'), agent('a3', 'cleo', { desired: 'stopped', observed: 'stopped' })].map(item => ({ ...item, room_id: 'r1' })));
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/members'), 200, people); await settle(page);
+    assert.deepEqual((await cards(page)).map(row => row[0]), ['a1', 'a3']);
+    // A refusal is said on the panel and the card stays.
+    await ask('a3');
+    await page.$eval('.app-dialog-ok', node => node.click());
+    await answer(page, await waitRequest(page, 'DELETE', '/api/agents/a3'), 409, { error: 'agent_not_stopped', message: 'stop cleo first: only a stopped agent can be removed' }); await settle(page);
+    assert.equal(await page.$eval('#agents-error', node => node.textContent), 'stop cleo first: only a stopped agent can be removed');
+    assert.deepEqual((await cards(page)).map(row => row[0]), ['a1', 'a3']);
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('agents page: ok');

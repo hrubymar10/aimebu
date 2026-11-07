@@ -1,5 +1,7 @@
 import { batch, signal } from '../../ui.js';
 import { request } from '../../api.js';
+import { confirmDialog } from '../../dialogs.js';
+import { agentLabel } from '../../sender-identity.js';
 import { outputFailure, outputStatus, reconcile } from './model.js';
 
 const PROFILE_MAX_AGE_MS = 30000;
@@ -127,6 +129,18 @@ export class AgentsStore {
     this.onError('');
     try {
       await this.source.control(id, action);
+      if (this.alive && generation === this.generation) await this.refresh();
+    } catch (error) { if (this.alive && generation === this.generation) this.onError(error.message); }
+  }
+
+  // Removing an agent is for good (its messages stay, it cannot be started again), so it asks first, naming the agent as the rest of the page does.
+  async remove(agent) {
+    const generation = this.generation;
+    this.onError('');
+    const sure = await confirmDialog(`Remove ${agentLabel(agent) || agent.id}? Its messages stay; it can't be started again.`, { title: 'Remove agent', confirm: 'Remove', danger: true });
+    if (!sure || !this.alive || generation !== this.generation) return;
+    try {
+      await this.source.remove(agent.id);
       if (this.alive && generation === this.generation) await this.refresh();
     } catch (error) { if (this.alive && generation === this.generation) this.onError(error.message); }
   }

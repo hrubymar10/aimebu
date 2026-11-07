@@ -116,7 +116,7 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 		return AgentProfile{}, err
 	} else {
 		var slug string
-		if err := s.db.QueryRowContext(ctx, `SELECT slug FROM agent WHERE id=?`, createdBy).Scan(&slug); err == nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(removed_slug,''),slug) FROM agent WHERE id=?`, createdBy).Scan(&slug); err == nil {
 			p.SpawnedBy = slug
 		}
 	}

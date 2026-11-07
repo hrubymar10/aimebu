@@ -108,7 +108,7 @@ func (s *Store) ReactionsForMessages(ctx context.Context, messages []Message) (m
 	}
 	marks := strings.TrimSuffix(strings.Repeat("?,", len(messages)), ",")
 	rows, err := s.readDB.QueryContext(ctx, `SELECT r.message_id,r.member_kind,r.member_id,r.emoji,
-		COALESCE(u.login,a.slug,r.member_id) FROM reaction r
+		COALESCE(u.login,NULLIF(a.removed_slug,''),a.slug,r.member_id) FROM reaction r
 		LEFT JOIN user u ON r.member_kind='user' AND u.id=r.member_id
 		LEFT JOIN agent a ON r.member_kind='agent' AND a.id=r.member_id
 		WHERE r.message_id IN (`+marks+`) ORDER BY r.message_id,r.emoji,r.member_id`, args...)
@@ -178,7 +178,9 @@ type ReplyPreview struct {
 	AuthorKind string `json:"author_kind"`
 	AuthorID   string `json:"author_id"`
 	AuthorName string `json:"author_name,omitempty"`
-	Snippet    string `json:"snippet"`
+	// AuthorProjectID is the project of an agent author that was removed, which names it (slug@project).
+	AuthorProjectID string `json:"author_project_id,omitempty"`
+	Snippet         string `json:"snippet"`
 }
 
 // MessageSnippet is one line of a message: whitespace collapsed and cut to 96 characters, "[attachment]" for a message that is only files.
@@ -213,8 +215,9 @@ func (s *Store) ReplyPreviewsForMessages(ctx context.Context, roomID string, mes
 		return out, nil
 	}
 	marks := strings.TrimSuffix(strings.Repeat("?,", len(args)-1), ",")
-	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.no,m.author_kind,m.author_id,COALESCE(u.login,''),substr(ltrim(m.body, ' '||char(9)||char(10)||char(13)),1,600)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.no,m.author_kind,m.author_id,COALESCE(u.login,NULLIF(g.removed_slug,''),g.slug,''),COALESCE(g.project_id,''),substr(ltrim(m.body, ' '||char(9)||char(10)||char(13)),1,600)
 		FROM message m LEFT JOIN user u ON m.author_kind='user' AND u.id=m.author_id
+		LEFT JOIN agent g ON m.author_kind='agent' AND g.id=m.author_id AND g.revoked_at IS NOT NULL
 		WHERE m.room_id=? AND m.id IN (`+marks+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -224,7 +227,7 @@ func (s *Store) ReplyPreviewsForMessages(ctx context.Context, roomID string, mes
 	for rows.Next() {
 		var id, body string
 		var preview ReplyPreview
-		if err := rows.Scan(&id, &preview.No, &preview.AuthorKind, &preview.AuthorID, &preview.AuthorName, &body); err != nil {
+		if err := rows.Scan(&id, &preview.No, &preview.AuthorKind, &preview.AuthorID, &preview.AuthorName, &preview.AuthorProjectID, &body); err != nil {
 			return nil, err
 		}
 		if preview.Snippet = MessageSnippet(body, 0); preview.Snippet == "" {

@@ -317,7 +317,7 @@ export class ChatStore {
   quoteFor(message) {
     const loaded = this.messages.get(message.reply_to), preview = message.reply_preview;
     const parent = loaded ? { no: loaded.no, name: this.host.authorName(loaded), snippet: messageSnippet(loaded) }
-      : preview ? { no: preview.no, name: this.host.authorName({ author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name }), snippet: preview.snippet } : null;
+      : preview ? { no: preview.no, name: this.host.authorName({ author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name, author_project_id: preview.author_project_id }), snippet: preview.snippet } : null;
     return { text: parent ? `↪ #${parent.no} ${parent.name}: ${parent.snippet}`.trimEnd().replace(/:$/, '') : '↪ Earlier message', title: parent ? `Go to #${parent.no}` : undefined };
   }
 

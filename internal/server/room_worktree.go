@@ -36,6 +36,9 @@ func (s *Server) machineWorktree(ctx context.Context, machine store.Machine, roo
 		if action == "inspect" {
 			return worktree.Inspect(ctx, root, roomID, baseRef)
 		}
+		if action == "retire" {
+			return worktree.Retire(ctx, root, roomID)
+		}
 		return worktree.Ensure(ctx, root, roomID, baseRef)
 	}
 	conn, err := s.machineForID(machine.ID)

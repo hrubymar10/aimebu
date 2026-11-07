@@ -112,7 +112,7 @@ func (s *Store) ReactionsForMessage(ctx context.Context, id string) ([]map[strin
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT r.member_kind,r.member_id,r.emoji,
-		COALESCE(u.login,a.slug,r.member_id) FROM reaction r
+		COALESCE(u.login,NULLIF(a.removed_slug,''),a.slug,r.member_id) FROM reaction r
 		LEFT JOIN user u ON r.member_kind='user' AND u.id=r.member_id
 		LEFT JOIN agent a ON r.member_kind='agent' AND a.id=r.member_id
 		WHERE r.message_id=? ORDER BY r.emoji,r.member_id`, id)

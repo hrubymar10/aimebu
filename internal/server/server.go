@@ -295,6 +295,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/projects/{project}/usage-limit", s.Auth.RequireUser(http.HandlerFunc(s.usageLimit)))
 	mux.Handle("POST /api/agents/{id}/control", s.Auth.RequireUser(http.HandlerFunc(s.agentControl)))
 	mux.Handle("DELETE /api/agents/{id}/worktree", s.Auth.RequireUser(http.HandlerFunc(s.agentWorktreeRemove)))
+	mux.Handle("DELETE /api/agents/{id}", s.Auth.RequireUser(http.HandlerFunc(s.agentRemove)))
 	mux.Handle("POST /api/agents/{id}/dm", s.Auth.RequireUser(http.HandlerFunc(s.openAgentDM)))
 	mux.Handle("POST /api/agents/{id}/switch", s.Auth.RequireUser(http.HandlerFunc(s.agentSwitch)))
 	mux.Handle("POST /api/inbox/{item}/answer", s.Auth.RequireUser(http.HandlerFunc(s.answerInbox)))
@@ -508,6 +509,9 @@ func messageView(m store.Message) map[string]any {
 	}
 	if m.AuthorName != "" {
 		view["author_name"] = m.AuthorName
+	}
+	if m.AuthorProjectID != "" {
+		view["author_project_id"] = m.AuthorProjectID
 	}
 	if len(m.Attachments) > 0 {
 		view["attachments"] = m.Attachments

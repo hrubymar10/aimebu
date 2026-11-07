@@ -159,7 +159,7 @@ func (s *Store) UsageTotalsFor(ctx context.Context, scope, scopeID, rng string) 
 	}
 	// The most expensive first; a group with no cost sorts by its tokens, then by name, so the order is stable.
 	const order = ` ORDER BY COALESCE(SUM(u.cost_est),0) DESC, COALESCE(SUM(u.tokens_in),0)+COALESCE(SUM(u.tokens_out),0) DESC, 2`
-	if out.ByAgent, err = groups(`SELECT u.agent_id,COALESCE(a.slug,u.agent_id),COUNT(DISTINCT u.turn_id),SUM(u.tokens_in),SUM(u.tokens_out),SUM(u.tokens_cache_read),SUM(u.tokens_cache_write),SUM(u.cost_est),MAX(CASE WHEN u.cost_est IS NOT NULL AND u.source='estimated' THEN 1 ELSE 0 END)
+	if out.ByAgent, err = groups(`SELECT u.agent_id,COALESCE(NULLIF(a.removed_slug,''),a.slug,u.agent_id),COUNT(DISTINCT u.turn_id),SUM(u.tokens_in),SUM(u.tokens_out),SUM(u.tokens_cache_read),SUM(u.tokens_cache_write),SUM(u.cost_est),MAX(CASE WHEN u.cost_est IS NOT NULL AND u.source='estimated' THEN 1 ELSE 0 END)
 		FROM usage_record u LEFT JOIN agent a ON a.id=u.agent_id WHERE ` + where + ` GROUP BY u.agent_id` + order); err != nil {
 		return UsageTotals{}, err
 	}

@@ -176,3 +176,56 @@ func TestNotUsableSaysWhatGitSaid(t *testing.T) {
 		t.Errorf("no git: %v", err)
 	}
 }
+
+// A removed worktree's branch is set aside under a name of its own, so a worktree made later under the same name starts from the base, and the work is
+// still on the old branch.
+func TestRetireSetsTheKeptBranchAside(t *testing.T) {
+	root := repoFixture(t)
+	ctx := context.Background()
+	item, err := Ensure(ctx, root, "room_a-ada", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(item.Path, "tracked.txt"), []byte("ada\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "tracked.txt"}, {"commit", "-qm", "ada"}} {
+		if output, err := exec.Command("git", append([]string{"-C", item.Path}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, output)
+		}
+	}
+	if _, err := Retire(ctx, root, "room_a-ada"); err == nil {
+		t.Fatal("a branch with a worktree standing was set aside")
+	}
+	if _, err := Remove(ctx, root, "room_a-ada", item.BaseRef, true); err != nil {
+		t.Fatal(err)
+	}
+	first, err := Retire(ctx, root, "room_a-ada")
+	if err != nil || first.Branch != "aimebu/room_a-ada-removed-1" || first.State != "removed" {
+		t.Fatalf("retire = %+v %v", first, err)
+	}
+	if again, err := Retire(ctx, root, "room_a-ada"); err != nil || again.Branch != "" {
+		t.Fatalf("a second call sets nothing aside: %+v %v", again, err)
+	}
+	// The work is on the old branch; the name is free and a new worktree under it starts from the base.
+	if out, err := exec.Command("git", "-C", root, "log", "--format=%s", "-1", "aimebu/room_a-ada-removed-1").Output(); err != nil || strings.TrimSpace(string(out)) != "ada" {
+		t.Fatalf("the work is on the set-aside branch: %q %v", out, err)
+	}
+	fresh, err := Ensure(ctx, root, "room_a-ada", item.BaseRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(fresh.Path, "tracked.txt")); err != nil || string(data) != "base\n" {
+		t.Fatalf("a new worktree under the same name starts from the base: %q %v", data, err)
+	}
+	// A second agent with the same name that is removed in turn gets the next number.
+	if _, err := Remove(ctx, root, "room_a-ada", item.BaseRef, true); err != nil {
+		t.Fatal(err)
+	}
+	if second, err := Retire(ctx, root, "room_a-ada"); err != nil || second.Branch != "aimebu/room_a-ada-removed-2" {
+		t.Fatalf("second retire = %+v %v", second, err)
+	}
+	if none, err := Retire(ctx, root, "room_never"); err != nil || none.Branch != "" {
+		t.Fatalf("no branch, nothing to do: %+v %v", none, err)
+	}
+}

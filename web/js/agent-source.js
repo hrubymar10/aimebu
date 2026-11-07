@@ -51,6 +51,10 @@ export class MockAgentSource {
     }, 1000);
     return { ...agent };
   }
+  async remove(id) {
+    if (!this.agents.has(id)) throw new Error('Agent not found');
+    this.agents.delete(id); this.notify();
+  }
   async control(id, action) {
     if (!this.available) throw new Error('Agent controls are not available yet');
     const agent = this.agents.get(id); if (!agent) throw new Error('Agent not found');
@@ -127,6 +131,11 @@ export class HttpAgentSource {
       body: { room_id: params.room_id, tool: params.tool, variant: params.variant, ...(params.launcher_id ? { launcher_id: params.launcher_id } : {}), model: params.model, machine_id: params.machine_id, rev: current.desired_rev },
     });
     this.agents.set(card.id, card); await this.changed(); return this.normalize(card);
+  }
+  // The server answers for the whole removal (the agent leaves its rooms, its worktree goes); the room's list is read again afterwards.
+  async remove(id) {
+    await request(`/api/agents/${id}`, { method: 'DELETE', body: {} });
+    this.agents.delete(id); await this.changed();
   }
   async control(id, action) {
     const current = this.agents.get(id);

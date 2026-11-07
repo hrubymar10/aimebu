@@ -386,6 +386,8 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				info, opErr = worktree.Remove(opCtx, frame.CheckoutPath, frame.RoomID, frame.BaseRef, frame.WorktreeForce)
 			case "inspect":
 				info, opErr = worktree.Inspect(opCtx, frame.CheckoutPath, frame.RoomID, frame.BaseRef)
+			case "retire":
+				info, opErr = worktree.Retire(opCtx, frame.CheckoutPath, frame.RoomID)
 			default:
 				opErr = errors.New("unknown worktree action")
 			}

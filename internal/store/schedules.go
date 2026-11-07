@@ -241,7 +241,7 @@ func scheduleTarget(s Schedule) string {
 
 func (tx *Tx) scheduleCreator(s Schedule) (string, error) {
 	var display string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE((SELECT login FROM user WHERE id=?),(SELECT slug FROM agent WHERE id=?),?)`, s.CreatorID, s.CreatorID, s.CreatorID).Scan(&display)
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE((SELECT login FROM user WHERE id=?),(SELECT COALESCE(NULLIF(removed_slug,''),slug) FROM agent WHERE id=?),?)`, s.CreatorID, s.CreatorID, s.CreatorID).Scan(&display)
 	return display, err
 }
 

@@ -138,7 +138,7 @@ func (s *Store) MessageDebug(ctx context.Context, messageID string) (MessageDebu
 		return MessageDebug{}, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT n.id,n.agent_id,COALESCE(a.slug,''),n.state,n.wake_reason,n.created_at FROM note n LEFT JOIN agent a ON a.id=n.agent_id WHERE n.message_id=? ORDER BY n.created_at,n.id`, messageID)
+	rows, err := s.db.QueryContext(ctx, `SELECT n.id,n.agent_id,COALESCE(NULLIF(a.removed_slug,''),a.slug,''),n.state,n.wake_reason,n.created_at FROM note n LEFT JOIN agent a ON a.id=n.agent_id WHERE n.message_id=? ORDER BY n.created_at,n.id`, messageID)
 	if err != nil {
 		return MessageDebug{}, err
 	}

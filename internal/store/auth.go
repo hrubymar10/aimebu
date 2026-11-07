@@ -469,20 +469,27 @@ func (s *Store) SetAgentKeyHash(ctx context.Context, id, keyHash string) error {
 }
 
 func (s *Store) RevokeAgent(ctx context.Context, id string) error {
-	return s.Tx(ctx, func(tx *Tx) error {
-		result, err := tx.Exec(`UPDATE agent SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, timestamp(), id)
-		if err != nil {
-			return err
-		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			return sql.ErrNoRows
-		}
-		_, err = tx.AppendEvent(Event{Kind: "agent_revoked", AgentID: id,
-			PayloadJSON: payloadJSON(map[string]string{"agent_id": id})})
+	return s.Tx(ctx, func(tx *Tx) error { return tx.revokeAgent(id, nil) })
+}
+
+// revokeAgent marks an agent revoked: its key stops working, and every query that looks for a live agent (a role's slot, a slug, a checkout's
+// writer) skips it. extra adds fields to the event's payload.
+func (tx *Tx) revokeAgent(id string, extra map[string]string) error {
+	result, err := tx.Exec(`UPDATE agent SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, timestamp(), id)
+	if err != nil {
 		return err
-	})
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return sql.ErrNoRows
+	}
+	payload := map[string]string{"agent_id": id}
+	for key, value := range extra {
+		payload[key] = value
+	}
+	_, err = tx.AppendEvent(Event{Kind: "agent_revoked", AgentID: id, PayloadJSON: payloadJSON(payload)})
+	return err
 }

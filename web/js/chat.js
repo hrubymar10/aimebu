@@ -498,6 +498,8 @@ export class Chat {
     if (message.author_kind === 'user') return message.author_id === currentUser ? 'You' : message.author_name || (String(message.author_id).startsWith('usr_') ? 'Someone' : message.author_id); // never the raw account id
     const agent = this.agents.get(message.author_id);
     if (agent?.name || agent?.slug) return agentLabel(agent);
+    // An agent that was removed: the server sends the name it had (and its project), and the row says so.
+    if (message.author_kind === 'agent' && message.author_name) return `${agentLabel({ slug: message.author_name, project_id: message.author_project_id })} (removed)`;
     // A native agent whose record is gone has only an opaque id; an imported v1 author's id is already the readable name.
     return message.author_id.startsWith('agt_') ? `Agent ${message.author_id.slice(-6)}` : message.author_id;
   }

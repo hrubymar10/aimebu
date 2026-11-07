@@ -404,8 +404,10 @@ type Message struct {
 	Attachments         []Attachment `json:"attachments,omitempty"`
 	AuthorHarness       string       `json:"author_harness,omitempty"`
 	AuthorModel         string       `json:"author_model,omitempty"`
-	// AuthorName is the login of a person author, read with the message so a client can show a name instead of the account id.
-	AuthorName string `json:"-"`
+	// AuthorName is the login of a person author, or the slug of an agent author that was removed, read with the message so a client can show a name
+	// instead of the account or agent id; AuthorProjectID is the removed agent's project, which names it (slug@project).
+	AuthorName      string `json:"-"`
+	AuthorProjectID string `json:"-"`
 }
 
 func (s *Store) InsertMessage(ctx context.Context, message Message) (Message, error) {
@@ -516,7 +518,9 @@ func (s *Store) ListMessagesAfter(ctx context.Context, roomID string, afterSeq i
 const messageSelect = `SELECT id, seq, no, room_id, author_kind, author_id,
 	body, reply_to, thread_root, targets_json, ask_json, source_out_id, created_at,
 	COALESCE(author_harness,''), COALESCE(author_model,''),
-	COALESCE((SELECT login FROM user WHERE user.id=message.author_id AND message.author_kind='user'),''),
+	COALESCE((SELECT login FROM user WHERE user.id=message.author_id AND message.author_kind='user'),
+		(SELECT COALESCE(NULLIF(removed_slug,''),slug) FROM agent WHERE agent.id=message.author_id AND message.author_kind='agent' AND agent.revoked_at IS NOT NULL),''),
+	COALESCE((SELECT project_id FROM agent WHERE agent.id=message.author_id AND message.author_kind='agent' AND agent.revoked_at IS NOT NULL),''),
 	COALESCE(visual_plan_json,''), COALESCE(appendix_pages_json,''),
 	needs_attention, COALESCE(proposed_answers_json,''), COALESCE(open_questions_json,'')
 	FROM message `
@@ -537,7 +541,7 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 		if err := rows.Scan(&message.ID, &message.Seq, &message.No, &message.RoomID,
 			&message.AuthorKind, &message.AuthorID, &message.Body, &replyTo,
 			&threadRoot, &message.TargetsJSON, &askJSON, &sourceOutID,
-			&message.CreatedAt, &message.AuthorHarness, &message.AuthorModel, &message.AuthorName,
+			&message.CreatedAt, &message.AuthorHarness, &message.AuthorModel, &message.AuthorName, &message.AuthorProjectID,
 			&message.VisualPlanJSON, &message.AppendixPagesJSON, &message.NeedsAttention,
 			&message.ProposedAnswersJSON, &message.OpenQuestionsJSON); err != nil {
 			return nil, err

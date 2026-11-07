@@ -227,7 +227,8 @@ Roles, agents
   machine_id, checkout_id, home_room_id?, key_hash, revoked_at?,
   desired[active|not_accepting|stopped], desired_rev,
   observed[idle|in_turn|interrupting|stopped|lost], generation,
-  launch_path (default empty), created_by, created_at) — **one role per agent**: one agent cannot hold
+  launch_path (default empty), removed_slug (default empty, migration 93),
+  created_by, created_at) — **one role per agent**: one agent cannot hold
   different roles in different rooms; `@role` resolves to room members whose
   agent role matches; `home_room_id` is set on the first non-DM agent join and
   limits room bulk control to that agent's current home membership; `generation`
@@ -236,6 +237,9 @@ Roles, agents
   differs from the canonical `checkout.canonical_path`: the harness is started
   there (`launch_path` on the delivery), and it is ignored once the agent is not a
   Claude agent and cleared when a switch moves it to another checkout
+  (a removed agent — `DELETE /api/agents/{id}` — is revoked; its `slug`, unique within
+  the project, is rewritten to a tombstone so the name is free, and `removed_slug`
+  keeps the name its messages are shown under)
 - **session**(id, agent_id, generation, native_session_id?,
   start_mode[native_resume|fresh_with_history], started_at, ended_at?)
 - **agent_switch**(agent_id UNIQUE, room_id, tool, variant, launcher_id?, model,
@@ -985,7 +989,9 @@ it never silently reruns a turn with uncertain effects.
   details?,code?,message?}`. The supervisor runs bounded Git operations in
   the mapped project root and reports the canonical worktree path. The server
   sends this frame only when the hello advertised `supports_worktree`.
-  Actions are `validate`, `ensure`, `remove`, and `inspect` (read-only: size,
+  Actions are `validate`, `ensure`, `remove`, `retire` (renames the kept branch of a removed
+  worktree to `<branch>-removed-<n>`, so the name is free; refused while a worktree stands
+  there; a supervisor that does not know it answers an unknown-action error, and the removal of the agent that asked stops there until the machine is updated), and `inspect` (read-only: size,
   uncommitted file count, merge state, head commit and last activity, used by
   the cleanup); typed Git error codes are preserved in `worktree_result`.
 - S→M `agent_log_read{v,req_id,agent_id,log_lines?,log_max_bytes?}`; M→S

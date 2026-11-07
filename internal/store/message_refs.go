@@ -92,7 +92,7 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 		}
 	case "agent":
 		var slug string
-		if err := q.QueryRowContext(ctx, `SELECT slug FROM agent WHERE id=?`, authorID).Scan(&slug); err == nil {
+		if err := q.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(removed_slug,''),slug) FROM agent WHERE id=?`, authorID).Scan(&slug); err == nil {
 			from = slug
 		}
 	}
