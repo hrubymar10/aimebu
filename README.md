@@ -227,7 +227,7 @@ Set `AIMEBU2_TLS_CERT` and `AIMEBU2_TLS_KEY` together to add HTTPS on
 redirects other machines to HTTPS. Both listeners use the same bind and allowlist.
 Sign-in, setup, invites and pairing answer only a `Host` of `localhost`, an IP address,
 the public URL's host or a name in `AIMEBU2_ALLOWED_HOSTS` (comma-separated), which
-you set when you reach the server by a LAN name. See [HTTPS setup](docs/tls.md) for certificates,
+you set when you reach the server by a LAN name; when upgrading, read the [upgrade notes](docs/upgrade-notes.md). See [HTTPS setup](docs/tls.md) for certificates,
 remote supervisors, and a Caddy example. Behind such a proxy, set
 `AIMEBU2_TRUSTED_PROXIES` to the proxy's IPs or CIDRs (default empty) so login
 throttling tells clients apart by `X-Forwarded-For`; the allowlist never
