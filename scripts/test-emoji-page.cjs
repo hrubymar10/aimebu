@@ -110,6 +110,19 @@ async function main() {
     await page.setViewport({ width: 1280, height: 900 });
     await closePicker();
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'emoji-button', 'Escape closes it and the focus goes back to the button');
+    // The composer moves the attach and emoji buttons between its toolbar and its bottom row when the window crosses the compact breakpoint; moving a
+    // node drops its focus, which made the line above fail now and then (a layout change landing just after the picker closed). Focus must survive it.
+    const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 50)))));
+    for (const [width, height] of [[600, 900], [1280, 900], [600, 900], [1280, 900]]) {
+      await page.focus('#emoji-button');
+      await page.setViewport({ width, height });
+      await frames();
+      assert.equal(await page.evaluate(() => document.activeElement?.id), 'emoji-button', `the emoji button keeps the focus when the window becomes ${width}px wide`);
+    }
+    await page.focus('.attachment-picker-btn');
+    await page.setViewport({ width: 600, height: 900 }); await frames();
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('attachment-picker-btn')), true, 'and so does the attach button');
+    await page.setViewport({ width: 1280, height: 900 }); await frames();
 
     // Opening and closing it again and again leaves nothing behind (the picker itself is the same few dozen nodes, kept for the next open).
     await openPicker(); await closePicker();

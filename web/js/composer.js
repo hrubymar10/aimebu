@@ -124,8 +124,12 @@ export class ComposerFormatting {
     const home = this.rich && !short.matches ? this.toolbar : this.field;
     if (this.toggle.parentNode !== home) { const focused = document.activeElement === this.toggle; home.append(this.toggle); if (focused) this.toggle.focus(); }
     if (!this.slots.length) return;
+    // Moving a node in the DOM drops its focus (to <body>): a key press or a closing picker that has just put focus on attach or emoji would lose it
+    // to a layout change (a rotated phone, a resized window) that moves the buttons between the toolbar and the bottom row.
+    const held = this.slots.find(slot => slot === document.activeElement);
     if (this.rich && !compact.matches) this.toolbar.prepend(...this.slots);
     else { for (const slot of this.slots) this.form.insertBefore(slot, this.field); }
+    if (held && document.activeElement !== held) held.focus({ preventScroll: true });
   }
   apply() {
     this.place();
