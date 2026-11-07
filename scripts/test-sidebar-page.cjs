@@ -459,8 +459,9 @@ async function main() {
     assert.equal(await page.$eval('[data-room-id=rm_api] .room-health', node => node.hidden), true);
     await page.close();
   }
-  // A row with every badge (project chip, health, mute, member count, attention, unread) at the narrowest rooms column: the name gives way, with an
-  // ellipsis, and no badge or other part of the row reaches past the row's right edge, on a desktop width and on a phone.
+  // A nested row with every badge (project chip, health, mute, member count, attention, unread) at the narrowest rooms column: the name gives way, with an
+  // ellipsis, the member count and the mute bell go (there is no room for them), and no badge or other part of the row reaches past the row's right edge, on a
+  // desktop width and on a phone.
   for (const [label, viewport] of [['desktop', { width: 1280, height: 800 }], ['phone', { width: 390, height: 844 }]]) {
     const far = new Date(Date.now() + 3600000).toISOString();
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_api' ? { ...item, member_count: 3, muted_until: far, title: 'api-work-with-a-rather-long-name' } : item)) }) });
@@ -476,8 +477,31 @@ async function main() {
       return { over, ellipsis: css.textOverflow === 'ellipsis' && css.overflow === 'hidden', truncated: name.scrollWidth > name.clientWidth, kinds, list: document.querySelector('#projects').scrollWidth <= document.querySelector('#projects').clientWidth };
     });
     assert.deepEqual([fit.over, fit.ellipsis, fit.truncated, fit.list], [[], true, true, true], `${label}: a row's badges stay inside it and the name is cut with an ellipsis: ${JSON.stringify(fit)}`);
-    assert.equal(fit.kinds.length, 5, `${label}: the test row shows all five badges: ${JSON.stringify(fit.kinds)}`);
+    assert.deepEqual(fit.kinds, ['.room-health', '.room-item-attention', '.room-item-unread'], `${label}: the pills that ask for attention stay; the count and the mute bell give way when the row is that narrow: ${JSON.stringify(fit.kinds)}`);
     await page.close();
+  }
+
+  // A row with a member count, a health flag and a bell (attention) badge stays on one line at the narrowest column and at a wider one, in every theme
+  // that draws it differently: the name, the count and each badge share one top (within 2px), no badge wraps inside itself, and the row is as tall as a
+  // row without badges. A project's home row carries the bell as well, so both kinds are checked.
+  for (const theme of ['dark', 'high-contrast-dark', 'light']) {
+    for (const width of [180, 240]) {
+      const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_api' ? { ...item, member_count: 3, title: 'test-general-room', attention_count: 1, unread_count: 0 } : item.id === 'rm_ah' ? { ...item, attention_count: 1 } : item)) }) });
+      await page.evaluate((theme, width) => { document.documentElement.dataset.theme = theme; document.documentElement.style.setProperty('--rooms-w', `${width}px`); document.querySelector('.sidebar').style.width = `${width}px`; window.__sidebar.setHealth([{ name: 'ada', room_ids: ['rm_api'], flags: [{ code: 'stuck' }] }]); const group = document.querySelector('[data-room-id=rm_ah]'); if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse').click(); }, theme, width);
+      await page.waitForFunction(() => document.querySelector('[data-room-id=rm_api] > .room-item').getBoundingClientRect().width > 0);
+      const lines = await page.evaluate(() => Object.fromEntries(['rm_api', 'rm_ah'].map(id => {
+        const row = document.querySelector(`[data-room-id=${id}] > .room-item`), top = row.querySelector('.room-item-name').getBoundingClientRect().top;
+        const badges = [...row.querySelectorAll('.room-item-top > :not(.room-item-name)')].filter(node => getComputedStyle(node).display !== 'none' && node.getBoundingClientRect().width > 0);
+        const bell = row.querySelector('.room-item-attention');
+        return [id, { bell: !!bell, bellHeight: bell ? Math.round(bell.getBoundingClientRect().height) : 0, tops: badges.map(node => Math.round(node.getBoundingClientRect().top - top)), top: Math.round(row.querySelector('.room-item-top').getBoundingClientRect().height), kinds: badges.map(node => node.className) }];
+      })));
+      for (const [id, line] of Object.entries(lines)) {
+        assert.equal(line.bell, true, `${theme} ${width}: ${id} shows the bell`);
+        assert.equal(line.tops.every(offset => Math.abs(offset) <= 2), true, `${theme} ${width}: ${id}'s badges share the name's line: ${JSON.stringify(line)}`);
+        assert.equal(line.top <= 24, true, `${theme} ${width}: ${id}'s name line is one line high: ${JSON.stringify(line)}`);
+      }
+      await page.close();
+    }
   }
 
   // A change of a room's preference (showing a hidden room) asks the server, reads the project again and opens the room; a refusal is told in a

@@ -170,11 +170,16 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .room-item .room-collapse svg { display: block; }
 /* The name is a button (it opens the room): v1's name look (size, weight, colour, the active and unread states) applies; what is stated here is that it is
    not drawn as a button, and that it takes the row's spare width. */
-/* The name takes the room the badges leave and is cut with an ellipsis (v1's own rule) when it is longer; it may shrink to nothing. The badges never shrink
-   and never leave the row: when even the shortest name and the badges do not fit side by side (a nested row at the narrowest column), they wrap under it. */
-.room-item .room-item-top { flex-wrap: wrap; row-gap: 2px; }
-.room-item .room-item-name { flex: 1 1 10ch; min-width: 0; border: 0; background: transparent; text-align: left; }
-.room-item .room-item-top > :not(.room-item-name) { flex: none; }
+/* One line, always: the name takes the room the badges leave and is cut with an ellipsis (v1's own rule) when it is longer; it may shrink to nothing. The badges
+   never shrink and never wrap, neither between them nor inside one (the bell pill's "🔔 1" has a space a browser may break at). */
+.room-item .room-item-top { flex-wrap: nowrap; }
+.room-item .room-item-name { flex: 1 1 0; min-width: 0; border: 0; background: transparent; text-align: left; }
+.room-item .room-item-top > :not(.room-item-name) { flex: none; white-space: nowrap; }
+/* A nested row at the narrowest column leaves the badges less room than they need even with no name at all, and a badge must not wrap or leave the row, so the ones the
+   row can do without go first, by the width of the row's own text column: the member count (also in the name's tooltip) and the mute bell; the pills that ask for
+   the person's attention (the health flag, the bell, the unread count) always stay and tighten their padding. */
+.room-item .room-item-info { container-type: inline-size; }
+@container (max-width: 100px) { .room-item-top { gap: 4px; } .room-item-count, .room-muted { display: none; } .room-item-top :is(.room-health, .room-item-attention, .room-item-unread) { padding-left: 3px; padding-right: 3px; margin-left: 0; min-width: 0; } }
 .room-item .room-item-name:hover { background: transparent; border-color: transparent; }
 .room-item.archived .room-item-name, .room-item.closing .room-item-name, .agent-chat-offer .room-item-name { color: var(--text-muted); }
 .room-item .room-health { padding: 1px 5px; } /* the row's reset zeroes the base's padding */
