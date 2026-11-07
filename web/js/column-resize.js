@@ -1,4 +1,4 @@
-// Drag handles on the inner edge of the rooms column (left) and the members column (right). The widths are CSS variables on the app element
+// Drag handles in the gaps between the panels: on the inner edge of the rooms column (left) and the members column (right). The widths are CSS variables on the app element
 // (--rooms-w, --agents-w), so neither a drag nor a window resize redraws anything: the browser only lays the page out again. They are kept per
 // browser in localStorage (screen sizes differ, so they are not an account preference), clamped to a range and so that the chat keeps a minimum
 // width, and reset by a double click. A handle is a keyboard control too: a focusable vertical separator with arrow, Home and End keys.
@@ -9,18 +9,29 @@ export const COLUMNS = {
 };
 export const CHAT_MIN = 360;
 const STEP = 16;
+// How long the grips stay after the pointer stops moving over the window (the CSS fades them out over a quarter of a second).
+export const GRIP_HOLD_MS = 3000;
 // The thread panel's width, and the window width from which it sits beside the members column (below that it takes the column's place).
 const THREAD_W = 420, THREAD_BESIDE = 1280;
 const PHONE = '(max-width: 700px)';
+// The panels' gaps (theme-v1.css, --gap): one at each side of the window, and one between neighbouring panels.
+const GAP = 6;
 
 export class ColumnResize {
-  constructor({ app = document.querySelector('#app-view'), chat = document.querySelector('.chat'), thread = document.querySelector('#thread-panel'), storage = localStorage } = {}) {
+  constructor({ app = document.querySelector('#app-view'), chat = document.querySelector('.chat'), thread = document.querySelector('#thread-panel'), storage = localStorage, gripHold = GRIP_HOLD_MS } = {}) {
     this.app = app; this.chat = chat; this.thread = thread; this.storage = storage;
     this.wanted = this.read();
     this.handles = {}; this.ends = [];
     for (const name of Object.keys(COLUMNS)) this.handles[name] = this.build(name);
     this.app.append(this.handles.rooms); this.chat.append(this.handles.agents);
     window.addEventListener('resize', () => this.apply());
+    // The grips show while the pointer moves over the window and for `gripHold` ms after it stops (html.col-grips; the CSS fades them).
+    let gripTimer = 0, lastMove = 0;
+    window.addEventListener('pointermove', () => {
+      const now = Date.now(); if (document.documentElement.classList.contains('col-grips') && now - lastMove < 100) return; lastMove = now;
+      document.documentElement.classList.add('col-grips'); clearTimeout(gripTimer);
+      gripTimer = setTimeout(() => document.documentElement.classList.remove('col-grips'), gripHold);
+    }, { passive: true });
     // A drag that loses its pointer (the window lost focus, the pointer was taken away) ends like a release, so the page is never left in the dragging state.
     window.addEventListener('blur', () => { for (const end of this.ends) end(); });
     const watch = (node, attributeFilter) => node && new MutationObserver(() => this.apply()).observe(node, { attributes: true, attributeFilter });
@@ -40,6 +51,8 @@ export class ColumnResize {
   }
   // Whether its handle is there to use: the column is present, and the Usages overview is not standing in for the members column.
   shown(name) { return this.present(name) && (name === 'rooms' || !this.chat.classList.contains('usages-open')); }
+  // What the gaps take from the chat on a desktop window: a gap at each side of the window and one beside each column that is there.
+  chrome(columns) { return 2 * GAP + columns * GAP; }
   // What the chat gives up besides the two columns: the thread panel, which sits at the chat's right edge whenever it is open.
   reserve() { return this.threadOpen() ? THREAD_W : 0; }
   // The widths the columns get now, given what is wanted: each within its own range, and, when both are present, together leaving the chat its
@@ -47,7 +60,7 @@ export class ColumnResize {
   // (a window that shrinks pulls both in, and the wide one more); with one column present it simply may not leave the chat less than the minimum.
   resolve() {
     const widths = Object.fromEntries(Object.keys(COLUMNS).map(name => [name, this.width(name)])), present = Object.keys(COLUMNS).filter(name => this.present(name));
-    const available = window.innerWidth - CHAT_MIN - this.reserve();
+    const available = window.innerWidth - CHAT_MIN - this.reserve() - this.chrome(present.length);
     if (present.length === 2) {
       const excess = widths.rooms + widths.agents - available;
       const slack = { rooms: widths.rooms - COLUMNS.rooms.min, agents: widths.agents - COLUMNS.agents.min }, total = slack.rooms + slack.agents;
@@ -64,7 +77,7 @@ export class ColumnResize {
   limits(name) {
     const spec = COLUMNS[name], other = name === 'rooms' ? 'agents' : 'rooms';
     const otherWidth = this.present(other) ? this.resolve()[other] : 0;
-    return { min: spec.min, max: Math.max(spec.min, Math.min(spec.max, window.innerWidth - otherWidth - CHAT_MIN - this.reserve())) };
+    return { min: spec.min, max: Math.max(spec.min, Math.min(spec.max, window.innerWidth - otherWidth - CHAT_MIN - this.reserve() - this.chrome(this.present(other) ? 2 : 1))) };
   }
   width(name) { const spec = COLUMNS[name], wanted = this.wanted[name] ?? spec.fallback; return Math.max(spec.min, Math.min(spec.max, wanted)); }
   effective(name) { return this.resolve()[name]; }

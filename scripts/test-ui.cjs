@@ -1459,7 +1459,7 @@ async function main() {
     assert.ok(hcNavContrast.ratio >= 7, `selected HC settings tab contrast ${JSON.stringify(hcNavContrast)}`);
     const settingsSize = await first.$eval('#settings-dialog .settings-pane', el => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, nav: el.querySelector('nav').getBoundingClientRect().width }));
     assert.equal(Math.round(settingsSize.width), 760);
-    assert.equal(Math.round(settingsSize.height), 720 - 53, 'the pane runs from the bottom of the top bar to the bottom of the window');
+    assert.equal(Math.round(settingsSize.height), 720);
     assert.equal(Math.round(settingsSize.nav), 180);
     for (const section of ['general', 'usages', 'notifications', 'roles', 'machines']) {
       await first.click(`#settings-${section}-tab`);
@@ -2709,9 +2709,9 @@ async function main() {
       assert.equal(await resolvedPage.$eval('[data-inbox-id="mock_resolved_a"] .inbox-raw', el => !el.hidden && el.textContent.includes('validation_failed') && el.textContent.includes('mock_resolved_a')), true, 'the raw record opens behind the bug icon');
       // Resume / Retry are .btn, Abandon is .btn-danger (checked on the recovery fixture elsewhere); the bulk dismiss is an archive icon with the count beside it.
       assert.equal(await resolvedPage.$eval('.inbox-dismiss-resolved', el => [el.hidden, el.getAttribute('aria-label'), el.title.startsWith('Dismiss all resolved (2)'), el.classList.contains('btn-icon'), !!el.querySelector('.icon-mask-archive'), el.textContent]).then(JSON.stringify), JSON.stringify([false, 'Dismiss all resolved (2)', true, true, true, '2']));
-      // A hidden room list leaves no empty column.
+      // A hidden room list leaves no empty column (only the page's own 6px gap at each side).
       const gutter = await resolvedPage.evaluate(() => { document.querySelector('.sidebar').hidden = true; const r = document.querySelector('#inbox-view').getBoundingClientRect(); const out = { left: Math.round(r.left), width: Math.round(r.width), viewport: innerWidth }; document.querySelector('.sidebar').hidden = false; return out; });
-      assert.deepEqual([gutter.left, gutter.width], [0, gutter.viewport], `an empty gutter is left when the room list is hidden: ${JSON.stringify(gutter)}`);
+      assert.deepEqual([gutter.left, gutter.width], [6, gutter.viewport - 12], `an empty gutter (the page keeps only its own 6px side gaps) is left when the room list is hidden: ${JSON.stringify(gutter)}`);
       // A room that is archived while the card is on screen updates the card and the bulk count (open -> closing -> closed).
       await resolvedPage.evaluate(() => { const item = window.__mockInbox.items.find(entry => entry.id === 'mock_open_failure'); item.room_lifecycle = 'closing'; window.__mockInbox.notify(); });
       await resolvedPage.waitForFunction(() => document.querySelector('[data-inbox-id="mock_open_failure"] .inbox-archived')?.textContent === 'Room is being archived' && document.querySelector('.inbox-dismiss-resolved').getAttribute('aria-label') === 'Dismiss all resolved (3)' && document.querySelector('.inbox-dismiss-resolved').textContent === '3');
@@ -3290,12 +3290,12 @@ async function main() {
     }
     await domClick(settingsPage, '#usages-toggle'); await settingsPage.waitForSelector('#usages-popover:not([hidden])');
     const docked = await settingsPage.evaluate(() => { const box = document.querySelector('#usages-popover').getBoundingClientRect(); return { right: Math.round(innerWidth - box.right), width: Math.round(box.width), chat: document.querySelector('.chat').classList.contains('usages-open'), members: getComputedStyle(document.querySelector('#agents-panel')).display }; });
-    assert.deepEqual(docked, { right: 0, width: 260, chat: true, members: 'none' }, 'usages replace the right column');
-    // The usages column runs from the header row to the bottom of the window at any height and scrolls its own content.
+    assert.deepEqual(docked, { right: 6, width: 260, chat: true, members: 'none' }, 'usages replace the right column, inside the 6px side gap of the page');
+    // The usages column runs from the header row to the bottom of the window (inside the page's 6px gap) at any height and scrolls its own content.
     for (const height of [720, 1000, 420]) {
       await settingsPage.setViewport({ width: 1100, height });
       const fit = await settingsPage.evaluate(() => { const dock = document.querySelector('#usages-popover'), box = dock.getBoundingClientRect(), chat = document.querySelector('.chat').getBoundingClientRect(); return { bottomGap: Math.round(innerHeight - box.bottom), chatGap: Math.round(chat.bottom - box.bottom), overflowY: getComputedStyle(dock).overflowY }; });
-      assert.deepEqual(fit, { bottomGap: 0, chatGap: 0, overflowY: 'auto' }, `the usages column must reach the bottom of the window at ${height}px: ${JSON.stringify(fit)}`);
+      assert.deepEqual(fit, { bottomGap: 6, chatGap: 0, overflowY: 'auto' }, `the usages column must reach the bottom of the window at ${height}px: ${JSON.stringify(fit)}`);
     }
     {
       const scrolls = await settingsPage.evaluate(() => { const dock = document.querySelector('#usages-popover'); const overflowing = dock.scrollHeight > dock.clientHeight; dock.scrollTop = 80; return { overflowing, moved: dock.scrollTop > 0 }; });
@@ -6294,6 +6294,7 @@ async function main() {
           return window.__realFetch(input, options);
         };
       });
+      await first.setViewport({ width: 1130, height: 720 }); // (the panels' gaps leave the composer 24px less: wide enough for the two chips on one row)
       await pick([['chip.png', 10], ['doc.txt', 10]]);
       await first.waitForFunction(() => document.querySelectorAll('#pending-attachments .attachment-pending-item.ready').length === 2);
       const chips = await first.evaluate(() => [...document.querySelectorAll('#pending-attachments .attachment-pending-item.ready')].map(chip => { const box = chip.getBoundingClientRect(), x = chip.querySelector('button').getBoundingClientRect(), host = document.querySelector('#pending-attachments').getBoundingClientRect(); return { top: box.top, height: box.height, within: x.left >= box.left && x.right <= box.right && x.top >= box.top && x.bottom <= box.bottom, visible: box.left >= host.left && box.right <= host.right + 1 }; }));
@@ -6303,6 +6304,7 @@ async function main() {
       await first.evaluate(() => { for (const button of document.querySelectorAll('#pending-attachments .attachment-pending-item.ready button')) button.click(); });
       await first.waitForFunction(() => !document.querySelector('#pending-attachments .attachment-pending-item.ready'));
       await first.evaluate(() => { window.fetch = window.__realFetch; });
+      await first.setViewport({ width: 1100, height: 720 });
       // The thread composer's send failure uses the same notice.
       await first.waitForSelector('#messages .chat-msg:last-of-type');
       await first.hover('#messages .chat-msg:last-of-type');

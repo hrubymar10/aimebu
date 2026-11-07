@@ -218,7 +218,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-context-track { flex: 1; height: 5px; overflow: hidden; border-radius: 3px; background: var(--border); }
 .agent-context-fill { display: block; height: 100%; background: var(--accent); }
 .agent-context-value { min-width: 27px; text-align: right; font-variant-numeric: tabular-nums; }
-.chat > .messages, .chat > .send-bar { margin-right: var(--agents-w, 260px); }
+.chat > .messages, .chat > .send-bar { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
 
 .inbox-view { background: var(--bg-primary); }
 .inbox-view > header { background: var(--bg-secondary); border-color: var(--border); }
@@ -500,7 +500,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .chat #agents-toggle { flex: 0 0 auto; height: 30px; }
 .thread-panel { top: 43px; }
 @media (min-width: 701px) {
-  .chat > header { margin-right: var(--agents-w, 260px); }
+  .chat > header { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
   .chat.agents-collapsed > header { margin-right: 0; }
   .chat > header #agents-toggle { position: absolute; top: 7px; right: 8px; z-index: 3; }
   .agents-panel { top: 0; }
@@ -695,7 +695,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .usages-popover-profile .usage-fill { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: inherit; background: var(--usage-provider-color); }
 .usages-empty button { margin-top: 10px; font-style: normal; }
 .chat.usages-open > .agents-panel { display: none; }
-.chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: var(--agents-w, 260px); }
+.chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
 @media (max-width: 700px) {
   .chat > #usages-popover { top: 43px; width: min(86vw, 340px); box-shadow: -12px 0 30px var(--overlay-shadow); }
   .chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: 0; }
@@ -862,7 +862,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
   .app.rooms-collapsed .chat > header > #edge-rooms-expand, .chat.agents-collapsed > header > #edge-agents-expand { display: inline-flex; }
   .chat > header > #edge-agents-expand { margin-left: auto; }
   .chat.usages-open.agents-collapsed > .agents-panel { display: none; }
-  .chat.usages-open.agents-collapsed > .messages, .chat.usages-open.agents-collapsed > .send-bar { margin-right: var(--agents-w, 260px); }
+  .chat.usages-open.agents-collapsed > .messages, .chat.usages-open.agents-collapsed > .send-bar { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
 }
 /* Room list (layouts A and B): the box on top, rows without always-visible actions, a chip for the project in the flat list. */
 .room-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; padding: 0; border: 0; }
@@ -1658,8 +1658,8 @@ dialog:focus, dialog:focus-visible { outline: none; }
   .chat:has(> .thread-panel:not([hidden])) > .agents-panel { display: none; }
 }
 @media (min-width: 1280px) {
-  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > .thread-panel { right: var(--agents-w, 260px); }
-  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > :is(#messages, .send-bar) { margin-right: min(calc(var(--agents-w, 260px) + 420px), 100%); }
+  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > .thread-panel { right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
+  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > :is(#messages, .send-bar) { margin-right: min(calc(calc(var(--agents-w, 260px) + var(--gap, 0px)) + 420px), 100%); }
 }
 
 /* The shared question / confirmation / notice dialog (dialogs.js). */
@@ -1851,13 +1851,45 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .agents-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .agents-scroll > #agents-list { flex: none; overflow: visible; }
 
-/* The drag handles between the side columns and the chat (column-resize.js). The line is a hairline until it is hovered, focused or dragged; the hit area is wider. */
-.col-resizer { z-index: 6; width: 8px; cursor: col-resize; touch-action: none; background: linear-gradient(to right, transparent 3px, var(--border) 3px, var(--border) 4px, transparent 4px); }
+/* Panels (desktop). The rooms column, the chat (with its thread beside it) and the members column are separate rounded panels on the page background,
+   with a gap between them; the gap is the drag handle (column-resize.js),. A phone and a tablet keep the drawer layout, where --gap is 0. */
+@media (min-width: 701px) {
+  .app { --gap: 6px; --panel-radius: 8px; padding: 0 var(--gap) var(--gap); column-gap: var(--gap); row-gap: var(--gap); background: var(--bg-tertiary); }
+  .app.rooms-collapsed { column-gap: 0; }
+  .app > .topbar { margin: 0 calc(-1 * var(--gap)); }
+  .sidebar, .agents-panel, .chat > #usages-popover, .inbox-view { border: 0; border-radius: var(--panel-radius); outline: 1px solid var(--border); outline-offset: -1px; } /* the ring is an outline, so it takes no room: the panels' headers line up with the chat's */
+  .sidebar, .agents-panel, .inbox-view { overflow: hidden; } /* (the usages column keeps its own overflow: auto) */
+  .chat > #usages-popover { top: 0; bottom: 0; }
+  /* The chat panel is drawn behind its content (it fills, and rounds, the part of the chat the members column leaves) and its ring above it, because the
+     header, the composer and the thread have fills of their own. --col is what the members column (and the gap before it) takes from the chat's right. */
+  .chat { isolation: isolate; background: transparent; --col: calc(var(--agents-w, 260px) + var(--gap)); }
+  .chat.agents-collapsed, .app.no-room .chat { --col: 0px; }
+  .chat.usages-open { --col: calc(var(--agents-w, 260px) + var(--gap)); }
+  .chat::before, .chat::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; right: var(--col); border-radius: var(--panel-radius); pointer-events: none; }
+  .chat::before { z-index: -1; background: var(--bg-primary); }
+  .chat::after { z-index: 7; border: 1px solid var(--border); }
+  .chat > header { border-radius: var(--panel-radius) var(--panel-radius) 0 0; }
+  .chat > .send-bar { border-radius: 0 0 var(--panel-radius) var(--panel-radius); }
+  .thread-panel { border-radius: 0 0 var(--panel-radius) 0; box-shadow: none; }
+}
+@media (min-width: 701px) and (max-width: 1279px) {
+  .chat:has(> .thread-panel:not([hidden])):not(.usages-open) { --col: 0px; }
+}
+
+/* The drag handles: the gap itself. At rest it shows nothing; a grip of three dots appears while the pointer moves over the window, stays for a moment
+   after it stops (column-resize.js sets `col-grips`), then fades. Hovered, focused or dragged, the gap is filled with the accent and the grip stays. */
+.col-resizer { z-index: 6; width: var(--gap, 6px); cursor: col-resize; touch-action: none; background: transparent; transition: background-color .15s; }
+.col-resizer::before { content: ""; position: absolute; inset: 0 -2px; } /* the hit area is a little wider than the gap */
+.col-resizer::after { content: ""; position: absolute; top: 50%; left: 50%; width: 4px; height: 22px; transform: translate(-50%, -50%); opacity: 0; transition: opacity .25s; pointer-events: none;
+  background: radial-gradient(circle at center, var(--text-muted) 1.3px, transparent 1.8px) center top / 4px 8px repeat-y; }
+html.col-grips .col-resizer::after { opacity: 1; }
+.col-resizer:is(:hover, :focus-visible, .dragging) { background: var(--accent); }
+.col-resizer:is(:hover, :focus-visible, .dragging)::after { opacity: 1; background-image: radial-gradient(circle at center, var(--bg-primary) 1.3px, transparent 1.8px); }
+.col-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .col-resizer, .col-resizer::after { transition: none; } }
 .col-resizer[hidden] { display: none; }
-.col-resizer:is(:hover, :focus-visible, .dragging) { background: linear-gradient(to right, transparent 2px, var(--accent) 2px, var(--accent) 5px, transparent 5px); }
-.col-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.col-resizer-rooms { grid-column: 1; grid-row: 2; justify-self: end; margin-right: -4px; position: relative; }
-.col-resizer-agents { position: absolute; top: 0; bottom: 0; right: calc(var(--agents-w, 260px) - 4px); }
+.col-resizer-rooms { grid-column: 1; grid-row: 2; justify-self: end; margin-right: calc(-1 * var(--gap, 6px)); position: relative; }
+.col-resizer-agents { position: absolute; top: 0; bottom: 0; right: var(--agents-w, 260px); }
 .chat.usages-open > .col-resizer-agents, .chat.agents-collapsed > .col-resizer-agents { display: none; }
 html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-select: none !important; }
 @media (max-width: 700px) { .col-resizer { display: none; } }
@@ -1869,23 +1901,8 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .usage-credential-alert details, .usages-credential-alert details { margin-top: 3px; color: var(--text-secondary); }
 .usage-credential-alert summary, .usages-credential-alert summary { cursor: pointer; }
 .usage-credential-alert details p, .usages-credential-alert details p { overflow-wrap: anywhere; font-size: 0.68rem; }
-/* The Usages column's header: the title first, like Rooms (the buttons follow), the grouping button says what it does, Switch is a button and not a status pill. */
-.chat > #usages-popover > header strong { order: -1; flex: 1; text-align: left; }
-.chat > #usages-popover > header .usages-popover-group { width: auto; gap: 5px; padding: 0 8px; }
-.usages-group-text { font-size: 11px; font-weight: 600; white-space: nowrap; }
-.btn.switcher-switch-pill { padding: 2px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); color: var(--text-primary); font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; }
-.btn.switcher-switch-pill:hover:not(:disabled), .btn.switcher-switch-pill:focus-visible, .switcher-switch-pill:hover:not(:disabled), .switcher-switch-pill:focus-visible { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
-/* The alerts about token refresh are red boxes, in Settings as in the column; their reasons are folded under Details. */
-.usage-credential-alerts, .usages-credential-alerts { display: grid; gap: 6px; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--red); border-radius: 6px; }
-.usage-credential-alert, .usages-credential-alert { color: var(--red); font-size: 12px; line-height: 1.4; }
-.usage-credential-alert p, .usages-credential-alert p { margin: 0; }
-.usage-credential-alert details, .usages-credential-alert details { margin-top: 3px; color: var(--text-secondary); }
-.usage-credential-alert summary, .usages-credential-alert summary { cursor: pointer; }
-.usage-credential-alert details p, .usages-credential-alert details p { overflow-wrap: anywhere; font-size: 0.68rem; }
 /* Data older than twice the refresh interval is grey, and says how old it is. */
 .usage-profile.is-stale, .usages-popover-profile.is-stale { --usage-color: var(--text-muted); }
 .usage-profile.is-stale .usage-pace-marker, .usages-popover-profile.is-stale .usage-pace-marker, .usage-profile.is-stale .usage-spark-line, .usages-popover-profile.is-stale .usage-spark-line { opacity: .45; }
 .usage-profile-stale { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .usage-profile-stale .usage-refresh { min-height: 0; height: auto; padding: 1px 8px; font-size: 11px; }
-/* The Settings pane starts where the top bar ends on a desktop width, so its edge does not cut the bar's buttons in half (a phone's pane is the whole screen). */
-@media (min-width: 701px) { #settings-dialog .settings-pane { height: calc(100dvh - 53px); max-height: calc(100dvh - 53px); margin: 53px auto 0; } }

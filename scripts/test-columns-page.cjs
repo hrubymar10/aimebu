@@ -26,19 +26,19 @@ async function main() {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
-  const mount = async ({ width = 1280, height = 800, fresh = true } = {}) => {
+  const mount = async ({ width = 1280, height = 800, fresh = true, hold } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(message.text()); });
     await page.setViewport({ width, height });
     if (fresh) await page.evaluateOnNewDocument(() => { if (!sessionStorage.getItem('kept')) { try { localStorage.clear(); } catch {} sessionStorage.setItem('kept', '1'); } });
     await page.goto(`${origin}/fixture.html`);
-    await page.evaluate(async () => {
+    await page.evaluate(async hold => {
       document.querySelector('#app-view').hidden = false;
       for (const view of ['#boot-view', '#login-view', '#onboarding-view', '#welcome-view']) { const node = document.querySelector(view); if (node) node.hidden = true; }
       const { ColumnResize } = await import('/js/column-resize.js');
-      window.__columns = new ColumnResize();
-    });
+      window.__columns = new ColumnResize(hold ? { gripHold: hold } : {});
+    }, hold);
     return page;
   };
   const widths = page => page.evaluate(() => ({ rooms: Math.round(document.querySelector('.sidebar').getBoundingClientRect().width), agents: Math.round(document.querySelector('#agents-panel').getBoundingClientRect().width), chat: Math.round(document.querySelector('#messages').getBoundingClientRect().width) }));
@@ -59,7 +59,7 @@ async function main() {
   // Defaults, and the handles as separators.
   {
     const page = await mount();
-    assert.deepEqual(await widths(page), { rooms: 240, agents: 260, chat: 780 }, 'the columns start at their defaults');
+    assert.deepEqual(await widths(page), { rooms: 240, agents: 260, chat: 756 }, 'the columns start at their defaults');
     assert.deepEqual(await aria(page, 'rooms'), { role: 'separator', orientation: 'vertical', min: 180, max: 480, now: 240, focusable: true, label: 'Resize the rooms column' });
     assert.deepEqual(await aria(page, 'agents'), { role: 'separator', orientation: 'vertical', min: 200, max: 520, now: 260, focusable: true, label: 'Resize the members column' });
     // Dragging grows and shrinks each column from its inner edge; nothing is written until the pointer is released.
@@ -73,9 +73,9 @@ async function main() {
     assert.equal((await widths(page)).rooms, 180, 'the rooms column stops at its minimum');
     await drag(page, 'rooms', 900);
     assert.equal((await widths(page)).rooms, 480, 'and at its maximum');
-    // ... and the room the chat keeps: with the rooms column at 480, the members column may have 1280 - 480 - 360 = 440 at most, not its own 520.
+    // ... and the room the chat keeps: with the rooms column at 480, the members column may have 1280 - 480 - 360 - 24 (the gaps) = 416 at most, not its own 520.
     await drag(page, 'agents', -900);
-    assert.deepEqual([(await widths(page)).agents, (await widths(page)).chat], [440, 360], 'the chat keeps its minimum width, and the members column stops short of its maximum');
+    assert.deepEqual([(await widths(page)).agents, (await widths(page)).chat], [416, 360], 'the chat keeps its minimum width, and the members column stops short of its maximum');
     await drag(page, 'agents', 900);
     assert.equal((await widths(page)).agents, 200, 'the members column stops at its minimum');
     await drag(page, 'rooms', -900);
@@ -88,17 +88,17 @@ async function main() {
   {
     const page = await mount({ width: 900 });
     await drag(page, 'rooms', 900);
-    assert.equal((await widths(page)).rooms, 280, '900 - 260 - 360 is what the rooms column may have');
-    assert.equal((await aria(page, 'rooms')).max, 280, 'and the separator says so');
+    assert.equal((await widths(page)).rooms, 256, '900 - 260 - 360 - 24 is what the rooms column may have');
+    assert.equal((await aria(page, 'rooms')).max, 256, 'and the separator says so');
     await page.close();
     const wide = await mount({ width: 1280 });
     await drag(wide, 'rooms', 400); // 480
     await wide.setViewport({ width: 1000, height: 800 });
     await wide.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
-    assert.deepEqual(await widths(wide), { rooms: 397, agents: 243, chat: 360 }, 'a shrinking window pulls both columns in, the wide one more, so the chat keeps its width');
+    assert.deepEqual(await widths(wide), { rooms: 377, agents: 239, chat: 360 }, 'a shrinking window pulls both columns in, the wide one more, so the chat keeps its width');
     await wide.setViewport({ width: 1280, height: 800 });
     await wide.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
-    assert.deepEqual(await widths(wide), { rooms: 480, agents: 260, chat: 540 }, 'and the widths the person chose come back when there is room again');
+    assert.deepEqual(await widths(wide), { rooms: 480, agents: 260, chat: 516 }, 'and the widths the person chose come back when there is room again');
     await wide.close();
   }
 
@@ -123,7 +123,7 @@ async function main() {
   {
     const page = await mount();
     await drag(page, 'rooms', 40); await drag(page, 'agents', -30);
-    assert.deepEqual(await widths(page), { rooms: 280, agents: 290, chat: 710 });
+    assert.deepEqual(await widths(page), { rooms: 280, agents: 290, chat: 686 });
     await page.close();
     const again = await mount({ fresh: false });
     assert.deepEqual([(await widths(again)).rooms, (await widths(again)).agents], [280, 290], 'the widths survive a reload');
@@ -144,8 +144,8 @@ async function main() {
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
     const open = await page.evaluate(() => { const px = node => Math.round(parseFloat(getComputedStyle(document.querySelector(node)).marginRight)); const thread = getComputedStyle(document.querySelector('#thread-panel')); return { margin: px('#messages'), right: Math.round(parseFloat(thread.right)), messages: Math.round(document.querySelector('#messages').getBoundingClientRect().width) }; });
     const sizes = await widths(page);
-    assert.deepEqual([open.margin, open.right, open.messages], [sizes.agents + 420, sizes.agents, 360], `the thread sits beside the members column and the chat keeps its minimum: ${JSON.stringify({ open, sizes })}`);
-    assert.ok(sizes.rooms >= 180 && sizes.agents >= 200 && sizes.rooms + sizes.agents <= 1280 - 360 - 420, 'both columns were pulled in to make room for the thread');
+    assert.deepEqual([open.margin, open.right, open.messages], [sizes.agents + 6 + 420, sizes.agents + 6, 360], `the thread sits beside the members column and the chat keeps its minimum: ${JSON.stringify({ open, sizes })}`);
+    assert.ok(sizes.rooms >= 180 && sizes.agents >= 200 && sizes.rooms + sizes.agents <= 1280 - 360 - 420 - 24, 'both columns were pulled in to make room for the thread');
     await page.evaluate(() => { document.querySelector('#thread-panel').hidden = true; });
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
     assert.deepEqual([(await widths(page)).rooms, (await widths(page)).agents], [240, 400], 'closing the thread gives the chosen widths back');
@@ -187,6 +187,41 @@ async function main() {
     await page.evaluate(() => window.dispatchEvent(new Event('blur')));
     assert.deepEqual([await page.evaluate(() => document.documentElement.classList.contains('col-resizing')), await stored(page)], [false, JSON.stringify({ rooms: 280 })], 'the blur ended it and wrote the width');
     await page.mouse.up();
+    await page.close();
+  }
+
+  // The gaps are the handles: three rounded panels with a gap between them, a grip of dots that shows while the pointer moves over the window and fades
+  // a moment after it stops, and the accent when a gap is hovered.
+  {
+    const page = await mount({ hold: 700 });
+    const geometry = await page.evaluate(() => {
+      const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width) }; };
+      const radius = (selector, pseudo) => getComputedStyle(document.querySelector(selector), pseudo).borderTopLeftRadius;
+      return { sidebar: box('.sidebar'), chat: box('.chat'), agents: box('#agents-panel'), rooms: box('.col-resizer-rooms'), members: box('.col-resizer-agents'),
+        radii: [radius('.sidebar'), radius('.chat', '::before'), radius('#agents-panel')], page: getComputedStyle(document.querySelector('#app-view')).backgroundColor, sidebarFill: getComputedStyle(document.querySelector('.sidebar')).backgroundColor };
+    });
+    assert.deepEqual(geometry.radii, ['8px', '8px', '8px'], 'the three columns are rounded panels');
+    assert.equal(geometry.rooms.width, 6, 'the gap is 6px wide'); assert.equal(geometry.members.width, 6);
+    assert.deepEqual([geometry.rooms.left, geometry.rooms.right], [geometry.sidebar.right, geometry.chat.left], 'the rooms handle fills the gap between the rooms panel and the chat');
+    assert.equal(geometry.members.right, geometry.agents.left, 'the members handle fills the gap before the members panel');
+    assert.notEqual(geometry.page, geometry.sidebarFill, 'the panels sit on the page background');
+    const grip = () => page.evaluate(() => ({ shown: document.documentElement.classList.contains('col-grips'), opacity: getComputedStyle(document.querySelector('.col-resizer-rooms'), '::after').opacity, fade: getComputedStyle(document.querySelector('.col-resizer-rooms'), '::after').transitionDuration }));
+    const wait = ms => page.evaluate(ms => new Promise(resolve => setTimeout(resolve, ms)), ms);
+    assert.deepEqual([(await grip()).shown, (await grip()).opacity], [false, '0'], 'no grip until the pointer moves');
+    await page.mouse.move(600, 400); await page.mouse.move(640, 420); await wait(60);
+    assert.equal((await grip()).shown, true, 'the grip shows while the pointer moves over the window');
+    await wait(300); assert.ok(Number((await grip()).opacity) > 0.99, 'fully visible once it has faded in');
+    assert.equal((await grip()).fade, '0.25s', 'and fades out over a quarter of a second');
+    await wait(1000);
+    assert.deepEqual([(await grip()).shown, (await grip()).opacity], [false, '0'], 'the grip is gone a moment after the pointer stops');
+    assert.equal(await page.evaluate(async () => (await import('/js/column-resize.js')).GRIP_HOLD_MS), 3000, 'it stays for three seconds by default');
+    // Hovered, a gap is filled with the accent and its grip stays (the pointer is no longer moving, so it is the hover that holds it).
+    const from = await centre(await handle(page, 'rooms'));
+    await page.mouse.move(from.x, from.y); await wait(500);
+    const hover = await page.evaluate(() => { const probe = document.createElement('i'); probe.style.background = 'var(--accent)'; document.body.append(probe); const accent = getComputedStyle(probe).backgroundColor; probe.remove(); const handle = document.querySelector('.col-resizer-rooms'); return { accent, fill: getComputedStyle(handle).backgroundColor, opacity: getComputedStyle(handle, '::after').opacity }; });
+    assert.deepEqual([hover.fill, hover.opacity], [hover.accent, '1'], 'a hovered gap is accent-coloured and keeps its grip');
+    await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+    assert.equal((await grip()).fade, '0s', 'with reduced motion the grip does not fade');
     await page.close();
   }
 
