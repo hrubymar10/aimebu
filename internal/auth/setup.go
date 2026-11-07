@@ -150,7 +150,7 @@ func (setup *OwnerSetup) Redeem(ctx context.Context, token, login, password, rem
 		return "", err
 	}
 	setup.closeLocked()
-	setup.Throttle.reset(setupThrottleKey(remoteIP))
+	setup.Throttle.reset(setupThrottleKey(remoteIP), remoteIP)
 	return ownerID, nil
 }
 

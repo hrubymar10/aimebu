@@ -26,12 +26,15 @@ var (
 const sessionTimeFormat = "2006-01-02T15:04:05.000000000Z"
 
 type Service struct {
-	Store        *store.Store
-	Policy       PasswordPolicy
-	SessionTTL   time.Duration
-	Throttle     *Throttler
-	PairThrottle *Throttler
-	Now          func() time.Time
+	Store      *store.Store
+	Policy     PasswordPolicy
+	SessionTTL time.Duration
+	// MaxSessionAge is the absolute lifetime of a session, counted from when it was made: the sliding expiry never carries it past this, so a
+	// stolen session token stops working after it however steadily it is used.
+	MaxSessionAge time.Duration
+	Throttle      *Throttler
+	PairThrottle  *Throttler
+	Now           func() time.Time
 	// PublicURL is the HTTP(S) origin browsers use when a reverse proxy
 	// fronts the server (AIMEBU2_PUBLIC_URL); empty when unset.
 	PublicURL string
@@ -39,7 +42,7 @@ type Service struct {
 
 func NewService(db *store.Store) *Service {
 	return &Service{Store: db, Policy: DefaultPasswordPolicy,
-		SessionTTL: 7 * 24 * time.Hour, Throttle: NewThrottler(), PairThrottle: NewThrottler(), Now: time.Now}
+		SessionTTL: 7 * 24 * time.Hour, MaxSessionAge: 30 * 24 * time.Hour, Throttle: NewLoginThrottler(), PairThrottle: NewThrottler(), Now: time.Now}
 }
 
 type LoginResult struct {
@@ -57,6 +60,12 @@ func (service *Service) Login(ctx context.Context, login, password, remoteIP str
 		return LoginResult{}, ErrRateLimited
 	}
 	defer service.Throttle.release(login, remoteIP)
+	// Guesses that cannot be right are refused before any password work: an empty password or name and a name no login is as long as are not worth
+	// a 600,000-iteration hash, and the refusal counts against the source like any other wrong guess.
+	if password == "" || login == "" || len(login) > 256 {
+		service.Throttle.fail(login, remoteIP, service.Now().UTC())
+		return LoginResult{}, ErrInvalidCredentials
+	}
 	maxIterations, err := service.Store.MaxPasswordIterations(ctx)
 	if err != nil {
 		return LoginResult{}, err
@@ -81,7 +90,7 @@ func (service *Service) Login(ctx context.Context, login, password, remoteIP str
 		service.Throttle.fail(login, remoteIP, service.Now().UTC())
 		return LoginResult{}, ErrInvalidCredentials
 	}
-	service.Throttle.reset(login)
+	service.Throttle.reset(login, remoteIP)
 	if rehash {
 		hash, params, err := HashPassword(password, service.Policy)
 		if err != nil {
@@ -108,7 +117,7 @@ func (service *Service) StartSession(ctx context.Context, userID string) (LoginR
 	expires := now.Add(service.SessionTTL)
 	_, err = service.Store.CreateAuthSession(ctx, store.AuthSession{UserID: userID,
 		TokenHash: hashToken(token), CSRFToken: csrf,
-		ExpiresAt: expires.Format(sessionTimeFormat)})
+		ExpiresAt: expires.Format(sessionTimeFormat), CreatedAt: now.Format(sessionTimeFormat)})
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -123,6 +132,12 @@ func (service *Service) Authenticate(ctx context.Context, token string) (store.A
 	}
 	now := service.Now().UTC()
 	newExpiry := now.Add(service.SessionTTL)
+	// The expiry slides, but never past the session's absolute lifetime.
+	if created, ok := service.sessionCreated(session); ok && service.MaxSessionAge > 0 {
+		if limit := created.Add(service.MaxSessionAge); newExpiry.After(limit) {
+			newExpiry = limit
+		}
+	}
 	// Every commit costs an fsync and the store has one connection, so a
 	// write per request queues a page load's parallel calls behind each
 	// other. Only slide the expiry once it lags noticeably.
@@ -172,7 +187,19 @@ func (service *Service) CheckSession(ctx context.Context, token string) (store.A
 	if err != nil || !expires.After(now) {
 		return store.AuthSession{}, ErrInvalidSession
 	}
+	if service.MaxSessionAge > 0 {
+		// A session whose age cannot be read is not trusted: its lifetime would be unbounded.
+		created, ok := service.sessionCreated(session)
+		if !ok || !created.Add(service.MaxSessionAge).After(now) {
+			return store.AuthSession{}, ErrInvalidSession
+		}
+	}
 	return session, nil
+}
+
+func (service *Service) sessionCreated(session store.AuthSession) (time.Time, bool) {
+	created, err := time.Parse(time.RFC3339Nano, session.CreatedAt)
+	return created.UTC(), err == nil
 }
 
 func (service *Service) RevokeSession(ctx context.Context, token string) error {
@@ -295,6 +322,11 @@ func (service *Service) PairingRetryAfter(token, remoteIP string) time.Duration 
 	return service.PairThrottle.RetryAfter(pairingThrottleKey(token), remoteIP, service.Now())
 }
 
+// LoginRetryAfter is how long a login attempt from this source must wait.
+func (service *Service) LoginRetryAfter(login, remoteIP string) time.Duration {
+	return service.Throttle.RetryAfter(strings.ToLower(strings.TrimSpace(login)), remoteIP, service.Now())
+}
+
 func (service *Service) RedeemMachinePairing(ctx context.Context, token, remoteIP string) (store.Machine, string, error) {
 	now := service.Now().UTC()
 	throttleName := pairingThrottleKey(token)
@@ -318,7 +350,7 @@ func (service *Service) RedeemMachinePairing(ctx context.Context, token, remoteI
 	if err != nil {
 		return store.Machine{}, "", err
 	}
-	service.PairThrottle.reset(throttleName)
+	service.PairThrottle.reset(throttleName, remoteIP)
 	return machine, key, nil
 }
 

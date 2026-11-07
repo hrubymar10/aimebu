@@ -188,9 +188,16 @@ type AuthSession struct {
 	CSRFToken string
 	ExpiresAt string
 	RevokedAt sql.NullString
+	// CreatedAt is when the session was made; its absolute lifetime counts from it, however often the expiry has slid.
+	CreatedAt string
 }
 
 func (s *Store) CreateAuthSession(ctx context.Context, session AuthSession) (AuthSession, error) {
+	created := session.CreatedAt
+	if created == "" {
+		created = timestamp()
+	}
+	session.CreatedAt = created
 	err := s.Tx(ctx, func(tx *Tx) error {
 		var err error
 		session.ID, err = newID("ses")
@@ -198,8 +205,8 @@ func (s *Store) CreateAuthSession(ctx context.Context, session AuthSession) (Aut
 			return err
 		}
 		_, err = tx.Exec(`INSERT INTO auth_session
-			(id,user_id,csrf_token,expires_at,token_hash) VALUES (?,?,?,?,?)`,
-			session.ID, session.UserID, session.CSRFToken, session.ExpiresAt, session.TokenHash)
+			(id,user_id,csrf_token,expires_at,token_hash,created_at) VALUES (?,?,?,?,?,?)`,
+			session.ID, session.UserID, session.CSRFToken, session.ExpiresAt, session.TokenHash, created)
 		if err != nil {
 			return err
 		}
@@ -215,9 +222,9 @@ func (s *Store) SessionByTokenHash(ctx context.Context, tokenHash string) (AuthS
 		return AuthSession{}, err
 	}
 	var session AuthSession
-	err := s.db.QueryRowContext(ctx, `SELECT s.id,s.user_id,s.token_hash,s.csrf_token,s.expires_at,s.revoked_at
+	err := s.db.QueryRowContext(ctx, `SELECT s.id,s.user_id,s.token_hash,s.csrf_token,s.expires_at,s.revoked_at,s.created_at
 		FROM auth_session s JOIN user u ON u.id=s.user_id WHERE s.token_hash=? AND u.disabled_at IS NULL`, tokenHash).Scan(&session.ID, &session.UserID,
-		&session.TokenHash, &session.CSRFToken, &session.ExpiresAt, &session.RevokedAt)
+		&session.TokenHash, &session.CSRFToken, &session.ExpiresAt, &session.RevokedAt, &session.CreatedAt)
 	return session, err
 }
 

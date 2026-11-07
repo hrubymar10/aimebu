@@ -87,7 +87,7 @@ func (service *Service) RedeemUserInvite(ctx context.Context, token, login, pass
 		}
 		return store.UserInvite{}, "", "", err
 	}
-	service.PairThrottle.reset(throttleKey)
+	service.PairThrottle.reset(throttleKey, remoteIP)
 	user, err := service.Store.UserByID(ctx, userID)
 	if err != nil {
 		return store.UserInvite{}, "", "", err

@@ -98,21 +98,40 @@ TLS requests and on proxied requests whose `Host` is the host of an HTTPS
 authenticated HTTP requests, but the stored expiry is moved only once it lags
 the new one by more than a tenth of the lifetime (at least five minutes, at most
 half the lifetime), so a page load's parallel requests do not each write. The
-effective idle timeout is therefore between about 6 days 7 hours and 7 days. An open event socket checks session validity every 30 seconds
+effective idle timeout is therefore between about 6 days 7 hours and 7 days.
+A session also has an absolute lifetime of 30 days from when it was made
+(`auth_session.created_at`): the expiry never slides past it, and the session
+is refused after it however steadily it is used, so a stolen token ends. Signing
+in again starts a new one. Sessions that existed when this was added start their
+30 days at that migration. An open event socket checks session validity every 30 seconds
 without renewing its expiry. Unsafe HTTP methods require `X-CSRF-Token`; WebSocket upgrades need
 a valid session cookie and a same-origin `Origin`; behind a reverse proxy the
 configured `AIMEBU2_PUBLIC_URL` origin also counts as same-origin. Failed logins are throttled
-per login and remote IP with exponential backoff (behind a proxy listed in
+per (login, client) and per client, with exponential backoff, so someone guessing at a login from
+one address cannot lock the person out of it from another (behind a proxy listed in
 `AIMEBU2_TRUSTED_PROXIES`, the remote IP comes from `X-Forwarded-For`; see
 [HTTPS](tls.md#reverse-proxy)), with the same invalid-login
 error for unknown users and wrong passwords. Password verification pads older
 hash policies to the strongest stored or current iteration count, including
 the work done for unknown users. The throttle reserves in-flight attempts
-atomically per login and IP. Five failures per login/IP in a 15-minute window
-are allowed before exponential backoff starts. A successful sign-in clears
-that login's failures but not the IP's, so signing in to one's own account
-does not restore the budget for guessing at others. The throttle prunes expired
-entries and caps its entry map.
+atomically per login and client. A client is one IPv4 address or one IPv6 /64.
+Five failures per login/client in a 15-minute window are allowed before
+exponential backoff starts, and the client's own total across logins is
+throttled the same way. A successful sign-in clears that login's failures for that
+client but not the client's total, so signing in to one's own account does not
+restore the budget for guessing at others. Once more than 50 guesses at one login
+have failed across all clients, further guesses at it from a client that has already
+failed at it are spaced a second apart: a fixed pause that never grows. A client
+with no failures at that login is not held by it, so the person with the right
+password gets through while a guesser elsewhere keeps the pause running. The trade
+is that a guesser who spreads over many addresses gets each address's own free guesses
+(five per 15 minutes) and the per-client backoff, not the pause: the aggregate slows
+repeat guessers, it does not cap a very distributed one. Guesses
+that cannot be right (an empty name or password, a name over 256 bytes) are
+refused before any password work and count as failures. The throttle prunes expired
+entries and caps its entry map; when it is full it forgets entries that have not
+earned a delay first, oldest first, and keeps those serving a delay, so a flood of
+one-guess clients cannot wash a penalty away.
 Machine and agent keys are
 256-bit random values prefixed `amk_` and `aak_`; only hashes are stored, and
 revocation invalidates them.

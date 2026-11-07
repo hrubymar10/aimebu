@@ -621,7 +621,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	result, err := s.Auth.Login(r.Context(), req.Login, req.Password, host)
 	if err != nil {
 		if errors.Is(err, auth.ErrRateLimited) {
-			delay := s.Auth.Throttle.RetryAfter(strings.ToLower(strings.TrimSpace(req.Login)), host, s.Auth.Now())
+			delay := s.Auth.LoginRetryAfter(req.Login, host)
 			seconds := int((delay + time.Second - 1) / time.Second)
 			if seconds < 1 {
 				seconds = 1

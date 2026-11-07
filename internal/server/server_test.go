@@ -438,8 +438,9 @@ func TestLoginRetryAfterUsesCanonicalName(t *testing.T) {
 	f := newFixture(t)
 	now := time.Now()
 	f.srv.Auth.Now = func() time.Time { return now }
+	// The failures come from the address the HTTP probe below comes from (loopback in the fixture): the throttle counts each source on its own.
 	for attempt := 0; attempt < 9; attempt++ {
-		if _, err := f.srv.Auth.Login(t.Context(), "owner", "wrong", "192.0.2.1"); !errors.Is(err, auth.ErrInvalidCredentials) {
+		if _, err := f.srv.Auth.Login(t.Context(), "owner", "wrong", "127.0.0.1"); !errors.Is(err, auth.ErrInvalidCredentials) {
 			t.Fatalf("failure %d: %v", attempt, err)
 		}
 		if attempt < 8 {

@@ -254,22 +254,111 @@ func TestLoginUniformErrorsAndThrottle(t *testing.T) {
 			t.Fatalf("failure %d: %v", i, err)
 		}
 	}
-	if _, err := service.Login(ctx, "owner", testPassword, "127.0.0.3"); !errors.Is(err, ErrRateLimited) {
-		t.Fatalf("per-login throttle = %v", err)
+	// Someone guessing at the login from one address does not lock the person out of it from another.
+	if _, err := service.Login(ctx, "owner", testPassword, "127.0.0.3"); err != nil {
+		t.Fatalf("the person from another address while a guesser is throttled = %v", err)
+	}
+	if _, err := service.Login(ctx, "owner", testPassword, "127.0.0.4"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("per-login throttle for the guessing address = %v", err)
 	}
 	if _, err := service.Login(ctx, "absent", "wrong", "127.0.0.4"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("per-IP throttle = %v", err)
 	}
 	now = now.Add(250 * time.Millisecond)
-	if _, err := service.Login(ctx, "owner", "wrong", "127.0.0.3"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := service.Login(ctx, "owner", "wrong", "127.0.0.4"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("attempt after first backoff = %v", err)
 	}
-	if _, err := service.Login(ctx, "owner", testPassword, "127.0.0.3"); !errors.Is(err, ErrRateLimited) {
+	if _, err := service.Login(ctx, "owner", testPassword, "127.0.0.4"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("exponential backoff = %v", err)
 	}
 	now = now.Add(500 * time.Millisecond)
-	if _, err := service.Login(ctx, "owner", testPassword, "127.0.0.3"); err != nil {
+	if _, err := service.Login(ctx, "owner", testPassword, "127.0.0.4"); err != nil {
 		t.Fatalf("login after backoff = %v", err)
+	}
+}
+
+// A login is guessed at from many addresses: each is throttled on its own, and once many guesses have failed across all of them the guesses
+// of an address that has already failed are spaced a second apart; an address with no failures at the login (the person's) is not held by it.
+func TestLoginThrottleIsPerSourceWithAFixedSpacingForAManySourceGuesser(t *testing.T) {
+	service, _, _ := testService(t)
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	service.Now = func() time.Time { return now }
+	ctx := context.Background()
+	for i := 0; i <= aggregateFreeFailures; i++ {
+		ip := fmt.Sprintf("10.1.%d.%d", i/200, i%200+1)
+		if _, err := service.Login(ctx, "owner", "wrong", ip); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("guess %d: %v", i, err)
+		}
+	}
+	// The person, from an address that has failed nothing at this login, is not held by the pause, though it is running.
+	if delay := service.LoginRetryAfter("owner", "10.9.9.9"); delay == 0 || delay > aggregateSpacing {
+		t.Fatalf("the pause should be running and no longer than %v: %v", aggregateSpacing, delay)
+	}
+	if _, err := service.Login(ctx, "owner", testPassword, "10.9.9.9"); err != nil {
+		t.Fatalf("the person while a guesser elsewhere keeps the pause running = %v", err)
+	}
+	// An address that has already failed at the login is held by it, for the spacing only, and then may try again.
+	if _, err := service.Login(ctx, "owner", "wrong", "10.9.9.7"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("its first guess = %v", err)
+	}
+	if _, err := service.Login(ctx, "owner", testPassword, "10.9.9.7"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("a repeat guess inside the pause = %v", err)
+	}
+	now = now.Add(aggregateSpacing)
+	if _, err := service.Login(ctx, "owner", testPassword, "10.9.9.7"); err != nil {
+		t.Fatalf("after the spacing = %v", err)
+	}
+	// Guessing at other logins is not slowed by it.
+	if _, err := service.Login(ctx, "absent", "wrong", "10.9.9.8"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("another login = %v", err)
+	}
+}
+
+// One subscriber holds a whole /64, so the low bits of an IPv6 address are not a new source; an IPv4-mapped address is the IPv4 one.
+func TestLoginThrottleKeysIPv6ByItsSixtyFour(t *testing.T) {
+	service, _, _ := testService(t)
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	service.Now = func() time.Time { return now }
+	ctx := context.Background()
+	for i := 0; i < 6; i++ {
+		ip := fmt.Sprintf("2001:db8:1:2::%x", i+1)
+		if _, err := service.Login(ctx, "owner", "wrong", ip); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("guess %d: %v", i, err)
+		}
+	}
+	if _, err := service.Login(ctx, "owner", testPassword, "2001:db8:1:2:ffff::7"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("another address in the same /64 = %v", err)
+	}
+	if _, err := service.Login(ctx, "owner", testPassword, "2001:db8:1:3::1"); err != nil {
+		t.Fatalf("a different /64 = %v", err)
+	}
+	if clientKey("::ffff:192.0.2.7") != clientKey("192.0.2.7") {
+		t.Fatalf("a mapped address is its IPv4 source: %q %q", clientKey("::ffff:192.0.2.7"), clientKey("192.0.2.7"))
+	}
+}
+
+// The table is bounded, and a flood of one-guess sources does not wash away a source that has earned a delay.
+func TestThrottleTableIsBoundedAndKeepsPenalties(t *testing.T) {
+	throttle := NewLoginThrottler()
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < freeFailureBudget+3; i++ {
+		throttle.fail("victim", "198.51.100.1", now)
+	}
+	until := now.Add(throttle.RetryAfter("victim", "198.51.100.1", now))
+	for i := 0; i < 3*maxThrottleEntries; i++ {
+		ip := fmt.Sprintf("10.%d.%d.%d", i/65536%256, i/256%256, i%256)
+		if throttle.reserve("flood", ip, now) {
+			throttle.fail("flood", ip, now)
+		}
+	}
+	throttle.mu.Lock()
+	size := len(throttle.entries)
+	throttle.mu.Unlock()
+	if size > maxThrottleEntries {
+		t.Fatalf("the table grew to %d", size)
+	}
+	if got := now.Add(throttle.RetryAfter("victim", "198.51.100.1", now)); !got.Equal(until) {
+		t.Fatalf("the penalty was washed away: %v then, %v now", until, got)
 	}
 }
 
@@ -725,5 +814,36 @@ func TestSlideThresholdBounds(t *testing.T) {
 	service.SessionTTL = 4 * time.Minute
 	if got := service.slideThreshold(); got != 2*time.Minute {
 		t.Fatalf("short TTL threshold = %s", got)
+	}
+}
+
+// A session that is used steadily still ends: the expiry slides, but never past the session's absolute lifetime.
+func TestSessionEndsAtItsAbsoluteLifetimeHoweverOftenItIsUsed(t *testing.T) {
+	service, _, _ := testService(t)
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	service.Now = func() time.Time { return now }
+	ctx := context.Background()
+	login, err := service.Login(ctx, "owner", testPassword, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Used every two days, so the sliding expiry never runs out.
+	for day := 2; day < 30; day += 2 {
+		now = time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC).Add(time.Duration(day) * 24 * time.Hour)
+		session, err := service.Authenticate(ctx, login.SessionToken)
+		if err != nil {
+			t.Fatalf("day %d: %v", day, err)
+		}
+		expires, _ := time.Parse(sessionTimeFormat, session.ExpiresAt)
+		if limit := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC).Add(service.MaxSessionAge); expires.After(limit) {
+			t.Fatalf("day %d: the expiry %v slid past the absolute lifetime %v", day, expires, limit)
+		}
+	}
+	now = time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC).Add(service.MaxSessionAge)
+	if _, err := service.Authenticate(ctx, login.SessionToken); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("a session past its absolute lifetime = %v", err)
+	}
+	if _, err := service.CheckSession(ctx, login.SessionToken); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("a long-lived socket past the absolute lifetime = %v", err)
 	}
 }
