@@ -103,7 +103,7 @@ function Row({ view, store, ctx, preview }) {
     <span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">${glyph}</span></span>
     <div class="room-item-info"><div class="room-item-top">
     <button type="button" class="row-btn room-item-name" title=${`${room.title} · ${members} ${members === 1 ? 'member' : 'members'}`} onClick=${select}>${room.title}</button>
-    ${view.chip && projectName && !(room.kind === 'home' && room.title.trim().toLowerCase() === projectName.trim().toLowerCase()) && html`<span class="room-project" title=${`Project ${projectName}`}>${projectName}</span>`}
+    ${view.chip && projectName && !(room.kind === 'home' && room.title.trim().toLowerCase() === projectName.trim().toLowerCase()) && html`<span class=${ctx.filtering ? 'room-project room-project-needed' : 'room-project'} title=${`Project ${projectName}`}>${projectName}</span>`}
     ${(affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`}
     ${quiet && html`<span class="room-muted" role="img" title=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'} aria-label=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'}><span class="icon-mask icon-mask-bell-disabled" aria-hidden="true"></span></span>`}
     ${room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
@@ -180,7 +180,7 @@ export function SidebarList({ store, projectButton }) {
   let tree = shown ? build() : null;
   // A project seen for the first time starts collapsed: fold it, then draw the tree again with it folded.
   if (tree && !store.holdFolds && store.foldNew(tree.collapsible, tree.nested, tree.holdsActive)) tree = build();
-  const ctx = { sort, active, previewAll: loadPreviewAll() };
+  const ctx = { sort, active, previewAll: loadPreviewAll(), filtering: !!tree?.filtering };
   useLayoutEffect(() => {
     if (!tree) return;
     store.collapsible.value = tree.collapsible;

@@ -286,3 +286,34 @@ html[data-ui-roomsettings="b"] #room-info-dialog .room-info-x { display: inline-
 html[data-ui-roomsettings="b"] #room-info-dialog #room-info-close { display: none; }
 html[data-ui-roomsettings="b"] #room-info-dialog::backdrop { background: rgba(0, 0, 0, .5); }
 @media (max-width: 700px) { html[data-ui-roomsettings="b"] #room-info-dialog[open] { min-height: 100dvh; } }
+
+/* Phone pass (N4). */
+/* The composer's corner "Aa" has z-index 2 and the thread panel covers the composer: without its own stacking context the button showed through the panel. */
+.composer-field { isolation: isolate; }
+/* The invite form is a wrapping flex row; its group sized to its longest line of text and ran off the right edge of Settings -> Users on a phone. */
+.user-invite-form > .settings-group { flex: 1 1 100%; min-width: 0; }
+@media (max-width: 700px) {
+  /* A table fills the message and wraps its cells; only a table with many columns scrolls sideways (v1 sizes it to its content, which hid every column but the first). */
+  .md-table { width: 100%; }
+  .md-th { white-space: nowrap; }
+  .md-td { min-width: 7ch; overflow-wrap: break-word; }
+}
+/* Touch targets: a finger needs about 40px. Quiet glyphs, breadcrumbs and chips keep their look; an invisible hit area grows around them. */
+@media (pointer: coarse) {
+  :is(.quiet-glyph, .room-crumbs .room-crumb, .thread-chip, .health-disk-clean) { position: relative; }
+  :is(.quiet-glyph, .room-crumbs .room-crumb, .thread-chip, .health-disk-clean)::after { content: ""; position: absolute; inset: -10px -6px; }
+  .btn:not(.btn-sm) { min-height: 40px; }
+  :is(#settings-dialog, #health-popover) :is(select, input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"])) { min-height: 40px; }
+}
+/* v1 draws the code-block copy button's icon in #fff on --bg-tertiary, which is a pale grey in the light themes: the icon was invisible. */
+:is([data-theme="light"], [data-theme$="-light"]) :is(.chat-msg-body, .visual-plan-block-body, .answer-description) .md-copy-btn { color: var(--text-primary); }
+:is([data-theme="light"], [data-theme$="-light"]) :is(.chat-msg-body, .visual-plan-block-body, .answer-description) .md-copy-btn svg { color: var(--text-primary); }
+
+/* Sidebar on a phone. The rows are grouped under their project, so the project chip only repeats the heading above them and takes the room the name needs
+   ("Phone revi..."); it stays where it tells rooms apart, in the results of a filter. */
+@media (max-width: 700px) { .room-item .room-project:not(.room-project-needed) { display: none; } }
+/* The row's small controls (new room, move, the fold chevron) are 22 to 25px; a finger needs more, and a miss selects the room. The look is unchanged. */
+@media (pointer: coarse) {
+  .room-item :is(.add-room, .project-move, .branch.room-collapse) { position: relative; }
+  .room-item :is(.add-room, .project-move, .branch.room-collapse)::after { content: ""; position: absolute; inset: -9px -7px; }
+}

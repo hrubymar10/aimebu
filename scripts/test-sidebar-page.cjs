@@ -426,6 +426,8 @@ async function main() {
     await page.type('.room-filter-input', 'gen');
     assert.deepEqual((await rows(page)).map(row => row[0]), ['rm_gen', 'rm_bg']);
     assert.equal(await page.evaluate(() => document.querySelector('.room-filter-input') === window.__box && window.__box.value), 'gen');
+    // In filter results the project chip tells rooms apart (a phone keeps it); outside a filter it only repeats the heading above (a phone hides it, see test-phone-pass-page).
+    assert.equal(await page.$$eval('.room-item .room-project', nodes => nodes.length > 0 && nodes.every(node => node.classList.contains('room-project-needed'))), true, 'while filtering every chip is marked as needed');
     await page.evaluate(() => window.__sidebar.setActive('rm_gen'));
     assert.equal(await page.evaluate(() => document.querySelector('.room-filter-input') === window.__box && window.__box.value === 'gen'), true, 'a redraw keeps the box');
     await page.type('.room-filter-input', 'zzz');
@@ -435,6 +437,7 @@ async function main() {
     assert.equal((await rows(page)).some(row => row[0] === 'rm_cg'), true);
     await page.$eval('.room-filter-input', node => { node.value = ''; node.dispatchEvent(new Event('input')); });
     assert.equal((await rows(page)).length > 8, true);
+    assert.equal(await page.$$eval('.room-item .room-project', nodes => nodes.length > 0 && nodes.every(node => !node.classList.contains('room-project-needed'))), true, 'without a filter no chip is marked as needed');
     await page.close();
   }
 

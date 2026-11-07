@@ -105,6 +105,7 @@ test-ui: ## Check web/v1.css against v1, run Chromium smoke against a scratch se
 	node scripts/test-topbar-page.cjs
 	node scripts/test-backdrop-page.cjs
 	node scripts/test-telemetry-page.cjs
+	node scripts/test-phone-pass-page.cjs
 
 dev: ## Run the server with live reload
 	go tool air -c .air.toml
