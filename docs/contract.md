@@ -858,16 +858,23 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
   supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?,
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}]}`
 - S→M `hello_ack{v, desired[{agent_id, generation, desired, desired_rev}],
   redeliver[...], resend_receipts[...], harness_settings[...],
-  harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...]}` — the optional probe directories are the
+  harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...], telemetry?}` — the optional probe directories are the
   project folders mapped to that machine (`harness_probe_dir` the first, `harness_probe_dirs` all of them in project order,
   each once, at most 8), used only for launcher version discovery: a container launcher answers only from a folder its
   container mounts, which the server cannot know, so the supervisor asks from each in turn until one answers.
+- S→M `telemetry_config{v, telemetry:{enabled, dsn?, environment?, traces_sample_rate?}}`, and the same object as `telemetry` in `hello_ack`: the
+  server's effective error and performance reporting settings (its environment, else the stored Settings once the owner answered the consent popup), sent
+  when a supervisor connects and again whenever they change. It carries no identity of a person. A supervisor announces `supports_telemetry_config=true`
+  in `hello` when it takes them, and only then is it sent the frame (an older supervisor does not know the frame type; it ignores the `hello_ack`
+  field); the server's own embedded supervisor does not announce it, being the server's process. The supervisor starts, replaces or stops its own reporting
+  by it, and sets the environment of the `agent-tools` bridge it spawns (see [Telemetry](telemetry.md#supervisors)). A DSN in the supervisor machine's own
+  environment (`AIMEBU2_SENTRY_DSN`, a DSN or `off`) wins over it.
 - S→M `harness_set{v, req_id, harness_setting:{tool,variant,enabled,override_path}}`;
   M→S `harness_result{v,req_id,harness?,code?,message?}` validates and applies
   the setting on that supervisor. M→S

@@ -1,7 +1,7 @@
 // Import-free: scripts/test-shell-model.cjs runs this module in a vm.
 
 // 'agents' is the caption that starts the second group.
-export const TABS = [['general', 'General'], ['usages', 'Usages'], ['notifications', 'Notifications'], ['roles', 'Roles'], ['users', 'Users'],
+export const TABS = [['general', 'General'], ['usages', 'Usages'], ['notifications', 'Notifications'], ['telemetry', 'Telemetry'], ['roles', 'Roles'], ['users', 'Users'],
   ['prompts', 'Prompts'], ['macros', 'Macros'], ['agents'], ['machines', 'Machines'], ['harnesses', 'Harnesses']];
 
 const INSTANCE = new Set(['roles', 'prompts', 'macros', 'machines', 'harnesses']);

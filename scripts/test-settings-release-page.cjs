@@ -4,7 +4,7 @@
 const assert = require('node:assert/strict');
 const { scratch, OWNER } = require('./scratch-server.cjs');
 
-const SECTIONS = ['general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'machines', 'harnesses'];
+const SECTIONS = ['general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'telemetry', 'machines', 'harnesses'];
 
 async function main() {
   const server = await scratch();

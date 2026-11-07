@@ -52,6 +52,7 @@ type machineConn struct {
 	supportsAgentLogs          bool
 	supportsAgentLogSize       bool
 	supportsStopReplay         bool
+	supportsTelemetryConfig    bool
 	harnessMu                  sync.Mutex
 	harnessSetMu               sync.Mutex
 	harnesses                  []protocol.HarnessRow
@@ -301,7 +302,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, supportsTelemetryConfig: hello.SupportsTelemetryConfig, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	s.machineMu.Lock()
 	old := s.machines[machineID]
@@ -336,7 +337,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
+	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Telemetry: s.telemetryForMachine(ctx, c), Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
 		return
 	}
 	if err := s.enqueuePendingSpawns(ctx, c); err != nil {

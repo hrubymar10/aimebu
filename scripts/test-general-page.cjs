@@ -125,9 +125,9 @@ async function main() {
     {
       const page = await mount();
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general > div')].map(div => `${div.id}:${div.querySelector('h3').textContent}`)),
-        ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'error-reports-section:Error reports', 'settings-backup:Settings backup']);
+        ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'settings-backup:Settings backup']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general .settings-row')].filter(row => !row.hidden).map(row => (row.querySelector('input, select, button')).id)),
-        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'error-reports-enabled', 'error-reports-dsn', 'settings-backup-export', 'settings-backup-file']);
+        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'settings-backup-export', 'settings-backup-file']);
       await page.close();
     }
     // The chat switches show what this person has and change the page at once: the bell and the debug button follow them.

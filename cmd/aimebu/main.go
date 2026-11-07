@@ -29,6 +29,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter/vibe"
 	"github.com/hrubymar10/aimebu/internal/agenttools"
 	"github.com/hrubymar10/aimebu/internal/auth"
+	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/server"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
@@ -321,6 +322,14 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 	client.AllowPlainHTTP = insecure
 	client.TurnLimits = turnLimits
 	client.ConfigDir = config.root
+	// A standalone supervisor reports the way the server tells it to (unless its own AIMEBU2_SENTRY_DSN says otherwise); the embedded one is the
+	// server's process and does not take the settings.
+	client.OnTelemetry = func(settings protocol.TelemetrySettings) {
+		applySupervisorTelemetry(settings, resolveVersion(), os.LookupEnv, client, nil, stderr)
+	}
+	if own, err := telemetry.FromEnv(os.LookupEnv, resolveVersion()); err == nil && own.EnvSet {
+		client.SetTelemetryEnv(telemetryEnvOf(own)) // this machine's own setting, for the bridge too, whatever the server says
+	}
 	if err := client.Run(ctx); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

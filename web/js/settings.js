@@ -11,6 +11,7 @@ import { MacroSettings } from './pages/macros/page.js';
 import { UsersSettings } from './pages/users/page.js';
 import { SettingsShell } from './pages/shell/page.js';
 import { PromptSettings } from './pages/prompts/page.js';
+import { TelemetrySettings } from './pages/telemetry/page.js';
 import { HttpQuotaSource } from './quota-source.js';
 import { HttpLimitGuardSource } from './limit-guard-source.js';
 
@@ -27,6 +28,7 @@ export class SettingsPanel {
     this.dialog = document.querySelector('#settings-dialog');
     this.usersSettings = new UsersSettings(this.dialog, projectContext);
     this.promptSettings = new PromptSettings(this.dialog, projectContext);
+    this.telemetrySettings = new TelemetrySettings(this.dialog);
     this.usagesSection = document.querySelector('#settings-usages');
     this.usages = new UsagesSettings({ source, quotaSource: new HttpQuotaSource(), guardSource: new HttpLimitGuardSource(), dialog: this.dialog, section: this.usagesSection });
     this.generalSection = document.querySelector('#settings-general');
@@ -39,12 +41,12 @@ export class SettingsPanel {
     this.notificationSettings = new NotificationSettings(this.notificationsSection, notifications);
     this.shell = new SettingsShell(this.dialog, {
       general: this.generalSection, usages: this.usagesSection, notifications: this.notificationsSection, roles: this.rolesSection, users: this.usersSettings.section,
-      prompts: this.promptSettings.section, macros: this.macroSettings.section, machines: this.machinesSection, harnesses: this.harnessSettings.section,
+      prompts: this.promptSettings.section, macros: this.macroSettings.section, telemetry: this.telemetrySettings.section, machines: this.machinesSection, harnesses: this.harnessSettings.section,
     }, { users: this.usersSettings.store.tab, onSelect: section => this.selectSection(section), onClose: () => this.dialog.close() });
     // Each section's page is drawn when the section is selected and taken out of the page when the dialog closes (a page holding unsaved edits keeps
     // them): the sections are about a thousand nodes together, which stay in the page for nothing otherwise.
     this.pages = { general: this.general.page, usages: this.usages.page, notifications: this.notificationSettings.page, roles: this.roleSettings.page, users: this.usersSettings.page,
-      prompts: this.promptSettings.page, macros: this.macroSettings.page, machines: this.machinesSettings.page, harnesses: this.harnessSettings.page };
+      prompts: this.promptSettings.page, macros: this.macroSettings.page, telemetry: this.telemetrySettings.page, machines: this.machinesSettings.page, harnesses: this.harnessSettings.page };
     this.dialog.addEventListener('close', () => this.release());
     this.release();
     document.querySelector('#settings-toggle').onclick = () => this.open();
@@ -109,5 +111,6 @@ export class SettingsPanel {
     if (section === 'harnesses') this.harnessSettings.open();
     if (section === 'macros') this.macroSettings.open();
     if (section === 'prompts') this.promptSettings.open();
+    if (section === 'telemetry') this.telemetrySettings.open();
   }
 }

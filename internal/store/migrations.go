@@ -1572,6 +1572,11 @@ ALTER TABLE agent ADD COLUMN removed_slug TEXT NOT NULL DEFAULT '';
 -- start their lifetime now, since when they were made was not kept.
 ALTER TABLE auth_session ADD COLUMN created_at TEXT NOT NULL DEFAULT '';
 UPDATE auth_session SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
+`}, {95, `
+-- Telemetry: each person has a random fingerprint that identifies their error reports instead of their account (empty until first needed, then
+-- generated; not derived from the account id), and may choose to send their login name instead.
+ALTER TABLE user ADD COLUMN telemetry_fingerprint TEXT NOT NULL DEFAULT '';
+ALTER TABLE user ADD COLUMN telemetry_send_name INTEGER NOT NULL DEFAULT 0 CHECK (telemetry_send_name IN (0,1));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

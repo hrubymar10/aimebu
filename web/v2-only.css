@@ -321,3 +321,9 @@ html[data-ui-roomsettings="b"] #room-info-dialog::backdrop { background: rgba(0,
 /* A harness's fields and panels turn off as one for someone who may look but not change (fieldset disabled); the fieldset adds no box of its own. */
 .machine-harness-readonly { border: 0; margin: 0; padding: 0; min-width: 0; }
 .machine-harness-fields { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 9px; }
+
+/* Settings -> Telemetry's read-only facts: a name and its value, side by side while there is room. */
+.settings-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 12px; font-size: .75rem; }
+.settings-facts dt { color: var(--text-secondary); }
+.settings-facts dd { margin: 0; color: var(--text-primary); }
+@media (max-width: 700px) { .settings-facts { grid-template-columns: 1fr; } .settings-facts dd { margin-bottom: 6px; } }

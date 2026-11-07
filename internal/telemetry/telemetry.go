@@ -121,7 +121,7 @@ func (t *Telemetry) CaptureError(ctx context.Context, err error) {
 	if t == nil || err == nil {
 		return
 	}
-	t.hub.Client().CaptureException(err, &sentry.EventHint{Context: ctx}, sentry.NewScope())
+	t.hub.Client().CaptureException(err, &sentry.EventHint{Context: ctx}, scopeFor(ctx))
 }
 
 // CapturePanic reports a recovered panic value, linked to its request's trace, and flushes, since the process may be about to die.
@@ -129,7 +129,7 @@ func (t *Telemetry) CapturePanic(ctx context.Context, value any) {
 	if t == nil || value == nil || errors.Is(asError(value), errHandlerAbort) {
 		return
 	}
-	scope := sentry.NewScope()
+	scope := scopeFor(ctx)
 	scope.SetLevel(sentry.LevelFatal)
 	t.hub.Client().RecoverWithContext(ctx, value, &sentry.EventHint{Context: ctx}, scope)
 	t.Flush(2 * time.Second)

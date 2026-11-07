@@ -51,6 +51,9 @@ func TestErrorReportsSettingsAndTheConsentPopup(t *testing.T) {
 	if status != 200 || view.Prompted || !view.Enabled || view.DSN != "https://shipped@h.example/1" || view.DefaultDSN != view.DSN || view.EnvLocked || view.Active {
 		t.Fatalf("fresh: %d %+v", status, view)
 	}
+	if view.TracesSampleRate != 0.5 || view.MaxDBSpans != telemetry.MaxDBSpans {
+		t.Fatalf("the volume facts: rate %v, db spans %d", view.TracesSampleRate, view.MaxDBSpans)
+	}
 	me := f.request("GET", "/api/me", nil, false)
 	var session map[string]any
 	_ = json.NewDecoder(me.Body).Decode(&session)

@@ -19,6 +19,10 @@ import (
 // from default_dsn.go, a separate file so that removing it leaves a build that is off until a DSN comes from the environment or Settings.
 var DefaultDSN string
 
+// DefaultTracesSampleRate is the share of requests (and of page loads) that are traced when AIMEBU2_SENTRY_TRACES_SAMPLE_RATE does not say: half of
+// them. The same number serves the server and the browser.
+const DefaultTracesSampleRate = 0.5
+
 // Config is what the environment and Settings say. The zero value (no DSN) is "telemetry off".
 type Config struct {
 	DSN         string
@@ -46,7 +50,7 @@ func ReleaseName(version string) string {
 	return strings.Trim(invalidReleaseChars.ReplaceAllString(version, "_"), "_.")
 }
 
-// Stored is what Settings -> General -> Error reports holds (global settings telemetry_enabled, telemetry_dsn, telemetry_prompted).
+// Stored is what Settings -> Telemetry holds (global settings telemetry_enabled, telemetry_dsn, telemetry_prompted).
 type Stored struct {
 	Enabled  *bool  // nil: never chosen, so the default (on when DefaultDSN is set)
 	DSN      string // empty: DefaultDSN
@@ -111,12 +115,12 @@ func loopbackHost(host string) bool {
 	return err == nil && addr.Unmap().IsLoopback()
 }
 
-// FromEnv reads AIMEBU2_SENTRY_DSN ("off" or empty disables), AIMEBU2_SENTRY_ENV (default "dev"), AIMEBU2_SENTRY_TRACES_SAMPLE_RATE (default 0.1). A bad rate is an error:
+// FromEnv reads AIMEBU2_SENTRY_DSN ("off" or empty disables), AIMEBU2_SENTRY_ENV (default "dev"), AIMEBU2_SENTRY_TRACES_SAMPLE_RATE (default DefaultTracesSampleRate). A bad rate is an error:
 // the caller says so and runs with telemetry off, rather than guessing.
 func FromEnv(lookup func(string) (string, bool), version string) (Config, error) {
 	getenv := func(name string) string { value, _ := lookup(name); return value }
 	config := Config{Environment: strings.TrimSpace(getenv("AIMEBU2_SENTRY_ENV")), Release: ReleaseName(version),
-		TracesSampleRate: 0.1}
+		TracesSampleRate: DefaultTracesSampleRate}
 	if value, set := lookup("AIMEBU2_SENTRY_DSN"); set {
 		config.EnvSet = true
 		if value = strings.TrimSpace(value); !strings.EqualFold(value, "off") {

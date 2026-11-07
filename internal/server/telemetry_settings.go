@@ -10,7 +10,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
-// Settings -> General -> Error reports lives in three global settings; see docs/telemetry.md. They are read and written here, not in the
+// Settings -> Telemetry lives in three global settings; see docs/telemetry.md. They are read and written here, not in the
 // store, because they only configure the telemetry package.
 const (
 	telemetryEnabledKey  = "telemetry_enabled"
@@ -48,6 +48,7 @@ func (s *Server) ApplyTelemetry(ctx context.Context) error {
 	}
 	config = config.Resolve(stored)
 	_, err = telemetry.Init(config, s.telemetryTransport)
+	s.pushTelemetry(ctx) // the supervisors report the way the server now does
 	return err
 }
 
@@ -58,6 +59,10 @@ type telemetryView struct {
 	Prompted   bool   `json:"prompted"`    // the owner has answered the consent popup
 	EnvLocked  bool   `json:"env_locked"`  // AIMEBU2_SENTRY_DSN is set, so it wins over these fields
 	Active     bool   `json:"active"`      // reports are being sent right now
+	// What bounds the volume, shown read-only: the share of requests (server) and page loads (browser) that are traced, which
+	// AIMEBU2_SENTRY_TRACES_SAMPLE_RATE overrides, and how many database statements of one request get a span.
+	TracesSampleRate float64 `json:"traces_sample_rate"`
+	MaxDBSpans       int     `json:"max_db_spans"`
 }
 
 func (s *Server) telemetryView(ctx context.Context) (telemetryView, error) {
@@ -66,7 +71,12 @@ func (s *Server) telemetryView(ctx context.Context) (telemetryView, error) {
 		return telemetryView{}, err
 	}
 	_, envSet := os.LookupEnv("AIMEBU2_SENTRY_DSN")
-	return telemetryView{Enabled: stored.EnabledOrDefault(), DSN: stored.DSNOrDefault(), DefaultDSN: telemetry.DefaultDSN, Prompted: stored.Prompted, EnvLocked: envSet, Active: telemetry.Current() != nil}, nil
+	rate := telemetry.DefaultTracesSampleRate
+	if config, err := telemetry.FromEnv(os.LookupEnv, s.Version); err == nil { // a bad rate runs with telemetry off; the page shows the default then
+		rate = config.TracesSampleRate
+	}
+	return telemetryView{Enabled: stored.EnabledOrDefault(), DSN: stored.DSNOrDefault(), DefaultDSN: telemetry.DefaultDSN, Prompted: stored.Prompted, EnvLocked: envSet, Active: telemetry.Current() != nil,
+		TracesSampleRate: rate, MaxDBSpans: telemetry.MaxDBSpans}, nil
 }
 
 // telemetrySettings answers GET and PUT /api/telemetry/settings for the owner and admins. PUT takes any of enabled, dsn and prompted.

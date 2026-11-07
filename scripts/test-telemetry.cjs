@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'telemetry.js'), 'utf8');
 const context = { URL };
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { SDK_URL, scrubUrl, routeOf, scrubText, scrubEvent, scrubBreadcrumb, sentryOptions, startTelemetry, resetTelemetryForTest };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { setTelemetryUser, SDK_URL, scrubUrl, routeOf, scrubText, scrubEvent, scrubBreadcrumb, sentryOptions, startTelemetry, resetTelemetryForTest };', context);
 const api = context.api;
 // The vendored SDK is the file the README records.
 const vendor = path.join(__dirname, '..', 'web', 'vendor');
@@ -57,19 +57,34 @@ assert.equal(api.scrubBreadcrumb({ category: 'console' }), null);
 (async () => {
   let loaded = 0;
   const deps = { load: async url => { loaded++; assert.equal(url, api.SDK_URL); }, Sentry: () => sentry };
-  const calls = [];
-  const sentry = { init: options => calls.push(options), browserTracingIntegration: () => 'tracing' };
+  const calls = [], tracingArgs = [];
+  const users = [];
+  const sentry = { setUser: user => users.push(user), init: options => calls.push(options), browserTracingIntegration: tracingOptions => { tracingArgs.push(tracingOptions); return 'tracing'; } };
   for (const config of [undefined, null, {}, { dsn: '' }, { dsn: 3 }]) { assert.equal(await api.startTelemetry(config, deps), false); api.resetTelemetryForTest(); }
   assert.equal(loaded, 0, 'no DSN: the SDK is never requested');
   assert.equal(calls.length, 0);
-  assert.equal(await api.startTelemetry({ dsn: 'https://k@h.example/1', environment: 'prod', release: 'v1', traces_sample_rate: 0.25 }, deps), true);
+  assert.equal(await api.startTelemetry({ dsn: 'https://k@h.example/1', environment: 'prod', release: 'v1', traces_sample_rate: 0.25, user_id: '0123456789abcdef' }, deps), true);
+  assert.deepEqual(plain(users), [{ id: '0123456789abcdef' }], 'the SDK is told who the reports are about: the id only');
   assert.equal(loaded, 1);
   assert.equal(await api.startTelemetry({ dsn: 'https://k@h.example/1' }, deps), false, 'started once');
   const options = calls[0];
   assert.equal(options.dsn, 'https://k@h.example/1'); assert.equal(options.environment, 'prod'); assert.equal(options.release, 'v1');
   assert.equal(options.sendDefaultPii, false);
   assert.equal(options.tracesSampleRate, 0.25);
-  assert.equal(options.replaysSessionSampleRate, undefined); assert.equal(options.replaysOnErrorSampleRate, undefined); assert.deepEqual(plain(options.integrations), ['tracing'], 'tracing is the only integration: there is no Replay');
+  options.integrations([]); // the SDK calls this with its defaults; the tracing integration is built then
+  // One span per loaded file was most of a page load's spans: none of those operations is traced.
+  for (const op of ['resource.script', 'resource.css', 'resource.img', 'resource.link', 'resource.other']) assert.ok(plain(tracingArgs[0]).ignoreResourceSpans.includes(op), `${op} is ignored`);
+  // Of a user only the id survives.
+  const named = plain(api.scrubEvent({ user: { id: 'abcdef0123456789', email: 'a@b.c', username: 'alice', ip_address: '10.0.0.1', geo: { city: 'Prague' } } }));
+  assert.deepEqual(named.user, { id: 'abcdef0123456789', ip_address: null }, 'only the id; no email, name, address or place');
+  assert.deepEqual(plain(api.scrubEvent({ user: { id: 'x'.repeat(200) } })).user.id.length, 64, 'the id is bounded');
+  assert.deepEqual(plain(api.scrubEvent({})).user, { ip_address: null }, 'nobody named: still an explicitly empty address');
+  api.setTelemetryUser('newid', { setUser: user => users.push(user) });
+  api.setTelemetryUser('', { setUser: user => users.push(user) });
+  assert.deepEqual(plain(users.slice(1)), [{ id: 'newid' }, null], 'a re-roll reaches the running SDK, and an empty id clears the user');
+  const kept = plain(api.scrubEvent({ type: 'transaction', spans: [{ op: 'resource.script', description: '/js/app.js' }, { op: 'resource.css', description: '/style.css' }, { op: 'http.client', description: 'GET /api/rooms' }, { op: 'browser.request', description: 'GET /' }, { op: 'browser.dns' }, { op: 'browser.paint' }, { op: 'browser.unload_event' }, { op: 'browser.response' }] }));
+  assert.deepEqual(kept.spans.map(span => span.op), ['http.client', 'browser.request', 'browser.response'], 'resource spans and the page load\'s minor timing spans are dropped by the scrubber; API requests and the request / response phases stay');
+  assert.equal(options.replaysSessionSampleRate, undefined); assert.equal(options.replaysOnErrorSampleRate, undefined); assert.deepEqual(plain(options.integrations([{ name: 'BrowserSession' }, { name: 'Dedupe' }])), [{ name: 'Dedupe' }, 'tracing'], 'the session integration is taken out (its session asks Sentry to infer the IP), tracing is added; there is no Replay');
   const collection = plain(options.dataCollection);
 assert.equal(collection.userInfo, false); assert.equal(collection.cookies, false); assert.equal(collection.httpHeaders, false); assert.deepEqual(collection.httpBodies, []); assert.equal(collection.urlQueryParams, false);
 assert.equal(collection.stackFrameVariables, false); assert.equal(collection.frameContextLines, 0); assert.equal(options.traceLifecycle, 'static', 'spans go through beforeSendTransaction');

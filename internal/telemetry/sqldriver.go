@@ -36,10 +36,24 @@ func (d *tracedDriver) Open(name string) (driver.Conn, error) {
 	return &tracedConn{inner: conn}, nil
 }
 
-// start begins a span for a statement when ctx is inside a recording span.
+// MaxDBSpans is how many statements of one request get a span of their own. A request that runs more (a list that asks per row) still
+// reports them: the transaction carries the number of statements and how many were left out (db.calls, db.calls_dropped), so a hot loop shows up without
+// every iteration being a span (the free Sentry plan counts spans).
+const MaxDBSpans = 50
+
+// spanBudget counts the statements of one request; the middleware puts it in the request's context.
+type spanBudget struct{ calls, dropped atomic.Int64 }
+
+type spanBudgetKey struct{}
+
+// start begins a span for a statement when ctx is inside a recording span and the request still has span budget left.
 func start(ctx context.Context, query string) (context.Context, trace.Span) {
 	t := Current()
 	if t == nil || !trace.SpanFromContext(ctx).IsRecording() {
+		return ctx, nil
+	}
+	if budget, ok := ctx.Value(spanBudgetKey{}).(*spanBudget); ok && budget.calls.Add(1) > MaxDBSpans {
+		budget.dropped.Add(1)
 		return ctx, nil
 	}
 	ctx, span := t.tracer.Start(ctx, "db.query", trace.WithAttributes(attribute.String(OpKey, "db.query"), attribute.String("db.system", "sqlite"), attribute.String("db.statement", query)))

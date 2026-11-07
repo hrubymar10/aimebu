@@ -38,6 +38,14 @@ export function routeOf(raw) {
   return `/${segments.slice(0, keep).join('/')}${segments.length > keep ? '/…' : ''}`;
 }
 
+// The operations of the spans the browser makes for every file a page loads.
+export const RESOURCE_OPS = ['resource.script', 'resource.css', 'resource.img', 'resource.link', 'resource.iframe', 'resource.other', 'resource.audio', 'resource.video', 'resource.track', 'resource.fetch', 'resource.xmlhttprequest'];
+// The page load's own timing spans are kept only where they tell the server's wait from the download (browser.request, browser.response): the rest
+// (cache, dns, connect, the unload / DOM / load events, paint) are ten more spans a load, and the paints and the vitals are measurements of the
+// transaction anyway.
+const KEPT_BROWSER_SPANS = new Set(['browser.request', 'browser.response']);
+export const isNoiseSpan = span => typeof span?.op === 'string' && (span.op.startsWith('resource.') || (span.op.startsWith('browser.') && !KEPT_BROWSER_SPANS.has(span.op)));
+
 // The span data that may leave: the method, the status and a route. No host (server.address), no query, no fragment.
 const SPAN_DATA = new Set(['http.request.method', 'http.response.status_code', 'http.route', 'http.method', 'http.status_code', 'url', 'url.path', 'type', 'size', 'duration', 'sentry.op', 'sentry.origin', 'sentry.source']);
 
@@ -52,7 +60,12 @@ function scrubFrames(frames) {
 // BeforeSend and BeforeSendTransaction: the event with everything but the allowed fields taken out. Returns the same object.
 export function scrubEvent(event) {
   if (!event || typeof event !== 'object') return null;
-  delete event.user; delete event.server_name; delete event.extra; delete event.modules;
+  // Nobody is identified and no address is inferred: the SDK says infer_ip "never" on every event, and this makes it so whatever the SDK did.
+  // The id is this person's fingerprint (or their login, when they chose that): see docs/telemetry.md. Nothing else of a user goes out.
+  const userID = typeof event.user?.id === 'string' && event.user.id ? event.user.id.slice(0, 64) : undefined;
+  event.user = { ...(userID ? { id: userID } : {}), ip_address: null };
+  event.sdk = { ...event.sdk, settings: { ...event.sdk?.settings, infer_ip: 'never' } };
+  delete event.server_name; delete event.extra; delete event.modules;
   if (event.request) event.request = { url: routeOf(event.request.url), ...(event.request.method ? { method: event.request.method } : {}) };
   if (event.contexts) for (const name of Object.keys(event.contexts)) if (!['trace', 'os', 'browser'].includes(name)) delete event.contexts[name];
   // The root span's data sits in the trace context, not in event.spans: the same allow-list (this is where url.full and the device's memory and cores were).
@@ -70,6 +83,7 @@ export function scrubEvent(event) {
   scrubFrames(event.stacktrace?.frames);
   if (Array.isArray(event.breadcrumbs)) event.breadcrumbs = event.breadcrumbs.map(scrubBreadcrumb).filter(Boolean);
   if (event.tags) delete event.tags.server_name;
+  if (Array.isArray(event.spans)) event.spans = event.spans.filter(span => !isNoiseSpan(span));
   for (const span of event.spans || []) {
     if (typeof span.description === 'string') { // "GET https://host/a?q=1" keeps only the path
       const request = /^([A-Z]+) (\S+)$/.exec(span.description);
@@ -118,8 +132,13 @@ export function sentryOptions(config, Sentry) {
     tracesSampleRate: Number(config.traces_sample_rate) || 0,
     // Never attach trace headers to a request: they would add a header to calls the server does not read.
     tracePropagationTargets: [],
-    integrations: [
-      Sentry.browserTracingIntegration(), // page load and navigation spans, and the Web Vitals
+    // No release-health sessions (the SDK's session envelope asks Sentry to infer the IP address with "{{auto}}"), no client reports.
+    sendClientReports: false,
+    integrations: defaults => [
+      ...defaults.filter(integration => integration.name !== 'BrowserSession'),
+      // Page load and navigation, the API requests and the Web Vitals. Not one span per loaded file (script, stylesheet, image, ...): they were most of
+      // a page load's spans (about 240) and say nothing about this app; scrubEvent drops any that get through anyway.
+      Sentry.browserTracingIntegration({ ignoreResourceSpans: RESOURCE_OPS }),
     ],
     beforeSend: scrubEvent,
     beforeSendTransaction: scrubEvent,
@@ -148,8 +167,16 @@ export async function startTelemetry(config, deps = {}) {
     const Sentry = deps.Sentry ? deps.Sentry() : globalThis.Sentry;
     if (!Sentry) return false;
     Sentry.init(sentryOptions(config, Sentry));
+    if (typeof config.user_id === 'string' && config.user_id) Sentry.setUser({ id: config.user_id });
     return true;
   } catch { return false; }
+}
+
+// Changes who the reports name (after the person re-rolled their fingerprint or chose to send their login) without a reload. Nothing happens while
+// reporting is not running.
+export function setTelemetryUser(id, Sentry = globalThis.Sentry) {
+  if (!started || typeof Sentry?.setUser !== 'function') return;
+  Sentry.setUser(typeof id === 'string' && id ? { id } : null);
 }
 
 // Test seam: lets a test start again.

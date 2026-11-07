@@ -73,6 +73,9 @@ func TestFromEnv(t *testing.T) {
 	if err != nil || !on.Enabled() || !on.EnvSet || on.DSN != "https://k@h/1" || on.Environment != "prod" || on.TracesSampleRate != 0.5 || on.Release != "v2.0.0-3-gabc_x_y" {
 		t.Fatalf("%+v %v", on, err)
 	}
+	if off.TracesSampleRate != 0.5 || DefaultTracesSampleRate != 0.5 {
+		t.Fatalf("the sample rate defaults to half of the requests: %v", off.TracesSampleRate)
+	}
 	for _, disabled := range []string{"off", "OFF", "", "  "} {
 		config, err := FromEnv(lookup(map[string]string{"AIMEBU2_SENTRY_DSN": disabled}), "v")
 		if err != nil || config.Enabled() || !config.EnvSet {
@@ -207,6 +210,9 @@ func TestScrubEvent(t *testing.T) {
 		if !strings.Contains(out, kept) {
 			t.Errorf("%q must survive: %s", kept, out)
 		}
+	}
+	if user, _ := json.Marshal(s.Event(event).User); string(user) != `{"id":"1"}` {
+		t.Errorf("of a user only the id survives: %s", user)
 	}
 	if s.Event(nil) != nil {
 		t.Fatal("nil in, nil out")
@@ -360,6 +366,118 @@ func TestSQLSpansRecordQueryAndRowsNeverValues(t *testing.T) {
 	}
 	if len(spans) < 4 || selectRows != 2 {
 		t.Fatalf("want >=4 db spans and 2 rows on the select, got %d spans, rows=%d", len(spans), selectRows)
+	}
+}
+
+// A request that asks the database two hundred times gets MaxDBSpans spans, and says how many it did not span.
+func TestSQLSpansPerRequestAreCapped(t *testing.T) {
+	_, transport := startTest(t)
+	name := RegisterSQLDriver(&sqlite.Driver{})
+	db, err := sql.Open(name, "file:"+t.TempDir()+"/t.sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	const calls = 200
+	Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < calls; i++ {
+			rows, err := db.QueryContext(r.Context(), `SELECT ?`, i)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = rows.Close()
+		}
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/many", nil))
+	// A quiet request carries no counters.
+	Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rows, _ := db.QueryContext(r.Context(), `SELECT 1`)
+		_ = rows.Close()
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/few", nil))
+	var transactions []*sentry.Event
+	for _, event := range transport.sent() {
+		if event.Type == "transaction" {
+			transactions = append(transactions, event)
+		}
+	}
+	if len(transactions) != 2 {
+		t.Fatalf("want 2 transactions, got %d", len(transactions))
+	}
+	many, few := transactions[0], transactions[1]
+	if len(many.Spans) != MaxDBSpans {
+		t.Fatalf("%d queries made %d spans, want exactly the cap %d", calls, len(many.Spans), MaxDBSpans)
+	}
+	data, _ := many.Contexts["trace"]["data"].(map[string]interface{})
+	if data["db.calls"] != int64(calls) || data["db.calls_dropped"] != int64(calls-MaxDBSpans) {
+		t.Fatalf("the transaction counts what it left out: %v", data)
+	}
+	if len(few.Spans) != 1 {
+		t.Fatalf("a quiet request spans its one query: %d", len(few.Spans))
+	}
+	if _, has := few.Contexts["trace"]["data"].(map[string]interface{})["db.calls_dropped"]; has {
+		t.Fatalf("a quiet request drops nothing: %v", few.Contexts["trace"]["data"])
+	}
+}
+
+// A request names its person by one id, on transactions, on 5xx reports and on panics; the user carries that id and nothing else.
+func TestRequestsCarryOnlyThePersonsReportID(t *testing.T) {
+	_, transport := startTest(t)
+	mux := http.NewServeMux()
+	named := func(id string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			SetUser(r.Context(), id) // what the auth hook does once the session is known
+			if r.URL.Query().Get("fail") != "" {
+				http.Error(w, "boom", 500)
+			}
+		}
+	}
+	mux.HandleFunc("GET /api/a", named("0123456789abcdef"))
+	mux.HandleFunc("GET /api/b", named("carol"))
+	mux.HandleFunc("GET /api/anon", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("GET /api/panic", func(w http.ResponseWriter, r *http.Request) {
+		SetUser(r.Context(), "0123456789abcdef")
+		panic("kaboom")
+	})
+	handler := Middleware(mux)
+	for _, path := range []string{"/api/a", "/api/a?fail=1", "/api/b", "/api/anon"} {
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", path, nil))
+	}
+	func() {
+		defer func() { _ = recover() }()
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/panic", nil))
+	}()
+	Current().Flush(time.Second)
+	seen := map[string][]string{}
+	for _, event := range transport.sent() {
+		user, _ := json.Marshal(event.User)
+		kind := event.Type
+		if kind == "" {
+			kind = "event"
+		}
+		seen[kind] = append(seen[kind], event.Transaction+" "+string(user))
+		if strings.Contains(marshal(t, event), "aimebu.user") {
+			t.Errorf("the user attribute must not reach the span data: %s", marshal(t, event))
+		}
+	}
+	want := map[string]bool{"GET /api/a {\"id\":\"0123456789abcdef\"}": true, "GET /api/b {\"id\":\"carol\"}": true, "GET /api/anon {}": true}
+	for _, got := range seen["transaction"] {
+		delete(want, got)
+	}
+	if len(want) != 0 {
+		t.Fatalf("transactions %v, missing %v", seen["transaction"], want)
+	}
+	var reports int
+	for _, event := range transport.sent() {
+		if event.Type != "transaction" && (strings.HasPrefix(event.Message, "HTTP 500") || event.Message == "kaboom") {
+			reports++
+			if user, _ := json.Marshal(event.User); string(user) != `{"id":"0123456789abcdef"}` {
+				t.Errorf("a 5xx or panic report names its person by the id only: %s", user)
+			}
+		}
+	}
+	if reports != 2 {
+		t.Fatalf("want the 5xx and the panic, got %d", reports)
 	}
 }
 

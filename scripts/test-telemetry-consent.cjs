@@ -1,4 +1,4 @@
-// The error-reports consent popup's logic: its fields follow the server's default, Not now turns reports off, and it is asked once.
+// The telemetry consent popup's logic: its fields follow the server's default, Not now turns reports off, and it is asked once.
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -12,6 +12,7 @@ vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { CONSENT
 const api = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
+assert.ok(/Settings → Telemetry/.test(api.CONSENT_TEXT), 'says where to change it'); assert.equal(api.consentFields({ enabled: true, dsn: '' })[0].label, 'Send telemetry');
 assert.ok(/errors/.test(api.CONSENT_TEXT) && /traces/.test(api.CONSENT_TEXT) && !/replay/i.test(api.CONSENT_TEXT), 'says what is sent');
 assert.ok(/messages, prompts, tokens, file contents/.test(api.CONSENT_TEXT), 'says what is never sent');
 assert.equal(api.dsnProblem(''), ''); assert.equal(api.dsnProblem('https://k@o1.ingest.de.sentry.io/42'), '');
@@ -20,12 +21,13 @@ for (const bad of ['x', 'https://host/1', 'https://k@h/', 'ftp://k@h/1', 'http:/
 
 // The toggle and the field start as the server says: on with the default filled in when a default ships, off and empty when none does.
 let fields = api.consentFields({ enabled: true, dsn: 'https://k@h.example/1', default_dsn: 'https://k@h.example/1' });
-assert.equal(fields[0].value, true); assert.equal(fields[1].value, 'https://k@h.example/1');
+assert.equal(fields[0].value, true); assert.equal(fields[1].value, 'https://k@h.example/1'); assert.equal(fields[1].reset.value, 'https://k@h.example/1', 'Reset puts the shipped default back');
 fields = api.consentFields({ enabled: false, dsn: '', default_dsn: '' });
 assert.equal(fields[0].value, false); assert.equal(fields[1].value, '');
-assert.equal(fields[1].showIf({ enabled: false }), false, 'the field shows only while reports are on');
+assert.equal(fields[1].showIf, undefined, 'the field is never hidden'); assert.equal(fields[1].disabledIf({ enabled: false }), true, 'off disables the field'); assert.equal(fields[1].disabledIf({ enabled: true }), false);
+assert.equal(fields[1].reset.value, '', 'no default shipped: nothing to reset to (the button is hidden)'); assert.equal(fields[1].reset.label, 'Reset to default DSN');
 assert.match(fields[1].validate('', { enabled: true }), /Enter a DSN/); assert.equal(fields[1].validate('', { enabled: false }), '');
-assert.notEqual(fields[1].validate('nope', { enabled: true }), '');
+assert.notEqual(fields[1].validate('nope', { enabled: true }), ''); assert.equal(fields[1].validate('nope', { enabled: false }), '', 'a greyed-out field is not validated');
 
 assert.deepEqual(plain(api.consentBody(null)), { prompted: true, enabled: false }, 'Not now / Escape turns reports off');
 assert.deepEqual(plain(api.consentBody({ enabled: false, dsn: 'x' })), { prompted: true, enabled: false });
@@ -35,7 +37,7 @@ assert.deepEqual(plain(api.consentBody({ enabled: true, dsn: 'https://k@h/1' }))
   const calls = [];
   const request = view => async (url, options = {}) => { calls.push([options.method || 'GET', url, options.body]); return view; };
   let dialogs = 0, answer = { enabled: true, dsn: 'https://k@h/1' };
-  const dialog = async options => { dialogs++; assert.equal(options.title, 'Error reports'); assert.equal(options.confirm, 'Save'); assert.equal(options.cancel, 'Not now'); return answer; };
+  const dialog = async options => { dialogs++; assert.equal(options.title, 'Telemetry'); assert.equal(options.confirm, 'Save'); assert.equal(options.cancel, 'Not now'); return answer; };
   await api.askTelemetryConsent(request({ prompted: true, enabled: true, dsn: 'x' }), dialog);
   assert.equal(dialogs, 0, 'already answered: never asked again'); assert.equal(calls.length, 1);
   calls.length = 0;

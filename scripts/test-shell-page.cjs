@@ -50,7 +50,7 @@ async function main() {
     // The tabs in order under their two captions, General selected, the Users tab holding its place; the title and the close button.
     {
       const page = await mount();
-      assert.deepEqual(await nav(page), ['caption', 'settings-general-tab*', 'settings-usages-tab', 'settings-notifications-tab', 'settings-roles-tab!', 'settings-users-tab', 'settings-prompts-tab!', 'settings-macros-tab!', 'settings-agents-title!', 'settings-machines-tab!', 'settings-harnesses-tab!']);
+      assert.deepEqual(await nav(page), ['caption', 'settings-general-tab*', 'settings-usages-tab', 'settings-notifications-tab', 'settings-telemetry-tab', 'settings-roles-tab!', 'settings-users-tab', 'settings-prompts-tab!', 'settings-macros-tab!', 'settings-agents-title!', 'settings-machines-tab!', 'settings-harnesses-tab!']);
       assert.deepEqual(await page.evaluate(() => {
         const nav = document.querySelector('#settings-dialog nav'), users = nav.querySelector('#settings-users-tab'), close = document.querySelector('#settings-close');
         return { caption: [nav.firstElementChild.textContent, nav.firstElementChild.getAttribute('aria-hidden')], title: document.querySelector('#settings-title').textContent, current: [...nav.querySelectorAll('[aria-current]')].map(node => node.id),

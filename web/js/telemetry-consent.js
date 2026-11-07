@@ -1,9 +1,11 @@
-// The error-reports consent popup: shown once to the owner, after the welcome on a new install and on the first sign-in after an update that
+// The telemetry consent popup: shown once to the owner, after the welcome on a new install and on the first sign-in after an update that
 // brought error reports. Nothing is reported until it has been answered (the server holds reports back until then). Import-free apart from
 // what is passed in, so scripts/test-telemetry-consent.cjs runs it in a vm.
 
-export const CONSENT_TEXT = 'Send error reports to help fix bugs: errors and performance traces. ' +
-  'Never sent: messages, prompts, tokens, file contents. You can change this later in Settings → General.';
+export const CONSENT_TEXT = 'Send telemetry to help fix bugs: errors and performance traces. ' +
+  'Never sent: messages, prompts, tokens, file contents. You can change this later in Settings → Telemetry.';
+
+export const RESET_DSN_LABEL = 'Reset to default DSN';
 
 export const DSN_PLACEHOLDER = 'https://<key>@<host>/<project id>';
 
@@ -16,13 +18,15 @@ export function dsnProblem(value) {
   return '';
 }
 
-// The fields of the popup and of Settings: the toggle starts as the server says (on exactly when a default DSN ships) and the field holds the
-// default, editable.
+// The fields of the popup: the toggle starts as the server says (on exactly when a default DSN ships) and the field is always filled with the
+// effective DSN (the default unless one was chosen), editable while reports are on, with a button that puts the default back.
 export function consentFields(view) {
   return [
-    { name: 'enabled', type: 'checkbox', label: 'Error reports', value: !!view.enabled },
-    { name: 'dsn', label: 'Sentry DSN', value: view.dsn || '', placeholder: DSN_PLACEHOLDER, showIf: values => values.enabled,
-      validate: (value, values) => (values.enabled && !value ? 'Enter a DSN, or turn error reports off.' : dsnProblem(value)) },
+    { name: 'enabled', type: 'checkbox', label: 'Send telemetry', value: !!view.enabled },
+    // Off greys the field and its reset button out; it does not hide them.
+    { name: 'dsn', label: 'Sentry DSN', value: view.dsn || '', placeholder: DSN_PLACEHOLDER, disabledIf: values => !values.enabled,
+      reset: { label: RESET_DSN_LABEL, value: view.default_dsn || '' },
+      validate: (value, values) => (!values.enabled ? '' : !value ? 'Enter a DSN, or turn telemetry off.' : dsnProblem(value)) },
   ];
 }
 
@@ -37,7 +41,7 @@ export async function askTelemetryConsent(request, formDialog) {
   try {
     const view = await request('/api/telemetry/settings');
     if (view.prompted) return;
-    const result = await formDialog({ title: 'Error reports', message: CONSENT_TEXT, fields: consentFields(view), confirm: 'Save', cancel: 'Not now' });
+    const result = await formDialog({ title: 'Telemetry', message: CONSENT_TEXT, fields: consentFields(view), confirm: 'Save', cancel: 'Not now' });
     await request('/api/telemetry/settings', { method: 'PUT', body: consentBody(result) });
   } catch { /* asked again next time */ }
 }

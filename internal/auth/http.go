@@ -46,6 +46,9 @@ func (service *Service) RequireUser(next http.Handler) http.Handler {
 		}
 		http.SetCookie(w, service.SessionCookie(cookie.Value, service.SecureRequest(r)))
 		ctx := context.WithValue(r.Context(), userContextKey{}, session.UserID)
+		if service.UserHook != nil {
+			service.UserHook(ctx, session.UserID)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

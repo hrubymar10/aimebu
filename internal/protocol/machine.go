@@ -45,7 +45,18 @@ const (
 	AgentLogUsageResult  = "agent_log_usage_result"
 	SessionScan          = "session_scan"
 	SessionScanResult    = "session_scan_result"
+	TelemetryConfig      = "telemetry_config"
 )
+
+// TelemetrySettings is what the server tells a supervisor about error and performance reporting: whether it is on, where reports go and how many
+// requests are traced. It carries no identity of a person. The supervisor reports as the machine it is (and not under a host name); a DSN set in
+// the supervisor's own environment (AIMEBU2_SENTRY_DSN, a DSN or "off") wins over it.
+type TelemetrySettings struct {
+	Enabled          bool    `json:"enabled"`
+	DSN              string  `json:"dsn,omitempty"`
+	Environment      string  `json:"environment,omitempty"`
+	TracesSampleRate float64 `json:"traces_sample_rate,omitempty"`
+}
 
 // Frame is the versioned machine socket envelope. Agent frames carry both
 // agent_id and generation; machine frames carry machine_id. The server binds
@@ -63,59 +74,64 @@ type Frame struct {
 	// ScanSessionID and CopyTo. One that does not would ignore CopyTo and answer as a plain lookup, so the server never asks it.
 	SupportsSessionCopy bool `json:"supports_session_copy,omitempty"`
 	// SupportsSessionAttribution says the supervisor answers a session scan that asks for attribution (ScanAttribution).
-	SupportsSessionAttribution bool                 `json:"supports_session_attribution,omitempty"`
-	SupportsLaunchPath         bool                 `json:"supports_launch_path,omitempty"`
-	SupportsWorktree           bool                 `json:"supports_worktree,omitempty"`
-	SupportsLaunchers          bool                 `json:"supports_launchers,omitempty"`
-	SupportsDetect             bool                 `json:"supports_detect,omitempty"`
-	SupportsDetectDir          bool                 `json:"supports_detect_dir,omitempty"`
-	SupportsAgentLogs          bool                 `json:"supports_agent_logs,omitempty"`
-	SupportsAgentLogSize       bool                 `json:"supports_agent_log_size,omitempty"`
-	SupportsStopReplay         bool                 `json:"supports_stop_replay,omitempty"`
-	Capabilities               []CapabilityReport   `json:"capabilities,omitempty"`
-	Harnesses                  []HarnessRow         `json:"harnesses,omitempty"`
-	HarnessSettings            []HarnessSetting     `json:"harness_settings,omitempty"`
-	HarnessProbeDir            string               `json:"harness_probe_dir,omitempty"`
-	HarnessProbeDirs           []string             `json:"harness_probe_dirs,omitempty"`
-	Harness                    *HarnessRow          `json:"harness,omitempty"`
-	HarnessSetting             *HarnessSetting      `json:"harness_setting,omitempty"`
-	Launchers                  []LauncherRow        `json:"launchers,omitempty"`
-	LauncherDefinitions        []LauncherDefinition `json:"launcher_definitions,omitempty"`
-	LauncherDefinition         *LauncherDefinition  `json:"launcher_definition,omitempty"`
-	Launcher                   *LauncherRow         `json:"launcher,omitempty"`
-	Detect                     *DetectRequest       `json:"detect,omitempty"`
-	HarnessCandidates          []HarnessCandidate   `json:"harness_candidates,omitempty"`
-	ModelCandidates            []ModelCandidate     `json:"model_candidates,omitempty"`
-	DetectDir                  string               `json:"detect_dir,omitempty"`
-	Agents                     []HelloAgent         `json:"agents,omitempty"`
-	Desired                    []DesiredAgent       `json:"desired,omitempty"`
-	Redeliver                  []Delivery           `json:"redeliver,omitempty"`
-	ResendReceipts             []ReceiptBody        `json:"resend_receipts,omitempty"`
-	AgentID                    string               `json:"agent_id,omitempty"`
-	LauncherID                 string               `json:"launcher_id,omitempty"`
-	ReqID                      string               `json:"req_id,omitempty"`
-	Generation                 int                  `json:"generation,omitempty"`
-	DesiredRev                 int64                `json:"desired_rev,omitempty"`
-	DesiredState               string               `json:"desired_state,omitempty"`
-	AgentKey                   string               `json:"agent_key,omitempty"`
-	CheckoutPath               string               `json:"checkout_path,omitempty"`
-	CanonicalPath              string               `json:"canonical_path,omitempty"`
-	RoomID                     string               `json:"room_id,omitempty"`
-	BaseRef                    string               `json:"base_ref,omitempty"`
-	WorktreeAction             string               `json:"worktree_action,omitempty"`
-	WorktreeForce              bool                 `json:"worktree_force,omitempty"`
-	LogLines                   int                  `json:"log_lines,omitempty"`
-	LogMaxBytes                int                  `json:"log_max_bytes,omitempty"`
-	AttachmentBearer           string               `json:"attachment_bearer,omitempty"`
-	TurnID                     string               `json:"turn_id,omitempty"`
-	Mode                       adapter.Mode         `json:"mode,omitempty"`
-	ParentTurnID               string               `json:"parent_turn_id,omitempty"`
-	Notes                      []DeliveryNote       `json:"notes,omitempty"`
-	Context                    json.RawMessage      `json:"context,omitempty"`
-	AllowedTools               []string             `json:"allowed_tools,omitempty"`
-	Agent                      *adapter.AgentSpec   `json:"agent,omitempty"`
-	NativeSessionHandle        string               `json:"native_session,omitempty"`
-	NativeSessionStarted       bool                 `json:"native_session_started,omitempty"`
+	SupportsSessionAttribution bool `json:"supports_session_attribution,omitempty"`
+	SupportsLaunchPath         bool `json:"supports_launch_path,omitempty"`
+	SupportsWorktree           bool `json:"supports_worktree,omitempty"`
+	SupportsLaunchers          bool `json:"supports_launchers,omitempty"`
+	SupportsDetect             bool `json:"supports_detect,omitempty"`
+	SupportsDetectDir          bool `json:"supports_detect_dir,omitempty"`
+	SupportsAgentLogs          bool `json:"supports_agent_logs,omitempty"`
+	SupportsAgentLogSize       bool `json:"supports_agent_log_size,omitempty"`
+	SupportsStopReplay         bool `json:"supports_stop_replay,omitempty"`
+	// SupportsTelemetryConfig says the supervisor takes the server's telemetry settings (a telemetry_config frame, and Telemetry in hello_ack). One that
+	// does not never gets the frame, whose type an older supervisor does not know.
+	SupportsTelemetryConfig bool `json:"supports_telemetry_config,omitempty"`
+	// Telemetry is the effective telemetry configuration of the server, in hello_ack and in a telemetry_config frame.
+	Telemetry            *TelemetrySettings   `json:"telemetry,omitempty"`
+	Capabilities         []CapabilityReport   `json:"capabilities,omitempty"`
+	Harnesses            []HarnessRow         `json:"harnesses,omitempty"`
+	HarnessSettings      []HarnessSetting     `json:"harness_settings,omitempty"`
+	HarnessProbeDir      string               `json:"harness_probe_dir,omitempty"`
+	HarnessProbeDirs     []string             `json:"harness_probe_dirs,omitempty"`
+	Harness              *HarnessRow          `json:"harness,omitempty"`
+	HarnessSetting       *HarnessSetting      `json:"harness_setting,omitempty"`
+	Launchers            []LauncherRow        `json:"launchers,omitempty"`
+	LauncherDefinitions  []LauncherDefinition `json:"launcher_definitions,omitempty"`
+	LauncherDefinition   *LauncherDefinition  `json:"launcher_definition,omitempty"`
+	Launcher             *LauncherRow         `json:"launcher,omitempty"`
+	Detect               *DetectRequest       `json:"detect,omitempty"`
+	HarnessCandidates    []HarnessCandidate   `json:"harness_candidates,omitempty"`
+	ModelCandidates      []ModelCandidate     `json:"model_candidates,omitempty"`
+	DetectDir            string               `json:"detect_dir,omitempty"`
+	Agents               []HelloAgent         `json:"agents,omitempty"`
+	Desired              []DesiredAgent       `json:"desired,omitempty"`
+	Redeliver            []Delivery           `json:"redeliver,omitempty"`
+	ResendReceipts       []ReceiptBody        `json:"resend_receipts,omitempty"`
+	AgentID              string               `json:"agent_id,omitempty"`
+	LauncherID           string               `json:"launcher_id,omitempty"`
+	ReqID                string               `json:"req_id,omitempty"`
+	Generation           int                  `json:"generation,omitempty"`
+	DesiredRev           int64                `json:"desired_rev,omitempty"`
+	DesiredState         string               `json:"desired_state,omitempty"`
+	AgentKey             string               `json:"agent_key,omitempty"`
+	CheckoutPath         string               `json:"checkout_path,omitempty"`
+	CanonicalPath        string               `json:"canonical_path,omitempty"`
+	RoomID               string               `json:"room_id,omitempty"`
+	BaseRef              string               `json:"base_ref,omitempty"`
+	WorktreeAction       string               `json:"worktree_action,omitempty"`
+	WorktreeForce        bool                 `json:"worktree_force,omitempty"`
+	LogLines             int                  `json:"log_lines,omitempty"`
+	LogMaxBytes          int                  `json:"log_max_bytes,omitempty"`
+	AttachmentBearer     string               `json:"attachment_bearer,omitempty"`
+	TurnID               string               `json:"turn_id,omitempty"`
+	Mode                 adapter.Mode         `json:"mode,omitempty"`
+	ParentTurnID         string               `json:"parent_turn_id,omitempty"`
+	Notes                []DeliveryNote       `json:"notes,omitempty"`
+	Context              json.RawMessage      `json:"context,omitempty"`
+	AllowedTools         []string             `json:"allowed_tools,omitempty"`
+	Agent                *adapter.AgentSpec   `json:"agent,omitempty"`
+	NativeSessionHandle  string               `json:"native_session,omitempty"`
+	NativeSessionStarted bool                 `json:"native_session_started,omitempty"`
 	// ForkSession says this turn resumes NativeSessionHandle as a copy: the harness saves it under a new id, which the turn reports as its
 	// native session.
 	ForkSession bool `json:"fork_session,omitempty"`

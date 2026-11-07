@@ -11,11 +11,11 @@ vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { TABS, t
 const { TABS, tabHidden, sectionTitle } = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
-assert.deepEqual(plain(TABS.map(([key]) => key)), ['general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'agents', 'machines', 'harnesses'], 'the nav order, with the Agents caption before Machines');
+assert.deepEqual(plain(TABS.map(([key]) => key)), ['general', 'usages', 'notifications', 'telemetry', 'roles', 'users', 'prompts', 'macros', 'agents', 'machines', 'harnesses'], 'the nav order, with the Agents caption before Machines');
 const shown = rights => plain(TABS.filter(([key]) => !tabHidden(key, { owner: false, admin: false, usagesHidden: false, users: 'shown', ...rights })).map(([key]) => key));
 assert.deepEqual(shown({ owner: true }), plain(TABS.map(([key]) => key)), 'the owner sees every tab');
-assert.deepEqual(shown({ admin: true, usagesHidden: true }), ['general', 'notifications', 'roles', 'users', 'prompts', 'macros', 'agents', 'machines', 'harnesses'], 'an admin sees the instance tabs, not Usages');
-assert.deepEqual(shown({ usagesHidden: true }), ['general', 'notifications', 'users'], 'anyone else loses the instance tabs and the Agents caption');
+assert.deepEqual(shown({ admin: true, usagesHidden: true }), ['general', 'notifications', 'telemetry', 'roles', 'users', 'prompts', 'macros', 'agents', 'machines', 'harnesses'], 'an admin sees the instance tabs, not Usages');
+assert.deepEqual(shown({ usagesHidden: true }), ['general', 'notifications', 'telemetry', 'users'], 'anyone else loses the instance tabs and the Agents caption, but keeps Telemetry (their own fingerprint)');
 assert.deepEqual(shown({ owner: true, users: 'hidden' }).includes('users'), false, 'a refused access check takes the Users tab away');
 assert.equal(tabHidden('users', { users: 'pending' }), false, 'a pending Users tab still holds its place');
 assert.deepEqual([sectionTitle('general'), sectionTitle('machines'), sectionTitle('nope')], ['General', 'Machines', '']);

@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -70,6 +71,12 @@ func Middleware(h http.Handler) http.Handler {
 			ctx, span = t.tracer.Start(ctx, r.Method+" (unrouted)", trace.WithSpanKind(trace.SpanKindServer),
 				trace.WithAttributes(attribute.String(OpKey, "http.server"), attribute.String("http.request.method", r.Method)))
 		}
+		slot := &userSlot{}
+		ctx = context.WithValue(ctx, userSlotKey{}, slot)
+		budget := &spanBudget{}
+		if span != nil {
+			ctx = context.WithValue(ctx, spanBudgetKey{}, budget)
+		}
 		request := r.WithContext(ctx)
 		defer func() {
 			value := recover()
@@ -83,6 +90,12 @@ func Middleware(h http.Handler) http.Handler {
 			}
 			if span != nil {
 				span.SetAttributes(attribute.String("http.route", route), attribute.Int("http.response.status_code", status))
+				if id := slot.get(); id != "" {
+					span.SetAttributes(attribute.String(UserKey, trimUserID(id)))
+				}
+				if dropped := budget.dropped.Load(); dropped > 0 {
+					span.SetAttributes(attribute.Int64("db.calls", budget.calls.Load()), attribute.Int64("db.calls_dropped", dropped))
+				}
 				span.SetName(route)
 				span.End()
 			}
@@ -91,7 +104,7 @@ func Middleware(h http.Handler) http.Handler {
 				panic(value)
 			}
 			if status >= 500 {
-				scope := sentry.NewScope()
+				scope := scopeFor(ctx)
 				scope.SetTag("http.route", route)
 				scope.SetTag("http.status_code", fmt.Sprint(status))
 				scope.SetLevel(sentry.LevelError)

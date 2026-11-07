@@ -73,7 +73,7 @@ async function main() {
       await first.click('#welcome-continue'); await first.evaluate(() => window.__welcomeDone);
       // The welcome is first-run only: Settings -> General has no section to play it again.
       await openSettings(first);
-      assert.deepEqual(await first.evaluate(() => ({ section: !!document.querySelector('#settings-welcome, #settings-welcome-play'), headings: [...document.querySelectorAll('#settings-general h3')].map(el => el.textContent.trim().toLowerCase()) })), { section: false, headings: ['appearance', 'chat', 'messages', 'error reports', 'settings backup'] }, 'Settings -> General has no Welcome section');
+      assert.deepEqual(await first.evaluate(() => ({ section: !!document.querySelector('#settings-welcome, #settings-welcome-play'), headings: [...document.querySelectorAll('#settings-general h3')].map(el => el.textContent.trim().toLowerCase()) })), { section: false, headings: ['appearance', 'chat', 'messages', 'settings backup'] }, 'Settings -> General has no Welcome section');
       await first.evaluate(() => document.querySelector('#settings-dialog').close());
     }
     // v1's global shortcuts: Ctrl/Cmd+, opens Settings on General; Ctrl/Cmd+W closes it again; Shift in the chord does nothing.
@@ -3374,15 +3374,15 @@ async function main() {
         return {
           id, fields: fields.length,
           unrowed: fields.filter(el => !el.closest('.settings-row')).map(el => el.id || el.name || el.tagName),
-          noDesc: rows.filter(row => { const field = row.querySelector('input,select,textarea,button'); const desc = field && document.getElementById((field.getAttribute('aria-describedby') || '').split(' ')[0]); return !desc || !desc.textContent.trim() || !row.querySelector('.settings-desc'); }).map(row => row.querySelector('.settings-label')?.textContent),
+          noDesc: rows.filter(row => { const field = row.querySelector('input,select,textarea') || row.querySelector('button'); const desc = field && document.getElementById((field.getAttribute('aria-describedby') || '').split(' ')[0]); return !desc || !desc.textContent.trim() || !row.querySelector('.settings-desc'); }).map(row => row.querySelector('.settings-label')?.textContent),
           noLabel: rows.filter(row => { const label = row.querySelector('label.settings-label'); const field = label && document.getElementById(label.htmlFor); return !field || !row.contains(field); }).map(row => row.querySelector('.settings-label')?.textContent),
-          rows: rows.length, rowIds: rows.map(row => row.querySelector('input,select,textarea,button')?.id), grouped: rows.every(row => row.parentElement.classList.contains('settings-group')),
+          rows: rows.length, rowIds: rows.map(row => (row.querySelector('input,select,textarea') || row.querySelector('button'))?.id), grouped: rows.every(row => row.parentElement.classList.contains('settings-group')),
         };
       }, section));
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
     for (const id of ['settings-general', 'settings-usages', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
-    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'error-reports-enabled', 'error-reports-dsn', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, and the settings backup, all as rows');
+    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
     // edge, and row actions such as move, remove and delete are icon buttons with a tooltip and an accessible name.
@@ -3422,7 +3422,7 @@ async function main() {
         await settingsPage.setViewport({ width, height });
         // The owner's full nav in both groups; on a phone the captions are gone but the gap before Machines stays.
         const nav = await settingsNav(settingsPage);
-        assert.deepEqual(nav.items, ['SETTINGS', 'general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], `Settings nav order at ${width}px`);
+        assert.deepEqual(nav.items, ['SETTINGS', 'general', 'usages', 'notifications', 'telemetry', 'roles', 'users', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], `Settings nav order at ${width}px`);
         assert.ok(!nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS group is set apart at ${width}px: ${JSON.stringify(nav)}`);
         for (const tab of tabs) {
           await domClick(settingsPage, `#${tab}`);

@@ -119,11 +119,14 @@ type Server struct {
 	usageWatchers        map[chan struct{}]struct{}
 	usageAlerts          *usages.AlertTracker
 	usageAlertWake       chan struct{}
+	telemetryIDs         sync.Map // user id -> the id that person's reports carry (see telemetry_identity.go)
 }
 
 func New(db *store.Store) *Server {
-	return &Server{Store: db, Auth: auth.NewService(db), PollInterval: 50 * time.Millisecond, WriteTimeout: 5 * time.Second, QueueSize: 32, MachinePingInterval: 15 * time.Second, SessionCheckInterval: 30 * time.Second,
+	s := &Server{Store: db, Auth: auth.NewService(db), PollInterval: 50 * time.Millisecond, WriteTimeout: 5 * time.Second, QueueSize: 32, MachinePingInterval: 15 * time.Second, SessionCheckInterval: 30 * time.Second,
 		Allow: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}, machines: make(map[string]*machineConn), spawnKeys: make(map[string]string), CopilotFlow: providers.NewCopilotFlow()}
+	s.Auth.UserHook = s.noteTelemetryUser
+	return s
 }
 
 func (s *Server) Handler() http.Handler {
@@ -134,6 +137,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/login", s.hostChecked(s.login))
 	mux.Handle("GET /api/telemetry/settings", s.Auth.RequireUser(http.HandlerFunc(s.telemetrySettings)))
 	mux.Handle("PUT /api/telemetry/settings", s.Auth.RequireUser(http.HandlerFunc(s.telemetrySettings)))
+	mux.Handle("GET /api/me/telemetry", s.Auth.RequireUser(http.HandlerFunc(s.telemetryIdentity)))
+	mux.Handle("PUT /api/me/telemetry", s.Auth.RequireUser(http.HandlerFunc(s.telemetryIdentity)))
+	mux.Handle("POST /api/me/telemetry/fingerprint", s.Auth.RequireUser(http.HandlerFunc(s.telemetryIdentity)))
 	mux.HandleFunc("GET /api/setup/status", s.hostChecked(s.setupStatus))
 	mux.HandleFunc("POST /api/setup/token", s.hostChecked(s.setupToken))
 	mux.HandleFunc("POST /api/setup", s.hostChecked(s.setupOwner))
@@ -826,6 +832,9 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 func (s *Server) buildInfo(w http.ResponseWriter, r *http.Request) {
 	info := map[string]any{"version": s.Version, "go_version": runtime.Version()}
 	if browser := telemetry.Current().BrowserConfig(); browser != nil {
+		if id, err := s.telemetryReportID(r.Context(), userID(r)); err == nil {
+			browser["user_id"] = id // the one id this person's reports carry: their fingerprint, or their login if they chose that
+		}
 		info["sentry"] = browser // the page starts its Sentry SDK from this; absent means it never loads the SDK
 	}
 	writeJSON(w, 200, info)

@@ -1643,6 +1643,9 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .app-dialog-message { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .app-dialog-fields { display: grid; gap: 12px; }
 .app-dialog-field { display: grid; gap: 4px; font-size: 12px; }
+.app-dialog-input-row { display: flex; align-items: center; gap: 8px; }
+.app-dialog-input-row > input { flex: 1 1 auto; min-width: 0; }
+.app-dialog-input-row > button { flex: none; }
 .app-dialog-field input { padding: 7px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 5px; color: var(--text-primary); }
 .app-dialog-check { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
 .app-dialog-check small, .app-dialog-field small { flex-basis: 100%; color: var(--text-muted); }

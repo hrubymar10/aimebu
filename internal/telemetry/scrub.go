@@ -79,7 +79,7 @@ func (s Scrubber) Text(text string) string {
 
 // A span's data keys that carry no content: everything else is dropped, so a new attribute cannot leak by being added elsewhere.
 var allowedSpanData = map[string]bool{
-	"db.system": true, "db.operation": true, "db.rows": true, "db.statement": true,
+	"db.system": true, "db.operation": true, "db.rows": true, "db.statement": true, "db.calls": true, "db.calls_dropped": true,
 	"http.request.method": true, "http.response.status_code": true, "http.route": true,
 }
 
@@ -89,7 +89,8 @@ func (s Scrubber) Event(event *sentry.Event) *sentry.Event {
 		return nil
 	}
 	// Who and where: no user, no host name, no request detail beyond the method and the path.
-	event.User, event.ServerName, event.Modules = sentry.User{}, "", nil
+	// Of a user only the id survives (the fingerprint, or the login when its owner chose to send it): no name, email or address.
+	event.User, event.ServerName, event.Modules = sentry.User{ID: trimUserID(event.User.ID)}, "", nil
 	delete(event.Tags, "server_name")
 	if event.Request != nil {
 		event.Request = &sentry.Request{Method: event.Request.Method, URL: s.URL(event.Request.URL)}

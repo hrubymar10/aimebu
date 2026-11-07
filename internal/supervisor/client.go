@@ -34,7 +34,10 @@ type Client struct {
 	MachineKey string
 	ServerURL  string
 	// AllowPlainHTTP lets this supervisor reach a server on another machine over plain http (the --insecure flag); without it only https, or this machine, is used.
-	AllowPlainHTTP          bool
+	AllowPlainHTTP bool
+	// OnTelemetry takes the server's telemetry settings (in hello_ack, and again whenever they change). Nil means this supervisor does not take them (the
+	// server's own embedded one is the server's process and reports through it): it then does not announce the capability.
+	OnTelemetry             func(protocol.TelemetrySettings)
 	HTTPClient              *http.Client
 	SupervisorVersion       string
 	CapabilityReports       []protocol.CapabilityReport
@@ -66,6 +69,7 @@ type Client struct {
 	active         map[string]string
 	running        map[string]adapter.Turn
 	pendingStopAck map[string]protocol.Frame
+	telemetryEnv   map[string]string // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
 	currentConn    *websocket.Conn
 	stopping       bool
 	turns          sync.WaitGroup
@@ -225,7 +229,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -261,6 +265,9 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		if err := c.setHarness(setting); err != nil && c.OnError != nil {
 			c.OnError(err)
 		}
+	}
+	if ack.Telemetry != nil && c.OnTelemetry != nil {
+		c.OnTelemetry(*ack.Telemetry)
 	}
 	c.refreshCapabilities()
 	if len(ack.LauncherDefinitions) > 0 {
@@ -563,6 +570,10 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				return err
 			}
 		case protocol.Pong:
+		case protocol.TelemetryConfig:
+			if frame.Telemetry != nil && c.OnTelemetry != nil {
+				c.OnTelemetry(*frame.Telemetry)
+			}
 		case protocol.Deliver:
 			if err := c.handleDeliver(ctx, conn, frame.Delivery()); err != nil {
 				return err

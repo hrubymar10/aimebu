@@ -54,9 +54,15 @@ func (p *spanProcessor) OnEnd(span trace.ReadOnlySpan) {
 	children := p.open[traceID]
 	delete(p.open, traceID)
 	p.mu.Unlock()
+	var user sentry.User
+	for _, attribute := range span.Attributes() {
+		if string(attribute.Key) == UserKey {
+			user = sentry.User{ID: trimUserID(attribute.Value.AsString())}
+		}
+	}
 	event := &sentry.Event{
 		Type: "transaction", Transaction: span.Name(), Level: sentry.LevelInfo, Platform: "go",
-		StartTime: span.StartTime(), Timestamp: span.EndTime(), Spans: children,
+		StartTime: span.StartTime(), Timestamp: span.EndTime(), Spans: children, User: user,
 		Contexts: map[string]sentry.Context{"trace": sentry.TraceContext{
 			TraceID: sentry.TraceID(converted.TraceID), SpanID: converted.SpanID, ParentSpanID: converted.ParentSpanID,
 			Op: converted.Op, Description: converted.Description, Status: converted.Status, Data: converted.Data,
@@ -77,6 +83,9 @@ func convert(span trace.ReadOnlySpan) *sentry.Span {
 		if string(attribute.Key) == OpKey {
 			out.Op = attribute.Value.AsString()
 			continue
+		}
+		if string(attribute.Key) == UserKey {
+			continue // goes to the transaction's user, not into the data
 		}
 		out.Data[string(attribute.Key)] = attribute.Value.AsInterface()
 	}
