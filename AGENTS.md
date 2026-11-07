@@ -11,7 +11,8 @@ contract; changing it requires the room leader's approval.
 
 Use the Go standard library by default. The only preapproved external
 dependencies are `github.com/goccy/go-json`, `github.com/coder/websocket`,
-and `modernc.org/sqlite`, and add each only when implementation needs it.
+`modernc.org/sqlite` and `github.com/pelletier/go-toml/v2` (MIT; it reads the person's
+Codex `config.toml`), and add each only when implementation needs it.
 `github.com/air-verse/air` is approved as a `tool` directive for `make dev`
 only (GPL-3.0; it is never imported or linked into aimebu).
 Ask before adding, removing, or updating any other dependency.

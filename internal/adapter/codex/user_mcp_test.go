@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
+	toml "github.com/pelletier/go-toml/v2"
+
 	"github.com/hrubymar10/aimebu/internal/adapter"
 )
 
@@ -19,9 +21,6 @@ command = "aimebu"
 args = ["mcp"]
 [mcp_servers.aimebu.env]
 AIMEBU_URL = "http://v1"
-
-[mcp_servers.'aimebu']
-url = "http://literal-quoted-v1"
 
 [mcp_servers.AIMEBU]
 url = "http://upper-v1"
@@ -54,58 +53,116 @@ model = "gpt-6-mini"
 command = "late"
 `
 
+// carried parses the tables a copy produced and returns the servers in them, by name.
+func carried(t *testing.T, tables string) map[string]map[string]any {
+	t.Helper()
+	var doc struct {
+		Servers map[string]map[string]any `toml:"mcp_servers"`
+	}
+	if err := toml.Unmarshal([]byte(tables), &doc); err != nil {
+		t.Fatalf("the copied tables are not valid TOML (%v):\n%s", err, tables)
+	}
+	return doc.Servers
+}
+
 // An ordinary server that only mentions aimebu is kept: a filesystem server rooted in an aimebu checkout, or aimebu started with other arguments.
 func TestOrdinaryServersThatMentionAimebuAreKept(t *testing.T) {
 	t.Parallel()
 	config := "[mcp_servers.files]\ncommand = \"npx\"\nargs = [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/Users/x/xcode/aimebu\"]\n\n[mcp_servers.daemon]\ncommand = \"aimebu\"\nargs = [\"server\", \"start\"]\n\n[mcp_servers.real]\ncommand = \"aimebu\"\nargs = [\"mcp\"]\n"
-	tables, _, dropped := userMCPServers(config, "aimebu")
-	if !strings.Contains(tables, "server-filesystem") || !strings.Contains(tables, `args = ["server", "start"]`) || strings.Contains(tables, "[mcp_servers.real]") || len(dropped) != 1 || dropped[0] != "real" {
-		t.Fatalf("tables:\n%s\ndropped: %v", tables, dropped)
+	tables, _, dropped, err := userMCPServers(config, "aimebu")
+	servers := carried(t, tables)
+	if err != nil || servers["files"] == nil || servers["daemon"] == nil || servers["real"] != nil || len(dropped) != 1 || dropped[0] != "real" {
+		t.Fatalf("servers %v dropped %v err %v", servers, dropped, err)
+	}
+	if args, _ := servers["daemon"]["args"].([]any); len(args) != 2 || args[0] != "server" || args[1] != "start" {
+		t.Fatalf("a kept server keeps its arguments: %v", servers["daemon"])
 	}
 }
 
 func TestUserMCPServersKeepsTheirTablesAndDropsAimebuAndV1Buses(t *testing.T) {
 	t.Parallel()
-	tables, vars, dropped := userMCPServers(userConfig, "aimebu")
-	for _, want := range []string{"[mcp_servers.docs]", `url = "https://docs.example/mcp"`, "[mcp_servers.docs.env_http_headers]", `[mcp_servers."quoted name"]`, "[mcp_servers.late]"} {
-		if !strings.Contains(tables, want) {
-			t.Errorf("missing %q in\n%s", want, tables)
-		}
+	tables, vars, dropped, err := userMCPServers(userConfig, "aimebu")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, bad := range []string{"aimebu", "AIMEBU", "AIMEBU_URL", "literal-quoted-v1", "upper-v1", "9997", "approval_policy", "profiles.fast", `model = `} {
+	servers := carried(t, tables)
+	if got := len(servers); got != 3 || servers["docs"] == nil || servers["quoted name"] == nil || servers["late"] == nil {
+		t.Fatalf("docs, quoted name and late are kept, nothing else: %v", servers)
+	}
+	if headers, _ := servers["docs"]["env_http_headers"].(map[string]any); headers["X-Team"] != "TEAM_ID" || servers["docs"]["url"] != "https://docs.example/mcp" {
+		t.Errorf("docs keeps its url and its header map: %v", servers["docs"])
+	}
+	for _, bad := range []string{"aimebu", "AIMEBU", "AIMEBU_URL", "upper-v1", "9997", "approval_policy", "profiles", "model"} {
 		if strings.Contains(tables, bad) {
 			t.Errorf("%q must not be copied:\n%s", bad, tables)
 		}
 	}
-	if len(dropped) != 4 {
-		t.Errorf("dropped = %v: aimebu in two quotings (one server), AIMEBU, the binary and the v1 port", dropped)
+	if strings.Join(dropped, ",") != "AIMEBU,aimebu,bus,v1port" {
+		t.Errorf("dropped = %v: aimebu, AIMEBU, the binary and the v1 port", dropped)
 	}
 	if got := strings.Join(vars, ","); got != "DOCS_TOKEN,TEAM_ID,TOOL_KEY,OTHER,CODEX_HOME" && got != "DOCS_TOKEN,TOOL_KEY,OTHER,CODEX_HOME,TEAM_ID" {
 		t.Errorf("env vars = %q", got)
 	}
 }
 
-func TestWellFormedCatchesWhatWouldBreakEveryTurn(t *testing.T) {
+// A real parser reads every spelling the same: dotted keys, an inline table of servers, spaces and quotes in a header, a server defined with its
+// sub-tables first. A v1 bus is found whatever way it is written.
+func TestEveryWayOfWritingAServerIsRead(t *testing.T) {
 	t.Parallel()
-	for name, tc := range map[string]struct {
-		text string
-		ok   bool
-	}{
-		"plain":                  {"[mcp_servers.a]\nurl = \"x\"\nargs = [\"a\", \"b\"]\n", true},
-		"multi-line array":       {"[mcp_servers.a]\nargs = [\n  \"a\",\n  \"b\", # note\n]\n", true},
-		"inline table":           {"[mcp_servers.a]\nenv = { A = \"1\", B = \"[x\" }\n", true},
-		"the same table twice":   {"[mcp_servers.a]\nurl = \"x\"\n[mcp_servers.a]\nurl = \"y\"\n", false},
-		"the same table, quoted": {"[mcp_servers.docs]\nurl = \"x\"\n[mcp_servers.\"docs\"]\nurl = \"y\"\n", false},
-		"quoted dotted parts":    {"[mcp_servers.'docs'.env]\nA = \"1\"\n[mcp_servers.docs.\"env\"]\nB = \"2\"\n", false},
-		"an array of tables":     {"[[tools]]\nname = \"a\"\n[[tools]]\nname = \"b\"\n", true},
-		"an open string":         {"[mcp_servers.a]\nurl = \"x\n", false},
-		"an open array":          {"[mcp_servers.a]\nargs = [\"a\"\n[mcp_servers.b]\nurl = \"y\"\n", false},
-		"a closing bracket more": {"[mcp_servers.a]\nargs = [\"a\"]]\n", false},
-		"triple-quoted":          {"[mcp_servers.a]\nnote = \"\"\"a\nb\"\"\"\n", true},
+	for name, config := range map[string]string{
+		"table":           "[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\n[mcp_servers.docs.http_headers]\nX = \"y\"\n",
+		"spaced header":   "[ mcp_servers . docs ]\nurl = \"https://d.example/mcp\"\n[ mcp_servers . docs . http_headers ]\nX = \"y\"\n",
+		"quoted header":   "[mcp_servers.\"docs\"]\nurl = \"https://d.example/mcp\"\n[mcp_servers.'docs'.http_headers]\nX = \"y\"\n",
+		"dotted keys":     "mcp_servers.docs.url = \"https://d.example/mcp\"\nmcp_servers.docs.http_headers.X = \"y\"\n",
+		"inline table":    "mcp_servers = { docs = { url = \"https://d.example/mcp\", http_headers = { X = \"y\" } } }\n",
+		"sub-table first": "[mcp_servers.docs.http_headers]\nX = \"y\"\n[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\n",
 	} {
-		if got := wellFormed(tc.text); got != tc.ok {
-			t.Errorf("%s: wellFormed = %v", name, got)
+		tables, _, _, err := userMCPServers(config, "aimebu")
+		servers := carried(t, tables)
+		headers, _ := servers["docs"]["http_headers"].(map[string]any)
+		if err != nil || servers["docs"]["url"] != "https://d.example/mcp" || headers["X"] != "y" {
+			t.Errorf("%s: err %v servers %v", name, err, servers)
 		}
+	}
+	for name, config := range map[string]string{
+		"dotted":             "mcp_servers.aimebu.command = \"aimebu\"\nmcp_servers.aimebu.args = [\"mcp\"]\n",
+		"inline":             "mcp_servers = { bus = { command = \"/opt/aimebu\", args = [\"mcp\"] } }\n",
+		"wrapped":            "[mcp_servers.bus]\ncommand = \"env\"\nargs = [\"X=1\", \"aimebu\", \"mcp\"]\n",
+		"under another name": "[mcp_servers.tools]\nurl = \"http://localhost:9997/mcp\"\n",
+	} {
+		tables, _, dropped, err := userMCPServers(config, "aimebu")
+		if err != nil || strings.TrimSpace(tables) != "" || len(dropped) != 1 {
+			t.Errorf("%s: a v1 bus must not be copied: err %v tables %q dropped %v", name, err, tables, dropped)
+		}
+	}
+}
+
+// A file that is not valid TOML is not read at all: Codex itself would refuse it, and a half-read config could carry a half of a server.
+func TestAConfigThatIsNotValidTOMLCarriesNothing(t *testing.T) {
+	t.Parallel()
+	for name, config := range map[string]string{
+		"the same table twice":         "[mcp_servers.a]\nurl = \"x\"\n[mcp_servers.a]\nurl = \"y\"\n",
+		"the same table, quoted":       "[mcp_servers.docs]\nurl = \"x\"\n[mcp_servers.\"docs\"]\nurl = \"y\"\n",
+		"an open string":               "[mcp_servers.a]\nurl = \"x\n",
+		"an open array":                "[mcp_servers.a]\nargs = [\"a\"\n[mcp_servers.b]\nurl = \"y\"\n",
+		"a closing bracket more":       "[mcp_servers.a]\nargs = [\"a\"]]\n",
+		"a bad escape":                 "[mcp_servers.a]\nurl = \"https://e.example/\\q\"\n",
+		"mcp_servers that is no table": "mcp_servers = 3\n",
+	} {
+		if tables, _, _, err := userMCPServers(config, "aimebu"); err == nil || tables != "" {
+			t.Errorf("%s: err %v tables %q", name, err, tables)
+		}
+		if overrides, _, err := dockerOverrides(config); err == nil || len(overrides) != 0 {
+			t.Errorf("%s (docker): err %v overrides %v", name, err, overrides)
+		}
+	}
+	if line := parseProblem(func() error { _, _, err := parseServers("[a\nsecret = 1"); return err }()); strings.Contains(line, "secret") || !strings.Contains(line, "line") {
+		t.Errorf("a problem names the place, never the content: %q", line)
+	}
+	// An entry of mcp_servers that is not a table is left out, the rest is carried.
+	tables, _, dropped, err := userMCPServers("[mcp_servers]\nodd = 5\n[mcp_servers.fine]\nurl = \"https://f.example\"\n", "aimebu")
+	if servers := carried(t, tables); err != nil || len(servers) != 1 || servers["fine"] == nil || len(dropped) != 1 || dropped[0] != "odd" {
+		t.Errorf("servers %v dropped %v err %v", servers, dropped, err)
 	}
 }
 
@@ -160,8 +217,8 @@ func TestNativeTurnCarriesThePersonsOwnServersNextToAimebu(t *testing.T) {
 	if strings.Count(config, "[mcp_servers.aimebu]") != 1 || strings.Contains(config, "[mcp_servers.aimebu.env]\nAIMEBU_URL") || strings.Contains(config, "v1") {
 		t.Fatalf("exactly one aimebu table, and no v1 bus:\n%s", config)
 	}
-	if !strings.Contains(config, "[mcp_servers.docs]") || !strings.Contains(config, `[mcp_servers."quoted name"]`) || !wellFormed(config) {
-		t.Fatalf("the person's servers, in a well-formed config:\n%s", config)
+	if servers := carried(t, config); servers["docs"] == nil || servers["quoted name"] == nil || servers["aimebu"] == nil {
+		t.Fatalf("the person's servers next to aimebu's, in a valid config:\n%s", config)
 	}
 	if !strings.Contains(env, "DOCS_TOKEN=tok") || strings.Contains(env, "UNRELATED") || strings.Contains(env, "user-codex") {
 		t.Fatalf("a server's named variable reaches Codex, nothing else, and CODEX_HOME is the private one:\n%s", env)
@@ -244,22 +301,19 @@ url = "http://[::1]:8080/mcp"
 [mcp_servers.aimebu_docker]
 url = "https://impostor.example/mcp"
 
-[mcp_servers.escapes]
-url = "https://e.example/\q"
-
 [mcp_servers."quoted name"]
 url = "https://q.example"
 `
 
 func TestDockerOverridesCarryOnlyThePlainRemoteServersAContainerCanUse(t *testing.T) {
 	t.Parallel()
-	overrides, skipped := dockerOverrides(dockerConfig)
-	if len(overrides) != 1 || overrides[0] != `mcp_servers.docs={url="https://docs.example/mcp",startup_timeout_sec=20}` {
+	overrides, skipped, err := dockerOverrides(dockerConfig)
+	if err != nil || len(overrides) != 1 || overrides[0] != "mcp_servers.docs={url='https://docs.example/mcp',startup_timeout_sec=20}" {
 		t.Fatalf("overrides = %q", overrides)
 	}
-	for name, why := range map[string]string{"aimebu": "v1", "literal": "other tables", "inline": "cannot carry (http_headers)", "tokened": "cannot carry (bearer_token_env_var)",
-		"headered": "other tables", "off": "switched off", "listed": "cannot carry (disabled_tools)", "required": "cannot carry (required)", "stdio": "command",
-		"bus": "v1", "local": "host itself", "loopback6": "host itself", "aimebu_docker": "own entry", "escapes": "plain string", "quoted name": "command line"} {
+	for name, why := range map[string]string{"aimebu": "v1", "literal": "other tables", "inline": "other tables", "tokened": "cannot carry (bearer_token_env_var)",
+		"headered": "other tables", "off": "switched off", "listed": "cannot carry (disabled_tools)", "required": "cannot carry (required)", "stdio": "runs a command",
+		"bus": "v1", "local": "host itself", "loopback6": "host itself", "aimebu_docker": "own entry", "quoted name": "command line"} {
 		if !strings.Contains(skipped[name], why) {
 			t.Errorf("%s: skipped for %q, want %q", name, skipped[name], why)
 		}
@@ -270,24 +324,35 @@ func TestDockerOverridesCarryOnlyThePlainRemoteServersAContainerCanUse(t *testin
 func TestDockerOverridesFailClosedOnAnythingTheyCannotReproduce(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct{ config, why string }{
-		"dotted header": {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\n[mcp_servers.docs.http_headers]\nX = \"y\"\n", "other tables"},
-		"spaced header": {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\n[ mcp_servers . docs . http_headers ]\nX = \"y\"\n", "other tables"},
-		"quoted header": {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\n[mcp_servers.\"docs\".http_headers]\nX = \"y\"\n", "other tables"},
-		"dotted tools":  {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\ntools.search.approval_mode = \"approve\"\n", "cannot reproduce"},
-		"dotted key":    {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\nhttp_headers.X = \"y\"\n", "cannot reproduce"},
-		"userinfo":      {"[mcp_servers.docs]\nurl = \"https://u:p@d.example/mcp\"\n", "user name"},
-		"query":         {"[mcp_servers.docs]\nurl = \"https://d.example/mcp?token=abc\"\n", "query"},
+		"dotted header":   {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\n[mcp_servers.docs.http_headers]\nX = \"y\"\n", "other tables"},
+		"spaced header":   {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\n[ mcp_servers . docs . http_headers ]\nX = \"y\"\n", "other tables"},
+		"quoted header":   {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\n[mcp_servers.\"docs\".http_headers]\nX = \"y\"\n", "other tables"},
+		"dotted tools":    {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\ntools.search.approval_mode = \"approve\"\n", "other tables"},
+		"dotted key":      {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\nhttp_headers.X = \"y\"\n", "other tables"},
+		"inline server":   {"mcp_servers = { docs = { url = \"https://d.example/mcp\", http_headers = { X = \"y\" } } }\n", "other tables"},
+		"unknown key":     {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\nexperimental = 1\n", "cannot carry (experimental)"},
+		"timeout as text": {"[mcp_servers.docs]\nurl = \"https://d.example/mcp\"\nstartup_timeout_sec = \"20\"\n", "plain number"},
+		"userinfo":        {"[mcp_servers.docs]\nurl = \"https://u:p@d.example/mcp\"\n", "user name"},
+		"query":           {"[mcp_servers.docs]\nurl = \"https://d.example/mcp?token=abc\"\n", "query"},
 	} {
-		overrides, skipped := dockerOverrides(tc.config)
-		if len(overrides) != 0 {
+		overrides, skipped, err := dockerOverrides(tc.config)
+		if err != nil || len(overrides) != 0 {
 			t.Errorf("%s: carried %q", name, overrides)
 		}
 		if !strings.Contains(skipped["docs"], tc.why) {
 			t.Errorf("%s: skipped for %q, want %q", name, skipped["docs"], tc.why)
 		}
 	}
-	if overrides, _ := dockerOverrides("[ mcp_servers . docs ]\nurl = \"https://d.example/mcp\"\n"); len(overrides) != 1 {
-		t.Errorf("a spaced header of a plain server should still be carried: %q", overrides)
+	// A plain server is carried whatever way it is written, and its numbers and quotes come out as TOML.
+	for name, config := range map[string]string{
+		"spaced header": "[ mcp_servers . docs ]\nurl = \"https://d.example/mcp\"\nstartup_timeout_sec = 20\ntool_timeout_sec = 2.5\n",
+		"dotted keys":   "mcp_servers.docs.url = \"https://d.example/mcp\"\nmcp_servers.docs.startup_timeout_sec = 20\nmcp_servers.docs.tool_timeout_sec = 2.5\n",
+		"inline table":  "mcp_servers = { docs = { url = \"https://d.example/mcp\", startup_timeout_sec = 20, tool_timeout_sec = 2.5 } }\n",
+	} {
+		overrides, _, err := dockerOverrides(config)
+		if err != nil || len(overrides) != 1 || overrides[0] != "mcp_servers.docs={url='https://d.example/mcp',startup_timeout_sec=20,tool_timeout_sec=2.5}" {
+			t.Errorf("%s: carried %q err %v", name, overrides, err)
+		}
 	}
 }
 
@@ -329,7 +394,7 @@ func TestDockerTurnPassesThePersonsRemoteServersAsOverrides(t *testing.T) {
 		return string(args)
 	}
 	args := run(adapter.ModeNormal)
-	for _, want := range []string{"mcp_servers.aimebu={command=\"true\",enabled=false}", "mcp_servers.aimebu_docker=", `mcp_servers.docs={url="https://docs.example/mcp"`, "--ignore-user-config"} {
+	for _, want := range []string{"mcp_servers.aimebu={command=\"true\",enabled=false}", "mcp_servers.aimebu_docker=", "mcp_servers.docs={url='https://docs.example/mcp'", "--ignore-user-config"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("missing %q:\n%s", want, args)
 		}

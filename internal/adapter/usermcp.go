@@ -103,8 +103,8 @@ func LooksLikeV1Bus(name, text string) bool {
 
 // UnsafeContainerURL says whether a remote MCP server url is one a container must not be given: it cannot be read as a url, it names the machine
 // itself (localhost in any spelling, a loopback or unspecified address, or an address written as a bare number or in hex, which resolvers
-// read as an address), which a container does not reach by that name, it carries a password or a user name, or it has a query string (the
-// place a token tends to go). The reason is in words for a log line.
+// read as an address), which a container does not reach by that name, it carries a password or a user name, or it has a query string or a fragment (the
+// places a token tends to go). The reason is in words for a log line.
 func UnsafeContainerURL(raw string) (reason string, unsafe bool) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" {
@@ -118,6 +118,9 @@ func UnsafeContainerURL(raw string) (reason string, unsafe bool) {
 	}
 	if u.RawQuery != "" || u.ForceQuery {
 		return "its url has a query string", true
+	}
+	if u.Fragment != "" || u.RawFragment != "" || strings.Contains(raw, "#") {
+		return "its url has a fragment", true
 	}
 	host := strings.ToLower(u.Hostname())
 	if host == "" || strings.HasSuffix(host, ".") || host == "localhost" || strings.HasSuffix(host, ".localhost") {

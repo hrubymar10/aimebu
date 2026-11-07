@@ -202,35 +202,35 @@ model, missing input/output, or inconsistent token shares leave cost unknown.
 Its private per-agent `CODEX_HOME` holds the structured-output schema and a
 translated MCP config. Only the private config contains the agent key; the
 inherited process environment excludes `AIMEBU2_*`. A native normal turn also
-carries the person's own MCP servers: the `[mcp_servers.<name>]` tables (and their
-sub-tables) of the `config.toml` next to their `auth.json` are copied into the private
-config, and the environment variables those servers name (`env_vars`,
+carries the person's own MCP servers: the `mcp_servers` of the `config.toml` next to their
+`auth.json` are read with a TOML parser (so a server counts however TOML writes it: tables
+and sub-tables, dotted keys, an inline table, spaces or quotes in a header) and written into the
+private config, and the environment variables those servers name (`env_vars`,
 `bearer_token_env_var`, `env_http_headers`) pass through. A server called `aimebu`
 is not copied (nor any server that is aimebu's own bus of v1 under another name: one
 whose command is the aimebu binary with an `mcp` argument, or that points at v1's port
 with an `/mcp` path; a server that only mentions aimebu, such as a filesystem server in
 an aimebu checkout, is kept), so a v1 bus
 never reaches an agent: aimebu's own entry is the only one under that name (a merge
-would mix the two, since Codex merges same-named tables). Names in any spelling of
-quoting are read, and a copy whose tables are not well formed is left out with a line
-in the supervisor's log, so a person's config cannot break a turn. Only the table form is read, not an `mcp_servers` inline table; the rest of
-the person's config (model, profile, approvals) still does not apply.
+would mix the two, since Codex merges same-named tables). A config that is not valid TOML
+(a table defined twice, an open string) is not read at all, with a line in the supervisor's log
+that names the line and column and never the content, so a person's config cannot break a turn;
+the rest of the person's config (model, profile, approvals) still does not apply.
 
 The same rules hold for every harness that carries a person's own servers (Codex,
 OpenCode, Pi and Vibe: normal turns only, a read-only turn gets none). A Docker turn
 carries the person's remote (HTTP or SSE) servers only, because a command on the host is
 not in the container (each one left out is logged with that reason): Codex passes each as
 a `-c mcp_servers.<name>=…` override and keeps `--ignore-user-config`, with aimebu's own two entries
-last. The Codex path fails closed: a server table is carried only when every line of it is a
-`url`, `enabled = true`, one of the two timeouts, a comment or blank (its own header, read with
-whitespace and quoting normalised, included). Any other line (a dotted key, a header, tools or
-variables sub-table, an unknown key) leaves the whole server out with a log line, never carried in
+last. The Codex path fails closed: a server is carried only when its parsed table holds nothing but a
+`url`, `enabled = true` and the two timeouts. Any other key (a header or tools table in any
+writing, an unknown key, a command) leaves the whole server out with a log line, never carried in
 a weaker form: that covers a server that is switched off (it would be switched on), tool lists,
 `required`, and a token variable or headers (a literal header is a credential, and the override sits
 on a command line that any process of the host can read; Codex also has no way to hand the container
 a variable). For every harness, a url the container cannot use as written is left out: the host
 itself in any spelling (`localhost`, loopback or unspecified addresses, numeric forms), user name and
-password in the url, or a query string (a likely token); and for Codex a server whose
+password in the url, a query string or a fragment (likely tokens); and for Codex a server whose
 name is not a plain word (Codex reads a quoted `-c` key with its quotes) or is `aimebu_docker`; OpenCode puts them
 in the inline config and forwards the `{env:NAME}` variables by name like the provider keys;
 Vibe writes them into the private home, with their `api_key_env` variables forwarded; Pi

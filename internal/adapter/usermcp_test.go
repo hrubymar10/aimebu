@@ -52,7 +52,7 @@ func TestUnsafeContainerURL(t *testing.T) {
 	for url, want := range map[string]bool{
 		"http://localhost:9/x": true, "https://LOCALHOST./x": true, "http://api.localhost/x": true, "http://127.0.0.1/x": true, "http://127.9.8.7:1/x": true,
 		"http://[::1]:80/x": true, "http://0.0.0.0/x": true, "http://user@docs.example/x": true, "https://docs.example/mcp?token=a": true,
-		"http://2130706433/x": true, "http://0x7f.1/x": true, "ftp://docs.example/x": true,
+		"https://h.example/mcp#tok=abc": true, "https://h.example/mcp#": true, "http://2130706433/x": true, "http://0x7f.1/x": true, "ftp://docs.example/x": true,
 		"https://docs.example/mcp": false, "https://localhost.example/mcp": false, "http://10.0.0.5/x": false,
 	} {
 		if _, got := UnsafeContainerURL(url); got != want {
