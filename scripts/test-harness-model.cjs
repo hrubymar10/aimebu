@@ -94,7 +94,7 @@ assert.equal(m.tabTitle({ ...harness, enabled: false, models: [] }), 'harness-do
 assert.equal(m.chosenHarness([{ id: 'a' }, { id: 'b' }], 'b'), 'b', 'the chosen harness stays chosen');
 assert.equal(m.chosenHarness([{ id: 'a' }, { id: 'b' }], 'gone'), 'a', 'a harness that is gone falls back to the first');
 assert.equal(m.chosenHarness([], 'a'), '', 'no harness, nothing chosen');
-assert.deepEqual([['ArrowDown', 0], ['ArrowDown', 2], ['ArrowUp', 0], ['ArrowUp', 2], ['Home', 1], ['End', 1], ['x', 1]].map(([key, at]) => m.tabKeyTarget(key, at, 3)), [1, 0, 2, 1, 0, 2, -1], 'the arrow keys wrap; Home and End jump; other keys do nothing');
+assert.deepEqual([['ArrowDown', 0], ['ArrowDown', 2], ['ArrowUp', 0], ['ArrowUp', 2], ['Home', 1], ['End', 1], ['ArrowRight', 2], ['ArrowLeft', 0], ['x', 1]].map(([key, at]) => m.tabKeyTarget(key, at, 3)), [1, 0, 2, 1, 0, 2, 0, 2, -1], 'the arrow keys (down and right forward, up and left back) wrap; Home and End jump; other keys do nothing');
 
 // A role default is named by its machine, harness and model, or by its ids while the harness is unknown.
 const item = { launcher_id: 'mln_x', model: 'm' };

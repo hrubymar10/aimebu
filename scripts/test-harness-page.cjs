@@ -105,11 +105,16 @@ async function main() {
       }
       await page.close();
     }
-    // The list of harnesses and the card of the selected one start at the same height.
+    // The list of harnesses is one scrolling row above the card of the selected one, which uses the whole width.
     {
       const page = await mount({}, { owner: true });
-      const edges = await page.evaluate(() => [document.querySelector('.harness-master'), document.querySelector('.harness-split .machine-harness')].map(el => Math.round(el.getBoundingClientRect().top)));
-      assert.equal(edges[0], edges[1], `top edges line up: ${JSON.stringify(edges)}`);
+      const geometry = await page.evaluate(() => {
+        const list = document.querySelector('.harness-master'), card = document.querySelector('.harness-split .machine-harness:not([hidden])'), split = document.querySelector('.harness-split');
+        const items = [...list.querySelectorAll('.harness-master-item')].map(el => Math.round(el.getBoundingClientRect().top));
+        const l = list.getBoundingClientRect(), c = card.getBoundingClientRect(), s = split.getBoundingClientRect();
+        return { above: l.bottom <= c.top + 1, full: Math.abs(c.width - s.width) <= 1 && Math.abs(l.width - s.width) <= 1, oneRow: new Set(items).size === 1, scrolls: getComputedStyle(list).overflowX, snap: getComputedStyle(list).scrollSnapType };
+      });
+      assert.deepEqual(geometry, { above: true, full: true, oneRow: true, scrolls: 'auto', snap: 'x' }, `the list is a row above a full-width card: ${JSON.stringify(geometry)}`);
       await page.close();
     }
     // A late save on machine A, answered after B was chosen, leaves B's page alone: no read of A, B's own pending read still draws.

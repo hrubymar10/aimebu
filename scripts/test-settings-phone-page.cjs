@@ -64,10 +64,10 @@ async function main() {
     assert.ok(key.height < 24 && await page.$eval('.role-card-key', node => getComputedStyle(node).whiteSpace) === 'nowrap', `a role key does not break at its hyphen: ${JSON.stringify(key)}`);
     assert.ok(head.right <= edit.left + 1, 'the title does not run under the edit button');
 
-    // Harnesses: the list is a column of full-width buttons; a select that is cut says so with an ellipsis and stays inside the dialog.
+    // Harnesses: the list is one scrolling row of tabs; a select that is cut says so with an ellipsis and stays inside the dialog.
     await show('harnesses');
     const items = await tops('.harness-master-item');
-    assert.ok(items.length === 3 && items.every((item, index) => item.left === items[0].left && item.right === items[0].right && (index === 0 || item.top >= items[index - 1].bottom)), `the harnesses are a column: ${JSON.stringify(items)}`);
+    assert.ok(items.length === 3 && items.every(item => item.top === items[0].top), `the harnesses are one row: ${JSON.stringify(items)}`);
     assert.deepEqual(await page.$eval('#long-select', node => { const style = getComputedStyle(node), rect = node.getBoundingClientRect(); return [style.textOverflow, rect.right <= innerWidth]; }), ['ellipsis', true]);
     assert.deepEqual(errors, [], 'no page errors');
     console.log('settings phone page: ok');

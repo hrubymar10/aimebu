@@ -470,9 +470,6 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
   #settings-dialog .user-member-row strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #settings-dialog .user-member-row select { flex: 0 1 auto; max-width: 42%; }
   #settings-dialog .user-row > span:empty { display: none; } /* the empty "Deactivated" slot; a direct child, so the icon inside a button is not hidden with it */
-  /* Harnesses: the list of harnesses is a column under the machine, not a strip that scrolls out of sight. */
-  #settings-dialog .harness-master { display: grid; overflow: visible; padding-bottom: 0; }
-  #settings-dialog button.harness-master-item { width: 100%; }
   /* Roles: the edit button sits on the title's line, and the chips and the summary use the card's whole width. */
   #settings-dialog .role-card-edit { grid-row: 1; }
   #settings-dialog :is(.role-card-chips, .role-card-summary) { grid-column: 1 / -1; }
@@ -537,7 +534,20 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
    a few letters), the list's counts stay on their row's line, and the list takes a little less. */
 .harness-detail-fields { grid-template-columns: minmax(0, 1fr); }
 .harness-master-count { white-space: nowrap; }
-@media (min-width: 701px) { .harness-split { grid-template-columns: minmax(140px, 190px) minmax(0, 1fr); } }
+/* Harnesses (xena): at every width the list is one horizontally scrolling row of tabs on top (scroll-snap; its ends fade while there is more to scroll to, as the
+   composer's format row does) and the selected harness's detail is the full width below. A side-by-side split overlapped near 1080 px. */
+.harness-split { grid-template-columns: minmax(0, 1fr); }
+.harness-master { display: flex; position: static; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 6px; }
+button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: start; scroll-margin-inline: 28px; }
+.harness-detail-fields { grid-template-columns: minmax(0, 1fr); }
+@property --harness-fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --harness-fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@keyframes harness-master-fade { 0% { --harness-fade-start: 0px; --harness-fade-end: 28px; } 4% { --harness-fade-start: 28px; --harness-fade-end: 28px; } 96% { --harness-fade-start: 28px; --harness-fade-end: 28px; } 100% { --harness-fade-start: 28px; --harness-fade-end: 0px; } }
+@supports (animation-timeline: scroll()) {
+  .harness-master { animation: harness-master-fade linear both; animation-timeline: scroll(self inline);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--harness-fade-start), #000 calc(100% - var(--harness-fade-end)), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--harness-fade-start), #000 calc(100% - var(--harness-fade-end)), transparent 100%); }
+}
 
 /* The composer's format row scrolls sideways when the chat is narrow (a thread open beside it); its ends fade out while there is more to scroll to, and a
    row that fits has no fade. (A scroll-driven animation of two lengths: where the browser has none, the row simply scrolls as before.) */

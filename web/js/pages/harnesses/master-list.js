@@ -2,7 +2,7 @@ import { html, useRef } from '../../ui.js';
 import { useIdPrefix } from './id-prefix.js';
 import { modelCount, harnessStatus, harnessTitle, tabTitle, tabKeyTarget } from './model.js';
 
-// A vertical tab list of the machine's harnesses; the card of the selected one is shown beside it.
+// A horizontally scrolling tab list of the machine's harnesses; the card of the selected one is shown full width below it.
 export function MasterList({ rows, selected, onSelect }) {
   const list = useRef(null);
   const prefix = useIdPrefix();
@@ -12,10 +12,11 @@ export function MasterList({ rows, selected, onSelect }) {
     event.preventDefault();
     const tab = list.current.querySelectorAll('[role=tab]')[to];
     tab.focus();
+    tab.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     onSelect(rows[to].id);
   };
   return html`
-    <div class="harness-master" role="tablist" aria-orientation="vertical" aria-label="Harnesses" ref=${list}>
+    <div class="harness-master" role="tablist" aria-orientation="horizontal" aria-label="Harnesses" ref=${list}>
       ${rows.map((harness, index) => html`
         <button
           type="button"

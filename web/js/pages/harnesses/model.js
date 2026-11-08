@@ -126,7 +126,8 @@ export const chosenHarness = (rows, selected) => rows.some(row => row.id === sel
 
 // The tab a key moves to from `index` among `count` tabs, or -1 when the key is not a navigation key.
 export function tabKeyTarget(key, index, count) {
-  const to = { ArrowDown: (index + 1) % count, ArrowUp: (index + count - 1) % count, Home: 0, End: count - 1 }[key];
+  const next = (index + 1) % count, previous = (index + count - 1) % count;
+  const to = { ArrowRight: next, ArrowDown: next, ArrowLeft: previous, ArrowUp: previous, Home: 0, End: count - 1 }[key];
   return to === undefined ? -1 : to;
 }
 
