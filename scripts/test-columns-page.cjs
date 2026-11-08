@@ -249,6 +249,8 @@ async function main() {
     assert.equal(await page.$eval('.col-resizer-thread', node => node.hidden), true, 'no thread handle while no thread is open');
     await open(page);
     assert.equal(await page.$eval('.col-resizer-thread', node => node.hidden), false, 'the handle shows with an open thread');
+    // The thread's handle sits on the panel's edge line, not in a gap, so it has no grip dots; the other handles keep theirs.
+    assert.deepEqual(await page.evaluate(() => ['.col-resizer-thread', '.col-resizer-rooms', '.col-resizer-agents'].map(selector => getComputedStyle(document.querySelector(selector), '::after').display)), ['none', 'block', 'block'], 'no grip dots on the thread handle, the rooms and members handles keep theirs');
     let state = await thread(page);
     assert.deepEqual([state.panel, state.variable], [420, '420px'], 'the thread opens at its default width');
     await drag(page, 'thread', -100);

@@ -1332,6 +1332,14 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
    size as the room composer's, a thumb-sized square on touch. In the toolbar they are the 26px quiet buttons the rule further down gives them. */
 #thread-composer > .attachment-picker-btn { flex: none; align-self: flex-end; box-sizing: border-box; width: 34px; height: 38px; min-height: 0; padding: 0; display: inline-grid; place-items: center; }
 @media (max-width: 700px), (pointer: coarse) { #thread-composer > .attachment-picker-btn { width: 40px; height: 40px; min-width: 40px; min-height: 40px; } }
+/* In the toolbar the thread's emoji button is centred in the row like attach and the format buttons (style.css's `.thread-panel form button { align-self: end }` meant the bottom row
+   and dropped it a few px below its neighbours). */
+#thread-composer .composer-toolbar > :is(.attachment-picker-btn, .composer-format, .composer-aa) { align-self: center; }
+/* On a mouse every button of the toolbar (attach, emoji, the formats, "Aa") is the same 26px square-ish box, so they share one top; the generic .btn-icon height had made the
+   formats 28px and "Aa" 32px, a pixel or three off their neighbours. (A touch screen has its own 40px rule.) */
+@media (min-width: 701px) and (not (pointer: coarse)) {
+  :is(#composer, #thread-composer) .composer-toolbar :is(.composer-format, .composer-aa) { height: 26px; min-height: 26px; }
+}
 /* The high-contrast themes restyle every .btn/.btn-icon as an outlined box on the page colour; Send stays green there, as in v1
    (dark green fill, white glyph; the bright green with a dark glyph on hover). */
 [data-theme^="high-contrast"] :is(#thread-composer button, #spawn-open, .btn-send).btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
@@ -1967,6 +1975,12 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
   .thread-panel > header { box-sizing: border-box; height: 43px; min-height: 43px; padding: 0 12px; justify-content: flex-start; gap: 8px; }
   .thread-panel > header h2 { font-size: 14px; }
   .chat:has(> .thread-panel:not([hidden])) > header { margin-right: min(var(--thread-w, 420px), 100%); }
+  /* The close button is the right end of the thread's header (the title stays left). */
+  .thread-panel > header > #close-thread { margin-left: auto; }
+  /* With the members column collapsed and a thread open, the button that brings the column back is the right-most control of the row, after the thread's close button; the
+     thread's header leaves room for it. Without a thread it stays at the end of the room's header. */
+  .chat.agents-collapsed:has(> .thread-panel:not([hidden])) > header > #edge-agents-expand { position: absolute; top: 7px; right: 8px; margin: 0; z-index: 3; }
+  .chat.agents-collapsed:has(> .thread-panel:not([hidden])) > .thread-panel > header { padding-right: 48px; }
 }
 @media (min-width: 1280px) {
   .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > header { margin-right: min(calc(calc(var(--agents-w, 260px) + var(--gap, 0px)) + var(--thread-w, 420px)), 100%); }
@@ -1984,6 +1998,8 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 
 /* the thread column is resizable (column-resize.js sets --thread-w on the app element); its handle sits on the panel's left edge */
 .thread-panel { width: min(var(--thread-w, 420px), 100%); }
+/* The thread's handle sits on the panel's edge line, not in a gap: no grip dots on it (the accent line on hover and focus stays). */
+.col-resizer-thread::after { display: none; }
 .col-resizer-thread { position: absolute; top: 0; bottom: 0; right: calc(var(--thread-w, 420px) - var(--gap, 6px) / 2); margin-right: 0; }
 @media (min-width: 1280px) {
   .chat:not(.agents-collapsed) > .col-resizer-thread { right: calc(var(--agents-w, 260px) + var(--gap, 0px) + var(--thread-w, 420px) - var(--gap, 6px) / 2); }

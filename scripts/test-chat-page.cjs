@@ -495,10 +495,10 @@ async function main() {
       return { sameBubble: JSON.stringify(style(reply.querySelector('.chat-msg-bubble'), ['borderTopWidth', 'borderTopStyle', 'borderRadius', 'backgroundColor'])) === JSON.stringify(style(room.querySelector('.chat-msg-bubble'), ['borderTopWidth', 'borderTopStyle', 'borderRadius', 'backgroundColor'])),
         bold: getComputedStyle(reply.querySelector('.chat-msg-body strong')).color === getComputedStyle(room.querySelector('.chat-msg-body strong')).color, name: getComputedStyle(reply.querySelector('.chat-msg-from-name')).color === getComputedStyle(room.querySelector('.chat-msg-from-name')).color };
     }), { sameBubble: true, bold: true, name: true }, 'a reply has the bubble, the bold and the name colour of a message in the room');
-    // The thread's title is in the room header's row (the icons end before the thread, the close button follows the title), and a reply has the same toolbar as a room message.
+    // The thread's title is in the room header's row (the icons end before the thread, the close button is at the panel's right edge), and a reply has the same toolbar as a room message.
     assert.deepEqual(await page.evaluate(() => { const head = document.querySelector('.chat > header').getBoundingClientRect(), title = document.querySelector('#thread-panel > header h2').getBoundingClientRect(), close = document.querySelector('#close-thread').getBoundingClientRect(), thread = document.querySelector('#thread-panel').getBoundingClientRect(), last = [...document.querySelectorAll('.chat > header button')].filter(node => node.offsetParent).map(node => node.getBoundingClientRect().right).reduce((a, b) => Math.max(a, b), 0);
-      return { sameRow: Math.abs(title.top + title.height / 2 - (head.top + head.height / 2)) <= 2, closeAfterTitle: close.left >= title.right && close.left - title.right < 60, iconsBeforeThread: last <= thread.left + 1 }; }),
-      { sameRow: true, closeAfterTitle: true, iconsBeforeThread: true }, 'the thread header is in the room header row, with the close button after the title');
+      return { sameRow: Math.abs(title.top + title.height / 2 - (head.top + head.height / 2)) <= 2, closeAtRightEdge: close.left >= title.right && thread.right - close.right >= 0 && thread.right - close.right <= 16, iconsBeforeThread: last <= thread.left + 1 }; }),
+      { sameRow: true, closeAtRightEdge: true, iconsBeforeThread: true }, 'the thread header is in the room header row, with the close button after the title');
     await page.hover('#thread-messages .thread-entry[data-message-id=rm_a_t1] .chat-msg-bubble'); await settle(page); await new Promise(resolve => setTimeout(resolve, 500));
     assert.deepEqual(await page.evaluate(() => { const bar = document.querySelector('#thread-messages [data-message-id=rm_a_t1] .message-actions'); return { shown: getComputedStyle(bar).opacity, labels: [...bar.querySelectorAll('button')].filter(b => !b.closest('[hidden]') && !b.classList.contains('message-actions-wake')).map(b => b.getAttribute('aria-label') || b.title) }; }).then(x => ({ shown: x.shown, hasReact: x.labels.some(l => /react/i.test(l)), hasCopy: x.labels.some(l => /copy/i.test(l)), noReply: !x.labels.some(l => /^reply/i.test(l)) && !x.labels.some(l => /thread/i.test(l)) })),
       { shown: '1', hasReact: true, hasCopy: true, noReply: true }, 'a reply in the thread has the message toolbar (react, copy; no reply or thread button, it already is one)');
@@ -2181,8 +2181,45 @@ async function main() {
     }
   }
 
-  await browser.close(); server.close();
+  // The thread panel's chrome: both composers' toolbar buttons share one top (dark and both high-contrast themes), the close button is the panel header's right end, with
+  // the members column collapsed the button that brings it back is the right-most control after the close button (and stays in the room header without a thread), the
+  // thread's resize handle has no grip dots (the others keep theirs), and a pressed format button shows in the high-contrast themes.
+  {
+    const page = await mount();
+    await addReplies(page, 3);
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
+    for (const theme of ['dark', 'high-contrast-dark', 'high-contrast-light']) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      await settle(page);
+      const seen = await page.evaluate(() => {
+        const tops = form => [...document.querySelectorAll(`${form} :is(.attachment-picker-btn, .composer-format)`)].map(el => Math.round(el.getBoundingClientRect().top * 10) / 10);
+        const main = tops('#composer'), thread = tops('#thread-composer');
+        const panel = document.querySelector('#thread-panel').getBoundingClientRect(), close = document.querySelector('#close-thread').getBoundingClientRect();
+        return { main: [...new Set(main)], thread: [...new Set(thread)], counts: [main.length, thread.length], closeGap: Math.round(panel.right - close.right) };
+      });
+      assert.deepEqual([...new Set(seen.main.concat(seen.thread))].length, 1, `every toolbar button of both composers has the same top in ${theme}: ${JSON.stringify(seen)}`);
+      assert.ok(seen.counts[0] > 3 && seen.counts[1] > 3, `both toolbars have their buttons: ${JSON.stringify(seen.counts)}`);
+      assert.ok(seen.closeGap >= 0 && seen.closeGap <= 16, `the close button is at the thread header's right edge in ${theme}: ${seen.closeGap}px`);
+      // A pressed format button reads as pressed in every theme (in the high-contrast ones it used to look like the others).
+      const look = () => page.evaluate(() => { const style = getComputedStyle(document.querySelector('#thread-composer .composer-format')); return [style.backgroundColor, style.borderTopColor].join('|'); });
+      const flip = async value => { await page.evaluate(value => document.querySelector('#thread-composer .composer-format').setAttribute('aria-pressed', value), value); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300))); return look(); }; // (colours fade over a moment)
+      const pressed = { off: await flip('false'), on: await flip('true') }; await flip('false');
+      assert.notEqual(pressed.on, pressed.off, `a pressed format button looks different in ${theme}: ${JSON.stringify(pressed)}`);
+    }
+    // The members column collapsed, a thread open: the expand button is the right-most control of the row, right of the close button, inside the chat's right edge.
+    await page.evaluate(() => document.querySelector('.chat').classList.add('agents-collapsed'));
+    await settle(page);
+    const withThread = await page.evaluate(() => { const expand = document.querySelector('#edge-agents-expand').getBoundingClientRect(), close = document.querySelector('#close-thread').getBoundingClientRect(), chat = document.querySelector('.chat').getBoundingClientRect(), title = document.querySelector('#thread-panel h2').getBoundingClientRect(); return { expand: getComputedStyle(document.querySelector('#edge-agents-expand')).display !== 'none' && expand.left >= close.right, insideChat: expand.right <= chat.right + 0.5, sameRow: Math.abs(expand.top + expand.height / 2 - (title.top + title.height / 2)) <= 3 }; });
+    assert.deepEqual(withThread, { expand: true, insideChat: true, sameRow: true }, 'with the members collapsed and a thread open, the expand button follows the close button on the same row');
+    await page.$eval('#close-thread', node => node.click()); await settle(page);
+    const noThread = await page.evaluate(() => { const expand = document.querySelector('#edge-agents-expand'), style = getComputedStyle(expand), header = document.querySelector('.chat > header').getBoundingClientRect(); const rect = expand.getBoundingClientRect(); return { position: style.position, inHeader: rect.right <= header.right + 0.5 && rect.left >= header.left }; });
+    assert.deepEqual(noThread, { position: 'static', inHeader: true }, 'without a thread the expand button stays at the end of the room header');
+    await page.close();
+  }
   assert.deepEqual(errors, []);
+  await browser.close(); server.close();
   console.log('chat page: ok');
 }
 main().catch(error => { console.error(error); process.exit(1); });

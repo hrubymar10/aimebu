@@ -437,7 +437,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
    black, which left the inactive card (cyan edge) looking the highlighted one. */
 [data-theme^="high-contrast"] .usages-popover-profile.is-active { border-color: var(--green-text); }
 [data-theme="high-contrast-dark"] .topbar nav .badge, [data-theme="high-contrast-dark"] .badge { background: var(--accent); color: #000000; }
-[data-theme^="high-contrast"] :is(#composer, #thread-composer) :is(.attachment-picker-btn, #emoji-button, #thread-emoji-button, .composer-format, .composer-aa) { border: 1px solid var(--border); background: var(--bg-tertiary); }
+[data-theme^="high-contrast"] :is(#composer, #thread-composer) :is(.attachment-picker-btn, .composer-format, .composer-aa) { border: 1px solid var(--border); background: var(--bg-tertiary); } /* (no #id inside the :is(): its weight would put this above the pressed rule below, and a pressed format button showed nothing) */
 [data-theme^="high-contrast"] :is(#composer, #thread-composer) .composer-format[aria-pressed="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
 [data-theme="high-contrast-light"] :is(.room-health, .health-flag) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
 
