@@ -57,7 +57,10 @@ export const toolKey = tool => (tool ? tool.launcher_id || `${tool.tool || ''}/$
 // Returns { enabled, note, switchTo } (switchTo is the catalog index of the launcher to use, -1 when there is none).
 export function sessionEntryState(selected, catalog) {
   const canContinue = tool => tool.tool === 'claude' && tool.available && (!tool.containerized || tool.shares_claude_home);
-  if (!selected || selected.tool !== 'claude' || !selected.containerized || selected.shares_claude_home) return { enabled: true, note: '', switchTo: -1 };
+  // Only Claude Code sessions can be continued, so for any other tool the entry is not offered at all (it used to stay, say "Claude Code" and
+  // list Claude's sessions while another tool was selected).
+  if (selected && selected.tool !== 'claude') return { enabled: false, hidden: true, note: '', switchTo: -1 };
+  if (!selected || !selected.containerized || selected.shares_claude_home) return { enabled: true, note: '', switchTo: -1 };
   const label = selected.label || 'This launcher';
   const switchTo = catalog.findIndex(canContinue);
   if (switchTo >= 0) return { enabled: false, note: `${label} keeps its own Claude home, so a session cannot be continued through it.`, switchTo };

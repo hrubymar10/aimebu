@@ -164,11 +164,11 @@ async function main() {
   }
 
   // A singleton-writer role finds the room's folder held by another live agent. That only matters when no worktree can be made for the newcomer (a
-  // folder that is not a Git repository): then the dialog says so in plain words, and Spawn stays available. With a worktree available, with another role,
-  // or with a worktree ticked for the room, there is nothing to say.
+  // folder that is not a Git repository): then the dialog says so in plain words, Spawn waits (the server would refuse it), and the two ways on are
+  // offered under the words. With a worktree available, with another role, or with a worktree ticked for the room, there is nothing to say.
   {
     const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
-    const hint = page => page.evaluate(() => ({ text: document.querySelector('#spawn-writer-hint').textContent, hidden: document.querySelector('#spawn-writer-hint').hidden, off: document.querySelector('#spawn-form button[type=submit]').disabled }));
+    const hint = page => page.evaluate(() => ({ text: document.querySelector('#spawn-writer-hint').textContent, hidden: document.querySelector('#spawn-writer-block').hidden, off: document.querySelector('#spawn-form button[type=submit]').disabled }));
     const free = await mount({ auto: stable({ 'GET /api/roles': writerRoles }), withCard: true });
     await open(free);
     await free.evaluate(() => window.__opening); await settle(free);
@@ -179,9 +179,12 @@ async function main() {
     await open(page);
     await page.evaluate(() => window.__opening); await settle(page);
     const held = await hint(page);
-    assert.deepEqual([held.hidden, held.off, held.text], [false, false, 'ada is already working in this folder, and a separate copy of it cannot be made (the folder is not a git repository), so a new writer here will be refused until ada is stopped.'], 'with no worktree possible a writer role is told, in plain words, that the live writer holds the folder, and can still be tried');
+    assert.deepEqual([held.hidden, held.off, held.text], [false, true, 'ada is already working in this folder, and a separate copy of it cannot be made (the folder is not a git repository), so a new writer here will be refused until ada is stopped.'], 'with no worktree possible a writer role is told, in plain words, that the live writer holds the folder, and Spawn waits instead of inviting a refusal');
+    assert.deepEqual(await page.evaluate(() => { const spawn = document.querySelector('#spawn-form button[type=submit]'), stop = document.querySelector('#spawn-writer-stop'), reader = document.querySelector('#spawn-writer-reader');
+      return { why: spawn.title, described: spawn.getAttribute('aria-describedby'), stop: [stop.hidden, stop.textContent, stop.getClientRects().length > 0], reader: [reader.hidden, reader.textContent, reader.getClientRects().length > 0] }; }),
+      { why: 'ada holds this folder: stop it, or start as a role that does not write', described: 'spawn-writer-hint', stop: [false, 'Stop ada and start', true], reader: [false, 'Start as 🧭 Lead', true] }, 'the disabled Spawn says why, and both ways on are right there');
     await select(page, 'role', 'lead');
-    assert.equal((await hint(page)).hidden, true, 'another role is not');
+    assert.deepEqual([(await hint(page)).hidden, (await hint(page)).off], [true, false], 'another role is not held up');
     await select(page, 'role', 'worker');
     assert.equal((await hint(page)).hidden, false);
     // The worktree box that cannot be ticked looks disabled; the control height is one for the name, the selects and the dice.
@@ -196,6 +199,29 @@ async function main() {
     await ticked.evaluate(() => { const box = document.querySelector('#spawn-form [name=worktree]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); });
     assert.equal((await hint(ticked)).hidden, true, 'a worktree for the room is a checkout of its own');
     await ticked.close();
+  }
+
+  // The two ways on under the warning start from the form as it stands: one with the role that does not write, the other after stopping the holder.
+  {
+    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
+    const refused = machines.machines.map(machine => (machine.id === 'm1' ? { ...machine, project_worktree: { ok: false, reason: 'the folder is not a git repository' } } : machine));
+    const auto = stable({ 'GET /api/roles': writerRoles, 'GET /api/machines?project_id=p1': { machines: refused }, 'POST /api/agents/a1/control': agent('a1', 'ada') });
+    const reader = await mount({ auto, withCard: true });
+    await open(reader); await reader.evaluate(() => window.__opening); await settle(reader);
+    await reader.$eval('#spawn-writer-reader', node => node.click());
+    const asLead = await waitRequest(reader, 'POST', '/api/rooms/r1/agents');
+    assert.equal((await body(reader, asLead)).role_key, 'lead', 'the role that does not write is sent');
+    assert.equal(await count(reader, 'POST', '/api/agents/a1/control'), 0, 'and the holder is left alone');
+    await reader.close();
+    const stopper = await mount({ auto, withCard: true });
+    await open(stopper); await stopper.evaluate(() => window.__opening); await settle(stopper);
+    await stopper.$eval('#spawn-writer-stop', node => node.click());
+    const started = await waitRequest(stopper, 'POST', '/api/rooms/r1/agents');
+    assert.equal(await count(stopper, 'POST', '/api/agents/a1/control'), 1, 'the holder is stopped first');
+    assert.equal((await body(stopper, started)).role_key, 'worker', 'then the writer is started as chosen');
+    await answer(stopper, started, 200, agent('a2', 'bert')); await settle(stopper);
+    assert.equal(await stopper.$eval('#spawn-dialog', node => node.open), false, 'the dialog closes once it started');
+    await stopper.close();
   }
 
   // Answers meant for an earlier opening fill nothing: the roles of a dialog that was closed and opened again, a name that arrives after the

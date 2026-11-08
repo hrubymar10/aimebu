@@ -670,7 +670,8 @@ root of a Git repository, or the supervisor refuses) the spawn answers
 `writer_agent_id`, `writer_slug` and `path`, and the message names them
 ("alice@proj is the writer of /path — stop it, or give this agent a non-writer
 role (it cannot get a worktree of its own: …)"); the Spawn dialog stays open on that answer, names the holder, and offers
-stopping it or a role that does not write (a continued session also gets "Work on a copy"); a reactivate, switch or role
+stopping it or a role that does not write (a continued session also gets "Work on a copy"). When the dialog already sees a live writer of the room on that
+machine and no worktree can be made, it says so before anything is sent, keeps Spawn disabled, and offers the same two ways on under the warning; a reactivate, switch or role
 change refused for the same reason answers the same way (a room or project **resume**
 starts such a writer in a worktree of its own like a single Reactivate does, the
 worktrees being made before the resume, so one blocked writer does not leave the scope stopped). An agent card of a

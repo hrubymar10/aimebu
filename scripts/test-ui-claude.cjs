@@ -65,6 +65,12 @@ async function main() {
       // The paste-an-id field is the alternative to the list, so it sits below it; the flags are one column with their right edges on one line.
       assert.deepEqual(await first.evaluate(() => { const list = document.querySelector('#cc-sessions-list').getBoundingClientRect(), find = document.querySelector('#cc-sessions-find').getBoundingClientRect(), edges = [...document.querySelectorAll('#cc-sessions-list .cc-session-flags')].filter(box => box.children.length).map(box => Math.round(box.getBoundingClientRect().right));
         return { below: find.top >= list.bottom, sameEdge: new Set(edges).size === 1, flagged: edges.length }; }), { below: true, sameEdge: true, flagged: 2 }, 'the id field is under the list and the badges line up');
+      // On a phone the play button is on the right edge of every row, on the first line; the badges sit on a line of their own beneath it.
+      await first.setViewport({ width: 390, height: 844 });
+      assert.deepEqual(await first.$$eval('#cc-sessions-list .cc-session', rows => rows.map(row => { const pick = row.querySelector('.cc-session-pick').getBoundingClientRect(), box = row.getBoundingClientRect(), flags = row.querySelector('.cc-session-flags'), title = row.querySelector('.cc-session-title').getBoundingClientRect();
+        return { rightEdge: Math.abs(box.right - pick.right) < 14, firstLine: pick.top < title.bottom + 4, flagsBelow: !flags.children.length || flags.getBoundingClientRect().top >= pick.bottom - 1 }; })),
+        [{ rightEdge: true, firstLine: true, flagsBelow: true }, { rightEdge: true, firstLine: true, flagsBelow: true }, { rightEdge: true, firstLine: true, flagsBelow: true }], 'the play button is pinned right on a phone');
+      await first.setViewport({ width: 1280, height: 900 });
       // By id it is found wherever it worked, and says it is outside the project folder; an unknown id says so.
       await first.$eval('#cc-session-id', (el, id) => { el.value = id; }, idFar);
       await first.evaluate(() => document.querySelector('#cc-sessions-find').requestSubmit());

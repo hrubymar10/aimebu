@@ -1825,7 +1825,14 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .cc-import-role { flex: 0 0 auto; max-width: 130px; }
 .cc-import-state { flex: 0 0 auto; min-width: 0; max-width: 200px; font-size: 11.5px; color: var(--text-muted); }
 .cc-import-state.error { color: var(--danger, #f85149); }
-@media (max-width: 700px) { .cc-session { flex-wrap: wrap; } .cc-session-flags { flex-direction: row; flex-wrap: wrap; align-items: flex-start; justify-content: flex-start; } }
+/* Phone: the text and the play button share the first line, the button always on the right edge; the badges get a line of their own beneath. */
+@media (max-width: 700px) {
+  .cc-session { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 6px; }
+  .cc-session-main { grid-column: 1; grid-row: 1; }
+  .cc-session-pick { grid-column: 2; grid-row: 1; align-self: center; justify-self: end; }
+  .cc-session-flags { grid-column: 1 / -1; grid-row: 2; flex-direction: row; flex-wrap: wrap; align-items: flex-start; justify-content: flex-start; }
+  .cc-session-flags:empty { display: none; }
+}
 
 /* The path beside the room title, before it: project › room › … Crumbs are quiet buttons that shrink first; the title keeps its width. On a phone only the nearest
    crumb stays beside the title. */
@@ -1855,7 +1862,9 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .spawn-occupied { display: grid; gap: 8px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--red); border-radius: 6px; background: var(--bg-secondary); font-size: 13px; }
 .spawn-occupied p { margin: 0; }
 .spawn-occupied-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.spawn-occupied[hidden], .spawn-occupied-actions [hidden] { display: none; }
+.spawn-occupied[hidden], .spawn-occupied-actions [hidden], .spawn-occupied-actions[hidden], .spawn-writer-block[hidden] { display: none; }
+/* The folder's writer is known before Spawn is pressed: the two ways on sit under the warning, and Spawn waits. */
+.spawn-writer-block .spawn-occupied-actions { margin-top: 8px; }
 
 /* The bar that asks for a reload after the server was replaced by another build (update-bar.js). */
 .update-bar { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 12px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); color: var(--text-primary); font-size: 13px; }

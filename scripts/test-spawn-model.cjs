@@ -68,7 +68,7 @@ const catalogOf = [
   { tool: 'claude', label: 'Claude Code', containerized: false, available: true },
 ];
 assert.deepEqual(sessionEntryState(catalogOf[2], catalogOf), { enabled: true, note: '', switchTo: -1 }, 'the native launcher can');
-assert.deepEqual(sessionEntryState(catalogOf[1], catalogOf), { enabled: true, note: '', switchTo: -1 }, 'another tool is not judged here');
+assert.deepEqual(sessionEntryState(catalogOf[1], catalogOf), { enabled: false, hidden: true, note: '', switchTo: -1 }, 'another tool has no sessions to continue, so the entry is hidden');
 assert.deepEqual(sessionEntryState(null, catalogOf), { enabled: true, note: '', switchTo: -1 });
 assert.deepEqual(sessionEntryState({ ...catalogOf[0], shares_claude_home: true }, catalogOf), { enabled: true, note: '', switchTo: -1 }, 'a Docker launcher that shares the home can');
 const blocked = sessionEntryState(catalogOf[0], catalogOf);

@@ -53,14 +53,16 @@ export class SpawnStore {
       const resume = this.resume.value, option = this.models.value.find(model => model.value === this.model.value);
       return resumeBanner({ resume, mode: this.mode.value, hasRoom: !!this.target.value, toolNote: this.toolNote.value, warning: resume ? modelChangeWarning(resume.model, option) : '', relative: relativeTime, history: this.historyNote.value });
     });
-    // A writer role finds the folder's writer slot taken by another agent and no worktree can be made for it: the dialog says so, in plain words. With a
-    // worktree available the new writer just starts in its own, and nothing is said.
-    this.writerBlock = computed(() => {
+    // A writer role finds the folder's writer slot taken by another agent and no worktree can be made for it: the dialog says so, in plain words, and
+    // Spawn waits: the server would refuse it. The ways on are offered right there instead (stop that agent and start, or start as a role that does
+    // not write), the same two the refusal itself offers. With a worktree available the new writer just starts in its own, and nothing is said.
+    this.writerHolder = computed(() => {
       const writerRoles = this.writerRoles.value, agents = [...(this.host.store?.agents.value?.values() || [])];
-      const holder = writerHolder({ writer: !this.resume.value && writerRoles.has(this.role.value), agents, writerRoles, machineID: this.machine.id.value, worktree: this.worktree.value, worktreeRefused: this.worktreeView.value.refused });
-      return holder ? writerHolderText(holder, this.worktreeView.value.note) : '';
+      return writerHolder({ writer: !this.resume.value && writerRoles.has(this.role.value), agents, writerRoles, machineID: this.machine.id.value, worktree: this.worktree.value, worktreeRefused: this.worktreeView.value.refused });
     });
-    this.submitDisabled = computed(() => !this.rolesReady.value || (!!this.resume.value && !this.target.value) || (!this.resume.value?.resumable && !this.machine.ready) || !this.tool.value?.available || !this.models.value.length);
+    this.writerBlock = computed(() => (this.writerHolder.value ? writerHolderText(this.writerHolder.value, this.worktreeView.value.note) : ''));
+    this.nonWriterRole = computed(() => this.roles.value.find(role => !this.writerRoles.value.has(role.value)) || null);
+    this.submitDisabled = computed(() => !this.rolesReady.value || (!!this.resume.value && !this.target.value) || (!this.resume.value?.resumable && !this.machine.ready) || !this.tool.value?.available || !this.models.value.length || !!this.writerHolder.value);
   }
 
   get dialog() { return this.host.spawnDialog; }
@@ -328,9 +330,21 @@ export class SpawnStore {
 
   // The ways on from a folder that has a writer (three for a session, two for a new agent). Each sends the request again.
   async startAsNonWriter() {
-    const held = this.occupied.peek(), writers = this.writerRoles.peek(), other = this.roles.peek().find(role => !writers.has(role.value));
+    const held = this.occupied.peek(), other = this.nonWriterRole.peek();
     if (!held || !other) return;
     this.role.value = other.value; await this.submit(held.fields);
+  }
+  // The same two ways, offered before Spawn is pressed when the dialog already knows who holds the folder: they start from the form as it stands.
+  async stopWriterAndStart(fields) {
+    const holder = this.writerHolder.peek();
+    if (!holder?.id) return;
+    this.occupied.value = { message: `Stopping ${holder.slug}…`, holderId: holder.id, holder: holder.slug, canCopy: false, fields };
+    await this.stopHolderAndStart();
+  }
+  async startFormAsNonWriter(fields) {
+    const other = this.nonWriterRole.peek();
+    if (!other) return;
+    this.role.value = other.value; await this.submit(fields);
   }
   async stopHolderAndStart() {
     let held = this.occupied.peek();

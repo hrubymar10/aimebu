@@ -37,13 +37,11 @@ function ContinueMenu({ enabled, onContinue }) {
 export function SpawnForm({ store, host }) {
   const resume = store.resume.value, continuing = resume?.kind === 'claude_session', banner = store.banner.value, machine = store.machine, view = store.worktreeView.value;
   const room = host.room, disabled = store.toolsDisabled.value, tools = toolRows(store.catalog.value, disabled), sessions = store.sessions.value;
-  const sessionsHidden = !!resume || room?.kind === 'dm';
+  const sessionsHidden = !!resume || room?.kind === 'dm' || !!sessions.hidden;
   const swap = sessions.switchTo >= 0 ? store.catalog.value[sessions.switchTo] : null;
-  const submit = event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    store.submit({ name: form.elements.name.value, baseRef: form.elements.base_ref.value, mode: form.elements.resume_mode.value, confirmed: form.querySelector('#spawn-resume-confirm').checked });
-  };
+  const fieldsOf = form => ({ name: form.elements.name.value, baseRef: form.elements.base_ref.value, mode: form.elements.resume_mode.value, confirmed: form.querySelector('#spawn-resume-confirm').checked });
+  const submit = event => { event.preventDefault(); store.submit(fieldsOf(event.currentTarget)); };
+  const holder = store.writerHolder.value, nonWriter = store.nonWriterRole.value;
   const entry = sessionsHidden ? null : html`<${ContinueMenu} enabled=${sessions.enabled} onContinue=${() => store.openSessionPicker()} />`;
   return html`<form id="spawn-form" onSubmit=${submit}><div class="spawn-title-row"><h2>${banner.title}</h2>${entry}</div>
     <p id="spawn-sessions-note" class="spawn-sessions-note" role="status" hidden=${sessionsHidden || !sessions.note}><span id="spawn-sessions-note-text">${(() => { const parts = store.hint(sessions.note); return parts.link ? html`${parts.before}<button type="button" class="inline-link" onClick=${() => host.openSettings(store.machine.id.peek())}>${parts.link}</button>${parts.after}` : parts.text; })()}</span>${' '}<button type="button" id="spawn-sessions-switch" class="btn" hidden=${!swap} onClick=${() => store.useTool(sessions.switchTo)}>${swap ? `Use ${swap.label || 'the native launcher'}` : ''}</button></p>
@@ -58,7 +56,11 @@ export function SpawnForm({ store, host }) {
     <label class="spawn-worktree-base" hidden=${!store.worktree.value || view.refused}>Base branch or ref (optional)<input name="base_ref" placeholder="Current HEAD" value=${store.baseRef.value} onInput=${event => { store.baseRef.value = event.currentTarget.value; }} /></label>
     <div id="spawn-agent-fields"><div class="spawn-name" hidden=${!!resume && !continuing}><label for="spawn-name">Name</label><div class="spawn-name-row"><input id="spawn-name" name="name" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="21" placeholder="Automatic" aria-describedby="spawn-name-error" value=${store.name.value} onInput=${event => store.typeName(event.currentTarget.value)} /><${IconButton} name="dice" label="Another name" id="spawn-name-dice" disabled=${store.nameBusy.value} onClick=${() => store.fillName()} /></div><p id="spawn-name-error" class="error spawn-name-error" role="alert">${store.nameError.value}</p></div>
       <label>Role<select name="role" value=${store.role.value} onChange=${event => store.pickRole(event.currentTarget.value)}>${store.roles.value.map(role => html`<option key=${role.value} value=${role.value}>${role.label}</option>`)}</select></label>
-      <p id="spawn-writer-hint" class="spawn-tool-reason" role="status" hidden=${!store.writerBlock.value}>${store.writerBlock.value}</p>
+      <div id="spawn-writer-block" class="spawn-writer-block" hidden=${!store.writerBlock.value}><p id="spawn-writer-hint" class="spawn-tool-reason" role="status" hidden=${!store.writerBlock.value}>${store.writerBlock.value}</p>
+        <div class="spawn-occupied-actions" hidden=${!!store.occupied.value}>
+          <button type="button" class="btn" id="spawn-writer-stop" hidden=${!holder?.id} onClick=${event => store.stopWriterAndStart(fieldsOf(event.currentTarget.form))}>${`Stop ${holder?.slug || 'the writer'} and start`}</button>
+          <button type="button" class="btn" id="spawn-writer-reader" hidden=${!nonWriter} onClick=${event => store.startFormAsNonWriter(fieldsOf(event.currentTarget.form))}>${`Start as ${nonWriter?.label || 'a role that does not write'}`}</button>
+        </div></div>
       <p id="spawn-home-hint" class="spawn-tool-reason" hidden=${!store.leadHint.value}>The home room is for the lead. Spawn workers into a task room such as general.</p>
       <label>Tool<select name="tool" required value=${store.toolIndex.value < 0 ? '' : String(store.toolIndex.value)} onChange=${event => store.pickTool(event.currentTarget.value)}>${tools.map((row, index) => html`<option key=${row.value} value=${row.value} disabled=${row.disabled || !!disabled?.[index]}>${row.label}</option>`)}</select></label>
       <${Reason} id="spawn-tool-reason" className="spawn-tool-reason" text=${store.reasonText.value} store=${store} host=${host} /><p id="spawn-version" class="spawn-version">${store.version.value}</p>
@@ -69,5 +71,5 @@ export function SpawnForm({ store, host }) {
         <button type="button" class="btn" id="spawn-occupied-stop" hidden=${!store.occupied.value?.holderId} onClick=${() => store.stopHolderAndStart()}>${`Stop ${store.occupied.value?.holder || 'the writer'} and start`}</button>
         <button type="button" class="btn" id="spawn-occupied-reader" onClick=${() => store.startAsNonWriter()}>Start as a role that does not write</button>
       </div></div>
-    <div class="dialog-actions"><button type="button" id="spawn-cancel" class="btn" onClick=${() => host.spawnDialog.close()}>Cancel</button><button type="submit" class="btn btn-primary" disabled=${store.submitDisabled.value}>Spawn</button></div></form>`;
+    <div class="dialog-actions"><button type="button" id="spawn-cancel" class="btn" onClick=${() => host.spawnDialog.close()}>Cancel</button><button type="submit" class="btn btn-primary" disabled=${store.submitDisabled.value} title=${holder ? `${holder.slug} holds this folder: stop it, or start as a role that does not write` : undefined} aria-describedby=${holder ? 'spawn-writer-hint' : undefined}>Spawn</button></div></form>`;
 }
