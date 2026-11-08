@@ -52,8 +52,9 @@ assert.deepEqual([m.flowExpired({ expires_at: '2026-01-01T00:00:10Z' }, Date.par
 
 // A profile's status line and Switch button.
 const clock = date => `T${date.getUTCMinutes()}`;
-assert.equal(m.profileStatusLine({ status: 'ok', last_refresh_at: '2026-01-01T10:07:00Z' }, clock), 'UpdatedT7'.replace('Updated', 'Updated '));
+assert.equal(m.profileStatusLine({ status: 'ok', last_refresh_at: '2026-01-01T10:07:00Z' }, clock), 'Updated T7');
 assert.equal(m.profileStatusLine({ status: 'token_expired' }, clock), 'Stale – token expired');
+assert.equal(m.profileStatusLine({ status: 'token_expired', last_refresh_at: '2026-01-01T10:07:00Z' }, clock), 'Stale – token expired · Updated T7', 'the reason and the update time are separate');
 assert.equal(m.profileStatusLine({ stale: true, status: 'ok' }, clock), 'Stale snapshot');
 assert.equal(m.profileStatusLine({ status: 'not_configured' }, clock), 'not configured');
 assert.equal(m.profileStatusLine({}, clock), 'No snapshot');

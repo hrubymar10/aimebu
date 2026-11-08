@@ -35,7 +35,7 @@ export function ProfileCard({ store, provider, profile, state, usedDisplay, refr
       <span class="usage-profile-plan switcher-tile-plan" title=${profile.plan || ''} hidden=${!profile.plan}>${profile.plan || ''}</span>
     </div>
     <p class="usage-profile-email" hidden=${!profile.email}>${profile.email || ''}</p>
-    <div class="usage-windows">${(profile.windows || []).map((window, index) => html`<${UsageWindow} window=${window} usedDisplay=${usedDisplay} fetchedAt=${profile.last_refresh_at} key=${`${window.key}:${index}`} />`)}</div>
+    <div class="usage-windows">${(profile.windows || []).map((window, index) => html`<${UsageWindow} window=${window} usedDisplay=${usedDisplay} fetchedAt=${profile.last_refresh_at} stale=${!!age} key=${`${window.key}:${index}`} />`)}</div>
     <p class="usage-profile-credits usages-credits-row" hidden=${!credits}>${credits}</p>
     <p class="usage-profile-status" hidden=${!status}>${status}</p>
     ${age && html`<p class="usage-profile-stale">Stale, last update ${age} ago${state.owner && html` <button type="button" class="btn usage-refresh" onClick=${() => store.mutateUsage(() => store.source.refresh(provider.provider_name))}>Refresh</button>`}</p>`}

@@ -204,3 +204,50 @@ func TestDockerOnlyHoldsANativeAgentBeforeAnyTurnIsMade(t *testing.T) {
 		t.Fatalf("the released agent has %d turn rows, want 1", n)
 	}
 }
+
+// When the setting is on and an agent's launcher cannot be read, the agent is held (a native launcher cannot be ruled out), no turn is made for it, and the room is
+// told once, not on every pass.
+func TestDockerOnlyHoldsAnAgentWhoseLauncherCannotBeRead(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	agent, _, _, _ := f.execution(t)
+	ctx := context.Background()
+	// The row the agent names is gone: written around the foreign key, on a connection of its own (the schema would not let a launcher go while an agent uses it).
+	writer, err := sql.Open("sqlite", "file:"+f.db.DBPath()+"?_pragma=foreign_keys(0)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.Exec(`UPDATE agent SET tool='claude', variant='mine', launcher_id='lch_gone' WHERE id=?`, agent.ID); err != nil {
+		t.Fatalf("pointing the agent at a missing launcher: %v", err)
+	}
+	f.setDockerOnly(t, true)
+	conn := f.dialMachine(t, nil)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	reader, err := sql.Open("sqlite", "file:"+f.db.DBPath()+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	count := func(query string, args ...any) int {
+		var n int
+		if err := reader.QueryRow(query, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	turns := func() int { return count(`SELECT COUNT(*) FROM turn WHERE agent_id=?`, agent.ID) }
+	before := turns() // the fixture made one turn of its own
+	d := NewDispatcher(f.srv)
+	for pass := 0; pass < 3; pass++ {
+		if sent, err := d.Pass(ctx); err != nil || sent != 0 {
+			t.Fatalf("pass %d dispatched %d: %v", pass, sent, err)
+		}
+	}
+	if n := turns() - before; n != 0 {
+		t.Fatalf("a held agent had %d turn row(s) made for it", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM message WHERE room_id=? AND author_kind='system' AND body LIKE '%launcher could not be read%'`, f.room.ID); n != 1 {
+		t.Fatalf("the hold is said %d times, want once", n)
+	}
+}

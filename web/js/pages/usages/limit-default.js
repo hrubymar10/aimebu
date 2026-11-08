@@ -24,10 +24,14 @@ export class LimitDefaultStore {
   }
 
   async save(body) {
+    const generation = this.generation;
     const state = await this.send('/api/usage-limit-default', { method: 'PUT', body });
-    if (this.alive) batch(() => { this.state.value = state; this.saved.value = 'Saved.'; });
+    if (this.alive && generation === this.generation) batch(() => { this.state.value = state; this.saved.value = 'Saved.'; });
     return state;
   }
+
+  // A sign-out or a change of role: what was read is dropped, and a read or a save still on its way is stale and draws nothing when it answers.
+  forget() { this.generation++; batch(() => { this.state.value = null; this.saved.value = ''; }); }
 
   destroy() { this.alive = false; this.generation++; }
 }

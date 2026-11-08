@@ -53,7 +53,7 @@ export const flowExpired = (flow, now = Date.now()) => now >= new Date(flow.expi
 export function profileStatusLine(profile, time) {
   const refreshed = profile.last_refresh_at ? `Updated ${time(new Date(profile.last_refresh_at))}` : '';
   const detail = profile.status === 'token_expired' ? 'Stale – token expired' : profile.stale ? 'Stale snapshot' : profile.status === 'ok' ? '' : (profile.status || 'No snapshot').replaceAll('_', ' ');
-  return detail + refreshed;
+  return detail && refreshed ? `${detail} · ${refreshed}` : detail + refreshed;
 }
 
 // How a profile's Switch button looks and whether it can be pressed.

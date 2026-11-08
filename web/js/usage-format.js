@@ -51,6 +51,14 @@ export function resetLabel(value) {
   return hours < 48 ? `Resets in ${hours}h ${minutes % 60}m` : `Resets in ${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+// A stale profile's reset, said as a fact about its last update instead of a countdown that looks live: the time it was due, or "Reset passed".
+export function staleResetText(value, now = Date.now()) {
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return '';
+  if (ms <= now) return 'Reset passed';
+  return `Resets ${new Date(ms).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`;
+}
+
 const SPARK_SPAN_MS = 48 * 3600000, SVG_NS = 'http://www.w3.org/2000/svg';
 
 // The geometry of a window's recent used-percentage samples, or null when there are fewer than two. The x axis is the last 48

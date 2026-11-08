@@ -282,6 +282,15 @@ says so on stderr when no snapshot exists or the cache is older than twice the
 refresh interval. Cached values are shown as written (`stale` as the server
 marked it). `GET /api/usages` stays the source of live data.
 
+In Settings → Usages and in the header popover, a profile whose data is older
+than twice the refresh interval (never less than five minutes) is shown as
+stale: its bars and figures are grey, it claims no pace, its reset is the time
+it was due or "Reset passed" instead of a ticking countdown, and a line says
+how old the data is ("Stale, last update 2d ago") with a Refresh button for the
+owner. Fresh profiles beside it are unchanged. A provider's "Updated ... ago" is
+the age of its oldest profile, so it never claims to be fresher than a card
+below it.
+
 Each window also carries a short history, drawn as a sparkline under its bar
 in Settings → Usages and in the header popover. The server keeps a bounded
 ring per provider, profile and window in `usages/history.json` (mode 0600, not

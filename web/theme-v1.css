@@ -1933,6 +1933,8 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .usage-credential-alert details p, .usages-credential-alert details p { overflow-wrap: anywhere; font-size: 0.68rem; }
 /* Data older than twice the refresh interval is grey, and says how old it is. */
 .usage-profile.is-stale, .usages-popover-profile.is-stale { --usage-color: var(--text-muted); }
+.usage-profile.is-stale .usage-fill, .usages-popover-profile.is-stale .usage-fill { background: var(--text-muted); }
+.usage-profile.is-stale .usages-window-meta, .usages-popover-profile.is-stale .usages-window-meta, .usage-profile.is-stale .usages-window-meta strong, .usages-popover-profile.is-stale .usages-window-meta strong { color: var(--text-muted); }
 .usage-profile.is-stale .usage-pace-marker, .usages-popover-profile.is-stale .usage-pace-marker, .usage-profile.is-stale .usage-spark-line, .usages-popover-profile.is-stale .usage-spark-line { opacity: .45; }
 .usage-profile-stale { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .usage-profile-stale .usage-refresh { min-height: 0; height: auto; padding: 1px 8px; font-size: 11px; }

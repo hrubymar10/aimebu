@@ -29,7 +29,7 @@ export class UsagesSettings {
   forget() {
     this.store.forget();
     this.quota.hide?.(); this.guard.hide?.();
-    this.limitDefault.state.value = null; this.limitDefault.saved.value = '';
+    this.limitDefault.forget();
   }
   load() { return this.store.load(); }
   changed() { return this.store.changed(); }

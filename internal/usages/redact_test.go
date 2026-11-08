@@ -57,9 +57,10 @@ func TestForAdminAllowListCoversEveryField(t *testing.T) {
 		{"Window", fields(Window{}), []string{"Key", "PercentUsed", "ResetAt", "WindowDurationSeconds", "Pace", "History"}},
 		{"Pace", fields(Pace{}), []string{"ExpectedPercent", "DeltaPercent", "State", "EtaSeconds", "LastsToReset"}},
 		{"Credits", fields(Credits{}), []string{"Label", "Balance", "SpendLimit"}},
-		{"HistoryPoint", fields(HistoryPoint{}), nil},
+		{"HistoryPoint", fields(HistoryPoint{}), []string{"T", "P"}},
 	} {
 		if c.want == nil {
+			t.Errorf("%s has no pinned field list: a struct left out of the list is not checked", c.name)
 			continue
 		}
 		if !reflect.DeepEqual(c.got, c.want) {

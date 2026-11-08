@@ -311,6 +311,21 @@ async function main() {
         { email: false, alerts: 0, cards: 0, switcher: false, plans: false });
       await page.close();
     }
+    // A read of the default daily limits that is still out when the page forgets its data (a sign-out) draws nothing when it answers, and nor does a save.
+    {
+      const page = await mount();
+      const result = await page.evaluate(async () => {
+        const { LimitDefaultStore } = await import('/js/pages/usages/limit-default.js');
+        let release; const held = new Promise(resolve => { release = resolve; });
+        const store = new LimitDefaultStore({ send: async (path, options) => { await held; return { daily_cost_cap: 5, daily_turn_cap: null, can_edit: true, ...(options?.body || {}) }; } });
+        const read = store.sync(), write = store.save({ daily_cost_cap: 9, daily_turn_cap: 1 });
+        store.forget();
+        release(); await read; await write.catch(() => {});
+        return [store.state.value, store.saved.value];
+      });
+      assert.deepEqual(result, [null, ''], 'an answer that arrives after the page forgot its data draws nothing');
+      await page.close();
+    }
     // Data older than twice the refresh interval is drawn grey and says how old it is, with a Refresh for the owner (an admin has none); fresh data does neither.
     {
       for (const owner of [true, false]) {
@@ -323,6 +338,16 @@ async function main() {
         const view = await page.evaluate(() => ({ stale: document.querySelectorAll('.usage-profile.is-stale').length, fresh: document.querySelectorAll('.usage-profile:not(.is-stale)').length > 0, text: document.querySelector('.usage-profile-stale')?.textContent.replace(/\s+/g, ' ').trim(),
           refresh: !!document.querySelector('.usage-profile-stale .usage-refresh'), color: getComputedStyle(document.querySelector('.usage-profile.is-stale .usage-fill')).backgroundColor }));
         assert.deepEqual([view.stale, view.fresh, view.text, view.refresh], [1, true, owner ? 'Stale, last update 2d ago Refresh' : 'Stale, last update 2d ago', owner], `${owner ? 'owner' : 'admin'}: ${JSON.stringify(view)}`);
+        const look = await page.evaluate(() => {
+          const color = value => { const probe = document.createElement('i'); probe.style.color = value; document.body.append(probe); const out = getComputedStyle(probe).color; probe.remove(); return out; };
+          const card = document.querySelector('.usage-profile.is-stale'), fresh = document.querySelector('.usage-profile:not(.is-stale)');
+          return { fill: getComputedStyle(card.querySelector('.usage-fill')).backgroundColor, muted: color(getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim()), freshFill: getComputedStyle(fresh.querySelector('.usage-fill')).backgroundColor,
+            pace: card.querySelectorAll('.usages-pace-text, .usage-pace-marker').length, reset: [...card.querySelectorAll('.usage-window-foot span')].map(node => node.textContent) };
+        });
+        assert.equal(look.fill, look.muted, `a stale card's bars are the muted grey: ${JSON.stringify(look)}`);
+        assert.notEqual(look.freshFill, look.muted, 'a fresh card keeps its colour');
+        assert.equal(look.pace, 0, 'a stale card claims no pace');
+        assert.ok(look.reset.every(text => /^(Reset passed|Resets .+)$/.test(text) && !/ in /.test(text)), `a stale card's reset is a fact, not a countdown: ${JSON.stringify(look.reset)}`);
         if (owner) {
           const before = await calls(page, 'refresh');
           await click(page, '.usage-profile-stale .usage-refresh'); await settle(page);

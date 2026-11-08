@@ -1,12 +1,13 @@
 import { html } from '../../ui.js';
-import { percent, windowLabel, paceExplanation, sparkGeometry, countdown, shown } from '../../usage-format.js';
+import { percent, windowLabel, paceExplanation, sparkGeometry, countdown, shown, staleResetText } from '../../usage-format.js';
 
 // One limit window, laid out as v1's row (the same classes and rules as the popover): the label, the bar with the expected-pace tick, the 48-hour
 // sparkline (v2 only), "N% left" with the reset countdown, then the pace line.
-export function UsageWindow({ window, usedDisplay, fetchedAt }) {
+// A stale profile (data older than twice the refresh interval) keeps its numbers but shows no pace claim and no live countdown.
+export function UsageWindow({ window, usedDisplay, fetchedAt, stale = false }) {
   const used = percent(window.percent_used), value = usedDisplay ? used : 100 - used;
   const label = windowLabel(window.key), side = usedDisplay ? 'used' : 'left';
-  const pace = window.pace, expected = Number(pace?.expected_percent);
+  const pace = stale ? null : window.pace, expected = Number(pace?.expected_percent);
   const state = pace?.state === 'reserve' ? 'reserve' : pace?.state === 'deficit' ? 'deficit' : 'on-track';
   const spark = sparkGeometry(window, usedDisplay);
   let paceLabel = '', eta = '';
@@ -30,7 +31,7 @@ export function UsageWindow({ window, usedDisplay, fetchedAt }) {
       </svg>
       <div class="usage-spark-caption"><span>48 h ago</span><span>${`${usedDisplay ? '% used' : '% left'}, last 48 h`}</span><span>now</span></div>
     </div>`}
-    <div class="usages-window-meta usage-window-foot"><strong>${`${shown(value)} ${side}`}</strong><span>${window.reset_at ? `Resets in ${countdown(window.reset_at)}` : ''}</span></div>
+    <div class="usages-window-meta usage-window-foot"><strong>${`${shown(value)} ${side}`}</strong><span>${window.reset_at ? (stale ? staleResetText(window.reset_at) : `Resets in ${countdown(window.reset_at)}`) : ''}</span></div>
     ${paceText && html`<div class=${`usages-pace-text usages-pace-text--${state}`} title=${explanation} tabindex="0" aria-label=${`${paceText}. ${explanation}`}>
       ${paceLabel && html`<span>${paceLabel}</span>`}${paceLabel && eta && html`<span class="usages-pace-sep">·</span>`}${eta && html`<span>${eta}</span>`}</div>`}
   </div>`;

@@ -1,4 +1,4 @@
-import { element, creditsText, percent, windowLabel, usageSparkline, sparkFigure, paceExplanation, age, countdown, shown, USAGE_LEGEND } from './usage-format.js';
+import { element, creditsText, percent, windowLabel, usageSparkline, sparkFigure, paceExplanation, age, countdown, shown, staleResetText, USAGE_LEGEND } from './usage-format.js';
 import { focusPopover, returnFocus } from './popover-focus.js';
 import { expiryBadge } from './usage-expiry.js';
 import { mergeAlerts, staleAge } from './usage-alerts.js';
@@ -128,7 +128,7 @@ export class UsagesPopover {
     if (profile.plan) head.append(element('span', 'usage-profile-plan switcher-tile-plan', profile.plan));
     node.append(head);
     const windows = profile.windows || [];
-    if (windows.length) { const list = element('div', 'usage-windows'); list.append(...windows.map(window => this.window(window, usedDisplay, profile.last_refresh_at))); node.append(list); }
+    if (windows.length) { const list = element('div', 'usage-windows'); list.append(...windows.map(window => this.window(window, usedDisplay, profile.last_refresh_at, !!age))); node.append(list); }
     else if (profile.has_credentials === false) node.append(element('div', 'usages-empty usages-empty-compact', 'Needs login'));
     if (profile.credits) node.append(element('div', 'usage-profile-credits usages-credits-row', creditsText(profile.credits)));
     const note = profile.status === 'token_expired' || profile.status === 'expired' ? 'Stale – token expired' : profile.stale ? 'Stale snapshot' : profile.status === 'ok' ? '' : !windows.length ? (profile.status || 'No snapshot').replaceAll('_', ' ') : '';
@@ -159,7 +159,8 @@ export class UsagesPopover {
     await this.load();
   }
   // v1's window row: the label, the bar with the expected-pace tick, "N% left" with the reset countdown, then the pace line.
-  window(window, usedDisplay, fetchedAt) {
+  // A stale profile (data older than twice the refresh interval) keeps its numbers but shows no pace claim and no live countdown.
+  window(window, usedDisplay, fetchedAt, stale = false) {
     const row = element('div', 'usage-window usages-window-row');
     const used = percent(window.percent_used), value = usedDisplay ? used : 100 - used;
     const top = element('div', 'usages-window-top'); top.append(element('span', '', windowLabel(window.key))); row.append(top);
@@ -167,12 +168,12 @@ export class UsagesPopover {
     track.setAttribute('role', 'progressbar'); track.setAttribute('aria-label', `${windowLabel(window.key)} ${usedDisplay ? 'used' : 'left'}`);
     track.setAttribute('aria-valuenow', String(Math.round(value))); track.setAttribute('aria-valuemin', '0'); track.setAttribute('aria-valuemax', '100');
     const fill = element('span', 'usage-fill'); fill.style.width = `${value}%`; track.append(fill);
-    const pace = window.pace, state = pace?.state === 'reserve' ? 'reserve' : pace?.state === 'deficit' ? 'deficit' : 'on-track';
+    const pace = stale ? null : window.pace, state = pace?.state === 'reserve' ? 'reserve' : pace?.state === 'deficit' ? 'deficit' : 'on-track';
     if (pace && Number.isFinite(Number(pace.expected_percent))) {
       const tick = element('i', `usage-pace-marker usages-pace-tick usages-pace-tick--${state}`); tick.style.left = `${usedDisplay ? percent(pace.expected_percent) : 100 - percent(pace.expected_percent)}%`; tick.title = 'Expected pace'; track.append(tick);
     }
     const meta = element('div', 'usages-window-meta usage-window-foot');
-    meta.append(element('strong', '', `${shown(value)} ${usedDisplay ? 'used' : 'left'}`), element('span', '', window.reset_at ? `Resets in ${countdown(window.reset_at)}` : ''));
+    meta.append(element('strong', '', `${shown(value)} ${usedDisplay ? 'used' : 'left'}`), element('span', '', window.reset_at ? (stale ? staleResetText(window.reset_at) : `Resets in ${countdown(window.reset_at)}`) : ''));
     const spark = usageSparkline(window, usedDisplay);
     row.append(track, ...(spark ? [sparkFigure(spark, usedDisplay)] : []), meta);
     if (pace) {
