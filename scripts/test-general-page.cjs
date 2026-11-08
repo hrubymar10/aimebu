@@ -121,13 +121,74 @@ async function main() {
       assert.equal(await page.evaluate(() => document.querySelector('#settings-general').childElementCount), 0);
       await page.close();
     }
+    // The warm window: an owner types minutes and it is saved when the field is left (one PUT with only that field); a bad value is not sent; anyone
+    // else sees the field disabled, with the reason.
+    {
+      const page = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 0, can_edit_warm: true } } });
+      await page.evaluate(() => window.__general.open());
+      await page.waitForFunction(() => !document.querySelector('#agent-warm-idle').disabled);
+      assert.equal(await page.$eval('#agent-warm-idle', el => el.value), '0', 'off by default');
+      await page.$eval('#agent-warm-idle', el => { el.focus(); el.value = '9999'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50))); // the draft is state: the blur must see the render that follows the typing
+      await page.$eval('#agent-warm-idle', el => el.blur());
+      await page.waitForFunction(() => /whole number of minutes/.test(document.querySelector('#agent-warm-idle-error').textContent));
+      assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT').length), 0, 'a value out of range is not sent');
+      await page.$eval('#agent-warm-idle', el => { el.focus(); el.value = '5'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
+      await page.$eval('#agent-warm-idle', el => el.blur());
+      await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/agent-isolation' && !request.answered));
+      const put = await page.evaluate(() => window.__requests.findIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { warm_idle_minutes: 5 });
+      await page.evaluate(index => window.__answer(index, 200, { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: true }), put);
+      await page.waitForFunction(() => document.querySelector('#agent-warm-idle').value === '5' && !document.querySelector('#agent-warm-idle').disabled);
+      assert.equal(await page.$eval('#agent-warm-idle-error', el => el.textContent), '');
+      await page.close();
+      const admin = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: false } } });
+      await admin.evaluate(() => window.__general.open());
+      await admin.waitForFunction(() => document.querySelector('#agent-warm-idle').value === '5');
+      assert.deepEqual(await admin.evaluate(() => [document.querySelector('#agent-warm-idle').disabled, document.querySelector('#agent-warm-idle').title]), [true, 'Only the owner can change this.']);
+      await admin.close();
+    }
+    // The prompt cache keep-alive: on by default; the owner changes one field at a time (one PUT with only that field in keep_alive), a bad value is not
+    // sent, and anyone else sees it all disabled with the reason.
+    {
+      const page = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 0, can_edit_warm: true, keep_alive: { enabled: true, claude_minutes: 50, codex_minutes: 10, stop_after_hours: 24 } } } });
+      await page.evaluate(() => window.__general.open());
+      await page.waitForFunction(() => !document.querySelector('#agent-keepalive-enabled').disabled);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#agent-keepalive-enabled').checked, document.querySelector('#agent-keepalive-claude-minutes').value, document.querySelector('#agent-keepalive-codex-minutes').value, document.querySelector('#agent-keepalive-stop-after-hours').value]), [true, '50', '10', '24'], 'on by default, with the defaults');
+      const last = () => page.evaluate(() => window.__requests.findLastIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));
+      await page.$eval('#agent-keepalive-enabled', el => el.click());
+      await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/agent-isolation' && !request.answered));
+      let put = await last();
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { keep_alive: { enabled: false } });
+      await page.evaluate(index => window.__answer(index, 200, { docker_only: false, can_edit: true, warm_idle_minutes: 0, can_edit_warm: true, keep_alive: { enabled: false, claude_minutes: 50, codex_minutes: 10, stop_after_hours: 24 } }), put);
+      await page.waitForFunction(() => !document.querySelector('#agent-keepalive-enabled').checked && !document.querySelector('#agent-keepalive-enabled').disabled);
+      await page.$eval('#agent-keepalive-claude-minutes', el => { el.focus(); el.value = '99999'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
+      await page.$eval('#agent-keepalive-claude-minutes', el => el.blur());
+      await page.waitForFunction(() => /whole number from 0 to 55/.test(document.querySelector('#agent-keepalive-error').textContent));
+      const sent = await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT').length);
+      assert.equal(sent, 1, 'a value out of range is not sent');
+      await page.$eval('#agent-keepalive-claude-minutes', el => { el.focus(); el.value = '30'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
+      await page.$eval('#agent-keepalive-claude-minutes', el => el.blur());
+      await page.waitForFunction(() => window.__requests.filter(request => request.method === 'PUT').length === 2);
+      put = await last();
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { keep_alive: { claude_minutes: 30 } });
+      await page.close();
+      const admin = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 0, can_edit_warm: false, keep_alive: { enabled: true, claude_minutes: 50, codex_minutes: 10, stop_after_hours: 24 } } } });
+      await admin.evaluate(() => window.__general.open());
+      await admin.waitForFunction(() => document.querySelector('#agent-keepalive-claude-minutes').value === '50');
+      assert.deepEqual(await admin.evaluate(() => ['#agent-keepalive-enabled', '#agent-keepalive-claude-minutes', '#agent-keepalive-codex-minutes', '#agent-keepalive-stop-after-hours'].map(id => document.querySelector(id).disabled)), [true, true, true, true]);
+      await admin.close();
+    }
     // The sections come in the order they have always had, each with the ids the page and its styles know.
     {
       const page = await mount();
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general > div')].map(div => `${div.id}:${div.querySelector('h3').textContent}`)),
-        ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'agent-isolation:Agents', 'settings-backup:Settings backup']);
+        ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'agent-isolation:Agents', 'prompt-cache:Prompt cache', 'settings-backup:Settings backup']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general .settings-row')].filter(row => !row.hidden).map(row => (row.querySelector('input, select, button')).id)),
-        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-docker-only', 'settings-backup-export', 'settings-backup-file']);
+        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-docker-only', 'agent-warm-idle', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
       await page.close();
     }
     // The chat switches show what this person has and change the page at once: the bell and the debug button follow them.

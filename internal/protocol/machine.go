@@ -1,11 +1,23 @@
 package protocol
 
 import (
+	"time"
+
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 )
 
 const Version = 2
+
+// KeepAliveScopeTTL is how long the server keeps a ping's scope without hearing of it again: the crash safety net for a supervisor that died or lost its
+// connection and so never lifts it. The supervisor of a ping that is not confirmed gone sends the "on" frame again (KeepAliveScopeRenewEvery) for as
+// long as it holds the agent in quarantine, so the quarantine can be any length without the scope lapsing under it; the ping's own run (its time
+// limit and the end that follows) must stay well inside one TTL, and a test in internal/supervisor holds the numbers to that.
+const KeepAliveScopeTTL = 3 * time.Minute
+
+// KeepAliveScopeRenewEvery is how often a supervisor renews the scope of a ping that is not confirmed gone: a third of the TTL, so two renewals in a row
+// can be lost to a dropped connection before it lapses.
+const KeepAliveScopeRenewEvery = KeepAliveScopeTTL / 3
 const MaxMachineFrameBytes = 4 << 20
 
 const (
@@ -46,6 +58,35 @@ const (
 	SessionScan          = "session_scan"
 	SessionScanResult    = "session_scan_result"
 	TelemetryConfig      = "telemetry_config"
+	// RetireWarm asks a supervisor to end the idle warm processes of one tool (an account switch is about to change the login they hold) and to answer
+	// with RetireWarmResult: Result "ok" once every one is confirmed gone, "error" (with Message) when one is not.
+	RetireWarm       = "retire_warm"
+	RetireWarmResult = "retire_warm_result"
+	// WarmStateFrame is a supervisor's report of its warm processes (in Frame.Warm), sent when they change and with hello.
+	WarmStateFrame = "warm_state"
+	// WarmClaimFrame is a supervisor telling the server, before it keeps a process warm, how many processes it has running now (Frame.WarmCount, counted
+	// with Frame.WarmSeq from the supervisor's one counter). The server saves the count and answers with WarmClaimAckFrame (the same ReqID); the supervisor
+	// keeps the process only once it has that answer, and ends it otherwise. What the server knows of a host can then only be ahead of reality, never
+	// behind: a host that drops is judged by the last count it gave, which was given before the process existed. Decreases are not claims; they go in
+	// warm_state reports, and a stale higher count only makes the server refuse, which is safe.
+	WarmClaimFrame    = "warm_claim"
+	WarmClaimAckFrame = "warm_claim_ack"
+	// KeepAliveFrame is a supervisor's report of one cache keep-alive ping (Frame.KeepAlive).
+	KeepAliveFrame = "keep_alive"
+	// KeepAlivePausedFrame tells a supervisor which cache keep-alive pings to hold back (Frame.PausedTools, Frame.PausedAgents): the server sends it when
+	// the supervisor connects and whenever it changes. It replaces what it said before.
+	KeepAlivePausedFrame = "keep_alive_paused"
+	// KeepAliveScopeFrame is a supervisor telling the server that a cache keep-alive ping of an agent is about to run (Frame.AgentID, Frame.ScopeOn true) or
+	// has ended and is confirmed gone (false). While it runs the server refuses every agent-tools call made with the agent's key (403 keep_alive_scope):
+	// a ping is not work, and the harness is only asked in words not to use the toolbox. The server answers the "on" frame with KeepAliveScopeAckFrame
+	// (the same ReqID) and the supervisor starts the ping only once it has it; an "off" frame is answered too, and the supervisor lets go of the agent
+	// to a real delivery only after that, so no real tool call is ever refused for a ping that has ended.
+	// AgentSettingsFrame carries the instance's agent settings to a supervisor without a delivery: the warm window (Frame.WarmIdleSeconds) and the cache
+	// keep-alive settings by tool (Frame.KeepAliveByTool). The server sends it when the supervisor connects, whenever a setting changes and with the
+	// periodic keep_alive_paused check, so a setting that is turned off reaches agents that are idle, not only the ones that get another delivery.
+	AgentSettingsFrame     = "agent_settings"
+	KeepAliveScopeFrame    = "keep_alive_scope"
+	KeepAliveScopeAckFrame = "keep_alive_scope_ack"
 )
 
 // TelemetrySettings is what the server tells a supervisor about error and performance reporting: whether it is on, where reports go and how many
@@ -69,12 +110,37 @@ type AgentKeyGrant struct {
 // agent_id and generation; machine frames carry machine_id. The server binds
 // the socket from its authenticated machine key, never from frame claims.
 type Frame struct {
-	V                   int    `json:"v"`
-	Type                string `json:"type"`
-	MachineID           string `json:"machine_id,omitempty"`
-	JournalID           string `json:"journal_id,omitempty"`
-	SupervisorVersion   string `json:"supervisor_version,omitempty"`
-	SupportsPathProbe   bool   `json:"supports_path_probe,omitempty"`
+	V                 int    `json:"v"`
+	Type              string `json:"type"`
+	MachineID         string `json:"machine_id,omitempty"`
+	JournalID         string `json:"journal_id,omitempty"`
+	SupervisorVersion string `json:"supervisor_version,omitempty"`
+	SupportsPathProbe bool   `json:"supports_path_probe,omitempty"`
+	// SupportsWarm says the supervisor keeps agents' harness processes warm and answers a retire_warm request. A server asks only one that does.
+	SupportsWarm bool `json:"supports_warm,omitempty"`
+	// PausedTools and PausedAgents, on a keep_alive_paused frame, are the tools whose limit guard is holding turns (the account is near its limit) and the
+	// agents whose provider limit is in force: no ping for them.
+	PausedTools  []string `json:"paused_tools,omitempty"`
+	PausedAgents []string `json:"paused_agents,omitempty"`
+	// KeepAliveByTool, on an agent_settings frame, is each tool's keep-alive setting (an interval of 0 is off for that tool).
+	KeepAliveByTool map[string]KeepAliveSettings `json:"keep_alive_by_tool,omitempty"`
+	// ScopeOn, on a keep_alive_scope frame, says a ping begins (true) or has ended (false).
+	ScopeOn bool `json:"scope_on,omitempty"`
+	// WarmSeq, on a warm_claim and a scope-on frame, is the supervisor's monotonic counter value for the frame (the same counter numbers WarmReport.Seq),
+	// and WarmCount, on a warm_claim, the processes (warm and pings) it has running. The server applies counts in this order and never lets an older
+	// one overwrite a newer.
+	WarmSeq   uint64 `json:"warm_seq,omitempty"`
+	WarmCount int    `json:"warm_count,omitempty"`
+	// ScopeGen, on a keep_alive_scope frame, names the ping the frame is about (its turn id). The server remembers it with the scope and ignores a lift
+	// that names another ping than the one scoped now (an owed lift of an old ping arriving after a new ping's scope began must not clear it); a
+	// frame without one (an older supervisor) always applies.
+	ScopeGen string `json:"scope_gen,omitempty"`
+	// KeepAlive, on a keep_alive frame, is what one ping did.
+	KeepAlive *KeepAliveReport `json:"keep_alive_report,omitempty"`
+	// Warm, on a warm_state frame, is the supervisor's whole warm picture at that moment.
+	Warm *WarmReport `json:"warm,omitempty"`
+	// RetireTool, on a retire_warm request, is the tool whose idle warm processes are to end.
+	RetireTool          string `json:"retire_tool,omitempty"`
 	SupportsSessionScan bool   `json:"supports_session_scan,omitempty"`
 	SupportsSessionFork bool   `json:"supports_session_fork,omitempty"`
 	// SupportsSessionCopy says the supervisor copies a Claude Code session to another folder's project directory when a session_scan names
@@ -130,7 +196,12 @@ type Frame struct {
 	AgentKey            string               `json:"agent_key,omitempty"`
 	// DockerOnly, on a spawn and a delivery, says the instance runs agents only in docker: a supervisor refuses an agent whose launcher is not
 	// containerized. An older supervisor ignores the field, which is why the server refuses it too.
-	DockerOnly           bool               `json:"docker_only,omitempty"`
+	DockerOnly bool `json:"docker_only,omitempty"`
+	// WarmIdleSeconds, on a delivery, is the instance's setting for how long a supervisor keeps an agent's harness process up after a turn
+	// (0 is off). It is always sent by a server that has the setting; a supervisor that does not know it ignores it and runs every turn cold.
+	WarmIdleSeconds *int `json:"warm_idle_seconds,omitempty"`
+	// KeepAliveSettings, on a delivery: see Delivery.KeepAliveSettings.
+	KeepAliveSettings    *KeepAliveSettings `json:"keep_alive,omitempty"`
 	CheckoutPath         string             `json:"checkout_path,omitempty"`
 	CanonicalPath        string             `json:"canonical_path,omitempty"`
 	RoomID               string             `json:"room_id,omitempty"`
@@ -286,14 +357,14 @@ type CapabilityReport struct {
 
 func DeliverFrame(d Delivery) Frame {
 	agent := d.Agent
-	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers, DockerOnly: d.DockerOnly}
+	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers, DockerOnly: d.DockerOnly, WarmIdleSeconds: d.WarmIdleSeconds, KeepAliveSettings: d.KeepAliveSettings}
 }
 func (f Frame) Delivery() Delivery {
 	agent := adapter.AgentSpec{}
 	if f.Agent != nil {
 		agent = *f.Agent
 	}
-	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers, DockerOnly: f.DockerOnly}
+	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers, DockerOnly: f.DockerOnly, WarmIdleSeconds: f.WarmIdleSeconds, KeepAliveSettings: f.KeepAliveSettings}
 }
 
 type HelloAgent struct {
@@ -340,6 +411,37 @@ type Delivery struct {
 	Providers []adapter.CustomProvider `json:"providers,omitempty"`
 	// DockerOnly: see Frame.DockerOnly.
 	DockerOnly bool `json:"docker_only,omitempty"`
+	// WarmIdleSeconds: see Frame.WarmIdleSeconds.
+	WarmIdleSeconds *int `json:"warm_idle_seconds,omitempty"`
+	// KeepAliveSettings is the instance's cache keep-alive setting for this agent's tool; nil means the server has none, and the supervisor does not ping.
+	KeepAliveSettings *KeepAliveSettings `json:"keep_alive,omitempty"`
+}
+
+// KeepAliveSettings says when an idle agent's prompt cache is kept warm with a ping: every IntervalSeconds after its last turn (0 is off), until
+// StopAfterSeconds have passed without real work.
+type KeepAliveSettings struct {
+	IntervalSeconds  int `json:"interval_seconds"`
+	StopAfterSeconds int `json:"stop_after_seconds"`
+}
+
+// KeepAliveReport is what one ping did: whether it ran, and what it read from and wrote to the prompt cache, so a ping that missed shows. Nothing of
+// what the model said is in it.
+type KeepAliveReport struct {
+	AgentID        string  `json:"agent_id"`
+	At             string  `json:"at"`
+	OK             bool    `json:"ok"`
+	Error          string  `json:"error,omitempty"`
+	ViaWarm        bool    `json:"via_warm,omitempty"`
+	TokensIn       int64   `json:"tokens_in"`
+	TokensOut      int64   `json:"tokens_out"`
+	CacheRead      int64   `json:"cache_read"`
+	CacheWrite     int64   `json:"cache_write"`
+	CostCumulative float64 `json:"cost_cumulative"`
+	// CostIsTotal says CostCumulative is the harness session's running total (Claude); otherwise Cost is this ping's own cost (Codex).
+	CostIsTotal bool `json:"cost_is_total,omitempty"`
+	// Cost is what this ping cost: the session's cumulative cost after it less what it was before (0 when that is not known).
+	Cost            float64 `json:"cost"`
+	DurationSeconds float64 `json:"duration_seconds"`
 }
 
 type DeliveryNote struct {
@@ -445,4 +547,36 @@ type ModelCandidate struct {
 	// Unreachable says why an agent could not use the model where the harness runs (its provider is at the machine's own loopback address,
 	// which inside a container is the container); empty for a model that can be reached.
 	Unreachable string `json:"unreachable,omitempty"`
+}
+
+// WarmReport is what a supervisor says about the agent processes it keeps warm: which agents have a live process and until when it is kept,
+// and what that costs. It is a snapshot, replaced by the next one.
+type WarmReport struct {
+	// Agents are the agents with a live process: State "idle" (kept until SleepsAt, RFC 3339) or "busy" (running a turn).
+	Agents []WarmAgent `json:"agents"`
+	// Seq numbers the report from the supervisor's one counter (shared with warm claims and ping scopes): the server ignores a report older than one
+	// it has applied. Processes counts every live warm process, whatever its state (busy, idle, or one that could not be confirmed gone); Agents is the
+	// picture for the screen and may omit what it cannot show.
+	Seq       uint64 `json:"seq,omitempty"`
+	Processes int    `json:"processes,omitempty"`
+	// PingsActive counts cache keep-alive pings that run or are not confirmed gone yet (a ping in a container held in quarantine counts until its end
+	// is confirmed or the quarantine is over). They are processes on the login too, though they are not warm slots: the server counts them with the
+	// agents when it asks whether a host that has dropped may still have something running.
+	PingsActive int `json:"pings_active,omitempty"`
+	// Started and Reused count warm processes started and turns that went into a live one, since the supervisor started.
+	Started int `json:"started"`
+	Reused  int `json:"reused"`
+	// UnconfirmedPingEnds counts keep-alive pings in a container whose end was never confirmed and whose quarantine ran out.
+	UnconfirmedPingEnds int `json:"unconfirmed_ping_ends,omitempty"`
+	// RSSBytes is the memory of the warm processes the supervisor runs itself; ContainerWideBytes is what every running container uses (the harness
+	// container is shared by all agents, and Docker reports no finer), where Docker warm processes live. Neither is measured per agent.
+	RSSBytes           int64 `json:"rss_bytes"`
+	ContainerWideBytes int64 `json:"container_wide_bytes"`
+}
+
+// WarmAgent is one agent's live process.
+type WarmAgent struct {
+	AgentID  string `json:"agent_id"`
+	State    string `json:"state"`
+	SleepsAt string `json:"sleeps_at,omitempty"`
 }

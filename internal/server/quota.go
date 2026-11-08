@@ -124,6 +124,10 @@ type quotaActuator struct {
 }
 
 func (a quotaActuator) Switch(ctx context.Context, tool, from, to string) (bool, string, error) {
+	// No new turn of the tool starts until the switch is over, so none can start, end and park an idle warm process on the login that is about to go
+	// after the processes below were ended; the check for running turns comes after the hold (see switcherUse).
+	releaseDispatch := a.s.Store.HoldDispatch(tool)
+	defer releaseDispatch()
 	running, err := a.s.runningAgents(ctx, tool)
 	if err != nil {
 		return false, "", err
@@ -131,6 +135,12 @@ func (a quotaActuator) Switch(ctx context.Context, tool, from, to string) (bool,
 	if len(running) > 0 {
 		return false, quota.ReasonAgentsRunning, nil
 	}
+	// Agents kept warm hold the login they started with: they are ended, and confirmed gone, before the swap.
+	releaseWarm, err := a.s.retireHostWarm(ctx, tool)
+	if err != nil {
+		return false, quota.ReasonAgentsRunning, nil
+	}
+	defer releaseWarm() // cache pings of the tool stay held back until the switch is over, whatever it came to
 	if a.afterPreCheck != nil {
 		a.afterPreCheck()
 	}

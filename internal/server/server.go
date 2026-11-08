@@ -114,6 +114,13 @@ type Server struct {
 	AllowedHosts         []string       // AIMEBU2_ALLOWED_HOSTS: host names, besides localhost, IPs and the public URL's, the routes that need no login answer to
 	doctorKey            string         // set by EnableDoctorKey; empty keeps GET /api/doctor closed
 	machineMu            sync.Mutex
+	kaScopeMu            sync.Mutex                                         // guards kaScope
+	kaScope              map[string]keepAliveScopeLease                     // agents with a cache keep-alive ping running: their toolbox is refused (see keep_alive_scope.go)
+	warmSeenMu           sync.Mutex                                         // guards warmSeen
+	warmSeen             map[string]warmSeenEntry                           // each machine's last count of warm processes, kept after it disconnects (see hostMayHaveWarm)
+	saveWarmSeen         func(ctx context.Context, key, value string) error // tests replace the write of a machine's last warm report
+	kaSwitchMu           sync.Mutex                                         // guards kaSwitching
+	kaSwitching          map[string]int                                     // tools whose account is being switched right now: their cache pings are held back
 	machines             map[string]*machineConn
 	spawnMu              sync.Mutex
 	spawnKeys            map[string]string

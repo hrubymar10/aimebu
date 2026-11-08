@@ -46,6 +46,8 @@ type Store struct {
 	// holds is the limit guard's per-tool hold on new turns (see tool_hold.go).
 	holdMu sync.RWMutex
 	holds  map[string]string
+	// switchHolds counts the account switches in progress per tool: while one runs no new turn of the tool is dispatched on the host (see HoldDispatch).
+	switchHolds map[string]int
 }
 
 // defaultTurnGateWait is far longer than the file swap HoldTurns exists for (a few seconds at worst, a busy Claude

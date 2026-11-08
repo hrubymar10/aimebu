@@ -182,6 +182,31 @@ verified no-action or read-only modes. The normal test suite uses a scripted
 `claude` binary.
 Set `AIMEBU2_LIVE_CC=1` to opt into the separately gated live canary.
 
+### Warm mode (adapter side)
+
+The Claude adapter also implements `adapter.WarmAdapter`: it can keep one `claude -p
+--input-format stream-json --output-format stream-json` process up between turns, so a
+turn that follows another soon after is written to the live process instead of starting
+a process and resuming the session. The supervisor decides when a process starts and
+ends; the adapter feeds the turns. (Nothing uses it until the supervisor's warm mode is
+switched on; it is off by default.)
+
+- `WarmFingerprint(spec)` hashes everything a warm process is started with (command,
+  arguments, environment with the agent key only as a hash, directory) and leaves out which
+  session is continued and the turn itself. A correction, a diagnostic or a fork returns
+  `ErrNoWarm` and runs one process per turn as before.
+- `StartWarm(ctx, spec)` starts the process; `WarmSession.Run(spec)` writes one stream-json
+  user message (the same JSON a one-turn process reads on standard input). The returned
+  `Turn` ends at that turn's `result` event: a successful result with an answer is a
+  terminal exit with code 0 and the process stays up. Any other ending (an error result, a
+  crash, a cancel, input the CLI refuses) ends the process too, and the turn's exit is the
+  process's own. A live session takes one turn at a time (`ErrWarmBusy`).
+- Measured with a real run (haiku, CLI 2.1.318): `--json-schema` gives `structured_output`
+  on every result of a multi-turn stream; `total_cost_usd` stays cumulative per session (the
+  existing delta logic applies); an interrupt and a malformed input line each make the CLI
+  exit 1, which is why any abnormal event means the process is gone; one idle process is
+  about 240 MB resident.
+
 ## Codex native adapter
 
 The native Codex adapter uses `codex exec --json` and `codex exec resume`

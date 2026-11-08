@@ -465,3 +465,93 @@ func TestVersionProbeSucceedsForALauncherThatExitedZeroAndLeftAHelperBehind(t *t
 		t.Fatalf("the probe took %v: it waited for the helper", elapsed)
 	}
 }
+
+// A keep-alive turn of a Codex agent differs from a real one only in what it says after the unchanged instruction text: the process is started with the
+// same arguments (a resume of the same session) and environment, and standard input differs only by the keep_alive instruction in the turn JSON.
+func TestKeepAliveTurnRunsWithTheRealTurnsArguments(t *testing.T) {
+	root := t.TempDir()
+	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	path := filepath.Join(root, "codex-docker")
+	run := func(name string, keepAlive bool) (args, stdin string) {
+		argsPath, inPath := filepath.Join(root, name+"-args"), filepath.Join(root, name+"-in")
+		script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat > " + inPath + "\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"019e0000-0000-7000-8000-000000000001\"}'\n"
+		if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		a := &Adapter{Command: path, Variant: "docker"}
+		spec := adapter.TurnSpec{TurnID: name, Agent: adapter.AgentSpec{ID: "agt_test", Tool: "codex", Variant: "docker", Model: "gpt-6-sol"}, CheckoutPath: root, VisibleCheckoutPath: "/workspace/project", Mode: adapter.ModeNormal, AgentTools: config,
+			NotesJSON: json.RawMessage(`[]`), NativeSessionHandle: "019e0000-0000-7000-8000-000000000001", NativeSessionStarted: true, KeepAlive: keepAlive}
+		turn, err := a.Start(context.Background(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range turn.Events() {
+		}
+		_, _ = turn.Wait()
+		rawArgs, _ := os.ReadFile(argsPath)
+		rawIn, _ := os.ReadFile(inPath)
+		return string(rawArgs), string(rawIn)
+	}
+	realArgs, realIn := run("real", false)
+	pingArgs, pingIn := run("ping", true)
+	if realArgs != pingArgs {
+		t.Fatalf("a ping must run with the real turn's arguments:\nreal: %s\nping: %s", realArgs, pingArgs)
+	}
+	if !strings.Contains(pingArgs, "resume\n") {
+		t.Fatalf("a ping continues the session: %s", pingArgs)
+	}
+	if strings.Contains(realIn, "keep-alive") || !strings.Contains(pingIn, "cache keep-alive, not work") {
+		t.Fatalf("real=%q ping=%q", realIn, pingIn)
+	}
+	prefix := func(in string) string { return in[:strings.Index(in, `{"turn_id"`)] }
+	if prefix(realIn) != prefix(pingIn) {
+		t.Fatal("the instruction text ahead of the turn JSON must not change")
+	}
+	if (&Adapter{}).KeepAliveTool() != "codex" {
+		t.Fatal("the codex adapter runs keep-alive turns for codex")
+	}
+}
+
+// Terminate asks a Codex turn to end with SIGTERM and kills it only if it does not: a launcher that traps the signal exits 143 on its own (a confirmed
+// end), one that ignores it is killed after the grace. Without it a containerized Codex ping could only be cancelled, which confirms nothing.
+func TestTurnTerminateEndsOnTheSignalOrIsKilledAfterTheGrace(t *testing.T) {
+	for name, tc := range map[string]struct {
+		script   string
+		byItself bool
+		code     int
+	}{
+		"traps TERM": {"#!/bin/sh\ncat >/dev/null &\ntrap 'exit 143' TERM\nwhile true; do sleep 0.1; done\n", true, 143},
+		"ignores it": {"#!/bin/sh\ncat >/dev/null &\ntrap '' TERM\nwhile true; do sleep 0.2; done\n", false, -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "codex")
+			if err := testenv.WriteExecutable(path, []byte(tc.script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			a := New(filepath.Join(root, "runtime"))
+			a.Command, a.AllowNative, a.AuthPath = path, true, ""
+			turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "terminate", Agent: adapter.AgentSpec{ID: "agt_test", Model: "gpt-6-sol"}, CheckoutPath: root, Mode: adapter.ModeCorrection})
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(150 * time.Millisecond)
+			terminator, ok := turn.(interface{ Terminate(time.Duration) bool })
+			if !ok {
+				t.Fatal("a Codex turn can be terminated")
+			}
+			if got := terminator.Terminate(300 * time.Millisecond); got != tc.byItself {
+				t.Fatalf("ended on the terminate = %v, want %v", got, tc.byItself)
+			}
+			for range turn.Events() {
+			}
+			exit, _ := turn.Wait()
+			if exit.TerminalEvent {
+				t.Fatalf("exit = %+v", exit)
+			}
+			if tc.byItself && exit.ExitCode != tc.code {
+				t.Fatalf("exit code = %d, want %d", exit.ExitCode, tc.code)
+			}
+		})
+	}
+}

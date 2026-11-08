@@ -133,9 +133,22 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	// No new turn of the tool starts from here until the switch is over (the host's agents of the tool wait in the queue), so none can start, end and
+	// park an idle warm process on the login that is about to go after the processes below were ended. The check for running turns comes after the
+	// hold: a turn that was being dispatched when it was taken is recorded by then and refuses the switch.
+	releaseDispatch := s.Store.HoldDispatch(r.PathValue("tool"))
+	defer releaseDispatch()
 	if !s.switcherQuiescent(w, r, r.PathValue("tool")) {
 		return
 	}
+	// Agents kept warm hold the login they started with: they are ended, and confirmed gone, before the swap. Their turns are held by the
+	// switch's own guard below too, which is taken right before the swap and covers the swap itself.
+	releaseWarm, err := s.retireHostWarm(r.Context(), r.PathValue("tool"))
+	if err != nil {
+		writeJSON(w, 409, map[string]any{"error": "warm_agents", "message": err.Error()})
+		return
+	}
+	defer releaseWarm() // cache pings of the tool stay held back until the switch is over, whatever it came to
 	if s.switcherAfterPreCheck != nil {
 		s.switcherAfterPreCheck()
 	}
@@ -172,8 +185,19 @@ func (s *Server) switcherRemove(w http.ResponseWriter, r *http.Request) {
 		switcherError(w, err)
 		return
 	}
-	if active == name && !s.switcherQuiescent(w, r, tool) {
-		return
+	if active == name {
+		// Removing the active profile deletes the live login the host's warm processes of the tool hold: same as a switch away from it.
+		releaseDispatch := s.Store.HoldDispatch(tool)
+		defer releaseDispatch()
+		if !s.switcherQuiescent(w, r, tool) {
+			return
+		}
+		releaseWarm, err := s.retireHostWarm(r.Context(), tool)
+		if err != nil {
+			writeJSON(w, 409, map[string]any{"error": "warm_agents", "message": err.Error()})
+			return
+		}
+		defer releaseWarm()
 	}
 	if err := s.Switcher.Remove(tool, name, active == name); err != nil {
 		switcherError(w, err)

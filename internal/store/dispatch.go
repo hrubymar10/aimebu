@@ -63,7 +63,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if err != nil {
 			return err
 		}
-		if s.ToolHold(tool) != "" {
+		if s.ToolHold(tool) != "" || s.dispatchHeldForSwitch(tool) {
 			// The limit guard judges the host machine's account, so only agents on the host wait for it: a remote machine
 			// has its own login and its own quota.
 			var onHost bool

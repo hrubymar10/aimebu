@@ -1,0 +1,1068 @@
+package supervisor
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/protocol"
+)
+
+// Warm agents. After a turn the supervisor can keep the agent's harness process up for a short idle window, so a message that arrives in it
+// goes straight into the live process instead of starting a new one and resuming the session. When the window ends the agent sleeps: the
+// process is ended and the next turn takes the ordinary cold path. Only an adapter that is an adapter.WarmAdapter takes part; for any other
+// tool, and for any turn the adapter will not run warm (a correction, a diagnostic, a fork), nothing changes.
+//
+// One rule runs through it: a warm process is either idle (in the pool, owned by nobody) or busy (running one turn, in c.running/c.active as
+// any turn is), and whoever takes it out of the pool owns it. Delivery, the idle timer, a stop, a key change and the memory guard all go
+// through take, so they cannot both end up with it.
+
+// WarmConfig is how long an idle agent's process is kept and when it is let go regardless.
+type WarmConfig struct {
+	// Idle is the window after a turn in which the process stays up. Zero turns warm mode off (the default).
+	Idle time.Duration
+	// MaxLifetime ends a process this old when its turn ends (and refuses it a new turn): a process keeps the credentials it started with, and
+	// nothing refreshes them inside it. Zero means a lifetime of one hour.
+	MaxLifetime time.Duration
+	// MinFreeBytes and MinFreePercent are the memory guard: when free memory falls under either, the longest-idle process is ended, one every
+	// few seconds, until there is enough again. Zero for both turns the guard off.
+	MinFreeBytes   int64
+	MinFreePercent float64
+}
+
+const (
+	defaultWarmMaxLifetime = time.Hour
+	warmGuardEvery         = 10 * time.Second
+	warmCloseGrace         = 3 * time.Second
+)
+
+// WarmConfigFromEnv reads the settings: AIMEBU2_WARM_IDLE (a duration such as 5m; unset or 0 is off), AIMEBU2_WARM_MAX_LIFETIME (default 1h),
+// AIMEBU2_WARM_MIN_FREE_MB (default 1536) and AIMEBU2_WARM_MIN_FREE_PERCENT (default 10).
+func WarmConfigFromEnv() WarmConfig {
+	config := WarmConfig{MinFreeBytes: 1536 << 20, MinFreePercent: 10}
+	if value := strings.TrimSpace(os.Getenv("AIMEBU2_WARM_IDLE")); value != "" {
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			config.Idle = d
+		}
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv("AIMEBU2_WARM_MAX_LIFETIME"))); err == nil && d > 0 {
+		config.MaxLifetime = d
+	}
+	if n, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("AIMEBU2_WARM_MIN_FREE_MB")), 10, 64); err == nil && n >= 0 {
+		config.MinFreeBytes = n << 20
+	}
+	if f, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("AIMEBU2_WARM_MIN_FREE_PERCENT")), 64); err == nil && f >= 0 {
+		config.MinFreePercent = f
+	}
+	return config
+}
+
+// warmCfg is the warm settings now, read under the lock (they can be changed while turns run).
+func (c *Client) warmCfg() WarmConfig {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Warm
+}
+
+func (w WarmConfig) lifetime() time.Duration {
+	if w.MaxLifetime > 0 {
+		return w.MaxLifetime
+	}
+	return defaultWarmMaxLifetime
+}
+
+// warmEntry is one live process and what it was started with.
+type warmEntry struct {
+	agentID       string
+	tool          string // the harness tool (claude, ...): an account switch retires by it
+	session       adapter.WarmSession
+	fp            string
+	started       time.Time
+	stderr        *swapWriter
+	containerized bool // runs through a Docker launcher: its memory is the container's, not the supervisor's
+	timer         *time.Timer
+	idleAt        time.Time
+	idleGen       int           // which idle window the timer belongs to: a timer of an earlier window, fired late, must not end the process of this one
+	idleStop      chan struct{} // closed when the process leaves the idle state, ending its crash watcher
+	retire        bool          // an end was asked for while it ran a turn: it ends when the turn does
+	gone          atomic.Bool   // its end was confirmed and counted (warmLive), once
+}
+
+// swapWriter is the stderr sink of a warm process: it writes to the output log of the turn that is running, and to nothing between turns (a
+// turn's log is closed when the turn ends, but the process goes on).
+type swapWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *swapWriter) Set(w io.Writer) {
+	s.mu.Lock()
+	s.w = w
+	s.mu.Unlock()
+}
+
+func (s *swapWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	w := s.w
+	s.mu.Unlock()
+	if w == nil {
+		return len(p), nil
+	}
+	_, _ = w.Write(p) // a log that fails changes nothing for the turn
+	return len(p), nil
+}
+
+// warmSlot is the per-agent state machine: the one place a warm process of the agent lives, whatever it is doing. Everything that changes it
+// (a delivery taking it, a turn ending, the idle timer, a stop, a key change, the memory guard, the crash watcher) holds the slot's lock for
+// the whole change, including starting, handing a turn to and ending the process, so none of them can see it half-way: a stop that arrives while
+// a delivery is starting the process waits for it and then finds it busy; a turn that ends while a stop lands is settled after it, against the
+// desired state the stop already set.
+type warmSlot struct {
+	mu    sync.Mutex
+	idle  *warmEntry // the process between turns
+	busy  *warmEntry // the process running a turn
+	stuck *warmEntry // a process that was ended and not confirmed gone: nothing else starts on the session until it is
+}
+
+type warmPool struct {
+	mu      sync.Mutex
+	slots   map[string]*warmSlot
+	ctx     context.Context
+	cancel  context.CancelFunc
+	now     func() time.Time
+	after   func(time.Duration, func()) *time.Timer
+	started int // warm processes started
+	reused  int // turns that went into a live process
+}
+
+func newWarmPool() *warmPool {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &warmPool{slots: map[string]*warmSlot{}, ctx: ctx, cancel: cancel, now: time.Now, after: time.AfterFunc}
+}
+
+// pool is the warm pool, made on first use.
+func (c *Client) pool() *warmPool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.warmPool == nil {
+		c.warmPool = newWarmPool()
+		if c.warmNow != nil {
+			c.warmPool.now = c.warmNow
+		}
+		if c.warmAfter != nil {
+			c.warmPool.after = c.warmAfter
+		}
+	}
+	return c.warmPool
+}
+
+// slot is an agent's state machine, made on first use.
+func (p *warmPool) slot(agentID string) *warmSlot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	slot := p.slots[agentID]
+	if slot == nil {
+		slot = &warmSlot{}
+		p.slots[agentID] = slot
+	}
+	return slot
+}
+
+// existing returns the slots as they are now, for a pass over all of them.
+func (p *warmPool) existing() map[string]*warmSlot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make(map[string]*warmSlot, len(p.slots))
+	for id, slot := range p.slots {
+		out[id] = slot
+	}
+	return out
+}
+
+// takeIdle removes the slot's idle process and stops its timer and watcher. The caller holds slot.mu.
+func (s *warmSlot) takeIdle() *warmEntry {
+	entry := s.idle
+	if entry == nil {
+		return nil
+	}
+	s.idle = nil
+	if entry.timer != nil {
+		entry.timer.Stop()
+		entry.timer = nil
+	}
+	if entry.idleStop != nil {
+		close(entry.idleStop)
+		entry.idleStop = nil
+	}
+	return entry
+}
+
+// endWarm ends a process (taken out of its slot by the caller, or one that never got in) and waits until it is gone, and says whether it is
+// confirmed gone. With a grace it first closes the process's input and lets it go on its own, which for a Docker launcher lets the wrapper
+// clean its session up properly instead of leaving that to its watchdog; it is killed when the grace is over. Without one it is killed at once.
+// A kill that is not confirmed is tried once more. The journal's note of the process is kept until it is known to be gone, and a caller that
+// gets false must not go on as if it were: not acknowledge a stop, not drop the key, not start another process on the session.
+func (c *Client) endWarm(entry *warmEntry, reason string, grace time.Duration) bool {
+	if entry == nil {
+		return true
+	}
+	pid := entry.session.Pid()
+	if entry.containerized && grace == 0 {
+		// `docker exec` does not pass a signal on, so a kill of the host side leaves the process in the container for up to about fifteen seconds:
+		// a process in a container is always closed first (its input is closed, `docker exec` returns and the wrapper cleans its session up).
+		grace = warmCloseGrace
+	}
+	err := errors.New("not tried")
+	if grace > 0 {
+		err = entry.session.Close(grace)
+	}
+	for attempt := 0; err != nil && attempt < 2; attempt++ { // a kill that is not confirmed is tried once more
+		err = entry.session.Kill()
+	}
+	if err != nil {
+		c.report(fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err))
+		return false
+	}
+	if c.Journal != nil && pid > 0 {
+		_ = c.Journal.ForgetWarmProcess(context.Background(), pid)
+	}
+	if entry.gone.CompareAndSwap(false, true) {
+		c.warmLive.Add(-1)
+	}
+	c.warmChanged()
+	return true
+}
+
+// finish ends a process the slot held and keeps hold of it as stuck when it is not confirmed gone, so that nothing starts another process on the
+// session until it is. The caller holds slot.mu.
+func (c *Client) finish(slot *warmSlot, entry *warmEntry, reason string, grace time.Duration) bool {
+	if c.endWarm(entry, reason, grace) {
+		return true
+	}
+	if entry != nil {
+		slot.stuck = entry
+	}
+	return false
+}
+
+// clearStuck tries again to end a process an earlier attempt could not confirm gone. The caller holds slot.mu.
+func (c *Client) clearStuck(slot *warmSlot) bool {
+	if slot.stuck == nil {
+		return true
+	}
+	if c.endWarm(slot.stuck, "a second attempt", 0) {
+		slot.stuck = nil
+		return true
+	}
+	return false
+}
+
+// retireWarm ends an agent's warm process and returns once it is confirmed gone (false: it is not, and the caller must not go on to acknowledge
+// a stop or drop a key: it is tried again by whoever asks next, and a stop is retried in the background): the caller then goes on to acknowledge
+// a stop or drop a key, so nothing is left holding either. An idle process is closed gracefully and ended. One that is running a turn is, for a
+// stop (killBusy), killed too: the turn then ends as a cancelled one; for a key change it is only marked, so it ends with its turn instead of
+// going idle.
+func (c *Client) retireWarm(agentID, reason string) bool {
+	return c.retireWarmAgent(agentID, reason, false)
+}
+
+// stopWarm is retireWarm for an agent that was stopped: whatever its process is doing, it ends before the stop is acknowledged.
+func (c *Client) stopWarm(agentID, reason string) bool {
+	pingsGone := c.keepAliveForget(agentID) // a stopped agent's cache is no longer kept
+	return c.retireWarmAgent(agentID, reason, true) && pingsGone
+}
+
+func (c *Client) retireWarmAgent(agentID, reason string, killBusy bool) bool {
+	c.mu.Lock()
+	pool := c.warmPool
+	c.mu.Unlock()
+	if pool == nil {
+		return true
+	}
+	pool.mu.Lock()
+	slot := pool.slots[agentID]
+	pool.mu.Unlock()
+	if slot == nil {
+		return true
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	return c.retireSlot(slot, reason, killBusy, warmCloseGrace)
+}
+
+// retireSlot is retireWarmAgent with the slot's lock held.
+func (c *Client) retireSlot(slot *warmSlot, reason string, killBusy bool, grace time.Duration) bool {
+	ok := c.clearStuck(slot)
+	if slot.busy != nil {
+		slot.busy.retire = true
+		if killBusy && !c.finish(slot, slot.busy, reason, 0) {
+			ok = false
+		}
+	}
+	if !c.finish(slot, slot.takeIdle(), reason, grace) {
+		ok = false
+	}
+	return ok
+}
+
+// RetireAllWarm ends every idle warm process (a settings change, a credential switch) and returns once they are confirmed gone (false: one is
+// not); the processes close side by side, so the wait is the longest grace and not their sum.
+func (c *Client) RetireAllWarm(reason string) bool { return c.retireAll(reason, warmCloseGrace) }
+
+// warmCapable says this supervisor can keep processes warm: its adapter has a warm mode. (Whether it does is the instance's window.)
+func (c *Client) warmCapable() bool {
+	if multi, ok := c.Adapter.(interface{ HasWarm() bool }); ok {
+		return multi.HasWarm()
+	}
+	_, ok := c.Adapter.(adapter.WarmAdapter)
+	return ok
+}
+
+// RetireWarmTool ends the idle warm processes of one tool, and the cache pings that run for it, and returns once they are confirmed gone (false: one is
+// not). A running turn is left alone (the account switch refuses while one runs), but its process is marked to end with the turn.
+func (c *Client) RetireWarmTool(tool, reason string) bool {
+	// Cache pings of the tool come first: a ping is a turn on the login about to change, and the server's own check for a running turn cannot see it. They
+	// are held back (no new one starts, and a pending timer finds the hold) and the ones that run are ended and confirmed, so no ping holds a warm
+	// process or the login while the slots below are retired.
+	pingsEnded := c.keepAliveHoldTool(tool)
+	c.mu.Lock()
+	pool := c.warmPool
+	c.mu.Unlock()
+	if pool == nil {
+		return true
+	}
+	var wait sync.WaitGroup
+	var failed atomic.Bool
+	for _, slot := range pool.existing() {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			slot.mu.Lock()
+			defer slot.mu.Unlock()
+			if slot.busy != nil && slot.busy.tool == tool {
+				slot.busy.retire = true
+			}
+			idleOfTool := slot.idle != nil && slot.idle.tool == tool
+			stuckOfTool := slot.stuck != nil && slot.stuck.tool == tool
+			switch {
+			case idleOfTool:
+				if !c.retireSlot(slot, reason, false, warmCloseGrace) {
+					failed.Store(true)
+				}
+			case stuckOfTool:
+				if !c.clearStuck(slot) {
+					failed.Store(true)
+				}
+			}
+		}()
+	}
+	wait.Wait()
+	return pingsEnded && !failed.Load()
+}
+
+func (c *Client) retireAll(reason string, grace time.Duration) bool {
+	c.mu.Lock()
+	pool := c.warmPool
+	c.mu.Unlock()
+	if pool == nil {
+		return true
+	}
+	var wait sync.WaitGroup
+	var failed atomic.Bool
+	for _, slot := range pool.existing() {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			slot.mu.Lock()
+			defer slot.mu.Unlock()
+			if !c.retireSlot(slot, reason, false, grace) {
+				failed.Store(true)
+			}
+		}()
+	}
+	wait.Wait()
+	return !failed.Load()
+}
+
+// warmRetryEvery is how often a stop whose process is not confirmed gone tries again.
+var warmRetryEvery = 2 * time.Second
+
+// stopWarmUntilGone keeps trying to end a stopped agent's warm process, and runs then once it is confirmed gone (the stop's ack and the key's
+// drop): they do not happen while a process of the agent may still be alive.
+func (c *Client) stopWarmUntilGone(agentID string, then func()) {
+	go func() {
+		for {
+			time.Sleep(warmRetryEvery)
+			c.mu.Lock()
+			stillStopped := c.desired[agentID].Desired == "stopped"
+			c.mu.Unlock()
+			if !stillStopped { // the agent was started again: the stop no longer waits for anything
+				return
+			}
+			if c.stopWarm(agentID, "a retry after a process was not confirmed gone") {
+				then()
+				return
+			}
+		}
+	}()
+}
+
+// warmTurn is a turn that runs in a live process; the supervisor settles the process when the turn ends.
+type warmTurn struct {
+	adapter.Turn
+	entry *warmEntry
+}
+
+func (t *warmTurn) LastOutput() time.Time {
+	if lo, ok := t.Turn.(interface{ LastOutput() time.Time }); ok {
+		return lo.LastOutput()
+	}
+	return time.Time{}
+}
+
+// Kill ends the process, not only the turn: a turn in a warm process cannot be separated from it.
+func (t *warmTurn) Kill() error { return t.entry.session.Kill() }
+
+// Terminate ends the process the turn runs in the way a container's launcher can confirm: its input is closed and it is given the grace to go on
+// its own (the launcher cleans up and the end is confirmed), and it is killed after. A ping in a warm container process is ended this way, and without
+// it the turn's own Cancel would be all a supervisor could do, which a container's wrapper does not confirm. It says whether the end is confirmed.
+func (t *warmTurn) Terminate(grace time.Duration) bool { return t.entry.session.Close(grace) == nil }
+
+// warmCredentials says which login a Claude process for the turn would use, as the process itself would find it: the credentials file in the
+// config directory the launcher gives it (CLAUDE_CONFIG_DIR through the owner's variable references, else the home's .claude), by its size,
+// modification time and a hash of its content (a profile restored to the same size and time still differs). A login that changed on disk (an account switch, a token refresh) is another stamp, so the process started under the old
+// one is not reused: each refresh makes the next turn cold. ok is false when it cannot be told reliably, and the turn then runs cold: no file
+// (a login kept in the keychain, or none), or a Docker launcher that does not share the host's Claude home, whose login is then not the file's.
+func warmCredentials(spec adapter.TurnSpec, sharesHome bool) (stamp string, ok bool) {
+	if spec.Agent.Tool != "claude" {
+		return "", true
+	}
+	if !sharesHome {
+		return "", false
+	}
+	dir := adapter.EnvValue("CLAUDE_CONFIG_DIR", spec.LauncherEnvRefs)
+	if dir == "" {
+		home := adapter.EnvValue("HOME", spec.LauncherEnvRefs)
+		if home == "" {
+			var err error
+			if home, err = os.UserHomeDir(); err != nil {
+				return "", false
+			}
+		}
+		dir = filepath.Join(home, ".claude")
+	}
+	file := filepath.Join(dir, ".credentials.json")
+	info, err := os.Stat(file)
+	if err != nil {
+		return "", false
+	}
+	content, err := os.ReadFile(file)
+	if err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(content)
+	return fmt.Sprintf("%s:%d:%d:%x", dir, info.Size(), info.ModTime().UnixNano(), sum[:8]), true
+}
+
+// startTurn starts a turn: in an agent's live process when there is one that is still what the turn needs, in a new warm process when warm
+// mode is on and the adapter serves the turn warm, and as a process of its own otherwise. Warm mode never fails a turn: a process that cannot
+// be started, recorded or handed the turn is reported and the turn runs cold.
+func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.Writer, cred credentials) (adapter.Turn, error) {
+	if !spec.KeepAlive && !c.keepAliveYield(spec.Agent.ID) {
+		// A ping of the agent was told to end and is not confirmed gone: it may still be on the session, and a second process must never be. The
+		// turn waits for the quarantine to be over (this runs in the delivery's own goroutine) and then goes on, rather than failing its start.
+		if !c.keepAliveWaitQuarantine(ctx, spec.Agent.ID) {
+			return nil, errWarmUnconfirmed
+		}
+	}
+	if !spec.KeepAlive {
+		// A lift the last ping owes is sent first (and its ack waited for): a real turn's toolbox is never refused because of a ping.
+		if err := c.keepAliveSettleLifts(ctx, spec.Agent.ID); err != nil {
+			return nil, fmt.Errorf("the scope of the agent's last keep-alive ping could not be lifted, so its toolbox would be refused: %w", err)
+		}
+	}
+	cfg := c.warmCfg()
+	warm, ok := c.Adapter.(adapter.WarmAdapter)
+	if cfg.Idle <= 0 || !ok {
+		if !c.retireWarm(spec.Agent.ID, "warm mode is off") {
+			return nil, errWarmUnconfirmed // a process of the agent may still be alive: no other starts on its session
+		}
+		return c.Adapter.Start(ctx, spec)
+	}
+	fp, err := warm.WarmFingerprint(spec)
+	if err != nil {
+		// A turn that cannot run warm (a correction, a diagnostic, a fork, a spec that does not build) may be on the session of a live process:
+		// that one ends first, so two processes are never working on one session.
+		if !c.retireWarm(spec.Agent.ID, "a turn that runs cold") {
+			return nil, errWarmUnconfirmed
+		}
+		return c.Adapter.Start(ctx, spec)
+	}
+	if !cred.ok || !cred.containerOK {
+		// The login cannot be told, or the process would run in a container whose launcher cannot confirm its end: no warm process.
+		if !c.retireWarm(spec.Agent.ID, "this turn cannot run warm") {
+			return nil, errWarmUnconfirmed
+		}
+		return c.Adapter.Start(ctx, spec)
+	}
+	fp += "|" + cred.stamp
+	pool := c.pool()
+	slot := pool.slot(spec.Agent.ID)
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if !c.clearStuck(slot) {
+		return nil, errWarmUnconfirmed
+	}
+	now := pool.now()
+	entry := slot.takeIdle()
+	if entry != nil {
+		reason := ""
+		switch {
+		case entry.fp != fp:
+			reason = "what it was started with changed"
+		case !entry.session.Alive():
+			reason = "it had ended"
+		case now.Sub(entry.started) >= cfg.lifetime():
+			reason = "its lifetime is over"
+		}
+		if reason != "" {
+			if !c.finish(slot, entry, reason, 0) {
+				return nil, errWarmUnconfirmed
+			}
+			entry = nil
+		}
+	}
+	reused := entry != nil
+	if entry == nil && spec.KeepAlive {
+		// A ping never starts a warm process (it would sit idle for the window and hold memory for nothing): it is a cold resume.
+		return c.Adapter.Start(ctx, spec)
+	}
+	if entry == nil {
+		stderr := &swapWriter{}
+		started := spec
+		started.StderrSink = stderr
+		session, err := warm.StartWarm(pool.ctx, started)
+		if err != nil {
+			if err != adapter.ErrNoWarm {
+				c.report(fmt.Errorf("agent %s: starting a warm process: %w; the turn runs cold", spec.Agent.ID, err))
+			}
+			return c.Adapter.Start(ctx, spec)
+		}
+		entry = &warmEntry{agentID: spec.Agent.ID, tool: spec.Agent.Tool, session: session, fp: fp, started: now, stderr: stderr, containerized: spec.LauncherContainerized || spec.Agent.Variant == "docker"}
+		c.warmLive.Add(1) // counted from the moment it exists until its end is confirmed (endWarm)
+		// A process nobody can find again if this supervisor dies is not kept warm: the journal's note, with the process's own start time, is
+		// what a later supervisor ends it by.
+		identity := c.identityOf(session.Pid())
+		if c.Journal == nil || session.Pid() <= 0 || identity == "" {
+			c.report(fmt.Errorf("agent %s: a warm process cannot be tracked (no start time); the turn runs cold", spec.Agent.ID))
+			if !c.finish(slot, entry, "it cannot be tracked", 0) {
+				return nil, errWarmUnconfirmed
+			}
+			return c.Adapter.Start(ctx, spec)
+		}
+		if err := c.Journal.RecordWarmProcess(context.Background(), WarmProcess{PID: session.Pid(), AgentID: spec.Agent.ID, Started: identity}); err != nil {
+			c.report(fmt.Errorf("agent %s: noting a warm process: %w; the turn runs cold", spec.Agent.ID, err))
+			if !c.finish(slot, entry, "it could not be noted", 0) {
+				return nil, errWarmUnconfirmed
+			}
+			return c.Adapter.Start(ctx, spec)
+		}
+		pool.mu.Lock()
+		pool.started++
+		pool.mu.Unlock()
+	}
+	if sink != nil {
+		entry.stderr.Set(sink)
+	}
+	turn, err := entry.session.Run(spec)
+	if err != nil {
+		c.report(fmt.Errorf("agent %s: handing the turn to its warm process: %w; the turn runs cold", spec.Agent.ID, err))
+		if !c.finish(slot, entry, "it could not take the turn", 0) {
+			return nil, errWarmUnconfirmed
+		}
+		return c.Adapter.Start(ctx, spec)
+	}
+	slot.busy = entry
+	c.warmChanged()
+	pool.mu.Lock()
+	if reused {
+		pool.reused++
+	}
+	pool.mu.Unlock()
+	return &warmTurn{Turn: turn, entry: entry}, nil
+}
+
+// errWarmUnconfirmed is why a turn is not started: a warm process of the agent was ended and is not confirmed gone, and a second process on the
+// session must never exist. The turn fails to start; the next delivery tries the process again.
+var errWarmUnconfirmed = errors.New("the agent's warm process could not be confirmed ended, so no other process is started on its session")
+
+// credentials is what warmCredentials says about a turn.
+type credentials struct {
+	stamp string
+	ok    bool
+	// containerOK says the process may be kept warm: it does not run in a container, or its launcher advertises that it confirms the end of
+	// the session inside the container (see containerEndFeature). Nothing else proves that process gone, so without it the agent runs cold.
+	containerOK bool
+}
+
+// containerEndFeature is what a Docker launcher advertises (in its features) when, on a terminate request, its wrapper traps the signal, ends the
+// session inside the container, waits for it, and only then exits with 128+signal (143 for TERM): harness-docker's `stop_on_signal`.
+const containerEndFeature = "stop_on_signal"
+
+// warmTurnEnded settles a warm process when its turn has ended and the exit is journaled: it goes idle for the window if everything allows
+// it, and is ended otherwise. It holds the agent's slot throughout, so a stop that lands meanwhile is settled against: the stop has already set
+// the desired state this reads, and its own retire waits for this and then finds the process idle. It runs before the turn's admission is
+// released, so the next delivery finds it in the pool or finds it gone.
+func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) {
+	wt, ok := turn.(*warmTurn)
+	if !ok {
+		return
+	}
+	entry := wt.entry
+	pool := c.pool()
+	slot := pool.slot(entry.agentID)
+	slot.mu.Lock()
+	entry.stderr.Set(nil)
+	keep := c.warmKeepable(pool, entry, exit)
+	var claimErr error
+	if keep {
+		// The server is told, and says it has it, before the process is kept: if the socket is down or it does not answer, the process ends now (the
+		// next turn runs cold) rather than idle where a host that then drops would be judged by a count that never included it. The slot is unlocked
+		// while that is waited for (a stop, a spawn or a delivery on the loop that reads the server's frames needs it, and the answer is read by that
+		// same loop): the entry stays the slot's busy one meanwhile, so it is counted, and a retire that lands marks or ends it. The admission of the
+		// turn is not released yet, so no other turn of the agent starts, and what was decided is decided again after.
+		slot.mu.Unlock()
+		claimErr = c.claimWarm()
+		slot.mu.Lock()
+		keep = claimErr == nil && c.warmKeepable(pool, entry, exit)
+	}
+	defer slot.mu.Unlock()
+	if slot.busy == entry {
+		slot.busy = nil
+	}
+	if !keep {
+		reason := "its turn did not end cleanly, or the agent was stopped, or its lifetime is over"
+		if claimErr != nil {
+			c.report(fmt.Errorf("agent %s: its warm process is not kept: %w", entry.agentID, claimErr))
+			reason = "the server did not confirm that it is kept"
+		}
+		c.finish(slot, entry, reason, 0)
+		return
+	}
+	now := pool.now()
+	cfg := c.warmCfg()
+	entry.idleAt = now
+	entry.idleGen++
+	gen := entry.idleGen
+	entry.idleStop = make(chan struct{})
+	entry.timer = pool.after(cfg.Idle, func() { c.expireWarm(entry, gen) })
+	slot.idle = entry
+	go c.watchIdle(slot, entry, entry.idleStop)
+	c.warmChanged()
+}
+
+// warmKeepable says the process of a turn that has ended should be kept idle: warm mode is on, the agent is active, nothing asked for its end, the turn
+// ended cleanly, the process is alive and not past its lifetime. The caller holds the slot's lock.
+func (c *Client) warmKeepable(pool *warmPool, entry *warmEntry, exit adapter.ExitInfo) bool {
+	c.mu.Lock()
+	active := c.desired[entry.agentID].Desired == "active" && !c.stopping
+	c.mu.Unlock()
+	cfg := c.warmCfg()
+	return cfg.Idle > 0 && active && !entry.retire && exit.TerminalEvent && exit.ExitCode == 0 && !exit.CancelIntent &&
+		entry.session.Alive() && pool.now().Sub(entry.started) < cfg.lifetime()
+}
+
+// warmClaimWait is how long the server's answer to a warm claim is waited for.
+var warmClaimWait = 5 * time.Second
+
+// claimWarm tells the server how many processes (warm and pings) the supervisor has running, counting the one about to be kept, and waits for its
+// answer. It takes no slot lock: the count is the supervisor's own atomics, not a walk of the slots (which a caller holding one slot's lock could not do
+// without waiting for another's).
+func (c *Client) claimWarm() error {
+	ctx, cancel := context.WithTimeout(context.Background(), warmClaimWait)
+	defer cancel()
+	seq := c.warmSeq.Add(1)
+	count := int(c.warmLive.Load()) + c.keepAlivePingsActive()
+	if c.warmClaim != nil {
+		return c.warmClaim(ctx, seq, count)
+	}
+	return c.sendForAck(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmClaimFrame, WarmSeq: seq, WarmCount: count})
+}
+
+// expireWarm is the idle timer: the agent sleeps if nothing took its process in the meantime.
+func (c *Client) expireWarm(entry *warmEntry, gen int) {
+	slot := c.pool().slot(entry.agentID)
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.idle != entry || entry.idleGen != gen {
+		return
+	}
+	slot.takeIdle()
+	c.finish(slot, entry, "the idle window ended", warmCloseGrace)
+}
+
+// watchIdle watches a process while it is idle: if it ends on its own (it crashed, or was killed from outside) the agent is asleep from that
+// moment, not at its next message, and what the process said on stderr is put in the supervisor's log, bounded.
+func (c *Client) watchIdle(slot *warmSlot, entry *warmEntry, stop <-chan struct{}) {
+	select {
+	case <-stop:
+		return
+	case <-entry.session.Exited():
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.idle != entry {
+		return
+	}
+	slot.takeIdle()
+	tail := ""
+	if reporter, ok := entry.session.(interface{ StderrTail() string }); ok {
+		tail = strings.TrimSpace(reporter.StderrTail())
+		if len(tail) > 2000 {
+			tail = tail[len(tail)-2000:]
+		}
+	}
+	c.report(fmt.Errorf("agent %s: its idle warm process ended by itself; the next turn starts a new one%s", entry.agentID, tailNote(tail)))
+	c.finish(slot, entry, "it ended while idle", 0) // already gone: this only notes that it is
+}
+
+func tailNote(tail string) string {
+	if tail == "" {
+		return ""
+	}
+	return ": " + adapter.SanitizeStderr(tail)
+}
+
+// WarmState is what Health and the agent card need to say about warm processes.
+type WarmState struct {
+	Idle    map[string]time.Time // agent -> when its idle window ends
+	Busy    int
+	Started int
+	Reused  int
+	// UnconfirmedPingEnds counts keep-alive pings in a container whose end was never confirmed and whose quarantine ran out (see keepAliveQuarantine).
+	UnconfirmedPingEnds int
+	// RSSBytes is the resident memory of the warm processes the supervisor runs itself. ContainerWideBytes is what every running container uses
+	// (Docker reports no more finely, and the harness container is shared by all agents), where the memory of Docker warm processes is: it is a
+	// figure for the machine's containers, not the warm agents' own, and Health says so.
+	RSSBytes           int64
+	ContainerWideBytes int64
+}
+
+// WarmState reports the warm processes. The processes are listed under the locks and measured after them.
+func (c *Client) WarmState() WarmState {
+	c.mu.Lock()
+	pool := c.warmPool
+	c.mu.Unlock()
+	state := WarmState{Idle: map[string]time.Time{}, UnconfirmedPingEnds: int(c.kaUnconfirmed.Load())}
+	if pool == nil {
+		return state
+	}
+	cfg := c.warmCfg()
+	type measured struct {
+		pid           int
+		containerized bool
+	}
+	var processes []measured
+	for id, slot := range pool.existing() {
+		slot.mu.Lock()
+		if slot.idle != nil {
+			state.Idle[id] = slot.idle.idleAt.Add(cfg.Idle)
+			processes = append(processes, measured{slot.idle.session.Pid(), slot.idle.containerized})
+		}
+		if slot.busy != nil {
+			state.Busy++
+			processes = append(processes, measured{slot.busy.session.Pid(), slot.busy.containerized})
+		}
+		slot.mu.Unlock()
+	}
+	pool.mu.Lock()
+	state.Started, state.Reused = pool.started, pool.reused
+	pool.mu.Unlock()
+	docker := false
+	for _, process := range processes {
+		if process.containerized {
+			docker = true
+			continue
+		}
+		state.RSSBytes += groupRSS(process.pid)
+	}
+	if docker {
+		measure := dockerMemory
+		if c.FreeDockerMemory != nil {
+			measure = c.FreeDockerMemory
+		}
+		if used, _, err := measure(); err == nil {
+			state.ContainerWideBytes = used
+		}
+	}
+	return state
+}
+
+// warmGuard is the memory guard: while free memory is under the limit it ends the longest-idle warm process, one at a time.
+func (c *Client) warmGuard(ctx context.Context) {
+	ticker := time.NewTicker(warmGuardEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.guardOnce()
+		}
+	}
+}
+
+// guardOnce checks memory once and ends the longest-idle warm process if it is short. Memory is the host's; with a Docker warm process it is
+// also the container side's (the VM's memory less what the containers use), and either being short counts.
+func (c *Client) guardOnce() bool {
+	cfg := c.warmCfg()
+	if cfg.Idle <= 0 || (cfg.MinFreeBytes <= 0 && cfg.MinFreePercent <= 0) {
+		return false
+	}
+	c.mu.Lock()
+	pool := c.warmPool
+	c.mu.Unlock()
+	if pool == nil {
+		return false
+	}
+	short := func(free, total int64) bool {
+		return total > 0 && (free < cfg.MinFreeBytes || float64(free)*100 < float64(total)*cfg.MinFreePercent)
+	}
+	free, total, err := freeMemory()
+	if c.FreeMemory != nil {
+		free, total, err = c.FreeMemory()
+	}
+	low := err == nil && short(free, total)
+	if !low && c.warmHasDocker(pool) {
+		measure := dockerMemory
+		if c.FreeDockerMemory != nil {
+			measure = c.FreeDockerMemory
+		}
+		if used, vmTotal, derr := measure(); derr == nil && vmTotal > 0 {
+			low = short(vmTotal-used, vmTotal)
+		}
+	}
+	if !low {
+		return false
+	}
+	// The longest-idle process, chosen from a look at every slot; then its slot is locked and the choice re-checked, so a process that was taken
+	// (or taken and put back with a new window) in the meantime is left alone.
+	var oldest *warmSlot
+	var chosen *warmEntry
+	var chosenAt time.Time
+	for _, slot := range pool.existing() {
+		slot.mu.Lock()
+		if slot.idle != nil && (chosen == nil || slot.idle.idleAt.Before(chosenAt)) {
+			oldest, chosen, chosenAt = slot, slot.idle, slot.idle.idleAt
+		}
+		slot.mu.Unlock()
+	}
+	if chosen == nil {
+		return false
+	}
+	oldest.mu.Lock()
+	defer oldest.mu.Unlock()
+	if oldest.idle != chosen || !chosen.idleAt.Equal(chosenAt) {
+		return false
+	}
+	oldest.takeIdle()
+	return c.finish(oldest, chosen, "memory pressure", warmCloseGrace)
+}
+
+// warmHasDocker says whether any warm process runs through a Docker launcher.
+func (c *Client) warmHasDocker(pool *warmPool) bool {
+	for _, slot := range pool.existing() {
+		slot.mu.Lock()
+		docker := (slot.idle != nil && slot.idle.containerized) || (slot.busy != nil && slot.busy.containerized)
+		slot.mu.Unlock()
+		if docker {
+			return true
+		}
+	}
+	return false
+}
+
+// shutdownWarm ends every warm process for good: no more are started.
+func (c *Client) shutdownWarm() {
+	c.keepAliveForgetAll()
+	c.retireAll("the supervisor is stopping", 0)
+	c.mu.Lock()
+	pool := c.warmPool
+	c.mu.Unlock()
+	if pool != nil {
+		pool.cancel()
+	}
+	c.sendFinalWarmState()
+}
+
+// sendFinalWarmState tells the server, synchronously and before the connection closes, what is left after a clean stop: normally no warm slot and no
+// ping, which is what lets a server that then restarts (or whose switch finds the host gone) know the host has nothing running. It reports what is
+// really there: a process that could not be confirmed gone is still counted. Not connected, or a warm-less supervisor, sends nothing.
+func (c *Client) sendFinalWarmState() {
+	if !c.warmCapable() {
+		return
+	}
+	report := c.WarmReport()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmStateFrame, Warm: &report})
+}
+
+// identityOf is the system's record of when a process started (tests replace it).
+func (c *Client) identityOf(pid int) string {
+	if c.ProcessStart != nil {
+		return c.ProcessStart(pid)
+	}
+	return processStart(pid)
+}
+
+// processStart is the system's own record of when a process started, for telling a process from a later one that reuses its pid.
+func processStart(pid int) string {
+	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// groupRSS is the resident memory of a process group, in bytes, or 0 where it cannot be read.
+func groupRSS(pgid int) int64 {
+	if pgid <= 0 {
+		return 0
+	}
+	out, err := exec.Command("ps", "-o", "rss=", "-g", strconv.Itoa(pgid)).Output()
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, field := range strings.Fields(string(out)) {
+		if n, err := strconv.ParseInt(field, 10, 64); err == nil {
+			total += n * 1024
+		}
+	}
+	return total
+}
+
+// SweepWarmOrphans ends the warm processes an earlier supervisor started and did not end (it died, or was killed): each one the journal
+// noted that is still running with the same start time is killed with its group. It runs once when the supervisor starts.
+func (c *Client) SweepWarmOrphans(ctx context.Context) {
+	if c.Journal == nil {
+		return
+	}
+	processes, err := c.Journal.WarmProcesses(ctx)
+	if err != nil {
+		c.report(err)
+		return
+	}
+	for _, process := range processes {
+		if started := processStart(process.PID); started != "" && started == process.Started {
+			_ = syscall.Kill(-process.PID, syscall.SIGKILL)
+		}
+		_ = c.Journal.ForgetWarmProcess(ctx, process.PID)
+	}
+}
+
+// applyWarmIdle takes the instance's warm window from a delivery (nil: the server has no such setting, and the supervisor's own stays). Turning it
+// off ends every idle process at once.
+func (c *Client) applyWarmIdle(seconds *int) {
+	if seconds == nil || *seconds < 0 {
+		return
+	}
+	idle := time.Duration(*seconds) * time.Second
+	c.mu.Lock()
+	changed := c.Warm.Idle != idle
+	c.Warm.Idle = idle
+	c.mu.Unlock()
+	if changed && idle <= 0 {
+		c.RetireAllWarm("warm mode was turned off")
+	}
+}
+
+// WarmReport is the supervisor's warm picture for the server: the agents with a live process (idle until when, or busy) and the figures.
+func (c *Client) WarmReport() protocol.WarmReport {
+	report := protocol.WarmReport{Agents: []protocol.WarmAgent{}}
+	// The number comes first: what is counted below is at least as new as it, so a count can never be older than its number (the server ignores a report
+	// whose number is older than one it holds, and a ping that begins after this line carries a later one).
+	report.Seq = c.warmSeq.Add(1)
+	counted := func() protocol.WarmReport {
+		report.UnconfirmedPingEnds = int(c.kaUnconfirmed.Load())
+		report.Processes = int(c.warmLive.Load())
+		report.PingsActive = c.keepAlivePingsActive()
+		return report
+	}
+	c.mu.Lock()
+	pool := c.warmPool
+	c.mu.Unlock()
+	if pool == nil {
+		return counted() // pings run without a pool (warm mode off): they still count
+	}
+	cfg := c.warmCfg()
+	for id, slot := range pool.existing() {
+		slot.mu.Lock()
+		switch {
+		case slot.busy != nil:
+			report.Agents = append(report.Agents, protocol.WarmAgent{AgentID: id, State: "busy"})
+		case slot.idle != nil:
+			report.Agents = append(report.Agents, protocol.WarmAgent{AgentID: id, State: "idle", SleepsAt: slot.idle.idleAt.Add(cfg.Idle).UTC().Format(time.RFC3339)})
+		}
+		slot.mu.Unlock()
+	}
+	sort.Slice(report.Agents, func(i, j int) bool { return report.Agents[i].AgentID < report.Agents[j].AgentID })
+	state := c.WarmState()
+	report.UnconfirmedPingEnds = state.UnconfirmedPingEnds
+	report.Started, report.Reused, report.RSSBytes, report.ContainerWideBytes = state.Started, state.Reused, state.RSSBytes, state.ContainerWideBytes
+	return counted()
+}
+
+// warmChanged tells the server the warm picture changed (a process went idle, was taken, ended). The report is built and sent off the caller's
+// path, one at a time and never stale: a burst of changes sends the last picture, not each.
+func (c *Client) warmChanged() {
+	if c.warmReports == nil {
+		return
+	}
+	select {
+	case c.warmReports <- struct{}{}:
+	default:
+	}
+}
+
+// sendWarmReports sends a warm_state frame whenever the picture changed, for as long as the connection lives.
+func (c *Client) sendWarmReports(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.warmReports:
+			report := c.WarmReport()
+			if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmStateFrame, Warm: &report}); err != nil && ctx.Err() == nil {
+				c.report(err)
+			}
+		}
+	}
+}
+
+// keepAliveForgetAll ends every agent's keep-alive (the supervisor is stopping).
+func (c *Client) keepAliveForgetAll() {
+	c.kaMu.Lock()
+	ids := make([]string, 0, len(c.ka))
+	for id := range c.ka {
+		ids = append(ids, id)
+	}
+	c.kaMu.Unlock()
+	for _, id := range ids {
+		c.keepAliveForget(id)
+	}
+}

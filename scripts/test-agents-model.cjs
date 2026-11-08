@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'agents', 'model.js'), 'utf8');
 const context = vm.createContext({ Date, Number, Math, JSON, Map, Intl, Object, Array, String });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateBadge, stateDot, stateOf, activityOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateBadge, stateDot, stateOf, activityOf, warmOf, keepAliveOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -58,6 +58,15 @@ for (const patch of [{ observed: 'in_turn' }, { desired: 'stopped', observed: 's
 }
 assert.equal(state({ observed: 'lost' }).kind, 'error', 'a lost process is still red');
 assert.equal(m.activityOf({}, state({})).text, '', 'an idle agent that has done nothing has no line (the pill says idle, and for how long)');
+// Warm mode: an idle agent says it is warm (and for how many more minutes) or sleeping; it says nothing when warm mode does not apply, or the agent is working.
+const nowMs = Date.parse('2026-11-08T16:00:00Z');
+assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs).text, 'Warm · sleeps in 5 min');
+assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: '2026-11-08T16:00:20Z' } }, nowMs).text, 'Warm · sleeps in 1 min', 'a window almost over still says one minute, never zero');
+assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: 'garbage' } }, nowMs).text, 'Warm');
+assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'sleeping' } }, nowMs).text, 'Sleeping');
+assert.equal(m.warmOf({ observed: 'in_turn', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs), null);
+assert.equal(m.warmOf({ observed: 'idle' }, nowMs), null);
+assert.equal(m.activityOf({ observed: 'idle', warm: { state: 'sleeping' } }, state({ observed: 'idle' })).text, 'Sleeping', 'the card shows it where an idle agent has nothing else to say');
 
 assert.equal(m.activityOf({ woken_by: 'reply', activity: 'tool inspect' }, state({})).text, 'Woken by reply · tool inspect');
 assert.equal(m.activityOf({}, state({ observed: 'in_turn' })).text, 'Working…');
@@ -135,3 +144,15 @@ assert.equal(m.outputFailure({ code: 'no_output', message: 'x' }), 'No output ha
 assert.equal(m.outputFailure({ message: 'The machine is offline' }), 'The machine is offline');
 assert.equal(m.outputFailure({}), 'The output could not be read.');
 console.log('agents model: ok');
+
+// Keep-alive on a card: the interval and what a stretch of pings costs, and a warning when the last ping failed or missed the cache.
+const keepLine = keep => m.keepAliveOf({ keep_alive: keep });
+assert.equal(m.keepAliveOf({}), null);
+assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28 }).text, 'Cache kept warm every 50 min');
+assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, estimate_usd: 1.26 }).text, 'Cache kept warm every 50 min, up to 28 pings after its last turn ≈ $1.3');
+assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, estimate_usd: 0.04 }).text, 'Cache kept warm every 50 min, up to 28 pings after its last turn ≈ $0.04');
+assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, estimate_usd: 0.002 }).text.endsWith('≈ <$0.01'), true);
+assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: true }).warning, '');
+assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: false, last_error: 'no key' }).warning, /^The last ping failed: no key\.$/);
+assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: true, missed: true }).warning, /did not find the cache/);
+console.log('agents model: keep-alive ok');

@@ -39,6 +39,11 @@ func (s *Server) requireAgentTool(next http.Handler) http.Handler {
 			apiError(w, http.StatusForbidden, "forbidden", "stopped agent cannot use toolbox")
 			return
 		}
+		if s.keepAliveScoped(caller.ID) {
+			// A cache keep-alive ping is running for this agent: it may not act, whatever it was asked in words.
+			refuseKeepAliveScope(w)
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), agentToolContextKey{}, caller)))
 	})
 }

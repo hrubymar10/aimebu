@@ -1595,6 +1595,39 @@ WHERE e.room_id IS NOT NULL AND e.kind='message_not_woken'
   AND json_extract(e.payload_json,'$.reason') IN ('not_addressed','system_chatter','auto_member')
   AND EXISTS (SELECT 1 FROM agent a WHERE a.id=e.agent_id)
 GROUP BY e.room_id, e.agent_id;
+`}, {97, `
+-- A cache keep-alive ping spends like a turn but is not one: its usage record has no turn (turn_id may be empty), carries the harness session it
+-- continued (session_id, so the session's running cost total stays right for the next real turn) and the source 'keep_alive'. SQLite cannot
+-- relax a NOT NULL or a CHECK in place, so the table is rebuilt with the same columns and indexes; every existing row is copied unchanged.
+CREATE TABLE usage_record_new (
+  id TEXT PRIMARY KEY,
+  source_event_id TEXT NOT NULL UNIQUE,
+  turn_id TEXT REFERENCES turn(id),
+  agent_id TEXT NOT NULL REFERENCES agent(id),
+  room_id TEXT NOT NULL REFERENCES room(id),
+  project_id TEXT NOT NULL REFERENCES project(id),
+  tokens_in INTEGER,
+  tokens_out INTEGER,
+  context_used INTEGER,
+  context_window INTEGER,
+  cost_est REAL,
+  source TEXT NOT NULL CHECK (source IN ('measured','estimated','unavailable','keep_alive')),
+  created_at TEXT NOT NULL,
+  tokens_cache_read INTEGER,
+  tokens_cache_write INTEGER,
+  model TEXT,
+  partial INTEGER NOT NULL DEFAULT 0 CHECK (partial IN (0,1)),
+  cost_total REAL,
+  session_id TEXT
+);
+INSERT INTO usage_record_new(id,source_event_id,turn_id,agent_id,room_id,project_id,tokens_in,tokens_out,context_used,context_window,cost_est,source,created_at,tokens_cache_read,tokens_cache_write,model,partial,cost_total)
+SELECT id,source_event_id,turn_id,agent_id,room_id,project_id,tokens_in,tokens_out,context_used,context_window,cost_est,source,created_at,tokens_cache_read,tokens_cache_write,model,partial,cost_total FROM usage_record;
+DROP TABLE usage_record;
+ALTER TABLE usage_record_new RENAME TO usage_record;
+CREATE INDEX usage_record_agent_time ON usage_record(agent_id, created_at);
+CREATE INDEX usage_record_room_time ON usage_record(room_id, created_at);
+CREATE INDEX usage_record_project_time ON usage_record(project_id, created_at);
+CREATE INDEX usage_record_turn ON usage_record(turn_id);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

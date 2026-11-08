@@ -21,6 +21,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/ccsessions"
+	"github.com/hrubymar10/aimebu/internal/pricing"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
@@ -475,6 +476,101 @@ type agentCardWithUsage struct {
 	HealthFlags []store.HealthFlag `json:"health_flags"`
 	// Hold says why this agent's next turn will not start although it is idle and accepting work: the limit guard is holding new turns of its tool.
 	Hold *agentHold `json:"hold,omitempty"`
+	// Warm says whether the agent's process is being kept up for its next turn: State "warm" (with SleepsAt, RFC 3339, when it goes to sleep) or
+	// "sleeping" (warm mode is on for it and there is no live process). Absent when warm mode is off or does not apply to the agent.
+	Warm *agentWarm `json:"warm,omitempty"`
+	// KeepAlive is about the agent's prompt cache being kept warm with pings: what the last ping did and what a stretch of them costs. Absent when
+	// keep-alive is off or does not apply to the agent.
+	KeepAlive *agentKeepAlive `json:"keep_alive,omitempty"`
+}
+
+// agentKeepAlive: IntervalMinutes is the ping interval; PingsPerStretch how many pings an idle stretch can have before the limit of hours without
+// real work stops them; EstimateUSD what that many pings cost at the agent's model and current context (cache reads, the model's price list; absent
+// when the model has no price or there is no context figure yet). Last* are the last ping's report as the supervisor sent it; Missed says it wrote to
+// the cache what it should have read (the cache had expired, or the ping's arguments differed from a real turn's).
+type agentKeepAlive struct {
+	IntervalMinutes int      `json:"interval_minutes"`
+	PingsPerStretch int      `json:"pings_per_stretch"`
+	EstimateUSD     *float64 `json:"estimate_usd,omitempty"`
+	LastAt          string   `json:"last_at,omitempty"`
+	LastOK          *bool    `json:"last_ok,omitempty"`
+	LastError       string   `json:"last_error,omitempty"`
+	CacheRead       int64    `json:"cache_read,omitempty"`
+	CacheWrite      int64    `json:"cache_write,omitempty"`
+	Missed          bool     `json:"missed,omitempty"`
+}
+
+// agentKeepAliveState works out what a card says about keep-alive (Claude Code and Codex agents; the supervisor pings both).
+func (s *Server) agentKeepAliveState(card store.AgentCard, usage *store.AgentUsage, config keepAliveConfig) *agentKeepAlive {
+	if !config.Enabled || card.Desired != "active" || (card.Tool != "claude" && card.Tool != "codex") {
+		return nil
+	}
+	interval := config.Minutes[card.Tool]
+	if interval <= 0 {
+		return nil
+	}
+	machine, err := s.machineForID(card.MachineID)
+	if err != nil || !machine.supportsWarm {
+		return nil
+	}
+	state := &agentKeepAlive{IntervalMinutes: interval}
+	if config.StopAfterHrs > 0 {
+		state.PingsPerStretch = config.StopAfterHrs * 60 / interval
+	}
+	machine.warmMu.Lock()
+	ping, ok := machine.pings[card.ID]
+	machine.warmMu.Unlock()
+	// What a stretch costs: the measured cost of the last ping times the pings in a stretch; before there is a ping, the model's price list on the
+	// agent's context (cache reads), when it has the model.
+	if state.PingsPerStretch > 0 {
+		if ok && ping.OK && ping.Cost > 0 {
+			total := ping.Cost * float64(state.PingsPerStretch)
+			state.EstimateUSD = &total
+		} else if usage != nil && usage.ContextUsed != nil {
+			zero, out := int64(0), int64(100)
+			if each := pricing.Estimate(card.Model, &zero, &out, usage.ContextUsed, &zero); each != nil {
+				total := *each * float64(state.PingsPerStretch)
+				state.EstimateUSD = &total
+			}
+		}
+	}
+	if ok {
+		okValue := ping.OK
+		state.LastAt, state.LastOK, state.LastError = ping.At, &okValue, ping.Error
+		state.CacheRead, state.CacheWrite = ping.CacheRead, ping.CacheWrite
+		state.Missed = ping.OK && ping.CacheWrite > ping.CacheRead
+	}
+	return state
+}
+
+type agentWarm struct {
+	State    string `json:"state"`
+	SleepsAt string `json:"sleeps_at,omitempty"`
+}
+
+// agentWarmState works out what a card says about warm mode, from the window the owner set and what the card's machine last reported.
+func (s *Server) agentWarmState(card store.AgentCard, windowOn bool) *agentWarm {
+	if !windowOn || card.Desired != "active" || card.Tool != "claude" {
+		return nil
+	}
+	machine, err := s.machineForID(card.MachineID)
+	if err != nil || !machine.supportsWarm {
+		return nil
+	}
+	machine.warmMu.Lock()
+	report := machine.warm
+	machine.warmMu.Unlock()
+	if report != nil {
+		for _, agent := range report.Agents {
+			if agent.AgentID == card.ID && agent.State == "idle" {
+				return &agentWarm{State: "warm", SleepsAt: agent.SleepsAt}
+			}
+		}
+	}
+	if card.Observed == "in_turn" {
+		return nil
+	}
+	return &agentWarm{State: "sleeping"}
 }
 
 // agentHold is a reason an idle agent starts no new turn, for its card: Code names it (limit_guard), Text is the short form the card's state
@@ -582,6 +678,8 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		withUsage := make([]agentCardWithUsage, 0, len(cards))
 		holds := s.agentHolds(r.Context(), cards)
+		window, _ := s.warmIdleSeconds(r.Context())
+		keepConfig, _ := s.keepAliveConfig(r.Context())
 		for _, card := range cards {
 			usage, err := s.Store.AgentUsage(r.Context(), card.ID)
 			if err != nil {
@@ -593,7 +691,7 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 				fail(w, err)
 				return
 			}
-			withUsage = append(withUsage, agentCardWithUsage{card, usage, flags, holds[card.ID]})
+			withUsage = append(withUsage, agentCardWithUsage{card, usage, flags, holds[card.ID], s.agentWarmState(card, window > 0), s.agentKeepAliveState(card, usage, keepConfig)})
 		}
 		writeJSON(w, 200, withUsage)
 		return

@@ -119,7 +119,9 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		digest TEXT NOT NULL,result TEXT NOT NULL,details BLOB,terminal INTEGER NOT NULL,
 		created_at TEXT NOT NULL,PRIMARY KEY(turn_id,answer_rev));
 	CREATE TABLE IF NOT EXISTS journal_meta(
-		id INTEGER PRIMARY KEY CHECK(id=1),journal_id TEXT NOT NULL);`)
+		id INTEGER PRIMARY KEY CHECK(id=1),journal_id TEXT NOT NULL);
+	CREATE TABLE IF NOT EXISTS warm_process(
+		pid INTEGER PRIMARY KEY,agent_id TEXT NOT NULL,started TEXT NOT NULL,recorded_at TEXT NOT NULL);`)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -558,3 +560,41 @@ func (j *Journal) PendingAnswers(ctx context.Context) ([]PendingAnswer, error) {
 }
 
 func timestamp() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") }
+
+// WarmProcess is a warm harness process this supervisor started and has not yet seen end: Started is the process's own start time as the
+// system reports it, so a pid that has since been reused is not mistaken for it.
+type WarmProcess struct {
+	PID     int
+	AgentID string
+	Started string
+}
+
+// RecordWarmProcess notes a warm process so that a supervisor that dies without ending it can find and end it at its next start.
+func (j *Journal) RecordWarmProcess(ctx context.Context, process WarmProcess) error {
+	_, err := j.db.ExecContext(ctx, `INSERT OR REPLACE INTO warm_process(pid,agent_id,started,recorded_at) VALUES (?,?,?,?)`, process.PID, process.AgentID, process.Started, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// ForgetWarmProcess drops a warm process that has ended.
+func (j *Journal) ForgetWarmProcess(ctx context.Context, pid int) error {
+	_, err := j.db.ExecContext(ctx, `DELETE FROM warm_process WHERE pid=?`, pid)
+	return err
+}
+
+// WarmProcesses lists the warm processes noted and not yet forgotten.
+func (j *Journal) WarmProcesses(ctx context.Context) ([]WarmProcess, error) {
+	rows, err := j.db.QueryContext(ctx, `SELECT pid,agent_id,started FROM warm_process ORDER BY pid`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WarmProcess
+	for rows.Next() {
+		var process WarmProcess
+		if err := rows.Scan(&process.PID, &process.AgentID, &process.Started); err != nil {
+			return nil, err
+		}
+		out = append(out, process)
+	}
+	return out, rows.Err()
+}

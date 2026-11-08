@@ -49,7 +49,8 @@ func NewMulti(implementations ...Adapter) *Multi {
 	return m
 }
 
-func (m *Multi) Start(ctx context.Context, spec TurnSpec) (Turn, error) {
+// implementationFor is the adapter that runs a spec.
+func (m *Multi) implementationFor(spec TurnSpec) Adapter {
 	variant := spec.Agent.Variant
 	if spec.Agent.LauncherID != "" {
 		variant = "native"
@@ -61,10 +62,40 @@ func (m *Multi) Start(ctx context.Context, spec TurnSpec) (Turn, error) {
 	if implementation == nil && spec.Agent.Variant == "" {
 		implementation = m.adapters[adapterKey(spec.Agent.Tool, "native")]
 	}
+	return implementation
+}
+
+func (m *Multi) Start(ctx context.Context, spec TurnSpec) (Turn, error) {
+	implementation := m.implementationFor(spec)
 	if implementation == nil {
 		return nil, fmt.Errorf("no adapter for tool %q", spec.Agent.Tool)
 	}
 	return implementation.Start(ctx, spec)
+}
+
+// HasWarm says whether any adapter of the Multi can keep a process warm (a Multi has the warm methods whatever it holds).
+func (m *Multi) HasWarm() bool {
+	for _, implementation := range m.adapters {
+		if _, ok := implementation.(WarmAdapter); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// WarmFingerprint and StartWarm make a Multi a WarmAdapter for the tools whose adapter is one; for any other they say ErrNoWarm.
+func (m *Multi) WarmFingerprint(spec TurnSpec) (string, error) {
+	if warm, ok := m.implementationFor(spec).(WarmAdapter); ok {
+		return warm.WarmFingerprint(spec)
+	}
+	return "", ErrNoWarm
+}
+
+func (m *Multi) StartWarm(ctx context.Context, spec TurnSpec) (WarmSession, error) {
+	if warm, ok := m.implementationFor(spec).(WarmAdapter); ok {
+		return warm.StartWarm(ctx, spec)
+	}
+	return nil, ErrNoWarm
 }
 
 // ForgetAgent deletes what each adapter keeps on disk for an agent that carries its key (a generated MCP config), for those that keep any.
@@ -123,4 +154,14 @@ func (m *Multi) CapabilitiesFor(tool, variant, version string, environment Envir
 		return Capabilities{}
 	}
 	return implementation.Capabilities(version, environment)
+}
+
+// CanKeepAlive says whether the adapter that runs this spec's tool can run a keep-alive turn.
+func (m *Multi) CanKeepAlive(spec TurnSpec) bool {
+	implementation := m.implementationFor(spec)
+	if implementation == nil {
+		return false
+	}
+	keeper, ok := implementation.(KeepAliver)
+	return ok && keeper.KeepAliveTool() == spec.Agent.Tool
 }

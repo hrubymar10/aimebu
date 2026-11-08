@@ -4,6 +4,9 @@ import { request } from './api.js';
 export const agentIsolation = {
   dockerOnly: false,
   canEdit: false,
+  warmIdleMinutes: 0, // how long agents are kept warm after a turn (0 is off); only the owner changes it
+  canEditWarm: false,
+  keepAlive: { enabled: true, claude_minutes: 50, codex_minutes: 10, stop_after_hours: 24 }, // the cache keep-alive: pings that keep an idle agent's prompt cache
   listeners: new Set(),
   async load() {
     try { this.apply(await request('/api/agent-isolation')); } catch {}
@@ -12,10 +15,23 @@ export const agentIsolation = {
   apply(body) {
     this.dockerOnly = !!body?.docker_only;
     this.canEdit = !!body?.can_edit;
+    this.warmIdleMinutes = Number(body?.warm_idle_minutes) || 0;
+    this.canEditWarm = !!body?.can_edit_warm;
+    if (body?.keep_alive) this.keepAlive = { ...this.keepAlive, ...body.keep_alive };
     for (const listener of this.listeners) listener(this);
   },
   async save(dockerOnly) {
     const body = await request('/api/agent-isolation', { method: 'PUT', body: { docker_only: !!dockerOnly } });
+    this.apply(body);
+    return body;
+  },
+  async saveKeepAlive(change) {
+    const body = await request('/api/agent-isolation', { method: 'PUT', body: { keep_alive: change } });
+    this.apply(body);
+    return body;
+  },
+  async saveWarm(minutes) {
+    const body = await request('/api/agent-isolation', { method: 'PUT', body: { warm_idle_minutes: Number(minutes) } });
     this.apply(body);
     return body;
   },

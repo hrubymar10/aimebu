@@ -164,6 +164,11 @@ func (tx *Tx) costSinceLastTotal(turnID, agentID string, total float64) (*float6
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT session_id FROM turn WHERE id=?`, turnID).Scan(&sessionID); err != nil {
 		return nil, nil, err
 	}
+	return tx.costSinceLastTotalInSession(sessionID, agentID, total)
+}
+
+// costSinceLastTotalInSession is costSinceLastTotal for a harness session known by its id: a keep-alive ping has no turn, only the session it continued.
+func (tx *Tx) costSinceLastTotalInSession(sessionID, agentID string, total float64) (*float64, *float64, error) {
 	var previous sql.NullFloat64
 	err := tx.tx.QueryRowContext(tx.ctx, previousTotalSQL, agentID, sessionID).Scan(&previous)
 	if err != nil && err != sql.ErrNoRows {
@@ -182,5 +187,5 @@ func (tx *Tx) costSinceLastTotal(turnID, agentID string, total float64) (*float6
 
 // previousTotalSQL finds the running total of the agent's session at its latest report; the agent+time index gives the order, and the walk
 // stops at the first match, which is nearly always the newest row.
-const previousTotalSQL = `SELECT u.cost_total FROM usage_record u JOIN turn t ON t.id=u.turn_id
-	WHERE u.agent_id=? AND t.session_id=? AND u.cost_total IS NOT NULL ORDER BY u.created_at DESC,u.rowid DESC LIMIT 1`
+const previousTotalSQL = `SELECT u.cost_total FROM usage_record u LEFT JOIN turn t ON t.id=u.turn_id
+	WHERE u.agent_id=? AND COALESCE(t.session_id,u.session_id)=? AND u.cost_total IS NOT NULL ORDER BY u.created_at DESC,u.rowid DESC LIMIT 1`

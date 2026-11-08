@@ -230,6 +230,18 @@ func promptFor(spec adapter.TurnSpec) string {
 	return prompt.ForContext(turnDeltas, turnPrompt, spec.ContextJSON)
 }
 
+// keepAliveText is the instruction of a keep-alive turn: in the turn's JSON, after the unchanged instruction text, so everything a real turn sends
+// ahead of it (and the arguments of the process) stays the same.
+func keepAliveText(spec adapter.TurnSpec) string {
+	if !spec.KeepAlive {
+		return ""
+	}
+	return "This is a cache keep-alive, not work. Reply with an empty messages array and do nothing else: no commands, no messages."
+}
+
+// KeepAliveTool says this adapter can run a keep-alive turn (adapter.KeepAliver).
+func (a *Adapter) KeepAliveTool() string { return "codex" }
+
 func turnInput(spec adapter.TurnSpec) ([]byte, error) {
 	data, err := json.Marshal(struct {
 		TurnID       string          `json:"turn_id"`
@@ -237,7 +249,8 @@ func turnInput(spec adapter.TurnSpec) ([]byte, error) {
 		Notes        json.RawMessage `json:"notes"`
 		Context      json.RawMessage `json:"context"`
 		AllowedTools []string        `json:"allowed_tools"`
-	}{spec.TurnID, spec.Agent.ID, spec.NotesJSON, prompt.WithoutOverrides(spec.ContextJSON), spec.AllowedTools})
+		KeepAlive    string          `json:"keep_alive,omitempty"`
+	}{spec.TurnID, spec.Agent.ID, spec.NotesJSON, prompt.WithoutOverrides(spec.ContextJSON), spec.AllowedTools, keepAliveText(spec)})
 	if err != nil {
 		return nil, err
 	}
@@ -453,6 +466,37 @@ func (t *turn) Cancel() error {
 		}
 	}()
 	return nil
+}
+
+// Terminate asks the turn's process group to end (SIGTERM) and waits up to grace for it to go on its own; only then is it killed. A launcher in a
+// container traps the signal, ends the session in the container and exits 143 once it is gone, which is how a caller tells a confirmed end from a
+// kill, and without this the supervisor could only Cancel a containerized ping (a kill of the wrapper after five seconds, which confirms nothing). It
+// records the cancel intent like Cancel and returns whether the process ended on the terminate.
+func (t *turn) Terminate(grace time.Duration) bool {
+	select {
+	case <-t.done:
+		return true
+	default:
+	}
+	t.mu.Lock()
+	if t.reap.Reaped() {
+		t.mu.Unlock()
+		return true
+	}
+	t.cancel = true
+	t.mu.Unlock()
+	if t.cmd.Process != nil {
+		_ = adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGTERM, t.reap.Reaped)
+	}
+	select {
+	case <-t.done:
+		return true
+	case <-time.After(grace):
+	}
+	if t.cmd.Process != nil {
+		_ = adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGKILL, t.reap.Reaped)
+	}
+	return false
 }
 
 func (t *turn) Kill() error {

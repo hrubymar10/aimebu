@@ -276,3 +276,26 @@ func (s *Store) DecideProviderLimit(ctx context.Context, itemID, actorID, key, c
 	}
 	return decision, reused, nil
 }
+
+// ProviderLimitedAgents lists the agents on a machine whose provider limit is in force now (it has no reset time yet, or the reset time has not come):
+// they get no turns, and a cache keep-alive ping would only meet the same limit.
+func (s *Store) ProviderLimitedAgents(ctx context.Context, machineID string) ([]string, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT p.agent_id FROM provider_limit p JOIN agent a ON a.id=p.agent_id
+		WHERE a.machine_id=? AND p.tool=a.tool AND (p.reset_at IS NULL OR p.reset_at>?) ORDER BY p.agent_id`, machineID, timestamp())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

@@ -440,6 +440,266 @@ not wait for that cooldown.
 Role text, current room context and the latest active desired revision ride in
 each delivery. The supervisor applies a newer revision before admission, so
 queued work can resume after reactivation without restarting the socket.
+### Cache keep-alive (on by default)
+
+A harness's prompt cache is what makes a turn after a long pause cheap. Claude Code writes it with a **one-hour**
+lifetime (measured: all cache creation is `ephemeral_1h`, and a turn after 450 s of silence still read it, 4 253
+tokens read, 177 written; dev's own usage records show 155 k and 90 k cached tokens read after a 37-minute gap;
+the 621 Codex session logs on one machine show 96 % cache hits at 5 to 10 minutes and 18 of 19 at 10 to 15). When the
+cache expires the next turn pays to write the whole context again, so for an agent that is active and idle the
+supervisor sends the harness a tiny **ping** shortly before the cache would expire.
+
+- **What a ping is.** The agent's last real turn, run again as a cold resume (or into its live warm process, if
+  it has one: a ping never starts a warm process) with *exactly* that turn's arguments, environment and folder,
+  and a user turn that only says `keep_alive` and asks the model to reply with an empty `messages` array. The
+  instruction is in the user turn, not the system prompt: the system prompt, the schema and the tool list are the
+  cached prefix, and a ping that differed there would not read the cache (measured: the same ping without
+  `--json-schema` re-created 3 755 of 3 954 tokens, at the price of a cold turn). The adapter test pins that the
+  arguments, the environment and the warm fingerprint are the real turn's.
+- **It cannot act.** The harness is asked in words not to use the toolbox, and that is not what keeps it from acting
+  (the words are in the user turn so the cached prefix stays the real turn's, and the process arguments and
+  environment stay byte-identical, so the key in them is the agent's own). The server enforces it: the supervisor
+  sends `keep_alive_scope` (`scope_on` true, the agent id) before the ping's process exists and starts the ping only
+  once the server answers `keep_alive_scope_ack`; while the scope is on, every agent-tools call made with that
+  agent's key (REST and MCP alike, in `requireAgentTool`) is refused with **403 `keep_alive_scope`** before any
+  handler runs, so a ping that calls a tool anyway posts nothing and changes nothing. The supervisor lifts the scope
+  (`scope_on` false, answered the same way) only after the ping's process is confirmed gone and before the ping
+  counts as ended, so a real turn that follows is never refused. Without an answer the ping does not run (it fails
+  closed and counts as a failure). A scope nobody lifted (a supervisor that died) lapses on the server after three
+  minutes (`protocol.KeepAliveScopeTTL`; a supervisor that holds an unconfirmed ping in quarantine renews it, at the
+  start of the quarantine and then every minute, so an orphan is never free to use the toolbox while the agent is
+  still blocked); it is not dropped when a connection comes or goes, so a supervisor that reconnects mid-ping leaves the
+  ping scoped. **The limit:** this covers the aimebu toolbox only. The harness's own tools (a shell, file edits, and for Codex shell
+  commands) are outside it, so there a ping relies on the instruction in its user turn ("no tools, no messages" for
+  Claude, "no commands, no messages" for Codex), which a model could still ignore; the server cannot refuse those.
+- **It is not a turn.** No turn exists for it on the server. Nothing is posted, no recovery item can come of it,
+  no read marker or note moves, the agent card does not change state, and the model's reply is thrown away. The
+  supervisor sends the server one `keep_alive_report` frame (what it read from and wrote to the cache, its cost, how
+  long it took, or why it failed; never what the model said), writes one line to its log, and the card shows the last
+  ping. A ping whose cache write exceeds its cache read **missed** (the cache had expired, or its arguments differed)
+  and the card says so; the log line carries the numbers so the interval can be tuned from what happened. A ping adds
+  about 150 tokens of context and about 10 KB of transcript each (measured), which is one reason the pings stop.
+- **When.** One interval after the last real turn ended cleanly: Claude **50 minutes** (at most 55: the
+  cache lives an hour, so a later ping always finds it gone, and a larger stored value is read as 55), Codex **10 minutes** (an
+  assumption: Codex states no lifetime, so each ping's cache read and write are logged to tune it from). Both
+  adapters implement `adapter.KeepAliver`: Codex runs `codex exec resume` with the real turn's arguments and the
+  instruction in the turn JSON after the unchanged instruction text; its cost is the price list's, per ping,
+  where Claude's is the difference of the session's running total. Settings -> General -> Agents holds a switch (on by default), the interval
+  per harness (0 is off for that harness) and "stop pinging after N hours without work" (24 by default); only the
+  owner changes them. The server puts the setting for the agent's tool on every delivery (`keep_alive`:
+  `interval_seconds`, `stop_after_seconds`); a supervisor that does not know it never pings. A delivery only
+  reaches an agent that has a turn to take, so the same settings (and the warm window) also go to every
+  warm-capable supervisor in an `agent_settings` frame: when it connects, when the owner saves a change, and with
+  the server's 15-second check. On receipt the supervisor applies the warm window (off ends every idle process),
+  forgets the keep-alive of an agent whose interval is now 0 (ending a ping that runs), and re-arms the timer of
+  the others from their last real turn at the new interval. Turning pings on starts them at an agent's next real
+  turn (an idle agent has no turn to ping from).
+- **Never in the way.** A real turn stops the pending ping and arms a new one when it ends (a turn that does not
+  end cleanly arms none). A delivery that arrives while a ping runs ends the ping: a process on this machine is
+  killed; one in a container is told to terminate (SIGTERM, then the launcher's own cleanup, up to about 12 s). A
+  ping that finds a turn running looks again a minute later. The ping's own time limit is 90 s.
+- **A ping's end in a container is confirmed like a warm process's.** Killing the wrapper confirms nothing about the
+  process inside the container, so such a ping counts as ended only when it finished by itself (exit status 0, or any
+  status from 1 to 124: `docker exec` passes the inner process's own status on, so an API error or a failed turn
+  has ended inside the container; 125 and above are the docker CLI's own failures or a signal's 128+n, which say
+  nothing about what runs in the container and are not confirmed), or was told to terminate and its wrapper exited with exactly 143 (the launcher advertises `stop_on_signal`), or a warm
+  process was closed through its launcher. A container whose launcher does not advertise `stop_on_signal` is not
+  pinged at all. When the end is not confirmed (the wrapper was killed after its grace) the ping is not over: the
+  agent stays blocked (a delivery for it waits, in its own goroutine, for the quarantine to be over and then runs; a stop is not
+  acknowledged and its key not dropped, an account switch is refused) and the server keeps refusing the agent's
+  toolbox (the scope is not lifted) for a 150 s quarantine, after which both are lifted, since nothing can observe
+  the orphaned process any more and a ping's tiny turn does not outlive that. The timeout is accepted rather than
+  a confirmation because the ping is a tiny turn with a refused toolbox, and the harness container's own watchdog
+  ends an orphan (a process whose wrapper has gone) within about 15 s: 150 s is ten times that. Where it did not
+  work the expiry is not silent: it logs a warning and adds to the **unconfirmed ping ends** counter that the
+  supervisor's `warm_state` report carries (`unconfirmed_ping_ends`; the machine's card in Settings → Machines
+  shows it once it is above 0).
+- **A lift that was not answered is owed.** If the scope lift after a ping gets no ack (the connection dropped),
+  the supervisor remembers the lift per agent (with the ping it is for) and sends it again, waiting for the ack, on reconnect and before a
+  real turn's process is started, so a real turn's toolbox is never refused for a ping. A ping whose scope-on gets no ack owes a lift too (the
+  server may have applied it), so the next real turn is not refused for the scope's lease. A real turn whose owed
+  lift still cannot be confirmed is not started (the failed start is retried like an unconfirmed ping end).
+  The server also lapses a scope by itself after its limit. Every scope frame names its ping (`scope_gen`, the
+  ping's turn id), one scope transition per agent is in flight at a time, and a ping settles the lift an earlier
+  ping still owes before its own scope begins; the server ignores a lift whose `scope_gen` is not the ping scoped
+  now (a late, owed lift of an older ping must not clear a newer ping's guard). A frame without `scope_gen`
+  (an older supervisor) always applies.
+- **Waits never hold up the supervisor's frame loop.** A delivery that has to wait for a ping runs in a goroutine
+  of its own; a stop or spawn waits a moment for the ping it ends and leaves the rest to the stop's own retry.
+- **Stops.** After the owner's hours without real work, when the agent is stopped, spawned again or loses its key,
+  when the setting is off, at shutdown, and after three failed pings in a row (a success in between starts the
+  count again). A fork, a correction, a diagnostic or a tool whose adapter cannot ping arms nothing.
+- **Cost.** (The cost of the first ping after a supervisor restart is 0 in the supervisor's own report, which has
+  no earlier total to take a difference from; the server records a ping's cost as the difference from the
+  session's last total it holds, which survives a restart, so the usage figures and the card are not affected.)
+  A ping reads the agent's whole context from the cache: at the cache-read price (a tenth of the input
+  price) of that context. Measured on Haiku with a 4 k context it is $0.0001; for a 90 k-token Opus context about
+  $0.045, so up to 28 pings after the last turn (24 h at 50 min) is about $1.3 per idle agent per day at most. The
+  agent's card says "Cache kept warm every 50 min, up to 28 pings after its last turn ≈ $1.3": the measured cost
+  of the last ping times the pings in a stretch, and before there is a ping the price list's estimate when it has
+  the model. The last report per agent is kept in memory on the server and the supervisor logs each one. The spend is also
+  written to `usage_record` (source `keep_alive`, no turn, the agent's room and project) so usage totals, limits and
+  the cost views count it; a Claude ping's cost is the difference from the session's running total, which is kept,
+  so the next real turn is not charged for the ping.
+
+### Warm agents (off by default)
+
+*Instance setting.* The window is set by the owner in Settings → General → Agents ("Keep agents warm
+(minutes)", 0 is off, at most 1440; `GET`/`PUT /api/agent-isolation`, `warm_idle_minutes`, owner only to
+change). The server puts it on every delivery as `warm_idle_seconds` (always present when the server has
+the setting, so 0 means off and absent means no setting); a supervisor applies it before the turn, and
+turning it off ends every idle process at once. `AIMEBU2_WARM_IDLE` is the supervisor's default until
+its first delivery.
+
+*What the owner sees.* A supervisor that keeps processes warm sends the server a `warm_state` frame (at
+connect, and whenever the picture changes: a process goes idle, is taken for a turn, ends): the agents with a
+live process (idle until when, or working), the counts started and reused since it started, the memory of
+the warm processes it runs itself, and what every running container uses. An idle Claude agent's card says
+"Warm · sleeps in N min" or "Sleeping" (`warm` on the card: `state` warm or sleeping, `sleeps_at`; absent when
+the window is off or does not apply to the agent), and the machine's card in Settings → Machines says how many
+agents are warm and what the processes use (`warm` on the machine row). The memory is **not per agent**: the
+harness container is shared by all agents and Docker reports no finer, so it is labelled container memory,
+all containers.
+
+*Account switch.* A warm process holds the login it started with. The guarantee: **a switch of account (by
+hand, or the automatic one) and the removal of the active profile go on only when every idle warm process of the
+tool on the host is confirmed gone, and none can have been started since.** In order:
+
+1. The server holds new turns of the tool on the host (the agents wait in the queue; a hold of its own, apart from
+   the limit guard's) and waits for the transactions that are open, so a turn that was being dispatched is
+   recorded by then. Only then does it check for running turns (`409 agents_running`).
+2. It sends the host's supervisor a `retire_warm` request for the tool (the login is on the host, so no other
+   machine is asked) and goes on only when it answers `ok`, that is, every idle process of the tool is confirmed
+   gone. `error`, no answer within 30 s, or a supervisor that goes away before it answers refuses the switch
+   (`409 warm_agents`; the automatic switch counts it as agents running).
+3. The swap itself checks for running turns once more under the switcher's lock. The hold of turns ends when the
+   switch is over, whatever it came to.
+
+The server's view of a host can only be ahead of reality, never behind. A supervisor therefore tells the server
+before it keeps a process: when a turn ends and its process would go idle it sends `warm_claim` (the count of
+processes it has running, warm and pings, including that one) and keeps the process only once the server answers
+`warm_claim_ack`; with the socket down, no answer within 5 s, a stale connection, or a count the server could not
+save (it answers only after the count is in the database, and memory is never ahead of what was saved), the process
+is ended instead and the next turn runs cold. The agent's slot is not locked while the answer is waited for (a stop
+or a spawn on the loop that reads the server's frames needs it): the process stays the slot's busy one meanwhile,
+and whether to keep it is decided again after the answer. A ping does the same with its scope-on frame (which raises the server's count to at
+least 1, saved before it is answered, and is answered before the ping's process exists; one that cannot be saved
+is not answered, so the ping does not run). Decreases (a process ended) are not claims: they go in
+the `warm_state` reports, and a stale higher count only makes the server refuse, which is safe. Everything the
+supervisor says of its running processes (reports, claims, scope-on) is numbered from one counter (`seq` /
+`warm_seq`, taken before the count it describes), and the server applies and saves counts under one lock in that
+order: a number older than one it holds on that connection is ignored, and so is a count from a connection that
+is no longer the machine's, so a late older report can never overwrite a newer count (a supervisor that restarts
+begins its counter again, on a new connection). A report's count is its live warm processes of any state
+(`processes`; the `agents` list is only the picture for the screen) plus `pings_active`.
+
+A host whose supervisor is **not connected** is not taken to have no warm processes: a dropped connection or a
+server restart leaves a supervisor's idle processes running. The switch is refused (`409 warm_agents`) until the
+supervisor is back and can answer, unless the server knows the host has none: it never connected, its supervisor
+cannot keep anything warm, or its last `warm_state` (a supervisor that stops cleanly sends one more, synchronously,
+after it has ended everything and before the connection closes) listed none, **no warm slot and no ping** (`pings_active`
+counts the cache pings that run or are held in quarantine, which are processes on the login though they hold no
+slot), and the server holds no live ping scope for the host (a ping scopes its agent before its process exists, so
+one that began just before the drop is seen even if its report did not arrive). The last report is kept in the
+database (the global setting `machine_warm_seen:<machine id>`, count and time; no table of its own), so a
+server that restarted still has it and switching is not wedged when the host's last word was none; revoking the
+machine removes it. A host with no report at all that had connected before is assumed to have some.
+
+A cache ping is a turn on the same login that the server's check for a running turn cannot see, so the request
+also covers pings: the server first holds the tool's pings back (the tool joins `paused_tools` in a
+`keep_alive_paused` frame sent before `retire_warm`, and stays in it until the switch is over, whatever it came to),
+and the supervisor ends every ping of the tool that runs and waits for a confirmed end (a container ping whose
+launcher cannot confirm refuses the switch) before it answers. A ping ended this way is not counted as a failure and
+its timer is armed again, to find the hold and look again later; the pings go on when the server lifts the hold.
+A supervisor announces `supports_warm` in `hello`; the server asks only one that does (a machine without
+it has no warm process, and `aimebu doctor` says so).
+
+With `AIMEBU2_WARM_IDLE=5m` (a Go duration; unset or `0` is off) a supervisor keeps an agent's
+harness process up for that window after a turn, so the next message goes straight into the
+live process instead of starting a new one and resuming the session (on dev that start was
+4 to 5 of the 6.5 to 7.5 seconds a short reply took). Only an adapter that implements
+`adapter.WarmAdapter` takes part: today the Claude Code adapter. When the window ends the
+agent sleeps: the process is ended and the next turn runs cold, as before. A correction, a
+diagnostic and a fork always run cold, and ending a live process comes first, so two
+processes are never on one session.
+
+- **One state machine per agent.** A warm process lives in the agent's slot whatever it is doing
+  (starting, running a turn, idle), and everything that changes it holds the slot's lock for
+  the whole change: a delivery taking it, a turn ending, the idle timer, a stop, a key change,
+  the memory guard and the crash watcher. So a stop that arrives while a delivery is still handing
+  the turn to the process waits for it and then ends it (a stop kills a process that is running a
+  turn too, and the stop is acknowledged and the key dropped only after); a key change in that
+  window leaves the running turn alone but the process does not go idle afterwards; and a turn
+  that ends as a stop lands is settled against the desired state the stop already set, so no
+  process is left idle after a stop. An idle process is not an active turn.
+- **Fingerprint.** At every delivery the supervisor asks the adapter what a process for the turn
+  would be started with (command, arguments including the system prompt and MCP configuration,
+  environment with the agent key as a hash, directory) and adds the login (below); a live process
+  whose fingerprint differs is ended and the turn gets a new one. So a role, prompt, model,
+  launcher, folder, key or login change is seen without a trigger list.
+- **Login.** The login is the Claude credentials file in the configuration directory the
+  *launcher* gives the process (`CLAUDE_CONFIG_DIR` through the owner's variable references, else
+  the home's `.claude`), by size, modification time and a hash of the content. Each token refresh or account switch
+  changes it, so **the next turn after one is cold**. When it cannot be told reliably the turn
+  runs cold and no process is kept: no credentials file (a login in the macOS keychain, or none),
+  or a Docker launcher that does not report `claude_home_shared`.
+- **Ended at once** (and reaped before the stop is acknowledged and before the key is dropped):
+  stop/pause/archive, a new spawn of the agent, a dropped key, a native launcher refused by
+  docker-only, shutdown, and `RetireAllWarm` (for a switch of account). A turn that does not end
+  cleanly (error result, crash, cancel) ends the process too; an interrupt and a malformed input
+  line make the CLI exit, so any abnormal event simply means the agent is asleep. An idle process
+  that ends by itself is noticed at once (the agent is asleep from then, and its last stderr goes
+  to the supervisor's log, bounded).
+- **Unconfirmed ends.** An end is confirmed (the process is reaped); a kill that is not confirmed
+  is tried once more. If a process still cannot be confirmed gone, nothing goes on as if it were:
+  a stop's acknowledgement and the key's drop wait and the stop is retried in the background (the
+  ack goes out when the process is finally gone), a spawn is refused, and no other process, warm
+  or cold, is started on the session (the turn fails to start and the next delivery tries again),
+  so there are never two processes on one session.
+- **Never fails a turn.** A process that cannot be started, noted in the journal or handed the
+  turn is reported and the turn runs cold.
+- **Limits.** `AIMEBU2_WARM_MAX_LIFETIME` (default 1h): a process that old is not reused and is
+  not kept idle (nothing refreshes credentials inside one). The memory guard
+  (`AIMEBU2_WARM_MIN_FREE_MB`, default 1536, and `AIMEBU2_WARM_MIN_FREE_PERCENT`, default 10)
+  ends the longest-idle process, one per ten seconds, while free memory is under either; there
+  is no cap on how many agents are warm. With a Docker warm process the guard also asks Docker
+  (`docker info` for the Docker host's memory, `docker stats` for what the containers use), because
+  the memory is the container's, not the supervisor's; Health reports the processes the
+  supervisor runs itself and, separately and labelled container-wide, what every running
+  container uses (Docker reports no finer, and the harness container is shared by all agents), not
+  the warm agents' own. Measured: a Claude Code
+  process is about 240 MB native and 250 to 330 MB inside the harness container.
+- **Orphans.** The journal notes each warm process with its own start time and keeps the note until
+  the process is known to be gone; a process that cannot be noted is not kept warm. A supervisor
+  that starts ends the ones a dead predecessor left (a pid with another start time is never
+  touched). With harness-docker the wrapper's own session watchdog (it watches the wrapper's
+  pid and start time) ends the process inside the shared harness container when the host wrapper
+  is gone, so there is nothing for the supervisor to label: the harness container is shared by
+  every agent and a warm process is one `docker exec` in it.
+- **Containers.** `docker exec` passes no signal on, so killing the host side leaves the process in the
+  container until harness-docker's session heartbeat sweeps it (about fifteen seconds), and neither the
+  wrapper's exit after a kill nor the passing of time proves it gone. A process in a container is
+  therefore kept warm **only when its launcher advertises `stop_on_signal`** (listed by
+  `HARNESS_DOCKER_PRINT_FEATURES=1 claude-docker --version`, so it is in the launcher's features), and
+  its end is confirmed only two ways: the clean one (input closed, the CLI exits, `docker exec`
+  returns, the wrapper's session cleanup runs and it exits 0), or, with that capability, a
+  terminate: the wrapper traps TERM, ends the session in the container, waits for it and only then
+  exits 128+signal, so exactly 143 after our SIGTERM. Any other status, a kill, or no capability
+  is *unconfirmed*. An unconfirmed end follows the rules above (stop ack and key drop wait, no
+  replacement on the session) and is never cleared by elapsed time; it stays until the supervisor
+  restarts, whose start-up sweep and the harness's own heartbeat deal with the leftovers. A launcher
+  without the capability runs its agents cold on every turn, as before. A process in a container is
+  always closed first (input, then SIGTERM with about eight seconds for the wrapper's own cleanup, only
+  then SIGKILL). A running container gets the faster in-container wrapper only after
+  `harness-docker-ctrl rebuild`; until then the terminate takes about two seconds.
+- An idle process is ended gracefully first (its input is closed and it gets a few seconds to go;
+  with a Docker launcher that lets the wrapper clean its session up properly, which is also the
+  roughly one second the wrapper's cleanup costs a one-process turn), and killed if it does not;
+  a process that is being replaced for a delivery, or whose turn failed, is killed at once. The
+  harness-docker wrapper (`docker exec -i` into the long-lived harness container) is what a
+  Docker launcher runs, so a warm Docker agent is one `docker exec` kept open.
+- Output the process writes to stderr goes to the log of the turn that is running.
+
 A running turn is bounded by two stall deadlines, ported from v1's pi
 watchdog. `AIMEBU2_TURN_IDLE` fires when the harness writes no output at all
 for that long (any stdout line counts, including streamed partial output,

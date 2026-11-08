@@ -47,8 +47,13 @@ func (c *Client) setAgentKey(agentID, key string) error {
 	if c.agentKeys == nil {
 		c.agentKeys = make(map[string]string)
 	}
+	changed := c.agentKeys[agentID] != "" && c.agentKeys[agentID] != key
 	c.agentKeys[agentID] = key
 	c.mu.Unlock()
+	if changed {
+		// A live process holds the key it started with: a key that is replaced (and so the old one revoked) ends it.
+		c.retireWarm(agentID, "the agent's key changed")
+	}
 	return nil
 }
 
@@ -67,6 +72,9 @@ func (c *Client) heldKeys() []string {
 // issues a new key whenever the agent starts again, so nothing a stopped agent leaves behind can authenticate, and nothing stays after it is
 // removed.
 func (c *Client) forgetAgentKey(agentID string) {
+	if !c.keepAliveForget(agentID) || !c.retireWarm(agentID, "the agent's key is dropped") {
+		return // a process of the agent may still hold the key: it stays until the process is confirmed gone
+	}
 	c.mu.Lock()
 	delete(c.agentKeys, agentID)
 	c.mu.Unlock()

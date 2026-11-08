@@ -251,3 +251,53 @@ func TestDockerOnlyHoldsAnAgentWhoseLauncherCannotBeRead(t *testing.T) {
 		t.Fatalf("the hold is said %d times, want once", n)
 	}
 }
+
+// The warm window of the agents is read by anyone signed in and changed only by the owner (an admin may change "only in docker" but not how much
+// memory the machines hold between turns). It is off until set, is in minutes, and is bounded.
+func TestWarmIdleSettingIsOwnerOnly(t *testing.T) {
+	t.Parallel()
+	w := newAdminWorld(t)
+	read := func(who adminActor) (any, any) {
+		t.Helper()
+		code, body := w.json(t, who, "GET", "/api/agent-isolation", nil)
+		if code != 200 {
+			t.Fatalf("%s reads %d", who.name, code)
+		}
+		return body["warm_idle_minutes"], body["can_edit_warm"]
+	}
+	if minutes, canEdit := read(w.viewer); minutes != float64(0) || canEdit != false {
+		t.Fatalf("default for a viewer: %v %v", minutes, canEdit)
+	}
+	for _, who := range []adminActor{w.admin, w.pOwner, w.oper, w.viewer, w.out} {
+		if code := w.call(t, who, "PUT", "/api/agent-isolation", map[string]int{"warm_idle_minutes": 5}); code != 403 {
+			t.Errorf("%s changed the warm window: %d", who.name, code)
+		}
+	}
+	if seconds, err := w.f.srv.warmIdleSeconds(t.Context()); err != nil || seconds != 0 {
+		t.Fatalf("a refused write changed it: %d %v", seconds, err)
+	}
+	for _, bad := range []int{-1, 1441} {
+		if code := w.call(t, w.owner, "PUT", "/api/agent-isolation", map[string]int{"warm_idle_minutes": bad}); code != 400 {
+			t.Errorf("%d minutes: %d", bad, code)
+		}
+	}
+	if code := w.call(t, w.owner, "PUT", "/api/agent-isolation", map[string]int{"warm_idle_minutes": 5}); code != 200 {
+		t.Fatalf("the owner sets it: %d", code)
+	}
+	if minutes, canEdit := read(w.owner); minutes != float64(5) || canEdit != true {
+		t.Fatalf("owner reads %v %v", minutes, canEdit)
+	}
+	if minutes, _ := read(w.viewer); minutes != float64(5) {
+		t.Fatalf("a viewer reads %v", minutes)
+	}
+	if seconds, _ := w.f.srv.warmIdleSeconds(t.Context()); seconds != 300 {
+		t.Fatalf("stored as seconds: %d", seconds)
+	}
+	// Setting docker-only alone leaves the window as it was, and an admin may do that.
+	if code := w.call(t, w.admin, "PUT", "/api/agent-isolation", map[string]bool{"docker_only": true}); code != 200 {
+		t.Fatalf("an admin turns docker-only on: %d", code)
+	}
+	if seconds, _ := w.f.srv.warmIdleSeconds(t.Context()); seconds != 300 {
+		t.Fatalf("docker-only changed the window: %d", seconds)
+	}
+}

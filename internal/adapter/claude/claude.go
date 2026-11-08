@@ -64,8 +64,21 @@ func turnInput(spec adapter.TurnSpec) ([]byte, error) {
 		Notes        json.RawMessage `json:"notes"`
 		Context      json.RawMessage `json:"context"`
 		AllowedTools []string        `json:"allowed_tools"`
-	}{spec.TurnID, spec.NotesJSON, prompt.WithoutOverrides(spec.ContextJSON), spec.AllowedTools})
+		KeepAlive    string          `json:"keep_alive,omitempty"`
+	}{spec.TurnID, spec.NotesJSON, prompt.WithoutOverrides(spec.ContextJSON), spec.AllowedTools, keepAliveText(spec)})
 }
+
+// keepAliveText is the instruction of a keep-alive turn, in the user turn and not the system prompt: the system prompt is part of the cached prefix,
+// and changing it would rewrite the cache for every real turn too.
+func keepAliveText(spec adapter.TurnSpec) string {
+	if !spec.KeepAlive {
+		return ""
+	}
+	return "This is a cache keep-alive, not work. Reply with an empty messages array and do nothing else: no tools, no messages."
+}
+
+// KeepAliveTool says this adapter can run a keep-alive turn (adapter.KeepAliver).
+func (a *Adapter) KeepAliveTool() string { return "claude" }
 
 func systemPromptFor(spec adapter.TurnSpec) string {
 	var context struct {
@@ -113,6 +126,54 @@ func (a *Adapter) Capabilities(version string, environment adapter.Environment) 
 }
 
 func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Turn, error) {
+	l, err := a.prepare(spec, false)
+	if err != nil {
+		return nil, err
+	}
+	cmd := l.command(ctx)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	input := l.input
+	go func() { _, _ = stdin.Write(input); _ = stdin.Close() }()
+	t := &turn{id: spec.TurnID, cmd: cmd, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, forkOf: forkOf(spec), events: make(chan adapter.Event, 32), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink)}
+	go t.run(stdout, stderr)
+	return t, nil
+}
+
+// launch is the harness process a spec asks for, before it is started.
+type launch struct {
+	name      string
+	args      []string
+	env       []string
+	dir       string
+	input     []byte // what a one-turn process reads on standard input
+	sessionAt [2]int // args[sessionAt[0]:sessionAt[1]] say which session to continue: not part of what a warm process is started with
+	agentKey  string // the agent's key as an environment entry: never in an argument list, and only a hash of it in a fingerprint
+}
+
+func (l *launch) command(ctx context.Context) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, l.name, l.args...)
+	cmd.Dir = l.dir
+	cmd.Env = l.env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd
+}
+
+// prepare works out the process for a spec; warm asks for one that reads its turns from standard input (stream-json) and stays up between them.
+func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 	if a.variant() == "native" && !a.AllowNative {
 		return nil, fmt.Errorf("native execution disabled; use the docker variant")
 	}
@@ -133,6 +194,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--append-system-prompt", systemPromptFor(spec), "--json-schema", string(responseSchema)}
+	if warm {
+		args = append(args, "--input-format", "stream-json")
+	}
 	if spec.Agent.Model != "" {
 		args = append(args, "--model", spec.Agent.Model)
 	}
@@ -142,6 +206,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if spec.ForkSession && !spec.NativeSessionStarted {
 		return nil, fmt.Errorf("a forked turn must resume an existing session")
 	}
+	sessionStart := len(args)
 	if spec.NativeSessionStarted {
 		args = append(args, "--resume", spec.NativeSessionHandle)
 		if spec.ForkSession {
@@ -151,6 +216,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	} else if spec.NativeSessionHandle != "" {
 		args = append(args, "--session-id", spec.NativeSessionHandle)
 	}
+	sessionEnd := len(args)
 	if spec.Mode == adapter.ModeDiagnostic {
 		args = append(args, "--strict-mcp-config", "--tools", "Read", "--disallowedTools", "Bash,Edit,Write", "--permission-mode", "dontAsk")
 	} else {
@@ -195,39 +261,25 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if spec.LauncherPath != "" {
 		command = spec.LauncherPath
 	}
-	cmd := exec.CommandContext(ctx, command, adapter.LauncherArgs(spec, args)...)
-	cmd.Dir = spec.CheckoutPath
-	cmd.Env = adapter.LauncherEnv(childEnv(), spec.LauncherEnvRefs)
+	env := adapter.LauncherEnv(childEnv(), spec.LauncherEnvRefs)
+	dir := spec.CheckoutPath
 	if spec.LaunchPath != "" {
 		// Claude keys a session by the folder it is started in as spelled, which it learns from PWD (the kernel only knows the resolved path).
 		// Go does not add PWD when Env is set, so it is set here.
-		cmd.Dir = spec.LaunchPath
-		cmd.Env = append(cmd.Env, "PWD="+spec.LaunchPath)
+		dir = spec.LaunchPath
+		env = append(env, "PWD="+spec.LaunchPath)
 	}
 	if a.variant() == "docker" {
-		cmd.Env = append(cmd.Env, "CLAUDE_LAUNCH_FLAGS=")
+		env = append(env, "CLAUDE_LAUNCH_FLAGS=")
 	}
-	cmd.Env = append(cmd.Env, agentKey...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
+	env = append(env, agentKey...)
+	full := adapter.LauncherArgs(spec, args)
+	shift := len(full) - len(args) // what the launcher puts before the protocol arguments
+	l := &launch{name: command, args: full, env: env, dir: dir, input: input, sessionAt: [2]int{shift + sessionStart, shift + sessionEnd}}
+	if len(agentKey) > 0 {
+		l.agentKey = agentKey[0]
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	go func() { _, _ = stdin.Write(input); _ = stdin.Close() }()
-	t := &turn{id: spec.TurnID, cmd: cmd, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, forkOf: forkOf(spec), events: make(chan adapter.Event, 32), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink)}
-	go t.run(stdout, stderr)
-	return t, nil
+	return l, nil
 }
 
 func childEnv() []string {
@@ -262,12 +314,26 @@ type turn struct {
 	err             error
 	next            int
 	stderrCapture   io.Writer
+	warm            *warmSession // set when the turn runs in a live process that outlives it
 }
 
 // LastOutput is when the harness last wrote any stdout line, parsed or not.
 // The supervisor's idle deadline counts it as liveness, so a long generation
 // that only streams partial output is not mistaken for a stall.
-func (t *turn) LastOutput() time.Time { return time.Unix(0, t.lastOutput.Load()) }
+func (t *turn) LastOutput() time.Time {
+	if t.warm != nil {
+		return time.Unix(0, t.warm.lastOutput.Load())
+	}
+	return time.Unix(0, t.lastOutput.Load())
+}
+
+// reaped says whether the turn's process has been waited for: the turn's own, or the live session's.
+func (t *turn) reaped() bool {
+	if t.warm != nil {
+		return t.warm.reap.Reaped()
+	}
+	return t.reap.Reaped()
+}
 
 func (t *turn) Events() <-chan adapter.Event { return t.events }
 
@@ -275,7 +341,7 @@ func (t *turn) Events() <-chan adapter.Event { return t.events }
 // so cancelling again, or after the exit, is a no-op (see adapter.SignalGroup).
 func (t *turn) Cancel() error {
 	t.mu.Lock()
-	if t.reap.Reaped() { // nothing left to cancel, and no intent to record for a process that ended by itself
+	if t.reaped() { // nothing left to cancel, and no intent to record for a process that ended by itself
 		t.mu.Unlock()
 		return nil
 	}
@@ -284,8 +350,34 @@ func (t *turn) Cancel() error {
 	if t.cmd.Process == nil {
 		return nil
 	}
-	return adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGKILL, t.reap.Reaped)
+	return adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGKILL, t.reaped)
 }
+
+// Terminate asks the turn's process group to end (SIGTERM) and waits up to grace for it to go on its own; only then is it killed. A launcher in a
+// container traps the signal, ends the session in the container and exits 143 once it is gone, which is how a caller tells a confirmed end from a
+// kill. It records the cancel intent like Cancel. It returns whether the process ended on the terminate.
+func (t *turn) Terminate(grace time.Duration) bool {
+	t.mu.Lock()
+	if t.reaped() {
+		t.mu.Unlock()
+		return true
+	}
+	t.cancel = true
+	t.mu.Unlock()
+	if t.cmd.Process != nil {
+		_ = adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGTERM, t.reaped)
+	}
+	select {
+	case <-t.done:
+		return true
+	case <-time.After(grace):
+	}
+	if t.cmd.Process != nil {
+		_ = adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGKILL, t.reaped)
+	}
+	return false
+}
+
 func (t *turn) Wait() (adapter.ExitInfo, error) {
 	<-t.done
 	t.mu.Lock()
@@ -305,155 +397,10 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 	go func() { _, _ = io.Copy(output, stderr); close(stderrDone) }()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	terminal := false
-	var lastAssistantContext *int64
-	steps := map[string]claudeStep{} // the main loop's API responses seen so far, by message id
-	sawResult := false
-	var candidate json.RawMessage
-	var errorResult, errorSummary string
-	errorIsResult, toolStarted, producedOutput := false, false, false
-	haveCandidate := false
+	s := newRunState()
 	for scanner.Scan() {
 		t.lastOutput.Store(time.Now().UnixNano())
-		line := append([]byte(nil), scanner.Bytes()...)
-		event, known := harness.ParseClaude(line)
-		if !known {
-			continue
-		}
-		if compact, ok := harness.ParseClaudeCompaction(event); ok {
-			t.emit(adapter.Event{Kind: adapter.EventCompaction, Compaction: &adapter.Compaction{PreTokens: compact.PreTokens, PostTokens: compact.PostTokens}})
-			continue
-		}
-		t.confirmSession(event.Raw)
-		switch event.Type {
-		case "assistant", "tool_progress", "system", "rate_limit_event", "user":
-			if event.Type == "rate_limit_event" && strings.Contains(strings.ToLower(string(event.Raw)), "limit reached") {
-				errorResult = adapter.SanitizeStderr(string(event.Raw))
-			}
-			if event.Type == "assistant" {
-				var assistant struct {
-					ParentToolUseID *string `json:"parent_tool_use_id"`
-					Message         struct {
-						ID    string `json:"id"`
-						Usage struct {
-							InputTokens              *int64 `json:"input_tokens"`
-							CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
-							CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
-						} `json:"usage"`
-					} `json:"message"`
-				}
-				if json.Unmarshal(event.Raw, &assistant) == nil && assistant.ParentToolUseID == nil && assistant.Message.Usage.InputTokens != nil {
-					used := *assistant.Message.Usage.InputTokens
-					if assistant.Message.Usage.CacheReadInputTokens != nil {
-						used += *assistant.Message.Usage.CacheReadInputTokens
-					}
-					if assistant.Message.Usage.CacheCreationInputTokens != nil {
-						used += *assistant.Message.Usage.CacheCreationInputTokens
-					}
-					lastAssistantContext = &used
-					// One API response is several assistant events that repeat its usage: each response counts once, by its message id.
-					if id := assistant.Message.ID; id != "" {
-						steps[id] = claudeStep{in: *assistant.Message.Usage.InputTokens, cacheRead: assistant.Message.Usage.CacheReadInputTokens, cacheWrite: assistant.Message.Usage.CacheCreationInputTokens}
-					}
-				}
-			}
-			activity := adapter.Event{Kind: adapter.EventActivity, Summary: event.Type}
-			started, finished := harness.ClaudeToolUses(event)
-			if len(started) > 0 {
-				toolStarted = true
-			}
-			for _, id := range started {
-				activity.Tools = append(activity.Tools, adapter.ToolEvent{ID: id})
-			}
-			for _, id := range finished {
-				activity.Tools = append(activity.Tools, adapter.ToolEvent{ID: id, Done: true})
-			}
-			t.emit(activity)
-		case "result":
-			var result struct {
-				Result  *string `json:"result"`
-				IsError bool    `json:"is_error"`
-				Usage   struct {
-					InputTokens              *int64 `json:"input_tokens"`
-					OutputTokens             *int64 `json:"output_tokens"`
-					CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
-					CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
-				} `json:"usage"`
-				ModelUsage map[string]struct {
-					ContextWindow *int64   `json:"contextWindow"`
-					CostUSD       *float64 `json:"costUSD"`
-				} `json:"modelUsage"`
-			}
-			if json.Unmarshal(event.Raw, &result) != nil {
-				continue
-			}
-			if result.IsError {
-				errorResult = adapter.SanitizeStderr(string(event.Raw))
-				errorIsResult = true
-				if result.Result != nil {
-					errorSummary = adapter.SanitizeStderr(*result.Result)
-				}
-				if result.Usage.OutputTokens != nil && *result.Usage.OutputTokens > 0 {
-					producedOutput = true
-				}
-			}
-			sawResult = true
-			usage := &adapter.Usage{TokensIn: result.Usage.InputTokens, TokensOut: result.Usage.OutputTokens, TokensCacheRead: result.Usage.CacheReadInputTokens, TokensCacheWrite: result.Usage.CacheCreationInputTokens}
-			if result.Usage.InputTokens != nil {
-				used := *result.Usage.InputTokens
-				if result.Usage.CacheReadInputTokens != nil {
-					used += *result.Usage.CacheReadInputTokens
-				}
-				if result.Usage.CacheCreationInputTokens != nil {
-					used += *result.Usage.CacheCreationInputTokens
-				}
-				usage.ContextUsed = &used
-			}
-			if lastAssistantContext != nil {
-				usage.ContextUsed = lastAssistantContext
-			}
-			var cost float64
-			var window int64
-			windowSet := false
-			costKnown, windowKnown := len(result.ModelUsage) > 0, len(result.ModelUsage) > 0
-			for _, model := range result.ModelUsage {
-				if model.CostUSD == nil {
-					costKnown = false
-				} else {
-					cost += *model.CostUSD
-				}
-				if model.ContextWindow == nil || *model.ContextWindow <= 0 {
-					windowKnown = false
-				} else if windowSet && *model.ContextWindow != window {
-					windowKnown = false
-				} else {
-					window = *model.ContextWindow
-					windowSet = true
-				}
-			}
-			if costKnown {
-				// The result of a resumed session reports the whole session's spend so far; the store subtracts the previous total.
-				usage.CostEstimate, usage.CostCumulative = &cost, true
-			}
-			if len(result.ModelUsage) == 1 {
-				for name := range result.ModelUsage {
-					usage.Model = name
-				}
-			}
-			if windowKnown {
-				usage.ContextWindow = &window
-			}
-			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage})
-			if result.Result != nil && !result.IsError {
-				candidate = append(candidate[:0], (*result.Result)...)
-				haveCandidate = true
-			}
-		}
-	}
-	// A turn that ended with no result (killed, cancelled, crashed) still spent what its API responses used. The input and cache tokens of
-	// those responses are known; the output count and the cost are only in the result, so they stay unknown, and the record says it is partial.
-	if !sawResult && len(steps) > 0 {
-		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: partialUsage(steps)})
+		t.handleLine(s, append([]byte(nil), scanner.Bytes()...))
 	}
 	scanError := scanner.Err()
 	if scanError != nil {
@@ -464,14 +411,183 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 			_ = syscall.Kill(-t.cmd.Process.Pid, syscall.SIGKILL)
 		}
 	}
-	if haveCandidate && scanError == nil {
-		t.emit(adapter.Event{Kind: adapter.EventFinalAnswer, Answer: candidate})
-		terminal = true
-	}
+	t.conclude(s, scanError)
 	<-stderrDone
 	err := t.cmd.Wait()
 	t.reap.MarkReaped()
-	exit := adapter.ExitInfo{TerminalEvent: terminal}
+	exit := t.exitInfo(s, tail.String(), err)
+	t.mu.Lock()
+	t.exit, t.err = exit, scanError
+	t.mu.Unlock()
+	t.emit(adapter.Event{Kind: adapter.EventProcessExit, Exit: &exit})
+}
+
+// runState is what one turn has seen of the harness's output so far.
+type runState struct {
+	terminal                                                  bool
+	lastAssistantContext                                      *int64
+	steps                                                     map[string]claudeStep // the main loop's API responses seen so far, by message id
+	sawResult                                                 bool
+	candidate                                                 json.RawMessage
+	errorResult, errorSummary                                 string
+	errorIsResult, toolStarted, producedOutput, haveCandidate bool
+}
+
+func newRunState() *runState { return &runState{steps: map[string]claudeStep{}} }
+
+// handleLine takes one line of the harness's standard output.
+func (t *turn) handleLine(s *runState, line []byte) {
+	event, known := harness.ParseClaude(line)
+	if !known {
+		return
+	}
+	if compact, ok := harness.ParseClaudeCompaction(event); ok {
+		t.emit(adapter.Event{Kind: adapter.EventCompaction, Compaction: &adapter.Compaction{PreTokens: compact.PreTokens, PostTokens: compact.PostTokens}})
+		return
+	}
+	t.confirmSession(event.Raw)
+	switch event.Type {
+	case "assistant", "tool_progress", "system", "rate_limit_event", "user":
+		if event.Type == "rate_limit_event" && strings.Contains(strings.ToLower(string(event.Raw)), "limit reached") {
+			s.errorResult = adapter.SanitizeStderr(string(event.Raw))
+		}
+		if event.Type == "assistant" {
+			var assistant struct {
+				ParentToolUseID *string `json:"parent_tool_use_id"`
+				Message         struct {
+					ID    string `json:"id"`
+					Usage struct {
+						InputTokens              *int64 `json:"input_tokens"`
+						CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
+						CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+					} `json:"usage"`
+				} `json:"message"`
+			}
+			if json.Unmarshal(event.Raw, &assistant) == nil && assistant.ParentToolUseID == nil && assistant.Message.Usage.InputTokens != nil {
+				used := *assistant.Message.Usage.InputTokens
+				if assistant.Message.Usage.CacheReadInputTokens != nil {
+					used += *assistant.Message.Usage.CacheReadInputTokens
+				}
+				if assistant.Message.Usage.CacheCreationInputTokens != nil {
+					used += *assistant.Message.Usage.CacheCreationInputTokens
+				}
+				s.lastAssistantContext = &used
+				// One API response is several assistant events that repeat its usage: each response counts once, by its message id.
+				if id := assistant.Message.ID; id != "" {
+					s.steps[id] = claudeStep{in: *assistant.Message.Usage.InputTokens, cacheRead: assistant.Message.Usage.CacheReadInputTokens, cacheWrite: assistant.Message.Usage.CacheCreationInputTokens}
+				}
+			}
+		}
+		activity := adapter.Event{Kind: adapter.EventActivity, Summary: event.Type}
+		started, finished := harness.ClaudeToolUses(event)
+		if len(started) > 0 {
+			s.toolStarted = true
+		}
+		for _, id := range started {
+			activity.Tools = append(activity.Tools, adapter.ToolEvent{ID: id})
+		}
+		for _, id := range finished {
+			activity.Tools = append(activity.Tools, adapter.ToolEvent{ID: id, Done: true})
+		}
+		t.emit(activity)
+	case "result":
+		var result struct {
+			Result  *string `json:"result"`
+			IsError bool    `json:"is_error"`
+			Usage   struct {
+				InputTokens              *int64 `json:"input_tokens"`
+				OutputTokens             *int64 `json:"output_tokens"`
+				CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+			} `json:"usage"`
+			ModelUsage map[string]struct {
+				ContextWindow *int64   `json:"contextWindow"`
+				CostUSD       *float64 `json:"costUSD"`
+			} `json:"modelUsage"`
+		}
+		if json.Unmarshal(event.Raw, &result) != nil {
+			return
+		}
+		if result.IsError {
+			s.errorResult = adapter.SanitizeStderr(string(event.Raw))
+			s.errorIsResult = true
+			if result.Result != nil {
+				s.errorSummary = adapter.SanitizeStderr(*result.Result)
+			}
+			if result.Usage.OutputTokens != nil && *result.Usage.OutputTokens > 0 {
+				s.producedOutput = true
+			}
+		}
+		s.sawResult = true
+		usage := &adapter.Usage{TokensIn: result.Usage.InputTokens, TokensOut: result.Usage.OutputTokens, TokensCacheRead: result.Usage.CacheReadInputTokens, TokensCacheWrite: result.Usage.CacheCreationInputTokens}
+		if result.Usage.InputTokens != nil {
+			used := *result.Usage.InputTokens
+			if result.Usage.CacheReadInputTokens != nil {
+				used += *result.Usage.CacheReadInputTokens
+			}
+			if result.Usage.CacheCreationInputTokens != nil {
+				used += *result.Usage.CacheCreationInputTokens
+			}
+			usage.ContextUsed = &used
+		}
+		if s.lastAssistantContext != nil {
+			usage.ContextUsed = s.lastAssistantContext
+		}
+		var cost float64
+		var window int64
+		windowSet := false
+		costKnown, windowKnown := len(result.ModelUsage) > 0, len(result.ModelUsage) > 0
+		for _, model := range result.ModelUsage {
+			if model.CostUSD == nil {
+				costKnown = false
+			} else {
+				cost += *model.CostUSD
+			}
+			if model.ContextWindow == nil || *model.ContextWindow <= 0 {
+				windowKnown = false
+			} else if windowSet && *model.ContextWindow != window {
+				windowKnown = false
+			} else {
+				window = *model.ContextWindow
+				windowSet = true
+			}
+		}
+		if costKnown {
+			// The result of a resumed session reports the whole session's spend so far; the store subtracts the previous total.
+			usage.CostEstimate, usage.CostCumulative = &cost, true
+		}
+		if len(result.ModelUsage) == 1 {
+			for name := range result.ModelUsage {
+				usage.Model = name
+			}
+		}
+		if windowKnown {
+			usage.ContextWindow = &window
+		}
+		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage})
+		if result.Result != nil && !result.IsError {
+			s.candidate = append(s.candidate[:0], (*result.Result)...)
+			s.haveCandidate = true
+		}
+	}
+}
+
+// conclude ends a turn's events: what it spent without a result, and its answer if it ended with one.
+func (t *turn) conclude(s *runState, scanError error) {
+	// A turn that ended with no result (killed, cancelled, crashed) still spent what its API responses used. The input and cache tokens of
+	// those responses are known; the output count and the cost are only in the result, so they stay unknown, and the record says it is partial.
+	if !s.sawResult && len(s.steps) > 0 {
+		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: partialUsage(s.steps)})
+	}
+	if s.haveCandidate && scanError == nil {
+		t.emit(adapter.Event{Kind: adapter.EventFinalAnswer, Answer: s.candidate})
+		s.terminal = true
+	}
+}
+
+// exitInfo is the turn's exit evidence once its process has ended (err is what waiting for it returned).
+func (t *turn) exitInfo(s *runState, tail string, err error) adapter.ExitInfo {
+	exit := adapter.ExitInfo{TerminalEvent: s.terminal}
 	if err != nil {
 		if status, ok := err.(*exec.ExitError); ok {
 			exit.ExitCode = status.ExitCode()
@@ -479,21 +595,20 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 			exit.ExitCode = 1
 		}
 	}
-	if !terminal {
-		exit.StderrTail = tail.String()
-		exit.ErrorEvent = errorResult
-		if errorIsResult {
+	if !s.terminal {
+		exit.StderrTail = tail
+		exit.ErrorEvent = s.errorResult
+		if s.errorIsResult {
 			// An explicit error result of a turn that ran no tool and produced no output (a failed sign-in, an expired session) failed before
 			// doing anything: it is a definite failure, not an uncertain outcome.
-			exit.ErrorSummary = errorSummary
-			exit.DefiniteFailure = errorSummary != "" && !toolStarted && !producedOutput
+			exit.ErrorSummary = s.errorSummary
+			exit.DefiniteFailure = s.errorSummary != "" && !s.toolStarted && !s.producedOutput
 		}
 	}
 	t.mu.Lock()
 	exit.CancelIntent = t.cancel
-	t.exit, t.err = exit, scanError
 	t.mu.Unlock()
-	t.emit(adapter.Event{Kind: adapter.EventProcessExit, Exit: &exit})
+	return exit
 }
 
 // claudeStep is what one API response of the main loop reported about its input.

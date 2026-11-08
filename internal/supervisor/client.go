@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -14,9 +15,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -74,6 +77,35 @@ type Client struct {
 	currentConn    *websocket.Conn
 	stopping       bool
 	turns          sync.WaitGroup
+	// Warm keeps an agent's harness process up for an idle window after a turn (see warm.go); the zero value is off.
+	Warm WarmConfig
+	// FreeMemory reports free and total memory for the warm memory guard; nil reads the system's (tests set it).
+	FreeMemory func() (free, total int64, err error)
+	// FreeDockerMemory reports the containers' use and the Docker host's total for the guard; nil asks docker (tests set it).
+	FreeDockerMemory func() (used, total int64, err error)
+	// ProcessStart reports a process's own start time for the warm journal; nil asks the system (tests set it).
+	ProcessStart    func(pid int) string
+	warmPool        *warmPool
+	warmReports     chan struct{} // a change of the warm picture, to be reported
+	kaMu            sync.Mutex
+	ka              map[string]*keepAliveEntry               // each agent's cache keep-alive (see keepalive.go)
+	kaPause         keepAlivePause                           // what the server says to hold pings back for
+	keepAliveSink   func(protocol.KeepAliveReport)           // tests see each ping's report here
+	keepAliveScope  func(agentID, gen string, on bool) error // tests replace the server's answer to a ping's scope request (see keepAliveScopeCall)
+	kaScopeMu       sync.Mutex
+	kaStuck         map[string]chan struct{}                               // a ping that was told to end and is not confirmed gone yet, by agent (guarded by kaMu)
+	kaScopePending  map[string]chan struct{}                               // scope requests waiting for the server's ack, by request id
+	kaOwed          map[string]string                                      // agents whose ping's scope lift was not answered and is owed again, with the ping it is for (guarded by kaScopeMu)
+	kaScopeLocks    map[string]*sync.Mutex                                 // one scope transition at a time per agent, held across the frame and its ack (guarded by kaScopeMu)
+	kaUnconfirmed   atomic.Int64                                           // pings whose end was never confirmed and whose quarantine ran out (see keepAliveQuarantine)
+	kaQuarantine    time.Duration                                          // tests shorten keepAliveQuarantine here; zero is the default
+	warmSeq         atomic.Uint64                                          // the one counter that orders what the supervisor says of its running processes
+	warmLive        atomic.Int64                                           // warm processes alive (counted from the start of one until its end is confirmed)
+	warmClaim       func(ctx context.Context, seq uint64, count int) error // tests replace the server's answer to a warm claim (see claimWarm)
+	kaRenewEvery    time.Duration                                          // tests shorten protocol.KeepAliveScopeRenewEvery here; zero is the default
+	kaWaitTerminate time.Duration                                          // tests shorten keepAliveWaitTerminate here; zero is the default
+	warmNow         func() time.Time
+	warmAfter       func(time.Duration, func()) *time.Timer
 }
 
 func NewClient(machineID, machineKey, serverURL string, journal *Journal, implementation adapter.Adapter) *Client {
@@ -82,6 +114,8 @@ func NewClient(machineID, machineKey, serverURL string, journal *Journal, implem
 		client.CapabilityReports = append(client.CapabilityReports, protocol.CapabilityReport{Tool: item.Tool, Version: item.Version, Environment: item.Environment, Flags: implementation.Capabilities(item.Version, item.Environment)})
 	}
 	client.Harnesses = defaultHarnesses()
+	client.Warm = WarmConfigFromEnv()
+	client.warmReports = make(chan struct{}, 1)
 	if journal != nil && journal.path != "" {
 		client.AgentLogs = agentlog.New(filepath.Join(filepath.Dir(journal.path), "agent-logs"))
 	}
@@ -158,7 +192,9 @@ func (c *Client) capabilityReportsSnapshot() []protocol.CapabilityReport {
 
 func (c *Client) Run(ctx context.Context) error {
 	c.SweepLegacyKeys()
+	c.SweepWarmOrphans(ctx)
 	go c.sweepAgentLogs(ctx)
+	go c.warmGuard(ctx)
 	for {
 		err := c.RunOnce(ctx)
 		if ctx.Err() != nil {
@@ -234,7 +270,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -302,6 +338,12 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 	c.startLauncherReprobe(probeCtx)
+	if c.warmCapable() {
+		go c.sendWarmReports(probeCtx)
+		c.warmChanged() // the picture at connect: what a server that restarted does not know
+	}
+	// A ping's scope lift the last connection lost is owed: sent again now, so the agent's toolbox is not refused for as long as the server's own limit.
+	go func() { _ = c.keepAliveSettleLifts(probeCtx, "") }()
 	for _, turn := range stoppedTurns {
 		_ = turn.Cancel()
 	}
@@ -464,6 +506,20 @@ func (c *Client) RunOnce(ctx context.Context) error {
 					c.report(err)
 				}
 			}(frame)
+		case protocol.RetireWarm:
+			// Ending a process can take its grace; keep reading frames meanwhile.
+			go func(request protocol.Frame) {
+				result := protocol.Frame{V: protocol.Version, Type: protocol.RetireWarmResult, ReqID: request.ReqID, Result: "ok"}
+				if !c.RetireWarmTool(request.RetireTool, "an account switch") {
+					result.Result, result.Message = "error", "a warm process of the tool is not confirmed gone"
+				}
+				if probeCtx.Err() != nil {
+					return
+				}
+				if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
+					c.report(err)
+				}
+			}(frame)
 		case protocol.PathProbe:
 			// Launcher version checks can take up to a minute. Keep reading
 			// machine frames while the probe runs; send serializes writes.
@@ -581,11 +637,29 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				return err
 			}
 		case protocol.Pong:
+		case protocol.KeepAlivePausedFrame:
+			c.applyKeepAlivePaused(frame.PausedTools, frame.PausedAgents)
+		case protocol.AgentSettingsFrame:
+			// Ending idle processes can take their grace: not on the loop that reads frames.
+			go c.applyAgentSettings(frame.WarmIdleSeconds, frame.KeepAliveByTool)
+		case protocol.KeepAliveScopeAckFrame, protocol.WarmClaimAckFrame:
+			c.keepAliveScopeAcked(frame.ReqID) // both are answers to a request waiting by its id
 		case protocol.TelemetryConfig:
 			if frame.Telemetry != nil && c.OnTelemetry != nil {
 				c.OnTelemetry(*frame.Telemetry)
 			}
 		case protocol.Deliver:
+			if delivery := frame.Delivery(); c.keepAliveBusy(delivery.AgentID) {
+				// A ping of the agent runs (or was not confirmed gone): the delivery waits for it to end, which can take as long as a container's
+				// cleanup, so it does that in a goroutine of its own and the loop goes on reading frames (pings, controls, the keep-alive pause).
+				go func() {
+					if err := c.handleDeliver(ctx, conn, delivery); err != nil {
+						c.report(fmt.Errorf("agent %s turn %s: %w", delivery.AgentID, delivery.TurnID, err))
+						_ = conn.CloseNow() // what returning the error would have done: the loop ends and the connection is made again
+					}
+				}()
+				continue
+			}
 			if err := c.handleDeliver(ctx, conn, frame.Delivery()); err != nil {
 				return err
 			}
@@ -711,6 +785,10 @@ func (c *Client) applySpawn(frame protocol.Frame) protocol.Frame {
 			return result
 		}
 	}
+	if !c.keepAliveForget(frame.AgentID) || !c.retireWarm(frame.AgentID, "the agent was spawned again") {
+		result.Result, result.Message = "error", "the agent's previous process could not be confirmed ended"
+		return result
+	}
 	if err := c.setAgentKey(frame.AgentID, frame.AgentKey); err != nil {
 		c.report(fmt.Errorf("agent tools config for %s: %w", frame.AgentID, err))
 		result.Result, result.Message = "error", err.Error()
@@ -798,6 +876,8 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		NativeSessionStarted: delivery.NativeSessionStarted, ForkSession: delivery.ForkSession, CheckoutPath: delivery.CheckoutPath, LaunchPath: launchSpelling(delivery.LaunchPath, delivery.CheckoutPath),
 		Mode: delivery.Mode, ContextJSON: delivery.Context, AllowedTools: delivery.AllowedTools, Providers: delivery.Providers}
 	containerized := delivery.Agent.Variant == "docker"
+	sharesHome := !containerized // a Docker launcher's login is the host's file only when it says it shares the host's Claude home
+	launcherConfirmsEnd := false // a Docker launcher's process is kept warm only when its wrapper confirms the end of the session in the container
 	if delivery.Agent.LauncherID != "" {
 		row := c.launcherRow(delivery.Agent.LauncherID)
 		if row.ID == "" || !row.Available {
@@ -816,8 +896,11 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		}
 		spec.AgentServerURL = row.AgentServerURL
 		containerized = row.Containerized
+		sharesHome = !row.Containerized || slices.Contains(row.Features, "claude_home_shared")
+		launcherConfirmsEnd = slices.Contains(row.Features, containerEndFeature)
 	}
 	if delivery.DockerOnly && !containerized && delivery.Agent.Tool != "fake" {
+		c.retireWarm(delivery.AgentID, "native launcher while docker-only is on")
 		return errDockerOnly
 	}
 	if delivery.Agent.Tool == "pi" && containerized && delivery.AttachmentBearer != "" {
@@ -955,6 +1038,9 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Ack, AgentID: delivery.AgentID, Generation: delivery.Generation, TurnID: delivery.TurnID, Ref: delivery.TurnID, Level: "accepted"}); err != nil {
 		return err
 	}
+	cred := credentials{}
+	cred.stamp, cred.ok = warmCredentials(spec, sharesHome)
+	cred.containerOK = !containerized || launcherConfirmsEnd
 	// The harness's stderr is kept in the agent's output log for as long as the turn runs. A log that cannot be opened is reported and the
 	// turn runs without one: it is a debugging aid, never a reason not to work.
 	var sink *agentlog.Turn
@@ -966,7 +1052,13 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 			spec.StderrSink = sink
 		}
 	}
-	turn, err := c.Adapter.Start(ctx, spec)
+	c.applyWarmIdle(delivery.WarmIdleSeconds)
+	c.keepAliveRemember(spec, delivery.KeepAliveSettings, cred, sharesHome)
+	var sinkWriter io.Writer
+	if sink != nil {
+		sinkWriter = sink
+	}
+	turn, err := c.startTurn(ctx, spec, sinkWriter, cred)
 	if err != nil {
 		if sink != nil {
 			_ = sink.Close()
@@ -1114,6 +1206,9 @@ events:
 		if event.Kind == adapter.EventProcessExit || journalErr != nil {
 			continue
 		}
+		if event.Kind == adapter.EventUsage && event.Usage != nil && event.Usage.CostCumulative && event.Usage.CostEstimate != nil {
+			c.keepAliveNoteCost(delivery.AgentID, *event.Usage.CostEstimate)
+		}
 		frame := turnEventFrame(delivery.AgentID, delivery.Generation, delivery.TurnID, event)
 		switch event.Kind {
 		case adapter.EventActivity, adapter.EventUsage, adapter.EventCompaction:
@@ -1179,12 +1274,19 @@ events:
 	}
 	if err := c.Journal.RecordExitInfo(ctx, delivery.TurnID, exit); err != nil {
 		c.report(err)
+		c.warmTurnEnded(turn, adapter.ExitInfo{})
+		c.keepAliveTurnEnded(delivery.AgentID, adapter.ExitInfo{})
 		release()
 		c.sendDeferredStopAck(ctx, delivery.AgentID)
 		return
 	}
-	// The process is durably finished before the server sees this frame. Free
-	// local admission now so an immediate follow-up delivery is not rejected.
+	// The process is durably finished before the server sees this frame. A warm process is settled (kept idle or ended) first, so that the
+	// delivery admitted next finds it in the pool or finds it gone; then local admission is freed so an immediate follow-up delivery is not
+	// rejected.
+	c.warmTurnEnded(turn, exit)
+	if delivery.Mode == adapter.ModeNormal {
+		c.keepAliveTurnEnded(delivery.AgentID, exit)
+	}
 	release()
 	c.sendDeferredStopAck(ctx, delivery.AgentID)
 	if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.Process, AgentID: delivery.AgentID, Generation: delivery.Generation, TurnID: delivery.TurnID, Exit: &exit}); err != nil {
@@ -1199,6 +1301,16 @@ func (c *Client) sendDeferredStopAck(ctx context.Context, agentID string) {
 	stopped := c.desired[agentID].Desired == "stopped" && c.running[agentID] == nil
 	c.mu.Unlock()
 	if stopped {
+		if !c.stopWarm(agentID, "the agent was stopped") {
+			// A process of the agent is not confirmed gone: the ack and the key's drop wait for it, and it is tried again.
+			c.mu.Lock()
+			if pending {
+				c.pendingStopAck[agentID] = ack
+			}
+			c.mu.Unlock()
+			c.stopWarmUntilGone(agentID, func() { c.sendDeferredStopAck(ctx, agentID) })
+			return
+		}
 		c.forgetAgentKey(agentID)
 	}
 	if pending {
@@ -1218,6 +1330,7 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 		turns = append(turns, turn)
 	}
 	c.mu.Unlock()
+	c.shutdownWarm()
 	for _, turn := range turns {
 		if err := turn.Cancel(); err != nil {
 			c.report(err)
@@ -1267,7 +1380,20 @@ func (c *Client) handleControl(frame protocol.Frame) bool {
 	}
 	c.mu.Unlock()
 	if frame.DesiredState == "stopped" && turn == nil {
-		c.forgetAgentKey(frame.AgentID)
+		// A warm process is ended and reaped before the ack and before the key goes: nothing is left holding either. If it is not confirmed
+		// gone, the ack and the key wait for it and it is tried again.
+		if c.stopWarm(frame.AgentID, "the agent was stopped") {
+			c.forgetAgentKey(frame.AgentID)
+		} else {
+			c.mu.Lock()
+			if c.pendingStopAck == nil {
+				c.pendingStopAck = make(map[string]protocol.Frame)
+			}
+			c.pendingStopAck[frame.AgentID] = controlAck(frame)
+			c.mu.Unlock()
+			c.stopWarmUntilGone(frame.AgentID, func() { c.sendDeferredStopAck(context.Background(), frame.AgentID) })
+			return true
+		}
 	}
 	if frame.DesiredState == "stopped" && turn != nil {
 		_ = turn.Cancel()

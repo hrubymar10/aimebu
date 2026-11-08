@@ -52,11 +52,40 @@ export const stateBadge = kind => ({ idle: 'idle', working: 'thinking', error: '
 // (v2's own `dead`) when it is stopped, lost or offline, muted for anything else.
 export const stateDot = kind => ({ idle: 'active', working: 'active', paused: 'stale', attention: 'stale', error: 'dead', stopped: 'dead', offline: 'dead' })[kind] || 'offline';
 
+// What a card says about warm mode, for an idle agent: "Warm · sleeps in N min" while its process is being kept up for the next message, "Sleeping"
+// when warm mode is on for it and there is no live process (the next message starts it, a little slower). Nothing when warm mode does not apply.
+// `now` is a parameter so the text is a function of the data and the time.
+export function warmOf(agent, now = Date.now()) {
+  const warm = agent.warm;
+  if (!warm || agent.observed !== 'idle') return null;
+  if (warm.state === 'warm') {
+    const left = Date.parse(warm.sleeps_at) - now;
+    if (!Number.isFinite(left)) return { text: 'Warm', title: 'Its process is kept running for the next message.' };
+    const minutes = Math.max(1, Math.ceil(left / 60000));
+    return { text: `Warm · sleeps in ${minutes} min`, title: 'Its process is kept running for the next message, so it answers faster. It goes to sleep when this ends.' };
+  }
+  return { text: 'Sleeping', title: 'Its process is stopped; the next message starts it, a few seconds slower than a warm agent.' };
+}
+
+// What a card says about the prompt cache keep-alive: how often it is pinged, what a stretch of pings costs (measured from the last ping when there is
+// one), and a warning when the last ping missed the cache or failed. Null when keep-alive does not apply to the agent.
+export function keepAliveOf(agent) {
+  const keep = agent.keep_alive;
+  if (!keep) return null;
+  const dollars = value => (value < 0.01 ? '<$0.01' : `$${value.toFixed(value < 1 ? 2 : 1)}`);
+  const cost = keep.estimate_usd != null ? `, up to ${keep.pings_per_stretch} pings after its last turn ≈ ${dollars(keep.estimate_usd)}` : '';
+  let warning = '';
+  if (keep.last_ok === false) warning = `The last ping failed${keep.last_error ? `: ${keep.last_error}` : ''}.`;
+  else if (keep.missed) warning = 'The last ping did not find the cache (it had expired, or the ping differed from a real turn): it paid to write it again.';
+  return { text: `Cache kept warm every ${keep.interval_minutes} min${cost}`, warning };
+}
+
 export function activityOf(agent, state) {
   const woken = agent.woken_by === 'reply' ? 'Woken by reply · ' : '';
   // An idle agent that has done nothing has nothing to say here: the pill already says idle and for how long.
   const said = agent.activity || (state.observed === 'Working' ? 'Working…' : '');
-  const text = state.why || (said ? woken + said : woken ? 'Woken by reply' : '');
+  const warm = state.why ? null : warmOf(agent);
+  const text = state.why || (said ? woken + said : woken ? 'Woken by reply' : warm ? warm.text : '');
   const last = agent.last_activity_at || agent.activity_at, seen = agent.machine_last_seen;
   return { text, last, seen };
 }

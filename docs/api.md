@@ -546,6 +546,19 @@ behind it. The guard judges the host machine's account, so only agents on the ho
 paused, stopped, lost or waiting on a recovery decision does not. A `hold` with `code` `docker_only` (text "native launcher refused") marks any agent that is not stopped on a native launcher while "Only run agents in docker" is on, whatever its machine or state. The card shows an agent that needs a recovery decision
 (`recovery_block`) or has a `hold` as an orange dot with the state "needs decision" or "held: claude session 95%" and the reason on
 the card, instead of the green "idle" of an agent that is free; a lost process stays red.
+Listed room agent cards also carry an optional `warm` (`{state, sleeps_at}`) when the owner has set a warm window and the
+agent is an active Claude agent on a machine that keeps processes warm: `state` is `warm` (with `sleeps_at`, RFC 3339, when its
+process goes to sleep) while its process is kept up for the next message, `sleeping` when there is none, and the field is absent
+while the agent is in a turn. The machine rows of `GET /api/machines` carry an optional `warm` (`{idle, busy, started, reused,
+rss_bytes, container_wide_bytes, unconfirmed_ping_ends?}`; `unconfirmed_ping_ends` counts keep-alive pings in a container whose end was never confirmed
+and whose quarantine ran out, present only when above 0) for a connected machine whose supervisor keeps processes warm; the memory is not per agent
+(`rss_bytes` is the processes the supervisor runs itself, `container_wide_bytes` everything running in containers).
+Listed room agent cards also carry an optional `keep_alive` for an active Claude agent on a machine that keeps processes warm, when the owner
+has the cache keep-alive on: `{interval_minutes, pings_per_stretch, estimate_usd?, last_at?, last_ok?, last_error?, cache_read?, cache_write?,
+missed?}` (`estimate_usd` is the cost of a stretch of pings, measured from the last ping when there is one, else the price list's; `missed` says the
+last ping wrote to the cache what it should have read). `GET /api/agent-isolation` also returns `keep_alive: {enabled, claude_minutes,
+codex_minutes, stop_after_hours}` (defaults on, 50, 10, 24), which the owner changes with `PUT {keep_alive: {...}}` (any of the fields; 0 minutes is
+off for that harness; the bounds are 0 to 55 minutes for Claude, 0 to 1440 for Codex and 0 to 720 hours; another user gets 403).
 Listed room agent cards also include optional `latest_usage` with nullable
 `tokens_in`, `tokens_out`, `context_used`, `context_window`, and
 `cost_so_far`, and `cost_estimated` when any of that cost used the price list.

@@ -30,6 +30,20 @@ type machineRow struct {
 	// requested, with the reason when it cannot. Only the host machine can be asked from here, and only when a project is named; absent
 	// means not known.
 	ProjectWorktree *worktreeCheck `json:"project_worktree,omitempty"`
+	// Warm is what the machine's supervisor last said about the agent processes it keeps warm (only for a connected one that keeps any): how many
+	// are live and what they use. The memory is not per agent: RSSBytes covers the processes the supervisor runs itself, ContainerWideBytes every
+	// running container (Docker reports no finer, and the harness container is shared by all agents).
+	Warm *machineWarm `json:"warm,omitempty"`
+}
+
+type machineWarm struct {
+	Idle                int   `json:"idle"`
+	Busy                int   `json:"busy"`
+	Started             int   `json:"started"`
+	Reused              int   `json:"reused"`
+	UnconfirmedPingEnds int   `json:"unconfirmed_ping_ends,omitempty"`
+	RSSBytes            int64 `json:"rss_bytes"`
+	ContainerWideBytes  int64 `json:"container_wide_bytes"`
 }
 
 func (s *Server) ownerMachine(w http.ResponseWriter, r *http.Request) bool {
@@ -119,8 +133,25 @@ func (s *Server) machineRow(m store.Machine) machineRow {
 	if m.RevokedAt.Valid {
 		connected = false
 	}
-	return machineRow{ID: m.ID, Name: m.Name, IsHost: m.IsHost, Approved: m.Approved, RevokedAt: m.RevokedAt.String,
+	row := machineRow{ID: m.ID, Name: m.Name, IsHost: m.IsHost, Approved: m.Approved, RevokedAt: m.RevokedAt.String,
 		LastSeen: m.LastSeen.String, SupervisorVersion: m.SupervisorVersion.String, Connected: connected}
+	if connected && conn.supportsWarm {
+		conn.warmMu.Lock()
+		report := conn.warm
+		conn.warmMu.Unlock()
+		if report != nil {
+			warm := &machineWarm{Started: report.Started, Reused: report.Reused, UnconfirmedPingEnds: report.UnconfirmedPingEnds, RSSBytes: report.RSSBytes, ContainerWideBytes: report.ContainerWideBytes}
+			for _, agent := range report.Agents {
+				if agent.State == "busy" {
+					warm.Busy++
+				} else {
+					warm.Idle++
+				}
+			}
+			row.Warm = warm
+		}
+	}
+	return row
 }
 
 // machineList is read-only: the owner and the admins see every machine (they run the harnesses on them), anyone else the approved machines
@@ -359,6 +390,7 @@ func (s *Server) machineRevocation(w http.ResponseWriter, r *http.Request) {
 	if conn != nil {
 		conn.stop()
 	}
+	s.forgetWarmSeen(r.Context(), id)
 	m, err = s.Store.MachineByID(r.Context(), id)
 	if err != nil {
 		fail(w, err)

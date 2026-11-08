@@ -313,3 +313,43 @@ func TestMigrationEightyThreeAddsVibeToTheProviderLimitTools(t *testing.T) {
 		t.Fatal("an unknown tool must still be rejected")
 	}
 }
+
+// The agents at a provider limit now are listed for their machine (a cache ping would only meet the limit): one with a reset time in the future, or
+// none yet, is; one whose reset has passed, and one on another machine, are not.
+func TestProviderLimitedAgentsListsOnlyLimitsInForce(t *testing.T) {
+	t.Parallel()
+	s, f, _ := recoveryFixture(t, false)
+	ctx := context.Background()
+	var machine string
+	if err := s.db.QueryRow(`SELECT machine_id FROM agent WHERE id=?`, f.agent.ID).Scan(&machine); err != nil {
+		t.Fatal(err)
+	}
+	var tool string
+	if err := s.db.QueryRow(`SELECT tool FROM agent WHERE id=?`, f.agent.ID).Scan(&tool); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.ProviderLimitedAgents(ctx, machine); err != nil || len(got) != 0 {
+		t.Fatalf("no limit: %v %v", got, err)
+	}
+	stamp := func(d time.Duration) string { return time.Now().Add(d).UTC().Format("2006-01-02T15:04:05.000000000Z") }
+	insert := func(reset any) {
+		t.Helper()
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES (?,?,?,?,?)`, f.agent.ID, f.turn.ID, stamp(-time.Hour), reset, tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, reset := range map[string]any{"a reset in the future": stamp(time.Hour), "no reset time yet": nil} {
+		insert(reset)
+		if got, err := s.ProviderLimitedAgents(ctx, machine); err != nil || len(got) != 1 || got[0] != f.agent.ID {
+			t.Fatalf("%s: %v %v", name, got, err)
+		}
+	}
+	insert(stamp(-time.Minute))
+	if got, err := s.ProviderLimitedAgents(ctx, machine); err != nil || len(got) != 0 {
+		t.Fatalf("a limit that has reset: %v %v", got, err)
+	}
+	insert(stamp(time.Hour))
+	if got, err := s.ProviderLimitedAgents(ctx, "mch_elsewhere"); err != nil || len(got) != 0 {
+		t.Fatalf("another machine: %v %v", got, err)
+	}
+}

@@ -54,6 +54,16 @@ type machineConn struct {
 	supportsStopReplay         bool
 	supportsTelemetryConfig    bool
 	supportsAgentKeys          bool
+	supportsWarm               bool
+	warmMu                     sync.Mutex
+	pauseMu                    sync.Mutex // serializes what keep_alive_paused says; pauseLast is what it said last
+	pauseLast                  string
+	pauseSent                  bool
+	settingsMu                 sync.Mutex // serializes agent_settings; settingsLast is what it said last
+	settingsLast               string
+	settingsSent               bool
+	warm                       *protocol.WarmReport                // the supervisor's last report of its warm processes
+	pings                      map[string]protocol.KeepAliveReport // each agent's last cache keep-alive ping, as its supervisor reported it
 	harnessMu                  sync.Mutex
 	harnessSetMu               sync.Mutex
 	harnesses                  []protocol.HarnessRow
@@ -303,8 +313,11 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, supportsWarm: hello.SupportsWarm, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
+	if !c.supportsWarm {
+		s.noteWarmSeen(machineID, 0) // a supervisor that cannot keep anything warm has nothing left running when it drops
+	}
 	s.machineMu.Lock()
 	old := s.machines[machineID]
 	s.machines[machineID] = c
@@ -352,6 +365,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	s.maintenanceMu.RUnlock()
 	handshakeLocked = false
 	go s.machinePinger(ctx, c)
+	go s.watchKeepAlivePause(ctx, c)
 	go s.replayPendingStops(ctx, c)
 	for {
 		frame, err := readMachineFrame(ctx, conn)
@@ -413,6 +427,38 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
+		if frame.Type == protocol.KeepAliveScopeFrame {
+			s.handleKeepAliveScope(c, frame, func(agentID string) bool {
+				agent, err := s.Store.AgentRuntimeByID(ctx, agentID)
+				return err == nil && agent.MachineID == c.id
+			})
+			continue
+		}
+		if frame.Type == protocol.KeepAliveFrame {
+			if frame.KeepAlive != nil && frame.KeepAlive.AgentID != "" {
+				c.warmMu.Lock()
+				if c.pings == nil {
+					c.pings = map[string]protocol.KeepAliveReport{}
+				}
+				c.pings[frame.KeepAlive.AgentID] = *frame.KeepAlive
+				c.warmMu.Unlock()
+				s.recordKeepAliveUsage(ctx, c, *frame.KeepAlive)
+			}
+			continue
+		}
+		if frame.Type == protocol.WarmClaimFrame {
+			s.handleWarmClaim(c, frame)
+			continue
+		}
+		if frame.Type == protocol.WarmStateFrame {
+			if frame.Warm != nil {
+				c.warmMu.Lock()
+				c.warm = frame.Warm
+				c.warmMu.Unlock()
+				s.applyWarmCount(c, frame.Warm.Seq, max(len(frame.Warm.Agents), frame.Warm.Processes)+frame.Warm.PingsActive, false)
+			}
+			continue
+		}
 		if frame.Type == protocol.LauncherResult || frame.Type == protocol.DetectResult {
 			c.harnessMu.Lock()
 			waiter := c.launcherPending[frame.ReqID]
@@ -425,7 +471,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		if frame.Type == protocol.PathResult || frame.Type == protocol.SessionScanResult || frame.Type == protocol.WorktreeResult || frame.Type == protocol.AgentLogResult || frame.Type == protocol.AgentLogUsageResult {
+		if frame.Type == protocol.PathResult || frame.Type == protocol.SessionScanResult || frame.Type == protocol.WorktreeResult || frame.Type == protocol.AgentLogResult || frame.Type == protocol.AgentLogUsageResult || frame.Type == protocol.RetireWarmResult {
 			c.harnessMu.Lock()
 			waiter := c.pathPending[frame.ReqID]
 			c.harnessMu.Unlock()
@@ -741,6 +787,16 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	if err != nil {
 		return err
 	}
+	warm, err := s.warmIdleSeconds(ctx)
+	if err != nil {
+		return err
+	}
+	delivery.WarmIdleSeconds = &warm
+	keep, err := s.keepAliveConfig(ctx)
+	if err != nil {
+		return err
+	}
+	delivery.KeepAliveSettings = keep.settingsFor(delivery.Agent.Tool)
 	c.boundMu.RLock()
 	generation, ok := c.bound[delivery.AgentID]
 	c.boundMu.RUnlock()

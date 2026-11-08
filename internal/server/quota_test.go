@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/quota"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/switcher"
@@ -573,4 +574,66 @@ func TestQuotaSourceMapsTheUsageSnapshotAndTheSwitcher(t *testing.T) {
 		t.Fatalf("profiles = %v %v", names, err)
 	}
 	_ = m
+}
+
+// The web switch holds new turns of the tool before it ends the host's warm processes (and for as long as the switch runs), so none can start and park
+// an idle process on the login about to go; the hold is released whatever the switch came to.
+func TestTheWebSwitchHoldsNewTurnsBeforeRetiringWarmAgents(t *testing.T) {
+	f, m, _ := quotaEnv(t)
+	machine := connectHost(t, f, true)
+	heldWhenAsked := make(chan bool, 1)
+	go func() {
+		request := <-machine.sendQueue
+		for request.Type == protocol.KeepAlivePausedFrame {
+			request = <-machine.sendQueue
+		}
+		heldWhenAsked <- f.srv.Store.DispatchHeldForSwitch("claude")
+		machine.harnessMu.Lock()
+		waiter := machine.pathPending[request.ReqID]
+		machine.harnessMu.Unlock()
+		waiter <- protocol.Frame{V: protocol.Version, Type: protocol.RetireWarmResult, ReqID: request.ReqID, Result: "ok"}
+	}()
+	resp := f.request(http.MethodPost, "/api/switcher/claude/use", map[string]string{"name": "B"}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	if !<-heldWhenAsked {
+		t.Fatal("new turns were not held when the supervisor was asked to end its warm agents")
+	}
+	if f.srv.Store.DispatchHeldForSwitch("claude") {
+		t.Fatal("the hold outlived the switch")
+	}
+	if got := activeProfile(t, m); got != "B" {
+		t.Fatalf("active = %s", got)
+	}
+}
+
+// Removing the active profile deletes the live login the host's warm processes hold: it is refused (409 warm_agents, nothing deleted) unless the
+// supervisor confirms they are gone, the same as a switch away from it.
+func TestRemovingTheActiveProfileRetiresWarmAgentsFirst(t *testing.T) {
+	f, m, _ := quotaEnv(t)
+	machine := connectHost(t, f, true)
+	go answerRetire(machine, "error", "a warm process of the tool is not confirmed gone")
+	resp := f.request(http.MethodDelete, "/api/switcher/claude/profiles/A", nil, true)
+	var body struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	resp.Body.Close()
+	if resp.StatusCode != 409 || body.Error != "warm_agents" {
+		t.Fatalf("status=%d body=%+v", resp.StatusCode, body)
+	}
+	if got := activeProfile(t, m); got != "A" {
+		t.Fatalf("active = %s: the profile was removed under a warm process", got)
+	}
+	if f.srv.Store.DispatchHeldForSwitch("claude") {
+		t.Fatal("a refused removal must release its hold")
+	}
+	go answerRetire(machine, "ok", "")
+	resp = f.request(http.MethodDelete, "/api/switcher/claude/profiles/A", nil, true)
+	resp.Body.Close()
+	if resp.StatusCode != 204 {
+		t.Fatalf("confirmed: status=%d", resp.StatusCode)
+	}
 }

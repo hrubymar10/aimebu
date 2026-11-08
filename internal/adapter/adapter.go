@@ -56,7 +56,11 @@ type TurnSpec struct {
 	NativeSessionStarted bool
 	// ForkSession resumes NativeSessionHandle as a copy (Claude's --fork-session): the harness saves it under a new id, which the turn
 	// reports in its native_session_started event.
-	ForkSession  bool
+	ForkSession bool
+	// KeepAlive marks a turn that is not work: it keeps the harness's prompt cache warm and nothing else. The adapter asks the model to answer with
+	// no messages, and the supervisor throws the answer away; no turn exists for it on the server. Never journaled. Only an adapter that is a
+	// KeepAliver runs one.
+	KeepAlive    bool `json:"-"`
 	CheckoutPath string
 	// LaunchPath, when set, is the folder the harness is started in instead of CheckoutPath: another spelling of the same directory, which a
 	// Claude Code session was saved under. The supervisor sets it only after checking it resolves to CheckoutPath.
@@ -193,6 +197,12 @@ type Capabilities struct {
 	ContextWindow    bool `json:"context_window"`
 	Cost             bool `json:"cost"`
 	CancelConfirmed  bool `json:"cancel_confirmed"`
+}
+
+// KeepAliver is implemented by an adapter that can run a keep-alive turn (TurnSpec.KeepAlive): the same process arguments as a real turn (so the same
+// cached prefix), and a user turn that only asks the model to reply with nothing.
+type KeepAliver interface {
+	KeepAliveTool() string
 }
 
 type Adapter interface {

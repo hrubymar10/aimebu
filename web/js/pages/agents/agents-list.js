@@ -5,7 +5,7 @@ import { harnessIcon, agentLabel } from '../../sender-identity.js';
 import { relativeTime, stateAge } from '../../time.js';
 import { harnessName } from '../../harness-version.js';
 import { healthLabel } from '../health/model.js';
-import { actionsOf, activityOf, contextOf, grantsOf, liveOf, profileRows, stateBadge, stateDot, stateOf, switchStatusOf } from './model.js';
+import { actionsOf, activityOf, keepAliveOf, contextOf, grantsOf, liveOf, profileRows, stateBadge, stateDot, stateOf, switchStatusOf } from './model.js';
 
 const PATHS = {
   dm: 'M3 4h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9l-4 3v-3H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
@@ -85,7 +85,7 @@ export class AgentCard extends Component {
 
   render({ agent, expanded, profile, output, readOutput, down, lifecycle, api }) {
     const state = stateOf(agent), activity = activityOf(agent, state), grants = grantsOf(agent), context = contextOf(agent.latest_usage), live = liveOf(agent);
-    const sw = switchStatusOf(agent, harnessName), actions = actionsOf(agent, { down, lifecycle });
+    const sw = switchStatusOf(agent, harnessName), actions = actionsOf(agent, { down, lifecycle }), keep = keepAliveOf(agent);
     const { src, label } = harnessIcon(agent.tool || '');
     const name = agentLabel(agent) || agent.id, dm = `Message ${agent.name || agent.slug || 'agent'} privately`;
     const reason = key => actions.find(action => action.name === key);
@@ -102,6 +102,7 @@ export class AgentCard extends Component {
           <${QuickButton} className="agent-stop icon-btn-danger" label="Stop" icon="stop" disabled=${reason('act-stop').disabled} onClick=${() => api.store.control(agent.id, 'stop')} />
           ${!expanded && html`<${IconButton} name="chevron-right" label="Open agent profile" className="agent-expand" aria-expanded="false" onClick=${toggle} />`}</div></div>
       <small class="agent-meta">${`${harnessName(agent.tool) || 'unknown'} · ${agent.model || 'unknown'}`}</small>
+      <small class="agent-keepalive" hidden=${!keep || (!expanded && !keep.warning)} title=${keep?.warning || ''}>${keep ? (keep.warning || keep.text) : ''}</small>
       <small class="agent-role-update">${agent.role_updated ? 'Role updated · respawn to apply' : ''}</small>
       <div class="agent-health">${(agent.health_flags || []).map((flag, index) => html`<span key=${`${flag.code}${index}`} class=${`health-flag health-${flag.code}`} title=${healthLabel(flag)}>${healthLabel(flag)}</span>`)}</div>
       <p class="agent-activity" title=${[activity.last && `Last agent event: ${new Date(activity.last).toLocaleString()}`, activity.seen && `Supervisor seen: ${new Date(activity.seen).toLocaleString()}`].filter(Boolean).join(' · ') || 'No activity time recorded'}>${activity.text}</p>
