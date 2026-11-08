@@ -385,9 +385,11 @@ async function main() {
     const mark = () => page.$eval('[data-room-id=rm_gen] > .room-item', row => ({ background: getComputedStyle(row).backgroundColor, name: getComputedStyle(row.querySelector('.room-item-name')).color }));
     const marked = await mark();
     await page.evaluate(() => document.querySelector('#app-view').classList.add('inbox-open'));
+    await new Promise(resolve => setTimeout(resolve, 400)); // past the row's background transition
     const unmarked = await mark();
     assert.ok(unmarked.background === 'rgba(0, 0, 0, 0)' && unmarked.background !== marked.background && unmarked.name !== marked.name, `the open room is not highlighted under the Inbox: ${JSON.stringify({ marked, unmarked })}`);
     await page.evaluate(() => document.querySelector('#app-view').classList.remove('inbox-open'));
+    await new Promise(resolve => setTimeout(resolve, 400));
     assert.deepEqual(await mark(), marked, 'the highlight returns with the room view');
     // The open room says so to assistive tech, and the member count says what it counts.
     assert.deepEqual(await page.$$eval('.room-item-name[aria-current]', nodes => nodes.map(node => node.closest('[data-room-id]').dataset.roomId)), ['rm_gen']);
@@ -395,6 +397,25 @@ async function main() {
     await page.evaluate(() => { localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1'); document.dispatchEvent(new CustomEvent('aimebu:sidebar-preview')); });
     assert.equal((await active()).previews.length > 5, true, 'every room previews');
     assert.equal((await active()).previews.find(item => item[0] === 'rm_api')[1], 'No messages yet');
+    await page.close();
+  }
+
+  // The room that becomes the open one is shown: its folded project opens, once for each time it becomes the open room; the fold the person makes after
+  // that stays, and the Inbox or a link opening another room of a folded project opens that project too.
+  {
+    const page = await mount({ auto: answerAll({}) });
+    const folded = id => page.$eval(`[data-room-id=${id}]`, node => node.classList.contains('collapsed'));
+    await page.evaluate(() => window.__sidebar.setActive('rm_bg')); await settle(page);
+    assert.equal(await folded('rm_ah'), true, 'Alpha (a project first seen) starts folded, and holds no open room');
+    await page.evaluate(() => window.__sidebar.setActive('rm_gen')); await settle(page);
+    assert.equal(await folded('rm_ah'), false, 'a folded project opens when one of its rooms becomes the open room');
+    assert.deepEqual(await page.$$eval('.room-item.active', nodes => nodes.map(node => node.parentElement.dataset.roomId)), ['rm_gen'], 'and the open room is on screen and marked');
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click()); // folding it again while its room is open is the person's choice
+    await settle(page);
+    assert.equal(await folded('rm_ah'), true, 'a fold made while the room is open stays');
+    await page.evaluate(() => window.__sidebar.setActive('rm_bg')); await settle(page);
+    await page.evaluate(() => window.__sidebar.setActive('rm_api')); await settle(page);
+    assert.equal(await folded('rm_ah'), false, 'and the project opens again when another of its rooms becomes the open one');
     await page.close();
   }
 

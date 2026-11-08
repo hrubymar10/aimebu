@@ -106,6 +106,8 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => ({ add: [document.querySelector('#machine-add').hidden, document.querySelector('#machine-add').disabled, document.querySelector('#machine-add').title],
         locked: [...document.querySelectorAll('.machine-card-actions button:not(.machine-stop-all)')].map(b => [b.disabled, b.title]), stop: [...document.querySelectorAll('.machine-stop-all')].every(b => !b.disabled) })),
         { add: [false, true, 'Only the owner can pair machines'], locked: [[true, 'Only the owner can approve machines'], [true, 'Only the owner can revoke machines'], [true, 'Only the owner can revoke machines']], stop: true });
+      assert.equal(await page.$eval('#machines-add-note', el => el.textContent), 'Only the owner can add machines, approve them or revoke them.', 'an admin is told why Add machine is off');
+      assert.deepEqual(await page.$$eval('.machine-card-actions .machine-action-label', nodes => nodes.map(node => node.textContent)).then(list => list.slice(-1)), ['Stop all agents on this machine'], 'a card action says what it does beside its icon');
       await page.close();
       const forbidden = await mount({ auto: { [MACHINES]: { status: 403, body: { message: 'forbidden' } } }, owner: false });
       await forbidden.waitForFunction(() => document.querySelector('#machines-error').textContent === 'Machines are for the owner and the admins.');

@@ -177,6 +177,7 @@ export function SidebarList({ store, projectButton }) {
   const shown = store.shown.value, sort = store.sort.value, active = store.active.value, filter = store.filter.value, manual = store.manual.value;
   const build = () => treeOf({ projects: store.projects, rooms: store.rooms, filter, sort, manual, collapsed: store.collapsedRooms, active, archiveFilter: store.archiveFilter, offers: store.joinable,
     pending: store.pending, provisional: store.holdFolds, seen: store.seenRooms, expected: store.focusRoom() });
+  if (shown) store.revealActive(active);
   let tree = shown ? build() : null;
   // A project seen for the first time starts collapsed: fold it, then draw the tree again with it folded.
   if (tree && !store.holdFolds && store.foldNew(tree.collapsible, tree.nested, tree.holdsActive)) tree = build();

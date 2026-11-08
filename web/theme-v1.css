@@ -83,7 +83,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-chat-offers summary { padding: 7px 8px; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .agent-chat-offer { display: flex; align-items: center; }
 .direct-rooms { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 8px; }
-.direct-rooms h3 { margin: 4px 8px 8px; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.direct-rooms h3 { margin: 4px 8px 8px; color: var(--text-muted); font-size: 9.8px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
 .reopen-room { padding: 3px 5px; color: var(--accent); font-size: 10px; }
 .room-state { padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); font-size: 9px; }
 .add-room:disabled { opacity: .25; }
@@ -198,7 +198,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .agents-panel { top: 51px; width: var(--agents-w, 260px); background: var(--bg-secondary); border-color: var(--border); }
 .agents-panel header { min-height: 43px; border-bottom: 1px solid var(--border); }
-.agents-panel h2 { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.agents-panel h2 { color: var(--text-muted); font-size: 9.8px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
 .agents-panel header button { padding: 4px 8px; }
 .agent-identity { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .agent-live-chip { display: inline-block; margin: 0 0 7px; padding: 1px 7px; border: 1px solid var(--accent); border-radius: 20px; color: var(--accent); font: 10px var(--font-mono); }
@@ -485,6 +485,8 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme="high-contrast-dark"] button:disabled { opacity: 1; background: var(--bg-primary); border-color: var(--border); color: var(--text-muted); }
 [data-theme="high-contrast-dark"] .reaction-pill[aria-pressed=true] { background: var(--accent-dim); }
 [data-theme="high-contrast-dark"] :is(button,input,textarea,select):focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+/* A menu item fills its menu edge to edge, and the menu clips what overflows it: the ring is drawn inside the item, so none of it is cut off. */
+[data-theme="high-contrast-dark"] [role="menuitem"]:focus-visible { outline-offset: -3px; }
 
 /* Shared chat chrome follows the compact v1 layout. */
 .chat > header { height: 43px; min-height: 43px; padding: 0 16px; gap: 12px; }
@@ -555,6 +557,8 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .proposed-answer-btn { min-height: 28px; max-width: 100%; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); padding: 4px 9px; font: 600 11.5px var(--font-sans); line-height: 1.2; white-space: normal; overflow-wrap: anywhere; cursor: pointer; transition: border-color .15s, background .15s; }
 .proposed-answer-btn:hover:not(:disabled), .proposed-answer-btn:focus-visible:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
 .proposed-answer-btn:disabled { cursor: default; opacity: .52; }
+/* Imported or closed-unanswered: nothing can answer these, so they read as quoted chips (dashed, flat, no pointer), not as live buttons. */
+.answer-history[data-answered="false"] .btn:disabled { background: transparent; border-style: dashed; box-shadow: none; cursor: default; pointer-events: none; font-weight: 400; }
 .answer-controls > .open-questions-open { display: inline-flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); font: 700 11.8px var(--font-sans); }
 .answer-controls > .open-questions-open:hover:not(:disabled), .answer-controls > .open-questions-open:focus-visible:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
 .answer-error { width: 100%; color: var(--red); margin: 3px 0; }
@@ -644,8 +648,9 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .agent-card .agent-identity { flex: 1 1 0; min-width: 0; display: block; overflow: hidden; }
 .agent-card .agent-id-text { display: block; line-height: 1.5; }
 /* The harness icon (or the person icon) is always there, between the presence dot and the role emoji. */
-/* v1 drew vibe and cline in white, which vanishes on a light surface; there the glyph is turned dark. Message headers use the same two files. */
-[data-theme$="light"] :is(.harness-icon, .msg-sender-icon)[src$="/vibe.svg"], [data-theme$="light"] :is(.harness-icon, .msg-sender-icon)[src$="/cline.svg"], [data-theme$="light"] :is(.harness-icon, .msg-sender-icon)[src$="/human.svg"] { filter: invert(1); }
+/* Every harness glyph (and the person and unknown icons) is drawn white, which vanishes on a light surface; there it is turned dark.
+   Cursor's is the one multicolour icon and keeps its own greys. Member cards, profiles and message headers all use these files. */
+[data-theme$="light"] :is(.harness-icon, .msg-sender-icon):not([src$="/cursor.svg"]) { filter: invert(1); }
 .agent-card .agent-state { flex: 0 0 auto; max-width: 100%; margin: 0; }
 .agent-card .agent-role, .agent-card .agent-role-update { display: none; }
 .agent-card.expanded .agent-id { flex-wrap: wrap; }
@@ -697,14 +702,16 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .chat.usages-open > .agents-panel { display: none; }
 .chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
 @media (max-width: 700px) {
-  .chat > #usages-popover { top: 43px; width: min(86vw, 340px); box-shadow: -12px 0 30px var(--overlay-shadow); }
+  .chat > #usages-popover { top: 43px; left: auto; right: 0; width: min(86vw, 340px); max-height: none; box-shadow: -12px 0 30px var(--overlay-shadow); } /* the sheet on the right like Members (the generic phone sheet rule would pin it to the left) */
+  .chat > #usages-popover:focus { outline: none; }
   .chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: 0; }
 }
 .error:empty { display: none; }
-[data-theme="high-contrast-dark"] .agent-card button:disabled { opacity: .5; border-style: dashed; color: #d6d6d6; }
+/* v1's cards have no disabled buttons; a disabled one takes v1's disabled icon button (.icon-button:disabled): the muted colour at .45, never a dashed edge. */
+[data-theme="high-contrast-dark"] .agent-card button:disabled { opacity: .45; color: var(--text-muted); }
 [data-theme="high-contrast-dark"] :is(input,textarea,select) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
 [data-theme="high-contrast-dark"] :is(.room-health, .health-flag) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
-#settings-general label { display: block; margin: 14px 0 5px; color: var(--text-secondary); }
+#settings-general label:not(.settings-label) { display: block; margin: 14px 0 5px; color: var(--text-secondary); }
 #theme-select { width: min(100%, 280px); } /* its padding, colours and size are v1's .settings-select (an 8px padding in a 28px field clipped the text) */
 
 /* UI part B: message tables and code blocks. */
@@ -832,7 +839,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .more-menu .more-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 40px; padding: 0 12px; text-align: left; background: transparent; border-color: transparent; }
 .more-menu .more-item[hidden] { display: none; }
 .more-menu .more-item:hover { background: var(--bg-hover); }
-@media (min-width: 901px), (min-width: 701px) and (pointer: fine) { .more-menu { display: none !important; } }
 
 /* Touch devices: message actions are real tap targets. */
 @media (hover: none) and (pointer: coarse) {
@@ -1487,6 +1493,9 @@ button > .icon-mask { pointer-events: none; }
 
 /* Settings polish. The dialog itself can hold focus without a ring (see web/js/dialog-focus.js). */
 dialog:focus, dialog:focus-visible { outline: none; }
+/* A top-bar popover takes focus when it opens (web/js/popover-focus.js), and like a dialog the panel itself has no ring: the browser's default one
+   drew a heavy text-coloured frame round the whole panel. Its controls keep their own rings. */
+.popover-panel:focus, .popover-panel:focus-visible { outline: none; }
 /* An input with its Save beside it, in the row's control column, on a phone too. */
 .settings-inline-control { display: flex; align-items: center; gap: 8px; width: 100%; }
 .settings-inline-control > input { flex: 1 1 auto; min-width: 0; }
@@ -1719,8 +1728,6 @@ dialog:focus, dialog:focus-visible { outline: none; }
 /* A worktree box that cannot be ticked looks it: the box and its words are dimmed and the pointer says no (the note under it stays readable). */
 #spawn-dialog .spawn-worktree-option:has(> input:disabled) > :is(input, span) { opacity: .5; cursor: not-allowed; }
 #spawn-dialog .spawn-worktree-option:has(> input:disabled) > span { color: var(--text-muted); }
-[data-theme="high-contrast-dark"] #spawn-dialog .spawn-worktree-option:has(> input:disabled) > :is(input, span) { opacity: 1; }
-[data-theme="high-contrast-dark"] #spawn-dialog .spawn-worktree-option:has(> input:disabled) > span { text-decoration: line-through; }
 /* One control height: a Name input, the selects and the dice button are all 40px, whatever the browser does with a native select. */
 #spawn-dialog :is(input:not([type=checkbox], [type=radio]), select) { box-sizing: border-box; height: 40px; }
 #spawn-dialog .spawn-name-row .btn-icon { height: 40px; align-self: auto; }
@@ -1940,3 +1947,8 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .usage-profile.is-stale .usage-pace-marker, .usages-popover-profile.is-stale .usage-pace-marker, .usage-profile.is-stale .usage-spark-line, .usages-popover-profile.is-stale .usage-spark-line { opacity: .45; }
 .usage-profile-stale { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .usage-profile-stale .usage-refresh { min-height: 0; height: auto; padding: 1px 8px; font-size: 11px; }
+
+/* v1 draws the profiles of a tile with only a line between them and none above the first (`:first-of-type`); v2's profile is a card with all four edges, so the first one
+   lost its top edge (and the active one its green). */
+.usages-popover-profile.switcher-tile-profile { border-top: 1px solid var(--border); margin-top: 0; }
+.usages-popover-profile.switcher-tile-profile.is-active { border-color: var(--green); }

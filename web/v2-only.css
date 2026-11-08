@@ -31,7 +31,7 @@
 @media (max-width: 700px) { .chat-msg.self { max-width: 94%; } }
 .chat-msg-system { align-self: center; width: auto; max-width: 100%; }
 /* The #number is a button here (it copies the number); v1's is a span. */
-button.chat-msg-id { border: 0; background: none; }
+button.chat-msg-id { border: 0; background: none; font-weight: 400; } /* v1's id is a span: a <button> would take the base's 500 */
 .chat-msg-id.copied { color: var(--green-text); }
 
 /* Composer. v1's send bar, form, input, send button, reply bar and pending-file list apply as they are; this is what v2 adds. */
@@ -88,6 +88,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 @media (max-width: 700px), (pointer: coarse) { .settings-text-input, .settings-select { min-height: 40px; } .settings-textarea { min-height: 84px; } }
 /* v1 sets no weight on an inactive tab: a <button> would take the browser's. The active tab is 500 in v1's own rule. */
 .settings-nav-item { font-weight: 400; }
+.settings-nav-item.active { font-weight: 500; }
 
 /* One modal pattern. Every <dialog> but Settings (which wears v1's full-height pane) looks like v1's modal pane (.open-questions-modal-pane): the primary
    surface, a border, v1's large radius and shadow, a scrim of .56 behind it, and a title in v1's modal title type (the padding is v2's 20px, which every dialog had). A dialog's own rules give it a
@@ -126,14 +127,17 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* The A/B/C experiment switch (hidden unless an experiment is active). */
 .topbar nav button.ui-variant-toggle { display: inline-flex; align-items: center; gap: 3px; min-width: 76px; height: 28px; padding: 0 7px; border-radius: 999px; white-space: nowrap; }
 .topbar nav button.ui-variant-toggle[hidden] { display: none; }
-/* Phone: the controls stay at the right edge and only those that do not fit are tucked away (js/pages/topbar). */
+/* Every width: the controls that do not fit the bar are tucked into the ⋯ menu, and only those (js/pages/topbar); the menu button shows while one is. */
+/* The controls sit at the right edge and the nav takes all the room beside the brand, so the bar is measured against what it has, not against what it holds. */
+.topbar nav { flex: 1 1 auto; justify-content: flex-end; }
+.app > .topbar nav .btn-icon.topbar-tucked { display: none; }
+.topbar.topbar-has-overflow #more-toggle { display: inline-grid; }
+/* Phone. */
 @media (max-width: 700px) {
   .topbar { z-index: 8; padding: 0 8px; gap: 6px; }
   .topbar-left img { width: 19px; height: 19px; }
   .topbar .logo, .topbar .build-version { display: none; }
-  .topbar nav { flex: 1 1 auto; justify-content: flex-end; overflow: visible; }
-  .app > .topbar nav .btn-icon.topbar-tucked { display: none; }
-  .topbar.topbar-has-overflow #more-toggle { display: inline-grid; }
+  .topbar nav { overflow: visible; }
   .topbar #logout { margin-left: 2px; }
   .topbar .badge { white-space: nowrap; }
   .topbar #connection { flex: 0 0 auto; }
@@ -144,12 +148,9 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 @media (max-width: 700px), (pointer: coarse) { .app > .topbar nav .btn-icon { flex-basis: 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; } }
 /* v1 hides the version under 740px; v2 hides it from 700px down (and on a touch tablet, below), so a desktop window between 701 and 740px shows it. */
 @media (min-width: 701px) and (max-width: 740px) { .topbar .build-version { display: inline; } }
-/* Tablets and big phones (a touch screen up to 900px wide, such as an iPad mini upright): 40px buttons no longer fit next to the brand and the experiment
-   pill, so the bar keeps what a phone's keeps (Rooms, Inbox, Usages, Settings) and the rest live in the ⋯ menu. The version text and the pill's long
-   label go, so nothing is squashed or clipped. */
+/* Tablets and big phones (a touch screen up to 900px wide, such as an iPad mini upright): the 40px buttons share the bar with the brand and the experiment
+   pill, so the version text and the pill's long label go first; the controls themselves are tucked only if they still do not fit. */
 @media (min-width: 701px) and (max-width: 900px) and (pointer: coarse) {
-  .topbar #system-events-toggle, .topbar #health-toggle, .topbar #knowledge-toggle, .topbar #logout { display: none; }
-  .topbar #more-toggle { display: inline-grid; }
   .topbar .build-version, .ui-variant-toggle .ui-variant-testing { display: none; }
   .topbar nav button.ui-variant-toggle { flex: 0 0 auto; }
 }
@@ -220,11 +221,11 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .chat-msg-body.md-rendered > :is(p, ul, ol, blockquote, .md-codeblock, .md-table-wrap, hr) + :is(p, ul, ol, blockquote, .md-codeblock, .md-table-wrap, hr) { margin-top: 1.55em; }
 .chat-msg-body.md-rendered blockquote { white-space: pre-wrap; }
 .chat-msg-body.md-rendered :is(h4, h5, h6) { font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin: 6px 0 3px; line-height: 1.3; }
-:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description) hr { margin: 8px 0; border: 0; border-top: 1px solid var(--border); }
+:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description, .inbox-question-body) hr { margin: 8px 0; border: 0; border-top: 1px solid var(--border); }
 .chat-msg-body.md-rendered del { opacity: .7; }
-:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description) li > :is(ul, ol) { margin: 2px 0; }
-:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description) li.md-task { list-style: none; }
-:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description) li.md-task > input { margin: 0 6px 0 -20px; vertical-align: middle; }
+:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description, .inbox-question-body) li > :is(ul, ol) { margin: 2px 0; }
+:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description, .inbox-question-body) li.md-task { list-style: none; }
+:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description, .inbox-question-body) li.md-task > input { margin: 0 6px 0 -20px; vertical-align: middle; }
 .chat-msg-body .md-codeblock { max-width: 100%; }
 /* A code line is a block: the diff highlight (code.hl-diff) takes the width of its longest line, which an inline element cannot. */
 .chat-msg-body.md-rendered pre code { display: block; }
@@ -241,15 +242,15 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 }
 
 /* Markdown in a visual-plan block and in a question's description (v1 draws neither with code or copy-button rules of its own). */
-:is(.visual-plan-block-body, .answer-description) .md-codeblock { position: relative; display: block; width: 100%; max-width: 100%; }
-:is(.visual-plan-block-body, .answer-description) .md-codeblock pre { width: 100%; max-width: 100%; padding: 8px 34px 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
-:is(.visual-plan-block-body, .answer-description) .md-codeblock pre code { display: block; background: none; padding: 0; white-space: pre; }
-:is(.visual-plan-block-body, .answer-description) .md-copy-btn { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; }
-:is(.visual-plan-block-body, .answer-description) .md-copy-btn .icon-mask { width: 14px; height: 14px; }
-@media (hover: hover) { :is(.visual-plan-block-body, .answer-description) .md-copy-btn { opacity: 0; } :is(.visual-plan-block-body, .answer-description) .md-codeblock:is(:hover, :focus-within) .md-copy-btn { opacity: 1; } }
+:is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-codeblock { position: relative; display: block; width: 100%; max-width: 100%; }
+:is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-codeblock pre { width: 100%; max-width: 100%; padding: 8px 34px 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+:is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-codeblock pre code { display: block; background: none; padding: 0; white-space: pre; }
+:is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-copy-btn { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; }
+:is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-copy-btn .icon-mask { width: 14px; height: 14px; }
+@media (hover: hover) { :is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-copy-btn { opacity: 0; } :is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-codeblock:is(:hover, :focus-within) .md-copy-btn { opacity: 1; } }
 @media (hover: none) and (pointer: coarse) {
-  :is(.visual-plan-block-body, .answer-description) .md-codeblock { display: flex; flex-direction: column; }
-  :is(.visual-plan-block-body, .answer-description) .md-codeblock .md-copy-btn { position: static; align-self: flex-end; order: -1; width: 40px; height: 40px; margin: 0 0 4px; opacity: 1; }
+  :is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-codeblock { display: flex; flex-direction: column; }
+  :is(.visual-plan-block-body, .answer-description, .inbox-question-body) .md-codeblock .md-copy-btn { position: static; align-self: flex-end; order: -1; width: 40px; height: 40px; margin: 0 0 4px; opacity: 1; }
 }
 /* ── Members panel: the agent and person cards ──
    The cards are v1's: .agent-card.agent-card-compact around .agent-id (the .agent-online-dot, the .harness-icon, the name as .agent-id-text, the state as
@@ -300,8 +301,8 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
   :is(#settings-dialog, #health-popover) :is(select, input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"])) { min-height: 40px; }
 }
 /* v1 draws the code-block copy button's icon in #fff on --bg-tertiary, which is a pale grey in the light themes: the icon was invisible. */
-:is([data-theme="light"], [data-theme$="-light"]) :is(.chat-msg-body, .visual-plan-block-body, .answer-description) .md-copy-btn { color: var(--text-primary); }
-:is([data-theme="light"], [data-theme$="-light"]) :is(.chat-msg-body, .visual-plan-block-body, .answer-description) .md-copy-btn svg { color: var(--text-primary); }
+:is([data-theme="light"], [data-theme$="-light"]) :is(.chat-msg-body, .visual-plan-block-body, .answer-description, .inbox-question-body) .md-copy-btn { color: var(--text-primary); }
+:is([data-theme="light"], [data-theme$="-light"]) :is(.chat-msg-body, .visual-plan-block-body, .answer-description, .inbox-question-body) .md-copy-btn svg { color: var(--text-primary); }
 
 /* Sidebar on a phone. The rows are grouped under their project, so the project chip only repeats the heading above them and takes the room the name needs
    ("Phone revi..."); it stays where it tells rooms apart, in the results of a filter. */
@@ -349,6 +350,15 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 
 /* An Inbox recovery card: the summary line and the decision first, what the harness left behind folded under Details. */
 .inbox-card .inbox-summary { margin: 6px 0 10px; color: var(--text-primary); font-size: 14px; }
+/* A long question: the heading is its first line, this is the rest, as rendered Markdown in the body text size, never as heading text. */
+.inbox-card .inbox-question-body { margin: -4px 0 12px; color: var(--text-primary); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.inbox-question-body > :first-child { margin-top: 0; }
+.inbox-question-body > :last-child { margin-bottom: 0; }
+.inbox-question-body p { margin: 6px 0; white-space: pre-wrap; }
+.inbox-question-body :is(ul, ol) { margin: 6px 0; padding-left: 22px; }
+.inbox-question-body :is(h1, h2, h3, h4, h5, h6) { margin: 10px 0 4px; font-size: 1em; line-height: 1.3; }
+.inbox-question-body blockquote { margin: 8px 0; padding: 3px 10px; border-left: 3px solid var(--border); white-space: pre-wrap; }
+.inbox-question-body code { font-family: var(--font-mono); font-size: .9em; }
 .inbox-card .inbox-details { margin-top: 10px; color: var(--text-secondary); font-size: 12px; }
 .inbox-card .inbox-details > summary { cursor: pointer; }
 .inbox-card .inbox-detail small { display: block; margin: 8px 0 3px; color: var(--text-muted); }
@@ -418,9 +428,12 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 [data-theme^="high-contrast"] button.btn-danger { background: rgba(220, 38, 38, 0.15); color: #ef4444; border-color: rgba(220, 38, 38, 0.35); }
 [data-theme^="high-contrast"] button.btn-danger:is(:hover, :focus-visible):not(:disabled) { background: rgba(220, 38, 38, 0.25); color: var(--red); border-color: var(--red); }
 [data-theme^="high-contrast"] button.btn-danger:disabled { opacity: 1; background: rgba(220, 38, 38, 0.15); color: #ef4444; border-color: rgba(220, 38, 38, 0.35); }
+/* The active usages profile is edged in its "Active" pill's green. High contrast's --green is a dark fill colour that vanishes as a 1px line on
+   black, which left the inactive card (cyan edge) looking the highlighted one. */
+[data-theme^="high-contrast"] .usages-popover-profile.is-active { border-color: var(--green-text); }
 [data-theme="high-contrast-dark"] .topbar nav .badge, [data-theme="high-contrast-dark"] .badge { background: var(--accent); color: #000000; }
-[data-theme^="high-contrast"] #composer :is(.attachment-picker-btn, #emoji-button, .composer-format, .composer-aa) { border: 1px solid var(--border); background: var(--bg-tertiary); }
-[data-theme^="high-contrast"] #composer .composer-format[aria-pressed="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
+[data-theme^="high-contrast"] :is(#composer, #thread-composer) :is(.attachment-picker-btn, #emoji-button, #thread-emoji-button, .composer-format, .composer-aa) { border: 1px solid var(--border); background: var(--bg-tertiary); }
+[data-theme^="high-contrast"] :is(#composer, #thread-composer) .composer-format[aria-pressed="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
 [data-theme="high-contrast-light"] :is(.room-health, .health-flag) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
 
 
@@ -451,7 +464,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
   #settings-dialog .user-member-row { flex-wrap: nowrap; }
   #settings-dialog .user-member-row strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #settings-dialog .user-member-row select { flex: 0 1 auto; max-width: 42%; }
-  #settings-dialog .user-row span:empty { display: none; }
+  #settings-dialog .user-row > span:empty { display: none; } /* the empty "Deactivated" slot; a direct child, so the icon inside a button is not hidden with it */
   /* Harnesses: the list of harnesses is a column under the machine, not a strip that scrolls out of sight. */
   #settings-dialog .harness-master { display: grid; overflow: visible; padding-bottom: 0; }
   #settings-dialog button.harness-master-item { width: 100%; }
@@ -476,3 +489,62 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 @media (max-width: 700px) {
   #app-view .sidebar header .rooms-close { display: inline-flex; }
 }
+
+/* v1's panel-header toggles and the Settings close button have no fill until hovered; v2's generic button fill (the base every <button> gets) made them a shade
+   lighter than the header they sit on. The room header's own icon buttons keep v1's fill (.btn-md-toggle), and the high-contrast themes their own rules above. */
+:root:not([data-theme^="high-contrast"]) :is(#rooms-fold, #edge-rooms, #edge-agents, .settings-close-btn):not(:hover, :focus-visible) { background: transparent; }
+
+/* High contrast: the generic row-button colour made three of v1's quieter pieces white. A reply's quote is a link in v1 (the accent), a message id is its muted
+   text colour, and the memory usage bar is a black track with a 1px outline and an accent fill. The emoji picker is v2's own: a cell is outlined only while it
+   is hovered or focused, not all at once. */
+[data-theme^="high-contrast"] .row-btn.quote { color: var(--accent); }
+/* v1 fills the room header's icon buttons (.btn-md-toggle) with the tertiary colour in the high-contrast themes too. */
+[data-theme^="high-contrast"] .chat > header button.btn-icon:not(:hover, :focus-visible, [aria-pressed="true"]) { background: var(--bg-tertiary); }
+[data-theme^="high-contrast"] button.chat-msg-id:not(.copied) { color: var(--text-muted); }
+.knowledge-usage-bar { border: 1px solid var(--border); border-radius: 999px; background: var(--bg-primary); }
+[data-theme^="high-contrast"] .emoji-cell:not(:hover, :focus-visible) { border-color: transparent; background: transparent; }
+[data-theme^="high-contrast"] .emoji-cell:is(:hover, :focus-visible) { border-color: var(--accent); }
+
+/* A machine card's action icons say what they do beside the icon (a lone square glyph under a machine's name told nobody). */
+.machine-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.machine-action-label { margin-right: 8px; color: var(--text-muted); font-size: 11px; }
+
+/* The custom sound picker's "No file chosen" is a hint, not a value: the muted colour. The status line under Notifications is hidden when the row above already
+   says the browser cannot show them. */
+#notification-sound-upload { color: var(--text-muted); }
+#notification-status[hidden] { display: none; }
+
+/* Room settings' archive, leave and remove controls name themselves (v1's danger zone has text buttons): the icon keeps its tooltip, and its label shows beside it. */
+#room-info-dialog .room-info-actions button.btn-icon { width: auto; min-width: 0; flex-basis: auto; padding: 0 12px; gap: 6px; }
+#room-info-dialog .room-info-actions button.btn-icon::after { content: attr(aria-label); font-size: 12px; font-weight: 500; line-height: 1; }
+
+/* The two selects in a room's notification settings are one width, whatever their option text. */
+.room-notify-setting select { width: 220px; max-width: 60%; }
+
+/* A profile's runtime breaks between its parts (model, tool/launcher), never inside a name at its hyphens. */
+.profile-fact-token { white-space: nowrap; }
+
+/* A health entry opens what it is about (the Inbox decision, the agent): a chevron at its end says it is a link. */
+.health-item { position: relative; padding-right: 24px !important; cursor: pointer; }
+.health-item::after { content: "›"; position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 16px; line-height: 1; }
+.health-item:is(:hover, :focus-visible) .health-item-title { color: var(--accent); }
+
+/* Harnesses: the detail pane is the narrower column of a 760px pane, so a model's name and description stack instead of sharing one line (each was cut to
+   a few letters), the list's counts stay on their row's line, and the list takes a little less. */
+.harness-detail-fields { grid-template-columns: minmax(0, 1fr); }
+.harness-master-count { white-space: nowrap; }
+@media (min-width: 701px) { .harness-split { grid-template-columns: minmax(140px, 190px) minmax(0, 1fr); } }
+
+/* The composer's format row scrolls sideways when the chat is narrow (a thread open beside it); its ends fade out while there is more to scroll to, and a
+   row that fits has no fade. (A scroll-driven animation of two lengths: where the browser has none, the row simply scrolls as before.) */
+@property --tools-fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --tools-fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@keyframes composer-tools-fade { 0% { --tools-fade-start: 0px; --tools-fade-end: 28px; } 4% { --tools-fade-start: 28px; --tools-fade-end: 28px; } 96% { --tools-fade-start: 28px; --tools-fade-end: 28px; } 100% { --tools-fade-start: 28px; --tools-fade-end: 0px; } }
+@supports (animation-timeline: scroll()) {
+  .composer-tools { animation: composer-tools-fade linear both; animation-timeline: scroll(self inline);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--tools-fade-start), #000 calc(100% - var(--tools-fade-end)), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--tools-fade-start), #000 calc(100% - var(--tools-fade-end)), transparent 100%); }
+}
+
+/* A system line that wraps keeps every line centred, as v1's centred row does: the body is its own centred block, not a left-aligned one inside a centred row. */
+.chat-msg-system-row > :first-child, .chat-msg-system-body { text-align: center; }

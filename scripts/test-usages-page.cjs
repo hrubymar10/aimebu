@@ -87,6 +87,7 @@ async function main() {
         return { name: card.querySelector('.usage-profile-name').textContent, active: card.querySelector('.usage-profile-active').hidden, windows: card.querySelectorAll('.usage-window').length, label: window.querySelector('.usage-track').getAttribute('aria-label'), now: window.querySelector('.usage-track').getAttribute('aria-valuenow'),
           marker: !!window.querySelector('.usage-pace-marker'), spark: !!window.querySelector('svg.usage-spark polyline'), pace: window.querySelector('.usages-pace-text').textContent, credits: card.querySelector('.usage-profile-credits').textContent, switchHidden: card.querySelector('.usage-switch').hidden };
       }), { name: 'main', active: false, windows: 3, label: 'Session left', now: '58', marker: true, spark: true, pace: '13% in reserve·Lasts until reset', credits: 'Credits: 12.50', switchHidden: true });
+      assert.equal(await page.$eval('#usages-list [data-provider=codex] .usage-profile', el => getComputedStyle(el).borderTopWidth), '1px', 'the first profile card keeps its top edge (v1 drew none above the first of a tile)');
       assert.ok(/expected pace/.test(await page.$eval('#usages-list .usages-legend', el => el.textContent)) && /In reserve/.test(await page.$eval('#usages-list .usages-legend', el => el.textContent)), 'the marks on a card are explained');
       await page.close();
     }

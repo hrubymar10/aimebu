@@ -9,9 +9,9 @@ function MachineCard({ store, machine }) {
   return html`<article class="machine-card" data-machine-id=${machine.id}>
     <strong>${view.title}</strong><span class="machine-status">${view.status}</span><small>${view.detail}</small>
     <div class="machine-card-actions">
-      ${view.approve && html`<${IconButton} name="check" label="Approve" ...${lock('Approve')} onClick=${() => store.change(machine, 'approve')} />`}
-      ${view.revoke && html`<${IconButton} name="key-off" label="Revoke" ...${lock('Revoke')} onClick=${() => store.change(machine, 'revoke')} />`}
-      ${view.stop && html`<${IconButton} name="stop" label="Stop all agents on this machine" className="machine-stop-all" onClick=${() => store.stopAgents(machine)} />`}
+      ${view.approve && html`<${IconButton} name="check" label="Approve" ...${lock('Approve')} onClick=${() => store.change(machine, 'approve')} /><span class="machine-action-label">Approve</span>`}
+      ${view.revoke && html`<${IconButton} name="key-off" label="Revoke" ...${lock('Revoke')} onClick=${() => store.change(machine, 'revoke')} /><span class="machine-action-label">Revoke</span>`}
+      ${view.stop && html`<${IconButton} name="stop" label="Stop all agents on this machine" className="machine-stop-all" onClick=${() => store.stopAgents(machine)} /><span class="machine-action-label">Stop all agents on this machine</span>`}
     </div></article>`;
 }
 
@@ -23,6 +23,7 @@ export function MachinesPage({ store }) {
       <button id="machine-add" type="button" class="btn btn-primary" hidden=${store.addHidden.value} disabled=${!!store.addDisabled.value} title=${store.addDisabled.value === null ? undefined : store.addDisabled.value ? 'Only the owner can pair machines' : ''} onClick=${() => store.openPairing()}>Add machine</button>
       <${IconButton} id="machine-refresh" name="refresh" label="Refresh" onClick=${() => store.load()} />
     </div>
+    ${store.addDisabled.value && html`<p id="machines-add-note" class="settings-intro">Only the owner can add machines, approve them or revoke them.</p>`}
     <p id="machines-error" class="error" role="alert">${store.error.value}</p>
     <p id="machines-note" class="settings-intro" role="status">${store.note.value}</p>
     <div id="machines-list">${machines === undefined ? '' : machines === null ? 'Loading machines…' : machines.length ? machines.map(machine => html`<${MachineCard} key=${machine.id} store=${store} machine=${machine} />`) : html`<p class="settings-intro">No machines yet.</p>`}</div>`;

@@ -45,7 +45,7 @@ async function main() {
     assert.deepEqual([crowded.more, crowded.mark], [true, true], 'with Health tucked the overflow button carries its warning');
     // an open menu closes when every control fits again, and the focus inside it goes to a control that came back to the bar
     await page.$eval('#more-toggle', button => button.click());
-    assert.ok(await page.evaluate(() => document.querySelector('#more-menu').contains(document.activeElement)), 'opening the menu focuses an item');
+    assert.ok(await page.evaluate(() => document.querySelector('#more-menu').contains(document.activeElement)), 'opening the menu focuses an item ');
     const where = () => page.evaluate(() => ({ open: !document.querySelector('#more-menu').hidden, offered: [...document.querySelectorAll('#more-menu .more-item')].filter(button => !button.hidden).map(button => button.firstElementChild.textContent),
       focus: (element => (element ? `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ''}${element.closest?.('#more-menu') ? ' (in the menu)' : ''}` : 'nothing'))(document.activeElement) }));
     const focusedBefore = (await where()).focus;
@@ -180,6 +180,23 @@ async function main() {
       assert.deepEqual(torn.mirrored, { hidden: false, badge: '2', issues: false, mark: false }, 'a destroyed menu no longer mirrors its buttons');
       assert.equal(torn.clicks, 0, 'and nothing was forwarded');
     }
+
+    await page.$eval('#settings-toggle', button => { button.style.cssText = ''; }); await page.keyboard.press('Escape');
+    // The bar folds only what does not fit, at every width: a tablet upright (a touch screen, 744px) has room for every control, so there is no ⋯ at all
+    // (it used to fold four of them at any touch width up to 900px); a narrow phone folds some; resizing between them re-flows.
+    const crowd = () => page.evaluate(() => ({ tucked: document.querySelectorAll('.topbar nav .topbar-tucked').length, more: getComputedStyle(document.querySelector('#more-toggle')).display !== 'none', visible: ['#system-events-toggle', '#health-toggle', '#knowledge-toggle', '#logout', '#inbox-toggle', '#settings-toggle'].filter(id => { const node = document.querySelector(id); return node && !node.hidden && getComputedStyle(node).display !== 'none'; }).length, spills: document.documentElement.scrollWidth > innerWidth }));
+    for (const [width, height] of [[744, 1133], [1133, 744], [1024, 768], [1440, 900]]) {
+      await page.setViewport({ width, height, isMobile: width < 1100, hasTouch: width < 1100 }); await settle();
+      const state = await crowd();
+      assert.deepEqual([state.tucked, state.more, state.spills], [0, false, false], `all the controls are in the bar at ${width}px: ${JSON.stringify(state)}`);
+    }
+    await page.setViewport({ width: 320, height: 568, isMobile: true, hasTouch: true }); await settle();
+    const phone = await crowd();
+    assert.ok(phone.tucked > 0 && phone.more && !phone.spills, `a narrow phone (320px) folds some controls into ⋯: ${JSON.stringify(phone)}`);
+    await page.setViewport({ width: 744, height: 1133, isMobile: true, hasTouch: true }); await settle();
+    assert.deepEqual([(await crowd()).tucked, (await crowd()).more], [0, false], 'and widening the window brings them back');
+    await page.setViewport({ width: 390, height: 844 });
+    await page.$eval('#settings-toggle', button => { button.style.cssText = 'width:600px;min-width:600px;flex-basis:600px'; }); await settle();
 
     // Sign out through the menu signs out
     await page.$eval('#more-toggle', button => button.click());

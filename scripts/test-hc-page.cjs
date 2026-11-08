@@ -61,6 +61,23 @@ async function main() {
       assert.notEqual(seen.pillFill, seen.pageFill, `a reaction you made is tinted (as in v1), not the page colour: ${seen.pillFill}`);
       assert.ok(seen.sendText >= 4.5, `Send is readable (${seen.sendText.toFixed(1)}:1)`);
       assert.ok(seen.sendMuted >= 4.5, `and so is a Send that is off (${seen.sendMuted.toFixed(1)}:1)`);
+      // The thread composer's buttons are boxed like the main composer's, a reply's quote is the accent (v1's link), a message id is the muted text colour,
+      // the memory usage bar is a black track with an outline, and an emoji cell is outlined only when hovered or focused.
+      const more = await page.evaluate(() => {
+        const style = el => getComputedStyle(el), make = (tag, cls, parent = document.body) => { const el = document.createElement(tag); el.className = cls; parent.append(el); return el; };
+        const resolve = (prop, name) => { const el = document.createElement('i'); el.style[prop] = `var(${name})`; document.body.append(el); return style(el)[prop]; };
+        const edge = el => `${style(el).borderTopWidth} ${style(el).borderTopStyle} ${style(el).borderTopColor}`;
+        const thread = ['#thread-composer .attachment-picker-btn', '#thread-emoji-button', '#thread-composer .composer-format', '#thread-composer .composer-aa'].map(sel => document.querySelector(sel));
+        const quote = make('button', 'row-btn quote'), id = make('button', 'row-btn quiet-glyph chat-msg-id'), bar = make('div', 'knowledge-usage-bar'), cell = make('button', 'row-btn emoji-cell');
+        return { thread: thread.map(el => el && edge(el)), main: edge(document.querySelector('#composer .attachment-picker-btn')), quote: style(quote).color, accent: resolve('color', '--accent'), id: style(id).color, muted: resolve('color', '--text-muted'),
+          bar: [style(bar).borderTopWidth, style(bar).backgroundColor, resolve('backgroundColor', '--bg-primary')], cell: style(cell).borderTopColor, header: style(document.querySelector('#room-info')).backgroundColor, tertiary: resolve('backgroundColor', '--bg-tertiary') };
+      });
+      assert.ok(more.thread.every(Boolean) && new Set([...more.thread, more.main]).size === 1, `the thread composer's buttons are boxed like the main one's in ${theme}: ${JSON.stringify(more)}`);
+      assert.equal(more.quote, more.accent, `a reply's quote is the accent in ${theme}`);
+      assert.equal(more.id, more.muted, `a message id is the muted text colour in ${theme}`);
+      assert.deepEqual([more.bar[0], more.bar[1]], ['1px', more.bar[2]], `the memory usage bar is a track with an outline in ${theme}`);
+      assert.equal(more.header, more.tertiary, `the room header's icon buttons have v1's tertiary fill in ${theme}`);
+      assert.equal(more.cell, 'rgba(0, 0, 0, 0)', `an emoji cell is not outlined at rest in ${theme}`);
     }
     assert.deepEqual(server.errors, []);
     console.log('high-contrast page tests passed');

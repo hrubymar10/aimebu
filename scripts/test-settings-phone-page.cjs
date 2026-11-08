@@ -53,6 +53,7 @@ async function main() {
     const [name] = await tops('.user-member-row strong'), [role] = await tops('.user-member-row select'), [remove] = await tops('.user-member-row button'), [row] = await tops('.user-member-row');
     assert.ok(Math.abs(name.top + name.height / 2 - (role.top + role.height / 2)) <= 4 && Math.abs(role.top + role.height / 2 - (remove.top + remove.height / 2)) <= 4, `name, role and remove share one row: ${JSON.stringify({ name, role, remove })}`);
     assert.ok(remove.right <= row.right && role.right <= row.right && name.right <= role.left, `and none leaves the card: ${JSON.stringify({ row, name, role, remove })}`);
+    assert.deepEqual(await page.$eval('.user-member-row button .icon-mask', node => { const box = node.getBoundingClientRect(); return [getComputedStyle(node).display !== 'none', box.width > 0 && box.height > 0]; }), [true, true], 'the remove button shows its icon (an empty-span rule once hid it with the "Deactivated" slot)');
     assert.deepEqual(await page.$eval('.user-member-row strong', node => { const style = getComputedStyle(node); return [style.textOverflow, style.whiteSpace, node.scrollWidth > node.clientWidth]; }), ['ellipsis', 'nowrap', true], 'a long login is cut with an ellipsis');
 
     // Roles: the edit button is on the title's line, the chips and the summary are below it across the whole card, and the key is one word.

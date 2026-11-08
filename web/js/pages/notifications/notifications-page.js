@@ -101,6 +101,6 @@ export function NotificationsPage({ openToken, notifications }) {
       </div>
     <//>
     <p class="settings-intro" role="status">${status}</p>
-    <p id="notification-status" class="settings-intro" role="status">${permissionError || notifications.status}</p>
+    <p id="notification-status" class="settings-intro" role="status" hidden=${!notifications.available && !permissionError}>${permissionError || notifications.status}</p>
   `;
 }

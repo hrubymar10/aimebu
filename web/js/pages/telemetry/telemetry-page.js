@@ -73,7 +73,7 @@ export function TelemetryPage({ onDirty = () => {} }) {
   return html`
     <${SettingsGroup} label="Telemetry">
       ${!readOnly && html`
-        <div class="settings-row">
+        <div class="settings-row settings-row-toggle">
           <div class="settings-row-info"><label class="settings-label" for="telemetry-enabled">Send telemetry</label><span class="settings-desc" id="telemetry-enabled-desc">Errors and performance traces to Sentry; never messages, prompts, tokens or file contents.</span></div>
           <div class="settings-control"><input id="telemetry-enabled" aria-describedby="telemetry-enabled-desc" type="checkbox" checked=${enabled} disabled=${!known || saving} onChange=${event => toggle(event.currentTarget.checked)} /></div>
         </div>

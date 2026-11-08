@@ -36,6 +36,22 @@ export function humanize(value) {
   return lines.join(' · ') || 'No readable details. Open the debug inspector for the raw record.';
 }
 
+// A card's heading is one short line; an agent's question is often a whole message (paragraphs, a list, code). The heading is its
+// first line, or that line's first sentence when the line is long; whatever follows is the body, which the card renders as Markdown.
+// A long first line with no sentence break is cut at a word and the body repeats the whole text, so nothing is ever dropped.
+const TITLE_MAX = 120;
+export function questionParts(value) {
+  const text = humanize(value).replace(/\r\n?/g, '\n').trim();
+  const plain = line => line.replace(/^#{1,6}\s+/, '').replace(/\*\*|__/g, '').trim();
+  const newline = text.indexOf('\n');
+  const first = newline < 0 ? text : text.slice(0, newline).trim(), rest = newline < 0 ? '' : text.slice(newline + 1).trim();
+  if (first.length <= TITLE_MAX) return { title: plain(first), body: rest };
+  const sentence = first.slice(0, TITLE_MAX + 1).match(/^(.{20,}?[.!?:])(?=\s)/);
+  if (sentence) return { title: plain(sentence[1]), body: [first.slice(sentence[1].length).trim(), rest].filter(Boolean).join('\n') };
+  const cut = first.lastIndexOf(' ', TITLE_MAX);
+  return { title: `${plain(first.slice(0, cut > 40 ? cut : TITLE_MAX))}…`, body: text };
+}
+
 export function readablePreview(raw) {
   if (!raw) return '';
   const value = raw.trim();

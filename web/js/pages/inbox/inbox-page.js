@@ -2,7 +2,8 @@ import { html, useLayoutEffect, useRef, useState } from '../../ui.js';
 import { rights } from '../../api.js';
 import { IconButton } from '../../components/icon-button.js';
 import { answerControls } from '../../answer-controls.js';
-import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
+import { renderMarkdown } from '../../markdown.js';
+import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, questionParts, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
 
 // answerControls is shared with the chat, so its DOM is built by that function and held in this island; the wrapper takes no space of its own.
 function AnswerIsland({ item, store, pending }) {
@@ -11,6 +12,13 @@ function AnswerIsland({ item, store, pending }) {
   useLayoutEffect(() => { host.current.replaceChildren(answerControls(item, value => store.answer(latest.current, value), { freeAnswer: true })); }, [item.id]);
   useLayoutEffect(() => { for (const control of host.current.querySelectorAll('button,textarea,input')) control.disabled = pending; }, [pending]);
   return html`<div class="inbox-answer-host" ref=${host}></div>`;
+}
+
+// The rest of a long question, rendered like a chat message's Markdown (lists, code, links) under the one-line heading.
+function QuestionBody({ source }) {
+  const host = useRef(null);
+  useLayoutEffect(() => { host.current.replaceChildren(renderMarkdown(source)); }, [source]);
+  return html`<div class="inbox-question-body md-rendered" ref=${host}></div>`;
 }
 
 function Raw({ item, pending }) {
@@ -25,11 +33,11 @@ function Freeform({ item, store, pending }) {
 }
 
 function Card({ item, store, rooms, onJump, openUsages }) {
-  const pending = store.pending.value.has(item.id), kind = item.kind, closed = ['closed', 'closing'].includes(item.room_lifecycle);
+  const pending = store.pending.value.has(item.id), kind = item.kind, closed = ['closed', 'closing'].includes(item.room_lifecycle), question = questionParts(item.question);
   const button = (label, onClick, classes = 'btn', extra = {}) => html`<button type="button" class=${classes} disabled=${pending} onClick=${onClick} ...${extra}>${label}</button>`;
   const head = html`${kind === 'delivery_failed' ? html`<small class="inbox-kind-error">${KIND_LABELS[kind]}</small>` : html`<small>${KIND_LABELS[kind] || kind}</small>`}
     ${(kind === 'recovery' || kind === 'delivery_failed') && closed && html`<small class="inbox-archived">${item.room_lifecycle === 'closing' ? 'Room is being archived' : 'In archived room'}</small>`}
-    <${Raw} item=${item} pending=${pending} /><h3>${humanize(item.question)}</h3>`;
+    <${Raw} item=${item} pending=${pending} /><h3>${question.title}</h3>${question.body && html`<${QuestionBody} source=${question.body} />`}`;
   const wrap = body => html`<article class="inbox-card" data-inbox-id=${item.id} data-rev=${String(item.rev)} data-question=${item.question || ''} data-room-lifecycle=${item.room_lifecycle || ''} data-pending=${pending ? 'true' : undefined}>${head}${body}</article>`;
   if (kind === 'usage_alert') {
     return wrap(html`${rights.owner && openUsages && button('Open Usages', () => openUsages(), 'btn btn-primary')}<${IconButton} name="close" label="Dismiss usage alert" disabled=${pending} onClick=${() => store.dismiss(item)} />`);

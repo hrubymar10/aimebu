@@ -301,6 +301,8 @@ async function main() {
     assert.ok(lines.slice(0, -1).every(line => /[/\-_.]$/.test(line)), `a line of the path ends inside a name: ${JSON.stringify(lines)}`);
     // The back arrow closes it and the focus goes back to the card's open button.
     await page.$eval('#agent-profile-close', node => node.click()); await settle(page);
+    // (the product puts the focus back a frame after the card is drawn closed, so the test waits for it instead of reading it at once)
+    await page.waitForFunction(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')).catch(() => {});
     assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')), true, 'the focus is back on the card');
     // A phone: the Agents tab opens the members list even when a profile was left open.
     await page.setViewport({ width: 390, height: 800 });
@@ -423,16 +425,17 @@ async function main() {
     assert.deepEqual([opened.title, opened.closeHidden, opened.open], ['Agent profile', false, true]);
     assert.deepEqual(opened.expanded, [['a1', true, null, null], ['a2', false, 'false', 'Open agent profile']], 'an open card has no button of its own: the panel\'s back arrow is the one way out');
     const labels = opened.facts.map(fact => fact[0]);
-    assert.deepEqual(labels, ['Runtime', 'Role', 'Agent ID'], 'the card alone gives these until the profile is read');
-    assert.deepEqual(opened.facts.find(fact => fact[0] === 'Role'), ['Role', '🔧 worker']);
+    assert.deepEqual(labels, ['Runtime', 'Agent ID'], 'the card alone gives these until the profile is read');
+    assert.equal(opened.facts.some(fact => fact[0] === 'Role'), false, 'the role is on the card, not repeated in the facts');
     await answer(page, profile, 200, { native_session_id: 'sess-1', resume_command: 'codex resume sess-1', cwd: '/work', branch: 'main', machine_name: 'Host', project_name: 'Alpha', spawned_by: 'owner', turns_today: 3, cost_today: 0.42 });
     await settle(page);
     const full = await state();
-    assert.deepEqual(full.facts.map(fact => fact[0]), ['Runtime', 'Role', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Project', 'Spawned', 'Last 24 h', 'Agent ID']);
+    assert.deepEqual(full.facts.map(fact => fact[0]), ['Runtime', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Project', 'Spawned', 'Last 24 h', 'Agent ID']);
     assert.deepEqual(full.facts.find(fact => fact[0] === 'Last 24 h'), ['Last 24 h', '3 turns · $0.42']);
     assert.equal(await page.$eval('[data-agent-id=a1] .profile-copy', node => node.getAttribute('aria-label')), 'Copy resume');
     await page.$eval('#agent-profile-close', node => node.click());
     assert.deepEqual((await state()).title, 'Members');
+    await page.waitForFunction(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')).catch(() => {}); // the focus goes back a frame after the card is drawn closed
     assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')), true, 'closing returns the focus to the card');
     // The back arrow closes it again; a click on the card outside its buttons opens it.
     await page.$eval('[data-agent-id=a2]', node => node.click());

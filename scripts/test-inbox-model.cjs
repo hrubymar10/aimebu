@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'inbox', 'model.js'), 'utf8');
 const context = vm.createContext({ JSON, Array, Object, Map, String, Number });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { humanize, readablePreview, readableReport, deliveryEvidence, resolvedItems, bulkLabel, countView, groupItems, groupTitle, cardKey, decisionOptions, retryWarning, evidenceText, boundaryText, recoveryResult, evidenceSummary, recoveryView };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { humanize, questionParts, readablePreview, readableReport, deliveryEvidence, resolvedItems, bulkLabel, countView, groupItems, groupTitle, cardKey, decisionOptions, retryWarning, evidenceText, boundaryText, recoveryResult, evidenceSummary, recoveryView };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -19,6 +19,20 @@ assert.equal(m.humanize('{"state":"held","count":2,"ok":true}'), 'state: held ·
 assert.equal(m.humanize('{"messages":[{"body":"A long draft that was cut off by a'), 'A long draft that was cut off by a', 'a draft cut off by the server keeps its text');
 assert.equal(m.humanize('{"messages":[{"nothing":'), 'The details are incomplete. Open the debug inspector for the raw record.');
 assert.equal(m.humanize('{}'), 'No readable details. Open the debug inspector for the raw record.');
+
+// A question card's heading is one short line; the rest of the question is its Markdown body, and no text is dropped.
+assert.deepEqual(plain(m.questionParts('Deploy now?')), { title: 'Deploy now?', body: '' });
+assert.deepEqual(plain(m.questionParts('Blocker: I cannot open the page:\n- no token\n- no CLI\n\nHow do you want to proceed?')),
+  { title: 'Blocker: I cannot open the page:', body: '- no token\n- no CLI\n\nHow do you want to proceed?' }, 'the first line is the heading, the list stays Markdown');
+assert.deepEqual(plain(m.questionParts('## **Pick one**\nA or B')), { title: 'Pick one', body: 'A or B' }, 'heading marks and bold markers are not shown as text');
+const long = `${'word '.repeat(12)}is the first sentence. ${'and then more text '.repeat(10)}`.trim();
+const split = plain(m.questionParts(long));
+assert.equal(split.title, `${'word '.repeat(12)}is the first sentence.`, 'a long first line breaks at its first sentence');
+assert.ok(split.body.startsWith('and then more text'), 'the rest of the line opens the body');
+const run = 'x'.repeat(10) + ' ' + 'y '.repeat(80);
+const cut = plain(m.questionParts(run));
+assert.ok(cut.title.endsWith('…') && cut.title.length <= 121, 'a long line without a sentence break is cut at a word');
+assert.equal(cut.body, run.trim(), 'and then the body repeats the whole text');
 assert.equal(m.readablePreview(''), '');
 assert.equal(m.readablePreview('{"messages":[{"body":"Hi"}]}'), 'Hi');
 assert.equal(m.readablePreview('{"messages":[{}]}'), 'The reply draft contains no readable text. View the room for context.');

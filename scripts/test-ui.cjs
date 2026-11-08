@@ -4596,7 +4596,7 @@ async function main() {
     // A disabled action says why: in its tooltip and in a line under the buttons.
     assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const button = card.querySelector('.agent-reactivate'), hint = card.querySelector(`#${button.getAttribute('aria-describedby')}`); return { disabled: button.disabled, title: button.title, hint: hint?.textContent, shown: !!hint?.offsetParent, pauseTitle: card.querySelector('.agent-act-pause').title, pauseDescribed: card.querySelector('.agent-act-pause').hasAttribute('aria-describedby') }; }), { disabled: true, title: 'Reactivate is unavailable: it is already active', hint: 'Reactivate is unavailable: it is already active.', shown: true, pauseTitle: 'Pause: finish the current turn, then accept no new work', pauseDescribed: false });
     const factLabels = await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .profile-fact-label', els => els.map(el => el.textContent));
-    for (const label of ['Runtime', 'Role', 'Agent ID']) assert.ok(factLabels.includes(label), `the profile lacks ${label}: ${factLabels}`);
+    for (const label of ['Runtime', 'Agent ID']) assert.ok(factLabels.includes(label), `the profile lacks ${label}: ${factLabels}`);
     for (const label of ['Status', 'Presence', 'Last seen']) assert.ok(!factLabels.includes(label), `the profile repeats the card's state line as ${label}`);
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .profile-fact-value code, [data-agent-id="agt_mock_worker"] code.profile-fact-value', el => el.textContent), 'agt_mock_worker', 'ids are monospace');
     await domClick(agentPage, '#agent-profile-close');
@@ -4715,7 +4715,8 @@ async function main() {
     // Room header icon buttons share one style; the workspace bar uses its own v1-sized transparent buttons.
     const iconButtons = await agentPage.evaluate(() => [...document.querySelectorAll('.sidebar header button.btn-icon, .chat header button.btn-icon, .room-controls button.btn-icon')].filter(el => el.getClientRects().length && !el.matches('.btn-primary, .btn-danger')).map(el => { const cs = getComputedStyle(el), r = el.getBoundingClientRect(), svg = el.querySelector('svg'); return { id: el.id, size: [Math.round(r.width), Math.round(r.height)], border: cs.borderTopWidth + ' ' + cs.borderTopStyle + ' ' + cs.borderTopColor, radius: cs.borderTopLeftRadius, background: cs.backgroundColor, icon: svg ? [Math.round(svg.getBoundingClientRect().width), Math.round(svg.getBoundingClientRect().height)].join('x') : 'text' }; }));
     assert.ok(iconButtons.length >= 6, `header icon buttons found: ${JSON.stringify(iconButtons.map(item => item.id))}`);
-    for (const key of ['size', 'border', 'radius', 'background']) assert.equal(new Set(iconButtons.map(item => JSON.stringify(item[key]))).size, 1, `header icon buttons differ in ${key}: ${JSON.stringify(iconButtons)}`);
+    // (v1's panel-fold toggles have no fill until hovered, and the other header buttons have one: the fold toggles are left out of the background check.)
+    for (const key of ['size', 'border', 'radius', 'background']) assert.equal(new Set(iconButtons.filter(item => key !== 'background' || !['rooms-fold', 'edge-rooms', 'edge-agents'].includes(item.id)).map(item => JSON.stringify(item[key]))).size, 1, `header icon buttons differ in ${key}: ${JSON.stringify(iconButtons)}`);
     const iconBefore = await agentPage.$eval('#room-info', el => ({ fill: getComputedStyle(el).backgroundColor, colour: getComputedStyle(el).color }));
     await agentPage.hover('#room-info'); await new Promise(resolve => setTimeout(resolve, 400)); // past the colour transition
     assert.deepEqual(await agentPage.$eval('#room-info', (el, was) => { const cs = getComputedStyle(el); return { fillKept: cs.backgroundColor === was.fill, iconBrightens: cs.color !== was.colour }; }, iconBefore), { fillKept: true, iconBrightens: true }, 'hover brightens the icon and keeps the fill');
@@ -6578,6 +6579,7 @@ async function main() {
     assert.deepEqual(await first.$eval('#room-lifecycle', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-archive'), el.textContent]), ['Archive room', 'Archive room', true, ''], 'Archive is an archive icon with a tooltip');
     assert.deepEqual(await first.$eval('#room-remove', el => [el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-trash'), el.textContent]), ['Remove room', true, ''], 'Remove room is a trash icon with an accessible name');
     assert.deepEqual(await first.$eval('#room-remove', el => [el.hidden, el.disabled, el.classList.contains('btn-danger')]), [false, true, true], 'Remove is shown, destructive and disabled until the room is archived');
+    assert.deepEqual(await first.$$eval('#room-lifecycle, #room-remove', nodes => nodes.map(el => getComputedStyle(el, '::after').content)), ['"Archive room"', '"Remove room"'], 'Room settings\' archive and remove controls show their names beside their icons');
     await domClick(first, '#room-info-close');
     const archiveConfirmations = [];
     await answerDialogs(first, text => { archiveConfirmations.push(text); return { accept: true }; });
@@ -6855,6 +6857,7 @@ async function main() {
         assert.equal(g.aa.left >= g.last.right - 0.5 && g.aa.right <= g.tools.right + 0.5 && g.aa.top >= g.tools.top - 0.5 && g.aa.bottom <= g.tools.bottom + 0.5, true, `layout ${layout.toUpperCase()}: Aa ends the toolbar`);
         assert.equal(await first.evaluate(() => document.querySelector('#composer .composer-aa').parentNode === document.querySelector('#composer .composer-toolbar')), true, `layout ${layout.toUpperCase()}: Aa is the toolbar's last item`);
         assert.equal(await first.$$eval('#composer .composer-tools .composer-format', buttons => buttons.length), 10);
+        assert.equal(await first.$eval('#composer .composer-tools', el => getComputedStyle(el).animationName), 'composer-tools-fade', 'the format row fades at its ends while it has more to scroll to');
         assert.equal(await first.evaluate(() => !!document.querySelector('#composer .attachment-picker-btn input[type=file]') && !!document.querySelector('#composer #emoji-button')), true);
       }
       // A phone: nothing overflows and the toolbar and the send button stay on screen in every layout (attach and emoji go back to the bottom row in A).

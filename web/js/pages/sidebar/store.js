@@ -30,7 +30,7 @@ export class SidebarStore {
     this.version = signal(0);
     this.shown = signal(false); this.collapsible = signal(new Set()); this.seenHealth = new Set();
     this.filter = signal(''); this.sort = signal(DEFAULT_SORT); this.manual = signal([]); this.active = signal('');
-    this.collapsedRooms = loadCollapsed(); this.seenRooms = loadSeen();
+    this.collapsedRooms = loadCollapsed(); this.seenRooms = loadSeen(); this.revealedFor = '';
     this.health = new Map(); this.joinable = []; this.agentChatProject = '';
     this.folds = new Map(); this.archiveFilter = new Map(); this.archiveHits = new Map();
     this.roomRequests = new Set(); this.listSeqs = new Map(); this.archiveTimers = new Map(); this.archiveRequests = new Map(); this.saves = new Map();
@@ -82,7 +82,7 @@ export class SidebarStore {
     this.roomRequests.clear();
     for (const cache of [this.projects, this.rooms, this.health, this.folds, this.archiveFilter, this.archiveHits, this.archiveTimers, this.archiveRequests, this.listSeqs]) cache.clear();
     this.joinable = []; this.agentChatProject = ''; this.chatSeq = null; this.loadedUser = null; this.dragging = null;
-    this.holdFolds = true; this.pending.clear(); this.expected = [];
+    this.holdFolds = true; this.pending.clear(); this.expected = []; this.revealedFor = '';
     batch(() => { this.active.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
   }
 
@@ -311,6 +311,19 @@ export class SidebarStore {
     }
     if (changed) try { localStorage.setItem(seenKey, JSON.stringify([...this.seenRooms])); localStorage.setItem(collapsedKey, JSON.stringify([...this.collapsedRooms])); } catch { /* private mode */ }
     return folded;
+  }
+
+  // A room that becomes the open one is shown: every folded room above it (its project and the rooms in between) opens, once for each time it becomes the open
+  // room, so the person's own fold of that project afterwards stays. A room not loaded yet is tried again when the list is drawn next. Answers whether it opened any.
+  revealActive(id) {
+    if (!id || this.revealedFor === id) return false;
+    const room = this.rooms.get(id);
+    if (!room) return false;
+    this.revealedFor = id;
+    let changed = false;
+    for (let above = room.parent_id && this.rooms.get(room.parent_id), guard = 0; above && guard < 64; above = above.parent_id && this.rooms.get(above.parent_id), guard++) if (this.collapsedRooms.delete(above.id)) changed = true;
+    if (changed) try { localStorage.setItem(collapsedKey, JSON.stringify([...this.collapsedRooms])); } catch { /* private mode */ }
+    return changed;
   }
 
   toggleCollapsed(id) {

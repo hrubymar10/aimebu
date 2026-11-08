@@ -119,7 +119,6 @@ export function profileRows(agent, profile, { harness, relative }) {
   // the agent is doing when it is doing something.
   const rows = [
     ['Runtime', `${agent.model || 'unknown'} · ${variant || 'unknown'}`],
-    ['Role', `${agent.role_emoji ? agent.role_emoji + ' ' : ''}${agent.role_key || agent.role || ''}`.trim()],
     ['Session', data.native_session_id, { mono: true }], ['Resume', data.resume_command, { mono: true, copy: true }],
     ['CWD', data.cwd, { mono: true }], ['Branch', data.branch, { mono: true }],
     ['Machine', data.machine_name], ['Launcher', data.launcher_name],

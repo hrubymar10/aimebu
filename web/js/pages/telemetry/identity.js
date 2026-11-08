@@ -62,7 +62,7 @@ export function IdentityRows({ state, off, muted }) {
         <${IconButton} id="telemetry-fingerprint-roll" name="dice" label=${identity?.send_name ? ROLL_LABEL_NAME : ROLL_LABEL} disabled=${disabled} onClick=${roll} />
       </div></div>
     </div>
-    <div class=${`settings-row${muted}`}>
+    <div class=${`settings-row settings-row-toggle${muted}`}>
       <div class="settings-row-info"><label class="settings-label" for="telemetry-send-name">Send my user name instead of a fingerprint</label><span class="settings-desc" id="telemetry-send-name-desc">Off by default. Your reports then carry your login name (nothing else) in place of the fingerprint, never both.</span></div>
       <div class="settings-control"><input id="telemetry-send-name" aria-describedby="telemetry-send-name-desc" type="checkbox" checked=${!!identity?.send_name} disabled=${disabled}
         onChange=${event => sendName(event.currentTarget.checked)} /></div>

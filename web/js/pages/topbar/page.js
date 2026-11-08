@@ -4,22 +4,20 @@ import { TopbarStore } from './store.js';
 import { MoreItems } from './components.js';
 import { MOVE_KEYS, planTuck } from './model.js';
 
-// "⋯" overflow menu for the top bar. On a phone the bar keeps every control that fits and the adapter measures it, tucking System events, Health,
-// Memory and Sign out into the menu only as far as needed (a class on the real button, so CSS hides it); on a touch tablet the menu always holds
-// them. Each menu item forwards a click to the real button, so their handlers, badges and popovers stay the single source of truth. The adapter
+// "⋯" overflow menu for the top bar. At every width the bar keeps every control that fits and the adapter measures it, tucking System events,
+// Health, Memory and Sign out into the menu only as far as needed (a class on the real button, so CSS hides it), and shows the menu button only
+// while something is tucked. Each menu item forwards a click to the real button, so their handlers, badges and popovers stay the single source of truth. The adapter
 // watches those buttons and writes the toggle's aria and health mark and the menu's hidden. A menu with no bar around it has nothing to measure:
 // all its items are on offer.
 const owners = new WeakMap();
 const ITEMS = [['#system-events-toggle', 'System events'], ['#health-toggle', 'Health'], ['#knowledge-toggle', 'Memory'], ['#logout', 'Sign out']];
-const PHONE = '(max-width: 700px)';
-const TABLET = '(min-width: 701px) and (max-width: 900px) and (pointer: coarse)';
 
 export class TopbarMenu {
   constructor({ toggle = document.querySelector('#more-toggle'), menu = document.querySelector('#more-menu'), sources = ITEMS.map(([selector, label]) => ({ target: document.querySelector(selector), label })), health = document.querySelector('#health-toggle'), bar = toggle.closest('.topbar') } = {}) {
     owners.get(menu)?.destroy(); owners.set(menu, this);
     this.toggle = toggle; this.menu = menu; this.targets = sources.map(source => source.target);
     this.bar = bar; this.nav = bar?.querySelector('nav') || null; this.health = health;
-    this.tucked = new Set(); this.tablet = false; this.widths = new Map(); this.frame = 0;
+    this.tucked = new Set(); this.widths = new Map(); this.frame = 0;
     const badges = this.targets.map(target => target.querySelector?.('.badge') || null);
     this.store = new TopbarStore({ items: sources.map((source, index) => ({ label: source.label, badge: badges[index] })), click: index => this.targets[index].click() });
     toggle.setAttribute('aria-haspopup', 'menu');
@@ -47,15 +45,15 @@ export class TopbarMenu {
     document.addEventListener('keydown', this.onKey);
   }
 
-  // Whether an item is on offer in the menu: always without a bar, on a touch tablet, or when the phone bar had to tuck its control.
-  offered(index) { return !this.bar || this.tablet || this.tucked.has(index); }
+  // Whether an item is on offer in the menu: always without a bar, or when the bar had to tuck its control.
+  offered(index) { return !this.bar || this.tucked.has(index); }
 
   syncItem(index) { this.store.setHidden(index, this.targets[index].hidden || !this.offered(index)); }
 
   // The toggle carries the health warning only while the Health button itself is out of the bar.
   syncIssues() {
     const index = this.targets.indexOf(this.health);
-    this.store.setIssues(!!this.health?.classList.contains('has-issues') && (!this.bar || this.tablet || this.tucked.has(index)));
+    this.store.setIssues(!!this.health?.classList.contains('has-issues') && (!this.bar || this.tucked.has(index)));
   }
 
   schedule() {
@@ -89,24 +87,20 @@ export class TopbarMenu {
 
   layout() {
     if (!this.bar || this.destroyed || !this.bar.getBoundingClientRect().width) return;
-    let tucked = [];
-    if (matchMedia(PHONE).matches) {
-      const entries = [...this.nav.children]
-        .filter(element => element !== this.toggle && !element.hidden && (element.classList.contains('topbar-tucked') || getComputedStyle(element).display !== 'none'))
-        .map(element => ({ item: this.targets.indexOf(element), width: this.width(element) }));
-      tucked = planTuck({ available: this.nav.clientWidth, gap: parseFloat(getComputedStyle(this.nav).columnGap) || 0, moreWidth: this.width(this.toggle), entries });
-    }
+    const entries = [...this.nav.children]
+      .filter(element => element !== this.toggle && !element.hidden && (element.classList.contains('topbar-tucked') || getComputedStyle(element).display !== 'none'))
+      .map(element => ({ item: this.targets.indexOf(element), width: this.width(element) }));
+    const tucked = planTuck({ available: this.nav.clientWidth, gap: parseFloat(getComputedStyle(this.nav).columnGap) || 0, moreWidth: this.width(this.toggle), entries });
     const before = this.tucked;
     // The menu item that has focus, if any: its control may come back to the bar in this very layout, which hides the item and would drop the
     // focus on the body, even though the menu stays open for the controls that are still tucked.
     const held = this.menu.hidden ? -1 : [...this.menu.querySelectorAll('[role=menuitem]')].indexOf(document.activeElement);
     this.tucked = new Set(tucked);
-    this.tablet = !matchMedia(PHONE).matches && matchMedia(TABLET).matches;
     this.targets.forEach((target, index) => { target.classList.toggle('topbar-tucked', this.tucked.has(index)); this.syncItem(index); });
     if (held >= 0 && (this.targets[held].hidden || !this.offered(held))) this.moveFocusOffItem(held);
     this.bar.classList.toggle('topbar-has-overflow', this.tucked.size > 0);
     this.syncIssues();
-    if (!this.tucked.size && !this.tablet && !this.menu.hidden) {
+    if (!this.tucked.size && !this.menu.hidden) {
       // Every control fits again, so the menu has nothing to offer. Focus that was in it goes to a control that came back to the bar.
       const focused = this.menu.contains(document.activeElement);
       this.store.setOpen(false);

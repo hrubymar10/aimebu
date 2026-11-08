@@ -504,9 +504,11 @@ Copy command, card Approve, memory activation and row Delete use the same
 tooltip and accessible-name rule; their icon and label follow the current
 action. The bar
 also has a live connection indicator
-at its far right. On phones, controls align to the right of the logo. When
-space runs out, Sign out, System events, Memory, then Health move into the
-More menu in that order; controls that fit remain in the bar. More carries
+at its far right. The controls align to the right of the logo. At any width,
+when space runs out, Sign out, System events, Memory, then Health move into the
+More menu in that order (the version text and the experiment pill's long label
+go first on a touch tablet); controls that fit remain in the bar, and the More
+button is there only while one is folded. More carries
 the Health warning color only while Health is in the menu. The Usages icon opens the usages column in place of the members column (instance
 owner only), laid out as in v1: a toolbar on the left (close, refresh, group by) and the title on
 the right; one card per provider with its icon, "Updated Ns ago" and each profile (the active
@@ -556,7 +558,7 @@ count. An explicit `ask` cannot be combined with these fields; `proposed_answers
 `open_questions` cannot be combined with each other.
 
 The open-item count appears on the Inbox button and in the tab title. Settings → Notifications → "Show message text in notifications" (off by default, kept on your account) puts the start of a chat message in the desktop notification instead of only saying that one arrived; the text is read through the room's own message list, so only what you may read is shown. New items play a short chime after a tab interaction. So do chat messages that address you (a mention, a reply, a group you are in), unless the room is quiet for you (Room settings → Notifications).
-The Inbox lists open items with message requests highlighted beside their replies. Delivery-failed notices show readable draft text when
+The Inbox lists open items with message requests highlighted beside their replies. A card's heading is one short line: a long question shows its first line (or that line's first sentence) as the heading and the rest as rendered Markdown under it, never as heading text. Delivery-failed notices show readable draft text when
 available and can be dismissed after review; failures of archived rooms can be dismissed all at once ("Dismiss all
 resolved"). Usage alerts show the provider, account name, window, remaining percentage and reset time inline and can be dismissed by an admin. The Inbox never shows raw JSON: a payload that is JSON is summarised in plain words, and the raw record is behind a
 bug icon that appears when Settings → General turns the debug inspector on. Resume, Retry and Continue are normal buttons; Abandon,

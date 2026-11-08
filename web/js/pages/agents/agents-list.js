@@ -53,7 +53,7 @@ export const breakable = text => String(text).split(/([/\-_.])/).filter(part => 
 
 function Fact({ label, value, mono, copy }) {
   const target = useRef(null);
-  return html`<div class=${mono ? 'profile-fact profile-fact-mono' : 'profile-fact'}><span class="profile-fact-label">${label}</span>${mono ? html`<code class="profile-fact-value" ref=${target}>${breakable(value)}</code>` : html`<strong class="profile-fact-value" ref=${target}>${String(value)}</strong>`}${copy && html`<${CopyButton} value=${value} label=${label} target=${target} />`}</div>`;
+  return html`<div class=${mono ? 'profile-fact profile-fact-mono' : 'profile-fact'}><span class="profile-fact-label">${label}</span>${mono ? html`<code class="profile-fact-value" ref=${target}>${breakable(value)}</code>` : html`<strong class="profile-fact-value" ref=${target}>${label === 'Runtime' ? String(value).split(' · ').flatMap((part, index) => [index ? ' · ' : '', html`<span class="profile-fact-token">${part}</span>`]) : String(value)}</strong>`}${copy && html`<${CopyButton} value=${value} label=${label} target=${target} />`}</div>`;
 }
 
 function Output({ agent, state, store }) {
