@@ -102,6 +102,8 @@ async function main() {
     await fill('boss', PASSWORD, `${PASSWORD}x`); await submit();
     assert.equal(await error(), 'The two passwords do not match.');
     assert.equal(creates.length, 0, 'none of those was sent');
+    // the form says what a valid login and password look like, before anything is typed wrong
+    assert.deepEqual(await page.evaluate(() => ['setup-login-hint', 'setup-password-hint'].map(id => document.getElementById(id).textContent)), ['3 to 32 lowercase letters, digits, - or _, starting with a letter.', 'At least 12 characters.']);
     // one create, then the theme step
     await fill('Boss', PASSWORD, PASSWORD);
     await page.evaluate(() => document.querySelector('#setup-form').requestSubmit());
@@ -112,6 +114,10 @@ async function main() {
     // the theme tiles: a pick applies at once and is saved; arrows move it
     const tiles = await page.evaluate(() => [...document.querySelectorAll('.theme-tile')].map(tile => [tile.dataset.choice, tile.getAttribute('aria-checked'), tile.tabIndex]));
     assert.ok(tiles.length >= 2 && tiles.filter(tile => tile[1] === 'true').length === 1, `one tile is chosen: ${JSON.stringify(tiles)}`);
+    // exactly one tile is marked: every other tile has the same quiet frame, whatever theme it previews
+    const frames = await page.evaluate(() => [...document.querySelectorAll('.theme-tile')].map(tile => [tile.getAttribute('aria-checked'), getComputedStyle(tile).borderTopColor, getComputedStyle(tile, '::after').content]));
+    assert.equal(new Set(frames.filter(frame => frame[0] !== 'true').map(frame => frame[1])).size, 1, `unselected tiles share one frame colour: ${JSON.stringify(frames)}`);
+    assert.deepEqual(frames.filter(frame => frame[2] !== 'none' && frame[2] !== 'normal').map(frame => frame[0]), ['true'], 'only the selected tile carries the tick');
     const choice = tiles.find(tile => tile[1] !== 'true')[0];
     const saves = requests(page, /\/api\/me\/preferences$/);
     await page.click(`.theme-tile[data-choice="${choice}"]`);

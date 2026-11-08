@@ -543,3 +543,47 @@ func TestV1ImportReusesOnlyAnOpenGeneralRoom(t *testing.T) {
 		})
 	}
 }
+
+// A project the import itself creates starts with an open "general" beside its home room. When every v1 room going into that general is
+// archived, it must end up archived (the owner's choice), and when any of them is open it must stay open.
+func TestV1ImportArchivesGeneralItMadeForANewProject(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		extraOpen  bool
+		wantClosed bool
+	}{
+		{"all archived", false, true},
+		{"one open", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, base := v1Fixture(t)
+			addV1Rooms(t, source, []string{"proj", "proj-leader", "extra"}, map[int64]string{10: "proj-leader", 11: "proj", 12: "extra"})
+			s := newV1RoleStore(t)
+			ctx := context.Background()
+			if _, err := s.ReserveV1MessageIDs(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			mapping := targetMapping(t, t.TempDir(), base)
+			room := mapping.Rooms["proj"]
+			room.Lifecycle = ""
+			mapping.Rooms["proj"] = room
+			if tc.extraOpen {
+				extra := mapping.Rooms["extra"]
+				extra.Lifecycle = "open"
+				mapping.Rooms["extra"] = extra
+			}
+			if _, err := s.ImportV1(ctx, source, mapping, false); err != nil {
+				t.Fatalf("import: %v", err)
+			}
+			var lifecycle string
+			var closedAt sql.NullString
+			if err := s.db.QueryRow(`SELECT r.lifecycle, r.closed_at FROM room r JOIN project p ON p.id=r.project_id WHERE p.name='proj' AND r.title='general'`).Scan(&lifecycle, &closedAt); err != nil {
+				t.Fatal(err)
+			}
+			if got := lifecycle == "closed"; got != tc.wantClosed || got != closedAt.Valid {
+				t.Fatalf("general is %q (closed_at %v), want closed=%v", lifecycle, closedAt, tc.wantClosed)
+			}
+		})
+	}
+}

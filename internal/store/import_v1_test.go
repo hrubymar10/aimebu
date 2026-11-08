@@ -119,6 +119,9 @@ func TestV1MacroPreviewDryRunConflictAndRerun(t *testing.T) {
 	if err != nil || preview.Counts["macros"] != 2 || preview.Macros["greet"] != "Hello <name>" || len(preview.MacroDefaults) != 1 || preview.MacroDefaults[0] != "greet" {
 		t.Fatalf("preview: %+v %v", preview, err)
 	}
+	if !reflect.DeepEqual(preview.MemoryCounts, V1MemoryCounts{Projects: map[string]int{"repo": 1}, Profiles: 1, Shared: 1, ProfileOwners: map[string]int{"alice": 1}}) {
+		t.Fatalf("memory counts: %+v", preview.MemoryCounts)
+	}
 	if preview.Suggested.SkipProfiles || preview.Suggested.SkipShared {
 		t.Fatalf("preview unexpectedly skips global memory: %+v", preview.Suggested)
 	}

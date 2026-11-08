@@ -1,0 +1,132 @@
+// The v1 import wizard against a scratch server whose config dir holds a small v1 backup (scripts/v1-fixture.cjs): sign in, walk all seven steps,
+// reload on the summary (it must run the dry run again, not sit on "Checking…"), import, and check what came across. `AUTH_BINARY` shares a binary.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { scratch, OWNER, MODULES } = require('./scratch-server.cjs');
+const { writeV1Backup, FIXTURE } = require('./v1-fixture.cjs');
+
+const DIALOG = '.import-v1-dialog';
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function signIn(page, origin) {
+  await page.goto(origin);
+  await page.waitForFunction(() => document.querySelector('#welcome-continue') || document.querySelector('#login-view:not([hidden])') || document.querySelector(".import-v1-dialog[open]"));
+  if (await page.$('#login-view:not([hidden])')) {
+    await page.type('#login-form [name=login]', OWNER.login); await page.type('#login-form [name=password]', OWNER.password);
+    await page.$eval('#login-form', form => form.requestSubmit());
+    await page.waitForFunction(() => document.querySelector('#welcome-continue') || document.querySelector('.import-v1-dialog[open]') || !document.querySelector('#app-view').hidden);
+  }
+  if (await page.$('#welcome-continue')) { await page.waitForSelector('#welcome-continue:not([inert])'); await page.click('#welcome-continue'); }
+}
+const heading = page => page.$eval(`${DIALOG} .import-progress-label`, node => node.textContent).catch(() => '');
+const clickButton = (page, text) => page.evaluate((selector, text) => {
+  const button = [...document.querySelector(selector).querySelectorAll('button')].find(item => item.textContent.trim() === text);
+  if (!button) throw new Error(`no "${text}" button: ${[...document.querySelectorAll(`${selector} button`)].map(item => item.textContent.trim()).join(' | ')}`);
+  button.click();
+}, DIALOG, text);
+const stepIs = (page, label) => page.waitForFunction((selector, label) => document.querySelector(`${selector} .import-progress-label`)?.textContent === label, {}, DIALOG, label);
+const next = async (page, label) => { await clickButton(page, 'Next'); await stepIs(page, label); };
+const footer = page => page.$eval(`${DIALOG} .import-totals`, node => node.hidden ? '' : node.textContent).catch(() => '');
+const height = page => page.$eval(DIALOG, node => Math.round(node.getBoundingClientRect().height));
+
+async function main() {
+  const server = await scratch({ env: MODULES, prepare: writeV1Backup });
+  const { origin } = server;
+  const calls = [];
+  try {
+    const page = await server.open({ context: await server.context() });
+    page.on('request', request => { if (request.url().includes('/api/import-v1/') && request.method() !== 'GET') calls.push(`${request.method()} ${new URL(request.url()).pathname}`); });
+    await signIn(page, origin);
+    await page.waitForSelector(`${DIALOG}[open]`);
+    // The first step names what the backup holds, and will not go on without a workspace folder for the project.
+    await stepIs(page, 'Step 1 of 7 · Projects');
+    assert.match(await page.$eval(DIALOG, dialog => dialog.textContent), new RegExp(`The backup holds ${FIXTURE.rooms} rooms, ${FIXTURE.messages} messages, ${FIXTURE.attachments} attachments and ${FIXTURE.memory} memory records`));
+    assert.match(await page.$eval(`${DIALOG} .import-only-chance`, node => node.textContent), /only chance to import v1 history\. Skipping closes the import permanently/, 'the warning is its own callout');
+    const heights = [await height(page)];
+    assert.equal(await footer(page), '1 project selected', 'the first page adds up its choices beside the buttons');
+    await clickButton(page, 'Next');
+    await page.waitForFunction(selector => /needs its workspace folder/.test(document.querySelector(`${selector} .error`).textContent), {}, DIALOG);
+    assert.equal(await heading(page), 'Step 1 of 7 · Projects', 'a missing folder does not move on');
+    const folder = path.join(server.tmp, 'workspace'); fs.mkdirSync(folder);
+    // the second text field is the folder; the name stays "repo"
+    await page.evaluate((selector, folder) => { const input = [...document.querySelectorAll(`${selector} .import-v1-content input[type=text]`)][1]; input.value = folder; input.dispatchEvent(new Event('input', { bubbles: true })); }, DIALOG, folder);
+    await next(page, 'Step 2 of 7 · People');
+    heights.push(await height(page));
+    assert.match(await page.$eval(DIALOG, dialog => dialog.textContent), /messages show under the account you map them to/, 'the copy says what the rendering does');
+    assert.doesNotMatch(await page.$eval(DIALOG, dialog => dialog.textContent), /original names remain/);
+    // alice is the owner; bob gets a new account (the suggestion).
+    await page.evaluate(selector => {
+      const select = document.querySelector(selector).querySelector('select');
+      select.value = [...select.options].find(option => /^owner/.test(option.textContent)).value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, DIALOG);
+    await next(page, 'Step 3 of 7 · Rooms');
+    heights.push(await height(page));
+    assert.equal(await footer(page), '2 of 2 rooms selected · 5 messages go in', 'the rooms page says how much is selected');
+    // `repo` has had no message for 60 days, so it is suggested archived; `repo-leader` is recent and stays open.
+    const rooms = await page.evaluate(selector => [...document.querySelectorAll(`${selector} .import-room-row`)].map(row => ({ name: row.querySelector('strong, b, h3, .import-room-name')?.textContent || row.textContent.split('\n')[0], archived: row.querySelector('input[type=checkbox]')?.checked ?? null })), DIALOG);
+    assert.equal(rooms.length, 2, `two rooms are offered (the event room and the chat are not): ${JSON.stringify(rooms)}`);
+    assert.match(await page.$eval(DIALOG, dialog => dialog.textContent), /A project's home room is never archived\./, 'a row with no archive choice says why');
+    await next(page, 'Step 4 of 7 · Direct messages');
+    assert.match(await page.$eval(`${DIALOG} .settings-intro`, node => node.textContent), /^The chat is not going to be imported\./);
+    assert.doesNotMatch(await page.$eval(DIALOG, node => node.textContent), /dm:alice/, 'the raw v1 id is not shown when the title is unambiguous');
+    heights.push(await height(page));
+    await next(page, 'Step 5 of 7 · Memory');
+    assert.equal(await footer(page), '2 of 2 memory records selected');
+    // The total follows the checkboxes: leaving the profiles out takes their records off it, and ticking them again puts them back.
+    const toggleProfiles = () => page.evaluate(selector => { const box = [...document.querySelectorAll(`${selector} label`)].find(label => /global user profiles/.test(label.textContent)).querySelector('input'); box.click(); }, DIALOG);
+    await toggleProfiles();
+    assert.equal(await footer(page), '1 of 2 memory records selected · 1 record not imported');
+    await toggleProfiles();
+    assert.equal(await footer(page), '2 of 2 memory records selected');
+    heights.push(await height(page));
+    // Each choice says how many records it covers.
+    assert.deepEqual(await page.evaluate(selector => [...document.querySelectorAll(`${selector} .import-v1-content label`)].map(label => (label.firstChild?.textContent || label.textContent).trim()), DIALOG),
+      ['Project facts: repo (1 record)', 'Import global user profiles (1 record)', 'Import shared agent notes (0 records)']);
+    await next(page, 'Step 6 of 7 · Macros');
+    // A macro's card says what will happen to it.
+    assert.deepEqual(await page.evaluate(selector => [...document.querySelectorAll(`${selector} .import-badge`)].map(badge => badge.textContent), DIALOG), ['New', 'New']);
+    assert.deepEqual(await page.evaluate(selector => [...document.querySelectorAll(`${selector} legend`)].map(legend => legend.firstChild.textContent.trim()), DIALOG), ['<greet>', '<name>'], 'macro keys are shown as stored');
+    await next(page, 'Step 7 of 7 · Summary');
+    heights.push(await height(page));
+    assert.equal(new Set(heights).size, 1, `the dialog keeps one height from step to step: ${heights}`);
+    const summary = async () => { await page.waitForFunction(selector => document.querySelector(`${selector} .import-headline`), {}, DIALOG); return page.evaluate(selector => ({
+      headline: document.querySelector(`${selector} .import-headline`).textContent,
+      parts: Object.fromEntries([...document.querySelectorAll(`${selector} .import-accounting-group`)].map(group => [group.dataset.key, Object.fromEntries([...group.querySelectorAll('tr[data-part]')].map(row => [row.dataset.part, Number(row.lastChild.textContent.replace(/,/g, ''))]))])),
+      keys: [...document.querySelectorAll(`${selector} > .import-v1-content > table td[data-key]`)].map(cell => cell.dataset.key) }), DIALOG); };
+    const first = await summary();
+    // Every count of the backup is accounted for, with a reason for each part left out.
+    assert.equal(first.headline, `Bringing across ${FIXTURE.imported} of ${FIXTURE.messages} messages, 2 of ${FIXTURE.rooms} rooms, ${FIXTURE.attachments} of ${FIXTURE.attachments} attachments.`);
+    assert.deepEqual(first.parts.messages, { imported: FIXTURE.imported, presence_lines: FIXTURE.presence, system_room: 1, dm_not_imported: 1 });
+    assert.deepEqual(first.parts.rooms, { imported: 2, system_room: 1, dm_not_imported: 1 });
+    assert.ok(first.keys.indexOf('projects') < first.keys.indexOf('messages') && first.keys.indexOf('messages') < first.keys.indexOf('room_prefs'), `the table leads with projects and messages and ends with settings: ${first.keys}`);
+    // A reload on the summary comes back to it and runs the dry run again; it does not sit on "Checking…".
+    const before = calls.filter(call => call.endsWith('/dry-run')).length;
+    await page.reload();
+    await signIn(page, origin);
+    await page.waitForSelector(`${DIALOG}[open]`);
+    await stepIs(page, 'Step 7 of 7 · Summary');
+    const again = await summary();
+    assert.deepEqual(again.parts, first.parts);
+    assert.ok(calls.filter(call => call.endsWith('/dry-run')).length > before, 'the reload asked for a new dry run');
+    // Import: one commit, then the finished page.
+    await clickButton(page, 'Import now');
+    await page.waitForFunction(selector => /v1 import complete/.test(document.querySelector(selector).textContent), { timeout: 60000 }, DIALOG);
+    assert.equal(calls.filter(call => call.endsWith('/commit')).length, 1);
+    assert.equal(await page.$eval(`${DIALOG} h2`, node => node.textContent), 'Import finished', 'the finished page has a heading');
+    const owner = await server.ownerClient();
+    const projects = await owner('/api/projects');
+    assert.equal(projects.status, 200);
+    const project = projects.body.find(item => item.name === FIXTURE.projectName);
+    assert.ok(project, `the imported project exists: ${JSON.stringify(projects.body)}`);
+    assert.equal(project.folder, folder, 'with the folder typed in step 1');
+    // `repo-leader` became the project's home room and stays open; `repo`, archived in step 3, is its "general" and must be archived too.
+    const placed = (await owner(`/api/projects/${project.id}/rooms`)).body;
+    const list = Array.isArray(placed) ? placed : placed.rooms;
+    assert.deepEqual(list.map(room => [room.kind, room.title, room.lifecycle]).sort(), [['home', 'repo', 'open'], ['task', 'general', 'closed']], JSON.stringify(list));
+    assert.deepEqual(server.errors.filter(error => !/503/.test(error)), [], 'no page errors');
+  } finally { await server.stop(); }
+  console.log('import v1 page: ok');
+}
+main().catch(error => { console.error(error); process.exit(1); });

@@ -1,5 +1,6 @@
 import { html, useLayoutEffect, useRef } from '../../ui.js';
 import { THEMES } from '../general/model.js';
+import { MIN_PASSWORD } from './model.js';
 
 const submitter = send => event => { event.preventDefault(); send(event.currentTarget.elements); };
 
@@ -23,8 +24,10 @@ export function OwnerStep({ store }) {
   return html`<form id="setup-form" onSubmit=${submitter(fields => store.submitOwner(fields.login.value, fields.password.value, fields.confirm.value))}>
     <h1>Create owner</h1>
     <p>Choose the account that owns this aimebu. You will sign in with it.</p>
-    <label>Login<input name="login" autocomplete="username" required minlength="3" maxlength="32" ref=${login} /></label>
-    <label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12" /></label>
+    <label>Login<input name="login" autocomplete="username" required minlength="3" maxlength="32" ref=${login} aria-describedby="setup-login-hint" /></label>
+    <p class="setup-hint" id="setup-login-hint">3 to 32 lowercase letters, digits, - or _, starting with a letter.</p>
+    <label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12" aria-describedby="setup-password-hint" /></label>
+    <p class="setup-hint" id="setup-password-hint">At least ${MIN_PASSWORD} characters.</p>
     <label>Repeat password<input name="confirm" type="password" autocomplete="new-password" required minlength="12" /></label>
     <button type="submit" class="btn btn-primary" disabled=${store.busy.owner.value}>Create owner</button>
     <p id="setup-error" class="error" role="alert">${store.ownerError.value}</p>

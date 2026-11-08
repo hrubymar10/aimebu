@@ -160,10 +160,12 @@ type V1ImportReport struct {
 	MemoryOffTargets []string `json:"memory_off_targets,omitempty"`
 	// FlattenedRoles are roles whose link to a parent had to be flattened because the parent changed under the chosen conflict
 	// resolutions and the link would have closed a loop or run too deep (see importV1Roles).
-	FlattenedRoles   []string          `json:"flattened_roles,omitempty"`
-	SkippedSounds    map[string]string `json:"skipped_sounds"`
-	NotCarried       map[string]int    `json:"not_carried"`
-	CarriedOverFiles []string          `json:"carried_over_files,omitempty"`
+	FlattenedRoles []string          `json:"flattened_roles,omitempty"`
+	SkippedSounds  map[string]string `json:"skipped_sounds"`
+	NotCarried     map[string]int    `json:"not_carried"`
+	// Accounting reconciles the backup's room, message, attachment and reaction totals to what the import does with them, a reason per part.
+	Accounting       []V1AccountingGroup `json:"accounting"`
+	CarriedOverFiles []string            `json:"carried_over_files,omitempty"`
 }
 
 type V1SkippedMemory struct {
@@ -1181,7 +1183,7 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 	if err != nil {
 		return report, err
 	}
-	report.Skipped["orphan_attachments"] = len(data.Attachments) - len(files)
+	report.Skipped["orphan_attachments"] = v1UnreferencedAttachments(data) // files no message refers to; an attachment of a room left out is counted with that room's messages
 	report.Skipped["unresolved_memory_source_links"] = data.UnresolvedMemorySources
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1964,6 +1966,7 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 			return report, err
 		}
 	}
+	report.Accounting = buildV1Accounting(data, mapping, report)
 	if dryRun {
 		return report, tx.Rollback()
 	}

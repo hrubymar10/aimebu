@@ -50,7 +50,8 @@ function Welcome({ store }) {
   useLayoutEffect(() => { if (done) { if (!auto) proceed.current.blur(); proceed.current.focus(); } }, [done, tick]);
   return html`<div class="welcome-art"><span class="welcome-line"></span>
     ${STARTS.map(([x, y], index) => html`<span class="welcome-dot" style=${{ '--sx': `${x}vw`, '--sy': `${y}vh`, '--i': String(index) }}></span>`)}
-    <span class="welcome-logo"><img class="welcome-icon welcome-icon-light" src="/icons/icon-512.png" alt="" width="512" height="512" /><img class="welcome-icon welcome-icon-dark" src="/icons/icon-512-dark.png" alt="" width="512" height="512" /></span></div>
+    <span class="welcome-logo"><img class="welcome-icon welcome-icon-light" src="/icons/icon-512.png" alt="" width="512" height="512" /><img class="welcome-icon welcome-icon-dark" src="/icons/icon-512-dark.png" alt="" width="512" height="512" /></span>
+    <span class="welcome-wait" role="status">${done ? '' : 'Getting things ready…'}</span></div>
     <h1 class="welcome-title"><span class="welcome-name">aimebu</span><span class="welcome-version"> v2</span></h1>
     <button type="button" id="welcome-continue" class="btn btn-primary welcome-continue" inert=${!done} disabled=${store.closed.value} data-auto-focus=${done && auto ? '' : undefined} ref=${proceed} onClick=${() => store.proceed()}>Continue</button>`;
 }

@@ -241,10 +241,17 @@ func (t *v1Targets) place(ctx context.Context, tx *sql.Tx, data *v1ImportData, m
 		} else if t.freshSubs[sub] {
 			newRooms[sub] = true
 		}
-		if present && t.freshSubs[sub] && spec.Lifecycle == "open" {
-			// Rooms sharing a sub-room: it is open if any of them is asked to be.
-			if _, err := tx.ExecContext(ctx, "UPDATE room SET lifecycle='open',closed_at=NULL WHERE id=?", sub); err != nil {
-				return "", err
+		if present && t.freshSubs[sub] {
+			// Rooms sharing a sub-room: it is open if any of them is asked to be. The "general" this run made for a new project starts
+			// open, so when every v1 room going into it is archived it is archived here, or the owner's choice is silently dropped.
+			if spec.Lifecycle == "open" {
+				if _, err := tx.ExecContext(ctx, "UPDATE room SET lifecycle='open',closed_at=NULL WHERE id=?", sub); err != nil {
+					return "", err
+				}
+			} else if !v1SubRoomWantsOpen(mapping, spec.Project, v1SubRoomTitle(spec)) {
+				if _, err := tx.ExecContext(ctx, "UPDATE room SET lifecycle='closed',closed_at=COALESCE(closed_at,?) WHERE id=?", timestamp(), sub); err != nil {
+					return "", err
+				}
 			}
 		}
 		target = sub

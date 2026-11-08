@@ -38,6 +38,7 @@ const COUNT_LABELS = {
   message_expiry: ['Message expiry setting', 'How long before a message counts as expired.'],
   messages: ['Messages', 'Chat history, with its original numbers.'],
   orphan_attachments: ['Unused attachment files', 'Files in the backup that no message refers to; left behind.'],
+  presence_lines: ["Bookkeeping lines", "v1's own join, leave and memory lines; v2 keeps presence elsewhere, so they are not imported."],
   preferences: ['Personal settings', 'Your theme, notification volume and interface switches from v1, saved to your profile.'],
   project_memory_settings: ['Project memory switches', 'Projects that start with v2 memory turned on.'],
   projects: ['Projects', 'Workspaces the imported rooms belong to.'],
@@ -55,6 +56,32 @@ const COUNT_LABELS = {
   unresolved_memory_source_links: ['Memory links not traced', 'Memory records whose source message was not imported keep their text but lose the link back to it.'],
 };
 
+// The summary's rows in the order an owner reads them: what holds the history first, then the rest, then settings and bookkeeping last.
+const COUNT_ORDER = ['projects', 'home_rooms', 'rooms', 'messages', 'attachments', 'reactions', 'memory', 'macros', 'macro_conflicts', 'roles', 'role_conflicts', 'role_links', 'accounts'];
+const COUNT_LAST = new Set(['inline_plan_appendix', 'message_expiry', 'preferences', 'settings', 'room_prefs', 'project_memory_settings', 'room_memory_settings', 'read_cursors', 'read_cursor_baselines', 'historical_members', 'agent_sessions', 'agent_session_history', 'orphan_attachments', 'unresolved_memory_source_links', 'sounds']);
+function countRank(key) {
+  if (COUNT_ORDER.includes(key)) return COUNT_ORDER.indexOf(key);
+  return COUNT_LAST.has(key) ? 200 : 100;
+}
+
+// What happened to each part of a reconciled count (report.accounting), in the owner's words. `rooms` words its own skips, since a room is not a record in one.
+const ACCOUNT_GROUPS = { rooms: 'Rooms', messages: 'Messages', attachments: 'Attachments', reactions: 'Reactions' };
+const ACCOUNT_PARTS = {
+  imported: 'Imported',
+  already_present: 'Already in v2',
+  presence_lines: "v1's own join, leave and memory bookkeeping lines (v2 keeps presence elsewhere)",
+  system_room: "In v1's own event room (not conversation)",
+  dm_not_imported: 'In direct messages you did not tick',
+  no_project: 'In rooms with no project to go into',
+  room_skipped: 'In rooms you chose not to import',
+  in_skipped_rooms: 'On messages in rooms not imported',
+  person_skipped: 'By people you did not map to an account',
+  unused_files: 'Files no message refers to',
+  other: 'Other',
+};
+const ROOM_PARTS = { system_room: "v1's own event room", dm_not_imported: 'Direct messages you did not tick', no_project: 'Rooms with no project to go into', room_skipped: 'Rooms you chose not to import' };
+const number = value => Number(value || 0).toLocaleString('en-US');
+
 // The pages of the wizard, in order. A page that has nothing to show for this backup is skipped.
 const STEPS = [
   ['projects', 'Projects', () => true],
@@ -69,6 +96,9 @@ const STEPS = [
 
 // What the import is doing, in words, as the server reports its phase.
 const IMPORT_PHASES = { scan: 'Reading the backup…', validate: 'Checking your choices…', copy: 'Copying files…', commit: 'Writing your history to v2 (this can take a minute)…', done: 'Done.' };
+
+// Said once as a warning on the first page and again, in the same words, when skipping is confirmed.
+const ONLY_CHANCE = 'This is the only chance to import v1 history. Skipping closes the import permanently, and the original backup stays on disk.';
 
 const NEW_PROJECT = '__new_project__';
 const NEW_ACCOUNT = '__new_account__';
@@ -101,9 +131,10 @@ export class ImportV1Wizard {
     this.status = node('p', '', 'settings-intro');
     this.error = node('div', '', 'error'); this.error.setAttribute('role', 'alert'); // a div: it can hold the list of problems
     this.content = node('div', '', 'import-v1-content');
+    this.totals = node('p', '', 'import-totals'); this.totals.hidden = true; this.totals.setAttribute('role', 'status');
     this.actions = node('div', '', 'dialog-actions');
     this.skipZone = node('div', '', 'import-skip-zone');
-    this.dialog.append(this.heading, this.progress, this.status, this.error, this.content, this.actions, this.skipZone);
+    this.dialog.append(this.heading, this.progress, this.status, this.error, this.content, this.totals, this.actions, this.skipZone);
     this.dialog.addEventListener('cancel', event => event.preventDefault());
     document.body.append(this.dialog);
     this.phase = 'review';
@@ -162,6 +193,8 @@ export class ImportV1Wizard {
     this.render();
     if (signal?.aborted || !isCurrent()) return false;
     if (!this.dialog.open) this.dialog.showModal();
+    // A reload on the summary step restores the step but not the dry run it shows; without this it sat on "Checking…" for good.
+    if (this.stepID === 'summary') this.check();
     return true;
   }
 
@@ -225,7 +258,7 @@ export class ImportV1Wizard {
 
   checkbox(label, checked, update) {
     const row = node('label', label); const box = node('input'); box.type = 'checkbox'; box.checked = !!checked;
-    box.onchange = () => { update(box.checked); this.save(); };
+    box.onchange = () => { update(box.checked); this.save(); this.refreshTotals(); };
     row.prepend(box);
     return row;
   }
@@ -272,6 +305,8 @@ export class ImportV1Wizard {
     this.error.textContent = '';
     this.actions.replaceChildren(); this.content.replaceChildren(); this.skipZone.replaceChildren();
     this.progress.hidden = this.phase !== 'review';
+    this.dialog.dataset.phase = this.phase; // the review pages share one height, so the dialog does not jump between steps
+    this.totals.hidden = true; this.totals.textContent = '';
     if (this.phase === 'changed') this.renderChanged();
     else if (this.phase === 'review') this.renderStep();
     else this.renderImport();
@@ -309,6 +344,7 @@ export class ImportV1Wizard {
     if (index > 0) this.actions.append(this.button('Back', () => this.go(this.steps[index - 1].id), true));
     if (this.newProject && step.id !== 'projects') this.content.append(this.renderNewProject()); // the projects page puts it above its own button
     this[`page_${step.id}`]();
+    this.refreshTotals();
     if (step.id !== 'summary') this.actions.append(this.button('Next', () => this.next()));
     if (index === 0) {
       this.offerSkip();
@@ -418,7 +454,8 @@ export class ImportV1Wizard {
 
   page_projects() {
     const p = this.preview, counts = p.counts || {};
-    this.status.textContent = `This is the only chance to import v1 history; skipping closes the import permanently, and the original backup stays on disk. The backup holds ${counts.rooms || 0} rooms, ${counts.messages || 0} messages, ${counts.attachments || 0} attachments and ${counts.memory || 0} memory records. First, the projects the history goes into: each needs a name and an absolute workspace folder.`;
+    this.status.textContent = `The backup holds ${counts.rooms || 0} rooms, ${counts.messages || 0} messages, ${counts.attachments || 0} attachments and ${counts.memory || 0} memory records. First, the projects the history goes into: each needs a name and an absolute workspace folder.`;
+    this.content.append(node('p', ONLY_CHANCE, 'import-warning import-only-chance'));
     if (this.restored) this.content.append(node('p', 'Continuing where you left off.', 'import-restored'));
     for (const [alias, project] of Object.entries(this.mapping.projects)) {
       const box = node('fieldset'); box.append(node('legend', alias));
@@ -465,7 +502,7 @@ export class ImportV1Wizard {
   page_people() {
     const p = this.preview;
     this.mapping.new_users ||= {};
-    this.status.textContent = 'People sharing one destination account are merged for access. Their original names remain on historical messages. A person can get a new account made by the import (no password: you get a one-time link for each at the end). Skipped people keep a historical label and receive no live room membership.';
+    this.status.textContent = 'Each v1 person\'s messages show under the account you map them to, so people sharing one destination account are merged, in access and in how their old messages are labelled. A person can get a new account made by the import (no password: you get a one-time link for each at the end). A skipped person has no account: their messages keep their v1 name as a label, and they receive no live room membership.';
     const people = [['-', 'Skip person (legacy label only)'], ...(p.destination_users || [this.mapping.owner_login]).map(login => [login, login === this.mapping.owner_login ? `${login} (owner)` : login]), [NEW_ACCOUNT, 'Create a new account…']];
     const owner = this.mapping.owner_login;
     const noSuggestedOwner = !Object.values(p.suggested?.humans || {}).includes(owner);
@@ -574,7 +611,7 @@ export class ImportV1Wizard {
       archived.querySelector('input').dataset.archived = room.id;
       archived.querySelector('input').onchange = event => { spec.lifecycle = event.target.checked ? 'closed' : 'open'; this.save(); this.refresh(); };
       row.append(archived);
-    }
+    } else if (!spec.skip && spec.project && spec.target === 'root') row.append(node('p', "A project's home room is never archived.", 'import-count-note'));
     if (room.memory_disabled && !spec.skip && spec.project) row.append(node('p', `v1 had memory off for this room, so v2 will have memory off for ${spec.target === 'root' ? `⌂ ${this.mapping.projects[spec.project]?.name || spec.project}` : `its room "${spec.target === 'sub' ? (spec.title || 'general') : room.id}"`}${spec.target ? ', and for any other v1 room merged into it' : ''}.`, 'settings-intro'));
     return row;
   }
@@ -606,18 +643,53 @@ export class ImportV1Wizard {
     const p = this.preview;
     const direct = (p.rooms || []).filter(room => room.dm);
     const picked = direct.filter(room => !this.mapping.rooms[room.id]?.skip).length;
-    this.status.textContent = `${picked} of ${direct.length} chats will be imported. Each private chat becomes a v2 direct message titled by the other person or agent, always open. A chat between two agents is imported as history you can read. No chat is imported unless you tick it; a ticked chat goes into its agent's project when there is one, and you can pick another.`;
+    const total = direct.length;
+    const count = total === 1 ? `The chat is${picked ? '' : ' not'}` : picked === 0 ? `None of the ${total} chats are` : picked === total ? `All ${total} chats are` : `${picked} of ${total} chats are`;
+    this.status.textContent = `${count} going to be imported. Each private chat becomes a v2 direct message titled by the other person or agent, always open. A chat between two agents is imported as history you can read. No chat is imported unless you tick it; a ticked chat goes into its agent's project when there is one, and you can pick another.`;
     for (const room of direct) {
       const spec = this.mapping.rooms[room.id] ||= { skip: true };
       const box = node('fieldset'); const legend = node('legend', this.dmTitle(room)); legend.dataset.dmRoom = room.id; box.append(legend);
-      // Titles can collide (two chats with the same agent), so the source id and size are always shown.
-      box.append(node('p', `${room.id} · ${room.messages} messages`, 'import-source-id'));
+      // Titles can collide (two chats with the same agent): then the v1 id tells them apart; otherwise it stays in the tooltip.
+      const same = direct.filter(other => this.dmTitle(other) === this.dmTitle(room)).length > 1;
+      const size = node('p', `${room.messages} ${room.messages === 1 ? 'message' : 'messages'}${same ? ` · ${room.id}` : ''}`, 'import-source-id'); size.title = `v1 chat ${room.id}`;
+      box.append(size);
       const toggle = this.checkbox('Import this chat', !spec.skip, checked => { spec.skip = !checked; });
       toggle.querySelector('input').onchange = event => { spec.skip = !event.target.checked; this.save(); this.refresh(); };
       box.append(toggle);
       if (!spec.skip) { const choice = this.projectSelect('Project', spec.project || '', alias => { spec.project = alias; }, 'Choose a project'); choice.querySelector('select').dataset.dmProject = room.id; box.append(choice); }
       this.content.append(box);
     }
+  }
+
+  // The one-line total beside the buttons, redrawn whenever a choice that feeds it changes.
+  refreshTotals() {
+    const totals = this.stepID ? this.footerTotals(this.stepID) : '';
+    this.totals.textContent = totals; this.totals.hidden = !totals;
+  }
+
+  // What the long pages add up to, kept in view beside the buttons: how much is selected and how much is left out.
+  footerTotals(stepID) {
+    const p = this.preview, m = this.mapping, n = (count, one, many = `${one}s`) => `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`;
+    if (stepID === 'projects') {
+      const kept = Object.keys(m.projects).length, dropped = Object.keys(p.suggested?.projects || {}).filter(alias => !m.projects[alias]).length;
+      return `${n(kept, 'project')} selected${dropped ? ` · ${n(dropped, 'project')} removed, their rooms are not imported` : ''}`;
+    }
+    if (stepID === 'rooms') {
+      const rooms = (p.rooms || []).filter(room => !room.dm && room.id !== SYSTEM_ROOM);
+      const left = rooms.filter(room => m.rooms[room.id]?.skip || !m.rooms[room.id]?.project);
+      const messages = rooms.filter(room => !left.includes(room)).reduce((sum, room) => sum + (room.messages || 0), 0);
+      return `${rooms.length - left.length} of ${n(rooms.length, 'room')} selected · ${n(messages, 'message')} go in${left.length ? ` · ${n(left.length, 'room')} not imported` : ''}`;
+    }
+    if (stepID === 'memory') {
+      const c = p.memory_counts || {}, all = (p.counts?.memory || 0);
+      let kept = 0;
+      for (const [scope, count] of Object.entries(c.projects || {})) if ((m.memory_projects[scope] || '-') !== '-') kept += count;
+      // A person's profile goes with the person: one mapped to nobody ("Skip person") is not imported, whatever the checkbox says.
+      if (!m.skip_profiles) kept += Object.entries(c.profile_owners || {}).reduce((sum, [person, count]) => sum + (m.humans[person] === '-' ? 0 : count), 0);
+      if (!m.skip_shared_notes) kept += c.shared || 0;
+      return `${kept} of ${n(all, 'memory record')} selected${kept < all ? ` · ${n(all - kept, 'record')} not imported` : ''}`;
+    }
+    return '';
   }
 
   // A DM is titled by the participants other than the owner's own accounts (and skipped people): the agent's name, "a · b" for two or more.
@@ -635,8 +707,10 @@ export class ImportV1Wizard {
   page_memory() {
     const p = this.preview;
     this.status.textContent = `The backup holds ${p.counts?.memory || 0} memory records. Imported records arrive as ordinary, active ones.`;
-    for (const scope of p.memory_projects || []) this.content.append(this.projectSelect(`Project facts: ${scope}`, (this.mapping.memory_projects[scope] || '-') === '-' ? '' : this.mapping.memory_projects[scope], value => { this.mapping.memory_projects[scope] = value || '-'; }, "Don't import"));
-    for (const [key, title] of [['skip_profiles', 'Import global user profiles'], ['skip_shared_notes', 'Import shared agent notes']]) {
+    const counts = p.memory_counts || {};
+    const records = n => `${n || 0} ${n === 1 ? 'record' : 'records'}`;
+    for (const scope of p.memory_projects || []) this.content.append(this.projectSelect(`Project facts: ${scope} (${records(counts.projects?.[scope])})`, (this.mapping.memory_projects[scope] || '-') === '-' ? '' : this.mapping.memory_projects[scope], value => { this.mapping.memory_projects[scope] = value || '-'; }, "Don't import"));
+    for (const [key, title] of [['skip_profiles', `Import global user profiles (${records(counts.profiles)})`], ['skip_shared_notes', `Import shared agent notes (${records(counts.shared)})`]]) {
       const row = this.checkbox(title, !this.mapping[key], checked => { this.mapping[key] = !checked; });
       row.querySelector('input').dataset.importChoice = key; row.querySelector('input').dataset.inverted = '1';
       this.content.append(row);
@@ -646,6 +720,16 @@ export class ImportV1Wizard {
       this.content.append(node('p', 'v1 global memory was on, so each project below starts with v2 memory on. Untick any project that should stay off.', 'settings-intro'));
       for (const [alias, project] of Object.entries(this.mapping.projects)) this.content.append(this.checkbox(`Enable project memory after import: ${project.name || alias}`, this.mapping.enable_project_memory[alias], checked => { this.mapping.enable_project_memory[alias] = checked; }));
     } else this.content.append(node('p', 'v1 memory was off or unset; destination project memory stays off.', 'settings-intro'));
+  }
+
+  // A macro's text: short ones in full, long ones folded behind their first line so a page of macros stays a page.
+  macroBody(text) {
+    const lines = text.split('\n');
+    if (text.length <= 300 && lines.length <= 6) return node('pre', text, 'import-macro-body');
+    const details = node('details', '', 'import-macro-long');
+    const first = lines.find(line => line.trim()) || '';
+    details.append(node('summary', `${first.length > 80 ? `${first.slice(0, 80)}…` : first} (${text.length.toLocaleString('en-US')} characters)`), node('pre', text, 'import-macro-body'));
+    return details;
   }
 
   page_macros() {
@@ -668,9 +752,20 @@ export class ImportV1Wizard {
     const bulk = node('div', '', 'import-bulk');
     bulk.append(this.button('Import all', () => { this.mapping.skip_macros = []; this.save(); this.refresh(); }, true), this.button('Import none', () => { this.mapping.skip_macros = [...keys]; this.save(); this.refresh(); }, true));
     this.content.append(bulk);
-    for (const key of keys) {
+    // Each macro's state, said on its card: the ones that need a decision (a key both have with different text) come first.
+    const stateOf = key => {
+      if (done.has(key)) return ['imported', 'Already imported'];
+      if (!Object.hasOwn(this.destinationMacros, key)) return ['new', 'New'];
+      if (this.destinationMacros[key] === p.macros[key]) return ['same', 'Already in v2'];
+      return (this.mapping.macro_conflicts[key] || 'keep_v2') === 'use_v1' ? ['conflict', 'Conflict: replacing the v2 text'] : ['conflict', 'Conflict: keeping the v2 text'];
+    };
+    const rank = key => ({ conflict: 0, new: 1, same: 2, imported: 3 })[stateOf(key)[0]];
+    for (const key of [...keys].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))) {
       const body = p.macros[key];
-      const box = node('fieldset'); box.append(node('legend', `<${key.toUpperCase()}>${(p.macro_defaults || []).includes(key) ? ' · v1 seeded default' : ''}`));
+      const [state, stateLabel] = stateOf(key);
+      const box = node('fieldset'); const legend = node('legend', `<${key}>${(p.macro_defaults || []).includes(key) ? ' · v1 seeded default' : ''} `);
+      const badge = node('span', stateLabel, `import-badge import-badge-${state}`); badge.dataset.state = state; legend.append(badge); box.append(legend);
+      box.dataset.macro = key;
       const imported = (p.imported_macros || []).includes(key);
       if (imported) box.append(node('p', 'Already imported from this backup; later edits are preserved.'));
       else {
@@ -678,12 +773,12 @@ export class ImportV1Wizard {
         include.querySelector('input').onchange = event => { const set = new Set(this.mapping.skip_macros); if (event.target.checked) set.delete(key); else set.add(key); this.mapping.skip_macros = [...set]; this.save(); this.refresh(); };
         box.append(include);
       }
-      const source = node('pre', body, 'import-macro-body'); box.append(node('p', 'v1 text'), source);
+      box.append(node('p', 'v1 text'), this.macroBody(body));
       const current = this.destinationMacros[key];
       if (Object.hasOwn(this.destinationMacros, key)) {
         box.append(node('p', current === body ? 'Already matches v2.' : 'Existing v2 text:'));
         if (current !== body) {
-          box.append(node('pre', current, 'import-macro-body'));
+          box.append(this.macroBody(current));
           if (!imported) box.append(this.field('On conflict', this.mapping.macro_conflicts[key] || 'keep_v2', value => { this.mapping.macro_conflicts[key] = value; }, [['keep_v2', 'Keep v2 text'], ['use_v1', 'Use v1 text']]));
         }
       }
@@ -757,7 +852,7 @@ export class ImportV1Wizard {
     list('Memory skipped', (report.skipped_memory || []).map(entry => `${entry.scope} · ${entry.scope_key} · ${entry.id}: ${entry.reason}`));
     list('Roles skipped', Object.entries(report.skipped_roles || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, reason]) => `${key}: ${reason}`));
     list('Role conflicts', Object.entries(report.role_conflicts || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, choice]) => `${key}: ${choice === 'use_v1' ? 'use v1 role' : 'keep v2 role'}`));
-    list('Macro conflicts', Object.entries(report.macro_conflicts || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, choice]) => `<${key.toUpperCase()}>: ${choice === 'use_v1' ? 'use v1 text' : 'keep v2 text'}`));
+    list('Macro conflicts', Object.entries(report.macro_conflicts || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, choice]) => `<${key}>: ${choice === 'use_v1' ? 'use v1 text' : 'keep v2 text'}`));
     list('Sounds skipped', Object.values(report.skipped_sounds || {}));
     list('Settings skipped', (report.skipped_settings || []).map(entry => `${entry.key}: ${entry.reason}`));
     const notCarried = { ...(report.not_carried || {}) };
@@ -775,9 +870,56 @@ export class ImportV1Wizard {
     this.actions.append(this.button('Import now', () => this.commit()));
   }
 
-  // The counts, with the columns and rows that are all zero left out: "Skipped" shows only when something is in it. Rows already in v2 (the report's already_present) are not shown.
+  // The reconciled totals first: one headline line, then a block per count whose parts add up to the backup's own number, each skipped part
+  // with its reason and, when there is something to look at, the rooms behind it (never message text).
+  renderAccounting(report) {
+    const groups = (report.accounting || []).filter(group => group.total > 0);
+    if (!groups.length) return;
+    const part = (group, key) => group.parts.find(item => item.key === key)?.count || 0;
+    const messages = groups.find(group => group.key === 'messages'), rooms = groups.find(group => group.key === 'rooms');
+    const headline = node('p', '', 'import-headline');
+    const bits = [];
+    if (messages) bits.push(`${number(part(messages, 'imported') + part(messages, 'already_present'))} of ${number(messages.total)} messages`);
+    if (rooms) bits.push(`${number(part(rooms, 'imported') + part(rooms, 'already_present'))} of ${number(rooms.total)} rooms`);
+    const attachments = groups.find(group => group.key === 'attachments');
+    if (attachments) bits.push(`${number(part(attachments, 'imported') + part(attachments, 'already_present'))} of ${number(attachments.total)} attachments`);
+    headline.textContent = `Bringing across ${bits.join(', ')}.`;
+    const left = groups.reduce((sum, group) => sum + (group.key === 'messages' ? group.total - part(group, 'imported') - part(group, 'already_present') : 0), 0);
+    this.content.append(headline);
+    if (left > 0) this.content.append(node('p', `${number(left)} messages are left out; the lists below say why.`, 'import-warning'));
+    const box = node('div', '', 'import-accounting');
+    for (const group of groups) {
+      const dropped = group.parts.filter(item => item.key !== 'imported' && item.key !== 'already_present' && item.count > 0);
+      const details = section(`${ACCOUNT_GROUPS[group.key] || group.key}: ${number(group.total)} in v1`, dropped.length ? `${number(dropped.reduce((sum, item) => sum + item.count, 0))} left out` : 'all brought across', dropped.length > 0);
+      details.dataset.key = group.key; details.classList.add('import-accounting-group');
+      const table = node('table');
+      for (const item of group.parts) {
+        if (!(item.count > 0)) continue; // a part is only ever drawn as a positive count
+        const label = (group.key === 'rooms' && ROOM_PARTS[item.key]) || ACCOUNT_PARTS[item.key] || item.key.replaceAll('_', ' ');
+        const row = node('tr', '', item.key === 'imported' || item.key === 'already_present' ? '' : 'import-skipped-row');
+        row.dataset.part = item.key;
+        const name = node('td', label);
+        if (item.items?.length) {
+          const list = node('details', '', 'import-items'); list.append(node('summary', `Show ${item.items.length === 1 ? 'it' : `all ${number(item.items.length)}`}`));
+          for (const line of item.items) list.append(node('p', line));
+          name.append(list);
+        }
+        row.append(name, node('td', number(item.count)));
+        table.append(row);
+      }
+      const total = node('tr', '', 'import-accounting-total'); total.append(node('td', `Total in the backup`), node('td', number(group.total)));
+      table.append(total);
+      details.append(table);
+      box.append(details);
+    }
+    this.content.append(box);
+  }
+
+  // The counts, with the columns and rows that are all zero left out: "Skipped" shows only when something is in it, and a non-zero one is marked.
+  // Rows already in v2 (the report's already_present) are not shown.
   renderReportCounts(report) {
-    const keys = [...new Set([...Object.keys(report.imported || {}), ...Object.keys(report.skipped || {})])].sort();
+    this.renderAccounting(report);
+    const keys = [...new Set([...Object.keys(report.imported || {}), ...Object.keys(report.skipped || {})])].sort((a, b) => countRank(a) - countRank(b) || a.localeCompare(b));
     const value = (map, key) => map?.[key] || 0;
     const rows = keys.filter(key => value(report.imported, key) || value(report.skipped, key));
     const showSkipped = rows.some(key => value(report.skipped, key));
@@ -788,8 +930,8 @@ export class ImportV1Wizard {
       const [title, explanation] = COUNT_LABELS[key] || [key.replaceAll('_', ' '), ''];
       const row = node('tr'); const name = node('td', title); name.dataset.key = key;
       if (explanation) name.append(node('div', explanation, 'import-count-note'));
-      row.append(name, node('td', String(value(report.imported, key))));
-      if (showSkipped) row.append(node('td', String(value(report.skipped, key))));
+      row.append(name, node('td', number(value(report.imported, key))));
+      if (showSkipped) row.append(node('td', number(value(report.skipped, key)), value(report.skipped, key) ? 'import-skipped' : ''));
       table.append(row);
     }
     this.content.append(table);
@@ -816,7 +958,8 @@ export class ImportV1Wizard {
     skip.onclick = () => Promise.resolve(this.skip()).then(close).catch(error => { close(); this.error.textContent = error.message; });
     const actions = node('div', '', 'dialog-actions'); actions.append(keep, skip);
     confirm.append(node('h3', 'Skip the v1 import forever?'),
-      node('p', 'Your v1 rooms, messages, memory, macros, roles and settings will not be brought into v2, and this wizard will not be offered again. The original backup stays on disk, but nothing in the app can import it later.'),
+      node('p', ONLY_CHANCE, 'import-warning'),
+      node('p', 'Your v1 rooms, messages, memory, macros, roles and settings will not be brought into v2, and this wizard will not be offered again. Nothing in the app can import the backup later.'),
       actions);
     this.dialog.append(confirm);
     confirm.showModal(); keep.focus();
@@ -868,8 +1011,10 @@ export class ImportV1Wizard {
       if (job.phase === 'done') {
         this.status.textContent = 'v1 import complete';
         this.content.replaceChildren();
+        this.heading.textContent = 'Import finished'; // the dialog's own heading says so; the invite links stay the first thing in the content
         // The links come first: they are shown only here, so they must not sit below a long report where a scroll would hide them.
         this.renderInvites(job);
+        if (!(job.invites || []).length && !job.invite_error) this.content.append(node('p', 'No new accounts were created, so there are no invite links.', 'settings-intro import-no-accounts'));
         if (job.report) { this.renderReportCounts(job.report); this.renderSkippedMemory(job.report); this.content.append(...(job.report.carried_over_files?.length ? [node('h3', 'Files kept for v2'), ...job.report.carried_over_files.map(path => node('p', path))] : [])); }
         else this.content.append(node('p', 'Import completed. Refresh to see the imported rooms.'));
         this.actions.append(this.button('Close and refresh', () => location.reload()));

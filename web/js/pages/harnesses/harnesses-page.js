@@ -105,7 +105,8 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
       </div>
       ${result && rows && html`<p class="harness-result" role="status">${resultLine(rows)}</p>`}
       <div class="harness-list" id=${`${idPrefix}harnesses-list`}>
-        ${rows && !rows.length && !(panel?.kind === 'detect' && panel.candidates.length) && html`<p class="settings-intro">No harnesses on this machine yet. Add one, or auto-detect what is installed.</p>`}
+        ${/* In the first-run step the status line under the list already says what is missing; a second, near-identical line is hidden (kept in the DOM: the page test waits for the list to have a child). */''}
+        ${rows && !rows.length && !(panel?.kind === 'detect' && panel.candidates.length) && html`<p class="settings-intro" hidden=${embedded}>No harnesses on this machine yet. Add one, or auto-detect what is installed.</p>`}
         ${rows?.length > 0 && html`
           <div class="harness-split">
             <${MasterList} rows=${rows} selected=${selected} onSelect=${data.selectHarness} />

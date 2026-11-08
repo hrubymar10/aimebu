@@ -41,9 +41,24 @@ every choice. An empty Workspace folder field starts at the home folder of the
 machine the server runs on when it is focused (typed text is never replaced). The draft (the
 choices and the page) is kept in the browser for each backup, so a reload
 continues where you left off; **Start over** on the first page drops it. The
-Summary is the dry run in words: the counts (the columns that are all zero are
-left out, so "Skipped" appears only when something is in it; what the backup
-already put in v2 is not listed), what is not imported and why, merged rooms, and what v2 does not carry.
+Summary is the dry run in words. It opens with one line of totals ("Bringing across
+23,889 of 28,002 messages, …") and, per count of the backup (rooms, messages,
+attachments, reactions), a block that adds up to the backup's own number: what is
+imported, and every part left out with its reason (v1's presence and memory
+bookkeeping lines, v1's own event room, direct messages not ticked, rooms with no
+project, rooms chosen out, and for reactions `person_skipped`: a reaction by a person
+mapped to nobody), with the rooms behind each part one click away (ids and message
+counts, never text). An attachment is counted once, by the messages that refer to it:
+imported if any imported message refers to it, otherwise left out with the reason of
+the message that does (a room left out, a join or leave line), and "unused files"
+only when no message refers to it (the table's `orphan_attachments` follows the same
+rule). The report carries the same data as `accounting`
+(`key`, `total`, `parts[]` of `key`, `count`, `items`); a count no named reason
+covers shows as `other`, so the parts always sum to the total. Below that comes the
+table of counts, ordered projects, rooms, messages, attachments first and settings
+last (the columns that are all zero are left out, so "Skipped" appears only when
+something is in it, and a non-zero cell is marked; what the backup already put in v2
+is not listed), then what is not imported and why, merged rooms, and what v2 does not carry.
 Choose **Import now** there, or **Skip the
 import…** (a separate link on the first page only, never next to **Import
 now**) and confirm **Skip import forever** in the dialog that names the
@@ -99,7 +114,7 @@ into. Once the import has committed the server creates a one-time reset link for
 each new account (valid an hour, working once, shown only on the finished page and
 in the job); a failure to make a link is reported there and never undoes the import,
 and the owner can make one in Settings → Users. A taken login, a duplicate login or a
-malformed one is refused before anything is written. The original name stays on messages. The person with
+malformed one is refused before anything is written. A person's messages show under the account they are mapped to, not under their v1 name (people mapped to one account are merged, and their old messages carry that account's name); only a skipped person, who has no account, keeps their v1 name, as a label. The person with
 the owner's own name (any case; the exact spelling first, then sorted order) is suggested into the owner's account, and so is the one person in the data when there is only one (messages, members, reactions, memory profiles, human agent records with read cursors, and room preferences count: a lone writer next to people who never wrote is not guessed at, and the wizard says so)
 (a single-person install is the owner, and mapping them elsewhere would leave their read positions, memory profile,
 pins and reactions behind). Everyone else is not merged into the owner's account unasked: the server's suggestion gives
@@ -128,12 +143,13 @@ project is a chat that goes into it gets access to that project; the Summary
 lists each as "X gets viewer access to project Y through a direct message"
 (`dm_only_access` in the report). Only a ticked chat counts, so a chat left
 unticked leaves them out. The wizard offers separate
-choices for project facts, global profiles, and shared notes. Global profiles
+choices for project facts (each project, or **Don't import**), global profiles, and shared notes, each labelled with the number of
+records it covers (the preview's `memory_counts`). Global profiles
 and shared notes are included by default and arrive as ordinary records;
 the Check report names every skipped memory record and its reason. If profiles
 merged onto one v2 user exceed the 2048-byte profile cap, Check points to
 **Skip global user profiles** or mapping people to separate users. It shows each
-backed-up macro body and any matching v2 body. A conflicting key keeps the v2
+backed-up macro body and any matching v2 body, on a card with a badge for what will happen (New, Conflict: keeping or replacing the v2 text, Already in v2, Already imported); conflicts come first and long bodies are folded behind their first line. A conflicting key keeps the v2
 text by default; choose the v1 text explicitly to replace it. A fresh v2
 install already carries the shipped `do-cr` and `example_macro` defaults, so a
 backup whose `do-cr` body differs shows that conflict too. Only macros
@@ -192,7 +208,7 @@ blocks the wizard before any import writes.
 
 ### Rooms page
 
-The Rooms page has a select per v1 room ("Import into": a project's root, its
+The review pages share one dialog height, and the long ones (Projects, Rooms, Memory) keep a one-line total of what is selected and what is left out beside the buttons. The Direct messages page leads with the message count and keeps the raw v1 chat id in a tooltip unless two chats share a title. The finished page's heading reads "Import finished". Macro keys are shown as stored (lowercase). The first page carries the "only chance" warning as its own callout (the skip confirmation repeats it in the same words). A room that goes to a project's home room has no "Archived after import" box: the page says a home room is never archived. The Rooms page has a select per v1 room ("Import into": a project's root, its
 general room, a new sub-room named like the room, or don't import), an
 "Archived after import" checkbox and Open all / Archive all, and a tree of the
 v2 rooms the choices make. Focus stays on the select, checkbox or bulk button

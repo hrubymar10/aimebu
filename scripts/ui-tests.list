@@ -23,6 +23,7 @@ node scripts/test-settings-phone-page.cjs
 node scripts/test-machines-page.cjs
 node scripts/test-project-page.cjs
 node scripts/test-claude-import-page.cjs
+node scripts/test-import-v1-page.cjs
 node scripts/test-shell-page.cjs
 node scripts/test-health-page.cjs
 node scripts/test-knowledge-page.cjs

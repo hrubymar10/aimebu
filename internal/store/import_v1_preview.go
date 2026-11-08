@@ -28,11 +28,13 @@ var v1PreviewNow = time.Now
 var ErrV1NoRooms = errors.New("v1 source has no rooms")
 
 type V1ImportPreview struct {
-	SourceKey          string                  `json:"source_key"`
-	Rooms              []V1PreviewRoom         `json:"rooms"`
-	Humans             []string                `json:"humans"`
-	DestinationUsers   []string                `json:"destination_users"`
-	MemoryProjects     []string                `json:"memory_projects"`
+	SourceKey        string          `json:"source_key"`
+	Rooms            []V1PreviewRoom `json:"rooms"`
+	Humans           []string        `json:"humans"`
+	DestinationUsers []string        `json:"destination_users"`
+	MemoryProjects   []string        `json:"memory_projects"`
+	// MemoryCounts says how many records each memory choice covers: per project scope, plus the user profiles and the shared agent notes.
+	MemoryCounts       V1MemoryCounts          `json:"memory_counts"`
 	Macros             map[string]string       `json:"macros"`
 	MacroDefaults      []string                `json:"macro_defaults"`
 	ImportedMacros     []string                `json:"imported_macros"`
@@ -52,6 +54,15 @@ type V1ImportPreview struct {
 	// HumanStakes is, for each v1 person, what is lost for good if the owner skips them (maps nobody to them): an import cannot be repeated,
 	// and these records belong to the person's account. The wizard says so next to a skipped person.
 	HumanStakes map[string]V1HumanStakes `json:"human_stakes"`
+}
+
+// V1MemoryCounts are the memory records of the backup by the choice that decides them on the wizard's Memory page.
+type V1MemoryCounts struct {
+	Projects map[string]int `json:"projects"`
+	Profiles int            `json:"profiles"`
+	Shared   int            `json:"shared"`
+	// ProfileOwners splits Profiles by the v1 person each belongs to: a profile of a person mapped to nobody is not imported.
+	ProfileOwners map[string]int `json:"profile_owners"`
 }
 
 // V1HumanStakes counts what belongs to one v1 person and is only imported when they are mapped to an account.
@@ -216,7 +227,18 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 			}
 		}
 	}
+	out.MemoryCounts.Projects = map[string]int{}
+	out.MemoryCounts.ProfileOwners = map[string]int{}
 	for _, memory := range data.Memory {
+		switch memory.Scope {
+		case "project_facts":
+			out.MemoryCounts.Projects[memory.ScopeKey]++
+		case "user_profile":
+			out.MemoryCounts.Profiles++
+			out.MemoryCounts.ProfileOwners[memory.ScopeKey]++
+		case "agent_shared_notes":
+			out.MemoryCounts.Shared++
+		}
 		if memory.Scope == "project_facts" {
 			scopes[memory.ScopeKey] = true
 		}

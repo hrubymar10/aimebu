@@ -473,9 +473,9 @@ async function main() {
         out.rooms = rooms;
         press('Next'); await settle();
         // Step 4: Direct messages. Off by default; turning one on shows its suggested project, and clearing it asks for one.
-        const dms = { label: wizard.progressLabel.textContent, status: count(wizard.status.textContent), checked: find('input[type=checkbox]').checked, retitle: find('legend[data-dm-room]').textContent };
+        const dms = { label: wizard.progressLabel.textContent, status: wizard.status.textContent.split('. ')[0], checked: find('input[type=checkbox]').checked, retitle: find('legend[data-dm-room]').textContent };
         find('input[type=checkbox]').click(); await settle();
-        dms.after = { status: count(wizard.status.textContent), hasProject: !!label('Project'), prefilled: find('select', label('Project'))?.value };
+        dms.after = { status: wizard.status.textContent.split('. ')[0], hasProject: !!label('Project'), prefilled: find('select', label('Project'))?.value };
         choose(find('select', label('Project')), ''); await settle(); press('Next'); await settle();
         dms.blocked = wizard.error.textContent.includes('Choose a project for the chat') && wizard.progressLabel.textContent.includes('Direct messages');
         // The problem points at the Project select itself: it is the invalid, described, focused field.
@@ -492,7 +492,7 @@ async function main() {
         const bulk = text => [...wizard.content.querySelectorAll('.import-bulk button')].find(button => button.textContent === text);
         bulk('Import none').click(); await settle(); macros.none = [...wizard.mapping.skip_macros].sort(); macros.noneStatus = count(wizard.status.textContent);
         bulk('Import all').click(); await settle(); macros.all = wizard.mapping.skip_macros.length;
-        [...wizard.content.querySelectorAll('fieldset')].find(box => box.querySelector('legend').textContent.startsWith('<OTHER>')).querySelector('input[type=checkbox]').click(); await settle();
+        [...wizard.content.querySelectorAll('fieldset')].find(box => box.querySelector('legend').textContent.startsWith('<other>')).querySelector('input[type=checkbox]').click(); await settle();
         macros.one = wizard.mapping.skip_macros; macros.conflict = !!label('On conflict');
         out.macros = macros;
         press('Next'); await settle();
@@ -562,13 +562,13 @@ async function main() {
         merged: ['2 v1 rooms will be merged into the root of a: a-leader, a.'], unmerged: 0, panel: true,
         created: { alias: true, project: { name: 'Fresh Start', folder: '/tmp/fresh' }, memory: true, placed: 'general:fresh-start', panelGone: true },
       },
-      dms: { label: 'Step 4 of 8 · Direct messages', status: '0 of 1 chats', checked: false, retitle: 'nina', after: { status: '1 of 1 chats', hasProject: true, prefilled: 'a' }, blocked: true, pointer: { invalid: 'true', described: true, focused: true } },
+      dms: { label: 'Step 4 of 8 · Direct messages', status: 'The chat is not going to be imported', checked: false, retitle: 'nina', after: { status: 'The chat is going to be imported', hasProject: true, prefilled: 'a' }, blocked: true, pointer: { invalid: 'true', described: true, focused: true } },
       memory: { label: 'Step 5 of 8 · Memory', scopes: 2, enableBoxes: [true, true, true] },
       macros: { label: 'Step 6 of 8 · Macros', status: '2 of 2 macros', none: ['greet', 'other'], noneStatus: '0 of 2 macros', all: 0, one: ['other'], conflict: true },
       roles: { label: 'Step 7 of 8 · Roles', choice: 'use_v1' },
       summary: {
         label: 'Step 8 of 8 · Summary', buttons: ['Back', 'Import now'], skipOffered: false,
-        where: ['a-leader → ⌂ a', 'a → a › general', 'solo → kcd2 › general (archived)', 'scratch → Fresh Start › general (archived)', 'nina → direct message in a · dm:alice:nina@repo'], headers: ['Record', 'New', 'Skipped'], rowKeys: ['macros', 'messages', 'rooms'],
+        where: ['a-leader → ⌂ a', 'a → a › general', 'solo → kcd2 › general (archived)', 'scratch → Fresh Start › general (archived)', 'nina → direct message in a · dm:alice:nina@repo'], headers: ['Record', 'New', 'Skipped'], rowKeys: ['rooms', 'messages', 'macros'],
         lists: ['Where each room goes', 'Rooms not imported: no project', 'Memory switched off', 'Merged rooms', 'Accounts created', 'Role conflicts', 'Not carried over'], accounts: true, noProject: true, plans: true,
         sent: { accounts: '{"bob":{"login":"bobby","role":"operator"}}', skipMacros: ['other'], rooms: ['root', 'general', false, 'a'], projects: ['a', 'kcd2', 'fresh-start'], roles: 'use_v1' },
       },
@@ -2920,11 +2920,11 @@ async function main() {
           }));
           assert.deepEqual(await setupPage.evaluate(() => ({ continueDisabled: document.querySelector('#onboarding-harnesses-continue').disabled, status: document.querySelector('#onboarding-harness-status').textContent, embedded: !!document.querySelector('#onboarding-harnesses-host #onboarding-settings-harnesses'), repeatedIds: [...document.querySelectorAll('[id]')].map(node => node.id).filter((id, at, all) => all.indexOf(id) !== at) })),
             { continueDisabled: true, status: 'No harness with a model yet. Tick a detected harness, or add one by hand and give it a model.', embedded: true, repeatedIds: [] }, 'the Harnesses step embeds the Settings component, cannot continue without a harness and says what is missing');
-          // The disabled Continue stays legible (a dashed outline, full-strength text), and Skip is the secondary button on its left.
+          // The disabled Continue looks like every other disabled primary button (the same half-strength fill, no dashed outline of its own), and Skip is the secondary button on its left.
           assert.deepEqual(await setupPage.evaluate(() => {
             const next = document.querySelector('#onboarding-harnesses-continue'), skip = document.querySelector('#onboarding-harnesses-skip'), style = getComputedStyle(next);
             return { dashed: style.borderTopStyle, opacity: style.opacity, skipFirst: skip.getBoundingClientRect().right <= next.getBoundingClientRect().left, primary: next.classList.contains('btn-primary'), skipPrimary: skip.classList.contains('btn-primary') };
-          }), { dashed: 'dashed', opacity: '1', skipFirst: true, primary: true, skipPrimary: false }, 'a disabled Continue is legible; Skip is secondary and on its left');
+          }), { dashed: 'solid', opacity: '0.5', skipFirst: true, primary: true, skipPrimary: false }, 'a disabled Continue has the one disabled look; Skip is secondary and on its left');
           // A detected-harness row in this step is a box beside its text (the first-run form's block label and full-width input rules do not
           // apply to it), and in a window shorter than the step Skip and Continue stay at its bottom edge.
           const viewportBefore = setupPage.viewport();

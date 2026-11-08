@@ -12,10 +12,11 @@ const OWNER = { login: 'owner', password: 'test-password-123' };
 
 // A scratch server and a browser for a page test. With `owner` the server starts with that account; without it there is no owner yet and the
 // server waits for its setup token (its path is in /api/setup/status). `AUTH_BINARY` names a binary built already, so several scripts share one.
-async function scratch({ owner = OWNER, env: extraEnv = {} } = {}) {
+async function scratch({ owner = OWNER, env: extraEnv = {}, prepare } = {}) {
   const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'aimebu-auth-'));
   const home = path.join(tmp, 'home'); fs.mkdirSync(home, { recursive: true });
   const env = { ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp, TMPDIR: tmp };
+  if (prepare) prepare(tmp); // lays files into the config dir before the server first starts (a v1 backup to import, say)
   let binary = process.env.AUTH_BINARY;
   if (!binary) {
     binary = path.join(tmp, 'aimebu');
