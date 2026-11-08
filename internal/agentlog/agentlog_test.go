@@ -295,37 +295,67 @@ func TestAReplacedBlobDropsTheRestOfItsLineAndLeavesNoState(t *testing.T) {
 
 // Taking a long line in tiny writes costs a look at each new byte, not at the whole buffer again for every write: the search for a place
 // to cut and the search for the end of the line both resume where they stopped.
+//
+// The check is about how the time grows, not how long it takes, so it holds on a slow or loaded machine: each case is timed at a size S and at
+// 4S, the best of three runs each. Linear work takes about 4 times as long at 4S, quadratic work about 16 times; the test fails above 10.
+// (A time under scalingFloor at S is taken as scalingFloor, since the ratio of two tiny timings is noise.) A far looser absolute cap only
+// stops a hang.
 func TestHoldingALongLineIsNotQuadratic(t *testing.T) {
+	const (
+		scalingFloor = 20 * time.Millisecond
+		hangGuard    = 60 * time.Second
+		runs         = 3
+	)
+	timeIt := func(step, size int, words bool, ending string) time.Duration {
+		best := time.Duration(1<<63 - 1)
+		for run := 0; run < runs; run++ {
+			store, _ := newStore(t)
+			log, err := store.OpenTurn("agt_slow", "t", 1, "normal")
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := strings.Repeat("z", size)
+			if words {
+				text = strings.Repeat("word ", size/5)
+			}
+			text += ending
+			started := time.Now()
+			for i := 0; i < len(text); i += step {
+				end := i + step
+				if end > len(text) {
+					end = len(text)
+				}
+				log.Write([]byte(text[i:end]))
+			}
+			log.Close()
+			if took := time.Since(started); took < best {
+				best = took
+			}
+		}
+		return best
+	}
 	for name, tc := range map[string]struct {
-		step, size int
+		step, size int // size is the larger of the two sizes timed (4S)
+		words      bool
 		ending     string
 	}{
-		"1-byte writes, a line that ends": {1, 200000, "\n"},
-		"64-byte writes, a blob held":     {64, hardLine - 1000, ""},
-		"64-byte writes, then a newline":  {64, hardLine - 1000, "\n"},
-		"1-byte writes of words":          {1, 200000, "\n"},
+		"1-byte writes, a line that ends": {1, 200000, false, "\n"},
+		"64-byte writes, a blob held":     {64, hardLine - 1000, false, ""},
+		"64-byte writes, then a newline":  {64, hardLine - 1000, false, "\n"},
+		"1-byte writes of words":          {1, 200000, true, "\n"},
 	} {
-		store, _ := newStore(t)
-		log, err := store.OpenTurn("agt_slow", "t", 1, "normal")
-		if err != nil {
-			t.Fatal(err)
+		small := timeIt(tc.step, tc.size/4, tc.words, tc.ending)
+		large := timeIt(tc.step, tc.size, tc.words, tc.ending)
+		if large > hangGuard {
+			t.Errorf("%s: %d bytes in %d-byte writes took %s", name, tc.size, tc.step, large)
 		}
-		text := strings.Repeat("z", tc.size)
-		if strings.Contains(name, "words") {
-			text = strings.Repeat("word ", tc.size/5)
+		t.Logf("%s: %s at %d bytes, %s at %d", name, small, tc.size/4, large, tc.size)
+		base := small
+		if base < scalingFloor {
+			base = scalingFloor
 		}
-		text += tc.ending
-		started := time.Now()
-		for i := 0; i < len(text); i += tc.step {
-			end := i + tc.step
-			if end > len(text) {
-				end = len(text)
-			}
-			log.Write([]byte(text[i:end]))
-		}
-		log.Close()
-		if took := time.Since(started); took > 5*time.Second {
-			t.Errorf("%s: %d bytes in %d-byte writes took %s", name, len(text), tc.step, took)
+		if large > 10*base {
+			t.Errorf("%s: %d bytes took %s, %d bytes took %s (%.1fx for 4x the bytes: more than linear growth)", name, tc.size/4, small, tc.size, large, float64(large)/float64(small))
 		}
 	}
 }
