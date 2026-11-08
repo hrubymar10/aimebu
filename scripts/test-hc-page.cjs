@@ -64,18 +64,27 @@ async function main() {
       // The thread composer's buttons are boxed like the main composer's, a reply's quote is the accent (v1's link), a message id is the muted text colour,
       // the memory usage bar is a black track with an outline, and an emoji cell is outlined only when hovered or focused.
       const more = await page.evaluate(() => {
+        const parse = text => text.match(/[\d.]+/g).slice(0, 3).map(Number);
+        const lum = ([r, g, b]) => { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+        const ratio = (a, b) => { const [x, y] = [lum(parse(a)), lum(parse(b))].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
         const style = el => getComputedStyle(el), make = (tag, cls, parent = document.body) => { const el = document.createElement(tag); el.className = cls; parent.append(el); return el; };
         const resolve = (prop, name) => { const el = document.createElement('i'); el.style[prop] = `var(${name})`; document.body.append(el); return style(el)[prop]; };
         const edge = el => `${style(el).borderTopWidth} ${style(el).borderTopStyle} ${style(el).borderTopColor}`;
         const thread = ['#thread-composer .attachment-picker-btn', '#thread-emoji-button', '#thread-composer .composer-format', '#thread-composer .composer-aa'].map(sel => document.querySelector(sel));
+        const history = make('div', 'answer-history'), chip = make('button', 'btn proposed-answer-btn', history), asked = make('button', 'btn open-questions-open', history), live = make('button', 'btn proposed-answer-btn'), liveAsk = make('button', 'btn open-questions-open'); chip.disabled = true; asked.disabled = true;
+        const card = make('article', 'agent-card'), review = make('button', 'btn agent-recovery', card); review.textContent = 'Review in Inbox';
         const quote = make('button', 'row-btn quote'), id = make('button', 'row-btn quiet-glyph chat-msg-id'), bar = make('div', 'memory-usage-bar'), cell = make('button', 'row-btn emoji-cell');
         return { thread: thread.map(el => el && edge(el)), main: edge(document.querySelector('#composer .attachment-picker-btn')), quote: style(quote).color, accent: resolve('color', '--accent'), id: style(id).color, muted: resolve('color', '--text-muted'),
-          bar: [style(bar).borderTopWidth, style(bar).backgroundColor, resolve('backgroundColor', '--bg-primary')], cell: style(cell).borderTopColor, header: style(document.querySelector('#room-info')).backgroundColor, tertiary: resolve('backgroundColor', '--bg-tertiary') };
+          bar: [style(bar).borderTopWidth, style(bar).backgroundColor, resolve('backgroundColor', '--bg-primary')], review: [style(review).backgroundColor, style(review).borderTopStyle, style(review).borderTopColor, style(review).textDecorationLine, ratio(style(review).color, style(review).backgroundColor)], live: [live, liveAsk].map(el => [style(el).backgroundColor, style(el).color, style(el).borderTopStyle, style(el).borderTopColor]), chips: [chip, asked].map(el => [style(el).backgroundColor, style(el).borderTopStyle, style(el).borderTopColor, style(el).opacity]), border: resolve('color', '--border'), page: resolve('backgroundColor', '--bg-primary'), text: resolve('color', '--text-primary'), cell: style(cell).borderTopColor, header: style(document.querySelector('#room-info')).backgroundColor, tertiary: resolve('backgroundColor', '--bg-tertiary') };
       });
       assert.ok(more.thread.every(Boolean) && new Set([...more.thread, more.main]).size === 1, `the thread composer's buttons are boxed like the main one's in ${theme}: ${JSON.stringify(more)}`);
       assert.equal(more.quote, more.accent, `a reply's quote is the accent in ${theme}`);
       assert.equal(more.id, more.muted, `a message id is the muted text colour in ${theme}`);
       assert.deepEqual([more.bar[0], more.bar[1]], ['1px', more.bar[2]], `the memory usage bar is a track with an outline in ${theme}`);
+      assert.deepEqual(more.chips, [[more.tertiary, 'solid', more.border, '0.52'], [more.tertiary, 'solid', more.border, '0.58']], `a closed proposed answer and its question button are v1's dimmed chip, solid and not grey, in ${theme}`);
+      assert.deepEqual(more.live, Array(2).fill([more.tertiary, more.text, 'solid', more.border]), `an open proposed answer and the question button are v1's chip, not the plain light button, in ${theme}`);
+      assert.deepEqual(more.review.slice(0, 4), [more.page, 'solid', more.border, 'none'], `"Review in Inbox" on an agent card is an outlined control, not the plain button, in ${theme}`);
+      assert.ok(more.review[4] >= 4.5, `and its text reads (${more.review[4].toFixed(1)}:1) in ${theme}`);
       assert.equal(more.header, more.tertiary, `the room header's icon buttons have v1's tertiary fill in ${theme}`);
       assert.equal(more.cell, 'rgba(0, 0, 0, 0)', `an emoji cell is not outlined at rest in ${theme}`);
     }

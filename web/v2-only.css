@@ -561,3 +561,18 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 #knowledge-dialog button.btn { line-height: normal; }
 #knowledge-dialog select.memory-scope-key-input { font-family: var(--font-mono); }
 [data-theme="high-contrast-dark"] #knowledge-dialog .memory-textarea { background: var(--bg-tertiary); }
+
+/* A proposed answer, and the Open Questions button beside it, are v1's chip in both states: an open one has the tertiary fill, text colour and solid outline of v1's
+   `.proposed-answer-btn` and `.open-questions-open` (the accent on hover and focus), and a closed one (answered, or no longer pending) the same, dimmed (52% for an answer,
+   58% for the question button, as v1 does). The generic button rules (the browser-light plain button of the high-contrast themes, the grey disabled one) are not what v1
+   draws for them. */
+:root:root :is(button.proposed-answer-btn, button.open-questions-open):not(:disabled) { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
+:root:root :is(button.proposed-answer-btn, button.open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--accent-dim); border-color: var(--accent); }
+:root:root .answer-history button:disabled { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); opacity: .52; cursor: default; }
+:root:root .answer-history button.open-questions-open:disabled { opacity: .58; }
+
+/* "Review in Inbox" on an agent card that needs a decision (v2 only): a small outlined control like the card's other buttons, in v1's palette (the orange of a decision
+   waiting, the border colour for its outline, the accent on hover and focus), not the browser's plain button; the high-contrast themes fill it with the page colour. */
+:root:root .agent-card button.agent-recovery { background: transparent; color: var(--orange); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-decoration: none; cursor: pointer; }
+:root:root[data-theme^="high-contrast"] .agent-card button.agent-recovery { background: var(--bg-primary); }
+:root:root .agent-card button.agent-recovery:is(:hover, :focus-visible) { background: var(--accent-dim); border-color: var(--accent); text-decoration: none; }
