@@ -582,17 +582,14 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 :root:root[data-theme^="high-contrast"] .agent-card button.agent-recovery { background: var(--bg-primary); }
 :root:root .agent-card button.agent-recovery:is(:hover, :focus-visible) { background: var(--accent-dim); border-color: var(--accent); text-decoration: none; }
 
-/* The Workspace folder field's home button and ghost suggestion (js/folder-field.js): the button sits inside the field at the edge the variant names, outlined only
-   while hovered or focused; the ghost is the home folder in the field's own type, muted. */
+/* The Workspace folder field's home button (js/folder-field.js): it sits inside the field at the left edge, outlined only while hovered or focused; the text is inset
+   for it only while it shows. */
 .folder-field { position: relative; }
 .folder-field > button.folder-home-btn { position: absolute; display: inline-grid; place-items: center; width: 26px; height: 26px; min-width: 0; min-height: 0; margin: 0; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); }
 .folder-field > button.folder-home-btn[hidden] { display: none; }
 .folder-field > button.folder-home-btn:is(:hover, :focus-visible) { border-color: var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
 .folder-field > button.folder-home-btn .icon-mask { width: 16px; height: 16px; }
-.folder-field[data-home-button="a"] > input { padding-right: 40px; }
-.folder-field[data-home-button="b"] > input { padding-left: 40px; }
-.folder-field > .folder-ghost { position: absolute; display: block; overflow: hidden; box-sizing: border-box; color: var(--text-muted); opacity: .75; white-space: nowrap; pointer-events: none; }
-.folder-field > .folder-ghost[hidden] { display: none; }
+.folder-field[data-home-button] > input { padding-left: 40px; }
 
 /* The experiment "HC plain buttons": how a plain .btn looks in the high-contrast themes (js/app.js). A is what v1 draws (the browser-light button, above); B is the chip
    look (the page colour as the field, the outline, primary text); C has the tertiary fill. Both have the accent on hover and focus, and a disabled one is the same
