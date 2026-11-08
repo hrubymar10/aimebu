@@ -449,9 +449,9 @@ from pi's `tool_execution_start`/`_end`, Codex's `item.started`/
 `item.completed` for commands, MCP calls, file changes and searches, and
 Claude Code's `tool_use` / `tool_result` blocks. `AIMEBU2_TURN_MAX` is a
 wall-clock cap for the whole turn, tools included. Defaults depend on the
-harness: pi gets 600s idle and a 30m cap (as in v1); Claude Code and Codex,
-which had no bound before and routinely run long turns, get 600s idle and
-no cap. Setting either variable overrides it for every harness; both are Go
+harness: pi gets 600s idle and a 30m cap (as in v1); every other harness
+(Claude Code, Codex, OpenCode and Vibe), which had no bound before and
+routinely run long turns, gets 600s idle and no cap. Setting either variable overrides it for every harness; both are Go
 durations, `0` disables a deadline, and an invalid value fails startup. The
 deadlines apply to the embedded and standalone supervisors alike and stop
 counting once the final answer has been received. A tool that never reports

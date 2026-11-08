@@ -137,7 +137,7 @@ Machine and agent keys are
 revocation invalidates them.
 
 `POST /api/login` accepts JSON `login` and `password` and returns
-`user_id`, `csrf_token`, and `expires_at` while setting the session cookie.
+`user_id`, `csrf_token`, and `expires_at` (plus `first_run`, `owner` and `admin`, and `host_home` for the owner and admins; see api.md) while setting the session cookie.
 An exact stored login wins. Otherwise, a trimmed, case-insensitive match is
 accepted only when it identifies one account; ambiguous legacy names require
 their exact spelling. New accounts store the lowercase form, and invitation
@@ -213,9 +213,9 @@ says; taking the flag away ends it at once.
 | list every account; invites into any project at any role; change anyone's project role | yes | yes (not the owner's or another admin's role) | their own project | no |
 | password-reset link, deactivate | any account but the owner can be deactivated | ordinary accounts only | no | no |
 | appoint or remove admins | yes | no | no | no |
-| macros, message expiry, sounds, global memory, global roles/prompts, cleanup and disk report, settings export, harness auto-detect, the machine list and a harness's launchers (read-only) | yes | yes | no | no |
+| macros, message expiry, sounds, global memory, global roles/prompts, cleanup and disk report, settings export, harness auto-detect, the machine list and a harness's launchers (read-only), the usage limits (read-only: no e-mail, host, error text or credential state) | yes | yes | no | no |
 | stop all agents on a machine (`POST /api/machines/{id}/agents/stop`, Settings → Machines): the agents they could stop one by one | yes | yes | no | no |
-| machines (pairing, approval, revoking), what a machine runs (saving, changing or removing a launcher; a harness's models, providers and path override; detecting a harness's models, which sends a provider key), account switcher and provider usages and credentials, quota switcher and limit guard, v1 import, settings preview/apply | yes | no | no | no |
+| machines (pairing, approval, revoking), what a machine runs (saving, changing or removing a launcher; a harness's models, providers and path override; detecting a harness's models, which sends a provider key), account switcher and changing provider usages and credentials, quota switcher and limit guard, v1 import, settings preview/apply | yes | no | no | no |
 | admit a paired machine for a project (`POST /api/projects/{project}/machine-folders/{machine}/admit`) | yes | yes | their own project | no |
 
 Links follow their issuer: a password-reset link is rechecked when it is used (the issuer must still be allowed to act on that account, so

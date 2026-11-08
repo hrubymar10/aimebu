@@ -56,6 +56,12 @@ shows unavailable harnesses with the reason and points to Settings → Harnesses
 the dialog's machine for an owner or admin; anyone else is told to ask an admin). A
 harness can be selected by ID or by its name in `variant`; `native` and `docker` keep their
 meaning for the harnesses named `native` and `harness-docker`.
+"Only run agents in docker" (Settings → General → Agents, an owner or admin setting, off by
+default; `GET`/`PUT /api/agent-isolation`) refuses to create an agent on, or switch one to, a native
+launcher (409 `docker_only`) and holds the turns of one already there; the supervisor refuses
+too, so a stale server or an older machine cannot get around it. A managed agent's key is held in
+the supervisor's memory only: no file and no argument list holds it (see
+[supervisor](docs/supervisor.md)).
 The inbox offers a one-time higher cap or a pause until the next local day.
 Health flags identify stuck turns, provider quota, disconnected supervisors,
 held answers, and recovery waiting on agent cards, rooms, and the top bar. The agent card pills use plain words
@@ -94,7 +100,7 @@ new version. A dirty checkout or a branch other than the remote's default is
 never touched: it only prints a one-line notice. Notices go to stderr, and the
 check is skipped for `version`, `help`, `--json`, `--machine` and `--plain`
 runs, for `AIMEBU_FORCE_BUILD=1`, and whenever stdin, stdout or stderr is not a
-terminal (so `aimebu mcp`, pipes and services never check).
+terminal (so `aimebu agent-tools`, pipes and services never check).
 `aimebu update` updates on demand and `aimebu update --check` only reports
 (`current`, `behind`, `dirty`, `non-default` or `unreachable`). Settings:
 
@@ -162,8 +168,8 @@ AI group-tag chatter out of what an agent is given (a mention, reply, DM or huma
 message is always delivered). The window is a setting under Settings → General; see
 [message expiry](docs/retention.md).
 
-Settings → Prompts lets the owner reword the shared sentences of an agent's turn
-prompt, globally or for one project (the response format stays fixed), and sets
+Settings → Prompts lets the owner or an admin reword the shared sentences of an agent's turn
+prompt globally, and a project's owner or operator for that project (the response format stays fixed); the owner or an admin also sets
 whether a lead is always asked to attach the full plan under a visual plan
 (Inline plans, default optional). While a save or reset is pending the page is locked (the scope
 select, every box and button), so an answer always belongs to the page it was asked from; see
@@ -176,7 +182,7 @@ variant through task, pause, kill, and recovery on a real server; see
 Error and performance reporting to Sentry is **on by default, once the owner has answered a one-time popup** (its toggle starts on, with the maintainers' DSN filled in; "Not now" turns it off). Set
 `AIMEBU2_SENTRY_DSN=off` (or another DSN), or use Settings → Telemetry, to stop or redirect the sending of crashes, 5xx answers and traces from the server and
 the web UI to a Sentry project (the maintainers', yours, or a self-hosted one); `AIMEBU2_SENTRY_ENV` and
-`AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` tune it. There is no Session Replay.
+`AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` tune it (the trace sample rate defaults to `1`: every request and page load). There is no Session Replay.
 Message bodies, prompts, attachments, tokens, cookies, headers, environment values and query strings are never sent: see
 [telemetry](docs/telemetry.md) for exactly what is and how to self-host.
 
@@ -265,8 +271,10 @@ project may spend in a day (cost and turns, all its rooms together): the owner s
 default in Settings → Usages, and each project inherits it, sets its own, or has no
 limit in Project settings. Fresh provider windows at or below 20% and 10%
 remaining create global Inbox alerts for the owner and global admins. The
-owner can change those thresholds in Settings → Usages; only the owner can
-open the detailed Usages view. See
+owner can change those thresholds in Settings → Usages; only the owner sees
+account details or changes anything there, and global admins can open the
+Usages view read-only (limits and profile names, nothing that names an account
+or how it signs in). See
 [usage snapshots](docs/usages.md) and
 [account switching](docs/switcher.md).
 Its files use the v1 switcher format under the selected v2 config root:
@@ -509,8 +517,8 @@ when space runs out, Sign out, System events, Memory, then Health move into the
 More menu in that order (the version text and the experiment pill's long label
 go first on a touch tablet); controls that fit remain in the bar, and the More
 button is there only while one is folded. More carries
-the Health warning color only while Health is in the menu. The Usages icon opens the usages column in place of the members column (instance
-owner only), laid out as in v1: a toolbar on the left (close, refresh, group by) and the title on
+the Health warning color only while Health is in the menu. The Usages icon opens the usages column in place of the members column (the owner
+and global admins; admins read it, and Refresh and Switch are the owner's), laid out as in v1: a toolbar on the left (close, refresh, group by) and the title on
 the right; one card per provider with its icon, "Updated Ns ago" and each profile (the active
 one first with an ACTIVE badge; every profile with its token-expiry icon, a SWITCH pill on the
 inactive ones, and its plan), Session/Weekly bars with the expected-pace
@@ -521,7 +529,7 @@ grows as text is entered, sends with Enter, and
 inserts a newline with Shift+Enter. Pressing ↑ in an empty composer (or with the
 caret at its start) recalls your earlier messages in that room, newest first;
 ↓ walks forward and Esc restores the draft. Settings → Macros edits shared `<KEY>`
-composer expansions for the instance owner; all signed-in users can insert
+composer expansions for the owner and global admins; all signed-in users can insert
 them from prefix suggestions (typing `<` opens the list, as in v1: an outlined
 list over the composer, one line per macro with its first 40 characters; ↑/↓
 move, Enter or Tab expands it in place, `\<` writes a literal `<`) and edit the
@@ -743,7 +751,7 @@ OpenAI-compatible endpoint: an id, a name, an `https://` base URL, or `http://` 
 only the NAME of the environment variable its key is read from, never the key. The turn's private
 OpenCode config refers to the key as `{env:NAME}`, native turns pass that variable through and Docker
 turns forward it by name; set it where the turn runs (the supervisor's environment, or the launcher's
-environment references). A provider's key variable and base URL are the owner's (or an admin's) to set, like a launcher's command and
+environment references). A provider's key variable and base URL are the owner's to set, like a launcher's command and
 environment references: the refused names (`PATH`, `HOME`, `LD_*`, `XDG_*`, `OPENCODE_*`, `AIMEBU*`, …, and the keys of OpenCode's own providers such as
 `OPENAI_API_KEY`, whose host value would otherwise go to the custom base URL) keep a saved provider from
 disturbing the harness itself, not from naming another variable of the supervisor's environment, so only someone trusted with a machine's

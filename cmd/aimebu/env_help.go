@@ -43,7 +43,7 @@ var environment = []envVar{
 		"Sentry DSN for error and performance reports (server and web UI); \"off\" or",
 		"empty disables, and either overrides Settings. See docs/telemetry.md"}},
 	{[]string{"AIMEBU2_SENTRY_ENV"}, []string{"Sentry environment name (default: dev)"}},
-	{[]string{"AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"}, []string{"Share of requests traced, 0 to 1 (default: 0.1)"}},
+	{[]string{"AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"}, []string{"Share of requests and page loads traced, 0 to 1 (default: 1)"}},
 	{[]string{"AIMEBU2_USAGES"}, []string{"Set to 0 to disable credential reads and provider usage requests"}},
 	{[]string{"AIMEBU2_WEB_BUNDLE"}, []string{
 		"Set to off to serve the web UI from its ~240 separate modules instead of the one",

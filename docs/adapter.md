@@ -171,7 +171,7 @@ non-terminal exit instead of waiting on a child blocked on its unread pipe.
 The catalog probes `claude --version` at supervisor startup and advertises it
 only when the executable is available. CLI version is discovery data, not a
 model choice: the server's spawn catalog separately bounds Claude models to
-the owner-editable list (default `haiku`, `sonnet`, and `opus`). Normal turns receive the aimebu MCP entry
+the list the owner sets on the harness in Settings → Harnesses (nothing is seeded; Auto-detect offers the current models). Normal turns receive the aimebu MCP entry
 inline through `--mcp-config` and are not strict: the person's own MCP servers and connectors
 (user, project and local scope, claude.ai) stay available to the agent, as in their
 terminal. The aimebu entry takes precedence over a server of the same name in any
@@ -510,7 +510,7 @@ reaches the provider some other way. The adapter's capabilities are
 pinned to the verified release, 2.25.0 on Linux, and claim cost and cancel confirmation only: no-action
 mode is not claimed until a live canary has shown that a read-only turn loads none of the person's MCP
 servers. `AIMEBU2_LIVE_VIBE=1` is reserved for that opt-in canary, which has not been written or run.
-The stream entries in the tests are shaped from the Vibe 2.25.0 sources, not recorded from a run.
+The `recorded_*` fixtures in the tests follow the keys and values of real `vibe -p --output streaming` runs and their `meta.json` files (ids and prompt text trimmed); the other fixtures are shaped from the Vibe 2.25.0 sources. (The two-turn Docker canary below, `AIMEBU2_LIVE_VIBE_DOCKER=1`, is a different test from the reserved no-action canary above.)
 
 ### Mistral Vibe in Docker
 

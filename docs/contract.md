@@ -133,7 +133,7 @@ Projects, rooms, people
   grant issuer's authority.
   Deactivation and reset revoke sessions; each project keeps an active owner.
 - **auth_session**(id, user_id, csrf_token, expires_at, revoked_at?,
-  token_hash UNIQUE) — the 256-bit bearer token is never stored directly;
+  token_hash UNIQUE, created_at) — the 256-bit bearer token is never stored directly;
   migration 3 adds its hash while the row ID remains sortable.
 
 Content
@@ -1366,12 +1366,14 @@ verification).
 
 ## 9. Error codes
 
-`room_closed`, `room_closing`, `room_paused`, `not_member`,
-`stale_generation`, `stale_rev`, `snapshot_required`, `writer_occupied`, `limit_agents`,
-`limit_rate`, `invalid_answer`, `conflict`, `unknown_tool`, `unauthorized`,
+`room_closed`, `room_closing`, `not_member`,
+`stale_generation`, `stale_rev`, `snapshot_required`, `writer_occupied`, `spawn_limit`,
+`invalid_answer`, `conflict`, `unauthorized`,
 `forbidden`, `depth_exceeded`, `already_resolved`, `already_withdrawn`,
-`agent_not_active`, `machine_unapproved`, `invalid_transition`,
-`readonly_unavailable`. Each documented as retryable or not.
+`agent_not_active`, `invalid_transition`, `invalid_request`, `not_found`,
+`invalid_csrf`, `invalid_credentials`, `rate_limited`, `project_archived`,
+`docker_only`. docs/api.md lists the codes of each route. Each documented as
+retryable or not.
 
 ## 10. Idle-profile warmup
 

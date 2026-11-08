@@ -1,7 +1,7 @@
 # Releasing aimebu 2.0.0 (draft plan)
 
-Status: draft of the 2.0.0 release plan. Everything below was checked against the tree at
-`207a2667` unless marked **open**. Nothing here adds a dependency or changes code.
+Status: draft of the 2.0.0 release plan. Everything below is kept in line with the code unless
+marked **open**. Nothing here adds a dependency or changes code.
 
 ## 1. Versioning
 
@@ -13,9 +13,10 @@ Where the version lives today:
   string unchanged. Without one it appends the short VCS revision, commit time
   and `dirty` from `runtime/debug` build info (a `go build` inside a checkout
   prints `aimebu v2 (development) 7fce1dbcb00c 2026-10-20T15:34:02Z`).
-- Nothing else reads it. The server API and the web UI do not show the binary
-  version. The embedded web assets are cache-busted by a content hash
-  (`internal/server/static_assets.go`), not by the version.
+- Little else reads it. The page header shows the build's version string
+  (`GET /api/buildinfo`, for a signed-in account). The embedded web assets are
+  cache-busted by a content hash (`internal/server/static_assets.go`) and the
+  bundle's bytes, not by the version.
 - There is no `VERSION` file, changelog, or Go-source constant. Git has one tag,
   `v0.0.0`.
 - The Go module path is `github.com/hrubymar10/aimebu`, the same as v1, so a

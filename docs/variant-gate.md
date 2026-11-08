@@ -1,9 +1,9 @@
 # Variant gate
 
-The cutover gate asks one question of every supported tool and container form:
+The cutover gate asks one question of every tool and container form it covers:
 does the core task, control, and recovery path work on the real server? It runs
 `claude`, `codex`, and `pi`, each as `native` and `docker`, plus `opencode` as
-`native` only (its Docker variant is not covered by this gate yet), through the normal HTTP API as the
+`native` only (its Docker variant is not covered by this gate yet). Mistral Vibe is not covered by this gate yet either. It goes through the normal HTTP API as the
 instance owner.
 
 ```bash

@@ -9,8 +9,9 @@ stops working, fix this file in the same commit as the change that broke it.
 ## Prerequisites
 
 - **Go**: the version in `go.mod` (`go 1.26.1` or newer). Dependencies are the
-  standard library plus the three approved in `AGENTS.md`; ask before adding,
-  removing or updating any other.
+  standard library plus the ones `AGENTS.md` approves (go-json, the websocket
+  and sqlite libraries, go-toml, esbuild and the telemetry set; `air` is a
+  `make dev` tool only); ask before adding, removing or updating any other.
 - **Docker**, for `make test-web` and so `make test-full`: the web unit tests run in a pinned `node`
   image (see "The web tests in Docker" below), so a machine needs no node of its own for them.
   `WEB_TEST_RUNNER=local` runs them with a local **Node.js** instead (a current release; the tests are
@@ -262,11 +263,13 @@ the switch.
 - `web/js/`: one module per concern. `app.js` boots the page and wires the
   rest; `api.js` holds the session (CSRF token, current user, rights) and the
   `request` helper every call uses; `events.js` is the live event stream.
-  Main areas: `sidebar.js` (rooms), `chat.js` and `composer*.js` (messages and
-  input), `inbox*.js` (the Inbox), `agents.js` and `room-members.js` (agent
-  cards and profile), `settings*.js` and the `*-settings.js`
-  pages (Settings), `setup.js` and `welcome.js` (first run), `preferences.js`
-  (per-user preferences saved through `/api/me/preferences`).
+  Main areas: `chat.js` and `composer*.js` (messages and input), `inbox*.js`
+  (the Inbox), `settings*.js` and the `*-settings.js` pages (Settings),
+  `preferences.js` (per-user preferences saved through
+  `/api/me/preferences`). A page of the app lives in `web/js/pages/<page>/`
+  (`sidebar` for rooms, `agents` for the agent cards, `members` for room
+  members and profiles, `setup` and `onboarding` for first run, `mobile-tabs`,
+  and so on).
   Shared UI pieces: `icon-button.js`, `dialogs.js`, `settings-row.js`,
   `popover-focus.js`, `dialog-focus.js`, `notice.js`, `live-region.js`.
   Logic that can run without a DOM (`*-format.js`, `settings-backup-format.js`,
@@ -334,7 +337,7 @@ the switch.
   `#settings-dialog` rules in `theme-v1.css`). Do not add one-off margins or
   paddings to a single page; change the shared rule if the spacing is wrong.
 - **Phone layouts.** The phone breakpoint is `max-width: 700px`, and phone
-  navigation is the bottom tab bar from `mobile-tabs.js`. Tap targets must be
+  navigation is the bottom tab bar from `web/js/pages/mobile-tabs/`. Tap targets must be
   at least 40 px; run `node scripts/phone-audit.cjs` after any layout change.
   Controls that appear on hover must also appear on focus and always on touch
   screens.
