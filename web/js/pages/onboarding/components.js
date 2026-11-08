@@ -1,11 +1,11 @@
 import { html, useLayoutEffect, useRef } from '../../ui.js';
 import { rights } from '../../api.js';
-import { prefillFolderOnFocus } from '../../workspace-folder.js';
+import { attachFolderField } from '../../folder-field.js';
 import { PRINCIPLES } from './model.js';
 
 function ProjectStep({ store }) {
   const form = useRef(null), reset = store.resetTick.value;
-  useLayoutEffect(() => { prefillFolderOnFocus(form.current.elements.folder, () => rights.hostHome); }, []);
+  useLayoutEffect(() => { attachFolderField(form.current.elements.folder, () => rights.hostHome); }, []);
   useLayoutEffect(() => { if (reset) form.current.reset(); }, [reset]);
   const send = event => { event.preventDefault(); const fields = event.currentTarget.elements; void store.submit(fields.name.value, fields.folder.value); };
   return html`<section data-step="project" hidden=${store.step.value !== 'project'}><form id="onboarding-form" noValidate ref=${form} onSubmit=${send}>

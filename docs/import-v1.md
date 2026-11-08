@@ -37,8 +37,9 @@ as it stands (a project with no name or no absolute folder; a new account with a
 bad, taken or repeated login; a chat turned on with no project) and lists all of
 it at once: a link to each field, the same message beside each field, each field
 marked invalid and tied to its message, and the first one focused. Back keeps
-every choice. An empty Workspace folder field starts at the home folder of the
-machine the server runs on when it is focused (typed text is never replaced). The draft (the
+every choice. A Workspace folder field is empty until you ask: a house button in the field
+(or Tab on a ghost suggestion) fills the home folder of the machine the server
+runs on, and typed text is never replaced. The draft (the
 choices and the page) is kept in the browser for each backup, so a reload
 continues where you left off; a choice in it for something the backup no longer offers (for example a macro that is now left out) is dropped, with a note on the page that opens; **Start over** on the first page drops the draft. The
 Summary is the dry run in words. It opens with one line of totals ("Bringing across

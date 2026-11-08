@@ -164,12 +164,14 @@ async function menuAudit(page, vw) {
       if (!document.querySelector('#health-toggle').classList.contains('topbar-tucked') || !toggle.classList.contains('has-issues')) findings.push('menu: tucked Health warning is missing');
     }
     if (width === 440) {
+      for (const pill of document.querySelectorAll('.ui-variant-toggle')) pill.hidden = true; // (the testing pills are not part of the bar being audited)
+      await new Promise(resolve => setTimeout(resolve, 200)); // the bar measures itself again without them
       const nav = document.querySelector('.topbar nav');
       const brand = document.querySelector('.topbar-left').getBoundingClientRect();
-      const buttons = [...nav.querySelectorAll('button')].filter(button => !button.hidden && button.getBoundingClientRect().width);
+      const buttons = [...nav.querySelectorAll('button')].filter(button => !button.hidden && !button.classList.contains('ui-variant-toggle') && button.getBoundingClientRect().width);
       if (getComputedStyle(toggle).display !== 'none') findings.push('menu: overflow shows with room for every button at 440px');
       const connection = document.querySelector('#connection').getBoundingClientRect();
-      if (buttons.length !== 7 || buttons[0].getBoundingClientRect().left < brand.right + 20 || getComputedStyle(nav).justifyContent !== 'flex-end' || width - connection.right > 16) findings.push('menu: controls are missing or not right-aligned at 440px');
+      if (buttons.length !== 7 || buttons[0].getBoundingClientRect().left < brand.right + 20 || getComputedStyle(nav).justifyContent !== 'flex-end' || width - connection.right > 16) findings.push(`menu: controls are missing or not right-aligned at 440px (${buttons.length} buttons, first at ${Math.round(buttons[0].getBoundingClientRect().left)} vs brand ${Math.round(brand.right)}, ${getComputedStyle(nav).justifyContent}, ${Math.round(width - connection.right)} from the edge)`);
       document.querySelector('#health-toggle').classList.add('has-issues');
       const logout = document.querySelector('#logout');
       logout.style.flexBasis = logout.style.width = logout.style.minWidth = '112px';

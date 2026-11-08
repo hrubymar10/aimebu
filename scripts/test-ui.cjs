@@ -1913,8 +1913,10 @@ async function main() {
     // No experiment is running: the pill stays hidden.
     // Message width: text, code, tables and plans all use the whole bubble (no line-length cap).
     {
-      assert.deepEqual(await first.$$eval('.topbar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'with no experiment running the pill is hidden');
-      assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].some(name => name.startsWith('data-ui-'))), false, 'and no experiment option is set');
+      // (An experiment may be running to be chosen between: then each has one visible pill and its option set; with none, the pill is hidden and no option is set.)
+      const running = await first.evaluate(async () => (await import('/js/ui-variant.js')).ACTIVE.slice());
+      assert.deepEqual(await first.$$eval('.topbar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), running.length ? running.map(() => false) : [true], 'the pill is hidden with no experiment running, and there is one per running experiment');
+      assert.deepEqual(await first.evaluate(() => [...document.documentElement.getAttributeNames()].filter(name => name.startsWith('data-ui-') && name !== 'data-ui-experiment').sort()), running.map(key => `data-ui-${key}`).sort(), 'and only the running experiments have an option set');
       const widths = await first.evaluate(async () => {
         const { renderMarkdown } = await import('/js/markdown.js');
         const host = document.createElement('div'); host.className = 'chat-msg-body md-rendered'; host.style.width = '1200px';
@@ -2885,11 +2887,13 @@ async function main() {
           assert.deepEqual(await setupPage.evaluate(() => { const form = document.querySelector('#onboarding-form'), style = getComputedStyle(form); return { border: style.borderTopWidth, padding: style.paddingTop, tabs: getComputedStyle(document.querySelector('#mobile-tabs')).display }; }),
             { border: '0px', padding: '0px', tabs: 'none' }, 'the first project form is one card, not a card in a card, with no tab bar under it');
           await setupPage.type('#onboarding-form [name=name]', 'demo'); fs.mkdirSync(path.join(tmp, 'demo-folder'), { recursive: true });
-          // Focusing the empty folder field starts it at the machine's home folder (the owner is told it at sign-in); typed text is never replaced.
+          // The empty folder field stays empty when focused; the home button fills it with the machine's home folder (the owner is told it at sign-in); typed text is never replaced.
           await setupPage.focus('#onboarding-form [name=folder]');
           const hostHome = await setupPage.evaluate(async () => (await (await fetch('/api/me')).json()).host_home);
           assert.ok(hostHome && hostHome.startsWith('/'), 'the owner is told the host home folder');
-          assert.equal(await setupPage.$eval('#onboarding-form [name=folder]', input => input.value), `${hostHome}/`, 'an empty folder field starts at the home folder');
+          assert.equal(await setupPage.$eval('#onboarding-form [name=folder]', input => input.value), '', 'the folder field does not fill itself');
+          await setupPage.click('#onboarding-form .folder-home-btn');
+          assert.equal(await setupPage.$eval('#onboarding-form [name=folder]', input => input.value), `${hostHome}/`, 'the home button fills the home folder');
           // Typing a whole path over the start replaces it (it is not appended: .../home//srv/work); the keystrokes go to the focused field.
           await setupPage.keyboard.type(path.join(tmp, 'demo-folder'));
           await setupPage.$eval('#onboarding-form [name=name]', input => input.focus());
@@ -3279,7 +3283,7 @@ async function main() {
     // The other top-bar popovers do the same, and Escape hands focus back to the button that opened them.
     for (const [toggle, popover] of [['#health-toggle', '#health-popover'], ['#system-events-toggle', '#system-events-popover']]) {
       await settingsPage.evaluate(() => document.querySelector('#usages-popover .usages-popover-close').click());
-      if (await settingsPage.$eval(toggle, el => el.hidden)) continue;
+      if (await settingsPage.$eval(toggle, el => el.hidden || el.classList.contains('topbar-tucked'))) continue; // (two experiment pills can crowd the bar, which folds the control into the menu)
       await settingsPage.evaluate(selector => document.querySelector(selector).click(), toggle);
       await settingsPage.waitForFunction(selector => !document.querySelector(selector).hidden, {}, popover);
       assert.equal(await settingsPage.evaluate(selector => document.activeElement === document.querySelector(selector), popover), true, `${popover} takes keyboard focus when it opens`);
@@ -5211,12 +5215,14 @@ async function main() {
     assert.equal(await first.$$eval('.chat-msg-system .message-actions', els => els.length), 0, 'system notice exposes message actions');
     // t2-system-events: the bell feed and the message debug inspector.
     assert.equal(await first.$eval('#system-events-toggle', el => !el.hidden), true, 'system events bell is on by default');
+    await first.setViewport({ width: 1280, height: 720 }); await new Promise(resolve => setTimeout(resolve, 300)); // (two experiment pills crowd a 1100px bar, which folds the bell into the menu)
     await domClick(first, '#system-events-toggle');
     await first.waitForFunction(() => !document.querySelector('#system-events-popover').hidden && document.querySelectorAll('#system-events-popover .system-event-row').length > 0);
     assert.equal(await first.$eval('#system-events-popover .system-event-row .system-event-text', el => el.textContent.length > 0), true);
     assert.deepEqual(await first.$$eval('#system-events-popover > header button', els => els.map(el => el.textContent.trim())), [], 'the feed has no button of its own to hide the bell; Settings -> General is the only switch');
     await first.keyboard.press('Escape');
     await first.waitForFunction(() => document.querySelector('#system-events-popover').hidden);
+    await first.setViewport({ width: 1100, height: 720 });
     assert.equal(await first.$eval('.chat-msg:not(.chat-msg-system) .chat-msg-debug-toggle', el => getComputedStyle(el).display), 'none', 'debug button is off by default');
     await openSettings(first);
     await domClick(first, '#settings-general-tab');

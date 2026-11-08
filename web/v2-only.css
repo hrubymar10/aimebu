@@ -581,3 +581,24 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 :root:root .agent-card button.agent-recovery { background: transparent; color: var(--orange); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-decoration: none; cursor: pointer; }
 :root:root[data-theme^="high-contrast"] .agent-card button.agent-recovery { background: var(--bg-primary); }
 :root:root .agent-card button.agent-recovery:is(:hover, :focus-visible) { background: var(--accent-dim); border-color: var(--accent); text-decoration: none; }
+
+/* The Workspace folder field's home button and ghost suggestion (js/folder-field.js): the button sits inside the field at the edge the variant names, outlined only
+   while hovered or focused; the ghost is the home folder in the field's own type, muted. */
+.folder-field { position: relative; }
+.folder-field > button.folder-home-btn { position: absolute; display: inline-grid; place-items: center; width: 26px; height: 26px; min-width: 0; min-height: 0; margin: 0; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); }
+.folder-field > button.folder-home-btn[hidden] { display: none; }
+.folder-field > button.folder-home-btn:is(:hover, :focus-visible) { border-color: var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
+.folder-field > button.folder-home-btn .icon-mask { width: 16px; height: 16px; }
+.folder-field[data-home-button="a"] > input { padding-right: 40px; }
+.folder-field[data-home-button="b"] > input { padding-left: 40px; }
+.folder-field > .folder-ghost { position: absolute; display: block; overflow: hidden; box-sizing: border-box; color: var(--text-muted); opacity: .75; white-space: nowrap; pointer-events: none; }
+.folder-field > .folder-ghost[hidden] { display: none; }
+
+/* The experiment "HC plain buttons": how a plain .btn looks in the high-contrast themes (js/app.js). A is what v1 draws (the browser-light button, above); B is the chip
+   look (the page colour as the field, the outline, primary text); C has the tertiary fill. Both have the accent on hover and focus, and a disabled one is the same
+   button dimmed, as v1 dims a disabled control. The chips, the Review in Inbox control and the Memory viewer's own buttons keep their own looks. */
+:root[data-ui-hcbuttons="b"][data-theme^="high-contrast"] { --hc-btn-field: var(--bg-primary); }
+:root[data-ui-hcbuttons="c"][data-theme^="high-contrast"] { --hc-btn-field: var(--bg-tertiary); }
+:root[data-ui-hcbuttons]:not([data-ui-hcbuttons="a"])[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open) { background: var(--hc-btn-field); color: var(--text-primary); border: 1px solid var(--border); }
+:root[data-ui-hcbuttons]:not([data-ui-hcbuttons="a"])[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
+:root[data-ui-hcbuttons]:not([data-ui-hcbuttons="a"])[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open):disabled { background: var(--hc-btn-field); color: var(--text-primary); border: 1px solid var(--border); opacity: .5; }

@@ -28,7 +28,8 @@ import { loadPreferences } from './preferences.js';
 import { RoomMenu } from './pages/room-menu/page.js';
 import { MessageDebug } from './message-debug.js';
 import { initMobileTabs } from './pages/mobile-tabs/page.js';
-import { initUIVariants } from './ui-variant.js';
+import { defineExperiment, initUIVariants } from './ui-variant.js';
+import { attachFolderField } from './folder-field.js';
 import { copyText } from './markdown.js';
 import { ImportV1Wizard } from './import-v1.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
@@ -42,7 +43,8 @@ import { ColumnResize } from './column-resize.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
 import { trackInputModality } from './input-modality.js';
 
-
+// The look of a plain button in the high-contrast themes is being chosen on the testing pill (the CSS reads data-ui-hcbuttons on <html>); the others have no effect there.
+defineExperiment('hcbuttons', 'HC plain buttons', ['v1 light button', 'Black chip', 'Tertiary fill']);
 initUIVariants();
 
 trackInputModality();
@@ -612,6 +614,7 @@ async function signedIn(session) {
 }
 const projectDialog = document.querySelector('#project-dialog');
 const projectForm = document.querySelector('#project-form');
+attachFolderField(projectForm.elements.folder, () => rights.hostHome);
 // Creating a project is the owner's and the admins'; for anyone else the button is off, with the reason, instead of ending in a 403.
 function applyRights() {
   const button = document.querySelector('#project-open'), allowed = rights.owner || rights.admin, label = allowed ? 'New project' : 'Only the owner or an admin can create projects';

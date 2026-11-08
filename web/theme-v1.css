@@ -1420,6 +1420,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-copy { -webkit-mask-image: url("/icons/copy.svg"); mask-image: url("/icons/copy.svg"); }
 .icon-mask-check { -webkit-mask-image: url("/icons/check.svg"); mask-image: url("/icons/check.svg"); }
 .icon-mask-reopen { -webkit-mask-image: url("/icons/reopen.svg"); mask-image: url("/icons/reopen.svg"); }
+.icon-mask-house { -webkit-mask-image: url("/icons/house.svg"); mask-image: url("/icons/house.svg"); }
 .icon-mask-more { -webkit-mask-image: url("/icons/more.svg"); mask-image: url("/icons/more.svg"); }
 .icon-mask-chevron-right { -webkit-mask-image: url("/icons/chevron-right.svg"); mask-image: url("/icons/chevron-right.svg"); }
 .icon-mask-refresh { -webkit-mask-image: url("/icons/refresh.svg"); mask-image: url("/icons/refresh.svg"); }

@@ -14,7 +14,7 @@ async function main() {
     // A database nobody has signed in to shows the owner the welcome first, before the checks below start the app; the smoke's own first sign-in consumes it.
     await login(first);
     const replayContext = await browser.createBrowserContext();
-    const replayPage = await replayContext.newPage();
+    const replayPage = await replayContext.newPage(); await replayPage.setViewport({ width: 1280, height: 800 });
     await replayPage.goto(origin);
     const replayRetry = await replayPage.evaluate(async () => {
       const { EventStream } = await import('/js/events.js');
@@ -60,7 +60,7 @@ async function main() {
     assert.deepEqual(replayRetry, { retryAfter: '5', snapshots: 2, seq: 13 }, 'failed replay snapshot skipped unprocessed events');
     await replayContext.close();
     const startupContext = await browser.createBrowserContext();
-    const startupPage = await startupContext.newPage();
+    const startupPage = await startupContext.newPage(); await startupPage.setViewport({ width: 1280, height: 800 });
     await startupPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       window.fetch = (input, options) => String(input) === '/api/import-v1/status'
@@ -89,7 +89,7 @@ async function main() {
     assert.equal(await startupPage.$eval('#settings-dialog', node => node.open), true, 'Settings did not open after the import check');
     await startupContext.close();
     const stalledContext = await browser.createBrowserContext();
-    const stalledPage = await stalledContext.newPage();
+    const stalledPage = await stalledContext.newPage(); await stalledPage.setViewport({ width: 1280, height: 800 });
     await stalledPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       window.fetch = (input, options) => String(input) === '/api/import-v1/status'
@@ -110,7 +110,7 @@ async function main() {
     await stalledPage.waitForSelector('#login-view:not([hidden])');
     await stalledContext.close();
     const slowContext = await browser.createBrowserContext();
-    const slowPage = await slowContext.newPage();
+    const slowPage = await slowContext.newPage(); await slowPage.setViewport({ width: 1280, height: 800 });
     await slowPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       let held = false;
@@ -134,7 +134,7 @@ async function main() {
     await slowPage.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
     await slowContext.close();
     const deniedContext = await browser.createBrowserContext();
-    const deniedPage = await deniedContext.newPage();
+    const deniedPage = await deniedContext.newPage(); await deniedPage.setViewport({ width: 1280, height: 800 });
     await deniedPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       window.fetch = (input, options) => String(input) === '/api/events/cursor'
@@ -149,7 +149,7 @@ async function main() {
     assert.equal(await deniedPage.$eval('#startup-status button', button => button.hidden), true, 'expired session showed Retry instead of sign-in');
     await deniedContext.close();
     const preStreamContext = await browser.createBrowserContext();
-    const preStreamPage = await preStreamContext.newPage();
+    const preStreamPage = await preStreamContext.newPage(); await preStreamPage.setViewport({ width: 1280, height: 800 });
     await preStreamPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       const originalTimeout = window.setTimeout.bind(window);
@@ -170,7 +170,7 @@ async function main() {
     assert.equal(await preStreamPage.$eval('#app-view', node => node.getAttribute('aria-busy')), null, 'late pre-stream snapshot left workspace busy');
     await preStreamContext.close();
     const failedPreStreamContext = await browser.createBrowserContext();
-    const failedPreStreamPage = await failedPreStreamContext.newPage();
+    const failedPreStreamPage = await failedPreStreamContext.newPage(); await failedPreStreamPage.setViewport({ width: 1280, height: 800 });
     await failedPreStreamPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       const originalTimeout = window.setTimeout.bind(window);
@@ -190,7 +190,7 @@ async function main() {
     assert.equal(await failedPreStreamPage.$eval('#app-view', node => node.getAttribute('aria-busy')), null, 'failed late snapshot kept workspace busy');
     await failedPreStreamContext.close();
     const lateContext = await browser.createBrowserContext();
-    const latePage = await lateContext.newPage();
+    const latePage = await lateContext.newPage(); await latePage.setViewport({ width: 1280, height: 800 });
     await latePage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       let firstStatus = true;
@@ -220,7 +220,7 @@ async function main() {
     await lateContext.close();
     // A usages request that fails with 403 after the reader picked another Settings tab must not switch them back.
     const lateForbiddenContext = await browser.createBrowserContext();
-    const lateForbiddenPage = await lateForbiddenContext.newPage();
+    const lateForbiddenPage = await lateForbiddenContext.newPage(); await lateForbiddenPage.setViewport({ width: 1280, height: 800 });
     await lateForbiddenPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       window.fetch = async (input, options) => {
@@ -238,7 +238,7 @@ async function main() {
     // A finished (or skipped) import is never offered again: with status `done` the wizard stays closed, and no
     // Settings control or API call can bring it back.
     const closedContext = await browser.createBrowserContext();
-    const closedPage = await closedContext.newPage();
+    const closedPage = await closedContext.newPage(); await closedPage.setViewport({ width: 1280, height: 800 });
     await closedPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
       window.__importCalls = [];

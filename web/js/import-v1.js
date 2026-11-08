@@ -1,5 +1,5 @@
 import { request, rights } from './api.js';
-import { prefillFolderOnFocus } from './workspace-folder.js';
+import { attachFolderField } from './folder-field.js';
 import { dmProblems, peopleProblems, problemSummary, projectProblems } from './import-problems.js';
 import { applyChoice, choiceValue, mergeGroups, newProjectAlias, parseChoice, planTree, roomChoice } from './import-tree.js';
 
@@ -436,7 +436,7 @@ export class ImportV1Wizard {
     const name = this.field('Name', '', () => {}, undefined, create); const folder = this.field('Workspace folder (absolute path)', '', () => {}, undefined, create);
     const nameInput = name.querySelector('input'), folderInput = folder.querySelector('input');
     nameInput.dataset.newProjectName = ''; folderInput.dataset.newProjectFolder = ''; folderInput.placeholder = '/path/to/the/project';
-    prefillFolderOnFocus(folderInput, () => rights.hostHome);
+    attachFolderField(folderInput, () => rights.hostHome);
     const message = node('p', '', 'error'); message.setAttribute('role', 'alert');
     const make = this.button('Create project', () => {
       const title = nameInput.value.trim();
@@ -480,7 +480,7 @@ export class ImportV1Wizard {
       name.querySelector('input').dataset.projectName = alias; box.append(name);
       const folder = this.field('Workspace folder (absolute path)', project.folder, value => { project.folder = value; });
       folder.querySelector('input').dataset.projectFolder = alias; folder.querySelector('input').placeholder = '/path/to/the/project';
-      prefillFolderOnFocus(folder.querySelector('input'), () => rights.hostHome);
+      attachFolderField(folder.querySelector('input'), () => rights.hostHome);
       box.append(folder);
       // v1 did not record where this project's agents worked (they are gone from its registry) and no folder of that name was found beside the
       // others, so the owner says. Any existing folder will do for now: it can be changed in the project's settings until its first agent starts.

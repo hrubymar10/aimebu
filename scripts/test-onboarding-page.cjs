@@ -36,9 +36,11 @@ async function main() {
     const creates = []; page.on('request', request => { if (request.method() === 'POST' && /\/api\/projects$/.test(request.url())) creates.push(request.postData()); });
     await page.$eval('#onboarding-form', form => { form.noValidate = true; form.requestSubmit(); });
     assert.deepEqual([await page.evaluate(() => document.querySelector('#onboarding-error').textContent), creates.length], ['Enter a project name and a workspace folder.', 0]);
-    // the folder field offers the server's home folder when it is focused empty
+    // the folder field stays empty when focused, and offers the server's home folder through its home button
     await page.focus('#onboarding-form [name=folder]');
-    assert.ok((await page.evaluate(() => document.querySelector('#onboarding-form [name=folder]').value)).startsWith('/'), 'an empty folder field is filled with a path on focus');
+    assert.equal(await page.evaluate(() => document.querySelector('#onboarding-form [name=folder]').value), '', 'focusing the folder field does not fill it');
+    await page.click('#onboarding-form .folder-home-btn');
+    assert.ok((await page.evaluate(() => document.querySelector('#onboarding-form [name=folder]').value)).startsWith('/'), 'the home button fills the folder field with a path');
     // creating the project goes on to the harness step, with Continue off and the reason said
     const folder = path.join(server.tmp, 'first-repo'); fs.mkdirSync(folder);
     await page.type('#onboarding-form [name=name]', 'First Project');

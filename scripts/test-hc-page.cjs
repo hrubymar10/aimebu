@@ -85,6 +85,31 @@ async function main() {
       assert.deepEqual(more.live, Array(2).fill([more.tertiary, more.text, 'solid', more.border]), `an open proposed answer and the question button are v1's chip, not the plain light button, in ${theme}`);
       assert.deepEqual(more.review.slice(0, 4), [more.page, 'solid', more.border, 'none'], `"Review in Inbox" on an agent card is an outlined control, not the plain button, in ${theme}`);
       assert.ok(more.review[4] >= 4.5, `and its text reads (${more.review[4].toFixed(1)}:1) in ${theme}`);
+      // The experiment "HC plain buttons": A is v1's light button; B and C are the black chip and the tertiary fill, both with the accent on hover and a dimmed disabled one.
+      for (const variant of ['a', 'b', 'c']) {
+        await page.evaluate(variant => {
+          document.documentElement.setAttribute('data-ui-hcbuttons', variant);
+          for (const [id, off] of [['hc-probe', false], ['hc-probe-off', true]]) { let el = document.getElementById(id); if (!el) { el = document.createElement('button'); el.id = id; el.className = 'btn'; el.textContent = 'x'; el.disabled = off; el.style.cssText = `position:fixed;top:${off ? 60 : 10}px;left:10px;z-index:99999`; document.body.append(el); } }
+        }, variant);
+        const read = () => page.evaluate(() => { const style = el => getComputedStyle(el), on = document.getElementById('hc-probe'), off = document.getElementById('hc-probe-off'); const probe = document.createElement('i'); probe.style.color = 'var(--accent)'; document.body.append(probe); const accent = style(probe).color; probe.remove();
+          const resolve = name => { const el = document.createElement('i'); el.style.backgroundColor = `var(${name})`; document.body.append(el); const value = style(el).backgroundColor; el.remove(); return value; };
+          return { on: [style(on).backgroundColor, style(on).color, style(on).borderTopStyle, style(on).borderTopColor], off: [style(off).backgroundColor, style(off).opacity], accent, page: resolve('--bg-primary'), tertiary: resolve('--bg-tertiary'), border: getComputedStyle(document.documentElement).getPropertyValue('--border').trim() }; });
+        const wait = ms => page.evaluate(ms => new Promise(resolve => setTimeout(resolve, ms)), ms); // (a button's colours fade over a moment)
+        await wait(400);
+        const rest = await read();
+        await page.hover('#hc-probe'); await wait(400);
+        const hovered = await page.evaluate(() => { const el = document.getElementById('hc-probe'); return [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderTopColor]; });
+        await page.mouse.move(0, 0);
+        if (variant === 'a') {
+          assert.deepEqual([rest.on[0], rest.on[1], hovered[0]], ['rgb(239, 239, 239)', 'rgb(0, 0, 0)', 'rgb(239, 239, 239)'], `A is v1's light button in ${theme}`);
+        } else {
+          const field = variant === 'b' ? rest.page : rest.tertiary;
+          assert.deepEqual([rest.on[0], rest.on[1], rest.on[2]], [field, more.text, 'solid'], `${variant.toUpperCase()}: the field and primary text in ${theme}`);
+          assert.equal(hovered[1], rest.accent, `${variant.toUpperCase()}: the accent outline on hover in ${theme}`);
+          assert.deepEqual([rest.off[0], rest.off[1]], [field, '0.5'], `${variant.toUpperCase()}: a disabled one is the same button dimmed in ${theme}`);
+        }
+      }
+      await page.evaluate(() => { document.documentElement.removeAttribute('data-ui-hcbuttons'); document.getElementById('hc-probe')?.remove(); document.getElementById('hc-probe-off')?.remove(); });
       assert.equal(more.header, more.tertiary, `the room header's icon buttons have v1's tertiary fill in ${theme}`);
       assert.equal(more.cell, 'rgba(0, 0, 0, 0)', `an emoji cell is not outlined at rest in ${theme}`);
     }
