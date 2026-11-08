@@ -13,6 +13,10 @@ import { setGlyph } from './icon-button.js';
 const compact = window.matchMedia('(max-width: 900px), (max-height: 520px)');
 // A phone held sideways hides the toolbar; "Aa" then moves into the field's corner so it can still be reached.
 const short = window.matchMedia('(max-height: 520px)');
+// A phone (or a touch screen up to 900px wide, held upright): the composer is one row with attach, emoji and "Aa" in it, and the format row is opened by "Aa"
+// (a view state of each composer, not stored). Held sideways it has no room for the row, and "Aa" keeps its old job in the field's corner.
+const phoneQuery = window.matchMedia('(max-width: 520px), (max-width: 900px) and (pointer: coarse)');
+const phoneLayout = () => phoneQuery.matches && !short.matches;
 
 const PREF = 'aimebu2.composer.formatting';
 const readPref = () => { try { return localStorage.getItem(PREF) !== 'off'; } catch { return true; } };
@@ -54,6 +58,7 @@ export class ComposerFormatting {
     this.textarea = textarea;
     this.onFiles = options.onFiles;
     this.rich = readPref();
+    this.formatOpen = false; // phone layout: the format row is shown under the row of buttons
     this.editor = null;
     // What the pickers (mentions, macros, commands, emoji) read the draft through: this textarea, or the editor while it is on.
     this.input = new ComposerInput(textarea);
@@ -109,7 +114,11 @@ export class ComposerFormatting {
     // Slack's "Aa": formatting on or off.
     this.toggle = document.createElement('button'); this.toggle.type = 'button'; this.toggle.className = 'btn-icon composer-aa'; this.toggle.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14h-5"/><path d="M16 16v-3.5a2.5 2.5 0 0 1 5 0V16"/><path d="M4.5 13h6"/><path d="m3 16 4.5-9 4.5 9"/></svg>';
     this.toggle.addEventListener('mousedown', event => event.preventDefault());
-    this.toggle.addEventListener('click', () => ComposerFormatting.setRich(!this.rich));
+    this.toggle.addEventListener('click', () => {
+      if (!phoneLayout()) { ComposerFormatting.setRich(!this.rich); return; }
+      // On a phone "Aa" shows or hides the format row; with formatting off it turns formatting on (and shows the row).
+      if (this.rich) { this.formatOpen = !this.formatOpen; this.apply(); } else { this.formatOpen = true; ComposerFormatting.setRich(true); }
+    });
     this.field.append(this.toggle);
     composers.add(this);
     this.apply();
@@ -121,24 +130,35 @@ export class ComposerFormatting {
   place() {
     (this.form || this.field).prepend(this.toolbar, this.linkForm);
     // "Aa" is the toolbar's last item while the toolbar shows, and sits in the field's corner when formatting is off or the toolbar is hidden.
-    const home = this.rich && !short.matches ? this.toolbar : this.field;
+    // On a phone it is in the row of buttons instead (after attach and emoji, before the input), whatever the state of the toolbar.
+    const phone = phoneLayout() && !!this.form;
+    const home = phone ? this.form : this.rich && !short.matches ? this.toolbar : this.field;
     if (this.toggle.parentNode !== home) { const focused = document.activeElement === this.toggle; home.append(this.toggle); if (focused) this.toggle.focus(); }
-    if (!this.slots.length) return;
+    if (!this.slots.length) { if (phone) this.form.insertBefore(this.toggle, this.field); return; }
     // Moving a node in the DOM drops its focus (to <body>): a key press or a closing picker that has just put focus on attach or emoji would lose it
     // to a layout change (a rotated phone, a resized window) that moves the buttons between the toolbar and the bottom row.
     const held = this.slots.find(slot => slot === document.activeElement);
     if (this.rich && !compact.matches) this.toolbar.prepend(...this.slots);
     else { for (const slot of this.slots) this.form.insertBefore(slot, this.field); }
+    if (phone) { const focused = document.activeElement === this.toggle; this.form.insertBefore(this.toggle, this.field); if (focused) this.toggle.focus(); }
     if (held && document.activeElement !== held) held.focus({ preventScroll: true });
   }
   apply() {
     this.place();
     this.field.classList.toggle('composer-rich', this.rich);
-    this.toolbar.hidden = !this.rich;
-    if (!this.rich) this.closeLink(false);
-    this.toggle.setAttribute('aria-pressed', String(this.rich));
-    this.toggle.setAttribute('aria-label', this.rich ? 'Formatting is on' : 'Formatting is off');
-    this.toggle.title = this.rich ? 'Hide formatting (plain text)' : 'Show formatting';
+    const phone = phoneLayout() && !!this.form, shown = this.rich && (!phone || this.formatOpen);
+    this.toolbar.hidden = !shown;
+    if (!shown) this.closeLink(false);
+    if (phone) {
+      // "Aa" opens and closes the format row; its label says what a press does.
+      this.toggle.setAttribute('aria-pressed', String(shown));
+      this.toggle.setAttribute('aria-label', shown ? 'Hide formatting' : 'Show formatting');
+      this.toggle.title = shown ? 'Hide formatting' : 'Show formatting';
+    } else {
+      this.toggle.setAttribute('aria-pressed', String(this.rich));
+      this.toggle.setAttribute('aria-label', this.rich ? 'Formatting is on' : 'Formatting is off');
+      this.toggle.title = this.rich ? 'Hide formatting (plain text)' : 'Show formatting';
+    }
     if (this.rich) this.startEditor(); else this.stopEditor();
     this.refreshState();
   }
@@ -222,6 +242,7 @@ export class ComposerFormatting {
 const replaceAll = () => { for (const composer of composers) composer.apply(); };
 compact.addEventListener('change', replaceAll);
 short.addEventListener('change', replaceAll);
+phoneQuery.addEventListener('change', replaceAll);
 
 window.addEventListener('storage', event => {
   if (event.key !== PREF) return;

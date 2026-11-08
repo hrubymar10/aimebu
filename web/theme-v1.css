@@ -1505,10 +1505,12 @@ dialog:focus, dialog:focus-visible { outline: none; }
   .composer-tools::-webkit-scrollbar { display: none; }
   .composer-tools > .composer-format { scroll-snap-align: start; }
 }
-/* On a phone, and on a touch screen up to 900px wide, the idle composer is one row, as in v1: the toolbar (with Aa) appears while the
-   composer has focus, i.e. while the editor, the link field or a toolbar button is in use, and goes again when it loses it. */
+/* On a phone, and on a touch screen up to 900px wide, the composer is one row, as in v1: attach, emoji, Aa, the input and send. The format row is
+   opened by Aa (see composer.js), in the room's composer and in the thread's alike; Aa is a button of the row, bordered like attach and emoji. */
 @media (max-width: 520px), (max-width: 900px) and (pointer: coarse) {
-  #composer:not(:focus-within) > .composer-toolbar, #composer:not(:focus-within) > .composer-link, #thread-composer:not(:focus-within) > .composer-toolbar, #thread-composer:not(:focus-within) > .composer-link { display: none; }
+  :is(#composer, #thread-composer) > .composer-aa { flex: none; align-self: flex-end; box-sizing: border-box; width: 40px; min-width: 40px; height: 40px; min-height: 40px; padding: 0; display: inline-grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); }
+  :is(#composer, #thread-composer) > .composer-aa[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+}
 }
 /* The room title keeps a readable width and is cut with an ellipsis; the controls give way, not the title. */
 .room-heading #room-title { flex: 0 1 auto; min-width: 6ch; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

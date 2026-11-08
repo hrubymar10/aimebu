@@ -4209,16 +4209,31 @@ async function main() {
       await tapMessage(0); assert.equal((await state())[0][0], true);
       await touch.keyboard.press('Escape'); await settle();
       assert.deepEqual((await state()).slice(0, 2), [[false, '0'], [false, '0']], 'Escape hides them');
-      // The idle composer is one row; the toolbar appears with focus and wraps instead of being cut off; the room title keeps a width.
+      // The composer is one row (attach, emoji, Aa, the input, send); focus does not show the format row, Aa does, and it scrolls instead of being cut off; the room title keeps a width.
       const bar = () => touch.evaluate(() => { const t = document.querySelector('#composer .composer-toolbar'), tools = document.querySelector('#composer .composer-tools'), title = document.querySelector('#room-title').getBoundingClientRect(); return { shown: !!t && getComputedStyle(t).display !== 'none' && t.getClientRects().length > 0, oneRow: tools ? tools.getBoundingClientRect().height <= 44 : null, scrolls: tools ? getComputedStyle(tools).overflowX === 'auto' : null, titleWidth: Math.round(title.width), controls: getComputedStyle(document.querySelector('.room-controls')).display }; });
       await touch.evaluate(() => document.activeElement?.blur()); await settle();
-      assert.equal((await bar()).shown, false, 'the idle composer on a touch tablet is one row, without the toolbar');
+      assert.equal((await bar()).shown, false, 'the composer on a touch tablet is one row, without the format row');
       await touch.focus('#composer .composer-editor .ProseMirror, #composer textarea:not([style*="none"])').catch(() => {});
       await touch.evaluate(() => (document.querySelector('#composer .ProseMirror') || document.querySelector('#composer textarea')).focus());
       await settle();
+      assert.equal((await bar()).shown, false, 'focus alone does not open the format row');
+      assert.equal(await touch.evaluate(() => document.querySelector('#composer .composer-aa').parentNode.id), 'composer', 'Aa is a button of the composer row');
+      await touch.evaluate(() => document.querySelector('#composer .composer-aa').click()); await settle();
       const focused = await bar();
-      assert.deepEqual([focused.shown, focused.oneRow, focused.scrolls], [true, true, true], `the toolbar appears with focus as one row that scrolls: ${JSON.stringify(focused)}`);
+      assert.deepEqual([focused.shown, focused.oneRow, focused.scrolls], [true, true, true], `Aa opens the format row as one row that scrolls: ${JSON.stringify(focused)}`);
       assert.ok(focused.titleWidth >= 40 && focused.controls === 'none', `the room title is squeezed or the controls are still crowding it: ${JSON.stringify(focused)}`);
+      await touch.evaluate(() => document.querySelector('#composer .composer-aa').click()); await settle();
+      assert.equal((await bar()).shown, false, 'Aa closes the format row again');
+      // The thread's composer is the same row with the same Aa: attach, emoji, Aa, the input, send; the format row opens with Aa and closes with it.
+      await domClick(touch, '#messages .chat-msg:last-of-type .message-actions .thread-action'); await touch.waitForSelector('#thread-composer .composer-aa', { visible: true }); await settle();
+      const threadBar = () => touch.evaluate(() => { const t = document.querySelector('#thread-composer .composer-toolbar'); return { shown: !!t && getComputedStyle(t).display !== 'none' && t.getClientRects().length > 0, label: document.querySelector('#thread-composer .composer-aa').getAttribute('aria-label') }; });
+      assert.deepEqual(await threadBar(), { shown: false, label: 'Show formatting' }, 'the thread composer has no format row until Aa is pressed');
+      assert.equal(await touch.evaluate(() => [...document.querySelectorAll('#thread-composer > *')].filter(node => node.matches('.attachment-picker-btn, #thread-emoji-button, .composer-aa, .composer-field, button[type=submit]')).map(node => node.id || node.className.split(' ').find(name => /attachment-picker-btn|composer-aa|composer-field/.test(name)) || node.type).join(',')), 'attachment-picker-btn,thread-emoji-button,composer-aa,composer-field,submit', 'the thread row is attach, emoji, Aa, the input, send');
+      await touch.evaluate(() => document.querySelector('#thread-composer .composer-aa').click()); await settle();
+      assert.deepEqual(await threadBar(), { shown: true, label: 'Hide formatting' }, 'Aa opens the thread composer\'s format row');
+      await touch.evaluate(() => document.querySelector('#thread-composer .composer-aa').click()); await settle();
+      assert.equal((await threadBar()).shown, false, 'and closes it');
+      await touch.evaluate(() => document.querySelector('#close-thread').click()); await settle();
       await touch.evaluate(() => document.activeElement?.blur());
       // A tablet has room for one side panel next to the chat: the chat column keeps at least 400px, the members panel starts closed and
       // opening one panel closes the other; the toolbar stays one row.
@@ -4237,8 +4252,9 @@ async function main() {
         assert.deepEqual(await touch.evaluate(() => [localStorage.getItem('aimebu_left_collapsed'), document.querySelector('#edge-rooms').getAttribute('aria-expanded'), document.querySelector('#rooms-toggle').getAttribute('aria-expanded')]), ['false', 'true', 'true'], `${width}: expanding the rooms on a tablet is remembered`);
         await touch.reload(); await appReady(touch); await touch.waitForFunction(() => document.querySelectorAll('#messages .chat-msg').length > 0); await settle();
         assert.equal((await column()).rooms, true, `${width}: the rooms column the person expanded stays expanded after a reload`);
-        await touch.evaluate(() => (document.querySelector('#composer .ProseMirror') || document.querySelector('#composer textarea')).focus()); await settle();
-        const rows = await bar(); assert.deepEqual([rows.shown, rows.oneRow], [true, true], `${width}: the toolbar is one row: ${JSON.stringify(rows)}`);
+        await touch.evaluate(() => document.querySelector('#composer .composer-aa').click()); await settle();
+        const rows = await bar(); assert.deepEqual([rows.shown, rows.oneRow], [true, true], `${width}: Aa opens the format row, and it is one row: ${JSON.stringify(rows)}`);
+        await touch.evaluate(() => document.querySelector('#composer .composer-aa').click()); await settle();
         await touch.evaluate(() => document.activeElement?.blur());
       }
       await touch.close(); await agentPage.bringToFront();
@@ -6844,11 +6860,17 @@ async function main() {
       // A phone: nothing overflows and the toolbar and the send button stay on screen in every layout (attach and emoji go back to the bottom row in A).
       await first.setViewport({ width: 390, height: 740 });
       await first.waitForFunction(() => !document.querySelector('#composer .composer-toolbar > .attachment-picker-btn'));
-      // On a phone the idle composer is one row; the toolbar shows while the composer has focus.
+      // On a phone the composer is one row (attach, emoji, Aa, the input, send); the format row is opened by Aa, not by focus.
       await first.evaluate(() => document.activeElement?.blur());
-      assert.equal(await first.evaluate(() => getComputedStyle(document.querySelector('#composer .composer-toolbar')).display), 'none', 'the idle phone composer has no toolbar row');
+      assert.equal(await first.evaluate(() => getComputedStyle(document.querySelector('#composer .composer-toolbar')).display), 'none', 'the phone composer has no format row until Aa is pressed');
       await first.evaluate(() => (document.querySelector('#composer .ProseMirror') || document.querySelector('#composer textarea')).focus());
+      await new Promise(resolve => setTimeout(resolve, 300));
+      assert.equal(await first.evaluate(() => getComputedStyle(document.querySelector('#composer .composer-toolbar')).display), 'none', 'focus alone does not open the format row');
+      assert.deepEqual(await first.evaluate(() => { const order = [...document.querySelectorAll('#composer > .attachment-picker-btn, #composer > #emoji-button, #composer > .composer-aa, #composer > .composer-field, #composer > button[type=submit]')].map(node => node.id || node.className.split(' ').find(name => /attachment-picker-btn|composer-aa|composer-field/.test(name)) || node.type); return order; }), ['attachment-picker-btn', 'emoji-button', 'composer-aa', 'composer-field', 'submit'], 'the row is attach, emoji, Aa, the input, send');
+      assert.equal(await first.evaluate(() => document.querySelector('#composer .composer-aa').getAttribute('aria-label')), 'Show formatting');
+      await first.evaluate(() => document.querySelector('#composer .composer-aa').click());
       await first.waitForFunction(() => getComputedStyle(document.querySelector('#composer .composer-toolbar')).display !== 'none');
+      assert.equal(await first.evaluate(() => document.querySelector('#composer .composer-aa').getAttribute('aria-label')), 'Hide formatting');
       for (const layout of ['a']) {
         const fit = await first.evaluate(() => { const form = document.querySelector('#composer'), r = selector => document.querySelector(selector).getBoundingClientRect(); return { overflow: form.scrollWidth - form.clientWidth, toolbarLeft: r('#composer .composer-toolbar').left, sendRight: r('#composer button[type=submit]').right, view: innerWidth, toolbarShown: getComputedStyle(document.querySelector('#composer .composer-toolbar')).display !== 'none' }; });
         assert.equal(fit.overflow <= 1 && fit.toolbarLeft >= 0 && fit.sendRight <= fit.view + 0.5 && fit.toolbarShown, true, `layout ${layout.toUpperCase()} on a phone: ${JSON.stringify(fit)}`);
