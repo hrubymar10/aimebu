@@ -1,5 +1,5 @@
 // The high-contrast themes (dark and light) in the real app: they look as v1's do. Links, mentions, message refs and sender names are the theme's accent
-// (v1's orange in the dark theme, its blue in the light one), a primary button and Send are v1's green, a plain button is v1's light one, the read-receipt avatars take the cyan outline, and what
+// (v1's orange in the dark theme, its blue in the light one), a primary button and Send are v1's green, a plain button is the tertiary-filled outlined one, the read-receipt avatars take the cyan outline, and what
 // v2 added (the top-bar badge, the composer's emoji and format buttons, the health chip) is set in that palette and stays readable (4.5:1).
 // `AUTH_BINARY` shares a built binary.
 const assert = require('node:assert/strict');
@@ -51,7 +51,7 @@ async function main() {
       assert.deepEqual([seen.hues.link, seen.hues.mention, seen.hues.ref, seen.hues.from], Array(4).fill(seen.hues.accentRgb), `links, mentions, message refs and sender names are the accent in ${theme}`);
       assert.ok(seen.health >= 4.5, `the health chip text is ${seen.health.toFixed(1)}:1 in ${theme}`);
       assert.equal(seen.receiptEdge, seen.hues.borderRgb, `a read-receipt avatar has the theme's outline in ${theme}`);
-      assert.deepEqual(seen.secondaryLook, ['rgb(239, 239, 239)', 'rgb(0, 0, 0)'], `a plain button is v1's: the browser's light fill and black text in ${theme}`);
+      assert.deepEqual(seen.secondaryLook, [seen.tertiary, seen.hues.text], `a plain button is the tertiary fill with the primary text in ${theme}`);
       assert.ok(seen.badge >= 4.5, `badge text on its fill is ${seen.badge.toFixed(1)}:1 in ${theme}`);
       assert.ok(seen.primaryDiffers && seen.primaryText >= 4.5 && seen.primaryFill === seen.green, `a primary button is filled differently from a secondary one, with readable text (${seen.primaryText.toFixed(1)}:1) in ${theme}`);
       assert.ok(seen.tools.every(Boolean) && new Set(seen.tools).size === 1 && !seen.tools[0].startsWith('0px'), `the composer buttons share one border: ${JSON.stringify(seen.tools)}`);
@@ -85,31 +85,23 @@ async function main() {
       assert.deepEqual(more.live, Array(2).fill([more.tertiary, more.text, 'solid', more.border]), `an open proposed answer and the question button are v1's chip, not the plain light button, in ${theme}`);
       assert.deepEqual(more.review.slice(0, 4), [more.page, 'solid', more.border, 'none'], `"Review in Inbox" on an agent card is an outlined control, not the plain button, in ${theme}`);
       assert.ok(more.review[4] >= 4.5, `and its text reads (${more.review[4].toFixed(1)}:1) in ${theme}`);
-      // The experiment "HC plain buttons": A is v1's light button; B and C are the black chip and the tertiary fill, both with the accent on hover and a dimmed disabled one.
-      for (const variant of ['a', 'b', 'c']) {
-        await page.evaluate(variant => {
-          document.documentElement.setAttribute('data-ui-hcbuttons', variant);
-          for (const [id, off] of [['hc-probe', false], ['hc-probe-off', true]]) { let el = document.getElementById(id); if (!el) { el = document.createElement('button'); el.id = id; el.className = 'btn'; el.textContent = 'x'; el.disabled = off; el.style.cssText = `position:fixed;top:${off ? 60 : 10}px;left:10px;z-index:99999`; document.body.append(el); } }
-        }, variant);
-        const read = () => page.evaluate(() => { const style = el => getComputedStyle(el), on = document.getElementById('hc-probe'), off = document.getElementById('hc-probe-off'); const probe = document.createElement('i'); probe.style.color = 'var(--accent)'; document.body.append(probe); const accent = style(probe).color; probe.remove();
-          const resolve = name => { const el = document.createElement('i'); el.style.backgroundColor = `var(${name})`; document.body.append(el); const value = style(el).backgroundColor; el.remove(); return value; };
-          return { on: [style(on).backgroundColor, style(on).color, style(on).borderTopStyle, style(on).borderTopColor], off: [style(off).backgroundColor, style(off).opacity], accent, page: resolve('--bg-primary'), tertiary: resolve('--bg-tertiary'), border: getComputedStyle(document.documentElement).getPropertyValue('--border').trim() }; });
-        const wait = ms => page.evaluate(ms => new Promise(resolve => setTimeout(resolve, ms)), ms); // (a button's colours fade over a moment)
-        await wait(400);
-        const rest = await read();
-        await page.hover('#hc-probe'); await wait(400);
-        const hovered = await page.evaluate(() => { const el = document.getElementById('hc-probe'); return [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderTopColor]; });
-        await page.mouse.move(0, 0);
-        if (variant === 'a') {
-          assert.deepEqual([rest.on[0], rest.on[1], hovered[0]], ['rgb(239, 239, 239)', 'rgb(0, 0, 0)', 'rgb(239, 239, 239)'], `A is v1's light button in ${theme}`);
-        } else {
-          const field = variant === 'b' ? rest.page : rest.tertiary;
-          assert.deepEqual([rest.on[0], rest.on[1], rest.on[2]], [field, more.text, 'solid'], `${variant.toUpperCase()}: the field and primary text in ${theme}`);
-          assert.equal(hovered[1], rest.accent, `${variant.toUpperCase()}: the accent outline on hover in ${theme}`);
-          assert.deepEqual([rest.off[0], rest.off[1]], [field, '0.5'], `${variant.toUpperCase()}: a disabled one is the same button dimmed in ${theme}`);
-        }
-      }
-      await page.evaluate(() => { document.documentElement.removeAttribute('data-ui-hcbuttons'); document.getElementById('hc-probe')?.remove(); document.getElementById('hc-probe-off')?.remove(); });
+      // A plain button: the tertiary fill, the outline and the primary text, the accent outline on hover, and a disabled one is the same button dimmed.
+      await page.evaluate(() => {
+        for (const [id, off] of [['hc-probe', false], ['hc-probe-off', true]]) { let el = document.getElementById(id); if (!el) { el = document.createElement('button'); el.id = id; el.className = 'btn'; el.textContent = 'x'; el.disabled = off; el.style.cssText = `position:fixed;top:${off ? 60 : 10}px;left:10px;z-index:99999`; document.body.append(el); } }
+      });
+      const wait = ms => page.evaluate(ms => new Promise(resolve => setTimeout(resolve, ms)), ms); // (a button's colours fade over a moment)
+      await wait(400);
+      const plain = await page.evaluate(() => { const style = el => getComputedStyle(el), on = document.getElementById('hc-probe'), off = document.getElementById('hc-probe-off'); const probe = document.createElement('i'); probe.style.color = 'var(--accent)'; document.body.append(probe); const accent = style(probe).color; probe.remove();
+        const resolve = name => { const el = document.createElement('i'); el.style.backgroundColor = `var(${name})`; document.body.append(el); const value = style(el).backgroundColor; el.remove(); return value; };
+        return { on: [style(on).backgroundColor, style(on).color, style(on).borderTopStyle, style(on).borderTopColor], off: [style(off).backgroundColor, style(off).opacity], accent, tertiary: resolve('--bg-tertiary') }; });
+      await page.hover('#hc-probe'); await wait(400);
+      const hovered = await page.evaluate(() => getComputedStyle(document.getElementById('hc-probe')).borderTopColor);
+      await page.mouse.move(0, 0);
+      assert.deepEqual([plain.on[0], plain.on[1], plain.on[2], plain.on[3]], [plain.tertiary, more.text, 'solid', plain.on[3]], `a plain button has the tertiary fill and the primary text in ${theme}`);
+      assert.notEqual(plain.on[3], 'rgba(0, 0, 0, 0)', `and an outline in ${theme}`);
+      assert.equal(hovered, plain.accent, `the accent outline on hover in ${theme}`);
+      assert.deepEqual([plain.off[0], plain.off[1]], [plain.tertiary, '0.5'], `a disabled one is the same button dimmed in ${theme}`);
+      await page.evaluate(() => { document.getElementById('hc-probe')?.remove(); document.getElementById('hc-probe-off')?.remove(); });
       assert.equal(more.header, more.tertiary, `the room header's icon buttons have v1's tertiary fill in ${theme}`);
       assert.equal(more.cell, 'rgba(0, 0, 0, 0)', `an emoji cell is not outlined at rest in ${theme}`);
     }

@@ -28,7 +28,7 @@ import { loadPreferences } from './preferences.js';
 import { RoomMenu } from './pages/room-menu/page.js';
 import { MessageDebug } from './message-debug.js';
 import { initMobileTabs } from './pages/mobile-tabs/page.js';
-import { defineExperiment, initUIVariants } from './ui-variant.js';
+import { initUIVariants } from './ui-variant.js';
 import { attachFolderField } from './folder-field.js';
 import { copyText } from './markdown.js';
 import { ImportV1Wizard } from './import-v1.js';
@@ -43,8 +43,6 @@ import { ColumnResize } from './column-resize.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
 import { trackInputModality } from './input-modality.js';
 
-// The look of a plain button in the high-contrast themes is being chosen on the testing pill (the CSS reads data-ui-hcbuttons on <html>); the others have no effect there.
-defineExperiment('hcbuttons', 'HC plain buttons', ['v1 light button', 'Black chip', 'Tertiary fill']);
 initUIVariants();
 
 trackInputModality();

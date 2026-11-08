@@ -603,12 +603,11 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .folder-field > button.folder-home-btn .icon-mask { width: 16px; height: 16px; }
 .folder-field[data-home-button] > input { padding-left: 40px; }
 
-/* The experiment "HC plain buttons": how a plain .btn looks in the high-contrast themes (js/app.js). A is what v1 draws (the browser-light button, above); B is the chip
-   look (the page colour as the field, the outline, primary text); C has the tertiary fill. Both have the accent on hover and focus, and a disabled one is the same
-   button dimmed, as v1 dims a disabled control. The chips, the Review in Inbox control and the Memory viewer's own buttons keep their own looks. */
-:root[data-ui-hcbuttons="b"][data-theme^="high-contrast"] { --hc-btn-field: var(--bg-primary); }
-:root[data-ui-hcbuttons="c"][data-theme^="high-contrast"] { --hc-btn-field: var(--bg-tertiary); }
-:root[data-ui-hcbuttons]:not([data-ui-hcbuttons="a"])[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open) { background: var(--hc-btn-field); color: var(--text-primary); border: 1px solid var(--border); }
-:root[data-ui-hcbuttons]:not([data-ui-hcbuttons="a"])[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
-:root[data-ui-hcbuttons]:not([data-ui-hcbuttons="a"])[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open):disabled { background: var(--hc-btn-field); color: var(--text-primary); border: 1px solid var(--border); opacity: .5; }
+/* A plain .btn in the high-contrast themes: the tertiary fill with the outline and the primary text, the accent outline on hover and focus, and a disabled one is the same
+   button dimmed (as v1 dims a disabled control). The chips, the Review in Inbox control and the Memory viewer's own buttons keep their own looks, and so do the primary,
+   danger and icon buttons. */
+:root[data-theme^="high-contrast"] { --hc-btn-field: var(--bg-tertiary); }
+:root:root[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open) { background: var(--hc-btn-field); color: var(--text-primary); border: 1px solid var(--border); }
+:root:root[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
+:root:root[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open):disabled { background: var(--hc-btn-field); color: var(--text-primary); border: 1px solid var(--border); opacity: .5; }
 .send-form .msg-input { overflow-y: hidden; } /* the box shows a scrollbar only at its height limit (js/chat.js fitDraft sets it) */
