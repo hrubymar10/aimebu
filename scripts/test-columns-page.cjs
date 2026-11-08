@@ -200,7 +200,7 @@ async function main() {
       return { sidebar: box('.sidebar'), chat: box('.chat'), agents: box('#agents-panel'), rooms: box('.col-resizer-rooms'), members: box('.col-resizer-agents'),
         radii: [radius('.sidebar'), radius('.chat', '::before'), radius('#agents-panel')], page: getComputedStyle(document.querySelector('#app-view')).backgroundColor, sidebarFill: getComputedStyle(document.querySelector('.sidebar')).backgroundColor };
     });
-    assert.deepEqual(geometry.radii, ['8px', '8px', '8px'], 'the three columns are rounded panels');
+    assert.deepEqual(geometry.radii, ['6px', '6px', '6px'], 'the three columns are rounded panels, with tighter corners');
     assert.equal(geometry.rooms.width, 6, 'the gap is 6px wide'); assert.equal(geometry.members.width, 6);
     assert.deepEqual([geometry.rooms.left, geometry.rooms.right], [geometry.sidebar.right, geometry.chat.left], 'the rooms handle fills the gap between the rooms panel and the chat');
     assert.equal(geometry.members.right, geometry.agents.left, 'the members handle fills the gap before the members panel');

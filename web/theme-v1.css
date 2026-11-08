@@ -1895,7 +1895,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 /* Panels (desktop). The rooms column, the chat (with its thread beside it) and the members column are separate rounded panels on the page background,
    with a gap between them; the gap is the drag handle (column-resize.js),. A phone and a tablet keep the drawer layout, where --gap is 0. */
 @media (min-width: 701px) {
-  .app { --gap: 6px; --panel-radius: 8px; padding: 0 var(--gap) var(--gap); column-gap: var(--gap); row-gap: var(--gap); background: var(--bg-tertiary); }
+  .app { --gap: 6px; --panel-radius: 6px; padding: 0 var(--gap) var(--gap); column-gap: var(--gap); row-gap: var(--gap); background: var(--bg-tertiary); }
   .app.rooms-collapsed { column-gap: 0; }
   .app > .topbar { margin: 0 calc(-1 * var(--gap)); }
   .sidebar, .agents-panel, .chat > #usages-popover, .inbox-view { border: 0; border-radius: var(--panel-radius); outline: 1px solid var(--border); outline-offset: -1px; } /* the ring is an outline, so it takes no room: the panels' headers line up with the chat's */
