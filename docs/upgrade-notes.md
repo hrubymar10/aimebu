@@ -32,9 +32,10 @@ with the way out (update harness-docker, then retry), as OpenCode's and Vibe's a
 
 ## What a machine runs is the owner's alone
 
-Saving, changing or removing a launcher, a harness's models and providers, its path override, importing providers and detecting a harness's
-models are owner-only now; an admin the owner appointed gets 403 (the Settings controls are disabled for them, with the reason). Listing
-them and auto-detecting which harnesses are installed stay open to admins. See [Auth](auth.md#global-admins).
+Saving, changing or removing a launcher, a harness's models and providers, its path override, importing providers, auto-detecting which
+harnesses are installed and detecting a harness's models are owner-only now; an admin the owner appointed gets 403 (the Settings controls are
+disabled for them, with the reason). Listing the machines, their harnesses and a harness's launchers stays open to admins. See
+[Auth](auth.md#global-admins).
 
 ## Sessions end after 30 days
 

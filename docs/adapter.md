@@ -379,7 +379,7 @@ an id with a slash or a URL that is not http(s).
 Trust boundary: the refused key-variable names are a denylist of what the harness or its launcher uses itself, which keeps a saved provider
 from redirecting the harness; it does not stop whoever may save a provider from naming any other variable of the supervisor's environment
 as the key and an endpoint of their choosing as its URL, so the key would be sent there. That is not more than the same person can do with
-a launcher's command and environment references, which is why saving providers belongs to the owner and admins, never to a project role.
+a launcher's command and environment references, which is why saving providers belongs to the owner, never to an admin or a project role.
 A supervisor that does not say `supports_providers` in its hello is never given such a turn: it is held
 with a note in the room (see `docs/contract.md`).
 The opt-in canary `AIMEBU2_LIVE_OPENCODE_PROVIDER=1 go test ./internal/adapter/opencode` runs the same two

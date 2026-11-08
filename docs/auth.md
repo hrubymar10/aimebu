@@ -233,4 +233,4 @@ set on it. System events that carry no project (credentials, quota switching) st
 
 The web page reads the account's reach from the sign-in answers (`owner`, `admin`) and shows only what it can use: a viewer cannot write in or
 spawn agents into an ordinary room (the composer and Spawn are off with a note saying why; a private chat between two members still works),
-and anyone who is not the owner or an admin gets New project switched off and no Roles, Prompts, Macros, Machines or Harnesses settings tab (an admin has them, with pairing, approving and revoking machines switched off and a reason). These are conveniences over the server's checks, which stay the rule.
+and anyone who is not the owner or an admin gets New project switched off and no Roles, Prompts, Macros, Machines or Harnesses settings tab (an admin has them, with pairing, approving and revoking machines, and everything that sets harnesses up, switched off and a reason). These are conveniences over the server's checks, which stay the rule.
