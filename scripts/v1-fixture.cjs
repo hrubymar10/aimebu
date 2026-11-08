@@ -11,8 +11,8 @@ const ago = days => new Date(Date.now() - days * DAY).toISOString().replace(/\.\
 // What the fixture holds, for the test to count against:
 //   rooms: repo-leader + repo (a project and its working room; `repo` is old, so it is suggested archived), a DM, and v1's _system room
 //   people: alice (human, maps to the owner), bob (human); agent bot@repo
-//   messages: 5 in rooms + 1 presence line ("bot joined") + 1 in the DM + 1 in _system, 1 reaction, 1 attachment, 2 memory records, 2 macros, 1 room view preference (alice pinned repo-leader)
-const FIXTURE = { rooms: 4, messages: 8, imported: 5, presence: 1, skippedRooms: 2, skippedMessages: 2, attachments: 1, memory: 2, macros: 2, roomPrefs: 1, humans: ['alice', 'bob'], projectName: 'repo' };
+//   messages: 5 in rooms + 1 presence line ("bot joined") + 1 in the DM + 1 in _system, 1 reaction, 1 attachment, 2 memory records, 4 macro rows (2 yours, a built-in as shipped, a deleted built-in), 1 room view preference (alice pinned repo-leader)
+const FIXTURE = { rooms: 4, messages: 8, imported: 5, presence: 1, skippedRooms: 2, skippedMessages: 2, attachments: 1, memory: 2, macros: 4, macrosOffered: 2, roomPrefs: 1, humans: ['alice', 'bob'], projectName: 'repo' };
 
 function writeV1Backup(root) {
   const dir = path.join(root, 'server');
@@ -53,6 +53,10 @@ function writeV1Backup(root) {
   put('memory', 'fact', { id: 'fact', scope: 'project_facts', scope_key: 'repo', body: 'a project fact', version: 1, author: 'alice', created_at: recent, updated_at: recent });
   put('memory', 'profile', { id: 'profile', scope: 'user_profile', scope_key: 'alice', body: 'a preference', version: 1, author: 'alice', created_at: recent, updated_at: recent });
   db.exec("INSERT INTO macros(key,value,seen_default) VALUES ('greet','Hello <name>',0),('name','world',0)");
+  // v1 also keeps its two built-ins: one exactly as shipped, and a row with no text for one the user deleted.
+  const shipped = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'internal', 'store', 'defaults_macros.json'), 'utf8'));
+  db.prepare('INSERT INTO macros(key,value,seen_default) VALUES (?,?,1)').run('example_macro', shipped.example_macro);
+  db.exec("INSERT INTO macros(key,value,seen_default) VALUES ('old_default','',1)");
   db.prepare('INSERT INTO room_prefs(agent_id,room_id,hidden,pinned) VALUES (?,?,0,1)').run('alice', 'repo-leader');
   db.close();
 }

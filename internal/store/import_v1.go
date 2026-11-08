@@ -264,14 +264,18 @@ type v1ImportReaction struct {
 }
 
 type v1ImportData struct {
-	Rooms                   []v1ImportRoom
-	Messages                []v1ImportMessage
-	Agents                  map[string]v1ImportAgent
-	Reactions               map[int64][]v1ImportReaction
-	Memory                  []v1ImportMemory
-	Attachments             map[string]v1ImportAttachment
-	Macros                  map[string]string
-	MacroSeenDefault        map[string]bool
+	Rooms            []v1ImportRoom
+	Messages         []v1ImportMessage
+	Agents           map[string]v1ImportAgent
+	Reactions        map[int64][]v1ImportReaction
+	Memory           []v1ImportMemory
+	Attachments      map[string]v1ImportAttachment
+	Macros           map[string]string
+	MacroSeenDefault map[string]bool
+	// MacroTotal is every macro row of the backup; MacroLeftOut names (key -> reason) the rows that are not offered because they carry
+	// nothing of the user's: a deleted built-in (v1 keeps a row with no text so it is not seeded again) and a built-in left as shipped.
+	MacroTotal              int
+	MacroLeftOut            map[string]string
 	RoomRaw                 map[string]string
 	Settings                map[string]json.RawMessage
 	SkippedSourceSettings   []V1SkippedSetting
@@ -368,7 +372,7 @@ func OpenV1ImportSource(ctx context.Context, dir string) (*v1ImportData, error) 
 	if err := db.QueryRowContext(ctx, "SELECT version FROM schema_meta LIMIT 1").Scan(&version); err != nil || version != 1 {
 		return nil, fmt.Errorf("expected v1 SQLite schema 1, got %d: %v", version, err)
 	}
-	data := &v1ImportData{Agents: map[string]v1ImportAgent{}, Reactions: map[int64][]v1ImportReaction{}, Attachments: map[string]v1ImportAttachment{}, Macros: map[string]string{}, MacroSeenDefault: map[string]bool{}, RoomRaw: map[string]string{}, Settings: map[string]json.RawMessage{}, Roles: map[string]v1ImportRole{}, SkippedSourceRoles: map[string]string{}}
+	data := &v1ImportData{Agents: map[string]v1ImportAgent{}, Reactions: map[int64][]v1ImportReaction{}, Attachments: map[string]v1ImportAttachment{}, Macros: map[string]string{}, MacroSeenDefault: map[string]bool{}, MacroLeftOut: map[string]string{}, RoomRaw: map[string]string{}, Settings: map[string]json.RawMessage{}, Roles: map[string]v1ImportRole{}, SkippedSourceRoles: map[string]string{}}
 	load := func(query string, visit func(string, string) error) error {
 		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
@@ -495,6 +499,11 @@ func OpenV1ImportSource(ctx context.Context, dir string) (*v1ImportData, error) 
 			if err := rows.Scan(&key, &body, &seenDefault); err != nil {
 				rows.Close()
 				return nil, err
+			}
+			data.MacroTotal++
+			if reason := v1MacroLeftOut(key, body, seenDefault); reason != "" {
+				data.MacroLeftOut[key] = reason
+				continue
 			}
 			data.Macros[key] = body
 			data.MacroSeenDefault[key] = seenDefault

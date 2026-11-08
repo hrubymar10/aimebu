@@ -155,3 +155,27 @@ func seedDefaultMacros(ctx context.Context, tx *sql.Tx) error {
 	}
 	return nil
 }
+
+// The reasons a v1 macro is left out of the import (see v1MacroLeftOut).
+const (
+	v1MacroDeleted = "deleted_in_v1"      // a built-in the user deleted: v1 keeps a row with no text so it is not seeded again
+	v1MacroBuiltin = "v1_builtin_example" // a built-in left exactly as shipped: v2 seeds its own
+)
+
+// v1MacroLeftOut says why a v1 macro row carries nothing the user wrote, or "" when it is theirs. Only rows v1 itself seeded (seen_default) can be
+// either: an empty row is a deleted built-in, and one whose text is still the shipped text is the built-in unchanged. A built-in the user edited
+// is theirs and is offered as any macro. The shipped text compared with is v2's own copy of the built-ins, which v2 took from v1: a v1 that
+// shipped an older text shows its unchanged copy as an edit, which is the safe way to be wrong (it is offered, and the owner can untick it).
+func v1MacroLeftOut(key, body string, seenDefault bool) string {
+	if !seenDefault {
+		return ""
+	}
+	if body == "" {
+		return v1MacroDeleted
+	}
+	var shipped map[string]string
+	if json.Unmarshal(defaultMacrosJSON, &shipped) == nil && shipped[key] == body {
+		return v1MacroBuiltin
+	}
+	return ""
+}

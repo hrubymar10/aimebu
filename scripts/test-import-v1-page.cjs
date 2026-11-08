@@ -39,6 +39,16 @@ async function main() {
     page.on('request', request => { if (request.url().includes('/api/import-v1/') && request.method() !== 'GET') calls.push(`${request.method()} ${new URL(request.url()).pathname}`); });
     await signIn(page, origin);
     await page.waitForSelector(`${DIALOG}[open]`);
+    // The wizard presents like the other first-run screens: a modal dialog over an opaque full-page backdrop, with the app behind it hidden and
+    // out of reach (no room header, sidebar or top bar around it).
+    assert.deepEqual(await page.evaluate(selector => {
+      const dialog = document.querySelector(selector), app = document.querySelector('#app-view');
+      const backdrop = getComputedStyle(dialog, '::backdrop').backgroundColor, filter = document.querySelector('#app-view .room-filter input');
+      filter.focus();
+      const top = document.elementFromPoint(10, 10), header = document.querySelector('#room-title');
+      return { modal: dialog.matches(':modal'), opaque: /^rgb\(/.test(backdrop), appHidden: getComputedStyle(app).visibility === 'hidden', headerHidden: !header || getComputedStyle(header).visibility === 'hidden',
+        sidebarFocusable: document.activeElement === filter, behind: !!top?.closest(selector) };
+    }, DIALOG), { modal: true, opaque: true, appHidden: true, headerHidden: true, sidebarFocusable: false, behind: true }, 'the wizard is modal over an opaque backdrop and the app behind it is out of reach');
     // The first step names what the backup holds, and will not go on without a workspace folder for the project.
     await stepIs(page, 'Step 1 of 7 · Projects');
     assert.match(await page.$eval(DIALOG, dialog => dialog.textContent), new RegExp(`The backup holds ${FIXTURE.rooms} rooms, ${FIXTURE.messages} messages, ${FIXTURE.attachments} attachments and ${FIXTURE.memory} memory records`));
@@ -87,6 +97,8 @@ async function main() {
     await next(page, 'Step 6 of 7 · Macros');
     // A macro's card says what will happen to it.
     assert.deepEqual(await page.evaluate(selector => [...document.querySelectorAll(`${selector} .import-badge`)].map(badge => badge.textContent), DIALOG), ['New', 'New']);
+    assert.equal(await page.$eval(`${DIALOG} .import-macros-left-out`, node => node.textContent),
+      "Left out: <example_macro> (v1's built-in example, unchanged; v2 has its own), <old_default> (deleted in v1).", 'the built-ins that carry nothing of yours are named, not offered');
     assert.deepEqual(await page.evaluate(selector => [...document.querySelectorAll(`${selector} legend`)].map(legend => legend.firstChild.textContent.trim()), DIALOG), ['<greet>', '<name>'], 'macro keys are shown as stored');
     await next(page, 'Step 7 of 7 · Summary');
     heights.push(await height(page));
@@ -100,8 +112,21 @@ async function main() {
     assert.equal(first.headline, `Bringing across ${FIXTURE.imported} of ${FIXTURE.messages} messages, 2 of ${FIXTURE.rooms} rooms, ${FIXTURE.attachments} of ${FIXTURE.attachments} attachments.`);
     assert.deepEqual(first.parts.messages, { imported: FIXTURE.imported, presence_lines: FIXTURE.presence, system_room: 1, dm_not_imported: 1 });
     assert.deepEqual(first.parts.rooms, { imported: 2, system_room: 1, dm_not_imported: 1 });
+    assert.deepEqual(first.parts.macros, { imported: FIXTURE.macrosOffered, v1_builtin_example: 1, deleted_in_v1: 1 }, 'the macros add up to the backup\'s rows, with a reason for each one left out');
     assert.ok(first.keys.indexOf('projects') < first.keys.indexOf('messages') && first.keys.indexOf('messages') < first.keys.indexOf('room_prefs'), `the table leads with projects and messages and ends with settings: ${first.keys}`);
     // A reload on the summary comes back to it and runs the dry run again; it does not sit on "Checking…".
+    // A draft saved before a macro was left out may hold choices for things the backup no longer offers; the import must not fail on them, and the first page says so once.
+    const stale = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find(name => /import/i.test(name) && name.includes('draft')) || Object.keys(localStorage).find(name => { try { return JSON.parse(localStorage.getItem(name))?.mapping; } catch { return false; } });
+      const draft = JSON.parse(localStorage.getItem(key));
+      draft.mapping.skip_macros = [...(draft.mapping.skip_macros || []), 'gone_macro'];
+      draft.mapping.macro_conflicts = { ...(draft.mapping.macro_conflicts || {}), gone_macro: 'use_v1' };
+      draft.mapping.rooms = { ...draft.mapping.rooms, gone_room: { name: 'gone', project: 'x' } };
+      draft.mapping.humans = { ...draft.mapping.humans, gone_person: '-' };
+      localStorage.setItem(key, JSON.stringify(draft));
+      return key;
+    });
+    assert.ok(stale, 'the draft is in the browser');
     const before = calls.filter(call => call.endsWith('/dry-run')).length;
     await page.reload();
     await signIn(page, origin);
@@ -109,6 +134,7 @@ async function main() {
     await stepIs(page, 'Step 7 of 7 · Summary');
     const again = await summary();
     assert.deepEqual(again.parts, first.parts);
+    assert.equal(await page.$eval(`${DIALOG} .import-stale-note`, node => node.textContent), 'Some earlier choices no longer apply.', 'the dropped choices are mentioned once');
     assert.ok(calls.filter(call => call.endsWith('/dry-run')).length > before, 'the reload asked for a new dry run');
     // Import: one commit, then the finished page.
     await clickButton(page, 'Import now');

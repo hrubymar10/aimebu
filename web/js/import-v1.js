@@ -65,7 +65,7 @@ function countRank(key) {
 }
 
 // What happened to each part of a reconciled count (report.accounting), in the owner's words. `rooms` words its own skips, since a room is not a record in one.
-const ACCOUNT_GROUPS = { rooms: 'Rooms', messages: 'Messages', attachments: 'Attachments', reactions: 'Reactions' };
+const ACCOUNT_GROUPS = { rooms: 'Rooms', messages: 'Messages', attachments: 'Attachments', reactions: 'Reactions', macros: 'Macros' };
 const ACCOUNT_PARTS = {
   imported: 'Imported',
   already_present: 'Already in v2',
@@ -76,6 +76,10 @@ const ACCOUNT_PARTS = {
   room_skipped: 'In rooms you chose not to import',
   in_skipped_rooms: 'On messages in rooms not imported',
   person_skipped: 'By people you did not map to an account',
+  kept_v2_text: 'Kept the v2 text (a key both have)',
+  unticked: 'Unticked on the Macros page',
+  v1_builtin_example: "v1's built-in example macros you never changed (v2 has its own)",
+  deleted_in_v1: 'Built-in macros you deleted in v1',
   unused_files: 'Files no message refers to',
   other: 'Other',
 };
@@ -217,8 +221,16 @@ export class ImportV1Wizard {
       if (account) mapping.new_users[human] = { ...account }; // the suggested login is a new account, not a link to an existing one
     }
     this.defaultPeople(mapping, human => undecided.has(human));
+    // A choice for something the preview no longer offers (a macro that is now left out, a room or person the backup no longer has) is dropped: the import
+    // would refuse it, and the owner could not tell why. The first page shown says so once.
+    const macros = new Set(Object.keys(this.preview.macros || {})), rooms = new Set((this.preview.rooms || []).map(room => room.id)), humans = new Set(this.preview.humans || []);
+    let dropped = 0;
+    const keepOffered = (choices, offered) => { for (const key of Object.keys(choices)) if (!offered.has(key)) { delete choices[key]; dropped++; } };
+    keepOffered(mapping.macro_conflicts, macros); keepOffered(mapping.rooms, rooms); keepOffered(mapping.humans, humans); keepOffered(mapping.new_users, humans);
+    const skipped = mapping.skip_macros.filter(key => macros.has(key)); dropped += mapping.skip_macros.length - skipped.length; mapping.skip_macros = skipped;
     this.mapping = mapping;
     if (this.steps.some(step => step.id === draft.step)) this.stepID = draft.step;
+    this.staleNote = dropped > 0 ? { step: this.stepID } : null;
     return true;
   }
 
@@ -308,7 +320,12 @@ export class ImportV1Wizard {
     this.dialog.dataset.phase = this.phase; // the review pages share one height, so the dialog does not jump between steps
     this.totals.hidden = true; this.totals.textContent = '';
     if (this.phase === 'changed') this.renderChanged();
-    else if (this.phase === 'review') this.renderStep();
+    else if (this.phase === 'review') {
+      this.renderStep();
+      // The note about dropped choices stays on the page the draft was restored to, and goes when the owner moves on.
+      if (this.staleNote && this.staleNote.step === this.stepID) this.content.prepend(node('p', 'Some earlier choices no longer apply.', 'import-restored import-stale-note'));
+      else this.staleNote = null;
+    }
     else this.renderImport();
   }
 
@@ -358,7 +375,7 @@ export class ImportV1Wizard {
     for (const key of ['macro_conflicts', 'role_conflicts', 'project_members', 'memory_projects', 'enable_project_memory']) this.mapping[key] ||= {};
     this.mapping.skip_macros ||= [];
     this.defaultPeople(this.mapping);
-    this.restored = false; this.stepID = this.steps[0].id;
+    this.restored = false; this.staleNote = null; this.stepID = this.steps[0].id;
     this.render();
   }
 
@@ -724,6 +741,7 @@ export class ImportV1Wizard {
 
   // A macro's text: short ones in full, long ones folded behind their first line so a page of macros stays a page.
   macroBody(text) {
+    if (!text) return node('pre', '(empty)', 'import-macro-body import-macro-empty');
     const lines = text.split('\n');
     if (text.length <= 300 && lines.length <= 6) return node('pre', text, 'import-macro-body');
     const details = node('details', '', 'import-macro-long');
@@ -749,6 +767,8 @@ export class ImportV1Wizard {
     }
     const parts = [[tally.new, 'new'], [tally.replace, 'replace the v2 text'], [tally.keep, 'keep the v2 text (a key both have)'], [tally.same, 'already match v2'], [tally.imported, 'already imported from this backup']].filter(([n]) => n).map(([n, text]) => `${n} ${text}`);
     this.status.textContent = `${keys.length - skip.size} of ${keys.length} macros chosen${parts.length ? `: ${parts.join(', ')}` : ''}.`;
+    const leftOut = Object.entries(p.macros_left_out || {}).sort(([a], [b]) => a.localeCompare(b));
+    if (leftOut.length) this.content.append(node('p', `Left out: ${leftOut.map(([key, why]) => `<${key}> (${why === 'deleted_in_v1' ? 'deleted in v1' : "v1's built-in example, unchanged; v2 has its own"})`).join(', ')}.`, 'settings-intro import-macros-left-out'));
     const bulk = node('div', '', 'import-bulk');
     bulk.append(this.button('Import all', () => { this.mapping.skip_macros = []; this.save(); this.refresh(); }, true), this.button('Import none', () => { this.mapping.skip_macros = [...keys]; this.save(); this.refresh(); }, true));
     this.content.append(bulk);

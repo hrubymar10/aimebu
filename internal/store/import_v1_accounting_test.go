@@ -124,3 +124,66 @@ func TestV1ImportAccountingReconcilesAndSaysWhy(t *testing.T) {
 		}
 	}
 }
+
+// v1 rows that carry nothing the user wrote are not offered as macros and are accounted for by name: a built-in the user deleted (v1 keeps a
+// row with no text) and a built-in left exactly as shipped (v2 seeds its own). A built-in the user edited is theirs and is offered.
+func TestV1ImportLeavesOutDeletedAndUnchangedBuiltinMacros(t *testing.T) {
+	t.Parallel()
+	source, base := v1Fixture(t)
+	db := openV1Fixture(t, source)
+	var shipped map[string]string
+	if err := json.Unmarshal(defaultMacrosJSON, &shipped); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		key, body string
+		seen      int
+	}{{"example_macro", shipped["example_macro"], 1}, {"do-cr", "my own review recipe", 1}, {"old_default", "", 1}, {"mine", "hello", 0}} {
+		if _, err := db.Exec(`INSERT OR REPLACE INTO macros(key,value,seen_default) VALUES (?,?,?)`, row.key, row.body, row.seen); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM macros WHERE key IN ('greet','name')`); err != nil {
+		t.Fatal(err)
+	}
+	s := newV1RoleStore(t)
+	ctx := context.Background()
+	preview, err := PreviewV1Import(ctx, source, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(preview.Macros); got != 2 || preview.Macros["do-cr"] == "" || preview.Macros["mine"] == "" {
+		t.Fatalf("offered macros: %+v", preview.Macros)
+	}
+	if want := map[string]string{"example_macro": "v1_builtin_example", "old_default": "deleted_in_v1"}; !reflect.DeepEqual(preview.MacrosLeftOut, want) {
+		t.Fatalf("left out: %+v, want %+v", preview.MacrosLeftOut, want)
+	}
+	report, err := s.ImportV1(ctx, source, base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var group V1AccountingGroup
+	for _, g := range report.Accounting {
+		if g.Key == "macros" {
+			group = g
+		}
+	}
+	if group.Total != 4 {
+		t.Fatalf("macros group: %+v", group)
+	}
+	sum := 0
+	for _, part := range group.Parts {
+		sum += part.Count
+		if part.Key == "other" {
+			t.Errorf("a macro no reason accounts for: %+v", group.Parts)
+		}
+	}
+	if sum != group.Total {
+		t.Errorf("parts add up to %d of %d: %+v", sum, group.Total, group.Parts)
+	}
+	for key, items := range map[string][]string{"v1_builtin_example": {"example_macro"}, "deleted_in_v1": {"old_default"}} {
+		if part, ok := accountingPart(group, key); !ok || !reflect.DeepEqual(part.Items, items) || part.Count != 1 {
+			t.Errorf("part %s: %+v %v", key, part, ok)
+		}
+	}
+}

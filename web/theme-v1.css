@@ -762,6 +762,10 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .inbox-card .inbox-jump { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 8px; }
 .import-v1-dialog { width: min(900px, 96vw); max-height: calc(100dvh - 24px); }
 .import-v1-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
+/* Like the other first-run screens, the import wizard is one centred dialog over a full-page backdrop in the page colour, with the app behind it
+   hidden and out of reach: no room header, sidebar or top bar shows around it (the 56% dim every other dialog gets left them visible). */
+.import-v1-dialog::backdrop { background: var(--bg-primary, Canvas); }
+body:has(.import-v1-dialog[open]) #app-view { visibility: hidden; }
 .import-v1-dialog[data-phase="review"] { height: min(760px, calc(100dvh - 24px)); }
 .import-totals { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: .9em; }
 .import-v1-dialog > * { flex: 0 0 auto; }

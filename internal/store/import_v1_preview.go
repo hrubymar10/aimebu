@@ -34,9 +34,11 @@ type V1ImportPreview struct {
 	DestinationUsers []string        `json:"destination_users"`
 	MemoryProjects   []string        `json:"memory_projects"`
 	// MemoryCounts says how many records each memory choice covers: per project scope, plus the user profiles and the shared agent notes.
-	MemoryCounts       V1MemoryCounts          `json:"memory_counts"`
-	Macros             map[string]string       `json:"macros"`
-	MacroDefaults      []string                `json:"macro_defaults"`
+	MemoryCounts  V1MemoryCounts    `json:"memory_counts"`
+	Macros        map[string]string `json:"macros"`
+	MacroDefaults []string          `json:"macro_defaults"`
+	// MacrosLeftOut are the v1 macros that are not offered (key -> reason: a deleted built-in, a built-in left as shipped).
+	MacrosLeftOut      map[string]string       `json:"macros_left_out"`
 	ImportedMacros     []string                `json:"imported_macros"`
 	ImportedRoles      []string                `json:"imported_roles"`
 	V1MemoryEnabled    bool                    `json:"v1_memory_enabled"`
@@ -280,6 +282,7 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 	}
 	out.Counts = map[string]int{"rooms": len(data.Rooms), "messages": len(data.Messages), "attachments": len(data.Attachments), "memory": len(data.Memory), "humans": len(humans), "macros": len(data.Macros), "read_cursors": readCursors, "room_prefs": roomPrefs, "sounds": len(data.Sounds), "agent_sessions": len(data.AgentSessions), "agent_session_history": len(data.AgentSessionHistory)}
 	out.Macros = data.Macros
+	out.MacrosLeftOut = data.MacroLeftOut
 	for key, seen := range data.MacroSeenDefault {
 		if seen {
 			out.MacroDefaults = append(out.MacroDefaults, key)

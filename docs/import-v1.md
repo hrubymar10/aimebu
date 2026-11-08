@@ -40,7 +40,7 @@ marked invalid and tied to its message, and the first one focused. Back keeps
 every choice. An empty Workspace folder field starts at the home folder of the
 machine the server runs on when it is focused (typed text is never replaced). The draft (the
 choices and the page) is kept in the browser for each backup, so a reload
-continues where you left off; **Start over** on the first page drops it. The
+continues where you left off; a choice in it for something the backup no longer offers (for example a macro that is now left out) is dropped, with a note on the page that opens; **Start over** on the first page drops the draft. The
 Summary is the dry run in words. It opens with one line of totals ("Bringing across
 23,889 of 28,002 messages, …") and, per count of the backup (rooms, messages,
 attachments, reactions), a block that adds up to the backup's own number: what is
@@ -152,7 +152,7 @@ merged onto one v2 user exceed the 2048-byte profile cap, Check points to
 backed-up macro body and any matching v2 body, on a card with a badge for what will happen (New, Conflict: keeping or replacing the v2 text, Already in v2, Already imported); conflicts come first and long bodies are folded behind their first line. A conflicting key keeps the v2
 text by default; choose the v1 text explicitly to replace it. A fresh v2
 install already carries the shipped `do-cr` and `example_macro` defaults, so a
-backup whose `do-cr` body differs shows that conflict too. Only macros
+backup whose `do-cr` body differs shows that conflict too. v1 keeps a row for every built-in it ever seeded, so two kinds of row carry nothing the user wrote and are not offered: a built-in the user deleted (a row with no text) and a built-in still exactly as shipped (v2 seeds its own). The Macros page names them in a "Left out" line, and the Summary accounts for each under `v1_builtin_example` and `deleted_in_v1` in the `macros` block of `accounting`, so the totals still add up to the backup's rows. A built-in the user edited is theirs and is offered as any macro; an empty body, should one ever be offered, shows as "(empty)". Only macros
 present in the backup import. The wizard marks keys already recorded in
 that ledger and hides their conflict selector on later runs. Project memory
 starts on for each destination project when v1's global memory was on (and off
@@ -208,7 +208,7 @@ blocks the wizard before any import writes.
 
 ### Rooms page
 
-The review pages share one dialog height, and the long ones (Projects, Rooms, Memory) keep a one-line total of what is selected and what is left out beside the buttons. The Direct messages page leads with the message count and keeps the raw v1 chat id in a tooltip unless two chats share a title. The finished page's heading reads "Import finished". Macro keys are shown as stored (lowercase). The first page carries the "only chance" warning as its own callout (the skip confirmation repeats it in the same words). A room that goes to a project's home room has no "Archived after import" box: the page says a home room is never archived. The Rooms page has a select per v1 room ("Import into": a project's root, its
+The wizard opens like the other first-run screens: one centred modal dialog over a full-page backdrop in the page colour, with the app behind it (top bar, sidebar, room header) hidden and unreachable until the import is done or skipped. The review pages share one dialog height, and the long ones (Projects, Rooms, Memory) keep a one-line total of what is selected and what is left out beside the buttons. The Direct messages page leads with the message count and keeps the raw v1 chat id in a tooltip unless two chats share a title. The finished page's heading reads "Import finished". Macro keys are shown as stored (lowercase). The first page carries the "only chance" warning as its own callout (the skip confirmation repeats it in the same words). A room that goes to a project's home room has no "Archived after import" box: the page says a home room is never archived. The Rooms page has a select per v1 room ("Import into": a project's root, its
 general room, a new sub-room named like the room, or don't import), an
 "Archived after import" checkbox and Open all / Archive all, and a tree of the
 v2 rooms the choices make. Focus stays on the select, checkbox or bulk button

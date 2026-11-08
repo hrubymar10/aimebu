@@ -181,6 +181,33 @@ func buildV1Accounting(data *v1ImportData, mapping V1ImportMap, report V1ImportR
 	}
 	groups = append(groups, finish(attachments))
 
+	macros := V1AccountingGroup{Key: "macros", Total: data.MacroTotal}
+	macros.Parts = append(macros.Parts, V1AccountingPart{Key: "imported", Count: report.Imported["macros"]})
+	if n := report.AlreadyPresent["macros"]; n > 0 {
+		macros.Parts = append(macros.Parts, V1AccountingPart{Key: "already_present", Count: n})
+	}
+	if n := report.Skipped["macro_conflicts"]; n > 0 {
+		macros.Parts = append(macros.Parts, V1AccountingPart{Key: "kept_v2_text", Count: n})
+	}
+	if n := report.Skipped["macros"]; n > 0 {
+		macros.Parts = append(macros.Parts, V1AccountingPart{Key: "unticked", Count: n})
+	}
+	for _, reason := range []string{v1MacroBuiltin, v1MacroDeleted} {
+		var keys []string
+		for key, why := range data.MacroLeftOut {
+			if why == reason {
+				keys = append(keys, key)
+			}
+		}
+		if len(keys) > 0 {
+			sort.Strings(keys)
+			macros.Parts = append(macros.Parts, V1AccountingPart{Key: reason, Count: len(keys), Items: keys})
+		}
+	}
+	if macros.Total > 0 {
+		groups = append(groups, finish(macros))
+	}
+
 	total := 0
 	for _, list := range data.Reactions {
 		total += len(list)
