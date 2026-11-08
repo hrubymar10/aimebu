@@ -502,8 +502,8 @@ reason. With no choice of your own, the Rooms column starts collapsed in a windo
 on phones, v1's bottom bar (Rooms | Chat | Agents) opens and closes the drawers (the top-bar Rooms button and the title bar's drawer buttons are not shown there; the top-bar icons are named as in v1: Usages, Memory, System events, Settings) (on desktop the column toggles replace the Rooms button, the room list stays beside the Inbox view so any room is one click away, and the Inbox button toggles back to the chat),
 the room's controls (Notes, Room settings, Go to message, raw
 Markdown, Export) collapse into one ⋯ menu so the title keeps room, and
-the composer stays at the bottom. The top bar is v1's height (53px, 49px up to 480px
-wide) and every control in it is an icon button with a tooltip and an accessible name (Inbox,
+the composer stays at the bottom. The top bar is 43px high on a desktop (a window over 700px wide that is not a touch screen), 53px on a touch tablet and
+on a phone (49px up to 480px wide), and every control in it is an icon button with a tooltip and an accessible name (Inbox,
 Health, Usages, Memory, Settings, Sign out, and Rooms on phones; the Agents button is an icon too; the members
 panel's Spawn button is the one exception, the green Send look with a glyph and the word "Spawn"); the Inbox and Health counts are a small pill in the button's corner, and the accessible name carries the
 number. Only the experiment pill is text. The same rule covers the close buttons, the sidebar's +, person and reopen buttons, the code-block and profile Copy buttons, the agent card's Message, Pause, Stop, Switch, Reactivate and Remove buttons, the scroll helpers (Back to latest and its thread twins, with a count pill), the Inbox card's "View in room" and the room menu's ⋯: icons with a tooltip and an accessible name, from glyph files in `web/icons/` (sources are credited in `web/vendor/README.md`). Primary dialog and form actions, tabs and content-driven buttons (answer choices, reactions, #ids) stay text. The glyphs are files in `web/icons/` drawn through a CSS mask, so one is

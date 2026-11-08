@@ -108,7 +108,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
    a tablet. The popovers (⋯ menu, health, usages, system events) are children of the bar, so the generic `.topbar button` sizes in theme-v1.css (kept in
    place: they tie in specificity with the popovers' own rules, so their order matters) reach them too. */
 .topbar { grid-column: 1 / -1; grid-row: 1; position: relative; z-index: auto; padding: 0 16px; } /* v1 raises the bar to 100; v2 keeps it below the first-run card and the other full-viewport layers */
-.app > .topbar { height: 53px; min-height: 53px; box-sizing: border-box; }
+.app > .topbar { height: var(--topbar-h, 53px); min-height: var(--topbar-h, 53px); box-sizing: border-box; }
 .topbar nav { gap: 6px; min-width: 0; flex-shrink: 1; }
 .topbar .build-version { white-space: nowrap; }
 .topbar #logout { margin-left: 4px; }
@@ -156,6 +156,17 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 }
 /* Touch targets on a tablet are 40px too: the experiment pill was sized for a mouse above 700px. */
 @media (pointer: coarse) { .topbar nav button.ui-variant-toggle { height: 40px; } }
+/* A desktop bar (a window over 700px wide that is not a touch screen) is 43px high, as the headers of the panels beneath it are: 26px icon buttons with 15px glyphs, small counters
+   on their corners, a smaller mark and name. A touch tablet keeps the 53px bar and its 40px targets, and so does a phone. --topbar-h is the one number the layouts
+   that start under the bar read (the room settings pane). */
+@media (min-width: 701px) and (not (pointer: coarse)) {
+  .app > .topbar nav .btn-icon { flex: 0 0 26px; width: 26px; min-width: 26px; height: 26px; min-height: 26px; }
+  .topbar nav button.btn, .topbar nav button.ui-variant-toggle { height: 26px; min-height: 26px; }
+  .topbar nav .icon-mask { width: 15px; height: 15px; }
+  .topbar nav .badge { min-width: 13px; height: 13px; padding: 0 2px; border-radius: 7px; font-size: 8px; line-height: 13px; }
+  .topbar-left img { width: 21px; height: 21px; }
+  .topbar .logo { font-size: 1rem; }
+}
 /* With two experiments the two pills share a phone's top bar: tighter letters. */
 @media (max-width: 700px) {
   .topbar nav button.ui-variant-toggle { gap: 1px; padding: 0 4px; font-size: 11px; }

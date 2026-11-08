@@ -1146,8 +1146,8 @@ async function main() {
     await page.evaluate(() => { window.__hidden = []; window.__chat.setRoomPreference = async (room, field, value) => { window.__hidden.push([room.id, field, value]); return true; }; window.__chat.showRoomInfo(); });
     await settle(page);
     // The pane starts where the top bar ends instead of covering it, and Hide room is a button that says what it is (an icon and its name), with a tooltip.
-    // (This page has no laid-out top bar; the app's is 53px high, which is where the pane starts.)
-    assert.deepEqual(await page.evaluate(() => { const pane = document.querySelector('#room-info-dialog').getBoundingClientRect(); return [Math.round(pane.top), Math.round(pane.bottom) === innerHeight]; }), [53, true], 'the room settings pane starts below the 53px top bar and ends at the bottom of the window');
+    // (This page has no laid-out top bar; the app's is 43px high on a desktop, which is where the pane starts.)
+    assert.deepEqual(await page.evaluate(() => { const pane = document.querySelector('#room-info-dialog').getBoundingClientRect(); return [Math.round(pane.top), Math.round(pane.bottom) === innerHeight]; }), [43, true], 'the room settings pane starts below the 53px top bar and ends at the bottom of the window');
     assert.deepEqual(await page.$eval('#room-hide', el => [el.textContent.trim(), !!el.querySelector('.icon-mask-eye-off'), el.title.length > 10, el.classList.contains('btn-icon')]), ['Hide room', true, true, false]);
     await page.$eval('#room-hide', node => node.click()); await settle(page);
     assert.deepEqual(await page.evaluate(() => [window.__hidden, document.querySelector('#room-info-dialog').open, document.querySelector('#room-hide').disabled]), [[['rm_a', 'hidden', true]], false, false]);

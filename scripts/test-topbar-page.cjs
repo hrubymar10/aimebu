@@ -189,6 +189,9 @@ async function main() {
       await page.setViewport({ width, height, isMobile: width < 1100, hasTouch: width < 1100 }); await settle();
       const state = await crowd();
       assert.deepEqual([state.tucked, state.more, state.spills], [0, false, false], `all the controls are in the bar at ${width}px: ${JSON.stringify(state)}`);
+      // A desktop bar (over 700px, not a touch screen) is 43px with 26px buttons; a touch screen keeps the 53px bar and its 40px targets.
+      const touch = width < 1100, size = await page.evaluate(() => ({ bar: Math.round(document.querySelector('.topbar').getBoundingClientRect().height), button: Math.round(document.querySelector('#settings-toggle').getBoundingClientRect().width) }));
+      assert.deepEqual(size, touch ? { bar: 53, button: 40 } : { bar: 43, button: 26 }, `the bar and its buttons at ${width}px${touch ? ' (touch)' : ''}: ${JSON.stringify(size)}`);
     }
     await page.setViewport({ width: 320, height: 568, isMobile: true, hasTouch: true }); await settle();
     const phone = await crowd();
