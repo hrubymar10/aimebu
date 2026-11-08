@@ -21,8 +21,10 @@ Reporting is decided in this order:
    volume facts; everyone else sees their identity rows only.
 3. **Nothing is reported until the owner has answered the popup.** On a new install the owner sees a one-time "Telemetry" popup
    after the welcome, and on the first sign-in after an update that brought telemetry. It holds the toggle (on when this build
-   ships a default DSN, otherwise off), the DSN field (filled in, with the same reset button; greyed out while the toggle is off), and one sentence on what is and is not sent. **Save** keeps what is shown; **Not
-   now** (or Escape) turns reports off. Either way it is not asked again.
+   ships a default DSN, otherwise off), the DSN field (filled in, with the same reset button; greyed out while the toggle is off), the owner's own switch "Send my user name instead of a
+   fingerprint" (off by default, greyed out with the DSN while the toggle is off, worded as in Settings → Telemetry), and one sentence on what is and is not sent. **Save** keeps what is shown
+   (and, with the switch ticked and reports on, also sets it for the owner's account, as `PUT /api/me/telemetry` with `send_name`; if that call fails the popup comes back with the reason and what was chosen, up to three times); **Not
+   now** (or Escape) turns reports off and changes nothing else. Either way it is not asked again.
 
 This build ships the maintainers' DSN as the default (`internal/telemetry/default_dsn.go`, EU ingest host `ingest.de.sentry.io`), so the popup's toggle starts on with it filled in. Deleting that one file gives a build with no default, which is off until a DSN comes from the environment or Settings. Set `AIMEBU2_SENTRY_DSN=off` to opt out for a whole server.
 

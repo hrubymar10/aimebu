@@ -3,6 +3,7 @@ import { IconButton } from '../../components/icon-button.js';
 import { request } from '../../api.js';
 import { confirmDialog } from '../../dialogs.js';
 import { setTelemetryUser } from '../../telemetry.js';
+import { SEND_NAME_LABEL, SEND_NAME_DESC } from '../../telemetry-consent.js';
 
 export const ROLL_LABEL = 'Generate a new fingerprint';
 export const ROLL_LABEL_NAME = 'Use a random fingerprint instead';
@@ -63,7 +64,7 @@ export function IdentityRows({ state, off, muted }) {
       </div></div>
     </div>
     <div class=${`settings-row settings-row-toggle${muted}`}>
-      <div class="settings-row-info"><label class="settings-label" for="telemetry-send-name">Send my user name instead of a fingerprint</label><span class="settings-desc" id="telemetry-send-name-desc">Off by default. Your reports then carry your login name (nothing else) in place of the fingerprint, never both.</span></div>
+      <div class="settings-row-info"><label class="settings-label" for="telemetry-send-name">${SEND_NAME_LABEL}</label><span class="settings-desc" id="telemetry-send-name-desc">${SEND_NAME_DESC}</span></div>
       <div class="settings-control"><input id="telemetry-send-name" aria-describedby="telemetry-send-name-desc" type="checkbox" checked=${!!identity?.send_name} disabled=${disabled}
         onChange=${event => sendName(event.currentTarget.checked)} /></div>
     </div>

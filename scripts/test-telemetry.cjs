@@ -88,7 +88,11 @@ assert.equal(api.scrubBreadcrumb({ category: 'console' }), null);
   const collection = plain(options.dataCollection);
 assert.equal(collection.userInfo, false); assert.equal(collection.cookies, false); assert.equal(collection.httpHeaders, false); assert.deepEqual(collection.httpBodies, []); assert.equal(collection.urlQueryParams, false);
 assert.equal(collection.stackFrameVariables, false); assert.equal(collection.frameContextLines, 0); assert.equal(options.traceLifecycle, 'static', 'spans go through beforeSendTransaction');
-assert.equal(options.beforeSend, api.scrubEvent); assert.equal(options.beforeSendTransaction, api.scrubEvent); assert.equal(options.beforeBreadcrumb, api.scrubBreadcrumb);
+// beforeSend scrubs an ordinary error as scrubEvent does, and drops one whose error was marked as a lost session (the page going to sign-in is not a report).
+const plainError = { exception: { values: [{ type: 'Error', value: 'boom' }] } };
+assert.deepEqual(plain(options.beforeSend(plainError, { originalException: new Error('boom') })), plain(api.scrubEvent(plainError)), 'an ordinary error is scrubbed and kept');
+assert.equal(options.beforeSend(plainError, { originalException: Object.assign(new Error('Request failed (401)'), { status: 401, unauthorized: true }) }), null, 'a lost-session error is dropped');
+assert.equal(options.beforeSendTransaction, api.scrubEvent); assert.equal(options.beforeBreadcrumb, api.scrubBreadcrumb);
   // A failing load or a missing SDK never throws.
   api.resetTelemetryForTest();
   assert.equal(await api.startTelemetry({ dsn: 'https://k@h/1' }, { load: async () => { throw new Error('offline'); } }), false);

@@ -1,6 +1,6 @@
 import './dialog-focus.js';
 import './backdrop-close.js';
-import { request, setSession, clearSession, currentUser, rights, isNetworkError } from './api.js';
+import { request, setSession, clearSession, currentUser, rights, isNetworkError, onSessionLost, isSessionLost } from './api.js';
 import { Sidebar } from './pages/sidebar/page.js';
 import { Chat } from './chat.js';
 import { setProjectNames } from './sender-identity.js';
@@ -224,7 +224,7 @@ messageDebug.setContext({ messages: () => chat.orderedMessages(), thread: messag
 const backgroundRefreshes = { agents: () => agents.refresh() };
 const retryOnLive = new Set();
 function refreshInBackground(name) {
-  return backgroundRefreshes[name]().catch(error => { if (!isNetworkError(error)) throw error; retryOnLive.add(name); });
+  return backgroundRefreshes[name]().catch(error => { if (isSessionLost(error)) return; if (!isNetworkError(error)) throw error; retryOnLive.add(name); });
 }
 function retryStale() { for (const name of [...retryOnLive]) { retryOnLive.delete(name); void refreshInBackground(name); } }
 // A tick is 30 s; a test shortens it.
@@ -642,6 +642,10 @@ projectForm.onsubmit = async event => {
     const rooms = await sidebar.addProject(project); if (rooms[0]) await selectRoom(rooms[0]);
   } catch (error) { if (generation === sessionGeneration) errorNode.textContent = error.message; }
 };
+// A call that finds the session gone (a 401 while signed in) sends the page to sign-in once, as signing out does; the timers that poll stop with the app view
+// (they only run while it is shown), and the event stream is stopped by the reset. The rejection that reaches a caller nobody waits for is not an error to report.
+onSessionLost(() => { if (appView.hidden && !currentUser) return; resetWorkspace(); clearSession(); document.title = 'aimebu'; appView.hidden = true; void signin.show(); });
+window.addEventListener('unhandledrejection', event => { if (isSessionLost(event.reason)) { event.preventDefault(); event.stopImmediatePropagation(); } });
 document.querySelector('#logout').onclick = async () => { cancelStartup(); try { await request('/api/logout', { method: 'POST' }); } finally { resetWorkspace(); clearSession(); document.title = 'aimebu'; appView.hidden = true; void signin.show(); } };
 document.querySelector('#inbox-toggle').onclick = () => { setRoomsOpen(false); agents.setMobileOpen(false); if (!inbox.view.hidden) inbox.hide(); else inbox.show(); };
 document.querySelector('#rooms-toggle').onclick = () => { inbox.hide(); if (matchMedia('(max-width: 700px)').matches) { appView.classList.add('chat-open'); setRoomsOpen(!appView.classList.contains('rooms-open')); } else { setRoomsCollapsed(!appView.classList.contains('rooms-collapsed')); } };

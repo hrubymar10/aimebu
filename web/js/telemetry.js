@@ -140,7 +140,8 @@ export function sentryOptions(config, Sentry) {
       // a page load's spans (about 240) and say nothing about this app; scrubEvent drops any that get through anyway.
       Sentry.browserTracingIntegration({ ignoreResourceSpans: RESOURCE_OPS }),
     ],
-    beforeSend: scrubEvent,
+    // A call that found the session gone (marked `unauthorized` by api.js) is the page going to sign-in, not an error to report, whatever listener saw it first.
+    beforeSend: (event, hint) => (hint?.originalException?.unauthorized ? null : scrubEvent(event)),
     beforeSendTransaction: scrubEvent,
     beforeBreadcrumb: scrubBreadcrumb,
   };

@@ -214,8 +214,19 @@ async function popup() {
     assert.deepEqual(await page.evaluate(() => ({ field: document.querySelector('#app-dialog input[type=text]').disabled, reset: document.querySelector('#app-dialog .app-dialog-reset').disabled, value: document.querySelector('#app-dialog input[type=text]').value })), { field: true, reset: true, value: 'http://pagekey@127.0.0.1:9/5' }, 'off with a custom DSN: field and reset both disabled');
     await page.click('#app-dialog input[type=checkbox]');
     assert.equal((await dsnState()).resetDisabled, false, 'on again: the reset button is back');
+    // The identity switch of the owner's own account sits under the DSN: off by default, greyed out while reports are off, worded as Settings -> Telemetry words it.
+    const nameSwitch = () => page.evaluate(() => { const box = document.querySelectorAll('#app-dialog input[type=checkbox]')[1], dsn = document.querySelector('#app-dialog input[type=text]'); return { there: !!box, checked: box?.checked, disabled: box?.disabled, below: box ? box.getBoundingClientRect().top > dsn.getBoundingClientRect().top : null, label: box?.closest('label')?.textContent }; });
+    assert.deepEqual(await nameSwitch(), { there: true, checked: false, disabled: false, below: true, label: 'Send my user name instead of a fingerprint' + 'Off by default. Your reports then carry your login name (nothing else) in place of the fingerprint, never both.' }, 'the popup has the name switch, off by default');
+    await page.click('#app-dialog input[type=checkbox]'); // reports off
+    assert.equal((await nameSwitch()).disabled, true, 'greyed out while Send telemetry is off');
+    await page.click('#app-dialog input[type=checkbox]'); // on again
+    assert.equal((await server.api(page, '/api/me/telemetry')).body.send_name, false, 'nothing is sent before Save');
+    await page.evaluate(() => document.querySelectorAll('#app-dialog input[type=checkbox]')[1].click());
+    assert.equal((await nameSwitch()).checked, true);
     await page.click('.app-dialog-ok');
     await page.waitForFunction(() => !document.querySelector('#app-view').hidden, { timeout: 30000 });
+    assert.equal((await server.api(page, '/api/me/telemetry')).body.send_name, true, 'Save with the switch ticked makes this account\'s reports carry its user name');
+    assert.equal((await (await server.ownerClient())('/api/me/telemetry', { method: 'PUT', body: { send_name: false } })).status, 200); // the rest of this scenario starts from the fingerprint, as a new account does
     const saved = (await server.api(page, '/api/telemetry/settings')).body;
     assert.deepEqual({ prompted: saved.prompted, enabled: saved.enabled, dsn: saved.dsn, active: saved.active }, { prompted: true, enabled: true, dsn: 'http://pagekey@127.0.0.1:9/5', active: true });
     // Asked once: a reload goes straight to the app.
