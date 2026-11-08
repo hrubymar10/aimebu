@@ -497,6 +497,19 @@ async function main() {
     }), { sameBubble: true, bold: true, name: true }, 'a reply has the bubble, the bold and the name colour of a message in the room');
     // F4: the time of a system line stays beside its text.
     assert.deepEqual(await page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_sys] .chat-msg-system-row'), body = row.firstElementChild, stamp = row.querySelector('.chat-msg-time'); const b = body.getBoundingClientRect(), s = stamp.getBoundingClientRect(); return { sideBySide: s.left >= b.right - 1 && s.top < b.bottom, nowrap: getComputedStyle(row).flexWrap }; }), { sideBySide: true, nowrap: 'nowrap' }, 'the time of a system line is beside its text, not alone on a line below');
+    // Seen-by markers sit at the column's right edge whatever they follow: one on a centred system line lines up with one on someone else's message
+    // (the strips are added the way read-receipts.js adds them, as the row's last child), and the system line's own text stays centred.
+    assert.deepEqual(await page.evaluate(() => {
+      const strip = node => { const div = document.createElement('div'); div.className = 'message-receipts'; div.setAttribute('role', 'group'); const avatar = document.createElement('span'); avatar.className = 'receipt-avatar'; avatar.textContent = 'MA'; div.append(avatar); node.append(div); return avatar; };
+      const system = document.querySelector('#messages [data-message-id=rm_a_sys]'), other = [...document.querySelectorAll('#messages > .chat-msg:not(.self):not(.chat-msg-system)')].at(-1);
+      // A short line is the case that showed it: a long one wraps across the whole column anyway.
+      const text = system.querySelector('.chat-msg-system-row').firstElementChild, words = text.textContent; text.textContent = 'ian looks offline';
+      const onSystem = strip(system).getBoundingClientRect(), onOther = strip(other).getBoundingClientRect();
+      const list = document.querySelector('#messages'), cs = getComputedStyle(list), box = list.getBoundingClientRect(), row = system.querySelector('.chat-msg-system-row').getBoundingClientRect();
+      const middle = box.left + parseFloat(cs.paddingLeft) + (list.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) / 2;
+      document.querySelectorAll('#messages .message-receipts').forEach(node => node.remove()); text.textContent = words;
+      return { sameRight: Math.abs(onSystem.right - onOther.right) <= 1, rowCentred: Math.abs((row.left + row.right) / 2 - middle) <= 2 };
+    }), { sameRight: true, rowCentred: true }, 'a receipt after a system line is right-aligned with the ones after other messages, and the line itself stays centred');
     await page.close();
   }
 

@@ -74,8 +74,8 @@ func (s *Store) attentionByRoom(ctx context.Context, userID string) (map[string]
 }
 
 // ReadReceipt is where one room member's read position lands. Humans report
-// their stored cursor; an agent counts as having read the newest message it
-// took into a turn, since agents only ever see the notes delivered to them.
+// their stored cursor; an agent reports the newest message it has dealt with
+// (see RoomReadReceipts).
 type ReadReceipt struct {
 	MemberKind string `json:"member_kind"`
 	MemberID   string `json:"member_id"`
@@ -83,16 +83,8 @@ type ReadReceipt struct {
 	Seq        int64  `json:"seq"`
 }
 
-// RoomReadReceipts lists the read positions of everyone who can read the
-// room. Members that have read nothing yet are omitted. A human's position is
-// their stored read cursor. An agent's is the newest message it took into a
-// turn or wrote itself: its own reply has been seen by definition, so the
-// marker must not stay behind the message it answered.
-func (s *Store) RoomReadReceipts(ctx context.Context, roomID string) ([]ReadReceipt, error) {
-	if err := s.checkTxReentry(ctx); err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT 'user',u.id,u.login,c.last_read_seq
+// roomReadReceiptsSQL takes the room id four times. The last arm is a key lookup in agent_room_seen, which queueMessageWakes keeps.
+const roomReadReceiptsSQL = `SELECT 'user',u.id,u.login,c.last_read_seq
 		FROM room_read_cursor c JOIN user u ON u.id=c.user_id JOIN room r ON r.id=c.room_id
 		WHERE c.room_id=? AND c.last_read_seq>0 AND u.disabled_at IS NULL AND (
 			(r.kind!='dm' AND EXISTS (SELECT 1 FROM membership mb WHERE mb.project_id=r.project_id AND mb.user_id=u.id))
@@ -105,10 +97,44 @@ func (s *Store) RoomReadReceipts(ctx context.Context, roomID string) ([]ReadRece
 			WHERE n.room_id=? AND n.state IN ('in_turn','done')
 			UNION ALL
 			SELECT m.author_id, m.seq FROM message m WHERE m.room_id=? AND m.author_kind='agent'
+			UNION ALL
+			SELECT agent_id, seq FROM (
+				SELECT s.agent_id AS agent_id, MIN(s.seq, COALESCE((SELECT MIN(q.seq)-1 FROM note n2 JOIN message q ON q.id=n2.message_id
+					WHERE n2.room_id=s.room_id AND n2.agent_id=s.agent_id AND n2.state IN ('queued','dispatched')), s.seq)) AS seq
+				FROM agent_room_seen s WHERE s.room_id=?
+			) WHERE seq>0
 		) x ON x.agent_id=a.id
 		WHERE a.revoked_at IS NULL
 		GROUP BY a.id,a.slug
-		ORDER BY 1,3`, roomID, roomID, roomID)
+		ORDER BY 1,3`
+
+// RoomReadReceipts lists the read positions of everyone who can read the
+// room. Members that have read nothing yet are omitted. A human's position is
+// their stored read cursor. An agent's is the newest message it has dealt
+// with, which is v1's rule (an agent's wait handed it every room message, the
+// ones not for it marked "no need to respond", and its cursor moved as it took
+// them) in v2's terms:
+//   - a message a turn took (its note is in_turn or done);
+//   - a message it wrote: its own reply has been seen by definition, so the
+//     marker never stays behind the message it answered;
+//   - a message the router delivered to it as nothing for it to do (not
+//     addressed to it, system chatter, or an unaddressed message for the
+//     worker while it is the lead put in the room): it counts the moment it
+//     is posted, as an unaddressed message did when a waiting v1 agent
+//     received it. queueMessageWakes keeps the newest one per room and agent
+//     in agent_room_seen. That marker never passes a message still waiting for the agent: it is read as at most the message before the
+//     agent's oldest queued or dispatched note in the room, so chatter after a queued note does not move it past that note (and
+//     this holds for the rows the migration's backfill wrote too).
+//
+// A queued note does not count: a message meant for an agent that is busy or
+// stopped stays unread until a turn takes it. Neither does a skip for a
+// revoked agent, a person who cannot reach it, or a full agent chat: those
+// were meant for it and did not get through.
+func (s *Store) RoomReadReceipts(ctx context.Context, roomID string) ([]ReadReceipt, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, roomReadReceiptsSQL, roomID, roomID, roomID, roomID)
 	if err != nil {
 		return nil, err
 	}

@@ -450,6 +450,16 @@ Inbox, usage, events, settings
   instant in the future) arrive in migration 73; `pinned` was dropped.
 - **room_read_cursor**(user_id, room_id, last_read_seq) — how far a person has
   read a room (migration 43).
+- **agent_room_seen**(room_id, agent_id, seq) — the newest message of a room
+  the router handed an agent with nothing for it to do (not addressed to it,
+  system chatter, or an unaddressed message for the worker while it is the
+  lead put in the room), kept as it is routed, and only for an agent that is
+  not stopped (a stopped agent saw nothing after it stopped); one of the
+  inputs of the agent's seen marker (`GET /api/rooms/{room}/read-receipts`),
+  which reads it as at most the message before the agent's oldest queued or
+  dispatched note in the room, so chatter after a waiting note does not carry
+  the marker past it. Primary key room_id + agent_id; migration 96 creates it
+  and fills it from the existing `message_not_woken` events.
 - **user_preference**(user_id, key, value, updated_at) — a person's interface
   preferences (theme, notification sound, sidebar project order), following
   them across devices (migration 57).

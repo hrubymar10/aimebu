@@ -29,7 +29,9 @@
 .chat-msg { align-self: stretch; width: auto; max-width: none; animation: none; }
 .chat-msg.self { align-self: flex-end; width: fit-content; max-width: 75%; }
 @media (max-width: 700px) { .chat-msg.self { max-width: 94%; } }
-.chat-msg-system { align-self: center; width: auto; max-width: 100%; }
+/* A system line spans the column like other people's messages and centres its row inside (v1's text-align: center on an inline row), so the
+   seen-by markers under it sit at the column's right edge with every other message's, not at the end of a shrink-wrapped centred box. */
+.chat-msg-system { align-self: stretch; width: auto; max-width: 100%; }
 /* The #number is a button here (it copies the number); v1's is a span. */
 button.chat-msg-id { border: 0; background: none; font-weight: 400; } /* v1's id is a span: a <button> would take the base's 500 */
 .chat-msg-id.copied { color: var(--green-text); }

@@ -1577,6 +1577,24 @@ UPDATE auth_session SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
 -- generated; not derived from the account id), and may choose to send their login name instead.
 ALTER TABLE user ADD COLUMN telemetry_fingerprint TEXT NOT NULL DEFAULT '';
 ALTER TABLE user ADD COLUMN telemetry_send_name INTEGER NOT NULL DEFAULT 0 CHECK (telemetry_send_name IN (0,1));
+`}, {96, `
+-- An agent's seen marker in a room also counts the messages the router handed it with nothing for it to do (not addressed to it, system
+-- chatter, an unaddressed message for the worker while it sits in the room as the lead), as a waiting v1 agent received them. The newest
+-- such message per room and agent is kept here as it happens, so reading the markers is a key lookup, not a pass over the room's events.
+-- The rows the existing message_not_woken events imply are filled in once.
+CREATE TABLE agent_room_seen (
+  room_id TEXT NOT NULL REFERENCES room(id),
+  agent_id TEXT NOT NULL REFERENCES agent(id),
+  seq INTEGER NOT NULL CHECK (seq > 0),
+  PRIMARY KEY (room_id, agent_id)
+) WITHOUT ROWID;
+INSERT INTO agent_room_seen(room_id, agent_id, seq)
+SELECT e.room_id, e.agent_id, MAX(m.seq)
+FROM event e JOIN message m ON m.id=json_extract(e.payload_json,'$.message_id') AND m.room_id=e.room_id
+WHERE e.room_id IS NOT NULL AND e.kind='message_not_woken'
+  AND json_extract(e.payload_json,'$.reason') IN ('not_addressed','system_chatter','auto_member')
+  AND EXISTS (SELECT 1 FROM agent a WHERE a.id=e.agent_id)
+GROUP BY e.room_id, e.agent_id;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

@@ -545,6 +545,16 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 				AgentID: member.id, PayloadJSON: payloadJSON(map[string]string{"message_id": message.ID, "reason": skip})}); err != nil {
 				return err
 			}
+			// A message with nothing in it for this agent counts as seen at once (its seen marker, see RoomReadReceipts); one that was
+			// meant for it and did not get through (revoked, out of reach, a full agent chat) does not.
+			if skip == "not_addressed" || skip == "system_chatter" || skip == "auto_member" {
+				// Only for an agent that is running: a stopped one saw nothing after it stopped, so its marker stays where it stopped.
+				if _, err := tx.Exec(`INSERT INTO agent_room_seen(room_id,agent_id,seq)
+					SELECT ?,a.id,? FROM agent a WHERE a.id=? AND a.desired!='stopped' AND a.observed!='stopped'
+					ON CONFLICT(room_id,agent_id) DO UPDATE SET seq=MAX(seq,excluded.seq)`, message.RoomID, message.Seq, member.id); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if _, err := tx.InsertNote(Note{AgentID: member.id, MessageID: message.ID, RoomID: message.RoomID, WakeReason: reason}); err != nil {
