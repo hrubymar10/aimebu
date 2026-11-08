@@ -64,7 +64,7 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 - Touch-sized targets on phones (v1 has none).
 - A real background on a plain `.btn` (v1 leaves the browser's grey), a hover on it, and a visible focus ring (v1's `.btn` sets `outline: none`).
 - Icon-only top bar with tooltips (v1 and v2 already agree).
-- Top bar (the layout stays v2's, by decision): placed in the app grid and fixed at 43px on a desktop (a window over 700px wide that is not a touch screen: `--topbar-h`, with 26px icon buttons), and at 53px on a touch tablet and on a phone (49px under 480px, with `--bar-h` following), no bar padding above or
+- Top bar (the layout stays v2's, by decision): placed in the app grid and fixed at 43px on a desktop (a window over 700px wide that is not a touch screen: `--topbar-h`, the buttons keeping their 30px), and at 53px on a touch tablet and on a phone (49px under 480px, with `--bar-h` following), no bar padding above or
   below; 30px icon buttons (40px on touch and on a phone) with v2's counters (`.badge`, v1 has only a dot), the Rooms/Inbox/Health/Memory/Usages/
   Settings/⋯/Sign out set, the ⋯ menu and the tucking of controls that do not fit on a phone or a touch tablet, the A/B/C experiment pill, the
   light and dark logo swap, and `z-index: auto` (v1 raises the bar to 100, which would lift it over the first-run card). The generic `.topbar button`

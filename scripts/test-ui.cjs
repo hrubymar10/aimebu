@@ -1800,7 +1800,7 @@ async function main() {
       unread: ['700', '9.1px', '1px 7px', 'rgb(47, 129, 247)', 'rgb(255, 255, 255)'],
       preview: ['10.5px', '15.75px'], header: [43, '12px', '0px 16px'],
       count: [22, 'rgb(28, 33, 40)', '9.1px'],
-      bar: [43, 26, 'rgba(0, 0, 0, 0)', '8.4px', '0.6'],
+      bar: [43, 30, 'rgba(0, 0, 0, 0)', '8.4px', '0.6'],
     }, 'desktop panels retain the v1 measurements');
     await second.evaluate(() => [...document.querySelectorAll('.room-item')].find(row => row.querySelector('.room-item-icon')?.textContent === '⌂')?.querySelector('.room-item-name').click());
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
@@ -5716,7 +5716,7 @@ async function main() {
           return { viewport: innerWidth, bar: box('.topbar'), header: box('.chat > header'), panel: box('#agents-panel'), toolbar: box('.room-controls'), buttons, topButtons, connection: box('#connection') };
         });
         const noOverlap = boxes => boxes.every((a, i) => boxes.slice(i + 1).every(b => a.right <= b.left || b.right <= a.left));
-        assert.ok(layout.topButtons.every(box => box.top >= 0 && box.bottom <= layout.bar.bottom && box.right <= width && Math.abs(box.height - 26) < 1) && layout.connection.right <= width && noOverlap(layout.topButtons), `${theme} top bar clips, overlaps, or has uneven button heights at ${width}: ${JSON.stringify(layout)}`);
+        assert.ok(layout.topButtons.every(box => box.top >= 0 && box.bottom <= layout.bar.bottom && box.right <= width && Math.abs(box.height - (box.icon ? 30 : 28)) < 1) && layout.connection.right <= width && noOverlap(layout.topButtons), `${theme} top bar clips, overlaps, or has uneven button heights at ${width}: ${JSON.stringify(layout)}`);
         assert.ok(layout.header.right <= layout.panel.left + 1 && layout.toolbar.right <= layout.header.right + 1 && noOverlap(layout.buttons), `${theme} room toolbar overlaps at ${width}: ${JSON.stringify(layout)}`);
       }
       await first.setViewport(originalViewport);

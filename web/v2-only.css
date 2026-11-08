@@ -156,17 +156,9 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 }
 /* Touch targets on a tablet are 40px too: the experiment pill was sized for a mouse above 700px. */
 @media (pointer: coarse) { .topbar nav button.ui-variant-toggle { height: 40px; } }
-/* A desktop bar (a window over 700px wide that is not a touch screen) is 43px high, as the headers of the panels beneath it are: 26px icon buttons with 15px glyphs, small counters
-   on their corners, a smaller mark and name. A touch tablet keeps the 53px bar and its 40px targets, and so does a phone. --topbar-h is the one number the layouts
-   that start under the bar read (the room settings pane). */
-@media (min-width: 701px) and (not (pointer: coarse)) {
-  .app > .topbar nav .btn-icon { flex: 0 0 26px; width: 26px; min-width: 26px; height: 26px; min-height: 26px; }
-  .topbar nav button.btn, .topbar nav button.ui-variant-toggle { height: 26px; min-height: 26px; }
-  .topbar nav .icon-mask { width: 15px; height: 15px; }
-  .topbar nav .badge { min-width: 13px; height: 13px; padding: 0 2px; border-radius: 7px; font-size: 8px; line-height: 13px; }
-  .topbar-left img { width: 21px; height: 21px; }
-  .topbar .logo { font-size: 1rem; }
-}
+/* A desktop bar (a window over 700px wide that is not a touch screen) is 43px high, as the headers of the panels beneath it are; its buttons, glyphs, counters, mark and name keep
+   their size and sit centred in it. A touch tablet keeps the 53px bar and its 40px targets, and so does a phone. --topbar-h (theme-v1.css) is the one number the bar and the
+   layouts that start under it (the room settings pane) read. */
 /* With two experiments the two pills share a phone's top bar: tighter letters. */
 @media (max-width: 700px) {
   .topbar nav button.ui-variant-toggle { gap: 1px; padding: 0 4px; font-size: 11px; }
