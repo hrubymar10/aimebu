@@ -2218,6 +2218,23 @@ async function main() {
     assert.deepEqual(noThread, { position: 'static', inHeader: true }, 'without a thread the expand button stays at the end of the room header');
     await page.close();
   }
+  // A reply's quote names its author the way a message header does, also an agent the page learns of after the row was drawn, and is v1's: a left bar, the accent
+  // text, no fill, across the bubble's width.
+  {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'high-contrast-dark'; window.__chat.store.add({ id: 'q_late', seq: 951, no: 951, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'ola', created_at: new Date().toISOString(), reply_to: 'unloaded_parent', reply_preview: { no: 77, author_kind: 'agent', author_id: 'agt_3f9a2b', snippet: 'earlier text' } }); });
+    await settle(page);
+    const quote = () => page.evaluate(() => { const el = document.querySelector('[data-message-id=q_late] .quote'), style = getComputedStyle(el), bubble = el.closest('.chat-msg-bubble'), cell = getComputedStyle(bubble); return { text: el.textContent, fill: style.backgroundColor, bar: style.borderLeftWidth, full: Math.abs(el.getBoundingClientRect().width - (bubble.getBoundingClientRect().width - parseFloat(cell.paddingLeft) - parseFloat(cell.paddingRight) - parseFloat(cell.borderLeftWidth) - parseFloat(cell.borderRightWidth))) <= 1 }; });
+    const before = await quote();
+    assert.match(before.text, /^↪ #77 Agent 3f9a2b: earlier text$/, 'an agent the page does not know yet reads as its short id');
+    assert.deepEqual([before.fill, before.bar, before.full], ['rgba(0, 0, 0, 0)', '2px', true], `the quote has no fill and runs across the bubble: ${JSON.stringify(before)}`);
+    await page.evaluate(() => window.__chat.setAgents([{ id: 'agt_3f9a2b', slug: 'owen', name: 'owen', project_id: 'prj_a', room_id: 'rm_a', status: 'online' }]));
+    await settle(page);
+    const after = await quote();
+    assert.match(after.text, /^↪ #77 owen\S*: earlier text$/, `once the agent is known the quote names it, as the message header does: ${after.text}`);
+    await page.close();
+  }
   assert.deepEqual(errors, []);
   await browser.close(); server.close();
   console.log('chat page: ok');

@@ -575,7 +575,14 @@ export class Chat {
     this.listView.update({ entries: this.rows, host: this, viewOf: message => this.rowView(message, true), restore });
   }
   registerNode(id, element) { if (element) this.nodes.set(id, element); else this.nodes.delete(id); }
-  quoteView(message) { return this.quotes.get(message.id) ?? null; }
+  // The line a reply quotes, as the row shows it: the author named by the same rule as a message header (authorName), looked up now so a name that became known later shows.
+  quoteView(message) {
+    if (!message.reply_to) return null;
+    const parent = this.quotes.get(message.id);
+    if (parent === undefined) return null;
+    if (!parent) return { text: '\u21aa Earlier message', title: undefined };
+    return { text: `\u21aa #${parent.no} ${this.authorName(parent.from)}: ${parent.snippet}`.trimEnd().replace(/:$/, ''), title: `Go to #${parent.no}` };
+  }
   // What a row shows that is not in its record: the author as the page knows it, the answer state, and the keys that make the row draw again.
   rowView(message, main = false) {
     const agent = this.agents.get(message.author_id), kind = senderKind(message, agent), live = kind === 'live' && message.author_kind === 'agent';
@@ -589,6 +596,7 @@ export class Chat {
       const count = threadCount(this.threadCounts, this.serverThreadCounts, message.id);
       view.articleClass = articleClass(message, currentUser); view.chip = threadChip(count); view.threadLabel = this.threadLabel(message.id);
       view.quote = this.quoteView(message);
+      if (view.quote) extra += `|${view.quote.text}`;
       view.expired = this.expiry.expired.has(message.id); view.boundary = this.expiry.divider === message.id;
       extra += `|${count}|${view.expired}|${view.boundary}`;
     }

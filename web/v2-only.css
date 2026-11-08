@@ -500,6 +500,8 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
    text colour, and the memory usage bar is a black track with a 1px outline and an accent fill. The emoji picker is v2's own: a cell is outlined only while it
    is hovered or focused, not all at once. */
 [data-theme^="high-contrast"] .row-btn.quote { color: var(--accent); }
+/* A reply's quote is v1's: a left bar and the accent text across the bubble's full width, with no fill of its own (the high-contrast .row-btn fill would draw a dark block that stops short of the bubble's edge). */
+:root:root .row-btn.quote, :root:root .row-btn.quote:is(:hover, :focus-visible, :active) { background: transparent; box-sizing: border-box; width: 100%; }
 /* v1 fills the room header's icon buttons (.btn-md-toggle) with the tertiary colour in the high-contrast themes too. */
 [data-theme^="high-contrast"] .chat > header button.btn-icon:not(:hover, :focus-visible, [aria-pressed="true"]) { background: var(--bg-tertiary); }
 [data-theme^="high-contrast"] button.chat-msg-id:not(.copied) { color: var(--text-muted); }

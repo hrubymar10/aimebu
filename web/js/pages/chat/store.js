@@ -324,12 +324,14 @@ export class ChatStore {
     this.scheduleExpiry();
   }
 
-  // The line a reply quotes, read once when its row is made: a parent in the loaded window is read from it; one outside it comes with the reply itself (reply_preview).
+  // What a reply quotes, read once when its row is made: the parent's number and snippet, and who wrote it (the loaded parent, or the preview that came with the reply
+  // for one outside the loaded window). The author's NAME is not kept: the page resolves it each time the row is drawn (chat.js quoteView), as a message header does, so
+  // an agent the page learns of after this row was made is named, not shown as "Agent 3F9A2B" for good.
   quoteFor(message) {
     const loaded = this.messages.get(message.reply_to), preview = message.reply_preview;
-    const parent = loaded ? { no: loaded.no, name: this.host.authorName(loaded), snippet: messageSnippet(loaded) }
-      : preview ? { no: preview.no, name: this.host.authorName({ author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name, author_project_id: preview.author_project_id }), snippet: preview.snippet } : null;
-    return { text: parent ? `↪ #${parent.no} ${parent.name}: ${parent.snippet}`.trimEnd().replace(/:$/, '') : '↪ Earlier message', title: parent ? `Go to #${parent.no}` : undefined };
+    if (loaded) return { no: loaded.no, from: loaded, snippet: messageSnippet(loaded) };
+    if (preview) return { no: preview.no, from: { author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name, author_project_id: preview.author_project_id }, snippet: preview.snippet };
+    return null;
   }
 
   // A question this viewer had open that is now gone from the inbox leaves a quiet "Answered" in its place; one that is open again loses it.
