@@ -4926,8 +4926,8 @@ async function main() {
       return { ownerLink: text(true, 'No harness yet. Add a harness in Settings → Harnesses.'), other: text(false, 'No harness yet. Add a harness in Settings → Harnesses.'),
         otherCheck: text(false, 'not found; check Settings → Harnesses'), otherEnable: text(false, 'disabled by owner; enable it in Settings → Harnesses'), none: text(false, 'No models') };
     });
-    assert.deepEqual(hints, { ownerLink: ['No harness yet. Add a harness in Settings → Harnesses.', true], other: ['No harness yet. Ask an admin to add a harness.', false], otherCheck: ['not found; ask an admin to check the harnesses', false],
-      otherEnable: ['disabled by owner; ask an admin to enable it', false], none: ['No models', false] });
+    assert.deepEqual(hints, { ownerLink: ['No harness yet. Add a harness in Settings → Harnesses.', true], other: ['No harness yet. Ask the owner to add a harness.', false], otherCheck: ['not found; ask the owner to check the harnesses', false],
+      otherEnable: ['disabled by owner; ask the owner to enable it', false], none: ['No models', false] });
     // ... as a link: it closes the dialog and opens Settings → Harnesses.
     await first.waitForSelector('#spawn-tool-reason button.inline-link');
     await first.click('#spawn-tool-reason button.inline-link');

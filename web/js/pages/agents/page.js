@@ -118,7 +118,7 @@ export class AgentsPanel {
   setError(message) { this.error.textContent = message; }
   focusName() { this.spawnDialog.querySelector('[name=name]')?.focus(); }
   focusConfirm() { this.spawnDialog.querySelector('#spawn-resume-confirm')?.focus(); }
-  canManageHarnesses() { return rights.admin; }
+  canManageHarnesses() { return rights.owner; } // what a machine runs is the owner's alone (admins read it)
   // Settings opens on the machine the dialog was showing.
   openSettings(machineID) {
     this.spawnDialog.close(); this.switchDialog.close();

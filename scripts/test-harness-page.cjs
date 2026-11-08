@@ -71,6 +71,15 @@ async function main() {
   const chooseMachine = (page, id) => page.$eval('#harness-machine', (el, id) => { el.value = id; el.dispatchEvent(new Event('change', { bubbles: true })); }, id);
   const card = id => `#harnesses-list .machine-harness[data-variant="${id}"]`;
   try {
+    // A machine whose supervisor is not connected cannot detect or take a harness: both buttons are off, the reason is their title and a note says
+    // how to connect it. A connected machine (or one the server does not report on) shows none of that.
+    for (const connected of [false, true, undefined]) {
+      const page = await mount({ 'GET /api/machines': { machines: [{ id: 'mch_a', name: 'A', approved: true, connected }, { id: 'mch_b', name: 'B', approved: true }] } });
+      const state = await page.evaluate(() => ({ note: !document.querySelector('#harness-offline').hidden, add: [document.querySelector('#harness-add').disabled, document.querySelector('#harness-add').title.slice(0, 32)], detect: document.querySelector('#harness-detect').disabled }));
+      if (connected === false) assert.deepEqual(state, { note: true, add: [true, "This machine's supervisor is not"], detect: true }, 'an unconnected machine cannot add or detect, and says why');
+      else assert.deepEqual(state, { note: false, add: [false, ''], detect: false }, 'a connected machine can');
+      await page.close();
+    }
     // An admin who is not the owner may look but not change what a machine runs: the controls that write are off with the reason as their title, the
     // note says so, and the owner sees none of that.
     for (const owner of [true, false]) {

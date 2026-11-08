@@ -27,7 +27,7 @@ const run = async ({ canSetUp = true, skipped = false, configured = false, stora
 (async () => {
   // Offered: an admin, no harness, not skipped. The skip stays as it was.
   assert.deepEqual(await run(), { result: 'offered', shown: 1, skip: [] });
-  // Someone who cannot manage harnesses is never offered it (they get the "ask an admin" hint where it matters), and nothing is read.
+  // Someone who cannot manage harnesses is never offered it (they get the "ask the owner" hint where it matters), and nothing is read.
   assert.deepEqual(await run({ canSetUp: false }), { result: 'not-allowed', shown: 0, skip: [] });
   // A harness with a model exists: nothing to offer; a skip from earlier is reset so the offer can come back if they are all removed.
   assert.deepEqual(await run({ configured: true }), { result: 'configured', shown: 0, skip: [] });

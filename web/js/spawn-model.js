@@ -135,14 +135,14 @@ export function writerHolder({ writer, agents, writerRoles, machineID, worktree,
 }
 export const writerHolderText = (agent, reason = '') => `${agent.slug} is already working in this folder, and a separate copy of it cannot be made${reason ? ` (${reason.replace(/^No worktree here: /, '')})` : ''}, so a new writer here will be refused until ${agent.slug} is stopped.`;
 
-// A hint that names Settings → Harnesses makes that name a button that opens it, so an empty machine says where to go. Only an owner or admin
-// can add or change a harness, so anyone else gets plain words (the link would only end in a refusal).
+// A hint that names Settings → Harnesses makes that name a button that opens it, so an empty machine says where to go. Only the owner
+// can add or change a harness (an admin reads them), so anyone else gets plain words (the link would only end in a refusal).
 export function hintParts(text, canManage) {
   const at = text.indexOf(HARNESSES);
   if (at < 0) return { text };
   if (!canManage) {
-    return { text: text.replace(/Add a harness in Settings → Harnesses/, 'Ask an admin to add a harness').replace(/Add one (?:in|under) Settings → Harnesses/, 'Ask an admin to add one').replace(/add one (?:in|under) Settings → Harnesses/, 'ask an admin to add one')
-      .replace(/; [Cc]heck Settings → Harnesses/, '; ask an admin to check the harnesses').replace(/[Cc]heck Settings → Harnesses/, 'Ask an admin to check the harnesses').replace(/enable it in Settings → Harnesses/, 'ask an admin to enable it') };
+    return { text: text.replace(/Add a harness in Settings → Harnesses/, 'Ask the owner to add a harness').replace(/Add one (?:in|under) Settings → Harnesses/, 'Ask the owner to add one').replace(/add one (?:in|under) Settings → Harnesses/, 'ask the owner to add one')
+      .replace(/; [Cc]heck Settings → Harnesses/, '; ask the owner to check the harnesses').replace(/[Cc]heck Settings → Harnesses/, 'Ask the owner to check the harnesses').replace(/enable it in Settings → Harnesses/, 'ask the owner to enable it') };
   }
   return { before: text.slice(0, at), link: HARNESSES, after: text.slice(at + HARNESSES.length) };
 }

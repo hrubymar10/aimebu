@@ -213,9 +213,9 @@ says; taking the flag away ends it at once.
 | list every account; invites into any project at any role; change anyone's project role | yes | yes (not the owner's or another admin's role) | their own project | no |
 | password-reset link, deactivate | any account but the owner can be deactivated | ordinary accounts only | no | no |
 | appoint or remove admins | yes | no | no | no |
-| macros, message expiry, sounds, global memory, global roles/prompts, cleanup and disk report, settings export, harness auto-detect, the machine list and a harness's launchers (read-only), the usage limits (read-only: no e-mail, host, error text or credential state) | yes | yes | no | no |
+| macros, message expiry, sounds, global memory, global roles/prompts, cleanup and disk report, settings export, the machine list and a harness's launchers (read-only), the usage limits (read-only: no e-mail, host, error text or credential state) | yes | yes | no | no |
 | stop all agents on a machine (`POST /api/machines/{id}/agents/stop`, Settings → Machines): the agents they could stop one by one | yes | yes | no | no |
-| machines (pairing, approval, revoking), what a machine runs (saving, changing or removing a launcher; a harness's models, providers and path override; detecting a harness's models, which sends a provider key), account switcher and changing provider usages and credentials, quota switcher and limit guard, v1 import, settings preview/apply | yes | no | no | no |
+| machines (pairing, approval, revoking), what a machine runs (detecting the installed harnesses, saving, changing or removing a launcher; a harness's models, providers and path override; detecting a harness's models, which sends a provider key), account switcher and changing provider usages and credentials, quota switcher and limit guard, v1 import, settings preview/apply | yes | no | no | no |
 | admit a paired machine for a project (`POST /api/projects/{project}/machine-folders/{machine}/admit`) | yes | yes | their own project | no |
 
 Links follow their issuer: a password-reset link is rechecked when it is used (the issuer must still be allowed to act on that account, so

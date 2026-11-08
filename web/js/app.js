@@ -310,7 +310,7 @@ const setHarnessSkipped = async (skipped, generation = sessionGeneration) => {
 // next sign-in (a later removal of every harness then offers the step again).
 const harnessSeen = () => { if (harnessSkipStored) void setHarnessSkipped(false).catch(() => {}); };
 settings.harnessSettings.onReady = harnessSeen;
-const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.admin, onSkip: () => setHarnessSkipped(true), onReady: harnessSeen });
+const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.owner, onSkip: () => setHarnessSkipped(true), onReady: harnessSeen });
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
 importWizard.dialog.addEventListener('close', () => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'), () => rights.owner);
@@ -586,12 +586,12 @@ async function signedIn(session) {
     startupSucceeded = true;
     // Items already waiting for the person are something that needs them too: the bar is offered once, the first time.
     if (inbox.items?.length) notificationBanner.attention();
-    // An owner or admin with no harness that has a model is offered the Harnesses step (after a v1 import, which carries no harness over; on
+    // The owner, with no harness that has a model, is offered the Harnesses step (after a v1 import, which carries no harness over; on
     // a first sign-in from another browser; when every harness was removed): nothing can be spawned without one. The answer comes from the
     // server, and so does a skip. Outside the startup deadline: a slow supervisor must not turn a loaded workspace into a timeout.
     if (!importWizard.dialog.open && !onboarding.open && sidebar.projects.size > 0) {
       void offerHarnessSetup({
-        user: currentUser, canSetUp: rights.admin, skipped: harnessSkipStored, configured: () => anyHarnessConfigured(request),
+        user: currentUser, canSetUp: rights.owner, skipped: harnessSkipStored, configured: () => anyHarnessConfigured(request),
         show: async () => { if (active() && !onboarding.open) await onboarding.showHarnesses('harness-only'); }, setSkipped: value => setHarnessSkipped(value, generation),
       }).catch(error => { if (active()) console.error('harness setup:', error); });
     }

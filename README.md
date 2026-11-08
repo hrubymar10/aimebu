@@ -47,13 +47,13 @@ is added to its harness
 so no running agent changes model. A tool whose model list was edited keeps
 one disabled harness so the list survives. After the first project is created and no machine has a harness with a model, the first run continues with a **Set up a harness** step (the
 Settings → Harnesses component itself: Add, Auto-detect and models) and offers "Spawn your first agent" only once one is ready; "Skip for now" leaves a
-"Set up a harness first" hint in place of the spawn button, and someone who cannot change harnesses is told to ask an admin. The same step is offered
-on its own to an owner or admin who signs in while no machine has a harness with a model (after a v1 import, which carries none over, from another browser, or once
+"Set up a harness first" hint in place of the spawn button, and someone who cannot change harnesses (anyone but the owner) is told to ask the owner. The same step is offered
+on its own to the owner who signs in while no machine has a harness with a model (after a v1 import, which carries none over, from another browser, or once
 every harness was removed), once per browser session. That comes from the server, not the browser: Skip is stored with the account
 (the `harness_setup_skipped` preference), so no browser asks again, until a harness with a model exists and the app resets it. Someone who cannot
 change harnesses is never offered it. The spawn dialog
 shows unavailable harnesses with the reason and points to Settings → Harnesses for setup (a link that opens it on
-the dialog's machine for an owner or admin; anyone else is told to ask an admin). A
+the dialog's machine for the owner; anyone else, an admin included, is told to ask the owner). A
 harness can be selected by ID or by its name in `variant`; `native` and `docker` keep their
 meaning for the harnesses named `native` and `harness-docker`.
 "Only run agents in docker" (Settings → General → Agents, an owner or admin setting, off by

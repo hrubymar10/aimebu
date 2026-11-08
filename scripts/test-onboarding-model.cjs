@@ -33,6 +33,6 @@ assert.deepEqual([setup.spawnHidden, setup.setupHidden, setup.noteHidden, setup.
 assert.match(setup.noteText, /Set one up, then spawn your first agent\.$/);
 const ask = m.howView(false, false);
 assert.deepEqual([ask.spawnHidden, ask.setupHidden, ask.noteHidden, ask.focus], [true, true, false, 'done']);
-assert.match(ask.noteText, /Ask an admin to add one/);
+assert.match(ask.noteText, /Ask the owner to add one/);
 assert.deepEqual([m.howView(true, false).setupHidden, m.howView(true, false).focus], [true, 'spawn']);
 console.log('onboarding-model: ok');

@@ -129,7 +129,7 @@ func TestGlobalAdminPermissionMatrix(t *testing.T) {
 		{"change a launcher", "PUT", "/api/machines/" + w.f.machineID + "/launchers/mln_none", map[string]any{}, ownerOnly},
 		{"remove a launcher", "DELETE", "/api/machines/" + w.f.machineID + "/launchers/mln_none", nil, ownerOnly},
 		{"machine harnesses", "GET", "/api/machines/mch_none/harnesses", nil, ownerAdmin},
-		{"detect harnesses", "POST", "/api/machines/" + w.f.machineID + "/launchers/detect", nil, ownerAdmin},
+		{"detect harnesses", "POST", "/api/machines/" + w.f.machineID + "/launchers/detect", nil, ownerOnly},
 		{"detect a harness's models", "POST", "/api/machines/" + w.f.machineID + "/launchers/mln_none/models/detect", nil, ownerOnly},
 		{"delete a sound", "DELETE", "/api/sounds/snd_none", nil, ownerAdmin},
 		{"disk report", "GET", "/api/disk", nil, ownerAdmin},

@@ -58,7 +58,7 @@ export class SettingsPanel {
     });
   }
   // What the account may do instance-wide. The owner and the admins (who are trusted like the owner) edit the roles, prompts and macros and see the machines and
-  // edit their harnesses (pairing, approving and revoking machines stay the owner's). For anyone else those tabs are gone instead of opening onto a 403.
+  // their harnesses (what a machine runs, and pairing, approving and revoking machines, stay the owner's). For anyone else those tabs are gone instead of opening onto a 403.
   setRights({ owner, admin }) {
     this.general.setRights({ owner, admin });
     const before = this.shell.store.section.value;

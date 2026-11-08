@@ -119,11 +119,11 @@ assert.deepEqual([worktreeOption({ roomKind: 'home' }).hidden, worktreeOption({ 
 
 // A hint names Settings → Harnesses as a button for an admin, and gives anyone else plain words.
 assert.deepEqual(plain(hintParts('No harness yet. Add a harness in Settings → Harnesses.', true)), { before: 'No harness yet. Add a harness in ', link: 'Settings → Harnesses', after: '.' });
-assert.equal(hintParts('No harness yet. Add a harness in Settings → Harnesses.', false).text, 'No harness yet. Ask an admin to add a harness.');
-assert.equal(hintParts('This harness has no models yet. Add one under Settings → Harnesses.', false).text, 'This harness has no models yet. Ask an admin to add one.');
-assert.equal(hintParts('x; check Settings → Harnesses', false).text, 'x; ask an admin to check the harnesses');
-assert.equal(hintParts('x. Check Settings → Harnesses.', false).text, 'x. Ask an admin to check the harnesses.');
-assert.equal(hintParts('disabled; enable it in Settings → Harnesses', false).text, 'disabled; ask an admin to enable it');
+assert.equal(hintParts('No harness yet. Add a harness in Settings → Harnesses.', false).text, 'No harness yet. Ask the owner to add a harness.');
+assert.equal(hintParts('This harness has no models yet. Add one under Settings → Harnesses.', false).text, 'This harness has no models yet. Ask the owner to add one.');
+assert.equal(hintParts('x; check Settings → Harnesses', false).text, 'x; ask the owner to check the harnesses');
+assert.equal(hintParts('x. Check Settings → Harnesses.', false).text, 'x. Ask the owner to check the harnesses.');
+assert.equal(hintParts('disabled; enable it in Settings → Harnesses', false).text, 'disabled; ask the owner to enable it');
 assert.deepEqual(plain(hintParts('No models', true)), { text: 'No models' });
 
 // What the line under the tool says.

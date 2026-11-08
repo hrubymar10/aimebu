@@ -5,7 +5,7 @@ import { Activity } from './activity.js';
 import { AddHarnessForm } from './add-harness-form.js';
 import { DetectPanel } from './detect-panel.js';
 import { rights } from '../../api.js';
-import { OWNER_ONLY } from './model.js';
+import { NOT_CONNECTED, OWNER_ONLY } from './model.js';
 import { useHarnesses } from './use-harnesses.js';
 import { DetectionDetails } from './detection-details.js';
 import { MasterList } from './master-list.js';
@@ -60,6 +60,10 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
     data.roleChanged();
   };
 
+  // A machine whose supervisor is not connected cannot detect or take a harness: say so, and why the buttons are off.
+  const offline = state.machines.value.find(entry => entry.id === machineID)?.connected === false;
+  const blocked = readOnly ? OWNER_ONLY : offline ? NOT_CONNECTED : undefined;
+
   return html`
     <${IdPrefix.Provider} value=${idPrefix}>
       <p class="settings-intro">A harness is a coding tool installed on a machine, with the models it can start agents with. Nothing is listed until you add it. Pick a machine, add its harnesses (or auto-detect them), then give each harness its models: exactly one is the default, which an agent falls back to when its own model is removed.</p>
@@ -74,9 +78,10 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
       <p class="error" role="alert">${state.error.value}</p>
       <${DetectionDetails} detail=${state.errorDetail.value} />
       <p class="settings-intro" id=${`${idPrefix}harness-readonly`} role="note" hidden=${!readOnly}>${OWNER_ONLY} You can look at the harnesses here; the controls are off.</p>
+      <p class="settings-intro" id=${`${idPrefix}harness-offline`} role="note" hidden=${!offline || state.toolbarHidden.value}>${NOT_CONNECTED}</p>
       <div class="machine-actions" hidden=${state.toolbarHidden.value}>
-        <button type="button" class="btn btn-primary" id=${`${idPrefix}harness-add`} disabled=${readOnly} title=${readOnly ? OWNER_ONLY : undefined} onClick=${() => setPanel({ kind: 'add', machineID })}>Add harness</button>
-        <button type="button" class="btn" id=${`${idPrefix}harness-detect`} disabled=${state.detecting.value || readOnly} title=${readOnly ? OWNER_ONLY : undefined} onClick=${detect}>
+        <button type="button" class="btn btn-primary" id=${`${idPrefix}harness-add`} disabled=${readOnly || offline} title=${blocked} onClick=${() => setPanel({ kind: 'add', machineID })}>Add harness</button>
+        <button type="button" class="btn" id=${`${idPrefix}harness-detect`} disabled=${state.detecting.value || readOnly || offline} title=${blocked} onClick=${detect}>
           ${state.detecting.value ? 'Detecting…' : 'Auto-detect harnesses'}
         </button>
       </div>

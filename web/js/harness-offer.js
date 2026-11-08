@@ -1,4 +1,4 @@
-// Whether to offer the Harnesses step on sign-in. A person who can manage harnesses (an owner or an admin) is offered it when no harness
+// Whether to offer the Harnesses step on sign-in. A person who can manage harnesses (the owner; an admin only reads them) is offered it when no harness
 // with a model exists, whatever brought them here (a v1 import, a first sign-in from another browser, every harness removed). The answer
 // comes from the server: whether a harness exists, and whether this person skipped the offer, a preference stored with their account.
 // Skip is kept until a harness with a model exists; the offer then resets itself, so it can come back if they are all removed later.

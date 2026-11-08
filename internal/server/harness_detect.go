@@ -82,9 +82,10 @@ func (s *Server) detectConn(w http.ResponseWriter, machineID string) (*machineCo
 	return conn, true
 }
 
-// machineHarnessDetect lists the harnesses installed on a machine, as candidates the owner ticks. Nothing is saved.
+// machineHarnessDetect lists the harnesses installed on a machine, as candidates the owner ticks. Nothing is saved. It asks the machine's supervisor to look
+// at what is installed on the host, and setting harnesses up is the owner's alone, so it is the owner's.
 func (s *Server) machineHarnessDetect(w http.ResponseWriter, r *http.Request) {
-	if !s.adminMachine(w, r) {
+	if !s.ownerMachine(w, r) {
 		return
 	}
 	machineID := r.PathValue("id")

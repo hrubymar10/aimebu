@@ -26,9 +26,9 @@ export function harnessStatusText({ ready, ticked, note }) {
   return ready ? 'A harness with a model is ready.' : HARNESS_MISSING;
 }
 
-// The last step offers Spawn only when an agent could run; otherwise it says so and offers a way to set one up (or to ask an admin).
+// The last step offers Spawn only when an agent could run; otherwise it says so and offers a way to set one up (or to ask the owner).
 export function howView(ready, manage) {
   const note = manage ? 'No harness with a model is set up yet, so there is nothing for an agent to run on. Set one up, then spawn your first agent.'
-    : 'No harness is set up yet, so there is nothing for an agent to run on. Ask an admin to add one, then spawn your first agent.';
+    : 'No harness is set up yet, so there is nothing for an agent to run on. Ask the owner to add one, then spawn your first agent.';
   return { spawnHidden: !ready, setupHidden: ready || !manage, noteHidden: ready, noteText: ready ? '' : note, focus: ready ? 'spawn' : manage ? 'setup' : 'done' };
 }
