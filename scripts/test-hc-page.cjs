@@ -68,7 +68,7 @@ async function main() {
         const resolve = (prop, name) => { const el = document.createElement('i'); el.style[prop] = `var(${name})`; document.body.append(el); return style(el)[prop]; };
         const edge = el => `${style(el).borderTopWidth} ${style(el).borderTopStyle} ${style(el).borderTopColor}`;
         const thread = ['#thread-composer .attachment-picker-btn', '#thread-emoji-button', '#thread-composer .composer-format', '#thread-composer .composer-aa'].map(sel => document.querySelector(sel));
-        const quote = make('button', 'row-btn quote'), id = make('button', 'row-btn quiet-glyph chat-msg-id'), bar = make('div', 'knowledge-usage-bar'), cell = make('button', 'row-btn emoji-cell');
+        const quote = make('button', 'row-btn quote'), id = make('button', 'row-btn quiet-glyph chat-msg-id'), bar = make('div', 'memory-usage-bar'), cell = make('button', 'row-btn emoji-cell');
         return { thread: thread.map(el => el && edge(el)), main: edge(document.querySelector('#composer .attachment-picker-btn')), quote: style(quote).color, accent: resolve('color', '--accent'), id: style(id).color, muted: resolve('color', '--text-muted'),
           bar: [style(bar).borderTopWidth, style(bar).backgroundColor, resolve('backgroundColor', '--bg-primary')], cell: style(cell).borderTopColor, header: style(document.querySelector('#room-info')).backgroundColor, tertiary: resolve('backgroundColor', '--bg-tertiary') };
       });

@@ -120,7 +120,7 @@ and reconnects the event stream from its last seen `seq`.
 | GET | `/api/projects/{project}/dm-peers` | — | active people sharing the caller's project, excluding the caller, as `{id,login}`; any project member |
 | POST | `/api/projects/{project}/dms` | `{user_id}` | the one private room for this pair in the project; both must be active project members |
 | GET | `/api/projects/{project}/archive/search` | `q` (nonempty text) | up to 50 newest matching messages in closed rooms as `{room_id,room_name,message_id,snippet,created_at}`; project membership required and private chats limited to their active human member |
-| GET/POST | `/api/projects/{project}/memory` | POST: `{body}` | `{enabled,can_edit,records,cap_bytes}` / created project fact |
+| GET/POST | `/api/projects/{project}/memory` | POST: `{body}` | `{enabled,can_edit,records,cap_bytes}` (each record has `author_kind`, `author_id` and `author_name`: a person's login or an agent's slug, empty when the author is gone) / created project fact |
 | PUT | `/api/projects/{project}/memory-enabled` | `{enabled:boolean}` | enable or disable project memory; owner/operator only |
 | PUT | `/api/rooms/{room}/memory-enabled` | `{enabled:false|null}` | restrict room memory flow or inherit project setting; owner/operator only |
 | PUT/DELETE | `/api/projects/{project}/memory/{id}` | PUT: `{body,rev}`; DELETE: `?rev=…` | revised or deleted fact; pending imported facts require the installation owner |

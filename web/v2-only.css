@@ -501,7 +501,6 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* v1 fills the room header's icon buttons (.btn-md-toggle) with the tertiary colour in the high-contrast themes too. */
 [data-theme^="high-contrast"] .chat > header button.btn-icon:not(:hover, :focus-visible, [aria-pressed="true"]) { background: var(--bg-tertiary); }
 [data-theme^="high-contrast"] button.chat-msg-id:not(.copied) { color: var(--text-muted); }
-.knowledge-usage-bar { border: 1px solid var(--border); border-radius: 999px; background: var(--bg-primary); }
 [data-theme^="high-contrast"] .emoji-cell:not(:hover, :focus-visible) { border-color: transparent; background: transparent; }
 [data-theme^="high-contrast"] .emoji-cell:is(:hover, :focus-visible) { border-color: var(--accent); }
 
@@ -548,3 +547,17 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 
 /* A system line that wraps keeps every line centred, as v1's centred row does: the body is its own centred block, not a left-aligned one inside a centred row. */
 .chat-msg-system-row > :first-child, .chat-msg-system-body { text-align: center; }
+
+/* The memory viewer's switch for a project's memory: a plain line under the filter row, in v1's field text. */
+.memory-enabled-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text-secondary); font-size: 0.78rem; }
+.memory-enabled-row[hidden] { display: none; }
+.memory-viewer-pane [hidden] { display: none !important; }
+
+/* The memory viewer's buttons are v1's: its plain button is the browser's light one with black text, and its danger button the translucent red; the high-contrast themes
+   already draw both that way. The project select takes the key box's place, in the key box's monospace. */
+:root:not([data-theme^="high-contrast"]) #knowledge-dialog button.btn:not(.btn-primary, .btn-danger, .btn-icon) { background: #efefef; color: #000000; }
+#knowledge-dialog button.btn:disabled:not(.btn-primary, .btn-danger, .btn-icon) { opacity: .5; }
+:root:not([data-theme^="high-contrast"]) #knowledge-dialog button.btn-danger:not(:hover, :focus-visible) { background: rgba(220, 38, 38, 0.15); border-color: rgba(220, 38, 38, 0.35); color: #ef4444; }
+#knowledge-dialog button.btn { line-height: normal; }
+#knowledge-dialog select.memory-scope-key-input { font-family: var(--font-mono); }
+[data-theme="high-contrast-dark"] #knowledge-dialog .memory-textarea { background: var(--bg-tertiary); }

@@ -32,28 +32,40 @@ export function usageRows(records, mode, projectName) {
   return [...rows.values()];
 }
 
-export const usageMeta = row => `${SCOPE_LABELS[row.scope] || row.scope}${row.key ? ` · ${row.key}` : ''} · ${row.used} / ${row.cap} bytes · ${row.count} ${row.count === 1 ? 'record' : 'records'}`;
+// The names v1's viewer gives each scope, for its badges and usage bars.
+export const VIEW_LABELS = { project: 'Project facts', user_profile: 'User profile', agent_shared_notes: 'Shared notes', task: 'Task notes' };
+export const VIEW_OPTIONS = [['all', 'All visible memory'], ['project', 'Project facts'], ['user_profile', 'User profile'], ['agent_shared_notes', 'Shared notes']];
+export const usageCount = row => `${row.used}/${row.cap} · ${row.count} ${row.count === 1 ? 'record' : 'records'}`;
 export const usageShare = row => `${row.cap ? Math.min(100, Math.round(row.used / row.cap * 100)) : 0}%`;
 
-export function statusLine(data, mode, projectName) {
-  const records = data.records || [], all = mode === 'all', project = mode === 'project';
-  const used = records.reduce((sum, item) => sum + byteLength(item.body), 0);
-  const profiles = new Set(mode === 'user_profile' ? records.map(item => item.scope_id) : []);
-  const counts = { project: 0, user_profile: 0, agent_shared_notes: 0 };
-  if (all) for (const item of records) counts[recordScope(item, mode)] = (counts[recordScope(item, mode)] || 0) + 1;
-  const head = all ? `${records.length} records: ${counts.project} project facts of ${projectName}, ${counts.user_profile} user profiles, ${counts.agent_shared_notes} shared notes. Other projects' facts are in the Project facts view.`
-    : mode === 'user_profile' ? `${records.length} records · ${profiles.size} profiles · ${data.cap_bytes} bytes per profile` : `${used} / ${data.cap_bytes} bytes · ${records.length} records`;
-  return head + ((project || all) && !data.enabled ? ` · Memory is off for ${projectName}: agents do not get its project facts, and saved records stay available.` : '');
-}
+// The notice v1 shows when memory is off, for the project in view.
+export const offNotice = projectName => `Memory is off for ${projectName}: agents do not get its project facts, and saved records stay available.`;
 
 export const emptyText = mode => (mode === 'all' ? 'No visible memory saved.' : mode === 'project' ? 'No project facts saved.' : mode === 'task' ? 'No notes saved for this task.' : 'No global memory saved.');
 
 // A shared note an agent wrote and nobody approved yet: not the same as one the owner switched off, and the owner needs to be able to tell.
 export const awaitsApproval = (item, scope) => scope === 'agent_shared_notes' && !item.active && item.author_kind === 'agent';
 
-export function recordMeta(item, { mode, profileUsage, cap, when }) {
-  const scope = recordScope(item, mode), all = mode === 'all';
-  return `${all ? SCOPE_LABELS[scope] + (scope === 'user_profile' ? ` ${item.scope_label || item.scope_id}` : '') + ' · ' : ''}${mode === 'user_profile' ? (item.scope_label || item.scope_id) + ` · ${profileUsage.get(item.scope_id)} / ${cap} bytes · ` : ''}${GLOBAL_SCOPES.includes(scope) && !item.active ? (awaitsApproval(item, scope) ? 'Waiting for approval · ' : 'Inactive · ') : ''}Revision ${item.rev} · ${item.author_kind} ${item.author_id} · ${when}`;
+// The name of who wrote a record: the server sends it (a person's login, an agent's slug); an imported v1 author's id is already a name; an id with no name is not shown.
+export function authorLabel(item) {
+  if (item.author_name) return item.author_name;
+  const id = String(item.author_id || '');
+  return id && !/^(usr|agt)_/.test(id) ? id : (item.author_kind === 'agent' ? 'an agent' : 'someone');
+}
+
+// What a card's row shows after its scope badge and key: v1's "v1 · owner", with the date, and a word first when the record is switched off.
+export function recordMeta(item, { mode, when }) {
+  const scope = recordScope(item, mode);
+  const state = GLOBAL_SCOPES.includes(scope) && !item.active ? (awaitsApproval(item, scope) ? 'Waiting for approval · ' : 'Inactive · ') : '';
+  return `${state}v${item.rev} · ${authorLabel(item)} · ${when}`;
+}
+
+// The key beside a card's badge: the project, the person a profile is about, or "global" for the shared notes.
+export function recordKey(item, mode, { projectName, taskTitle }) {
+  const scope = recordScope(item, mode);
+  if (scope === 'user_profile') return item.scope_label || item.scope_id;
+  if (scope === 'agent_shared_notes') return 'global';
+  return scope === 'task' ? taskTitle : projectName;
 }
 
 const EVENTS = ['knowledge_created', 'knowledge_updated', 'knowledge_deleted', 'project_memory_setting_changed', 'global_knowledge_created', 'global_knowledge_updated', 'global_knowledge_deleted'];

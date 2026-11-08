@@ -135,6 +135,31 @@ func TestKnowledgeAccessRevisionsAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestKnowledgeListNamesTheAuthor(t *testing.T) {
+	t.Parallel()
+	s, project, task, agent := knowledgeFixture(t)
+	ctx := context.Background()
+	if _, err := s.SetProjectMemoryEnabled(ctx, project.ID, "usr_owner", true); err != nil {
+		t.Fatal(err)
+	}
+	byPerson, err := s.ManageKnowledge(ctx, "project", project.ID, "user", "usr_owner", "", 0, "written by a person", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byAgent, err := s.ManageKnowledge(ctx, "task", task.ID, "agent", agent.ID, "", 0, "written by an agent", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	people, err := s.ListKnowledge(ctx, "project", project.ID)
+	if err != nil || len(people) != 1 || people[0].ID != byPerson.ID || people[0].AuthorName != "usr_owner" {
+		t.Fatalf("a person's record names the login: %+v err=%v", people, err)
+	}
+	notes, err := s.ListKnowledge(ctx, "task", task.ID)
+	if err != nil || len(notes) != 1 || notes[0].ID != byAgent.ID || notes[0].AuthorName == "" || notes[0].AuthorName == agent.ID {
+		t.Fatalf("an agent's record names its slug, not its id: %+v err=%v", notes, err)
+	}
+}
+
 func TestKnowledgeRecallRespectsRoomMembership(t *testing.T) {
 	t.Parallel()
 	s, project, task, agent := knowledgeFixture(t)

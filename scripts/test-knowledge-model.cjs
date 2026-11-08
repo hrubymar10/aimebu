@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'knowledge', 'model.js'), 'utf8');
 const context = vm.createContext({ TextEncoder, encodeURIComponent, Map });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { awaitsApproval, scopePath, recordScope, editable, projectLabelText, usageRows, usageMeta, usageShare, statusLine, emptyText, recordMeta, eventTouches };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { awaitsApproval, scopePath, recordScope, editable, projectLabelText, usageRows, usageCount, usageShare, offNotice, emptyText, recordMeta, recordKey, authorLabel, eventTouches };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -19,23 +19,23 @@ assert.deepEqual([m.projectLabelText('all'), m.projectLabelText('project')], ['P
 const records = [{ scope: 'project', body: 'abc', _cap: 100 }, { scope: 'project', body: 'de', _cap: 100 }, { scope: 'user_profile', scope_id: 'u1', scope_label: 'owner', body: 'xyz', _cap: 50 }, { scope: 'agent_shared_notes', body: 'n', _cap: 20 }];
 const rows = plain(m.usageRows(records, 'all', 'Alpha'));
 assert.deepEqual(rows, [{ scope: 'project', key: 'Alpha', used: 5, count: 2, cap: 100 }, { scope: 'user_profile', key: 'owner', used: 3, count: 1, cap: 50 }, { scope: 'agent_shared_notes', key: '', used: 1, count: 1, cap: 20 }]);
-assert.deepEqual(rows.map(m.usageMeta), ['Project facts · Alpha · 5 / 100 bytes · 2 records', 'User profile · owner · 3 / 50 bytes · 1 record', 'Shared agent notes · 1 / 20 bytes · 1 record']);
+assert.deepEqual(rows.map(m.usageCount), ['5/100 · 2 records', '3/50 · 1 record', '1/20 · 1 record']);
 assert.deepEqual([m.usageShare({ used: 5, cap: 100 }), m.usageShare({ used: 500, cap: 100 }), m.usageShare({ used: 5, cap: 0 })], ['5%', '100%', '0%']);
-assert.equal(m.statusLine({ records, cap_bytes: 100, enabled: true }, 'all', 'Alpha'), "4 records: 2 project facts of Alpha, 1 user profiles, 1 shared notes. Other projects' facts are in the Project facts view.");
-assert.equal(m.statusLine({ records: records.slice(0, 2), cap_bytes: 100, enabled: false }, 'project', 'Alpha'), '5 / 100 bytes · 2 records · Memory is off for Alpha: agents do not get its project facts, and saved records stay available.');
-assert.equal(m.statusLine({ records: [records[2], { ...records[2], body: 'q' }], cap_bytes: 50 }, 'user_profile', ''), '2 records · 1 profiles · 50 bytes per profile');
+assert.equal(m.offNotice('Alpha'), 'Memory is off for Alpha: agents do not get its project facts, and saved records stay available.');
 assert.deepEqual(['all', 'project', 'task', 'user_profile'].map(m.emptyText), ['No visible memory saved.', 'No project facts saved.', 'No notes saved for this task.', 'No global memory saved.']);
-const item = { scope: 'user_profile', scope_id: 'u1', scope_label: 'owner', rev: 3, author_kind: 'user', author_id: 'a', active: false };
-assert.equal(m.recordMeta(item, { mode: 'all', profileUsage: new Map(), cap: 50, when: 'now' }), 'User profile owner · Inactive · Revision 3 · user a · now');
+const item = { scope: 'user_profile', scope_id: 'u1', scope_label: 'owner', rev: 3, author_kind: 'user', author_id: 'usr_a', active: false };
+assert.equal(m.recordMeta(item, { mode: 'all', when: 'now' }), 'Inactive · v3 · someone · now');
+assert.equal(m.recordMeta({ ...item, author_name: 'owner' }, { mode: 'all', when: 'now' }), 'Inactive · v3 · owner · now', 'the author is a name, never an id');
+assert.deepEqual([m.authorLabel({ author_kind: 'agent', author_id: 'agt_1' }), m.authorLabel({ author_kind: 'user', author_id: 'usr_9' }), m.authorLabel({ author_kind: 'user', author_id: 'owner-v1' }), m.authorLabel({ author_name: 'ivy', author_id: 'agt_2' })], ['an agent', 'someone', 'owner-v1', 'ivy']);
+assert.deepEqual([m.recordKey(item, 'all', { projectName: 'Alpha', taskTitle: 'T' }), m.recordKey({ scope: 'project' }, 'all', { projectName: 'Alpha', taskTitle: 'T' }), m.recordKey({ scope: 'agent_shared_notes' }, 'all', { projectName: 'Alpha', taskTitle: 'T' }), m.recordKey({}, 'task', { projectName: 'Alpha', taskTitle: 'T' })], ['owner', 'Alpha', 'global', 'T']);
 // A shared note an agent wrote and nobody approved is "waiting for approval", not "inactive" (which is what the owner's own switch-off says).
 const agentNote = { scope: 'agent_shared_notes', scope_id: 'global', active: false, rev: 1, author_kind: 'agent', author_id: 'agt_1' };
 assert.equal(m.awaitsApproval(agentNote, 'agent_shared_notes'), true);
 assert.equal(m.awaitsApproval({ ...agentNote, active: true }, 'agent_shared_notes'), false);
 assert.equal(m.awaitsApproval({ ...agentNote, author_kind: 'user' }, 'agent_shared_notes'), false, 'switched off by a person: inactive');
 assert.equal(m.awaitsApproval(agentNote, 'user_profile'), false);
-assert.ok(m.recordMeta(agentNote, { mode: 'agent_shared_notes', profileUsage: new Map(), cap: 50, when: 'now' }).includes('Waiting for approval · '));
-assert.ok(m.recordMeta({ ...agentNote, author_kind: 'user' }, { mode: 'agent_shared_notes', profileUsage: new Map(), cap: 50, when: 'now' }).includes('Inactive · '));
-assert.equal(m.recordMeta(item, { mode: 'user_profile', profileUsage: new Map([['u1', 7]]), cap: 50, when: 'now' }), 'owner · 7 / 50 bytes · Inactive · Revision 3 · user a · now');
+assert.ok(m.recordMeta(agentNote, { mode: 'agent_shared_notes', when: 'now' }).includes('Waiting for approval · '));
+assert.ok(m.recordMeta({ ...agentNote, author_kind: 'user' }, { mode: 'agent_shared_notes', when: 'now' }).includes('Inactive · '));
 const touches = (event, view) => m.eventTouches(event, view);
 assert.deepEqual([touches({ kind: 'knowledge_created', project_id: 'p' }, { mode: 'project', projectID: 'p' }), touches({ kind: 'knowledge_created', project_id: 'q' }, { mode: 'project', projectID: 'p' }), touches({ kind: 'global_knowledge_updated' }, { mode: 'all', projectID: 'p' }),
   touches({ kind: 'global_knowledge_updated' }, { mode: 'user_profile' }), touches({ kind: 'global_knowledge_updated' }, { mode: 'project', projectID: 'p' }), touches({ kind: 'knowledge_deleted', room_id: 'r' }, { mode: 'task', roomID: 'r' }), touches({ kind: 'message_created', project_id: 'p' }, { mode: 'project', projectID: 'p' })],

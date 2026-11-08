@@ -1164,7 +1164,6 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
 }
 
 /* Knowledge records use v1 memory cards' small text. */
-@media (min-width: 701px) { #knowledge-dialog .knowledge-record textarea { font-size: 12px; line-height: 1.4; } #knowledge-dialog .knowledge-record small { font-size: 11px; } } /* phones keep 16px so iOS does not zoom */
 
 /* .quiet-glyph is the one class for a #number or bug icon that reads as quiet text or an icon, as in v1: no box or outline of its
    own, only a colour change on hover (keyboard focus keeps a ring). It is wherever such a glyph renders: message headers, system

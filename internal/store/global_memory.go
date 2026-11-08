@@ -28,7 +28,7 @@ func (s *Store) ListGlobalKnowledge(ctx context.Context, scope, key string) ([]K
 	if key == "" || scope == "agent_shared_notes" && key != "global" {
 		return nil, ErrInvalidScope
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT g.id,g.body,g.rev,g.author_kind,g.author_id,g.created_at,g.updated_at,g.source_message_id,COALESCE(u.login,''),g.active FROM global_memory g LEFT JOIN user u ON u.id=g.scope_key AND g.scope='user_profile' WHERE g.scope=? AND g.scope_key=? ORDER BY g.created_at,g.id", scope, key)
+	rows, err := s.db.QueryContext(ctx, "SELECT g.id,g.body,g.rev,g.author_kind,g.author_id,g.created_at,g.updated_at,g.source_message_id,COALESCE(u.login,''),g.active,"+authorNameSQL("g")+" FROM global_memory g LEFT JOIN user u ON u.id=g.scope_key AND g.scope='user_profile' WHERE g.scope=? AND g.scope_key=? ORDER BY g.created_at,g.id", scope, key)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func (s *Store) ListGlobalKnowledge(ctx context.Context, scope, key string) ([]K
 	for rows.Next() {
 		item := KnowledgeRecord{Scope: scope, ScopeID: key}
 		var source sql.NullString
-		if err := rows.Scan(&item.ID, &item.Body, &item.Rev, &item.AuthorKind, &item.AuthorID, &item.CreatedAt, &item.UpdatedAt, &source, &item.ScopeLabel, &item.Active); err != nil {
+		if err := rows.Scan(&item.ID, &item.Body, &item.Rev, &item.AuthorKind, &item.AuthorID, &item.CreatedAt, &item.UpdatedAt, &source, &item.ScopeLabel, &item.Active, &item.AuthorName); err != nil {
 			return nil, err
 		}
 		item.SourceMessageID = source.String
@@ -248,7 +248,7 @@ func (s *Store) listGlobalKnowledge(ctx context.Context, scope string, activeOnl
 	if activeOnly {
 		activeClause = " AND g.active=1"
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT g.id,g.scope_key,g.body,g.rev,g.author_kind,g.author_id,g.created_at,g.updated_at,g.source_message_id,COALESCE(u.login,''),g.active FROM global_memory g LEFT JOIN user u ON u.id=g.scope_key AND g.scope='user_profile' WHERE g.scope=?"+activeClause+" ORDER BY g.scope_key,g.created_at,g.id", scope)
+	rows, err := s.db.QueryContext(ctx, "SELECT g.id,g.scope_key,g.body,g.rev,g.author_kind,g.author_id,g.created_at,g.updated_at,g.source_message_id,COALESCE(u.login,''),g.active,"+authorNameSQL("g")+" FROM global_memory g LEFT JOIN user u ON u.id=g.scope_key AND g.scope='user_profile' WHERE g.scope=?"+activeClause+" ORDER BY g.scope_key,g.created_at,g.id", scope)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,7 @@ func (s *Store) listGlobalKnowledge(ctx context.Context, scope string, activeOnl
 	for rows.Next() {
 		item := KnowledgeRecord{Scope: scope}
 		var source sql.NullString
-		if err := rows.Scan(&item.ID, &item.ScopeID, &item.Body, &item.Rev, &item.AuthorKind, &item.AuthorID, &item.CreatedAt, &item.UpdatedAt, &source, &item.ScopeLabel, &item.Active); err != nil {
+		if err := rows.Scan(&item.ID, &item.ScopeID, &item.Body, &item.Rev, &item.AuthorKind, &item.AuthorID, &item.CreatedAt, &item.UpdatedAt, &source, &item.ScopeLabel, &item.Active, &item.AuthorName); err != nil {
 			return nil, err
 		}
 		item.SourceMessageID = source.String

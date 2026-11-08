@@ -1684,68 +1684,66 @@ async function main() {
     const roomID = await first.evaluate(() => location.hash.slice(1));
     await first.waitForFunction(() => !document.querySelector('#task-notes-toggle')?.hidden);
     await first.click('#knowledge-toggle');
-    await first.waitForFunction(() => document.querySelector('#knowledge-dialog')?.open && document.querySelector('#knowledge-status')?.textContent.includes('Memory is off'));
+    await first.waitForFunction(() => document.querySelector('#knowledge-dialog')?.open && document.querySelector('#knowledge-off') && !document.querySelector('#knowledge-off').hidden);
     // The viewer opens on "All visible"; its project picker then only scopes the project facts listed with the global records.
-    assert.deepEqual(await first.evaluate(() => ({ scope: document.querySelector('#knowledge-scope').value, title: document.querySelector('#knowledge-title').textContent, project: !document.querySelector('#knowledge-project-label').hidden, projectLabel: document.querySelector('#knowledge-project-label').firstChild.textContent.trim(), enable: document.querySelector('#knowledge-enabled-label').hidden, add: document.querySelector('#knowledge-add').hidden })),
-      { scope: 'all', title: 'All visible memory', project: true, projectLabel: 'Project facts from', enable: true, add: true }, 'the Memory viewer opens on All visible');
+    assert.deepEqual(await first.evaluate(() => ({ scope: document.querySelector('#knowledge-scope').value, title: document.querySelector('#knowledge-title').textContent, project: !!document.querySelector('#knowledge-project'), projectLabel: document.querySelector('#knowledge-project').getAttribute('aria-label'), enable: document.querySelector('#knowledge-enabled-label').hidden, add: document.querySelector('#knowledge-add').hidden })),
+      { scope: 'all', title: 'Memory', project: true, projectLabel: 'Project facts from', enable: true, add: true }, 'the Memory viewer opens on All visible');
     await first.select('#knowledge-scope', 'project');
-    await first.waitForFunction(() => document.querySelector('#knowledge-title')?.textContent === 'Project facts' && !document.querySelector('#knowledge-enabled-label').hidden && document.querySelector('#knowledge-project-label').firstChild.textContent.trim() === 'Project' && document.querySelector('#knowledge-status')?.textContent.includes('bytes') && document.querySelector('#knowledge-status').textContent.includes('Memory is off'));
+    await first.waitForFunction(() => document.querySelector('#knowledge-scope')?.value === 'project' && !document.querySelector('#knowledge-enabled-label').hidden && document.querySelector('#knowledge-project').getAttribute('aria-label') === 'Project' && !document.querySelector('#knowledge-off').hidden);
     await first.click('#knowledge-enabled');
     await first.waitForFunction(() => document.querySelector('#knowledge-enabled')?.checked && !document.querySelector('#knowledge-add')?.hidden);
     await first.locator('#knowledge-add textarea').fill('Project fact from smoke');
     await first.click('#knowledge-add button');
     await first.waitForFunction(() => document.querySelector('#knowledge-records textarea')?.value === 'Project fact from smoke');
-    assert.deepEqual(await first.$eval('#knowledge-records .knowledge-actions button.btn-danger', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-trash'), el.textContent]), ['Delete', 'Delete', true, '']);
+    assert.deepEqual(await first.$eval('#knowledge-records .memory-row-actions button.btn-danger', el => [el.getAttribute('aria-label'), el.textContent, !!el.querySelector('.icon-mask-trash')]), [null, 'Delete', false], 'Delete is v1\'s text button');
     // v1's memory cards use small record text.
-    assert.deepEqual(await first.evaluate(() => { const card = document.querySelector('#knowledge-records .knowledge-record'); return { textPx: parseFloat(getComputedStyle(card.querySelector('textarea')).fontSize), metaPx: parseFloat(getComputedStyle(card.querySelector('small')).fontSize) }; }), { textPx: 12, metaPx: 11 }, 'knowledge cards use v1\'s small record text');
+    assert.deepEqual(await first.evaluate(() => { const card = document.querySelector('#knowledge-records .knowledge-record'); return { textPx: parseFloat(getComputedStyle(card.querySelector('textarea')).fontSize), metaPx: parseFloat(getComputedStyle(card.querySelector('.memory-meta')).fontSize) }; }), { textPx: 10.92, metaPx: 10.08 }, 'knowledge cards use v1\'s small record text');
     await first.select('#knowledge-scope', 'agent_shared_notes');
-    await first.waitForFunction(() => document.querySelector('#knowledge-title')?.textContent === 'Shared agent notes');
-    await first.waitForFunction(() => document.querySelector('#knowledge-status')?.textContent.includes('records') && !document.querySelector('#knowledge-add')?.hidden);
+    await first.waitForFunction(() => document.querySelector('#knowledge-scope')?.value === 'agent_shared_notes' && !document.querySelector('#knowledge-add')?.hidden && document.querySelector('.memory-viewer-pane')?.dataset.state === 'ready');
     await first.locator('#knowledge-add textarea').fill('Shared note from smoke');
     await first.click('#knowledge-add button');
     await first.waitForFunction(() => document.querySelector('#knowledge-records textarea')?.value === 'Shared note from smoke');
     await first.waitForFunction(() => {
-      const button = document.querySelector('#knowledge-records .knowledge-actions button:last-child');
-      if (button?.getAttribute('aria-label') !== 'Deactivate' || button.title !== 'Deactivate' || !button.querySelector('.icon-mask-pause')) return false;
+      const button = document.querySelector('#knowledge-records .memory-row-actions button:last-child');
+      if (button?.textContent !== 'Deactivate') return false;
       button.click(); // Find and click in one browser task so refresh cannot detach it.
       return true;
     });
-    await waitDump(first, 'knowledge Deactivate', () => document.querySelector('#knowledge-records article small')?.textContent.includes('Inactive'), () => ({
+    await waitDump(first, 'knowledge Deactivate', () => document.querySelector('#knowledge-records .memory-meta')?.textContent.includes('Inactive'), () => ({
       error: document.querySelector('#knowledge-error')?.textContent, status: document.querySelector('#knowledge-status')?.textContent,
-      records: [...document.querySelectorAll('#knowledge-records article')].map(article => ({ meta: article.querySelector('small')?.textContent, buttons: [...article.querySelectorAll('.knowledge-actions button')].map(button => button.getAttribute('aria-label') || button.textContent) })),
+      records: [...document.querySelectorAll('#knowledge-records .memory-row')].map(row => ({ meta: row.querySelector('.memory-meta')?.textContent, buttons: [...row.querySelectorAll('.memory-row-actions button')].map(button => button.textContent) })),
     }));
     await first.waitForFunction(() => {
-      const button = document.querySelector('#knowledge-records .knowledge-actions button:last-child');
-      if (button?.getAttribute('aria-label') !== 'Activate for agents' || button.title !== 'Activate for agents' || !button.querySelector('.icon-mask-play')) return false;
+      const button = document.querySelector('#knowledge-records .memory-row-actions button:last-child');
+      if (button?.textContent !== 'Activate for agents') return false;
       button.click();
       return true;
     });
-    await first.waitForFunction(() => !document.querySelector('#knowledge-records article small')?.textContent.includes('Inactive'));
+    await first.waitForFunction(() => !document.querySelector('#knowledge-records .memory-meta')?.textContent.includes('Inactive'));
     await first.select('#knowledge-scope', 'user_profile');
-    await first.waitForFunction(() => document.querySelector('#knowledge-title')?.textContent === 'User profiles');
-    await first.waitForFunction(() => document.querySelector('#knowledge-status')?.textContent.includes('records') && !document.querySelector('#knowledge-add')?.hidden);
+    await first.waitForFunction(() => document.querySelector('#knowledge-scope')?.value === 'user_profile' && !document.querySelector('#knowledge-add')?.hidden && document.querySelector('.memory-viewer-pane')?.dataset.state === 'ready');
     await first.locator('#knowledge-add textarea').fill('Profile from smoke');
     await first.click('#knowledge-add button');
     await first.waitForFunction(() => document.querySelector('#knowledge-records textarea')?.value === 'Profile from smoke');
     await first.select('#knowledge-scope', 'all');
-    await first.waitForFunction(() => document.querySelector('#knowledge-title')?.textContent === 'All visible memory' && document.querySelectorAll('#knowledge-records article').length === 3);
+    await first.waitForFunction(() => document.querySelector('#knowledge-scope')?.value === 'all' && document.querySelectorAll('#knowledge-records .memory-row').length === 3);
     assert.equal(await first.$eval('#knowledge-add', el => el.hidden), true, 'adding needs a concrete scope');
-    const allMeta = await first.$$eval('#knowledge-records article small', els => els.map(el => el.textContent));
-    assert.equal(allMeta.some(text => text.startsWith('Project facts · ')), true);
-    assert.equal(allMeta.some(text => text.startsWith('User profile ')), true);
-    assert.equal(allMeta.some(text => text.startsWith('Shared agent notes · ')), true);
-    const usageRows = await first.$$eval('.knowledge-usage-row .knowledge-usage-meta', els => els.map(el => el.textContent));
+    const badges = await first.$$eval('#knowledge-records .memory-scope-badge', els => els.map(el => el.textContent));
+    assert.deepEqual([...badges].sort(), ['Project facts', 'Shared notes', 'User profile']);
+    const authors = await first.$$eval('#knowledge-records .memory-meta', els => els.map(el => el.textContent));
+    assert.equal(authors.every(text => !/usr_|agt_/.test(text)), true, `a card names its author, not an id: ${authors.join('|')}`);
+    const usageRows = await first.$$eval('.memory-usage-row .memory-usage-meta', els => els.map(el => el.textContent));
     assert.equal(usageRows.length, 3, 'one usage row per scope');
-    assert.equal(usageRows.every(text => /\d+ \/ \d+ bytes · 1 record$/.test(text)), true, usageRows.join('|'));
-    assert.equal(await first.$$eval('.knowledge-usage-bar[role="progressbar"]', els => els.length), 3);
+    assert.equal(usageRows.every(text => /\d+\/\d+ · 1 record$/.test(text)), true, usageRows.join('|'));
+    assert.equal(await first.$$eval('.memory-usage-bar[role="progressbar"]', els => els.length), 3);
     await first.click('#knowledge-clean');
-    await first.waitForFunction(() => document.querySelectorAll('#knowledge-records article').length === 0 && document.querySelector('#knowledge-records')?.textContent.includes('No visible memory saved.'));
-    assert.equal(await first.$eval('.knowledge-usage', el => el.hidden), true);
+    await first.waitForFunction(() => document.querySelectorAll('#knowledge-records .memory-row').length === 0 && document.querySelector('#knowledge-records')?.textContent.includes('No visible memory saved.'));
+    assert.equal(await first.$eval('.memory-usage-list', el => el.hidden), true);
     await domClick(first, '#knowledge-close');
     await first.waitForFunction(() => !document.querySelector('#knowledge-dialog')?.open && !document.querySelector('#task-notes-toggle')?.hidden);
     await domClick(first, '#task-notes-toggle');
     await first.waitForFunction(() => document.querySelector('#knowledge-dialog')?.open && document.querySelector('#knowledge-title')?.textContent.startsWith('Notes'));
-    await first.waitForFunction(() => !document.querySelector('#knowledge-add')?.hidden && document.querySelector('#knowledge-status')?.textContent.includes('records'));
+    await first.waitForFunction(() => !document.querySelector('#knowledge-add')?.hidden && document.querySelector('.memory-viewer-pane')?.dataset.state === 'ready');
     await first.locator('#knowledge-add textarea').fill('Task note from smoke');
     await first.click('#knowledge-add button');
     await first.waitForFunction(() => document.querySelector('#knowledge-records textarea')?.value === 'Task note from smoke');
@@ -5730,14 +5728,14 @@ async function main() {
     await domClick(first, '#settings-close');
     const darkLegacyBackground = await first.evaluate(() => {
       const sample = document.createElement('div');
-      sample.className = 'knowledge-record';
+      sample.className = 'memory-row';
       document.body.append(sample);
       const background = getComputedStyle(sample).backgroundColor;
       sample.remove();
       return { background, hasThemeAttribute: document.documentElement.hasAttribute('data-theme') };
     });
     assert.equal(darkLegacyBackground.hasThemeAttribute, false, 'default Dark has no theme attribute');
-    assert.equal(darkLegacyBackground.background, 'rgb(28, 33, 40)', 'legacy card uses the Dark tertiary surface');
+    assert.equal(darkLegacyBackground.background, 'rgb(22, 27, 34)', 'a memory card uses the Dark secondary surface (v1\'s)');
     assert.notEqual(darkLegacyBackground.background, 'rgb(247, 249, 247)', 'legacy card must not keep the light surface in Dark');
     await checkHeaderGeometry('Dark');
     assert.equal(await first.$eval('.room-item.active', el => getComputedStyle(el).backgroundColor), 'rgba(88, 166, 255, 0.1)');
@@ -7247,7 +7245,7 @@ async function main() {
       await domClick(first, '.room-notes button');
       await first.waitForFunction(() => document.querySelector('#knowledge-dialog').open && !document.querySelector('#room-info-dialog').open);
       assert.deepEqual(await first.evaluate(id => ({ scope: document.querySelector('#knowledge-scope').value, project: document.querySelector('#knowledge-project').value === id, title: document.querySelector('#knowledge-title').textContent }), actualProjectID),
-        { scope: 'project', project: true, title: 'Project facts' }, 'the home room links to the project facts');
+        { scope: 'project', project: true, title: 'Memory' }, 'the home room links to the project facts');
       await domClick(first, '#knowledge-close');
       // Settings has no Project page any more: the form is only in the home room's settings.
       assert.equal(await first.evaluate(() => !!document.querySelector('#settings-project-tab, #settings-project, #project-settings-select')), false, 'Settings has no Project tab, section or project chooser');
@@ -7865,12 +7863,12 @@ async function main() {
         { id: 'knw_imported', scope_id: 'prj_test', body: 'brought over from v1', rev: 3, author_kind: 'user', author_id: 'alice', updated_at: '2026-10-01', active: true, _edit: true },
       ] };
       await tick();
-      const record = panel.dialog.querySelector('.knowledge-records article');
+      const record = panel.dialog.querySelector('.memory-list .memory-row');
       const buttons = [...record.querySelectorAll('button')].map(button => button.getAttribute('aria-label') || button.textContent), editable = !record.querySelector('textarea').readOnly;
       panel.store.data.value = { ...panel.store.data.value, can_edit: false, records: [{ ...panel.store.data.value.records[0], _edit: false }] };
       await tick();
-      const viewer = panel.dialog.querySelector('.knowledge-records article');
-      return { buttons, readOnly: !editable, status: panel.dialog.querySelector('#knowledge-status').textContent, review: !!panel.dialog.querySelector('input[data-review-id]') || /review/i.test(panel.dialog.textContent),
+      const viewer = panel.dialog.querySelector('.memory-list .memory-row');
+      return { buttons, readOnly: !editable, status: panel.dialog.querySelector('#knowledge-status')?.textContent ?? '', review: !!panel.dialog.querySelector('input[data-review-id]') || /review/i.test(panel.dialog.textContent),
         viewerReadOnly: viewer.querySelector('textarea').readOnly, viewerButtons: viewer.querySelectorAll('button').length };
     });
     assert.deepEqual(memoryView.buttons, ['Save', 'Delete'], `an imported record is edited like any other: ${JSON.stringify(memoryView)}`);

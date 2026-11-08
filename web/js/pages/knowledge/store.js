@@ -41,7 +41,7 @@ export class KnowledgeStore {
     let { projects, selectedProjectID } = this.projectContext();
     if (projectID) selectedProjectID = projectID;
     batch(() => {
-      this.mode.value = scope; this.room = null; this.title.value = SCOPE_TITLES[scope];
+      this.mode.value = scope; this.room = null; this.title.value = 'Memory';
       this.projects.value = projects.map(project => ({ id: project.id, name: project.name }));
       this.projectID.value = projects.some(project => project.id === selectedProjectID) ? selectedProjectID : (projects[0]?.id || '');
     });
@@ -63,7 +63,7 @@ export class KnowledgeStore {
 
   selectScope(scope) {
     this.leave();
-    batch(() => { this.mode.value = scope; this.title.value = SCOPE_TITLES[scope]; });
+    batch(() => { this.mode.value = scope; this.title.value = 'Memory'; });
     return this.load();
   }
 

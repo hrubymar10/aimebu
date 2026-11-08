@@ -34,7 +34,14 @@ type KnowledgeRecord struct {
 	CreatedAt       string `json:"created_at"`
 	UpdatedAt       string `json:"updated_at"`
 	SourceMessageID string `json:"source_message_id,omitempty"`
-	Active          bool   `json:"active"`
+	// AuthorName is the login of a person author, or the slug of an agent author, read with the record so a client shows a name and not an id.
+	AuthorName string `json:"author_name,omitempty"`
+	Active     bool   `json:"active"`
+}
+
+// authorNameSQL reads the name of a record's author from its table (or alias): a person's login, an agent's slug (the one it had when it was removed).
+func authorNameSQL(table string) string {
+	return `COALESCE((SELECT login FROM user WHERE user.id=` + table + `.author_id AND ` + table + `.author_kind='user'),(SELECT COALESCE(NULLIF(removed_slug,''),slug) FROM agent WHERE agent.id=` + table + `.author_id AND ` + table + `.author_kind='agent'),'')`
 }
 
 func knowledgeTable(scope string) (table, column string, err error) {
@@ -143,7 +150,7 @@ func (s *Store) ListKnowledge(ctx context.Context, scope, scopeID string) ([]Kno
 	if scope == "project" {
 		sourceColumns = "source_message_id,1"
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,body,rev,author_kind,author_id,created_at,updated_at,`+sourceColumns+` FROM `+table+` WHERE `+column+`=? ORDER BY created_at,id`, scopeID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,body,rev,author_kind,author_id,created_at,updated_at,`+sourceColumns+`,`+authorNameSQL(table)+` FROM `+table+` WHERE `+column+`=? ORDER BY created_at,id`, scopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +159,7 @@ func (s *Store) ListKnowledge(ctx context.Context, scope, scopeID string) ([]Kno
 	for rows.Next() {
 		item := KnowledgeRecord{Scope: scope, ScopeID: scopeID}
 		var source sql.NullString
-		if err := rows.Scan(&item.ID, &item.Body, &item.Rev, &item.AuthorKind, &item.AuthorID, &item.CreatedAt, &item.UpdatedAt, &source, &item.Active); err != nil {
+		if err := rows.Scan(&item.ID, &item.Body, &item.Rev, &item.AuthorKind, &item.AuthorID, &item.CreatedAt, &item.UpdatedAt, &source, &item.Active, &item.AuthorName); err != nil {
 			return nil, err
 		}
 		item.SourceMessageID = source.String

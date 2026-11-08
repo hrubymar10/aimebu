@@ -633,7 +633,13 @@ by default. The mapping makes project visibility and human identity explicit; se
 [the import guide](docs/import-v1.md). Message numbers and reply links retain their
 v1 IDs; native messages continue above the highest v1 number. Imported messages
 use native message fields and renderers.
-Imported history cannot wake agents. The Knowledge viewer includes user
+Imported history cannot wake agents. The Memory viewer (the brain button) is v1's
+layout: a full-height pane with a filter row (what to show, which project, Refresh),
+the Clear button at the top right (it asks first), one usage bar per scope with its
+record count, and a card per record that leads with the scope's badge and key, then
+its version, author's name and date, the text, and Save (off until the text is
+edited) and Delete (Deactivate, Activate or Approve for a global record), with the
+add form below. It shows project facts, user
 profiles and shared agent notes. Project memory remains disabled after import
 unless the owner selects an enabled destination project. Imported facts,
 profiles and shared notes arrive as ordinary active records.
