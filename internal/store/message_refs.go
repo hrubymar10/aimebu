@@ -3,9 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"regexp"
 	"strconv"
 	"unicode/utf8"
+
+	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
 // MaxMessageRefs bounds how many "#N" references one delivery resolves into its context.
@@ -81,22 +84,26 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 	if err != nil {
 		return AgentMessage{}, err
 	}
-	from := authorID
+	return AgentMessage{No: no, Available: true, RoomID: roomID, Room: title, From: authorLabel(ctx, q, authorKind, authorID), Body: excerptRunes(body, limit), CreatedAt: createdAt}, nil
+}
+
+// authorLabel is how an agent is shown who wrote a message: a person's login, an agent's name (its old one when it was removed), "system".
+func authorLabel(ctx context.Context, q singleRowQuerier, authorKind, authorID string) string {
 	switch authorKind {
 	case "system":
-		from = "system"
+		return "system"
 	case "user":
 		var login string
 		if err := q.QueryRowContext(ctx, `SELECT login FROM user WHERE id=?`, authorID).Scan(&login); err == nil {
-			from = login
+			return login
 		}
 	case "agent":
 		var slug string
 		if err := q.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(removed_slug,''),slug) FROM agent WHERE id=?`, authorID).Scan(&slug); err == nil {
-			from = slug
+			return slug
 		}
 	}
-	return AgentMessage{No: no, Available: true, RoomID: roomID, Room: title, From: from, Body: excerptRunes(body, limit), CreatedAt: createdAt}, nil
+	return authorID
 }
 
 // AgentMessageByNo is what the message_get tool answers: a message by its number, limited to the agent's project (see AgentMessage).
@@ -119,4 +126,81 @@ func (tx *Tx) referencedMessages(agentID, projectID string, bodies []string, del
 		out = append(out, message)
 	}
 	return out, nil
+}
+
+// parentExcerptRunes bounds the body of a note's reply or thread parent in a turn.
+const parentExcerptRunes = 500
+
+// noteWhy says why a message reached an agent, from its note's wake reason; parent is the message it replies to, if any.
+func noteWhy(reason string, parent *protocol.NoteParent) string {
+	switch reason {
+	case "reply":
+		if parent != nil && parent.No > 0 {
+			return fmt.Sprintf("a reply to your message #%d", parent.No)
+		}
+		return "a reply to your message"
+	case "mention":
+		return "you are mentioned"
+	case "role":
+		return "your role is mentioned"
+	case "group":
+		return "a group tag that includes you"
+	case "dm":
+		return "a private message to you"
+	case "agent_dm":
+		return "a message in your chat with another agent"
+	case "handoff":
+		return "work handed to you"
+	case "inbox_answer":
+		return "an answer to your question"
+	case "human_message":
+		return "a person's message to the room"
+	case "conversation":
+		return "a person's reply in a conversation you started"
+	}
+	return reason
+}
+
+// noteContext fills in each delivered note's reason, the message it replies to and the first message of its conversation, so a reply is never an
+// opaque id: reasons[i] is notes[i]'s wake reason.
+func (tx *Tx) noteContext(agentID string, notes []protocol.DeliveryNote, reasons []string) error {
+	parents := map[string]*protocol.NoteParent{}
+	parent := func(messageID, roomID string) (*protocol.NoteParent, error) {
+		if messageID == "" {
+			return nil, nil
+		}
+		if found, ok := parents[messageID]; ok {
+			return found, nil
+		}
+		var no int64
+		var authorKind, authorID, body string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT no,author_kind,author_id,body FROM message WHERE id=? AND room_id=?`, messageID, roomID).Scan(&no, &authorKind, &authorID, &body)
+		if err == sql.ErrNoRows {
+			parents[messageID] = nil
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		found := &protocol.NoteParent{No: no, From: authorLabel(tx.ctx, tx.tx, authorKind, authorID), Body: excerptRunes(body, parentExcerptRunes), Yours: authorKind == "agent" && authorID == agentID}
+		parents[messageID] = found
+		return found, nil
+	}
+	for i := range notes {
+		note := &notes[i]
+		replyParent, err := parent(note.ReplyTo, note.RoomID)
+		if err != nil {
+			return err
+		}
+		note.InReplyTo = replyParent
+		if note.ThreadRoot != "" && note.ThreadRoot != note.ReplyTo {
+			if note.Conversation, err = parent(note.ThreadRoot, note.RoomID); err != nil {
+				return err
+			}
+		}
+		if i < len(reasons) {
+			note.Why = noteWhy(reasons[i], replyParent)
+		}
+	}
+	return nil
 }

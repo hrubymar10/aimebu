@@ -34,7 +34,7 @@ assert.deepEqual(plain(api.groupReactions([{ emoji: '👍', member_id: 'u1', mem
 assert.deepEqual(plain(api.groupReactions([], 'me')), []);
 
 assert.deepEqual([{ author_kind: 'system' }, { author_kind: 'user', author_id: 'me' }, { author_kind: 'user', author_id: 'x' }, { author_kind: 'agent', author_id: 'me' }].map(message => api.articleClass(message, 'me')), ['chat-msg chat-msg-system', 'chat-msg self', 'chat-msg', 'chat-msg']);
-assert.deepEqual([{}, { thread_root: 'r' }, { author_kind: 'system' }].map(message => api.liveArrival(message, { initialLoading: false, contextMode: false })), [true, false, false]);
+assert.deepEqual([{}, { thread_root: 'r' }, { author_kind: 'system' }].map(message => api.liveArrival(message, { initialLoading: false, contextMode: false })), [true, true, false]);
 assert.deepEqual([[true, false], [false, true]].map(([initialLoading, contextMode]) => api.liveArrival({}, { initialLoading, contextMode })), [false, false]);
 
 const base = { hasMoreOlder: false, oldestSeq: 0, rootRendered: false, openThreadID: undefined, threadLatestHidden: true, threadEntryKnown: false, contextMode: false, known: false, missed: false };
@@ -43,8 +43,8 @@ assert.equal(route({ seq: 5 }, {}), 'add');
 assert.equal(route({ seq: 5 }, { hasMoreOlder: true, oldestSeq: 10 }), 'skip', 'a row the live cap already dropped');
 assert.equal(route({ seq: 15 }, { hasMoreOlder: true, oldestSeq: 10 }), 'add');
 assert.equal(route({ seq: 10 }, { hasMoreOlder: true, oldestSeq: 10 }), 'add', 'the oldest row itself is not older than the oldest');
-assert.equal(route({ seq: 5, thread_root: 'r' }, { hasMoreOlder: true, oldestSeq: 10, rootRendered: true }), 'add', 'the cap does not apply to a reply');
-assert.equal(route({ seq: 5, thread_root: 'r' }, {}), 'skip', 'a reply with no row and no open thread');
+assert.equal(route({ seq: 5, thread_root: 'r' }, { hasMoreOlder: true, oldestSeq: 10, rootRendered: true }), 'skip', 'a reply is a row like any other, so the cap applies to it');
+assert.equal(route({ seq: 5, thread_root: 'r' }, {}), 'add', 'a reply is a row of the room whether or not its root or a panel is there');
 assert.equal(route({ seq: 5, thread_root: 'r' }, { rootRendered: true }), 'add');
 assert.equal(route({ seq: 5, thread_root: 'r' }, { openThreadID: 'r' }), 'add', 'an open thread takes its reply');
 assert.equal(route({ id: 'm', thread_root: 'r' }, { openThreadID: 'r', threadLatestHidden: false }), 'new-reply', 'a reply while the panel is not at its end is counted');
@@ -52,8 +52,9 @@ assert.equal(route({ id: 'm', thread_root: 'r' }, { openThreadID: 'r', threadLat
 assert.equal(route({ seq: 5 }, { contextMode: true }), 'missed', 'a history window counts it on the button');
 assert.equal(route({ seq: 5 }, { contextMode: true, known: true }), 'skip');
 assert.equal(route({ seq: 5 }, { contextMode: true, missed: true }), 'skip');
-assert.equal(route({ seq: 5, thread_root: 'r' }, { contextMode: true, rootRendered: true }), 'add', 'a window still shows replies of the rows it has');
-assert.equal(route({ seq: 5, thread_root: 'r' }, { contextMode: true, openThreadID: 'r' }), 'add');
+assert.equal(route({ seq: 5, thread_root: 'r' }, { contextMode: true, rootRendered: true }), 'panel', 'a window counts the reply on its root and takes no row');
+assert.equal(route({ seq: 5, thread_root: 'r' }, { contextMode: true, openThreadID: 'r' }), 'panel');
+assert.equal(route({ seq: 5, thread_root: 'r' }, { contextMode: true }), 'missed', 'a reply of nothing shown is counted on the button');
 
 assert.deepEqual([{ initialLoading: true }, { newestSeq: 40 }, { newestSeq: 0 }, { contextMode: true, newestSeq: 40, lastRowSeq: () => 12 }, { catchingUp: true, newestSeq: 40, lastRowSeq: () => 0 }].map(state => api.newestShownSeq({ initialLoading: false, contextMode: false, catchingUp: false, newestSeq: 0, lastRowSeq: () => 0, ...state })), [0, 40, 0, 12, 0]);
 const never = () => { throw new Error('the list was read'); };
@@ -71,7 +72,7 @@ assert.equal(api.answersThroughInbox({ kind: 'question', options: ['yes', 'no'],
 assert.deepEqual([[{ kind: 'question' }, null, false], [null, { proposed_answers: ['a'] }, true], [null, { open_questions: [{ question: 'q' }] }, false], [null, { proposed_answers: [] }, true], [null, null, false], [{ kind: 'note' }, {}, true]].map(([item, message, answered]) => api.answerArea(item, message, answered)), ['controls', 'history', 'history', 'done', 'none', 'done']);
 
 const m = (seq, body, extra = {}) => ({ seq, body, author_kind: 'user', author_id: 'me', ...extra });
-assert.deepEqual(plain(api.recallCandidates([m(5, 'c'), m(1, 'a'), m(2, 'a'), m(3, 'b'), m(4, 'x', { author_id: 'other' }), m(6, 'r', { thread_root: 'root' }), m(7, 'sys', { author_kind: 'agent' }), m(8, 'a')], 'me')), ['a', 'b', 'c', 'a']);
+assert.deepEqual(plain(api.recallCandidates([m(5, 'c'), m(1, 'a'), m(2, 'a'), m(3, 'b'), m(4, 'x', { author_id: 'other' }), m(6, 'r', { thread_root: 'root' }), m(7, 'sys', { author_kind: 'agent' }), m(8, 'a')], 'me')), ['a', 'b', 'c', 'r', 'a']);
 assert.equal(api.recallCandidates(Array.from({ length: 250 }, (_, i) => m(i, `m${i}`)), 'me').length, 200);
 
 const step = (key, value, recall, at = value.length, end = at, candidates = ['a', 'b', 'c']) => plain(api.recallStep({ key, value, at, end }, recall, candidates));

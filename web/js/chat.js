@@ -91,6 +91,9 @@ export class Chat {
     this.threadNewButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
     this.threadList.before(this.threadOlderStatus, this.threadLatestButton, this.threadNewButton);
     this.threadList.addEventListener('scroll', () => { if (this.threadList.scrollTop < 80) this.loadOlderThread(); });
+    this.threadChip = document.querySelector('#thread-reply-chip'); this.threadChipText = this.threadChip.querySelector('#thread-reply-jump'); this.threadReply = null;
+    this.threadChipText.onclick = () => { if (this.threadReply) this.jumpToMessage(this.threadReply.id); };
+    document.querySelector('#cancel-thread-reply').onclick = () => this.setThreadReply(null);
     this.list.replaceChildren(); this.listView = mountPreactPage(this.list, props => html`<${MessageList} ...${props} />`, { onError: error => console.error('message list failed', error) });
     this.threadList.replaceChildren(); this.threadView = mountPreactPage(this.threadList, props => html`<${ThreadList} ...${props} />`, { onError: error => console.error('thread list failed', error) });
     this.delegateRows(this.list); this.delegateRows(this.threadList);
@@ -270,7 +273,7 @@ export class Chat {
     else if (is('chat-msg-usage-toggle')) toggleMessageUsage(control, message.usage);
     else if (is('quote')) this.jumpToMessage(message.reply_to);
     else if (is('image-thumb')) { const full = this.lightbox.querySelector('img'); full.src = control.dataset.url; this.lightbox.showModal(); }
-    else if (is('thread-chip')) this.openThread(message);
+    else if (is('thread-chip')) this.openConversation(message);
     else if (is('reaction-pill')) this.toggleReaction(message.id, control.dataset.emoji);
     else messageAction(this, control, message);
   }
@@ -590,13 +593,13 @@ export class Chat {
       identity: senderIdentity(message, agent), roleEmoji: agent?.role_emoji || '', roleTitle: agent?.role || '' };
     const answer = this.answerView(message), bodyKey = `${this.raw}|${this.mentionIndex?.signature ?? ''}`;
     const view = { author, answer, bodyKey, raw: this.raw, mentionKey: this.mentionIndex?.signature ?? '', usageTitle: message.usage ? usageTooltip(message.usage) : '', needsAttention: !!message.needs_attention };
-    view.pills = groupReactions(this.reactions.get(message.id) || [], currentUser);
+    view.pills = groupReactions(this.reactions.get(message.id) || [], currentUser); view.quote = this.quoteView(message);
     let extra = `|${JSON.stringify(view.pills)}`;
+    // The quote's text (author name included) is part of the draw key, so a name that becomes known later redraws the row.
+    if (view.quote) extra += `|${view.quote.text}`;
     if (main) {
       const count = threadCount(this.threadCounts, this.serverThreadCounts, message.id);
       view.articleClass = articleClass(message, currentUser); view.chip = threadChip(count); view.threadLabel = this.threadLabel(message.id);
-      view.quote = this.quoteView(message);
-      if (view.quote) extra += `|${view.quote.text}`;
       view.expired = this.expiry.expired.has(message.id); view.boundary = this.expiry.divider === message.id;
       extra += `|${count}|${view.expired}|${view.boundary}`;
     }
@@ -623,14 +626,21 @@ export class Chat {
     this.threadNewButton.hidden = count === 0;
   }
   openThread(root, focus = null) { return this.store.openThread(root, focus); }
+  openConversation(message) { return this.store.openConversation(message); }
   loadOlderThread() { return this.store.loadOlderThread(); }
   sendThread() { return this.store.sendThread(); }
   send() { return this.store.send(); }
   reopenLatest() { return this.store.reopenLatest(); }
   closeThread() { return this.store.closeThread(); }
   threadClosed() {
-    this.threadNotice.clear(); this.threadRoot = null; this.threadTitle.textContent = 'Thread'; this.threadUpdate(); this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false';
+    this.threadNotice.clear(); this.threadRoot = null; this.setThreadReply(null); this.threadTitle.textContent = 'Thread'; this.threadUpdate(); this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false';
     this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; this.resizeThreadDraft(); document.querySelector('#thread-error').textContent = '';
+  }
+  // The message the panel's next send replies to; none means the root. Only a reply to something other than the root is worth a chip.
+  setThreadReply(message) {
+    const other = message && message.id !== this.threadRoot?.id ? message : null;
+    this.threadReply = other; this.threadChip.hidden = !other; this.threadChipText.textContent = other ? `Replying to ${this.authorName(other)}: ${messageSnippet(other)}` : '';
+    if (message) this.threadDraft.focus();
   }
   setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
   // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
@@ -638,6 +648,7 @@ export class Chat {
   // an answer and sending it unedited acts like the button, while edited text is an ordinary reply).
   answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body); }
   beginThread(root, focus) {
+    if (this.threadRoot?.id !== root.id) this.setThreadReply(null);
     this.threadRoot = root; this.threadTitle.textContent = 'Thread'; this.threadPanel.hidden = false; this.threadUpdate();
     this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewButton.hidden = true;
     document.querySelector('#thread-error').textContent = '';
@@ -657,7 +668,7 @@ export class Chat {
     return () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; };
   }
   beginThreadSend() { document.querySelector('#thread-error').textContent = ''; this.threadNotice.clear(); }
-  sentThreadReply() { this.threadDraft.value = ''; this.resizeThreadDraft(); }
+  sentThreadReply() { this.setThreadReply(null); this.threadDraft.value = ''; this.resizeThreadDraft(); }
   threadToEnd() { this.threadList.scrollTop = this.threadList.scrollHeight; }
   threadSendFailed(message) { this.threadNotice.show(message); }
   restoreThreadDraft(draft) { this.threadDraft.value = draft; this.resizeThreadDraft(); this.draft.focus(); }

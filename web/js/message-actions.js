@@ -88,10 +88,10 @@ export function messageAction(chat, button, message) {
   if (is('quick-reaction')) { closePopup(); chat.toggleReaction(message.id, button.dataset.emoji); }
   else if (is('message-react')) { const popup = button.closest('.message-actions')?.querySelector(':scope > .message-reaction-row'); if (popup) togglePopup(button, popup); }
   else if (is('message-find')) findReaction(chat, message, button);
-  else if (is('message-reply')) chat.setReply(message);
+  else if (is('message-reply')) { if (button.closest('.thread-panel')) chat.setThreadReply(message); else chat.setReply(message); }
   else if (is('message-link')) copyWithFeedback(button, `#${message.no}`);
   else if (is('message-copy')) copyWithFeedback(button, message.body);
-  else if (is('thread-action')) chat.openThread(message);
+  else if (is('thread-action')) chat.openConversation(message);
   else return false;
   return true;
 }
@@ -141,6 +141,6 @@ export function fillMessageActions(bar, chat, message) {
   const copyText_ = iconButton('copy', 'Copy message text', 'message-copy');
   const copyLink = iconButton('link', `Copy link to #${message.no}`, 'message-copy message-link');
   const thread = iconButton('thread', chat.threadLabel(message.id), 'thread-action');
-  // Inside the thread panel every message already is a reply in that thread, so the reply and thread buttons are not offered there.
-  bar.append(react, find, ...(bar.closest('.thread-panel') ? [] : [reply, thread]), copyText_, copyLink, reactionRow);
+  // Inside the panel the reply button picks what the panel's next send answers; the thread button is not offered there (the panel is the thread).
+  bar.append(react, find, ...(bar.closest('.thread-panel') ? [reply] : [reply, thread]), copyText_, copyLink, reactionRow);
 }

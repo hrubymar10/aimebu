@@ -301,7 +301,9 @@ func TestAuthenticationCSRFAndCRUD(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestThreadRootValidation(t *testing.T) {
+// One concept, the reply: a writer sends reply_to, and thread_root comes back as the first message of the conversation. A thread_root sent alone
+// (an older client) is ignored, a reply to a reply stays in the first message's conversation, and the parent must exist in the room.
+func TestReplyLinksDeriveTheConversation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
@@ -319,15 +321,24 @@ func TestThreadRootValidation(t *testing.T) {
 		return result
 	}
 	root := post(f.room.ID, map[string]string{"body": "root"}, 201)["id"].(string)
-	reply := post(f.room.ID, map[string]string{"body": "reply", "thread_root": root}, 201)
-	if reply["thread_root"] != root {
-		t.Fatalf("thread root omitted: %v", reply)
+	stale := post(f.room.ID, map[string]string{"body": "stale", "thread_root": root}, 201)
+	if stale["thread_root"] != nil && stale["thread_root"] != "" || stale["reply_to"] != nil && stale["reply_to"] != "" {
+		t.Fatalf("a thread_root sent alone is ignored, not turned into a reply: %v", stale)
 	}
-	if got := post(f.room.ID, map[string]string{"body": "bad", "thread_root": "msg_missing"}, 400); got["error"] != "invalid_answer" {
-		t.Fatalf("missing root: %v", got)
+	threadOnly := post(f.room.ID, map[string]string{"body": "reply", "reply_to": root}, 201)
+	if threadOnly["thread_root"] != root || threadOnly["reply_to"] != root {
+		t.Fatalf("a reply derives its conversation: %v", threadOnly)
 	}
-	if got := post(f.room.ID, map[string]string{"body": "bad", "thread_root": reply["id"].(string)}, 400); got["error"] != "invalid_answer" {
-		t.Fatalf("nested thread: %v", got)
+	deeper := post(f.room.ID, map[string]string{"body": "deeper", "reply_to": threadOnly["id"].(string)}, 201)
+	if deeper["thread_root"] != root || deeper["reply_to"] != threadOnly["id"] {
+		t.Fatalf("a reply to a reply stays in the first message's conversation: %v", deeper)
+	}
+	ignored := post(f.room.ID, map[string]string{"body": "chosen root", "reply_to": root, "thread_root": deeper["id"].(string)}, 201)
+	if ignored["thread_root"] != root {
+		t.Fatalf("thread_root is derived, never chosen: %v", ignored)
+	}
+	if got := post(f.room.ID, map[string]string{"body": "bad", "reply_to": "msg_missing"}, 400); got["error"] != "invalid_answer" {
+		t.Fatalf("missing parent: %v", got)
 	}
 	other := f.request("POST", "/api/projects/"+f.project.ID+"/rooms", map[string]string{"title": "other"}, true)
 	defer other.Body.Close()
@@ -335,8 +346,24 @@ func TestThreadRootValidation(t *testing.T) {
 	if err := json.NewDecoder(other.Body).Decode(&otherRoom); err != nil || other.StatusCode != 201 {
 		t.Fatalf("other room=%+v status=%d err=%v", otherRoom, other.StatusCode, err)
 	}
-	if got := post(otherRoom.ID, map[string]string{"body": "bad", "thread_root": root}, 400); got["error"] != "invalid_answer" {
-		t.Fatalf("cross-room root: %v", got)
+	if got := post(otherRoom.ID, map[string]string{"body": "bad", "reply_to": root}, 400); got["error"] != "invalid_answer" {
+		t.Fatalf("cross-room parent: %v", got)
+	}
+	// The conversation view opens from any of its messages, and holds the whole chain.
+	resp := f.request("GET", "/api/rooms/"+f.room.ID+"/messages?thread_root="+deeper["id"].(string), nil, false)
+	defer resp.Body.Close()
+	var page []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("conversation status=%d err=%v", resp.StatusCode, err)
+	}
+	var ids []string
+	for _, m := range page {
+		ids = append(ids, m.ID)
+	}
+	if got := strings.Join(ids, ","); !strings.Contains(got, threadOnly["id"].(string)) || !strings.Contains(got, deeper["id"].(string)) {
+		t.Fatalf("the conversation opened from a reply lacks the chain: %s", got)
 	}
 }
 

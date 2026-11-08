@@ -74,13 +74,8 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 		if lifecycle != "open" {
 			return "", ErrInvalidTransition
 		}
-		var threadRoot string
-		if askMessage.Valid {
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(thread_root,'') FROM message WHERE id=?`, askMessage.String).Scan(&threadRoot); err != nil {
-				return "", err
-			}
-		}
-		message, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "user", AuthorID: userID, Body: body, ReplyTo: askMessage.String, ThreadRoot: threadRoot, OnlyTargets: []string{requesterID}})
+		// The answer replies to the ask, so it joins the ask's conversation (its thread_root is derived from that).
+		message, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "user", AuthorID: userID, Body: body, ReplyTo: askMessage.String, OnlyTargets: []string{requesterID}})
 		if err != nil {
 			return "", err
 		}

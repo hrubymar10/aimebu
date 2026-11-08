@@ -1334,13 +1334,17 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			root, rootErr := s.Store.MessageByID(r.Context(), rootID)
-			if rootErr != nil || root.RoomID != room.ID || root.ThreadRoot != "" {
+			if rootErr != nil || root.RoomID != room.ID {
 				if rootErr != nil && !errors.Is(rootErr, sql.ErrNoRows) {
 					fail(w, rootErr)
 				} else {
 					apiError(w, 404, "not_found", "thread root not found in room")
 				}
 				return
+			}
+			// Any message of a conversation opens the whole conversation: a reply names its first message as thread_root.
+			if root.ThreadRoot != "" {
+				rootID = root.ThreadRoot
 			}
 			switch {
 			case query.Has("after"):
@@ -1495,7 +1499,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body        string   `json:"body"`
 		ReplyTo     string   `json:"reply_to"`
-		ThreadRoot  string   `json:"thread_root"`
+		ThreadRoot  string   `json:"thread_root"` // read and ignored: the conversation follows reply_to
 		Attachments []string `json:"attachments"`
 	}
 	if !readJSON(w, r, &req) {
@@ -1505,10 +1509,15 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "invalid_answer", "invalid body")
 		return
 	}
+	// One concept, the reply: thread_root is derived from reply_to, so one in the body (an older client) is read and ignored.
 	if req.ReplyTo != "" {
 		parent, err := s.Store.MessageByID(r.Context(), req.ReplyTo)
 		if err != nil {
-			fail(w, err)
+			if errors.Is(err, sql.ErrNoRows) {
+				apiError(w, 400, "invalid_answer", "reply target not found")
+			} else {
+				fail(w, err)
+			}
 			return
 		}
 		if parent.RoomID != room.ID {
@@ -1516,22 +1525,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.ThreadRoot != "" {
-		root, err := s.Store.MessageByID(r.Context(), req.ThreadRoot)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				apiError(w, 400, "invalid_answer", "thread root not found")
-			} else {
-				fail(w, err)
-			}
-			return
-		}
-		if root.RoomID != room.ID || root.ThreadRoot != "" {
-			apiError(w, 400, "invalid_answer", "thread root must be a top-level message in this room")
-			return
-		}
-	}
-	m, err := s.Store.InsertMessage(r.Context(), store.Message{RoomID: room.ID, AuthorKind: "user", AuthorID: userID(r), Body: req.Body, ReplyTo: req.ReplyTo, ThreadRoot: req.ThreadRoot, AttachmentIDs: req.Attachments})
+	m, err := s.Store.InsertMessage(r.Context(), store.Message{RoomID: room.ID, AuthorKind: "user", AuthorID: userID(r), Body: req.Body, ReplyTo: req.ReplyTo, AttachmentIDs: req.Attachments})
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidAttachment) {
 			apiError(w, 400, "invalid_attachment", "invalid attachment")

@@ -1628,6 +1628,26 @@ CREATE INDEX usage_record_agent_time ON usage_record(agent_id, created_at);
 CREATE INDEX usage_record_room_time ON usage_record(room_id, created_at);
 CREATE INDEX usage_record_project_time ON usage_record(project_id, created_at);
 CREATE INDEX usage_record_turn ON usage_record(turn_id);
+`}, {98, `
+-- One concept, the reply. A writer chooses only reply_to; thread_root is the first message of the conversation, derived from the reply chain
+-- (see InsertMessage). Existing rows are brought in line once: a message that was only in a thread (thread_root without reply_to) becomes
+-- a reply to that thread's first message, and every reply gets the first message of its chain as its thread_root. A reply whose parent is
+-- in another room is not followed (a chain stops at a parent that has no in-room parent) and keeps what it had; unchanged rows are not rewritten.
+-- The depth limit of 10000 below only guards against a reply loop: a row deeper than that is not reached and keeps its old values.
+-- reply_to gets an index for walking chains (here and for the conversation view).
+CREATE INDEX message_reply_to ON message(reply_to) WHERE reply_to IS NOT NULL;
+UPDATE message SET reply_to=thread_root WHERE (reply_to IS NULL OR reply_to='') AND thread_root IS NOT NULL AND thread_root<>'';
+CREATE TEMP TABLE reply_root(id TEXT PRIMARY KEY, root TEXT NOT NULL) WITHOUT ROWID;
+WITH RECURSIVE chain(id, room_id, root, depth) AS (
+  SELECT m.id, m.room_id, p.id, 1 FROM message m JOIN message p ON p.id=m.reply_to AND p.room_id=m.room_id
+  WHERE NOT EXISTS (SELECT 1 FROM message g WHERE g.id=p.reply_to AND g.room_id=p.room_id)
+  UNION ALL
+  SELECT m.id, m.room_id, chain.root, chain.depth+1 FROM chain JOIN message m ON m.reply_to=chain.id AND m.room_id=chain.room_id
+  WHERE chain.depth < 10000
+)
+INSERT OR IGNORE INTO reply_root(id, root) SELECT id, root FROM chain;
+UPDATE message SET thread_root=(SELECT root FROM reply_root WHERE reply_root.id=message.id) WHERE id IN (SELECT id FROM reply_root) AND thread_root IS NOT (SELECT root FROM reply_root WHERE reply_root.id=message.id);
+DROP TABLE reply_root;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

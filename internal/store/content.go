@@ -420,6 +420,17 @@ func (s *Store) InsertMessage(ctx context.Context, message Message) (Message, er
 }
 
 func (tx *Tx) InsertMessage(message Message) (Message, error) {
+	// One concept, the reply: a writer chooses only reply_to, and thread_root is the first message of the conversation, derived from the reply
+	// chain (the parent's thread_root, or the parent itself when it starts one); one a caller passes in is dropped. The parent is looked up in
+	// the message's own room: a reply_to in another room, or missing, derives nothing, and every caller (the POST route, an answer's validation,
+	// an inbox answer, which uses the ask's own room) has already made sure the parent is in the room.
+	message.ThreadRoot = ""
+	if message.ReplyTo != "" {
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(NULLIF(thread_root,''),id) FROM message WHERE id=? AND room_id=?`, message.ReplyTo, message.RoomID).Scan(&message.ThreadRoot)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Message{}, err
+		}
+	}
 	targets, wake, guard, err := tx.resolveMessageTargets(message)
 	if err != nil {
 		return Message{}, err

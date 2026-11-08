@@ -1058,7 +1058,7 @@ async function main() {
       const answered = { room: marker(main), thread: marker(threadNode) };
       chat.updateAnswerControls([]);
       const stillOnce = marker(main).length;
-      chat.rows = []; chat.listUpdate(); chat.messages.delete(record.id); chat.store.add(record);
+      chat.rows = []; chat.store.rowIDs.clear(); chat.listUpdate(); chat.messages.delete(record.id); chat.store.add(record);
       const redrawn = marker(main).length;
       chat.updateAnswerControls([{ ...item, rev: 2 }]);
       const reopened = { controls: !!roomControlsOf(), marker: marker(main).length };
@@ -2046,8 +2046,9 @@ async function main() {
     await first.waitForFunction(() => document.querySelectorAll('.thread-entry').length === 2);
     await second.waitForFunction(() => [...document.querySelectorAll('.thread-entry .chat-msg-body')].some(el => el.textContent === 'Thread reply'));
     await reachRow(first, '.chat-msg:first-child'); await reachRow(second, '.chat-msg:first-child');
-    assert.equal(await first.$eval('.chat-msg:first-child .thread-action', el => el.title), 'Thread · 1');
-    assert.equal(await second.$eval('.chat-msg:first-child .thread-action', el => el.title), 'Thread · 1');
+    // The count is the whole conversation: the earlier room reply ("Reply body") and this panel reply both answer the root.
+    assert.equal(await first.$eval('.chat-msg:first-child .thread-action', el => el.title), 'Thread · 2');
+    assert.equal(await second.$eval('.chat-msg:first-child .thread-action', el => el.title), 'Thread · 2');
     await domClick(first, '#close-thread'); await second.click('#close-thread');
     await first.locator('#composer textarea').fill('Unsent draft');
     const before = await first.$('.chat-msg[data-message-id="' + id + '"]');
@@ -2299,13 +2300,18 @@ async function main() {
     assert.equal(await first.$eval('article.chat-msg:last-of-type .chat-msg-body h2', el => el.textContent), 'Heading');
     ctx.setJumpSeq(String(await first.evaluate(async id => { const messages = await (await fetch(`/api/rooms/${id}/messages`)).json(); return messages.find(item => item.body === 'Thread reply').no; }, roomID)));
     await domClick(first, '#room-jump');
+    // A reply is a row of the room, so a jump to it lands on that row and leaves the panel closed; the row's thread button opens its conversation.
+    const replyID = await first.waitForFunction(() => [...document.querySelectorAll('#messages .chat-msg')].find(el => el.querySelector('.chat-msg-body')?.textContent === 'Thread reply')?.dataset.messageId, { timeout: 10000 }).then(handle => handle.jsonValue());
+    assert.equal(await first.$eval('#thread-panel', el => el.hidden), true, 'a jump to a reply does not open the panel');
+    await reachRow(first, `.chat-msg[data-message-id="${replyID}"]`);
+    await domClick(first, `.chat-msg[data-message-id="${replyID}"] .thread-action`);
     await first.waitForFunction(() => !document.querySelector('#thread-panel').hidden && [...document.querySelectorAll('.thread-entry .chat-msg-body')].some(el => el.textContent === 'Thread reply'));
     // A long unbroken word and a long sentence must wrap inside the panel, not run past it.
     await first.evaluate(async id => {
       const csrf = (await (await fetch('/api/me')).json()).csrf_token;
       const messages = await (await fetch(`/api/rooms/${id}/messages`)).json();
       const reply = messages.find(message => message.body === 'Thread reply');
-      const response = await fetch(`/api/rooms/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ body: `Long word: ${'x'.repeat(240)} and a long sentence ${'that keeps going '.repeat(14)}`, thread_root: reply.thread_root || reply.id }) });
+      const response = await fetch(`/api/rooms/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ body: `Long word: ${'x'.repeat(240)} and a long sentence ${'that keeps going '.repeat(14)}`, reply_to: reply.id }) });
       if (!response.ok) throw new Error(`long reply: ${response.status}`);
     }, roomID);
     await first.waitForFunction(() => [...document.querySelectorAll('#thread-messages .chat-msg-body')].some(el => el.textContent.startsWith('Long word: ')));
@@ -7646,15 +7652,15 @@ async function main() {
       await appReady(olderPage);
       await olderPage.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
       await olderPage.$eval(`[data-room-id="${threadRoom}"] .room-item-name`, el => el.click());
-      // The room list shows the latest 100 messages, all of them replies (not rendered there); the root is on the older page.
+      // The room list shows the latest 100 messages, all of them replies (a reply's quote stub repeats the root's text, so rows are found by body); the root is on the older page.
       await waitDump(olderPage, 'Older thread room opens', () => document.querySelector('#messages').dataset.hasOlder === 'true' && document.querySelector('#room-title')?.textContent === 'Older thread', () => ({
         hash: decodeURIComponent(location.hash), title: document.querySelector('#room-title')?.textContent, hasOlder: document.querySelector('#messages').dataset.hasOlder, messages: document.querySelectorAll('#messages .chat-msg').length,
         active: [...document.querySelectorAll('.room-item.active')].map(row => row.textContent.trim().slice(0, 40)), rows: [...document.querySelectorAll('[data-room-id] .room-item-name')].map(row => row.textContent.trim().slice(0, 30)),
         connection: document.querySelector('#connection')?.getAttribute('aria-label'), error: document.querySelector('#chat-error')?.textContent, busy: document.querySelector('#app-view')?.getAttribute('aria-busy'),
       }));
       await olderPage.$eval('#messages', el => { el.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); el.scrollTop = 0; });
-      await olderPage.waitForFunction(() => [...document.querySelectorAll('#messages .chat-msg')].some(el => el.textContent.includes('Thread root for older replies')));
-      await olderPage.evaluate(() => { const row = [...document.querySelectorAll('#messages .chat-msg')].find(el => el.textContent.includes('Thread root for older replies')); row.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); row.querySelector('.thread-action').click(); });
+      await olderPage.waitForFunction(() => [...document.querySelectorAll('#messages .chat-msg')].some(el => el.querySelector('.chat-msg-body')?.textContent === 'Thread root for older replies'));
+      await olderPage.evaluate(() => { const row = [...document.querySelectorAll('#messages .chat-msg')].find(el => el.querySelector('.chat-msg-body')?.textContent === 'Thread root for older replies'); row.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); row.querySelector('.thread-action').click(); });
       await waitDump(olderPage, 'older thread opens with 101 entries', () => document.querySelectorAll('#thread-messages .thread-entry').length === 101 && document.querySelector('#thread-messages').dataset.hasOlder === 'true', () => {
         const list = document.querySelector('#thread-messages');
         return { entries: list.querySelectorAll('.thread-entry').length, hasOlder: list.dataset.hasOlder, scrollTop: Math.round(list.scrollTop), scrollHeight: list.scrollHeight, clientHeight: list.clientHeight, olderStatusHidden: document.querySelector('.thread-older-status, #thread-older-status')?.hidden, error: document.querySelector('#thread-error')?.textContent, panelHidden: document.querySelector('#thread-panel').hidden, title: document.querySelector('#thread-panel h2')?.textContent, rootsInRoom: document.querySelectorAll('#messages .chat-msg').length };
@@ -8402,7 +8408,8 @@ with con:
     await new Promise(resolve => setTimeout(resolve, 500));
     assert.equal(await perfUnread(), 3, `reselecting the room marked read past the window's newest top-level row (#${windowEnd.seq})`);
     await perfPage.evaluate(() => [...document.querySelectorAll('.room-item-name')].find(el => el.textContent.includes('Perf history')).click());
-    await perfPage.waitForFunction(() => document.querySelector('#messages > article.chat-msg:last-of-type')?.dataset.messageId === 'msg_perf_late_7');
+    // The seeded reply is a row of the room like any other, so with the latest page loaded it is the newest row.
+    await perfPage.waitForFunction(() => document.querySelector('#messages > article.chat-msg:last-of-type')?.dataset.messageId === 'msg_perf_late_8');
     for (let i = 0; i < 50 && await perfUnread() !== 0; i++) await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(await perfUnread(), 0, 'reopening the room did not mark it read');
     await perfContext.close();
@@ -8465,7 +8472,7 @@ with con:
     // 140 more arrivals at about 17 handler closures each would add some 2400 listeners; delegated rows add none.
     assert(liveAfter.jsEventListeners - liveBaseline.jsEventListeners < 100, `listeners grew with arrivals: ${liveBaseline.jsEventListeners} -> ${liveAfter.jsEventListeners}`);
     assert(liveAfter.nodes - liveBaseline.nodes < 2000, `DOM nodes grew with arrivals: ${liveBaseline.nodes} -> ${liveAfter.nodes}`);
-    // Replies to a root the cap already trimmed have no row to count them on: they are not kept, and the maps stay bounded.
+    // Replies are rows of the room: replies to a root the cap already trimmed are kept only as rows of their own (the root has no row), and the maps stay bounded.
     const trimmedRoot = await first.evaluate(async roomID => {
       const [root] = await (await fetch(`/api/rooms/${roomID}/messages?after=0&limit=1`)).json();
       const { csrf_token } = await (await fetch('/api/me')).json();
@@ -8482,14 +8489,15 @@ with con:
     livePosted = 201; await waitLiveLast();
     await new Promise(resolve => setTimeout(resolve, 500));
     const liveLateReplies = await liveStats();
-    const orphanReplies = await livePage.evaluate(id => ({ rendered: !!document.querySelector(`#messages > article[data-message-id="${id}"]`), kept: [...window.__chat.messages.values()].filter(message => message.thread_root === id).length, counted: window.__chat.threadCounts.has(id) || window.__chat.serverThreadCounts.has(id) }), trimmedRoot.id);
-    assert.deepEqual(orphanReplies, { rendered: false, kept: 0, counted: false }, 'replies to a trimmed root were kept with no row owning them');
+    const orphanReplies = await livePage.evaluate(id => { const kept = [...window.__chat.messages.values()].filter(message => message.thread_root === id); return { rendered: !!document.querySelector(`#messages > article[data-message-id="${id}"]`), kept: kept.length > 0 && kept.length <= 40, everyKeptHasRow: kept.every(message => document.querySelector(`#messages > article[data-message-id="${message.id}"]`)) }; }, trimmedRoot.id);
+    assert.deepEqual(orphanReplies, { rendered: false, kept: true, everyKeptHasRow: true }, 'replies to a trimmed root were kept with no row owning them');
     assert(liveLateReplies.rows <= 40, `the live end kept ${liveLateReplies.rows} rows past its cap of 40`);
     for (const [name, size] of Object.entries(liveLateReplies.maps)) assert(size <= 60, `the chat's ${name} map kept ${size} entries after replies to a trimmed root: ${JSON.stringify(liveLateReplies)}`);
     // Scrolling up re-fetches what the cap dropped, in order and without a gap.
     await livePage.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
     await waitDump(livePage, 'live cap older page', first => document.querySelector('#messages > article.chat-msg .chat-msg-body')?.textContent !== first, () => ({ first: document.querySelector('#messages > article.chat-msg .chat-msg-body')?.textContent }), liveLateReplies.first);
-    const liveOlder = await livePage.evaluate(() => [...document.querySelectorAll('#messages > article.chat-msg .chat-msg-body')].map(body => Number(body.textContent.replace('Live cap ', ''))));
+    // The late replies are rows too; the order check reads the numbered messages only.
+    const liveOlder = await livePage.evaluate(() => [...document.querySelectorAll('#messages > article.chat-msg .chat-msg-body')].map(body => body.textContent).filter(text => /^Live cap \d+$/.test(text)).map(text => Number(text.replace('Live cap ', ''))));
     assert(liveOlder[0] < Number(liveLateReplies.first.replace('Live cap ', '')) && liveOlder.every((n, i) => i === 0 || n === liveOlder[i - 1] + 1), `scrolling up after a live trim did not restore the dropped rows in order: ${liveOlder.join(',')}`);
     // Delegated row controls still work on a row that arrived live: copying the number and opening the thread from its chip.
     await livePage.evaluate(() => [...document.querySelectorAll('#messages > article.chat-msg')].find(row => row.querySelector('.thread-chip')).querySelector('.thread-chip').click());
@@ -8607,6 +8615,11 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     assert.equal(exported.at(-1), 'Held live after jump');
     jumpTarget = firstLargeSeq + 1000;
     await domClick(largePage, '#room-jump');
+    // A reply is a row of the room, so the jump shows it there (the room's window moves to it) and leaves the panel closed; its thread button opens the conversation around it.
+    const oldReplyID = await largePage.waitForFunction(() => [...document.querySelectorAll('#messages .chat-msg')].find(el => el.querySelector('.chat-msg-body')?.textContent.includes('Imported message 01000'))?.dataset.messageId, { timeout: 30000 }).then(handle => handle.jsonValue());
+    assert.equal(await largePage.$eval('#thread-panel', el => el.hidden), true, 'a jump to an old reply does not open the panel');
+    await reachRow(largePage, `.chat-msg[data-message-id="${oldReplyID}"]`);
+    await domClick(largePage, `.chat-msg[data-message-id="${oldReplyID}"] .thread-action`);
     await largePage.waitForFunction(() => [...document.querySelectorAll('#thread-messages .thread-entry')].some(item => item.textContent.includes('Imported message 01000')));
     const contextThread = await largePage.$$eval('#thread-messages .thread-entry .chat-msg-body', nodes => nodes.map(node => node.textContent));
     assert.equal(contextThread.length, 101, 'old-reply jump did not keep the thread bounded');
@@ -8628,11 +8641,16 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     assert(replySeqs.every((seq, index) => index === 0 || seq > replySeqs[index - 1]), 'older thread page arrived out of sequence');
     jumpTarget = firstLargeSeq;
     await domClick(largePage, '#room-jump');
-    await largePage.waitForFunction(() => document.querySelector('#messages')?.textContent.includes('Imported message 00000'));
-    await reachRow(largePage, '[data-message-id="msg_large_00000"]');
-    assert.equal(await largePage.$eval('[data-message-id="msg_large_00000"] .thread-action', node => node.title), 'Thread · 162', 'root count missed replies outside the context page');
+    // Replies are rows of the room and quote their parent, so the text alone does not say the root's row is there: wait for the row itself (the panel has an entry for it too).
+    await largePage.waitForFunction(() => document.querySelector('#messages > [data-message-id="msg_large_00000"]'));
+    await reachRow(largePage, '#messages > [data-message-id="msg_large_00000"]');
+    assert.equal(await largePage.$eval('#messages > [data-message-id="msg_large_00000"] .thread-action', node => node.title), 'Thread · 162', 'root count missed replies outside the context page');
     jumpTarget = firstLargeSeq + 1000;
     await domClick(largePage, '#room-jump');
+    // The jump lands on the reply's row in the room; its thread button opens the conversation around it.
+    const jumpedReplyID = await largePage.waitForFunction(() => [...document.querySelectorAll('#messages > .chat-msg')].find(el => el.querySelector('.chat-msg-body')?.textContent.includes('Imported message 01000'))?.dataset.messageId, { timeout: 30000 }).then(handle => handle.jsonValue());
+    await reachRow(largePage, `#messages > [data-message-id="${jumpedReplyID}"]`);
+    await domClick(largePage, `#messages > [data-message-id="${jumpedReplyID}"] .thread-action`);
     await largePage.waitForFunction(() => !document.querySelector('.thread-latest')?.hidden && document.querySelector('#thread-messages')?.textContent.includes('Imported message 01000'));
     await largePage.evaluate(roomID => {
       const previousFetch = window.fetch;
@@ -8665,9 +8683,9 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     assert.equal(await largePage.$eval('.thread-new', node => node.hidden), true, 'new reply marker remained after opening latest replies');
     jumpTarget = firstLargeSeq;
     await largePage.click('#room-jump');
-    await largePage.waitForFunction(() => document.querySelector('#messages')?.textContent.includes('Imported message 00000'));
-    await reachRow(largePage, '[data-message-id="msg_large_00000"]');
-    assert.equal(await largePage.$eval('[data-message-id="msg_large_00000"] .thread-action', node => node.title), 'Thread · 165', 'live replies did not update the full thread count');
+    await largePage.waitForFunction(() => document.querySelector('#messages > [data-message-id="msg_large_00000"]'));
+    await reachRow(largePage, '#messages > [data-message-id="msg_large_00000"]');
+    assert.equal(await largePage.$eval('#messages > [data-message-id="msg_large_00000"] .thread-action', node => node.title), 'Thread · 165', 'live replies did not update the full thread count');
     assert.equal(await largePage.$eval('.back-to-latest', element => element.hidden), false, 'old-message jump did not expose latest navigation');
     await domClick(largePage, '.back-to-latest');
     await largePage.waitForFunction(() => document.querySelector('#messages')?.textContent.includes('Held live after jump'));
@@ -8678,11 +8696,19 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     }, largeRoomID);
     assert(newestThreadReply?.no && newestThreadReply.body === 'Second live reply in old thread', 'latest thread reply was not selected deterministically');
     jumpTarget = newestThreadReply.no;
+    // A jump to a reply lands on its row in the room; the row's thread button opens the conversation around it.
+    const openJumpedReply = async body => {
+      const id = await largePage.waitForFunction(text => [...document.querySelectorAll('#messages > .chat-msg')].find(el => el.querySelector('.chat-msg-body')?.textContent === text)?.dataset.messageId, { timeout: 30000 }, body).then(handle => handle.jsonValue());
+      await reachRow(largePage, `#messages > [data-message-id="${id}"]`);
+      await domClick(largePage, `#messages > [data-message-id="${id}"] .thread-action`);
+    };
     await largePage.click('#room-jump');
+    await openJumpedReply(newestThreadReply.body);
     await largePage.waitForFunction(body => document.querySelector('#thread-messages')?.textContent.includes(body) && document.querySelector('.thread-latest')?.hidden, {}, newestThreadReply.body);
     assert.equal(await largePage.$eval('.thread-latest', node => node.hidden), true, 'jump to newest reply showed Latest replies');
     await largePage.evaluate(() => { window.__holdThreadProbe = true; window.__threadProbeResult = null; window.__releaseThreadProbe = null; });
     await largePage.click('#room-jump');
+    await openJumpedReply(newestThreadReply.body);
     await largePage.waitForFunction(() => typeof window.__releaseThreadProbe === 'function');
     assert.equal(await largePage.evaluate(() => window.__threadProbeResult), 0, 'held thread probe did not capture the latest window');
     assert.equal(await largePage.$eval('.thread-latest', node => node.hidden), false, 'Latest replies closed before probe completed');
@@ -8935,7 +8961,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
           if ((!options?.method || options.method === 'GET') && /^\/api\/rooms\/[^/]+\/messages\?limit=\d+$/.test(String(input))) {
             const messages = await response.clone().json();
             const old = new Date(Date.now() - 10 * 3600 * 1000).toISOString();
-            const roots = messages.filter(message => !message.thread_root); // thread replies are not in the main list
+            const roots = messages; // replies are rows of the room like any other
             // Three old AI messages (expired) and one old human message (always delivered, so never marked).
             roots.slice(0, 3).forEach(message => { message.created_at = old; message.author_kind = 'agent'; message.expirable = true; });
             if (roots[3]) { roots[3].created_at = old; roots[3].author_kind = 'user'; roots[3].expirable = false; }

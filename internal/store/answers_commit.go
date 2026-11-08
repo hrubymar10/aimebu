@@ -55,14 +55,42 @@ func (tx *Tx) insertOutbox(turn answerTurn, input AnswerInput, index int, item a
 	}
 	_, err = tx.Exec(`INSERT INTO outbox(id,turn_id,answer_rev,idx,agent_id,room_id,body,reply_to,thread_root,ask_json,attachments_json,visual_plan_json,appendix_pages_json,digest,state,held_reason,dedupe_key,needs_attention,proposed_answers_json,open_questions_json)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, turn.id, input.AnswerRev, index, turn.agentID, roomID, item.Body,
-		nullable(item.ReplyTo), nullable(item.ThreadRoot), ask, attachments, nullablePlan(item.VisualPlan, visualPlan), nullablePlan(item.AppendixPages, appendixPages), input.Digest, state,
+		nullable(item.ReplyTo), nil, ask, attachments, nullablePlan(item.VisualPlan, visualPlan), nullablePlan(item.AppendixPages, appendixPages), input.Digest, state,
 		nullable(heldReason), fmt.Sprintf("%s:%d:%d", turn.id, input.AnswerRev, index), item.NeedsAttention,
 		nullableList(item.ProposedAnswers, proposed), nullableList(item.OpenQuestions, questions))
 	return id, err
 }
 
+// defaultReplyTarget is the one message an answer that names no reply_to is plainly about: the turn was woken by exactly one note, from a person
+// writing in the room, and the answer is a single plain message back to that room. It returns "" in every other case, because a guess is worse than
+// no link: a turn that carries several notes, a message to another room (alone or beside one to this room), an ask or a handoff, or a second message could each be about anything.
+func (tx *Tx) defaultReplyTarget(turn answerTurn, input AnswerInput) (string, error) {
+	if turn.mode != "normal" || input.Parsed == nil {
+		return "", nil
+	}
+	if len(input.Parsed.Messages) != 1 || input.Parsed.Messages[0].Room != turn.roomID {
+		return "", nil
+	}
+	var notes int
+	var messageID, authorKind, roomID string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*),COALESCE(MIN(m.id),''),COALESCE(MIN(m.author_kind),''),COALESCE(MIN(m.room_id),'') FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=?`, turn.id).
+		Scan(&notes, &messageID, &authorKind, &roomID)
+	if err != nil || notes != 1 || authorKind != "user" || roomID != turn.roomID {
+		return "", err
+	}
+	return messageID, nil
+}
+
 func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *AnswerReceipt) error {
+	defaultTo, err := tx.defaultReplyTarget(turn, input)
+	if err != nil {
+		return err
+	}
 	for index, item := range input.Parsed.Messages {
+		defaulted := defaultTo != "" && item.Room == turn.roomID && item.ReplyTo == "" && item.Ask == nil && !item.Handoff
+		if defaulted {
+			item.ReplyTo = defaultTo
+		}
 		outID, err := tx.insertOutbox(turn, input, index, item, "proposed", "")
 		if err != nil {
 			return err
@@ -82,13 +110,18 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 			askJSON = string(data)
 		}
 		message, err := tx.InsertMessage(Message{RoomID: item.Room, AuthorKind: "agent", AuthorID: turn.agentID,
-			Body: item.Body, ReplyTo: item.ReplyTo, ThreadRoot: item.ThreadRoot, AskJSON: askJSON, SourceOutID: outID, Handoff: item.Handoff,
+			Body: item.Body, ReplyTo: item.ReplyTo, AskJSON: askJSON, SourceOutID: outID, Handoff: item.Handoff,
 			NeedsAttention: item.NeedsAttention, ProposedAnswersJSON: jsonList(item.ProposedAnswers), OpenQuestionsJSON: jsonList(item.OpenQuestions),
 			VisualPlanJSON: rawList(item.VisualPlan), AppendixPagesJSON: rawList(item.AppendixPages)})
 		if err != nil {
 			return err
 		}
 		receipt.MessageIDs = append(receipt.MessageIDs, message.ID)
+		if defaulted {
+			if err := tx.recordReplyDefault(turn, message); err != nil {
+				return err
+			}
+		}
 		members, err := tx.roomRecipients(item.Room)
 		if err != nil {
 			return err
@@ -177,7 +210,7 @@ func (tx *Tx) recordNonCommittedOutbox(turn answerTurn, input AnswerInput, recei
 	for index, item := range input.Parsed.Messages {
 		// Invalid references remain in the raw candidate on the receipt;
 		// nullable outbox foreign keys cannot point at missing messages.
-		item.ReplyTo, item.ThreadRoot = "", ""
+		item.ReplyTo = ""
 		if _, err := tx.insertOutbox(turn, input, index, item, "proposed", ""); err != nil {
 			return err
 		}
@@ -232,5 +265,16 @@ func (tx *Tx) insertAnswerInbox(turn answerTurn, message Message, kind string, p
 	}
 	_, err = tx.AppendEvent(Event{Kind: "inbox_item_created", ProjectID: projectID, RoomID: message.RoomID, AgentID: turn.agentID, TurnID: turn.id,
 		PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "message_id": message.ID})})
+	return err
+}
+
+// recordReplyDefault notes in the turn's events that the server, not the agent, chose this message's reply_to.
+func (tx *Tx) recordReplyDefault(turn answerTurn, message Message) error {
+	var projectID string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, turn.agentID).Scan(&projectID); err != nil {
+		return err
+	}
+	_, err := tx.AppendEvent(Event{Kind: "reply_defaulted", ProjectID: projectID, RoomID: message.RoomID, AgentID: turn.agentID, TurnID: turn.id,
+		PayloadJSON: payloadJSON(map[string]string{"message_id": message.ID, "reply_to": message.ReplyTo})})
 	return err
 }

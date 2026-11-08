@@ -113,7 +113,7 @@ func TestTurnPromptSeparatesInboxAskFromAttention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"reply_to":null,"thread_root":null,"attachments":null`, `"needs_attention":false,"proposed_answers":null,"open_questions":null`, "Never combine ask with human attention controls.", "call the aimebu attachment_get tool", `"turn_id":"prompt"`} {
+	for _, want := range []string{`"reply_to":null,"attachments":null`, `"needs_attention":false,"proposed_answers":null,"open_questions":null`, "Never combine ask with human attention controls.", "call the aimebu attachment_get tool", `"turn_id":"prompt"`} {
 		if !strings.Contains(string(prompt), want) {
 			t.Fatalf("missing prompt guidance %q", want)
 		}

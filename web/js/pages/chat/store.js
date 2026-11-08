@@ -12,7 +12,7 @@ export class ChatStore {
     this.threadGeneration = 0; this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadPageSize = 100; this.threadOlderPageSize = 50;
     this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map(); this.prefetched = null;
     this.pendingAttachments = []; this.pendingUploads = 0; this.uploadRequests = new Set(); this.threadPending = []; this.threadUploads = 0;
-    this.rows = []; this.quotes = new Map(); this.rowBatching = false; this.rowPending = []; this.expiry = { expired: new Set(), divider: null }; this.expiryQueued = false;
+    this.rows = []; this.rowIDs = new Set(); this.quotes = new Map(); this.rowBatching = false; this.rowPending = []; this.expiry = { expired: new Set(), divider: null }; this.expiryQueued = false;
     this.threadEntries = []; this.threadEntryIDs = new Set(); this.threadBatching = false; this.threadNewReplyIDs = new Set(); this.answerItems = new Map();
     this.clearRoom();
   }
@@ -20,7 +20,7 @@ export class ChatStore {
   clearRoom() {
     // repliedTo: parent id -> the ids of the people who replied to it.
     this.answeredMessages = new Set(); this.repliedTo = new Map(); this.messages = new Map(); this.historicalAuthors = new Set(); this.reactions = new Map();
-    this.threadCounts = new Map(); this.serverThreadCounts = new Map(); this.missedIDs = new Set(); this.announcedIDs = null;
+    this.threadCounts = new Map(); this.counted = new Set(); this.serverThreadCounts = new Map(); this.missedIDs = new Set(); this.announcedIDs = null;
     this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.loadingNewer = false; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0;
   }
 
@@ -76,7 +76,8 @@ export class ChatStore {
       if (generation !== this.openGeneration) return;
       for (const message of messages) {
         const route = liveRoute(message, { hasMoreOlder: this.hasMoreOlder, oldestSeq: this.oldestSeq, contextMode: this.contextMode, known: this.messages.has(message.id), missed: this.missedIDs.has(message.id), ...this.threadState(message) });
-        if (route === 'new-reply') this.markNewThreadReply(message);
+        if (route === 'new-reply') { this.markNewThreadReply(message); if (!this.contextMode) this.add(message); }
+        else if (route === 'panel') this.add(message, false, false, true);
         else if (route === 'add') { const known = this.messages.has(message.id); this.add(message); if (!known && !quiet && liveArrival(message, this) && !this.announcedIDs?.has(message.id)) this.host.announce(message); }
         else if (route === 'missed') {
           this.missedIDs.add(message.id); this.host.updateLatestLabel();
@@ -194,7 +195,8 @@ export class ChatStore {
     const jump = ++this.jumpGeneration;
     let message = this.messages.get(key);
     try {
-      if (!message) {
+      // A message the panel loaded on its own has no row (it may be outside the window): it is looked up like one not loaded.
+      if (!message || !this.rowIDs.has(message.id)) {
         const messages = await request(`/api/rooms/${roomID}/messages?around=${encodeURIComponent(key)}&limit=${this.pageSize}`);
         if (generation !== this.openGeneration || jump !== this.jumpGeneration) return;
         message = messages.find(item => item.id === key);
@@ -204,24 +206,14 @@ export class ChatStore {
         this.hasMoreOlder = false; this.loadingOlder = false; this.loadingNewer = false; this.catchingUp = false; this.oldestSeq = 0;
         this.closeThread(); this.clearRows();
         this.host.beginWindow();
-        this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear();
+        this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.counted.clear(); this.serverThreadCounts.clear();
         this.batchRows(() => { for (const item of messages) this.add(item); });
         this.host.windowDrawn();
         this.oldestSeq = messages[0]?.seq || 0; this.hasMoreOlder = messages.length === this.pageSize;
         this.host.showWindow();
         this.contextMode = true; this.host.showLatestButton(true); this.windowSeq = messages.at(-1)?.seq || 0;
       }
-      if (message.thread_root) {
-        let root = this.messages.get(message.thread_root);
-        if (!root) {
-          const roots = await request(`/api/rooms/${roomID}/messages?around=${encodeURIComponent(message.thread_root)}&limit=1`);
-          if (generation !== this.openGeneration || jump !== this.jumpGeneration) return;
-          root = roots.find(item => item.id === message.thread_root);
-        }
-        if (root) await this.openThread(root, message);
-        if (generation !== this.openGeneration || jump !== this.jumpGeneration) return;
-        this.host.showReply(message);
-      } else this.host.showRow(message);
+      this.host.showRow(message);
       this.host.say('');
     } catch (error) { if (generation === this.openGeneration && jump === this.jumpGeneration) this.host.say(error.message); }
   }
@@ -266,7 +258,7 @@ export class ChatStore {
     this.host.listUpdate();
   }
 
-  clearRows() { this.rows = []; this.quotes.clear(); this.expiry = { expired: new Set(), divider: null }; this.host.listUpdate(); }
+  clearRows() { this.rows = []; this.rowIDs.clear(); this.quotes.clear(); this.expiry = { expired: new Set(), divider: null }; this.host.listUpdate(); }
 
   batchRows(fill, restore) {
     this.rowBatching = true; this.rowPending = [];
@@ -283,37 +275,42 @@ export class ChatStore {
     for (const author of this.repliedTo.get(message.id) || []) if (author !== message.author_id) return true;
     return false;
   }
-  add(message, prepend = false, paged = false) {
+  // Every message is a row of the room, replies included (a reply shows its quote). A message that belongs to a conversation also counts on its root and goes to the open
+  // panel; `panelOnly` is for what the panel loads itself, which may lie outside the window the room shows and so gets no row.
+  add(message, prepend = false, paged = false, panelOnly = false) {
     if (Number.isInteger(message.thread_count)) {
       const rootID = message.thread_root || message.id;
       this.serverThreadCounts.set(rootID, Math.max(this.serverThreadCounts.get(rootID) || 0, message.thread_count));
       this.updateThreadCount(rootID);
     }
-    if (this.messages.has(message.id)) return;
-    this.noteAuthor(message);
-    this.messages.set(message.id, message);
-    // A person replying to a question is its answer, for the history block under that question (the next update draws it). Who replied is kept, and
-    // whether it counts is decided when the message is drawn (repliedByOther): the question's own author talking to themselves answers nothing, and that
-    // must not depend on whether the reply or its parent was loaded first.
-    if (message.reply_to && message.author_kind === 'user') {
-      if (!this.repliedTo.has(message.reply_to)) this.repliedTo.set(message.reply_to, new Set());
-      this.repliedTo.get(message.reply_to).add(message.author_id);
+    if (!this.messages.has(message.id)) {
+      this.noteAuthor(message);
+      this.messages.set(message.id, message);
+      // A person replying to a question is its answer, for the history block under that question (the next update draws it). Who replied is kept, and
+      // whether it counts is decided when the message is drawn (repliedByOther): the question's own author talking to themselves answers nothing, and that
+      // must not depend on whether the reply or its parent was loaded first.
+      if (message.reply_to && message.author_kind === 'user') {
+        if (!this.repliedTo.has(message.reply_to)) this.repliedTo.set(message.reply_to, new Set());
+        this.repliedTo.get(message.reply_to).add(message.author_id);
+      }
+      if (this.missedIDs.delete(message.id)) this.host.updateLatestLabel();
+      if (message.thread_root && !this.counted.has(message.id)) {
+        this.counted.add(message.id);
+        const count = (this.threadCounts.get(message.thread_root) || 0) + 1;
+        this.threadCounts.set(message.thread_root, count);
+        this.updateThreadCount(message.thread_root);
+        // The thread panel pages and refreshes itself; a forward page of the main list could land outside the replies it shows.
+        if (this.host.threadRoot?.id === message.thread_root && !paged) this.insertThreadEntry(message);
+      }
+      if (message.reply_to) this.quotes.set(message.id, this.quoteFor(message));
     }
-    if (this.missedIDs.delete(message.id)) this.host.updateLatestLabel();
-    if (message.thread_root) {
-      const count = (this.threadCounts.get(message.thread_root) || 0) + 1;
-      this.threadCounts.set(message.thread_root, count);
-      this.updateThreadCount(message.thread_root);
-      // The thread panel pages and refreshes itself; a forward page of the main list could land outside the replies it shows.
-      if (this.host.threadRoot?.id === message.thread_root && !paged) this.insertThreadEntry(message);
-      return;
-    }
+    if ((message.thread_root && panelOnly) || this.rowIDs.has(message.id)) return;
+    this.rowIDs.add(message.id);
     const quiet = prepend || paged || this.rowBatching;
     const place = quiet ? null : this.host.listPlace();
     this.host.noteRow(message);
     if (Array.isArray(message.reactions)) this.reactions.set(message.id, message.reactions);
     if (answerEligible(this.answerItems.get(message.id))) this.answeredMessages.delete(message.id);
-    if (message.reply_to) this.quotes.set(message.id, this.quoteFor(message));
     this.rows = prepend ? [message, ...this.rows] : [...this.rows, message];
     if (this.rowBatching) { if (!Array.isArray(message.reactions)) this.rowPending.push(message.id); }
     else {
@@ -409,7 +406,7 @@ export class ChatStore {
   releaseThread() {
     const id = this.host.threadRoot?.id;
     if (!id || this.host.nodes.has(id)) return;
-    for (const [key, message] of this.messages) if (message.thread_root === id) this.messages.delete(key);
+    for (const [key, message] of this.messages) if (message.thread_root === id && !this.rowIDs.has(key)) { this.messages.delete(key); this.counted.delete(key); }
     this.threadCounts.delete(id); this.serverThreadCounts.delete(id);
   }
 
@@ -468,10 +465,10 @@ export class ChatStore {
   dropRows(ids) {
     const gone = new Set(), open = this.host.threadRoot?.id;
     for (const id of ids) {
-      this.messages.delete(id); this.reactions.delete(id); gone.add(id);
+      this.messages.delete(id); this.reactions.delete(id); this.rowIDs.delete(id); gone.add(id);
       if (id !== open) { this.threadCounts.delete(id); this.serverThreadCounts.delete(id); }
     }
-    for (const [id, message] of this.messages) if (message.thread_root && message.thread_root !== open && gone.has(message.thread_root)) this.messages.delete(id);
+    for (const [id, message] of this.messages) if (message.thread_root && message.thread_root !== open && gone.has(message.thread_root) && !this.rowIDs.has(id)) { this.messages.delete(id); this.counted.delete(id); }
     this.rows = this.rows.filter(message => !gone.has(message.id));
     for (const id of gone) this.quotes.delete(id);
     this.host.listUpdate();
@@ -510,6 +507,21 @@ export class ChatStore {
     return true;
   }
 
+  // The conversation a message belongs to, in the panel: a reply opens its root's conversation, with itself in view.
+  async openConversation(message) {
+    if (!message.thread_root) return this.openThread(message);
+    let root = this.messages.get(message.thread_root);
+    if (!root) {
+      const roomID = this.host.room?.id, thread = this.threadGeneration;
+      try {
+        const roots = await request(`/api/rooms/${roomID}/messages?around=${encodeURIComponent(message.thread_root)}&limit=1`);
+        if (thread !== this.threadGeneration) return;
+        root = roots.find(item => item.id === message.thread_root);
+      } catch (error) { this.host.say(error.message); return; }
+    }
+    if (root) await this.openThread(root, message);
+  }
+
   async openThread(root, focus = null) {
     if (!this.alive) return;
     const roomID = this.host.room?.id, thread = ++this.threadGeneration;
@@ -523,7 +535,7 @@ export class ChatStore {
       const context = focus ? `&around=${encodeURIComponent(focus.id)}` : '';
       const page = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(root.id)}${context}&limit=${this.threadPageSize}`);
       if (thread !== this.threadGeneration) return;
-      this.batchThreadEntries(() => { for (const message of page) { this.threadNewReplyIDs.delete(message.id); this.add(message); this.insertThreadEntry(message); } });
+      this.batchThreadEntries(() => { for (const message of page) { this.threadNewReplyIDs.delete(message.id); this.add(message, false, false, true); this.insertThreadEntry(message); } });
       this.host.updateThreadNewMarker();
       this.threadOldestSeq = page[0]?.seq || 0;
       this.threadHasMoreOlder = page.length === this.threadPageSize;
@@ -547,7 +559,7 @@ export class ChatStore {
       if (page.length) this.threadOldestSeq = page[0].seq;
       this.threadHasMoreOlder = page.length === this.threadOlderPageSize;
       const place = this.host.holdThreadPlace();
-      this.batchThreadEntries(() => { for (const message of page) { this.add(message); this.insertThreadEntry(message); } }, place);
+      this.batchThreadEntries(() => { for (const message of page) { this.add(message, false, false, true); this.insertThreadEntry(message); } }, place);
     } catch (error) {
       if (thread === this.threadGeneration) this.host.threadError(error.message);
     } finally {
@@ -560,12 +572,13 @@ export class ChatStore {
     const room = this.host.room.id, root = this.host.threadRoot.id, body = this.host.threadDraft.value, generation = this.openGeneration, attachments = this.threadPending.map(item => item.id);
     this.host.beginThreadSend();
     try {
-      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, thread_root: root, reply_to: root, ...(attachments.length ? { attachments } : {}) } });
+      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, reply_to: this.host.threadReply?.id || root, ...(attachments.length ? { attachments } : {}) } });
       if (generation === this.openGeneration && this.host.threadRoot?.id === root) {
         this.threadPending = []; this.host.renderThreadPending();
         this.host.sentThreadReply();
         const atEnd = this.host.threadLatestHidden();
-        if (atEnd) this.add(message); else this.markNewThreadReply(message);
+        if (atEnd) this.add(message, false, false, this.contextMode);
+        else { this.markNewThreadReply(message); if (!this.contextMode) this.add(message); }
         if (atEnd) this.host.threadToEnd();
       }
     } catch (error) { if (generation === this.openGeneration) this.host.threadSendFailed(error.message); }

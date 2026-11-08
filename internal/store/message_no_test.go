@@ -88,11 +88,11 @@ func TestMessageByNoAndReferenceResolution(t *testing.T) {
 		}
 	}
 	// An agent's answer may name the message it replies to by number; the reference becomes the id.
-	messages := []answer.Message{{ReplyTo: "#1"}, {ThreadRoot: "1"}, {ReplyTo: first.ID}, {ReplyTo: "#42"}}
+	messages := []answer.Message{{ReplyTo: "#1"}, {ReplyTo: first.ID}, {ReplyTo: "#42"}}
 	if err := s.Tx(ctx, func(tx *Tx) error { return tx.resolveMessageRefs(messages) }); err != nil {
 		t.Fatal(err)
 	}
-	if messages[0].ReplyTo != first.ID || messages[1].ThreadRoot != first.ID || messages[2].ReplyTo != first.ID || messages[3].ReplyTo != "#42" {
+	if messages[0].ReplyTo != first.ID || messages[1].ReplyTo != first.ID || messages[2].ReplyTo != "#42" {
 		t.Fatalf("resolved references: %+v", messages)
 	}
 }

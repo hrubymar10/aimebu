@@ -50,7 +50,7 @@ func (s *Store) ResolveMessageRef(ctx context.Context, ref string) (string, erro
 // before the answer is validated and committed. The receipt digest is taken from the answer as the agent sent it, so a replay still matches.
 func (tx *Tx) resolveMessageRefs(messages []answer.Message) error {
 	for i := range messages {
-		for _, ref := range []*string{&messages[i].ReplyTo, &messages[i].ThreadRoot} {
+		for _, ref := range []*string{&messages[i].ReplyTo} {
 			no, ok := messageNoRef(*ref)
 			if !ok {
 				continue

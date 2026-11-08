@@ -68,7 +68,7 @@ export class MessageDebug {
     const list = this.context?.messages?.() || [], index = list.findIndex(item => item.id === this.current?.id);
     this.position.textContent = index >= 0 ? `${index + 1} / ${list.length}` : '';
     this.prev.disabled = index <= 0; this.next.disabled = index < 0 || index >= list.length - 1;
-    this.threadButton.hidden = !this.context?.thread || !!this.current?.thread_root;
+    this.threadButton.hidden = !this.context?.thread;
   }
 
   async open(message) {

@@ -175,6 +175,20 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 			}
 		}
 	}
+	// A person's reply anywhere in a conversation also reaches the agent that started it, when that is not the author replied to: steering
+	// an agent's conversation through someone else's message still gets to that agent. Agents' replies never widen this way.
+	if message.AuthorKind == "user" && message.ThreadRoot != "" && message.ThreadRoot != message.ReplyTo {
+		var rootKind, rootAuthor string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT author_kind,author_id FROM message WHERE id=? AND room_id=?`, message.ThreadRoot, message.RoomID).Scan(&rootKind, &rootAuthor)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, nil, nil, err
+		}
+		if member, ok := byID[rootAuthor]; ok && rootKind == "agent" && member.kind == "agent" {
+			if _, already := targets[member.id]; !already {
+				add(member, "conversation")
+			}
+		}
+	}
 	if message.AuthorKind == "agent" || message.AuthorKind == "user" {
 		var kind string
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind FROM room WHERE id=?`, message.RoomID).Scan(&kind); err != nil {

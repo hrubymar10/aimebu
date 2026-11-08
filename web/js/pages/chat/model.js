@@ -30,18 +30,18 @@ export function groupReactions(entries, me) {
 
 export const articleClass = (message, me) => (message.author_kind === 'system' ? 'chat-msg chat-msg-system' : message.author_kind === 'user' && message.author_id === me ? 'chat-msg self' : 'chat-msg');
 
-export const liveArrival = (message, { initialLoading, contextMode }) => !initialLoading && !contextMode && !message.thread_root && message.author_kind !== 'system';
+export const liveArrival = (message, { initialLoading, contextMode }) => !initialLoading && !contextMode && message.author_kind !== 'system';
 
-// What a live refresh does with one message of a page: 'skip', 'new-reply', 'add' or 'missed' (counted on the Back to latest button of a history window).
+// What a live refresh does with one message of a page: 'skip', 'new-reply' (for the open panel, which is not at its end; the room still gets its row), 'panel'
+// (a reply counted and shown in the panel only, while the room shows a history window), 'add' or 'missed' (counted on the Back to latest button of a history window).
 export function liveRoute(message, state) {
   const { hasMoreOlder, oldestSeq, rootRendered, openThreadID, threadLatestHidden, threadEntryKnown, contextMode, known, missed } = state;
   // A row the live cap already dropped, returned by an overlapping refresh, would land out of order.
-  if (!message.thread_root && hasMoreOlder && message.seq < oldestSeq) return 'skip';
-  // A reply whose root is neither rendered nor open has no owner to count it on.
-  if (message.thread_root && !rootRendered && openThreadID !== message.thread_root) return 'skip';
-  if (message.thread_root === openThreadID && !threadLatestHidden && !threadEntryKnown) return 'new-reply';
-  if (!contextMode || (message.thread_root && (openThreadID === message.thread_root || rootRendered))) return 'add';
-  if (!message.thread_root && !known && !missed) return 'missed';
+  if (hasMoreOlder && message.seq < oldestSeq) return 'skip';
+  if (message.thread_root && message.thread_root === openThreadID && !threadLatestHidden && !threadEntryKnown) return 'new-reply';
+  if (!contextMode) return 'add';
+  if (message.thread_root && (openThreadID === message.thread_root || rootRendered)) return 'panel';
+  if (!known && !missed) return 'missed';
   return 'skip';
 }
 
@@ -74,7 +74,7 @@ export function answersThroughInbox(item, requester, body) {
 }
 
 export function recallCandidates(messages, me) {
-  const own = [...messages].filter(message => message.author_kind === 'user' && message.author_id === me && !message.thread_root).sort((a, b) => a.seq - b.seq);
+  const own = [...messages].filter(message => message.author_kind === 'user' && message.author_id === me).sort((a, b) => a.seq - b.seq);
   const out = [];
   for (const message of own) if (out.at(-1) !== message.body) out.push(message.body);
   return out.slice(-200);

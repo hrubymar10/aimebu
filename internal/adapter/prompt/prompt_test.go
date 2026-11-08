@@ -8,7 +8,7 @@ import (
 func TestBuildOrdersSharedSentencesAroundTheDeltas(t *testing.T) {
 	t.Parallel()
 	got := Build(Deltas{Opening: "OPEN.", Role: "ROLE.", Attachments: "ATT.", Output: "OUT.", Ack: "ACK.", Closing: "CLOSE."})
-	order := []string{"OPEN.", "Use context.you_are", "ROLE.", "Input note attachments are files; ATT.", "A note retry_notice", "OUT.", "Use either proposed_answers", "After spawning an agent", "ACK.", "A message from a human that is addressed to you", "A lead with a completed review", "CLOSE."}
+	order := []string{"OPEN.", "Use context.you_are", "ROLE.", "Input note attachments are files; ATT.", "A note retry_notice", "OUT.", "Use either proposed_answers", "After spawning an agent", "ACK.", "Toward people: don't narrate.", "A lead with a completed review", "CLOSE."}
 	last := -1
 	for _, part := range order {
 		at := strings.Index(got, part)
@@ -28,10 +28,28 @@ func TestBuildOrdersSharedSentencesAroundTheDeltas(t *testing.T) {
 func TestEveryPromptTellsAnAgentToAnswerHumans(t *testing.T) {
 	t.Parallel()
 	got := Build(Deltas{Opening: "O", Attachments: "A", Output: "U", Ack: "K", Closing: "C"})
-	for _, want := range []string{"always gets a reply, even a one-line one", "Silence and reaction-only rules apply to agent-to-agent traffic"} {
+	for _, want := range []string{"Toward people: don't narrate.", "When a person addresses you directly (mention, a reply to your message, a DM), always respond: answer if there is anything to say, otherwise react."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the shared prompt lost %q", want)
 		}
+	}
+}
+
+// An agent answering a message links its answer to it, is told what the note it got answers, and never drops a direct address.
+func TestPromptsAskForReplyLinksAndNoSilentDrop(t *testing.T) {
+	t.Parallel()
+	got := Build(Deltas{Opening: "O", Attachments: "A", Output: ReturnOneObject, Ack: "K", Closing: "C"})
+	for _, want := range []string{
+		"When your message answers a delivered message, set reply_to to its no; a reply joins that message's conversation.",
+		"in_reply_to shows the message it replies to and conversation the message its conversation started with",
+		"Never leave them without any sign you saw it.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the prompt lost %q", want)
+		}
+	}
+	if strings.Contains(ReturnOneObject, "Use reply_to") || strings.Contains(got, "thread_root") {
+		t.Fatalf("reply_to is listed among the optional fields again, or the prompt asks for thread_root: %s", got)
 	}
 }
 
@@ -53,7 +71,7 @@ func TestOverridesReplaceOnlyTheirSentenceAndFallBack(t *testing.T) {
 	if !strings.Contains(got, "MY MENTIONS") || strings.Contains(got, "After spawning an agent") {
 		t.Fatalf("the override replaces its sentence: %q", got)
 	}
-	for _, kept := range []string{"A lead with a completed review", "A message from a human that is addressed to you", "OUT", "K", "C"} {
+	for _, kept := range []string{"A lead with a completed review", "Toward people: don't narrate.", "OUT", "K", "C"} {
 		if !strings.Contains(got, kept) {
 			t.Errorf("%q must survive: an empty, blank or unknown override changes nothing", kept)
 		}

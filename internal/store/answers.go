@@ -257,7 +257,7 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 				return "invalid_answer", "ask has no authorized recipient", nil
 			}
 		}
-		for _, ref := range []string{item.ReplyTo, item.ThreadRoot} {
+		for _, ref := range []string{item.ReplyTo} {
 			if ref == "" {
 				continue
 			}
@@ -268,15 +268,6 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 			}
 			if err != nil {
 				return "", "", err
-			}
-		}
-		if item.ThreadRoot != "" {
-			var parent sql.NullString
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT thread_root FROM message WHERE id=?`, item.ThreadRoot).Scan(&parent); err != nil {
-				return "", "", err
-			}
-			if parent.Valid {
-				return "invalid_answer", fmt.Sprintf("message %d has a nested thread", i), nil
 			}
 		}
 		for _, attachment := range item.Attachments {

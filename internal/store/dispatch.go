@@ -152,20 +152,22 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.choice') FROM event WHERE turn_id=? AND kind='recovery_decision' ORDER BY seq DESC LIMIT 1`, special.ID).Scan(&choice); err != nil {
 					return err
 				}
-				rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.no,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,'') FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=? AND n.state='queued' ORDER BY m.seq`, special.ID)
+				rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.no,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,''),n.wake_reason FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=? AND n.state='queued' ORDER BY m.seq`, special.ID)
 				if err != nil {
 					return err
 				}
+				var specialReasons []string
 				for rows.Next() {
 					var note protocol.DeliveryNote
-					var planJSON, pagesJSON string
-					if err := rows.Scan(&note.NoteID, &note.MessageID, &note.No, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON); err != nil {
+					var planJSON, pagesJSON, wakeReason string
+					if err := rows.Scan(&note.NoteID, &note.MessageID, &note.No, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON, &wakeReason); err != nil {
 						rows.Close()
 						return err
 					}
 					originalBodies[note.MessageID] = note.Body
 					note.Body = deliveredNoteBody(note.Body, planJSON, pagesJSON)
 					specialNotes = append(specialNotes, note)
+					specialReasons = append(specialReasons, wakeReason)
 				}
 				err = rows.Err()
 				rows.Close()
@@ -173,6 +175,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 					return err
 				}
 				if err := tx.noteAttachments(specialNotes); err != nil {
+					return err
+				}
+				if err := tx.noteContext(agentID, specialNotes, specialReasons); err != nil {
 					return err
 				}
 				if choice == "resume" {
@@ -319,6 +324,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			return err
 		}
 		var notes []protocol.DeliveryNote
+		var reasons []string
 		var expiredNotes []expiredNote
 		originalBodies := map[string]string{}
 		agentTriggered, humanTriggered := false, false
@@ -348,6 +354,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				humanTriggered = true
 			}
 			notes = append(notes, note)
+			reasons = append(reasons, wakeReason)
 		}
 		err = rows.Err()
 		rows.Close()
@@ -355,6 +362,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			return err
 		}
 		if err := tx.noteAttachments(notes); err != nil {
+			return err
+		}
+		if err := tx.noteContext(agentID, notes, reasons); err != nil {
 			return err
 		}
 		if len(notes) == 0 {

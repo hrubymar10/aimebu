@@ -36,7 +36,7 @@ function installServer() {
     if (method === 'GET' && parts[1] === 'rooms' && parts[3] === 'messages') {
       const room = window.__data.rooms[parts[2]]; if (!room) return { status: 404, body: { message: 'no room' } };
       const thread = q.get('thread_root'), limit = Number(q.get('limit') || 200);
-      let list = room.messages.filter(message => thread ? message.thread_root === thread : !message.thread_root);
+      let list = room.messages.filter(message => thread ? message.thread_root === thread : true);
       if (q.get('after')) list = (thread ? list : room.messages).filter(message => message.seq > Number(q.get('after'))).slice(0, limit);
       else if (q.get('before')) list = list.filter(message => message.seq < Number(q.get('before'))).slice(-limit);
       else if (q.get('around')) {
@@ -48,7 +48,9 @@ function installServer() {
     }
     if (method === 'POST' && parts[1] === 'rooms' && parts[3] === 'messages') {
       const room = window.__data.rooms[parts[2]]; const seq = room.messages.length + 1;
-      const message = { id: `${parts[2]}_m${seq}`, seq, no: seq, room_id: parts[2], author_kind: 'user', author_id: 'usr_me', author_name: 'me', body: body.body, created_at: new Date().toISOString(), reply_to: body.reply_to || '', thread_root: body.thread_root || '' };
+      const message = { id: `${parts[2]}_m${seq}`, seq, no: seq, room_id: parts[2], author_kind: 'user', author_id: 'usr_me', author_name: 'me', body: body.body, created_at: new Date().toISOString(), reply_to: body.reply_to || '', thread_root: '' };
+      // as the server derives it: a reply belongs to its parent's conversation (the parent's root, or the parent itself)
+      const parent = body.reply_to && room.messages.find(item => item.id === body.reply_to); if (parent) message.thread_root = parent.thread_root || parent.id;
       room.messages.push(message); window.__posted.push(body);
       return ok(message);
     }
@@ -248,7 +250,7 @@ async function main() {
     await page.evaluate(() => { window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); }); await page.evaluate(() => window.__open); await settle(page);
     const place = () => page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_m50]'); return { top: Math.round(row.getBoundingClientRect().top), scrollTop: Math.round(document.querySelector('#messages').scrollTop), thread: window.__chat.threadRoot?.id || null, threadShown: !document.querySelector('#thread-panel').hidden, rows: document.querySelectorAll('#messages > article.chat-msg').length }; });
     const before = await place();
-    assert.deepEqual([before.thread, before.threadShown, before.rows], ['rm_a_m120', true, 130], 'scrolled up with every older page loaded and a thread open');
+    assert.deepEqual([before.thread, before.threadShown, before.rows], ['rm_a_m120', true, 132], 'scrolled up with every older page loaded and a thread open');
     await page.evaluate(() => {
       const list = window.__data.rooms.rm_a.messages;
       list.push({ id: 'rm_a_m134', seq: 133, no: 133, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'while the socket was down', created_at: '2026-01-10T12:05:00Z', reply_to: '', thread_root: '' });
@@ -259,7 +261,7 @@ async function main() {
     await page.evaluate(() => { window.__sync = window.__chat.syncInPlace(); }); await page.evaluate(() => window.__sync); await settle(page);
     const after = await place();
     assert.deepEqual([after.top, after.scrollTop, after.thread, after.threadShown], [before.top, before.scrollTop, 'rm_a_m120', true], 'the reader stays where they were, with the thread open');
-    assert.equal(after.rows, 131, 'the message that arrived meanwhile is on the list');
+    assert.equal(after.rows, 134, 'the messages that arrived meanwhile, replies included, are on the list');
     assert.equal(await page.evaluate(() => window.__chat.messages.has('rm_a_t3')), true, 'and the reply to the open thread is known');
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-message-id=rm_a_m60] .reaction-pill')].map(node => [node.textContent, node.title, node.getAttribute('aria-pressed'), node.dataset.emoji])), [['🎉 1', 'ann', 'false', '🎉']], 'a reaction that changed meanwhile is shown');
     assert.equal(await count(page, 'GET', 'rooms/rm_a/messages\\?limit='), opens, 'the room was not opened again');
@@ -482,7 +484,7 @@ async function main() {
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#thread-pending-attachments .attachment-pending-item')].map(node => node.textContent.trim())).then(list => list.length), 1, 'a file picked in the thread waits under it');
     assert.equal(await page.evaluate(() => document.querySelectorAll('#pending-attachments .attachment-pending-item').length), 0, 'and is not the room composer\'s');
     await page.evaluate(() => document.querySelector('#thread-composer').requestSubmit()); await settle(page);
-    assert.deepEqual((await page.evaluate(() => window.__posted)).at(-1), { body: '', thread_root: 'rm_a_m120', reply_to: 'rm_a_m120', attachments: ['att_1'] }, 'a reply of only a file is sent in the thread with it');
+    assert.deepEqual((await page.evaluate(() => window.__posted)).at(-1), { body: '', reply_to: 'rm_a_m120', attachments: ['att_1'] }, 'a reply of only a file is sent in the thread with it');
     assert.equal(await page.evaluate(() => document.querySelectorAll('#thread-pending-attachments .attachment-pending-item').length), 0, 'the strip empties');
     await page.evaluate(() => { window.__adding = window.__chat.store.addThreadFiles([new File(['y'], 'gone.txt', { type: 'text/plain' })]); }); await page.evaluate(() => window.__adding); await settle(page);
     await page.evaluate(() => window.__chat.closeThread()); await settle(page);
@@ -500,8 +502,16 @@ async function main() {
       return { sameRow: Math.abs(title.top + title.height / 2 - (head.top + head.height / 2)) <= 2, closeAtRightEdge: close.left >= title.right && thread.right - close.right >= 0 && thread.right - close.right <= 16, iconsBeforeThread: last <= thread.left + 1 }; }),
       { sameRow: true, closeAtRightEdge: true, iconsBeforeThread: true }, 'the thread header is in the room header row, with the close button after the title');
     await page.hover('#thread-messages .thread-entry[data-message-id=rm_a_t1] .chat-msg-bubble'); await settle(page); await new Promise(resolve => setTimeout(resolve, 500));
-    assert.deepEqual(await page.evaluate(() => { const bar = document.querySelector('#thread-messages [data-message-id=rm_a_t1] .message-actions'); return { shown: getComputedStyle(bar).opacity, labels: [...bar.querySelectorAll('button')].filter(b => !b.closest('[hidden]') && !b.classList.contains('message-actions-wake')).map(b => b.getAttribute('aria-label') || b.title) }; }).then(x => ({ shown: x.shown, hasReact: x.labels.some(l => /react/i.test(l)), hasCopy: x.labels.some(l => /copy/i.test(l)), noReply: !x.labels.some(l => /^reply/i.test(l)) && !x.labels.some(l => /thread/i.test(l)) })),
-      { shown: '1', hasReact: true, hasCopy: true, noReply: true }, 'a reply in the thread has the message toolbar (react, copy; no reply or thread button, it already is one)');
+    assert.deepEqual(await page.evaluate(() => { const bar = document.querySelector('#thread-messages [data-message-id=rm_a_t1] .message-actions'); return { shown: getComputedStyle(bar).opacity, labels: [...bar.querySelectorAll('button')].filter(b => !b.closest('[hidden]') && !b.classList.contains('message-actions-wake')).map(b => b.getAttribute('aria-label') || b.title) }; }).then(x => ({ shown: x.shown, hasReact: x.labels.some(l => /react/i.test(l)), hasCopy: x.labels.some(l => /copy/i.test(l)), hasReply: x.labels.some(l => /^reply to/i.test(l)), noThread: !x.labels.some(l => /thread/i.test(l)) })),
+      { shown: '1', hasReact: true, hasCopy: true, hasReply: true, noThread: true }, 'a reply in the thread has the message toolbar (react, reply, copy; no thread button, the panel is the thread)');
+    // Reply on a panel message picks what the next send answers (a chip names it); cancelling goes back to the root.
+    await page.$eval('#thread-messages [data-message-id=rm_a_t1] .message-reply', node => node.click()); await settle(page);
+    assert.deepEqual(await page.evaluate(() => ({ shown: !document.querySelector('#thread-reply-chip').hidden, text: document.querySelector('#thread-reply-jump').textContent })), { shown: true, text: 'Replying to me: reply bold text' }, 'the chip names the message the panel replies to');
+    await page.$eval('#cancel-thread-reply', node => node.click());
+    assert.equal(await page.evaluate(() => document.querySelector('#thread-reply-chip').hidden), true, 'cancelling drops the chip');
+    await page.$eval('#thread-messages [data-message-id=rm_a_t1] .message-reply', node => node.click());
+    await page.evaluate(() => { window.__chat.threadDraft.value = 'to the reply'; return window.__chat.sendThread(); }); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [window.__posted.at(-1), document.querySelector('#thread-reply-chip').hidden]), [{ body: 'to the reply', reply_to: 'rm_a_t1' }, true], 'a send from the panel answers the selected message (no thread_root is sent) and clears the chip');
     // F4: the time of a system line stays beside its text.
     assert.deepEqual(await page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_sys] .chat-msg-system-row'), body = row.firstElementChild, stamp = row.querySelector('.chat-msg-time'); const b = body.getBoundingClientRect(), s = stamp.getBoundingClientRect(); return { sideBySide: s.left >= b.right - 1 && s.top < b.bottom, nowrap: getComputedStyle(row).flexWrap }; }), { sideBySide: true, nowrap: 'nowrap' }, 'the time of a system line is beside its text, not alone on a line below');
     // Seen-by markers sit at the column's right edge whatever they follow: one on a centred system line lines up with one on someone else's message
@@ -660,6 +670,13 @@ async function main() {
     await page.close();
   }
 
+  // Opens a root's conversation the way its chip does; with replies as rows of the room the root may lie outside the loaded window, and then it is fetched as a jump would.
+  const chip = (page, root) => page.evaluate(async root => {
+    const node = document.querySelector(`[data-message-id=${root}] .thread-chip`);
+    if (node) { node.click(); return; }
+    const found = (await (await fetch(`/api/rooms/rm_a/messages?around=${root}&limit=1`)).json()).find(item => item.id === root);
+    window.__open = window.__chat.openThread(found); await window.__open;
+  }, root);
   // Threads. Replies of m120 are seq 131 on; the room list shows the root with a reply count and the thread panel the root and its replies.
   const addReplies = (page, count, root = 'rm_a_m120') => page.evaluate((count, root) => {
     const messages = window.__data.rooms.rm_a.messages;
@@ -675,13 +692,13 @@ async function main() {
     await addReplies(page, 3);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     assert.equal(await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m120] .thread-chip').textContent), '3 replies', 'the root counts its replies from the live page');
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
     assert.deepEqual(await panel(page), { hidden: false, title: 'Thread · 3', entries: ['rm_a_m120', 'rm_a_t1', 'rm_a_t2', 'rm_a_t3'], error: '', focus: true });
     assert.equal(await count(page, 'GET', 'thread_root=rm_a_m120&limit=100'), 1);
     await page.evaluate(() => { const draft = window.__chat.threadDraft; draft.value = 'my reply'; });
     await page.evaluate(() => window.__chat.sendThread()); await settle(page);
-    assert.deepEqual([(await posts(page)).at(-1), (await panel(page)).entries.at(-1), await page.evaluate(() => window.__chat.threadDraft.value)], [{ body: 'my reply', thread_root: 'rm_a_m120', reply_to: 'rm_a_m120' }, 'rm_a_t3'.replace('t3', 't3') && (await panel(page)).entries.at(-1), ''], 'a reply is posted into the thread and the box empties');
+    assert.deepEqual([(await posts(page)).at(-1), (await panel(page)).entries.at(-1), await page.evaluate(() => window.__chat.threadDraft.value)], [{ body: 'my reply', reply_to: 'rm_a_m120' }, 'rm_a_t3'.replace('t3', 't3') && (await panel(page)).entries.at(-1), ''], 'a reply is posted into the thread and the box empties');
     assert.equal(await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m120] .thread-chip').textContent), '4 replies');
     await page.evaluate(() => { window.__holds.push({ method: 'POST', re: '/messages$' }); window.__chat.threadDraft.value = 'will fail'; window.__sendingThread = window.__chat.sendThread(); });
     await answer(page, await waitRequest(page, 'POST', '/messages$'), 500, { message: 'Thread is closed.' }); await page.evaluate(() => window.__sendingThread); await settle(page);
@@ -697,7 +714,7 @@ async function main() {
     await addReplies(page, 3);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     await hold(page, 'GET', 'thread_root=');
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     const held = await waitRequest(page, 'GET', 'thread_root=');
     if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); } else if (how === 'close') await page.$eval('#close-thread', node => node.click()); else await page.evaluate(() => window.__chat.reset());
     await settle(page);
@@ -711,7 +728,7 @@ async function main() {
     const page = await mount();
     await addReplies(page, 130);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 101); await settle(page);
     assert.deepEqual(await page.evaluate(() => [document.querySelector('#thread-messages').dataset.hasOlder, document.querySelector('#thread-messages > article:nth-child(2)').dataset.messageId]), ['true', 'rm_a_t31']);
     await page.evaluate(() => { document.querySelector('#thread-messages').scrollTop = 0; });
@@ -725,7 +742,7 @@ async function main() {
     const page = await mount();
     await addReplies(page, 130);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 101); await settle(page);
     await hold(page, 'GET', 'thread_root=.*before=');
     await page.evaluate(() => { document.querySelector('#thread-messages').scrollTop = 0; });
@@ -743,7 +760,7 @@ async function main() {
     const page = await mount();
     await addReplies(page, 2);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 3); await settle(page);
     await hold(page, 'POST', '/messages$');
     await page.evaluate(() => { window.__chat.threadDraft.value = 'sent late'; window.__sendingThread = window.__chat.sendThread(); });
@@ -758,7 +775,7 @@ async function main() {
     await addReplies(failing, 2);
     await openRoom(failing, 'rm_a'); await opened(failing); await settle(failing);
     await failing.evaluate(() => { window.__holds.push({ method: 'POST', re: '/messages$' }); });
-    await failing.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(failing, 'rm_a_m120');
     await failing.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 3); await settle(failing);
     await failing.evaluate(() => { window.__chat.threadDraft.value = 'will fail'; window.__sendingThread = window.__chat.sendThread(); });
     const bad = await waitRequest(failing, 'POST', '/messages$');
@@ -772,7 +789,7 @@ async function main() {
     await addReplies(page, 2);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     await hold(page, 'GET', 'thread_root=');
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     const held = await waitRequest(page, 'GET', 'thread_root=');
     if (how === 'close') await page.$eval('#close-thread', node => node.click()); else { await openRoom(page, 'rm_b'); await opened(page); }
     await answer(page, held, 500, { message: 'Thread unavailable.' }); await settle(page);
@@ -786,12 +803,12 @@ async function main() {
     await addReplies(page, 130);
     await addReplies(page, 130, 'rm_a_m110');
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 101); await settle(page);
     await hold(page, 'GET', 'thread_root=rm_a_m120.*before=');
     await page.evaluate(() => { document.querySelector('#thread-messages').scrollTop = 0; });
     const first = await waitRequest(page, 'GET', 'thread_root=rm_a_m120.*before=');
-    await page.$eval('[data-message-id=rm_a_m110] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m110');
     await page.waitForFunction(() => document.querySelector('#thread-messages > article')?.dataset.messageId === 'rm_a_m110' && document.querySelectorAll('#thread-messages > article.thread-entry').length === 101); await settle(page);
     await hold(page, 'GET', 'thread_root=rm_a_m110.*before=');
     await page.evaluate(() => { document.querySelector('#thread-messages').scrollTop = 0; });
@@ -806,7 +823,7 @@ async function main() {
     const page = await mount();
     await addReplies(page, 2);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 3); await settle(page);
     await page.evaluate(() => { const messages = window.__data.rooms.rm_a.messages; messages.push({ id: 'rm_a_live', seq: messages.length + 1, no: messages.length + 1, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live reply', created_at: '2026-01-10T12:00:00Z', reply_to: 'rm_a_m120', thread_root: 'rm_a_m120', thread_count: 3 }); return window.__chat.refreshMessages(); });
     await settle(page);
@@ -817,41 +834,17 @@ async function main() {
     await page.close();
   }
 
-  // Jumping to a reply opens its thread on it; a jump still looking for the root when the room changes opens nothing.
+  // A reply is a row of the room like any message: a jump to it shows that row (flashing) and leaves the panel alone; opening its conversation from the reply opens
+  // its root's panel with the reply in view.
   {
     const page = await mount();
     await addReplies(page, 130);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     await page.evaluate(() => window.__chat.jumpToMessage('rm_a_t5')); await settle(page);
-    assert.deepEqual(await page.evaluate(() => [document.querySelector('#thread-panel').hidden, !!document.querySelector('#thread-messages [data-message-id=rm_a_t5]'), document.querySelector('#thread-messages [data-message-id=rm_a_t5]')?.classList.contains('message-flash')]), [false, true, true]);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#thread-panel').hidden, !!document.querySelector('#messages [data-message-id=rm_a_t5]'), document.querySelector('#messages [data-message-id=rm_a_t5] .chat-msg-bubble')?.classList.contains('message-flash')]), [true, true, true], 'a jump to a reply shows its row in the room');
+    await page.evaluate(() => { window.__open = window.__chat.openConversation(window.__chat.messages.get('rm_a_t5')); }); await page.evaluate(() => window.__open); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#thread-panel').hidden, window.__chat.threadRoot?.id, !!document.querySelector('#thread-messages [data-message-id=rm_a_t5]')]), [false, 'rm_a_m120', true], 'a reply opens its root conversation with itself in it');
     await page.close();
-    const late = await mount();
-    await addReplies(late, 130);
-    await openRoom(late, 'rm_a'); await opened(late); await settle(late);
-    await hold(late, 'GET', 'around=rm_a_m120');
-    await late.evaluate(() => { window.__chat.messages.delete('rm_a_m120'); window.__chat.nodes.get('rm_a_m120').remove(); window.__chat.nodes.delete('rm_a_m120'); window.__jumping = window.__chat.jumpToMessage('rm_a_t5'); });
-    const held = await waitRequest(late, 'GET', 'around=rm_a_m120');
-    await openRoom(late, 'rm_b'); await opened(late); await settle(late);
-    await serve(late, held); await late.evaluate(() => window.__jumping); await settle(late);
-    assert.deepEqual([(await panel(late)).hidden, (await panel(late)).entries.length, await late.evaluate(() => document.querySelector('#chat-error').textContent)], [true, 0, ''], 'a late root lookup opens no thread in the new room');
-    await late.close();
-    for (const [held, what, change] of [['around=rm_a_m120', 'a late root lookup opens no thread', 'jump'], ['thread_root=rm_a_m120', 'a late thread page shows no reply', 'jump'], ['thread_root=rm_a_m120', 'a late thread page shows no reply after a room change', 'room']]) {
-      const newer = await mount();
-      await addReplies(newer, 130);
-      await openRoom(newer, 'rm_a'); await opened(newer); await settle(newer);
-      await newer.evaluate(() => { window.__shown = 0; const show = window.__chat.showReply; window.__chat.showReply = function (...args) { window.__shown++; return show.apply(this, args); }; });
-      if (held.startsWith('around')) await newer.evaluate(() => { window.__chat.messages.delete('rm_a_m120'); window.__chat.nodes.get('rm_a_m120').remove(); window.__chat.nodes.delete('rm_a_m120'); });
-      await hold(newer, 'GET', held);
-      await newer.evaluate(() => { window.__jumping = window.__chat.jumpToMessage('rm_a_t5'); });
-      const request = await waitRequest(newer, 'GET', held);
-      if (change === 'jump') await newer.evaluate(() => { window.__chat.jumpToMessage('rm_a_m100'); });
-      else { await openRoom(newer, 'rm_b'); await opened(newer); }
-      await settle(newer);
-      const hidden = (await panel(newer)).hidden;
-      await newer.evaluate(() => { window.__holds.length = 0; }); await serve(newer, request); await newer.evaluate(() => window.__jumping); await settle(newer);
-      assert.deepEqual([(await panel(newer)).hidden === hidden || !hidden, await newer.evaluate(() => window.__shown)], [true, 0], `${change === 'jump' ? 'a newer jump: ' : ''}${what}`);
-      await newer.close();
-    }
   }
 
   // Reactions. A message that carries its reactions shows them without a request; one that does not asks for them. Entries group by emoji with a count, the
@@ -998,7 +991,7 @@ async function main() {
     const page = await mount({ plain: true });
     await addReplies(page, 2);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 3); await settle(page);
     await page.evaluate(() => { window.__chat.threadDraft.value = 'thread draft'; });
     await page.focus('#composer textarea[name=body]'); await page.keyboard.type('main draft'); await page.keyboard.press('Home');
@@ -1495,7 +1488,7 @@ async function main() {
     await addReplies(page, 3);
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.find(message => message.id === 'rm_a_m125').reply_to = 'rm_a_m100'; });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
     const own = names => page.evaluate(names => names.map(name => Object.hasOwn(window.__chat, name)), names);
     assert.deepEqual(await own(['rows', 'threadEntries', 'threadEntryIDs', 'threadNewReplyIDs', 'quotes', 'expiry', 'messages', 'threadCounts']), Array(8).fill(false), 'the chat keeps no state of its own for the lists');
@@ -1579,7 +1572,7 @@ async function main() {
       retention.seconds = 3600; chat.store.syncExpiry();
     });
     const marked = await state();
-    assert.deepEqual([marked.expired, marked.marks, marked.boundary, marked.labels], [30, 30, ['61'], 1], 'the old rows carry the hourglass and the first newer one the boundary');
+    assert.deepEqual([marked.expired, marked.marks, marked.boundary, marked.labels], [27, 27, ['61'], 1], 'the old rows carry the hourglass and the first newer one the boundary');
     await page.evaluate(async () => { const { retention } = await import('/js/retention.js'); retention.seconds = 0; window.__chat.store.syncExpiry(); });
     assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages .chat-msg-expired').length, document.querySelectorAll('#messages .expiry-boundary').length, document.querySelectorAll('#messages .chat-msg-expired-icon, #messages .expiry-label').length]), [0, 0, 0], 'and they leave when expiry is turned off');
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_t9', seq: 998, no: 998, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'one more', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: 'rm_a_m120' }); return window.__chat.refreshMessages(); });
@@ -1605,7 +1598,7 @@ async function main() {
         window.__data.agents = [{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'claude', model: 'm', role_emoji: '🛠', role: 'dev', project_id: 'prj_a' }];
       });
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
       return page;
     };
@@ -1661,7 +1654,7 @@ async function main() {
       // the rows leave with their thread
       await page.evaluate(() => window.__chat.closeThread()); await settle(page);
       assert.deepEqual(await entries(page), [], 'closing the thread removes its rows');
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
       await openRoom(page, 'rm_b'); await opened(page); await settle(page);
       assert.deepEqual(await entries(page), [], 'leaving the room removes them too');
@@ -1848,7 +1841,7 @@ async function main() {
       await page.evaluate(() => { window.__chat.store.threadHasMoreOlder = true; window.__chat.store.threadOldestSeq = 5; window.__chat.loadOlderThread(); }); await settle(page);
       assert.equal(await reads(), 0, 'no older replies without a thread open');
       await page.evaluate(() => { window.__chat.store.threadHasMoreOlder = false; window.__chat.store.threadOldestSeq = 0; });
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
       await page.evaluate(() => { window.__chat.store.threadHasMoreOlder = false; window.__chat.loadOlderThread(); }); await settle(page);
       assert.equal(await reads(), 0, 'no older replies when none are behind');
@@ -1860,7 +1853,7 @@ async function main() {
       assert.equal(await reads(), 1, 'a second older read is not asked for while one is out');
       const first = await waitRequest(page, 'GET', 'thread_root=.*before=');
       await page.evaluate(() => { window.__holds.length = 0; window.__chat.closeThread(); });
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
       await hold(page, 'GET', 'thread_root=.*before=');
       await page.evaluate(() => { window.__c = window.__chat.loadOlderThread(); });
@@ -1876,7 +1869,7 @@ async function main() {
       const page = await mount();
       await addReplies(page, 130);
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 50); await settle(page);
       await hold(page, 'GET', 'thread_root=.*before=');
       await page.evaluate(() => { document.querySelector('#thread-messages').scrollTop = 0; });
@@ -1894,7 +1887,7 @@ async function main() {
       const page = await mount();
       await addReplies(page, 130);
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
       await hold(page, 'GET', 'thread_root=.*before=');
       await page.evaluate(() => { window.__late = window.__chat.loadOlderThread(); });
@@ -1938,7 +1931,7 @@ async function main() {
       const posts = () => page.evaluate(() => window.__requests.filter(request => request.method === 'POST').length);
       await page.evaluate(() => { window.__chat.threadDraft.value = 'alone'; window.__chat.sendThread(); }); await settle(page);
       assert.equal(await posts(), 0, 'no thread reply without a thread open');
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
       await page.evaluate(() => { window.__chat.threadDraft.value = '   '; window.__chat.sendThread(); }); await settle(page);
       assert.equal(await posts(), 0, 'no thread reply without text');
@@ -1956,7 +1949,7 @@ async function main() {
       const page = await mount();
       await addReplies(page, 3);
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
       await hold(page, 'POST', '/messages$');
       await page.evaluate(() => { window.__shown = 0; window.__failed = 0; const sent = window.__chat.sentThreadReply; window.__chat.sentThreadReply = function (...args) { window.__shown++; return sent.apply(this, args); }; window.__chat.threadDraft.value = 'late'; window.__late = window.__chat.sendThread(); });
@@ -1966,7 +1959,7 @@ async function main() {
       else {
         await openRoom(page, 'rm_b'); await opened(page); await settle(page);
         await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-        await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+        await chip(page, 'rm_a_m120');
         await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
         await page.evaluate(() => { window.__chat.threadDraft.value = 'typed since'; });
       }
@@ -1980,7 +1973,7 @@ async function main() {
       const page = await mount();
       await addReplies(page, 3);
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await chip(page, 'rm_a_m120');
       await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
       await hold(page, 'GET', 'rooms/rm_a/messages\\?limit=100');
       await page.evaluate(() => { window.__re = window.__chat.store.reopenLatest(); });
@@ -2084,7 +2077,7 @@ async function main() {
     const page = await mount();
     await addReplies(page, 3);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
     const result = await page.evaluate(() => {
       const chat = window.__chat, root = chat.threadView, destroy = root.destroy; let destroyed = 0;
@@ -2138,7 +2131,7 @@ async function main() {
       ['number lookup', { opened: true, other: true }, page => page.evaluate(() => { window.__late = window.__chat.jumpToMessage(1003); }), 'GET', 'message-numbers/'],
       ['forward page', { opened: true, windowed: true }, page => page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; }), 'GET', 'rooms/rm_a/messages\\?after=100'],
       ['send', { opened: true }, async page => { await typeDraft(page, 'out the door'); await submit(page); }, 'POST', '/messages$'],
-      ['thread read', { opened: true, replies: true }, page => page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click()), 'GET', 'thread_root='],
+      ['thread read', { opened: true, replies: true }, page => chip(page, 'rm_a_m120'), 'GET', 'thread_root='],
       ['older thread read', { opened: true, replies: 130, threadOpen: true }, page => page.evaluate(() => { document.querySelector('#thread-messages').scrollTop = 0; }), 'GET', 'thread_root=.*before='],
       ['thread send', { opened: true, replies: true, threadOpen: true }, page => page.evaluate(() => { window.__chat.threadDraft.value = 'late reply'; window.__late = window.__chat.sendThread(); }), 'POST', '/messages$'],
       ['reactions read', { reactions: true }, page => openRoom(page, 'rm_a'), 'GET', '/api/messages/rm_a_m129/reactions'],
@@ -2151,7 +2144,7 @@ async function main() {
       if (setup.replies) await addReplies(page, setup.replies === true ? 3 : setup.replies);
       if (setup.opened) { await openRoom(page, 'rm_a'); await opened(page); await settle(page); await calls(page); }
       if (setup.windowed) { await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page); }
-      if (setup.threadOpen) { await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click()); await page.waitForFunction(count => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1, {}, 1); await settle(page); }
+      if (setup.threadOpen) { await chip(page, 'rm_a_m120'); await page.waitForFunction(count => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1, {}, 1); await settle(page); }
       await hold(page, method, re);
       await start(page);
       const held = await waitRequest(page, method, re);

@@ -206,7 +206,7 @@ func TestMigrationNinetySixBackfillsSeenFromEvents(t *testing.T) {
 	}
 	before := agentReceipts(t, s, room.ID)
 	// Back to version 95, as a database from before the table, then migrate again.
-	for _, statement := range []string{`DROP TABLE agent_room_seen`, `DELETE FROM schema_version WHERE version>=96`} {
+	for _, statement := range []string{`DROP TABLE agent_room_seen`, `DROP INDEX message_reply_to`, `DELETE FROM schema_version WHERE version>=96`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)
 		}

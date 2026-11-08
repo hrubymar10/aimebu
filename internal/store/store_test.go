@@ -493,11 +493,12 @@ func TestRoomsForProjectIncludesReadOnlySidebarFacts(t *testing.T) {
 	}
 }
 
+// A reply carries the first message of its conversation as thread_root, derived at insert and stored; one a caller passes in is dropped.
 func TestMessageThreadRootPersists(t *testing.T) {
 	t.Parallel()
 	s, _ := testStore(t, Options{})
 	_, room, root := fixture(t, s)
-	reply, err := s.InsertMessage(context.Background(), Message{RoomID: room.ID, AuthorKind: "system", AuthorID: "system", Body: "reply", ThreadRoot: root.ID})
+	reply, err := s.InsertMessage(context.Background(), Message{RoomID: room.ID, AuthorKind: "system", AuthorID: "system", Body: "reply", ReplyTo: root.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

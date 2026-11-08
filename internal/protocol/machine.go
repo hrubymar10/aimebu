@@ -450,12 +450,28 @@ type DeliveryNote struct {
 	From      string `json:"from"`
 	MessageID string `json:"message_id"`
 	// No is the message's number, the "#N" people see; the agent may name a message by it (reply_to, thread_root, reactions).
-	No          int64                `json:"no,omitempty"`
-	Body        string               `json:"body"`
-	RetryNotice string               `json:"retry_notice,omitempty"`
-	ReplyTo     string               `json:"reply_to,omitempty"`
+	No          int64  `json:"no,omitempty"`
+	Body        string `json:"body"`
+	RetryNotice string `json:"retry_notice,omitempty"`
+	ReplyTo     string `json:"reply_to,omitempty"`
+	// ThreadRoot is the first message of the conversation the message is in, derived from its reply chain (never chosen by its writer).
 	ThreadRoot  string               `json:"thread_root,omitempty"`
 	Attachments []DeliveryAttachment `json:"attachments,omitempty"`
+	// Why says in a few words why this message reached the agent: "a reply to your message #12", "you are mentioned", "a person's
+	// message to the room"...
+	Why string `json:"why,omitempty"`
+	// InReplyTo is the message this one replies to, and Conversation the first message of its conversation when that is another one: its
+	// number, who wrote it, an excerpt, and whether the agent wrote it itself, so the agent knows what is being answered without looking it up.
+	InReplyTo    *NoteParent `json:"in_reply_to,omitempty"`
+	Conversation *NoteParent `json:"conversation,omitempty"`
+}
+
+// NoteParent is the message a delivered note replies to, or the first message of its conversation.
+type NoteParent struct {
+	No    int64  `json:"no"`
+	From  string `json:"from"`
+	Body  string `json:"body"`
+	Yours bool   `json:"yours,omitempty"`
 }
 
 type DeliveryAttachment struct {

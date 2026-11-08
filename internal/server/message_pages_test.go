@@ -105,7 +105,7 @@ func TestThreadReplyPersistsWhenCountLookupFails(t *testing.T) {
 	f.srv.threadCountsQuery = func(context.Context, string, []store.Message) (map[string]int, error) {
 		return nil, errors.New("injected count lookup failure")
 	}
-	resp := f.request(http.MethodPost, "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "saved reply", "thread_root": root.ID}, true)
+	resp := f.request(http.MethodPost, "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "saved reply", "reply_to": root.ID}, true)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST status: got %d, want 201", resp.StatusCode)
 	}
@@ -140,7 +140,7 @@ func TestThreadPageAndFullRootCount(t *testing.T) {
 		t.Helper()
 		payload := map[string]string{"body": body}
 		if root != "" {
-			payload["thread_root"] = root
+			payload["reply_to"] = root
 		}
 		resp := f.request(http.MethodPost, "/api/rooms/"+f.room.ID+"/messages", payload, true)
 		if resp.StatusCode != 201 {
@@ -221,12 +221,11 @@ func TestThreadPageAndFullRootCount(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
-	resp := f.request(http.MethodGet, "/api/rooms/"+f.room.ID+"/messages?thread_root="+reply1, nil, false)
-	if resp.StatusCode != 404 {
-		t.Fatalf("reply as root: %d", resp.StatusCode)
+	// Any message of a conversation opens the whole of it: a reply named as thread_root gives its conversation's page.
+	if fromReply := read("?thread_root=" + reply1 + "&limit=1"); len(fromReply) != 1 || fromReply[0].ID != reply2 {
+		t.Fatalf("a reply opens its conversation: %+v", fromReply)
 	}
-	resp.Body.Close()
-	resp = f.request(http.MethodGet, "/api/rooms/"+f.room.ID+"/messages?thread_root="+root+"&around="+root, nil, false)
+	resp := f.request(http.MethodGet, "/api/rooms/"+f.room.ID+"/messages?thread_root="+root+"&around="+root, nil, false)
 	if resp.StatusCode != 404 {
 		t.Fatalf("root is not a reply: %d", resp.StatusCode)
 	}

@@ -24,14 +24,30 @@ func TestParseCanonicalCandidate(t *testing.T) {
 }
 
 func TestParseAcceptsAMessageNumberAsReplyTo(t *testing.T) {
-	parsed, err := Parse([]byte(`{"messages":[{"room":"room-1","body":"x","reply_to":36226,"thread_root":12},{"room":"room-1","body":"y","reply_to":"msg_1"}]}`), false)
-	if err != nil || parsed.Messages[0].ReplyTo != "36226" || parsed.Messages[0].ThreadRoot != "12" || parsed.Messages[1].ReplyTo != "msg_1" {
+	parsed, err := Parse([]byte(`{"messages":[{"room":"room-1","body":"x","reply_to":36226},{"room":"room-1","body":"y","reply_to":"msg_1"}]}`), false)
+	if err != nil || parsed.Messages[0].ReplyTo != "36226" || parsed.Messages[1].ReplyTo != "msg_1" {
 		t.Fatalf("number reply_to: %+v %v", parsed, err)
 	}
 	for _, bad := range []string{`"reply_to":0`, `"reply_to":-3`, `"reply_to":1.5`, `"reply_to":true`, `"reply_to":[1]`} {
 		if _, err := Parse([]byte(`{"messages":[{"room":"room-1","body":"x",`+bad+`}]}`), false); err == nil {
 			t.Fatalf("%s was accepted", bad)
 		}
+	}
+}
+
+// The conversation follows reply_to, so a thread_root (a stale prompt, a turn already under way) is dropped from the answer: silently when it is
+// null or empty, with a note when it names something, and the message still parses with its reply_to.
+func TestParseIgnoresAStaleThreadRoot(t *testing.T) {
+	parsed, err := Parse([]byte(`{"messages":[{"room":"room-1","body":"x","reply_to":"msg_1","thread_root":12},{"room":"room-1","body":"y","thread_root":null},{"room":"room-1","body":"z","thread_root":""}]}`), false)
+	if err != nil || len(parsed.Messages) != 3 || parsed.Messages[0].ReplyTo != "msg_1" {
+		t.Fatalf("a stale thread_root: %+v %v", parsed, err)
+	}
+	if len(parsed.Warnings) != 1 || !strings.Contains(parsed.Warnings[0], "message 0 ignored thread_root") {
+		t.Fatalf("warnings = %q, want one for the message that named a thread_root", parsed.Warnings)
+	}
+	quiet, err := Parse([]byte(`{"messages":[{"room":"room-1","body":"y","thread_root":null}]}`), false)
+	if err != nil || len(quiet.Warnings) != 0 || len(quiet.Messages) != 1 {
+		t.Fatalf("a null thread_root is dropped silently: %+v %v", quiet, err)
 	}
 }
 

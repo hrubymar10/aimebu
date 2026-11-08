@@ -138,7 +138,10 @@ Projects, rooms, people
 
 Content
 - **message**(id, seq UNIQUE, room_id, author_kind[user|agent|system],
-  author_id, body, reply_to?, thread_root?, targets_json, ask_json?,
+  author_id, body, reply_to?, thread_root? (derived: the first message of the
+  conversation, from the reply chain; never chosen by the writer, migration 98,
+  which also turned thread-only rows into replies to their root and added the
+  partial index message_reply_to), targets_json, ask_json?,
   needs_attention, proposed_answers_json?, open_questions_json?,
   source_out_id? UNIQUE, created_at, visual_plan_json?,
   appendix_pages_json?, author_harness, author_model, no) — `no` is the
@@ -1080,8 +1083,9 @@ it never silently reruns a turn with uncertain effects.
   the supervisor is upgraded or the machine is revoked. The same holds for a
   stop missed while the machine was offline.
 - S→M `deliver{v, agent_id, generation, turn_id, mode, parent_turn_id?,
-  notes[{note_id, room_id, from, message_id, body, reply_to?, thread_root?,
-  attachments[{id,name?,mime,size,sha256}]}], attachment_bearer?,
+  notes[{note_id, room_id, from, message_id, no?, body, reply_to?, thread_root?,
+  attachments[{id,name?,mime,size,sha256}], why?, in_reply_to?:{no, from,
+  body, yours?}, conversation?:{no, from, body, yours?}}], attachment_bearer?,
   context{role_body, rooms[{room_id, title, kind}],
   you_are:{id,name,role,harness,model},
   team_roster:[{id,name,role,harness,model}],
@@ -1138,8 +1142,8 @@ leave it false.
 ### 4.4 Agent I/O (one canonical schema)
 Final answer (from the adapter's final-answer event; native schema flag on
 CC/Codex, prompt-only on pi):
-`{"messages":[{"room":"…","body":"…","reply_to":"msg_…?","thread_root":
-"msg_…?","attachments":["att_…"]?,"ask":{"kind":"question|approval",
+`{"messages":[{"room":"…","body":"…","reply_to":"msg_…?",
+"attachments":["att_…"]?,"ask":{"kind":"question|approval",
 "text":"…","options":["…"]?,"free_text":bool}?,
 "needs_attention":bool?,"proposed_answers":["…"]?,
 "open_questions":[{"question":"…","description":"…"?,"options":["…"]}]?,
@@ -1149,6 +1153,27 @@ CC/Codex, prompt-only on pi):
 "reconciliation":{"status":"clean|uncertain","findings":["…"]}?}`
 - A message may use `proposed_answers` or `open_questions`, but not both.
   Neither may be combined with `ask`.
+- One concept, the reply: a message that answers a delivered note sets
+  `reply_to` to it (its `no` or message ID) and so joins that message's
+  conversation; `thread_root` is derived, not part of the answer (one still
+  sent is ignored). Each note says why it reached the agent (`why`: "a reply to your
+  message #N", "you are mentioned", "a person's message to the room", "a
+  person's reply in a conversation you started"…), and carries the message it
+  replies to (`in_reply_to`) and the first message of its conversation when
+  that is another one (`conversation`): number, author, a 500-character
+  excerpt, and `yours:true` when the agent wrote it, so a reply is never an
+  opaque ID.
+- A reply wakes the author of the message it answers (agents behind the reply
+  hop guard). A person's reply anywhere in a conversation also wakes the agent
+  that started it, when that is not the author replied to (wake reason
+  `conversation`); an agent's reply never widens this way.
+- Default `reply_to` (server-side, conservative): when a normal turn was woken
+  by exactly one note, written by a person in the turn's room, and the answer
+  holds exactly one message to that room with no `reply_to`, no `ask` and no
+  `handoff`, the server sets `reply_to` to that note's message and records a
+  `reply_defaulted` event (`message_id`, `reply_to`) on the turn. Any other
+  shape (several notes, several messages, another room, an agent's note) keeps
+  exactly the link the agent wrote, or none; the server never guesses there.
 - `handoff:true` addressed to the lead = task-result handoff (wakes the
   lead). `reconciliation` only in diagnostic turns.
 - `visual_plan` and `appendix_pages` are message-scoped display content. The

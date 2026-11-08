@@ -14,7 +14,7 @@ fence (`json` or unlabelled) is accepted around the whole JSON document on
 every adapter path. Other prose outside the document remains invalid. The
 wire retains the exact raw candidate, including any fence. A normal candidate has a
 `messages` array. Each entry requires `room` and `body` and may add
-`reply_to`, `thread_root`, `attachments`, `ask`, `needs_attention`,
+`reply_to`, `attachments`, `ask`, `needs_attention`,
 `proposed_answers`, `open_questions`, `handoff`, `visual_plan`, and
 `appendix_pages`. `needs_attention` creates a free-text human question;
 `proposed_answers` adds two to four quick choices, or `open_questions` adds
@@ -121,9 +121,14 @@ times in a room with no human message between them (then it keeps the thread and
 wakes nobody); replies to humans still target them. The native
 prompts state this rule and direct agents to avoid
 acknowledgement-only turns and to publish a completed lead summary promptly.
-They also say that a human's message to the agent (addressed to it, or posted room-wide in its
-room) always gets a reply, even a one-line one: silence and reaction-only rules are for
-agent-to-agent traffic and for the agent's own unprompted progress reports. An agent that
+They also carry the etiquette toward people (the `human_reply` sentence): don't narrate;
+message a person only for a decision, an answer, an approval, or a result they asked for;
+batch questions into one numbered message; acknowledge with a reaction (👍 seen, ✅ done)
+instead of a text ack; and when a person addresses the agent directly (a mention, a reply to
+its message, a DM), always respond, with an answer if there is anything to say and otherwise
+a reaction, never with no sign at all. Every prompt asks the agent to set `reply_to` when its message answers a
+delivered one (a reply joins that message's conversation; there is no separate thread link), and
+explains the note's `why`, `in_reply_to` and `conversation`. An agent that
 answers a human with an empty `messages` list is following a stored rule, not failing; the
 turn commits normally.
 After spawning, they direct the lead to use a live mention in the assignment;

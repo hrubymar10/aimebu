@@ -30,7 +30,6 @@ type Message struct {
 	Room            string            `json:"room"`
 	Body            string            `json:"body"`
 	ReplyTo         string            `json:"reply_to,omitempty"`
-	ThreadRoot      string            `json:"thread_root,omitempty"`
 	Attachments     []string          `json:"attachments,omitempty"`
 	Ask             *Ask              `json:"ask,omitempty"`
 	NeedsAttention  bool              `json:"needs_attention,omitempty"`
@@ -270,8 +269,9 @@ func tolerateMessageMetadata(raw []byte) ([]byte, []string) {
 	if json.Unmarshal(envelope["messages"], &messages) != nil || len(messages) > 10 {
 		return raw, nil
 	}
-	known := map[string]bool{"room": true, "body": true, "reply_to": true, "thread_root": true, "attachments": true, "ask": true, "needs_attention": true, "proposed_answers": true, "open_questions": true, "handoff": true, "visual_plan": true, "appendix_pages": true}
+	known := map[string]bool{"room": true, "body": true, "reply_to": true, "attachments": true, "ask": true, "needs_attention": true, "proposed_answers": true, "open_questions": true, "handoff": true, "visual_plan": true, "appendix_pages": true}
 	warnings := []string{}
+	changed := false
 	for i, encoded := range messages {
 		var fields map[string]json.RawMessage
 		if json.Unmarshal(encoded, &fields) != nil || fields == nil {
@@ -286,6 +286,17 @@ func tolerateMessageMetadata(raw []byte) ([]byte, []string) {
 			if known[key] {
 				continue
 			}
+			// The conversation a message belongs to is derived from reply_to, so a thread_root (the old way to say it, still in a stale prompt or a turn
+			// already under way) is dropped: silently when it is empty or null, with a note otherwise.
+			if key == "thread_root" {
+				value := strings.TrimSpace(string(fields[key]))
+				delete(fields, key)
+				changed = true
+				if value != "" && value != "null" && value != `""` {
+					warnings = append(warnings, fmt.Sprintf("message %d ignored thread_root: the conversation follows reply_to", i))
+				}
+				continue
+			}
 			// A model may label a structured question redundantly. If the
 			// label is its only request for an inbox item, keep it invalid
 			// rather than silently committing the body as ordinary text.
@@ -298,7 +309,7 @@ func tolerateMessageMetadata(raw []byte) ([]byte, []string) {
 		}
 		messages[i], _ = json.Marshal(fields)
 	}
-	if len(warnings) == 0 {
+	if len(warnings) == 0 && !changed {
 		return raw, nil
 	}
 	envelope["messages"], _ = json.Marshal(messages)
@@ -589,7 +600,7 @@ func visualFiniteNumber(value any) bool {
 	}
 }
 
-// numbersAsMessageRefs lets a message name the message it replies to (or the thread root) by its number written as a JSON number
+// numbersAsMessageRefs lets a message name the message it replies to by its number written as a JSON number
 // ("reply_to": 36226), as the prompt invites, by reading it as the string "36226"; the number is resolved to an id when the answer is
 // committed. Anything that is not a plain positive integer is left for the strict decoder to refuse.
 func numbersAsMessageRefs(raw []byte) []byte {
@@ -603,7 +614,7 @@ func numbersAsMessageRefs(raw []byte) []byte {
 	}
 	changed := false
 	for _, fields := range messages {
-		for _, key := range []string{"reply_to", "thread_root"} {
+		for _, key := range []string{"reply_to"} {
 			value := bytes.TrimSpace(fields[key])
 			if len(value) == 0 || value[0] < '1' || value[0] > '9' {
 				continue

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -109,6 +110,7 @@ func TestAttentionAnswerUsesOneInboxAndWakesRequester(t *testing.T) {
 	}
 }
 
+// An ask that replies into a conversation puts the person's answer in that conversation too.
 func TestThreadedInboxAnswerStaysInThread(t *testing.T) {
 	s, f := answerFixture(t, false)
 	ctx := context.Background()
@@ -116,7 +118,7 @@ func TestThreadedInboxAnswerStaysInThread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Choose","thread_root":%q,"needs_attention":true}]}`, f.room.ID, root.ID)
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Choose","reply_to":%q,"needs_attention":true}]}`, f.room.ID, root.ID)
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
 	if err != nil || receipt.Result != "committed" || len(receipt.MessageIDs) != 1 {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
@@ -439,5 +441,116 @@ func TestInvalidCorrectionHoldsAndRaisesFailureForHuman(t *testing.T) {
 				t.Fatalf("delivery failure inbox=%d want=%d", inbox, want)
 			}
 		})
+	}
+}
+
+// A plain single answer to the one person's message that woke the turn links to it without the agent saying so, and the turn's events say
+// the server did it. Every other shape keeps exactly the link the agent wrote.
+func TestSingleAnswerToTheWakingPersonDefaultsItsReply(t *testing.T) {
+	t.Parallel()
+	replyOf := func(t *testing.T, s *Store, id string) string {
+		t.Helper()
+		var reply sql.NullString
+		if err := s.db.QueryRow(`SELECT reply_to FROM message WHERE id=?`, id).Scan(&reply); err != nil {
+			t.Fatal(err)
+		}
+		return reply.String
+	}
+	run := func(t *testing.T, prepare func(*Store, executionFixture), body func(room string) string) (*Store, executionFixture, AnswerReceipt) {
+		t.Helper()
+		s, f := answerFixture(t, false)
+		if _, err := s.db.Exec(`UPDATE message SET author_kind='user',author_id='usr_answers' WHERE id=?`, f.message.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, f.turn.ID, f.note.ID); err != nil {
+			t.Fatal(err)
+		}
+		if prepare != nil {
+			prepare(s, f)
+		}
+		receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, body(f.room.ID))
+		if err != nil || receipt.Result != "committed" {
+			t.Fatalf("receipt=%+v err=%v", receipt, err)
+		}
+		return s, f, receipt
+	}
+	plain := func(room string) string { return fmt.Sprintf(`{"messages":[{"room":%q,"body":"done"}]}`, room) }
+
+	s, f, receipt := run(t, nil, plain)
+	if got := replyOf(t, s, receipt.MessageIDs[0]); got != f.message.ID {
+		t.Fatalf("reply_to=%q, want the waking message %q", got, f.message.ID)
+	}
+	var events int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='reply_defaulted' AND turn_id=? AND json_extract(payload_json,'$.message_id')=?`, f.turn.ID, receipt.MessageIDs[0]).Scan(&events); err != nil || events != 1 {
+		t.Fatalf("reply_defaulted events=%d err=%v", events, err)
+	}
+
+	var otherRoom string
+	for name, c := range map[string]struct {
+		prepare func(*Store, executionFixture)
+		body    func(room string) string
+	}{
+		"two messages": {nil, func(room string) string {
+			return fmt.Sprintf(`{"messages":[{"room":%q,"body":"a"},{"room":%q,"body":"b"}]}`, room, room)
+		}},
+		// One message to the waking room and another elsewhere is not "a single plain message back": the answer holds two messages, so nothing is linked.
+		"second message to another room": {func(s *Store, f executionFixture) {
+			other, err := s.CreateRoom(context.Background(), Room{ProjectID: f.project.ID, Kind: "task", Title: "elsewhere", CreatedBy: "usr_answers"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AddMember(context.Background(), other.ID, "agent", f.agent.ID); err != nil {
+				t.Fatal(err)
+			}
+			otherRoom = other.ID
+		}, func(room string) string {
+			return fmt.Sprintf(`{"messages":[{"room":%q,"body":"here"},{"room":%q,"body":"there"}]}`, room, otherRoom)
+		}},
+		"ask": {nil, func(room string) string {
+			return fmt.Sprintf(`{"messages":[{"room":%q,"body":"q","ask":{"kind":"question","text":"Which?","options":["A","B"]}}]}`, room)
+		}},
+		"handoff": {nil, func(room string) string {
+			return fmt.Sprintf(`{"messages":[{"room":%q,"body":"over to you","handoff":true}]}`, room)
+		}},
+		"agent note": {func(s *Store, f executionFixture) {
+			if _, err := s.db.Exec(`UPDATE message SET author_kind='agent',author_id=? WHERE id=?`, f.agent.ID, f.message.ID); err != nil {
+				t.Fatal(err)
+			}
+		}, plain},
+		"two notes": {func(s *Store, f executionFixture) {
+			other, err := s.InsertMessage(context.Background(), Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_answers", Body: "more"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`INSERT OR IGNORE INTO note(id,agent_id,message_id,room_id,state,wake_reason,created_at) VALUES ('note_second',?,?,?,'dispatched','room',?)`, f.agent.ID, other.ID, f.room.ID, timestamp()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) SELECT ?,id FROM note WHERE message_id=? AND agent_id=?`, f.turn.ID, other.ID, f.agent.ID); err != nil {
+				t.Fatal(err)
+			}
+		}, plain},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, receipt := run(t, c.prepare, c.body)
+			for _, id := range receipt.MessageIDs {
+				if got := replyOf(t, s, id); got != "" {
+					t.Fatalf("reply_to=%q, want none", got)
+				}
+			}
+		})
+	}
+
+	// A reply_to the agent wrote is never replaced.
+	var earlier Message
+	s, _, receipt = run(t, func(s *Store, f executionFixture) {
+		var err error
+		if earlier, err = s.InsertMessage(context.Background(), Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: "earlier"}); err != nil {
+			t.Fatal(err)
+		}
+	}, func(room string) string {
+		return fmt.Sprintf(`{"messages":[{"room":%q,"body":"done","reply_to":%q}]}`, room, earlier.ID)
+	})
+	if got := replyOf(t, s, receipt.MessageIDs[0]); got != earlier.ID {
+		t.Fatalf("explicit reply_to=%q, want %q", got, earlier.ID)
 	}
 }
