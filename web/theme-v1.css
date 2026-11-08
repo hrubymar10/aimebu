@@ -1184,7 +1184,7 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
 /* While the thread panel is open on a desktop-width window, the message column ends where the panel begins, so a message is
    never wrapped and then cut off under the panel. (A phone's panel covers the whole screen.) */
 @media (min-width: 701px) {
-  .chat:has(> .thread-panel:not([hidden])) > :is(#messages, .send-bar) { margin-right: min(420px, 100%); }
+  .chat:has(> .thread-panel:not([hidden])) > :is(#messages, .send-bar) { margin-right: min(var(--thread-w, 420px), 100%); }
 }
 
 /* Emoji: the ":" suggester rows and the picker. */
@@ -1368,7 +1368,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .composer-notice[hidden] { display: none; }
 .composer-notice-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .composer-notice-close { flex: 0 0 auto; width: 22px; height: 22px; }
-.chat:has(> .thread-panel:not([hidden])) > .composer-notice { margin-right: min(420px, 100%); }
+.chat:has(> .thread-panel:not([hidden])) > .composer-notice { margin-right: min(var(--thread-w, 420px), 100%); }
 
 /* Markdown lists, task items and rules (web/js/markdown.js), in messages and in plan blocks. */
 
@@ -1698,7 +1698,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 }
 @media (min-width: 1280px) {
   .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > .thread-panel { right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
-  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > :is(#messages, .send-bar) { margin-right: min(calc(calc(var(--agents-w, 260px) + var(--gap, 0px)) + 420px), 100%); }
+  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > :is(#messages, .send-bar) { margin-right: min(calc(calc(var(--agents-w, 260px) + var(--gap, 0px)) + var(--thread-w, 420px)), 100%); }
 }
 
 /* The shared question / confirmation / notice dialog (dialogs.js). */
@@ -1959,3 +1959,32 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
    lost its top edge (and the active one its green). */
 .usages-popover-profile.switcher-tile-profile { border-top: 1px solid var(--border); margin-top: 0; }
 .usages-popover-profile.switcher-tile-profile.is-active { border-color: var(--green); }
+
+/* The thread panel (desktop). Its title sits in the row of the room's header, as the right part of the same bar: the panel runs from the top of the chat, the room header ends where
+   the panel begins, and the close button follows the title. The reply box is the room's box (js/chat.js fitDraft), so the two composers match. */
+@media (min-width: 701px) {
+  .thread-panel { top: 0; }
+  .thread-panel > header { box-sizing: border-box; height: 43px; min-height: 43px; padding: 0 12px; justify-content: flex-start; gap: 8px; }
+  .thread-panel > header h2 { font-size: 14px; }
+  .chat:has(> .thread-panel:not([hidden])) > header { margin-right: min(var(--thread-w, 420px), 100%); }
+}
+@media (min-width: 1280px) {
+  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > header { margin-right: min(calc(calc(var(--agents-w, 260px) + var(--gap, 0px)) + var(--thread-w, 420px)), 100%); }
+}
+.thread-entry { border-bottom: 0; }
+#thread-composer .msg-input { min-width: 0; min-height: 38px; max-height: 180px; resize: none; overflow-y: hidden; }
+
+/* A reply in the thread panel has the room's message toolbar (react, find, copy): shown on hover and focus like a message in the room, and on a tap on a touch screen. */
+.thread-entry .chat-msg-bubble { position: relative; }
+.thread-entry:hover .message-actions, .thread-entry:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+@media (hover: none) and (pointer: coarse) {
+  .thread-entry:hover .message-actions { opacity: 0; pointer-events: none; }
+  .thread-entry.actions-open .message-actions, .thread-entry:has(:focus-visible) .message-actions { opacity: 1; pointer-events: auto; }
+}
+
+/* the thread column is resizable (column-resize.js sets --thread-w on the app element); its handle sits on the panel's left edge */
+.thread-panel { width: min(var(--thread-w, 420px), 100%); }
+.col-resizer-thread { position: absolute; top: 0; bottom: 0; right: calc(var(--thread-w, 420px) - var(--gap, 6px) / 2); margin-right: 0; }
+@media (min-width: 1280px) {
+  .chat:not(.agents-collapsed) > .col-resizer-thread { right: calc(var(--agents-w, 260px) + var(--gap, 0px) + var(--thread-w, 420px) - var(--gap, 6px) / 2); }
+}

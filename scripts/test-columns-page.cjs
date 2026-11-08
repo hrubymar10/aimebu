@@ -228,7 +228,7 @@ async function main() {
   // Not on a phone, and not beside a collapsed column.
   {
     const phone = await mount({ width: 390, height: 800 });
-    assert.deepEqual(await phone.$$eval('.col-resizer', nodes => nodes.map(node => getComputedStyle(node).display)), ['none', 'none'], 'a phone has no handles: its columns are drawers');
+    assert.deepEqual(await phone.$$eval('.col-resizer', nodes => nodes.map(node => getComputedStyle(node).display)), ['none', 'none', 'none'], 'a phone has no handles: its columns are drawers');
     await phone.close();
     const page = await mount();
     await page.evaluate(() => { document.querySelector('#app-view').classList.add('rooms-collapsed'); });
@@ -237,6 +237,42 @@ async function main() {
     await page.evaluate(() => { document.querySelector('#app-view').classList.remove('rooms-collapsed'); document.querySelector('.chat').classList.add('agents-collapsed'); });
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 60)));
     assert.deepEqual(await hiddenHandles(page), { rooms: false, agents: true }, 'nor does a collapsed members column');
+    await page.close();
+  }
+
+  // The thread column: its own handle on the panel's left edge, a drag and the keys move --thread-w (the chat's margins and the panel follow), the width is
+  // kept across a reload, a double click resets it, and the handle is there only while a thread is open.
+  {
+    const open = async (page, shut = false) => { await page.evaluate(shut => { document.querySelector('#thread-panel').hidden = shut; }, shut); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80))); };
+    const thread = page => page.evaluate(() => ({ panel: Math.round(document.querySelector('#thread-panel').getBoundingClientRect().width), variable: document.querySelector('#app-view').style.getPropertyValue('--thread-w'), margin: Math.round(parseFloat(getComputedStyle(document.querySelector('#messages')).marginRight)), headerMargin: Math.round(parseFloat(getComputedStyle(document.querySelector('.chat > header')).marginRight)), agents: Math.round(document.querySelector('#agents-panel').getBoundingClientRect().width) }));
+    const page = await mount({ width: 1600 });
+    assert.equal(await page.$eval('.col-resizer-thread', node => node.hidden), true, 'no thread handle while no thread is open');
+    await open(page);
+    assert.equal(await page.$eval('.col-resizer-thread', node => node.hidden), false, 'the handle shows with an open thread');
+    let state = await thread(page);
+    assert.deepEqual([state.panel, state.variable], [420, '420px'], 'the thread opens at its default width');
+    await drag(page, 'thread', -100);
+    state = await thread(page);
+    assert.equal(state.panel, 520, 'dragging the handle left widens the thread');
+    assert.equal(state.margin, state.agents + 6 + 520, 'the chat gives up the new width');
+    assert.equal(state.headerMargin, state.margin, 'and so does the room header, so its icons end before the thread');
+    assert.equal((await aria(page, 'thread')).now, 520);
+    await handle(page, 'thread').then(node => node.focus());
+    await page.keyboard.press('ArrowRight');
+    assert.equal((await thread(page)).panel, 504, 'ArrowRight narrows by one step');
+    await page.keyboard.press('Home');
+    assert.equal((await thread(page)).panel, 320, 'Home goes to the minimum');
+    await page.keyboard.press('End');
+    assert.ok((await thread(page)).panel >= 700, 'End goes to the maximum the window leaves');
+    await drag(page, 'thread', 200);
+    const kept = (await thread(page)).panel;
+    await page.reload(); await page.evaluate(async () => { document.querySelector('#app-view').hidden = false; for (const view of ['#boot-view', '#login-view', '#onboarding-view', '#welcome-view']) { const node = document.querySelector(view); if (node) node.hidden = true; } const { ColumnResize } = await import('/js/column-resize.js'); window.__columns = new ColumnResize(); });
+    await open(page);
+    assert.equal((await thread(page)).panel, kept, 'the width is kept across a reload');
+    await doubleClick(page, 'thread');
+    assert.equal((await thread(page)).panel, 420, 'a double click resets it');
+    await open(page, true);
+    assert.equal(await page.evaluate(() => document.querySelector('#app-view').style.getPropertyValue('--thread-w')), '', 'closing the thread drops the variable');
     await page.close();
   }
 

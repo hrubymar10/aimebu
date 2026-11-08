@@ -7,12 +7,15 @@ export const COLUMNS = {
   rooms: { variable: '--rooms-w', label: 'Resize the rooms column', min: 180, max: 480, fallback: 240, side: 'left' },
   agents: { variable: '--agents-w', label: 'Resize the members column', min: 200, max: 520, fallback: 260, side: 'right' },
 };
+// The thread column is a third handle, on the thread panel's left edge; it is not part of the rooms/members layout maths, only of what the chat gives up.
+export const THREAD = { variable: '--thread-w', label: 'Resize the thread column', min: 320, max: 760, fallback: 420, side: 'right' };
+const SPECS = { ...COLUMNS, thread: THREAD };
 export const CHAT_MIN = 360;
 const STEP = 16;
 // How long the grips stay after the pointer stops moving over the window (the CSS fades them out over a quarter of a second).
 export const GRIP_HOLD_MS = 3000;
-// The thread panel's width, and the window width from which it sits beside the members column (below that it takes the column's place).
-const THREAD_W = 420, THREAD_BESIDE = 1280;
+// The window width from which the thread panel sits beside the members column (below that it takes the column's place).
+const THREAD_BESIDE = 1280;
 const PHONE = '(max-width: 700px)';
 // The panels' gaps (theme-v1.css, --gap): one at each side of the window, and one between neighbouring panels.
 const GAP = 6;
@@ -22,8 +25,8 @@ export class ColumnResize {
     this.app = app; this.chat = chat; this.thread = thread; this.storage = storage;
     this.wanted = this.read();
     this.handles = {}; this.ends = [];
-    for (const name of Object.keys(COLUMNS)) this.handles[name] = this.build(name);
-    this.app.append(this.handles.rooms); this.chat.append(this.handles.agents);
+    for (const name of Object.keys(SPECS)) this.handles[name] = this.build(name);
+    this.app.append(this.handles.rooms); this.chat.append(this.handles.agents, this.handles.thread);
     window.addEventListener('resize', () => this.apply());
     // The grips show while the pointer moves over the window and for `gripHold` ms after it stops (html.col-grips; the CSS fades them).
     let gripTimer = 0, lastMove = 0;
@@ -38,7 +41,7 @@ export class ColumnResize {
     watch(this.app, ['class']); watch(this.chat, ['class']); watch(this.thread, ['hidden']);
     this.apply();
   }
-  read() { try { const saved = JSON.parse(this.storage.getItem(STORAGE_KEY) || '{}'); return Object.fromEntries(Object.keys(COLUMNS).filter(name => Number.isFinite(saved[name])).map(name => [name, saved[name]])); } catch { return {}; } }
+  read() { try { const saved = JSON.parse(this.storage.getItem(STORAGE_KEY) || '{}'); return Object.fromEntries(Object.keys(SPECS).filter(name => Number.isFinite(saved[name])).map(name => [name, saved[name]])); } catch { return {}; } }
   write() { try { if (Object.keys(this.wanted).length) this.storage.setItem(STORAGE_KEY, JSON.stringify(this.wanted)); else this.storage.removeItem(STORAGE_KEY); } catch { /* private browsing: the widths last as long as the page */ } }
   phone() { return window.matchMedia(PHONE).matches; }
   threadOpen() { return !!this.thread && !this.thread.hidden && !this.app.classList.contains('no-room'); }
@@ -50,11 +53,17 @@ export class ColumnResize {
     return !this.chat.classList.contains('agents-collapsed') && !this.app.classList.contains('no-room') && !(this.threadOpen() && window.innerWidth < THREAD_BESIDE);
   }
   // Whether its handle is there to use: the column is present, and the Usages overview is not standing in for the members column.
-  shown(name) { return this.present(name) && (name === 'rooms' || !this.chat.classList.contains('usages-open')); }
+  shown(name) { if (name === 'thread') return this.threadOpen() && !this.phone(); return this.present(name) && (name === 'rooms' || !this.chat.classList.contains('usages-open')); }
   // What the gaps take from the chat on a desktop window: a gap at each side of the window and one beside each column that is there.
   chrome(columns) { return 2 * GAP + columns * GAP; }
   // What the chat gives up besides the two columns: the thread panel, which sits at the chat's right edge whenever it is open.
-  reserve() { return this.threadOpen() ? THREAD_W : 0; }
+  reserve() { return this.threadOpen() ? this.threadWidth() : 0; }
+  // The thread's width: what is wanted within its own range, and within what the columns that are present leave the chat at their minimums.
+  threadWidth() { return Math.max(THREAD.min, Math.min(this.width('thread'), this.threadRoom())); }
+  threadRoom() {
+    const present = Object.keys(COLUMNS).filter(name => this.present(name));
+    return Math.min(THREAD.max, window.innerWidth - CHAT_MIN - this.chrome(present.length) - present.reduce((sum, name) => sum + COLUMNS[name].min, 0));
+  }
   // The widths the columns get now, given what is wanted: each within its own range, and, when both are present, together leaving the chat its
   // minimum (and the thread its room). When they do not fit, the shortfall is taken from each in proportion to how far it is above its own minimum
   // (a window that shrinks pulls both in, and the wide one more); with one column present it simply may not leave the chat less than the minimum.
@@ -75,14 +84,15 @@ export class ColumnResize {
   }
   // The range a column may be dragged within now: its own, and what the other column (as it is drawn) and the thread leave the chat.
   limits(name) {
+    if (name === 'thread') return { min: THREAD.min, max: Math.max(THREAD.min, this.threadRoom()) };
     const spec = COLUMNS[name], other = name === 'rooms' ? 'agents' : 'rooms';
     const otherWidth = this.present(other) ? this.resolve()[other] : 0;
     return { min: spec.min, max: Math.max(spec.min, Math.min(spec.max, window.innerWidth - otherWidth - CHAT_MIN - this.reserve() - this.chrome(this.present(other) ? 2 : 1))) };
   }
-  width(name) { const spec = COLUMNS[name], wanted = this.wanted[name] ?? spec.fallback; return Math.max(spec.min, Math.min(spec.max, wanted)); }
-  effective(name) { return this.resolve()[name]; }
+  width(name) { const spec = SPECS[name], wanted = this.wanted[name] ?? spec.fallback; return Math.max(spec.min, Math.min(spec.max, wanted)); }
+  effective(name) { return name === 'thread' ? this.threadWidth() : this.resolve()[name]; }
   build(name) {
-    const spec = COLUMNS[name], handle = document.createElement('div');
+    const spec = SPECS[name], handle = document.createElement('div');
     handle.className = `col-resizer col-resizer-${name}`; handle.setAttribute('role', 'separator'); handle.setAttribute('aria-orientation', 'vertical');
     handle.setAttribute('aria-label', spec.label); handle.tabIndex = 0; handle.dataset.column = name;
     let start = null;
@@ -126,6 +136,10 @@ export class ColumnResize {
   // Usages overview in the members column's place, keeps its width), the handles' hidden state and their aria values.
   apply() {
     const widths = this.resolve();
+    if (this.threadOpen() && !this.phone()) this.app.style.setProperty(THREAD.variable, `${this.threadWidth()}px`); else this.app.style.removeProperty(THREAD.variable);
+    { const handle = this.handles.thread, { min, max } = this.limits('thread'), value = this.threadWidth();
+      handle.hidden = !this.shown('thread');
+      handle.setAttribute('aria-valuemin', String(min)); handle.setAttribute('aria-valuemax', String(max)); handle.setAttribute('aria-valuenow', String(value)); }
     for (const name of Object.keys(COLUMNS)) {
       const handle = this.handles[name], shown = this.shown(name), { min, max } = this.limits(name), value = widths[name];
       if (this.present(name)) this.app.style.setProperty(COLUMNS[name].variable, `${value}px`); else this.app.style.removeProperty(COLUMNS[name].variable);

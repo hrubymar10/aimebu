@@ -39,6 +39,14 @@ function setLatest(button, label, count = 0) {
 }
 
 export const FLASH_MS = 1500;
+// Sizes a message box to its text, up to 180px: it never shows a scrollbar until it is at its height limit (a line of text and its borders can
+// be a pixel more than the box's own minimum, which was enough to draw one for no reason). The room's box and the thread's are sized the same way.
+export function fitDraft(draft) {
+  draft.style.height = '39px';
+  draft.style.height = `${Math.min(draft.scrollHeight, 180)}px`;
+  draft.style.overflowY = draft.scrollHeight > 180 ? 'auto' : 'hidden';
+}
+
 export class Chat {
   constructor(onRoomMutation) {
     this.onRoomMutation = onRoomMutation;
@@ -96,6 +104,7 @@ export class Chat {
       if (this.recallKey(event)) return;
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && this.quickCommands?.popup.hidden !== false && this.macroAutocomplete?.popup.hidden !== false && this.mentionAutocomplete?.popup.hidden !== false && this.emojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.form.requestSubmit(); }
     });
+    this.threadDraft.addEventListener('input', () => this.resizeThreadDraft());
     this.threadDraft.addEventListener('keydown', event => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && this.threadMentionAutocomplete?.popup.hidden !== false && this.threadEmojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.threadForm.requestSubmit(); }
     });
@@ -224,7 +233,7 @@ export class Chat {
   }
   wakeActions(event, container) {
     const target = event.target;
-    const row = target.closest?.('article.chat-msg'); if (!row || !container.contains(row)) return;
+    const row = target.closest?.('article.chat-msg, article.thread-entry'); if (!row || !container.contains(row)) return;
     const bar = row.querySelector('.message-actions'); if (!bar || bar.dataset.built) return;
     const message = this.entryMessage(row.dataset.messageId); if (!message) return;
     wakeMessageActions(this, bar, message);
@@ -309,7 +318,8 @@ export class Chat {
     draft.focus();
     if (!document.execCommand?.('insertText', false, glyph)) { draft.setRangeText(glyph, draft.selectionStart, draft.selectionEnd, 'end'); draft.dispatchEvent(new Event('input', { bubbles: true })); }
   }
-  resizeDraft() { this.draft.style.height = '39px'; this.draft.style.height = `${Math.min(this.draft.scrollHeight, 180)}px`; }
+  resizeDraft() { fitDraft(this.draft); }
+  resizeThreadDraft() { fitDraft(this.threadDraft); }
   setRoomFacts(room) {
     if (this.room?.id !== room.id) { this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1; }
     this.room = room;
@@ -573,13 +583,14 @@ export class Chat {
       identity: senderIdentity(message, agent), roleEmoji: agent?.role_emoji || '', roleTitle: agent?.role || '' };
     const answer = this.answerView(message), bodyKey = `${this.raw}|${this.mentionIndex?.signature ?? ''}`;
     const view = { author, answer, bodyKey, raw: this.raw, mentionKey: this.mentionIndex?.signature ?? '', usageTitle: message.usage ? usageTooltip(message.usage) : '', needsAttention: !!message.needs_attention };
-    let extra = '';
+    view.pills = groupReactions(this.reactions.get(message.id) || [], currentUser);
+    let extra = `|${JSON.stringify(view.pills)}`;
     if (main) {
       const count = threadCount(this.threadCounts, this.serverThreadCounts, message.id);
       view.articleClass = articleClass(message, currentUser); view.chip = threadChip(count); view.threadLabel = this.threadLabel(message.id);
-      view.pills = groupReactions(this.reactions.get(message.id) || [], currentUser); view.quote = this.quoteView(message);
+      view.quote = this.quoteView(message);
       view.expired = this.expiry.expired.has(message.id); view.boundary = this.expiry.divider === message.id;
-      extra = `|${count}|${JSON.stringify(view.pills)}|${view.expired}|${view.boundary}`;
+      extra += `|${count}|${view.expired}|${view.boundary}`;
     }
     view.key = `${this.agentSigs?.get(message.author_id) ?? ''}|${bodyKey}|${answer.key}${extra}`;
     return view;
@@ -611,7 +622,7 @@ export class Chat {
   closeThread() { return this.store.closeThread(); }
   threadClosed() {
     this.threadNotice.clear(); this.threadRoot = null; this.threadTitle.textContent = 'Thread'; this.threadUpdate(); this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false';
-    this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; document.querySelector('#thread-error').textContent = '';
+    this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; this.resizeThreadDraft(); document.querySelector('#thread-error').textContent = '';
   }
   setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
   // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
@@ -638,10 +649,10 @@ export class Chat {
     return () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; };
   }
   beginThreadSend() { document.querySelector('#thread-error').textContent = ''; this.threadNotice.clear(); }
-  sentThreadReply() { this.threadDraft.value = ''; }
+  sentThreadReply() { this.threadDraft.value = ''; this.resizeThreadDraft(); }
   threadToEnd() { this.threadList.scrollTop = this.threadList.scrollHeight; }
   threadSendFailed(message) { this.threadNotice.show(message); }
-  restoreThreadDraft(draft) { this.threadDraft.value = draft; this.draft.focus(); }
+  restoreThreadDraft(draft) { this.threadDraft.value = draft; this.resizeThreadDraft(); this.draft.focus(); }
   // Whether the person has typed or attached something that is not sent: the message and the thread reply, whichever way the composer is
   // showing them (the formatted editor keeps the textarea in step), and files waiting to go with the message.
   hasDraft() { return !!(this.draft.value.trim() || this.threadDraft.value.trim() || this.pendingAttachments?.length || this.pendingUploads || this.store.threadPending?.length || this.store.threadUploads); }
