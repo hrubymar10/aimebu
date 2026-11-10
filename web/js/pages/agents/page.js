@@ -8,6 +8,9 @@ import { SpawnStore } from './spawn-store.js';
 import { SwitchForm } from './switch-form.js';
 import { SwitchStore } from './switch-store.js';
 
+// How long after a read of the room's agents the next one may start (events that come in the meantime ask for one more, together).
+const RESYNC_MS = 500;
+
 // A touch screen wider than a phone and up to 900px (an iPad upright): one side panel at a time.
 const TABLET = matchMedia('(min-width: 701px) and (max-width: 900px) and (pointer: coarse)');
 
@@ -53,7 +56,7 @@ export class AgentsPanel {
     document.addEventListener('keydown', this.onKey);
     this.listPage = mountPreactPage(this.list, () => html`<${AgentsList} store=${this.store} api=${this.api} />`);
     this.humansPage = mountPreactPage(this.humans, () => html`<${HumansList} store=${this.store} api=${this.api} />`);
-    this.unsubscribe = this.source.subscribe(() => this.refresh());
+    this.unsubscribe = this.source.subscribe(event => this.sourceChanged(event));
     // A touch tablet has room for one side panel next to the chat: the members panel starts closed, and opening one panel closes the
     // other. Those changes are not remembered; the desktop preference is.
     if (TABLET.matches) this.setDesktopOpen(false, false);
@@ -125,6 +128,17 @@ export class AgentsPanel {
     document.dispatchEvent(new CustomEvent('aimebu:open-settings', { detail: { section: 'harnesses', machineID } }));
   }
   refresh() { return this.store.refresh(); }
+  // The event stream carries every agent event of every room and project (a turn queued, started, finished, a ping), and a refresh reads the room's agents and
+  // members. So an event only counts when it is about this room or one of its agents, and the reads it asks for are coalesced: one runs at once, and any number
+  // of events during it or within the next RESYNC_MS ask for exactly one more. (Each event used to start its own pair of reads.)
+  sourceChanged(event) {
+    if (event?.room_id && this.room && event.room_id !== this.room.id && !(event.agent_id && this.cards.has(event.agent_id))) return undefined;
+    if (this.refreshBusy) { this.refreshAgain = true; return undefined; }
+    this.refreshBusy = true; this.refreshAgain = false;
+    return this.refresh().finally(() => {
+      this.refreshTimer = setTimeout(() => { this.refreshTimer = 0; this.refreshBusy = false; if (this.refreshAgain) { this.refreshAgain = false; void this.sourceChanged(); } }, RESYNC_MS);
+    });
+  }
   control(id, action) { return this.store.control(id, action); }
   openSpawn(options) { return this.spawn.open(options); }
   openSwitch(id) { return this.switch.open(id); }
@@ -139,6 +153,7 @@ export class AgentsPanel {
   canReadOutput() { return !!this.room && (rights.admin || this.projectRole?.(this.room.project_id) === 'owner'); }
 
   destroy() {
+    clearTimeout(this.refreshTimer); this.refreshAgain = false;
     this.stopPanel(); document.removeEventListener('keydown', this.onKey); this.unsubscribe?.(); this.store.destroy(); this.spawn.destroy(); this.switch.destroy(); this.listPage.destroy(); this.humansPage.destroy(); this.spawnPage.destroy(); this.switchPage.destroy();
   }
 }

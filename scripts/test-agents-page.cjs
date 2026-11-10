@@ -663,6 +663,20 @@ async function main() {
     await answer(page, control, 409, { message: 'The agent changed', error: 'stale' }); await settle(page);
     assert.deepEqual([await empty(page), await page.evaluate(() => window.__requests.length)], [[0, 0, ''], total], 'a destroyed panel shows no refusal and reads nothing');
     await page.close();
+    // A storm of agent events does not become a storm of reads: events of other rooms' agents read nothing, and a burst about this room is one read at once and
+    // one more after it, however many events there are (each used to start its own agents and members reads).
+    page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    await page.evaluate((list, members) => { window.__auto['GET /api/rooms/r1/agents'] = list; window.__auto['GET /api/rooms/r1/members'] = members; }, [agent('a1', 'ada')], people); // (later reads are answered at once)
+    const roomReads = () => page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && /\/api\/rooms\/r1\/(agents|members)$/.test(request.path)).length);
+    const readsBefore = await roomReads();
+    await page.evaluate(async () => { const source = window.__panel.source; for (let i = 0; i < 40; i++) await source.onEvent({ agent_id: 'other', room_id: 'r2', kind: 'turn_recorded', payload_json: '{}', created_at: '2026-01-01T10:05:00Z' }); });
+    await settle(page);
+    assert.equal(await roomReads(), readsBefore, 'events about another room\'s agents read nothing');
+    await page.evaluate(async () => { const source = window.__panel.source; const events = []; for (let i = 0; i < 60; i++) events.push(source.onEvent({ agent_id: 'a1', room_id: 'r1', kind: 'turn_recorded', payload_json: '{}', created_at: '2026-01-01T10:05:00Z' })); await Promise.all(events); await new Promise(resolve => setTimeout(resolve, 900)); });
+    const burst = (await roomReads()) - readsBefore;
+    assert.ok(burst >= 2 && burst <= 4, `60 events about this room read the agents and members once, and once more after: ${burst} reads`);
+    await page.close();
     // An event that reaches a destroyed panel through the source starts no read.
     page = await mount();
     await show(page, 'r1', [agent('a1', 'ada')]);

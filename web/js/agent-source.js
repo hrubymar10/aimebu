@@ -155,11 +155,12 @@ export class HttpAgentSource {
         const when = new Date(event.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         this.activity.set(event.agent_id, { summary: `${label} ${when}`, turnID: event.turn_id, kind: event.kind, at: event.created_at });
       }
-      if (event.kind.startsWith('agent_') || event.kind.startsWith('turn_') || event.kind.startsWith('answer_') || event.kind.startsWith('supervisor_') || event.kind.startsWith('provider_') || event.kind === 'activity') await this.changed();
+      if (event.kind.startsWith('agent_') || event.kind.startsWith('turn_') || event.kind.startsWith('answer_') || event.kind.startsWith('supervisor_') || event.kind.startsWith('provider_') || event.kind === 'activity') await this.changed(event);
     }
   }
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  changed() { return Promise.all([...this.listeners].map(listener => listener())); }
+  // `event` is the stream event that changed an agent (the listeners decide whether it concerns what they show); none for a change made here.
+  changed(event) { return Promise.all([...this.listeners].map(listener => listener(event))); }
 }
 
 export function createAgentSource() { return new URLSearchParams(location.search).has('mock_agents') ? new MockAgentSource(true) : new HttpAgentSource(); }
