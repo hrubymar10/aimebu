@@ -567,16 +567,21 @@ export class ChatStore {
     }
   }
 
-  // The message a plain send in the panel answers: the conversation's last one that is not the sender's own (a reply to oneself addresses nobody), the root
-  // when there is none. At the panel's end that is read from its entries; a panel showing an older window (or holding replies it has not shown) asks the
-  // server for the conversation's newest messages.
+  // The message a plain send in the panel answers: the conversation's last reply that is not the sender's own (a reply to oneself addresses nobody) and not a system
+  // message (nor does a reply to that), the first message when there is none. At the panel's end the newest are read from its entries; a panel showing an older window (or
+  // holding replies it has not shown) asks the server for the newest 50. A page of nothing but the sender's own replies is not the end of the search: the page before it
+  // is read, and so on, until one is found or the conversation is used up (at most 20 pages, a thousand replies, then the first message answers).
   async lastInThread(room, root) {
-    // Not answerable: the sender's own message (a reply to oneself addresses nobody) and a system message (nor does a reply to that).
-    const mine = message => message.author_kind === 'system' || (message.author_kind === 'user' && message.author_id === currentUser);
-    let recent;
-    if (this.host.threadLatestHidden() && !this.threadNewReplyIDs.size) recent = this.threadEntries;
-    else recent = await request(`/api/rooms/${room}/messages?thread_root=${encodeURIComponent(root)}&limit=50`);
-    return recent.findLast(message => !mine(message))?.id || root;
+    const PAGE = 50, answerable = message => message.id !== root && message.author_kind !== 'system' && !(message.author_kind === 'user' && message.author_id === currentUser);
+    const local = this.host.threadLatestHidden() && !this.threadNewReplyIDs.size;
+    let page = local ? this.threadEntries : await request(`/api/rooms/${room}/messages?thread_root=${encodeURIComponent(root)}&limit=${PAGE}`);
+    let found = page.findLast(answerable), more = local ? this.threadHasMoreOlder : page.length === PAGE;
+    let oldest = page.find(message => message.id !== root)?.seq;
+    for (let pages = 0; !found && more && oldest && pages < 20; pages++) {
+      page = await request(`/api/rooms/${room}/messages?thread_root=${encodeURIComponent(root)}&before=${oldest}&limit=${PAGE}`);
+      found = page.findLast(answerable); more = page.length === PAGE; oldest = page[0]?.seq;
+    }
+    return found?.id || root;
   }
 
   async sendThread() {

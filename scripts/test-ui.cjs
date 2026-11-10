@@ -5237,7 +5237,7 @@ async function main() {
     assert.equal(await first.$$eval('.chat-msg-system .message-actions', els => els.length), 0, 'system notice exposes message actions');
     // t2-system-events: the bell feed and the message debug inspector.
     assert.equal(await first.$eval('#system-events-toggle', el => !el.hidden), true, 'system events bell is on by default');
-    await first.setViewport({ width: 1280, height: 720 }); await new Promise(resolve => setTimeout(resolve, 300)); // (two experiment pills crowd a 1100px bar, which folds the bell into the menu)
+    await first.setViewport({ width: 1600, height: 720 }); await new Promise(resolve => setTimeout(resolve, 300)); // (experiment pills crowd the bar: two of them fold the bell into the menu even at 1280px)
     await domClick(first, '#system-events-toggle');
     // The feed holds only what needs a look (the server's notable events), so this run may have none: the panel then says so. (The panel's rows are tested in test-system-events-page.)
     await first.waitForFunction(() => !document.querySelector('#system-events-popover').hidden && document.querySelectorAll('#system-events-popover .system-event-row, #system-events-popover .system-events-empty').length > 0);
@@ -8648,7 +8648,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     assert.equal(await largePage.$eval('#thread-messages', node => node.dataset.hasOlder), 'true', 'a large thread still has older replies behind the loaded page');
     const threadAnchor = await largePage.$eval('#thread-messages', element => {
       element.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); element.scrollTop = 0;
-      const reply = element.children[1];
+      const reply = element.children[2]; // (the first loaded reply may change shape when older ones arrive above it: its place in the tree, see forkLayout)
       return { id: reply.dataset.messageId, top: reply.getBoundingClientRect().top };
     });
     await largePage.waitForFunction(() => document.querySelectorAll('#thread-messages .thread-entry').length >= 151);

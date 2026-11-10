@@ -701,7 +701,8 @@ export class Chat {
   showThreadOlderStatus(shown) { this.threadOlderStatus.hidden = !shown; }
   holdThreadPlace() {
     // Measured after the page arrives, as in loadOlder: only the inserted height is compensated, not the reader's own scrolling.
-    const anchor = this.threadList.children[1], anchorTop = anchor?.getBoundingClientRect().top;
+    // The row after the first loaded reply: that one may change shape when older replies arrive above it (its place in the tree, see forkLayout), a change above the anchor is compensated.
+    const anchor = this.threadList.children[2] || this.threadList.children[1], anchorTop = anchor?.getBoundingClientRect().top;
     this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
     return () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; };
   }

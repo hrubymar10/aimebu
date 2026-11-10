@@ -2,6 +2,14 @@ import { html, Component, Fragment, useCallback, useLayoutEffect, useRef } from 
 import { EXPIRED_HOURGLASS } from '../../usage-expiry.js';
 import { fillMessageActions, messageActionsProps, placeholderMessageActions } from '../../message-actions.js';
 import { stampTime } from '../../time.js';
+import { forkLayout } from './model.js';
+import { defineExperiment } from '../../ui-variant.js';
+
+// How a fork of the conversation shows in the thread panel, five ways on the testing pill (the CSS reads data-ui-forks on <html>; every piece is in the markup and only the chosen
+// one is shown): A a quote of the parent when it is not the row directly above (a small "\u21b3 name" when it is), B rows indented by their depth in the tree with a thin connector,
+// C a coloured rail per branch with a fork starting a new colour (quotes as in A), D a label above a row whose parent is not directly above and no quotes, E the main chain at full
+// size and the side branches compact. With no experiment the panel quotes a reply's parent unless it is the first message.
+defineExperiment('forks', 'Forks in a thread', ['Context quote', 'Indent', 'Branch rail', 'Fork label', 'Side branches compact']);
 import { applySenderIdentity, fillSenderPresence, SENDER_PRESENCE_ROOT } from '../../sender-identity.js';
 import { fillVisualPlan, hasVisualPlan, VISUAL_PLAN_ROOT } from '../../visual-plan.js';
 import { ANSWER_CONTROLS_ROOT, ANSWER_HISTORY_ROOT, fillAnswerControls, fillAnswerHistory } from '../../answer-controls.js';
@@ -78,15 +86,24 @@ export function AnswerSlot({ message, view, host, listed = '' }) {
   return null;
 }
 
-export function ThreadEntry({ message, view, host }) {
-  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${[view.articleClass, 'thread-entry', view.needsAttention ? 'needs-attention' : ''].filter(Boolean).join(' ')} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)}>
-    <${MessageMeta} message=${message} view=${view} /><div class="chat-msg-bubble">${view.quote && message.reply_to !== host.threadRoot?.id && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div><${AnswerSlot} message=${message} view=${view} host=${host} />
+export function ThreadEntry({ message, view, host, fork }) {
+  const parentName = fork?.parent ? host.authorName(fork.parent) : '';
+  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${[view.articleClass, 'thread-entry', view.needsAttention ? 'needs-attention' : ''].filter(Boolean).join(' ')} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} data-depth=${fork ? String(fork.depth) : undefined} data-lane=${fork ? String(fork.lane) : undefined} data-fork=${fork?.fork ? '1' : undefined} data-parent-root=${fork?.parentIsRoot ? '1' : undefined} style=${fork ? `--fork-depth:${fork.depth};--fork-lane:${fork.lane}` : undefined}>
+    ${fork?.fork && message.reply_to && html`<div class="fork-label">${fork.known ? `\u21b3 forks from #${fork.parent.no} ${parentName}` : '\u21b3 forks from an earlier message'}</div>`}
+    ${fork && !fork.fork && fork.parent && html`<div class="fork-ref">${`\u21b3 ${parentName}`}</div>`}
+    <${MessageMeta} message=${message} view=${view} /><div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div><${AnswerSlot} message=${message} view=${view} host=${host} listed="" />
   </article>`}<//>`;
 }
 
 export function ThreadList({ entries = [], host, viewOf, restore }) {
   useLayoutEffect(() => { restore?.(); });
-  return entries.map(message => html`<${ThreadEntry} key=${message.id} message=${message} view=${viewOf(message)} host=${host} />`);
+  const layout = forkLayout(entries);
+  return entries.map(message => {
+    const fork = layout.get(message.id), view = viewOf(message);
+    // The layout is part of what the row draws, so a row whose place in the tree changed (an older reply arriving) is drawn again.
+    const forked = { ...view, key: `${view.key}|${fork.depth}.${fork.lane}.${fork.fork}.${fork.parent?.id || ''}` };
+    return html`<${ThreadEntry} key=${message.id} message=${message} view=${forked} host=${host} fork=${fork} />`;
+  });
 }
 
 function Actions({ message, host, label }) {

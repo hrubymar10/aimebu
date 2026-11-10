@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'chat', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { plainText, messageSnippet, threadCount, threadLabel, threadTitle, threadChip, newRepliesLabel, latestLabel, groupReactions, articleClass, liveArrival, liveRoute, newestShownSeq, trimCap, overCap, answerEligible, answerArea, answersThroughInbox, recallCandidates, recallStep };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { forkLayout, plainText, messageSnippet, threadCount, threadLabel, threadTitle, threadChip, newRepliesLabel, latestLabel, groupReactions, articleClass, liveArrival, liveRoute, newestShownSeq, trimCap, overCap, answerEligible, answerArea, answersThroughInbox, recallCandidates, recallStep };', context);
 const api = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -90,4 +90,19 @@ assert.equal(step('ArrowDown', 'a\nb', { index: 0, draft: '' }, 0), null, 'Down 
 assert.deepEqual(step('Escape', 'b', { index: 1, draft: 'typing' }), { index: null, draft: 'typing', value: 'typing' });
 assert.equal(step('Escape', 'b', { index: null, draft: '' }), null);
 assert.equal(step('a', 'b', { index: 1, draft: '' }), null);
+// Where each entry of a conversation sits in its tree: a chain of five, a fork from the second message and one from the first.
+{
+  const message = (id, reply_to) => ({ id, no: Number(id.slice(1)), reply_to });
+  const entries = [message('m1'), message('m2', 'm1'), message('m3', 'm2'), message('m4', 'm3'), message('m5', 'm4'), message('m6', 'm2'), message('m7', 'm1')];
+  const layout = api.forkLayout(entries), at = id => { const { depth, lane, fork, known, parentIsRoot } = layout.get(id); return { depth, lane, fork, known, parentIsRoot }; };
+  assert.deepEqual(at('m1'), { depth: 0, lane: 0, fork: false, known: true, parentIsRoot: false });
+  assert.deepEqual(at('m2'), { depth: 1, lane: 0, fork: false, known: true, parentIsRoot: true }, 'the first reply continues the root\'s lane and sits right under it');
+  assert.deepEqual([at('m3'), at('m4'), at('m5')].map(item => [item.depth, item.lane, item.fork]), [[2, 0, false], [3, 0, false], [3, 0, false]], 'the chain keeps one lane, and depth stops at 3');
+  assert.deepEqual(at('m6'), { depth: 2, lane: 1, fork: true, known: true, parentIsRoot: false }, 'a second reply to m2 is a fork on a new lane');
+  assert.deepEqual(at('m7'), { depth: 1, lane: 2, fork: true, known: true, parentIsRoot: true }, 'a second reply to the first message is a fork of its own, not under it');
+  assert.equal(layout.get('m6').parent.id, 'm2');
+  // An older page is not loaded: a parent that is not among the entries is a fork of an unknown message, not a crash.
+  const partial = api.forkLayout([message('m1'), message('m9', 'm8'), message('m10', 'm9')]);
+  assert.deepEqual([partial.get('m9').known, partial.get('m9').fork, partial.get('m10').fork, partial.get('m10').lane === partial.get('m9').lane], [false, true, false, true]);
+}
 console.log('chat model: ok');

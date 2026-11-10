@@ -2377,6 +2377,91 @@ async function main() {
     assert.match(after.text, /^↪ #77 owen\S*: earlier text$/, `once the agent is known the quote names it, as the message header does: ${after.text}`);
     await page.close();
   }
+  // What a plain send in the panel answers when the newest replies are all the viewer's own: the search goes back, past the loaded window and past a server page, to the last
+  // reply of someone else; with only the viewer's own replies it falls back to the first message.
+  if (ROWS) {
+    const send = async (page, fixture) => {
+      await page.evaluate(fixture => {
+        const messages = window.__data.rooms.rm_a.messages, start = messages.length;
+        fixture.forEach((item, i) => messages.push({ id: `rm_a_${item.id}`, seq: start + 1 + i, no: start + 1 + i, room_id: 'rm_a', author_kind: 'user', author_id: item.mine ? 'usr_me' : 'usr_ann', author_name: item.mine ? 'me' : 'ann', body: item.id, created_at: new Date(Date.parse('2026-01-10T11:00:00Z') + i * 1000).toISOString(), reply_to: item.reply || 'rm_a_m120', thread_root: 'rm_a_m120', thread_count: fixture.length }));
+        messages.find(message => message.id === 'rm_a_m120').thread_count = fixture.length;
+      }, fixture);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await chip(page, 'rm_a_m120');
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+      await page.evaluate(() => { window.__chat.threadDraft.value = 'answer'; return window.__chat.sendThread(); }); await settle(page);
+      return page.evaluate(() => window.__posted.at(-1).reply_to);
+    };
+    const mine = id => ({ id, mine: true }), someone = id => ({ id, mine: false });
+    // A reply of someone else, then 130 of the viewer's own: the panel holds the newest 100 (and the first message), so the answer is further back than the panel, in the page before it.
+    let page = await mount();
+    assert.equal(await send(page, [someone('older'), ...Array.from({ length: 130 }, (_, i) => mine(`own${i}`))]), 'rm_a_older', 'a send answers the last reply of someone else, beyond the loaded window');
+    await page.close();
+    // The same, but the other person's reply is further back than one server page of 50 beyond the window.
+    page = await mount();
+    assert.equal(await send(page, [someone('farback'), ...Array.from({ length: 190 }, (_, i) => mine(`own${i}`))]), 'rm_a_farback', 'and beyond more than one page');
+    await page.close();
+    // Only the viewer's own replies: the first message.
+    page = await mount();
+    assert.equal(await send(page, Array.from({ length: 120 }, (_, i) => mine(`own${i}`))), 'rm_a_m120', 'with only their own replies a send answers the first message');
+    await page.close();
+  }
+  // Forks in the thread panel, in each placement of the testing pill: a chain of five replies to a first message (t1..t5), a fork from the second reply (t6) and one from the
+  // first message again (t7, which is not directly under it).
+  if (ROWS) {
+    const page = await mount();
+    await page.evaluate(() => {
+      const messages = window.__data.rooms.rm_a.messages, start = messages.length;
+      const parents = { t1: 'rm_a_m120', t2: 'rm_a_t1', t3: 'rm_a_t2', t4: 'rm_a_t3', t5: 'rm_a_t4', t6: 'rm_a_t2', t7: 'rm_a_m120' };
+      Object.entries(parents).forEach(([name, parent], i) => messages.push({ id: `rm_a_${name}`, seq: start + 1 + i, no: start + 1 + i, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: `fork reply ${name}`, created_at: new Date(Date.parse('2026-01-10T11:00:00Z') + i * 1000).toISOString(), reply_to: parent, thread_root: 'rm_a_m120', thread_count: 7 }));
+      messages.find(message => message.id === 'rm_a_m120').thread_count = 7;
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await chip(page, 'rm_a_m120');
+    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 8); await settle(page);
+    const read = variant => page.evaluate(variant => {
+      if (variant) document.documentElement.setAttribute('data-ui-forks', variant); else document.documentElement.removeAttribute('data-ui-forks');
+      const out = {};
+      for (const name of ['t1', 't2', 't3', 't4', 't5', 't6', 't7']) {
+        const row = document.querySelector(`#thread-messages [data-message-id=rm_a_${name}]`), shown = selector => { const node = row.querySelector(selector); return !!node && getComputedStyle(node).display !== 'none'; };
+        out[name] = { quote: shown('.quote'), ref: shown('.fork-ref'), label: shown('.fork-label'), labelText: row.querySelector('.fork-label')?.textContent || '', margin: getComputedStyle(row).marginLeft, rail: getComputedStyle(row).borderLeftColor, railWidth: getComputedStyle(row).borderLeftWidth, clamp: getComputedStyle(row.querySelector('.chat-msg-body')).webkitLineClamp, depth: row.dataset.depth, lane: row.dataset.lane, fork: row.dataset.fork || '' };
+      }
+      return out;
+    }, variant);
+    const names = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'], pick = (state, key) => names.map(name => state[name][key]);
+    const none = await read('');
+    assert.deepEqual(pick(none, 'depth'), ['1', '2', '3', '3', '3', '3', '1'], 'depth is the level below the first message, at most 3');
+    assert.deepEqual(pick(none, 'lane'), ['0', '0', '0', '0', '0', '1', '2'], 'the chain is one lane, each fork a new one');
+    assert.deepEqual(pick(none, 'fork'), ['', '', '', '', '', '1', '1'], 'only t6 and t7 are forks: their parent is not the row above');
+    assert.deepEqual(pick(none, 'quote'), [false, true, true, true, true, true, false], 'with no experiment a reply quotes its parent unless it is the first message');
+    const a = await read('a');
+    assert.deepEqual(pick(a, 'quote'), [false, false, false, false, false, true, true], 'A: only a fork quotes its parent, the first message too');
+    assert.deepEqual(pick(a, 'ref'), [true, true, true, true, true, false, false], 'A: a reply directly under its parent has the small reference instead');
+    const b = await read('b');
+    assert.deepEqual(pick(b, 'margin'), ['14px', '28px', '42px', '42px', '42px', '42px', '14px'], 'B: indented by depth, three levels at most');
+    // An own message is right-aligned and shrinks to its bubble: B indents it from the right.
+    const ownRows = await page.evaluate(() => { const own = document.querySelector('#thread-messages [data-message-id=rm_a_t3]'); own.classList.add('self'); const style = getComputedStyle(own); const out = { left: style.marginLeft, right: style.marginRight }; own.classList.remove('self'); return out; });
+    assert.deepEqual(ownRows, { left: '0px', right: '42px' }, 'B: an own row is indented from the right by its depth');
+    const c = await read('c');
+    assert.equal(c.t5.rail, c.t1.rail, 'C: a chain keeps its colour');
+    assert.notEqual(c.t6.rail, c.t5.rail, 'C: a fork starts a new colour');
+    assert.notEqual(c.t7.rail, c.t6.rail, 'C: and the next fork another');
+    assert.deepEqual(pick(c, 'quote'), [false, false, false, false, false, true, true], 'C: quotes as in A');
+    const palette = await page.evaluate(() => { const probe = name => { const i = document.createElement('i'); i.style.color = `var(${name})`; document.body.append(i); const color = getComputedStyle(i).color; i.remove(); return color; }; return { red: probe('--red'), text: probe('--text-primary') }; });
+    const rails = await page.evaluate(() => [0, 1, 2, 3, 4, 5].map(lane => { const row = document.querySelector('#thread-messages .thread-entry'); const copy = row.cloneNode(false); copy.dataset.lane = String(lane); copy.className = 'thread-entry'; row.parentElement.append(copy); const color = getComputedStyle(copy).borderLeftColor; copy.remove(); return color; }));
+    assert.equal(new Set(rails).size, 6, `C: six distinct branch colours: ${rails}`);
+    assert.ok(!rails.includes(palette.red) && !rails.includes(palette.text), 'C: no branch is the error red or the text colour');
+    const d = await read('d');
+    assert.deepEqual(pick(d, 'quote'), Array(7).fill(false), 'D: no quotes');
+    assert.deepEqual(pick(d, 'label'), [false, false, false, false, false, true, true], 'D: a label above each fork only');
+    assert.match(d.t6.labelText, /^↳ forks from #\d+ ann/, 'D: the label names the parent by number and sender');
+    const e = await read('e');
+    // The clamp needs a pointer to open it again, so it applies only where there is one (hover: hover); a touch screen keeps the text whole.
+    const pointer = await page.evaluate(() => matchMedia('(hover: hover)').matches);
+    assert.deepEqual(pick(e, 'clamp'), ['none', 'none', 'none', 'none', 'none', pointer ? '2' : 'none', pointer ? '2' : 'none'], `E: the side branches are clamped where a pointer can open them (hover: ${pointer}), the main chain never`);
+    await read('');
+    await page.close();
+  }
   assert.deepEqual(errors, []);
   await browser.close(); server.close();
   console.log('chat page: ok');

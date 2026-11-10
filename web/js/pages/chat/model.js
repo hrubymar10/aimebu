@@ -95,3 +95,23 @@ export function recallStep({ key, value, at, end }, recall, candidates) {
   }
   return null;
 }
+
+// Where each entry of a conversation sits in its tree, for the thread panel (a flat, time-ordered list in which a reply to an older message reads as the next step of the
+// chain): its depth below the first message (capped at 3 for display), its lane (the first reply to a message continues the lane of that message, a later reply starts a new
+// one: the lanes are the branches), whether it is a fork (its parent is not the row directly above) and who its parent is. A parent that is not among the entries (an older
+// page is not loaded) counts as a fork of an unknown message. entries[0] is the first message.
+export function forkLayout(entries) {
+  const place = new Map(entries.map((message, index) => [message.id, index]));
+  const depth = new Map(), lane = new Map(), continued = new Set(), layout = new Map();
+  let lanes = 0;
+  entries.forEach((message, index) => {
+    if (index === 0) { depth.set(message.id, 0); lane.set(message.id, 0); layout.set(message.id, { depth: 0, lane: 0, fork: false, parent: null, parentIsRoot: false, known: true }); return; }
+    const at = place.get(message.reply_to), parent = at !== undefined && at < index ? entries[at] : null;
+    let own;
+    if (parent && !continued.has(parent.id)) { continued.add(parent.id); own = lane.get(parent.id); } else own = ++lanes;
+    const level = parent ? depth.get(parent.id) + 1 : 1;
+    depth.set(message.id, level); lane.set(message.id, own);
+    layout.set(message.id, { depth: Math.min(3, level), lane: own % 6, fork: parent ? at !== index - 1 : true, parent, parentIsRoot: !!parent && at === 0, known: !!parent });
+  });
+  return layout;
+}

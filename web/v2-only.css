@@ -640,3 +640,39 @@ html[data-ui-warmicon="b"] .agent-online-dot[data-warm="cold"] { -webkit-mask-im
 html[data-ui-warmicon="b"] .warm-sr, html[data-ui-warmicon="e"] .warm-sr { display: block; }
 html[data-ui-warmicon="e"] .agent-card[data-warm="warm"] { box-shadow: inset 3px 0 0 var(--orange); }
 html[data-ui-warmicon="e"] .agent-card[data-warm="cold"] { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* Forks in the thread panel (pages/chat/rows.js; the pieces are in the markup, the experiment pill picks which show). Without the experiment a reply's quote is shown unless it
+   answers the first message. A fork is a reply whose parent is not the row directly above. */
+.thread-entry .fork-label, .thread-entry .fork-ref { display: none; font-size: 11px; color: var(--text-muted); }
+.thread-entry[data-parent-root] .quote { display: none; }
+/* A: the parent is quoted when it is not directly above (also the first message, when it is not directly above); when it is, a small "name" reference instead. */
+html[data-ui-forks="a"] .thread-entry[data-parent-root] .quote, html[data-ui-forks="c"] .thread-entry[data-parent-root] .quote { display: block; }
+html[data-ui-forks="a"] .thread-entry:not([data-fork]) .quote, html[data-ui-forks="c"] .thread-entry:not([data-fork]) .quote { display: none; }
+html[data-ui-forks="a"] .thread-entry .fork-ref, html[data-ui-forks="c"] .thread-entry .fork-ref { display: block; margin: 0 0 2px 2px; }
+/* B: indented by depth (at most 3 levels) with a thin connector line. */
+html[data-ui-forks="b"] .thread-entry { margin-left: calc(var(--fork-depth, 0) * 14px); padding-left: 6px; border-left: 1px solid var(--border-hover); }
+html[data-ui-forks="b"] .thread-entry[data-depth="0"] { border-left-color: transparent; padding-left: 0; }
+/* The viewer's own rows are right-aligned and shrink to their bubble, so they are indented from the right, with the connector on that side. */
+html[data-ui-forks="b"] .thread-entry.self { margin-left: 0; padding-left: 0; border-left: 0; margin-right: calc(var(--fork-depth, 0) * 14px); padding-right: 6px; border-right: 1px solid var(--border-hover); }
+html[data-ui-forks="b"] .thread-entry.self[data-depth="0"] { border-right-color: transparent; padding-right: 0; }
+/* C: a rail per branch, a new colour for each fork; the colours come from the theme and are calm ones (no red, which reads as an error, and no text colour, which merges with the border). */
+html[data-ui-forks="c"] .thread-entry { padding-left: 8px; border-left: 3px solid var(--fork-color, var(--accent)); }
+html[data-ui-forks="c"] .thread-entry[data-lane="0"] { --fork-color: var(--accent); }
+html[data-ui-forks="c"] .thread-entry[data-lane="1"] { --fork-color: var(--green); }
+html[data-ui-forks="c"] .thread-entry[data-lane="2"] { --fork-color: var(--orange); }
+html[data-ui-forks="c"] .thread-entry[data-lane="3"] { --fork-color: color-mix(in srgb, var(--accent) 55%, var(--green)); }
+html[data-ui-forks="c"] .thread-entry[data-lane="4"] { --fork-color: color-mix(in srgb, var(--accent) 55%, var(--orange)); }
+html[data-ui-forks="c"] .thread-entry[data-lane="5"] { --fork-color: color-mix(in srgb, var(--green) 55%, var(--orange)); }
+/* D: a label above a fork; no quotes. */
+html[data-ui-forks="d"] .thread-entry .quote { display: none; }
+html[data-ui-forks="d"] .thread-entry .fork-label { display: block; margin: 4px 0 2px 2px; }
+/* E: the main chain (lane 0) at full size, the side branches compact: a dashed edge, smaller text clamped to two lines until the row is hovered or focused. */
+html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]) { margin-left: 14px; padding-left: 8px; border-left: 1px dashed var(--border-hover); }
+html[data-ui-forks="e"] .thread-entry.self[data-lane]:not([data-lane="0"]) { margin-left: 0; padding-left: 0; border-left: 0; margin-right: 14px; padding-right: 8px; border-right: 1px dashed var(--border-hover); }
+html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]) .chat-msg-body { font-size: 12.5px; }
+/* The clamp needs a pointer to open it again (hover or focus), so a touch screen keeps the text whole: only the smaller size and the dashed edge mark the branch. */
+@media (hover: hover) {
+  html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]) .chat-msg-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+  html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]):is(:hover, :focus-within) .chat-msg-body { display: block; overflow: visible; }
+}
+html[data-ui-forks="e"] .thread-entry[data-fork] .fork-label { display: block; margin: 4px 0 2px 2px; }
