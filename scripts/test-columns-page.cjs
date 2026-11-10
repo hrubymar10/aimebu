@@ -218,8 +218,9 @@ async function main() {
     // Hovered, a gap is filled with the accent and its grip stays (the pointer is no longer moving, so it is the hover that holds it).
     const from = await centre(await handle(page, 'rooms'));
     await page.mouse.move(from.x, from.y); await wait(500);
-    const hover = await page.evaluate(() => { const probe = document.createElement('i'); probe.style.background = 'var(--accent)'; document.body.append(probe); const accent = getComputedStyle(probe).backgroundColor; probe.remove(); const handle = document.querySelector('.col-resizer-rooms'); return { accent, fill: getComputedStyle(handle).backgroundColor, opacity: getComputedStyle(handle, '::after').opacity }; });
-    assert.deepEqual([hover.fill, hover.opacity], [hover.accent, '1'], 'a hovered gap is accent-coloured and keeps its grip');
+    const hover = await page.evaluate(() => { const probe = document.createElement('i'); probe.style.background = 'var(--accent)'; document.body.append(probe); const accent = getComputedStyle(probe).backgroundColor; probe.remove(); const handle = document.querySelector('.col-resizer-rooms'), line = getComputedStyle(handle, '::after'), box = handle.getBoundingClientRect(); return { accent, fill: getComputedStyle(handle).backgroundColor, opacity: line.opacity, line: line.backgroundColor, width: parseFloat(line.width), height: Math.round(parseFloat(line.height)), gap: Math.round(box.height), radius: line.borderTopLeftRadius }; });
+    assert.deepEqual([hover.fill, hover.opacity, hover.line], ['rgba(0, 0, 0, 0)', '1', hover.accent], 'a hovered handle is a line in the accent colour, not a filled gap');
+    assert.ok(hover.width >= 2 && hover.width <= 4 && Math.abs(hover.height - hover.gap) <= 1 && parseFloat(hover.radius) >= 2, `the line is thin, as tall as the gap and rounded: ${JSON.stringify(hover)}`);
     await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
     assert.equal((await grip()).fade, '0s', 'with reduced motion the grip does not fade');
     await page.close();
@@ -249,8 +250,8 @@ async function main() {
     assert.equal(await page.$eval('.col-resizer-thread', node => node.hidden), true, 'no thread handle while no thread is open');
     await open(page);
     assert.equal(await page.$eval('.col-resizer-thread', node => node.hidden), false, 'the handle shows with an open thread');
-    // The thread's handle sits on the panel's edge line, not in a gap, so it has no grip dots; the other handles keep theirs.
-    assert.deepEqual(await page.evaluate(() => ['.col-resizer-thread', '.col-resizer-rooms', '.col-resizer-agents'].map(selector => getComputedStyle(document.querySelector(selector), '::after').display)), ['none', 'block', 'block'], 'no grip dots on the thread handle, the rooms and members handles keep theirs');
+    // The thread's handle sits on the panel's edge line, not in a gap, so it shows no grip dots at rest (while the pointer moves); the other handles do.
+    assert.deepEqual(await page.evaluate(async () => { document.documentElement.classList.add('col-grips'); await new Promise(resolve => setTimeout(resolve, 400)); const out = ['.col-resizer-thread', '.col-resizer-rooms', '.col-resizer-agents'].map(selector => getComputedStyle(document.querySelector(selector), '::after').opacity); document.documentElement.classList.remove('col-grips'); return out; }), ['0', '1', '1'], 'no grip dots on the thread handle, the rooms and members handles keep theirs');
     let state = await thread(page);
     assert.deepEqual([state.panel, state.variable], [420, '420px'], 'the thread opens at its default width');
     await drag(page, 'thread', -100);

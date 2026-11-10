@@ -132,6 +132,23 @@ function surfaceAudit(MIN) {
   const thread = document.querySelector('#thread-panel'); thread.hidden = false;
   fits(thread, 'thread panel'); small(thread, 'thread panel');
   const threadList = thread.querySelector('#thread-messages'); if (box(threadList).height < 90) out.push(`thread panel: the reply list is only ${Math.round(box(threadList).height)}px tall`);
+  // The panel's header with the members column collapsed (an iPad held upright): the close button and the button that brings the column back are both inside the
+  // header, centred in it, the same size, and apart.
+  if (vw > 700) {
+    const chat = document.querySelector('.chat'), was = chat.classList.contains('agents-collapsed'); chat.classList.add('agents-collapsed');
+    const head = thread.querySelector(':scope > header'), close = thread.querySelector('#close-thread'), expand = document.querySelector('#edge-agents-expand');
+    const theme = document.documentElement.dataset.theme;
+    if (head && close && expand && box(expand).width) for (const name of ['', 'light', 'high-contrast-dark', 'high-contrast-light']) {
+      if (name) document.documentElement.dataset.theme = name; else delete document.documentElement.dataset.theme;
+      const label = name || 'default theme', h = box(head), c = box(close), e = box(expand), middle = r => (r.top + r.bottom) / 2 - (h.top + h.bottom) / 2;
+      if (e.top < h.top - 0.5 || e.bottom > h.bottom + 0.5) out.push(`thread header (${label}): the members button (${Math.round(e.top)}..${Math.round(e.bottom)}px) is not inside the header (${Math.round(h.top)}..${Math.round(h.bottom)}px)`);
+      if (Math.abs(middle(e)) > 1 || Math.abs(middle(c)) > 1) out.push(`thread header (${label}): the buttons are not centred in it (members ${middle(e).toFixed(1)}px, close ${middle(c).toFixed(1)}px)`);
+      if (Math.abs(e.width - c.width) > 0.5 || Math.abs(e.height - c.height) > 0.5) out.push(`thread header (${label}): the members button is ${Math.round(e.width)}x${Math.round(e.height)} and the close button ${Math.round(c.width)}x${Math.round(c.height)}`);
+      if (e.left < c.right + 2 && e.right > c.left - 2) out.push(`thread header (${label}): the members button touches the close button`);
+    }
+    if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
+    if (!was) chat.classList.remove('agents-collapsed');
+  }
   thread.hidden = true;
   // Emoji picker (open in the fixture): a bottom sheet on a phone, anchored and inside the viewport elsewhere; 40px targets.
   const picker = document.querySelector('.emoji-picker');

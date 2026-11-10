@@ -184,6 +184,13 @@ async function main() {
     await page.$eval('#settings-toggle', button => { button.style.cssText = ''; }); await page.keyboard.press('Escape');
     // The bar folds only what does not fit, at every width: a tablet upright (a touch screen, 744px) has room for every control, so there is no ⋯ at all
     // (it used to fold four of them at any touch width up to 900px); a narrow phone folds some; resizing between them re-flows.
+    // The testing pill is the first (leftmost) control of the bar's right part, before the rooms and inbox buttons, on a desktop and on a phone alike.
+    for (const [width, height] of [[1280, 900], [390, 800]]) {
+      await page.setViewport({ width, height, isMobile: width < 700, hasTouch: width < 700 });
+      const order = await page.evaluate(() => { const pill = document.querySelector('#ui-variant-toggle'), was = pill.hidden; pill.hidden = false; const lefts = ['#ui-variant-toggle', '#rooms-toggle', '#inbox-toggle'].map(selector => document.querySelector(selector).getBoundingClientRect()); pill.hidden = was; return { lefts: lefts.map(r => [Math.round(r.left), Math.round(r.right)]), first: document.querySelector('.topbar nav').firstElementChild.id, pillBeforeRooms: lefts[0].right <= lefts[1].left + 0.5 || lefts[1].width === 0, rooms: lefts[1].width > 0 }; });
+      assert.equal(order.first, 'ui-variant-toggle', `the pill comes first in the bar's markup at ${width}px`);
+      if (order.rooms) assert.ok(order.pillBeforeRooms, `and is drawn left of the rooms button at ${width}px: ${JSON.stringify(order)}`);
+    }
     const crowd = () => page.evaluate(() => ({ tucked: document.querySelectorAll('.topbar nav .topbar-tucked').length, more: getComputedStyle(document.querySelector('#more-toggle')).display !== 'none', visible: ['#system-events-toggle', '#health-toggle', '#knowledge-toggle', '#logout', '#inbox-toggle', '#settings-toggle'].filter(id => { const node = document.querySelector(id); return node && !node.hidden && getComputedStyle(node).display !== 'none'; }).length, spills: document.documentElement.scrollWidth > innerWidth }));
     for (const [width, height] of [[744, 1133], [1133, 744], [1024, 768], [1440, 900]]) {
       await page.setViewport({ width, height, isMobile: width < 1100, hasTouch: width < 1100 }); await settle();

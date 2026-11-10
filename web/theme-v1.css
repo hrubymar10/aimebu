@@ -1937,8 +1937,9 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .col-resizer::after { content: ""; position: absolute; top: 50%; left: 50%; width: 4px; height: 22px; transform: translate(-50%, -50%); opacity: 0; transition: opacity .25s; pointer-events: none;
   background: radial-gradient(circle at center, var(--text-muted) 1.3px, transparent 1.8px) center top / 4px 8px repeat-y; }
 html.col-grips .col-resizer::after { opacity: 1; }
-.col-resizer:is(:hover, :focus-visible, .dragging) { background: var(--accent); }
-.col-resizer:is(:hover, :focus-visible, .dragging)::after { opacity: 1; background-image: radial-gradient(circle at center, var(--bg-primary) 1.3px, transparent 1.8px); }
+/* While hovered, focused or dragged a handle is a rounded line: a thin, fully rounded accent line down the middle of its gap, as tall as the gap, so it never covers a
+   panel's border (it replaces the grip dots while it shows). */
+.col-resizer:is(:hover, :focus-visible, .dragging)::after { opacity: 1; top: 0; bottom: 0; width: 3px; height: auto; transform: translateX(-50%); border-radius: 999px; background: var(--accent); }
 .col-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .col-resizer, .col-resizer::after { transition: none; } }
 .col-resizer[hidden] { display: none; }
@@ -1979,8 +1980,13 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
   .thread-panel > header > #close-thread { margin-left: auto; }
   /* With the members column collapsed and a thread open, the button that brings the column back is the right-most control of the row, after the thread's close button; the
      thread's header leaves room for it. Without a thread it stays at the end of the room's header. */
-  .chat.agents-collapsed:has(> .thread-panel:not([hidden])) > header > #edge-agents-expand { position: absolute; top: 7px; right: 8px; margin: 0; z-index: 3; }
+  .chat.agents-collapsed:has(> .thread-panel:not([hidden])) > header > #edge-agents-expand { position: absolute; top: 21.5px; transform: translateY(-50%); right: 8px; margin: 0; z-index: 3; } /* centred on the thread header's 43px, whatever the button's size */
   .chat.agents-collapsed:has(> .thread-panel:not([hidden])) > .thread-panel > header { padding-right: 48px; }
+}
+/* Touch: both buttons of the thread's header are the 40px targets (the close button's rule is the one further down), so the header makes room for the wider one. */
+@media (min-width: 701px) and (hover: none) and (pointer: coarse) {
+  .chat.agents-collapsed:has(> .thread-panel:not([hidden])) > header > #edge-agents-expand { width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
+  .chat.agents-collapsed:has(> .thread-panel:not([hidden])) > .thread-panel > header { padding-right: 56px; }
 }
 @media (min-width: 1280px) {
   .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > header { margin-right: min(calc(calc(var(--agents-w, 260px) + var(--gap, 0px)) + var(--thread-w, 420px)), 100%); }
@@ -1998,8 +2004,8 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 
 /* the thread column is resizable (column-resize.js sets --thread-w on the app element); its handle sits on the panel's left edge */
 .thread-panel { width: min(var(--thread-w, 420px), 100%); }
-/* The thread's handle sits on the panel's edge line, not in a gap: no grip dots on it (the accent line on hover and focus stays). */
-.col-resizer-thread::after { display: none; }
+/* The thread's handle sits on the panel's edge line, not in a gap: no grip dots at rest on it (the rounded line on hover and focus stays). */
+html.col-grips .col-resizer-thread:not(:hover, :focus-visible, .dragging)::after { opacity: 0; }
 .col-resizer-thread { position: absolute; top: 0; bottom: 0; right: calc(var(--thread-w, 420px) - var(--gap, 6px) / 2); margin-right: 0; }
 @media (min-width: 1280px) {
   .chat:not(.agents-collapsed) > .col-resizer-thread { right: calc(var(--agents-w, 260px) + var(--gap, 0px) + var(--thread-w, 420px) - var(--gap, 6px) / 2); }
