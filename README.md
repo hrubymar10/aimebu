@@ -534,9 +534,9 @@ tick, "N% left" with the reset countdown, and the reserve/deficit line. The grou
 each provider's active profile first, then a divider and the other profiles (remembered in this
 browser); with no provider enabled the column offers Open Settings → Usages. The one-row composer
 grows as text is entered, sends with Enter, and
-inserts a newline with Shift+Enter. Pressing ↑ in an empty composer (or with the
+inserts a newline with Shift+Enter. On a phone or an iPad with no fine pointer (touch only: `(hover: none) and (pointer: coarse)`, read at every key, so an iPad with a trackpad or keyboard acts like a desktop) Enter makes a new line in the room and the thread composers and only the send button sends; an open picker still takes Enter. Pressing ↑ in an empty composer (or with the
 caret at its start) recalls your earlier messages in that room, newest first;
-↓ walks forward and Esc restores the draft. Settings → Macros edits shared `<KEY>`
+↓ walks forward and Esc restores the draft. It works in the rich composer (over the whole document, so ↑ on the second line of a draft only moves the caret) and in the thread panel's composer, where it recalls your messages of that conversation; Shift, Ctrl, Alt and ⌘ with the arrows, composing text, and an open picker (mentions, macros, commands, emoji) keep the keys for themselves. Settings → Macros edits shared `<KEY>`
 composer expansions for the owner and global admins; all signed-in users can insert
 them from prefix suggestions (typing `<` opens the list, as in v1: an outlined
 list over the composer, one line per macro with its first 40 characters; ↑/↓

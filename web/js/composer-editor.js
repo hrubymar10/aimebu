@@ -3,6 +3,7 @@
 // for the rest of the app: sending reads its value, and anything that sets its value (a sent message clears it, a room change
 // resets it) reloads the editor. The shared pickers (@ mentions, < macros, / commands, : emoji) work here through EditorBridge,
 // which gives them a textarea-like view of the editor.
+import { enterSends } from './enter-key.js';
 import { docToMarkdown } from './composer-markdown.js';
 import { looksLikeMarkdown, carriesFormatting } from './composer-paste.js';
 import { renderMarkdown } from './markdown.js';
@@ -127,6 +128,10 @@ export class ComposerEditor {
       }
       return true;
     };
+    const newLine = chainCommands(
+      (state, dispatch) => (inList(state) ? PM.splitListItem(schema.nodes.list_item)(state, dispatch) : false),
+      PM.newlineInCode, PM.createParagraphNear, PM.liftEmptyBlock, PM.splitBlock,
+    );
     const keys = {
       'Mod-b': toggleMark(schema.marks.strong), 'Mod-i': toggleMark(schema.marks.em), 'Mod-u': toggleMark(schema.marks.underline),
       'Mod-Shift-x': toggleMark(schema.marks.strike), 'Mod-Shift-c': toggleMark(schema.marks.code),
@@ -134,17 +139,16 @@ export class ComposerEditor {
       'Mod-z': PM.undo, 'Mod-y': PM.redo, 'Mod-Shift-z': PM.redo,
       'Mod-Shift-7': this.command('ol'), 'Mod-Shift-8': this.command('ul'), 'Mod-Shift-9': this.command('quote'), 'Mod-Alt-Shift-c': this.command('codeblock'),
       // A plain Enter sends (a code block keeps its newlines); Shift+Enter continues a list or quote, or breaks the line.
+      // On a touch screen with no fine pointer Enter is Shift+Enter (a new line) and only the send button sends (see enter-key.js).
       Enter: (state, dispatch) => {
         if (enterEmpty(state, dispatch) || enterEndOfCode(state, dispatch)) return true;
         if (inCode(state)) return false;
+        if (!enterSends()) return newLine(state, dispatch);
         onSend?.();
         return true;
       },
       Backspace: backspace,
-      'Shift-Enter': chainCommands(
-        (state, dispatch) => (inList(state) ? PM.splitListItem(schema.nodes.list_item)(state, dispatch) : false),
-        PM.newlineInCode, PM.createParagraphNear, PM.liftEmptyBlock, PM.splitBlock,
-      ),
+      'Shift-Enter': newLine,
       'Mod-Enter': exitCode,
     };
     this.state = PM.EditorState.create({ schema, plugins: [PM.history(), PM.inputRules({ rules }), keymap(keys), keymap(baseKeymap), this.placeholderPlugin(PM, placeholder)] });
@@ -210,6 +214,24 @@ export class ComposerEditor {
     const state = PM.EditorState.create({ schema, doc, plugins: this.view.state.plugins, selection: PM.TextSelection.atEnd(doc) });
     this.view.updateState(state);
     this.onState?.();
+  }
+  // The whole document, to put back later exactly as it was (marks, lists, quotes and all): a ProseMirror document is immutable, so this is a reference, not a copy.
+  getDoc() { return this.view.state.doc; }
+  // Replace the whole document with one taken from getDoc(); the caret ends at its end.
+  setDoc(doc) {
+    const { PM } = this;
+    const state = PM.EditorState.create({ schema: this.schema, doc, plugins: this.view.state.plugins, selection: PM.TextSelection.atEnd(doc) });
+    this.view.updateState(state);
+    this.onState?.();
+  }
+  // Replace the whole document with a Markdown text, read as formatting the way a pasted message is (bold, lists, quotes, code, links); plain text, and Markdown with
+  // structure the document has no place for (a heading, a table), stay plain text, as setText leaves them.
+  setMarkdown(text) {
+    if (!looksLikeMarkdown(text)) { this.setText(text); return; }
+    const fragment = renderMarkdown(text);
+    fragment.querySelectorAll?.('.md-copy-btn, input').forEach(node => node.remove());
+    const doc = this.PM.DOMParser.fromSchema(this.schema).parse(fragment, { preserveWhitespace: false });
+    this.setDoc(doc.childCount ? doc : this.schema.nodes.doc.create(null, [this.schema.nodes.paragraph.create()]));
   }
   focus() { this.view.focus(); }
   destroy() { this.view.destroy(); }

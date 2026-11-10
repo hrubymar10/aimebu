@@ -1003,6 +1003,117 @@ async function main() {
     await page.close();
   }
 
+  // The same history in the rich composer (the editor has the focus and the caret, not the textarea) and in the thread panel's composer, over that conversation's own
+  // messages. The keys are the editor's own: Up at the start of the document, Down at its end, a picker that is open keeps them, a modifier or composing is no history.
+  {
+    const page = await mount();
+    await page.evaluate(() => { for (const [seq, body] of [[121, 'mine one'], [124, 'mine two'], [129, 'mine three']]) Object.assign(window.__data.rooms.rm_a.messages[seq - 1], { author_id: 'usr_me', author_name: 'me', body }); });
+    await addReplies(page, 3);
+    await page.evaluate(() => { const messages = window.__data.rooms.rm_a.messages; for (const [id, body] of [['rm_a_t1', 'thread mine one'], ['rm_a_t3', 'thread mine two']]) Object.assign(messages.find(message => message.id === id), { author_id: 'usr_me', author_name: 'me', body }); });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.waitForSelector('#composer .ProseMirror');
+    const text = (thread = false) => page.evaluate(thread => (thread ? window.__chat.threadFormatting : window.__chat.formatting).input.value, thread);
+    const press = async (key, modifier) => { if (modifier) await page.keyboard.down(modifier); await page.keyboard.press(key); if (modifier) await page.keyboard.up(modifier); await settle(page); };
+    await page.focus('#composer .ProseMirror');
+    // (A reply is a message of the room, so the room's history has the conversation's own replies too, in the order they were sent.)
+    await press('ArrowUp'); assert.equal(await text(), 'thread mine two', 'Up in an empty rich composer recalls the newest own message');
+    await press('ArrowUp'); assert.equal(await text(), 'thread mine one');
+    await press('ArrowUp'); assert.equal(await text(), 'mine three');
+    await press('ArrowDown'); assert.equal(await text(), 'thread mine one');
+    await press('Escape'); assert.equal(await text(), '', 'Escape puts the draft back');
+    await page.keyboard.type('line one'); await page.keyboard.down('Shift'); await page.keyboard.press('Enter'); await page.keyboard.up('Shift'); await page.keyboard.type('line two'); await settle(page);
+    await press('ArrowUp'); assert.equal(await text(), 'line one\nline two', 'Up from the second line of a draft moves the caret, it is not history');
+    await page.evaluate(() => window.__chat.formatting.input.setSelectionRange(0, 0)); await press('ArrowUp'); assert.equal(await text(), 'thread mine two', 'at the very start of the document it is');
+    for (let i = 0; i < 2; i++) await press('ArrowDown');
+    assert.equal(await text(), 'line one\nline two', 'past the newest the draft is back');
+    await press('Escape'); await page.evaluate(() => { window.__chat.formatting.input.value = ''; });
+    await press('ArrowUp', 'Control'); assert.equal(await text(), '', 'a modifier makes it no history');
+    // A formatted draft survives a walk: Up saves the editor's document, and Escape (or Down past the newest) puts it back as it was, with its bold and list; a recalled
+    // message that has formatting loads as formatting, not as asterisks.
+    await page.evaluate(() => { window.__chat.formatting.input.value = ''; });
+    await page.evaluate(() => window.__chat.formatting.loadMarkdown('plain start **bold draft**\n\n- item a\n- item b'));
+    const shape = () => page.evaluate(() => { const root = document.querySelector('#composer .ProseMirror'); return { strong: [...root.querySelectorAll('strong')].map(node => node.textContent), items: [...root.querySelectorAll('li')].map(node => node.textContent), markdown: window.__chat.draft.value }; });
+    const drafted = await shape();
+    assert.deepEqual([drafted.strong, drafted.items], [['bold draft'], ['item a', 'item b']], `the formatted draft is in the editor as formatting: ${JSON.stringify(drafted)}`);
+    await page.focus('#composer .ProseMirror'); await page.evaluate(() => window.__chat.formatting.input.setSelectionRange(0, 0));
+    await press('ArrowUp');
+    const recalled = await shape();
+    assert.ok(recalled.strong.length > 0 || recalled.items.length > 0 || recalled.markdown.length > 0, 'something was recalled');
+    await press('Escape');
+    const restored = await shape();
+    assert.deepEqual([restored.strong, restored.items, restored.markdown], [drafted.strong, drafted.items, drafted.markdown], `Escape puts the formatted draft back as it was: ${JSON.stringify(restored)}`);
+    await page.evaluate(() => window.__chat.formatting.input.setSelectionRange(0, 0)); await press('ArrowUp');
+    for (let i = 0; i < 6; i++) await press('ArrowDown');
+    const back = await shape();
+    assert.deepEqual([back.strong, back.items, back.markdown], [drafted.strong, drafted.items, drafted.markdown], `and so does Down past the newest: ${JSON.stringify(back)}`);
+    // A recalled message with formatting is loaded as formatting.
+    await page.evaluate(() => { window.__chat.formatting.input.value = ''; });
+    await page.evaluate(() => { const own = window.__chat.messages.get('rm_a_m129'); own.body = 'a **bold** word and a list:\n\n- one\n- two'; });
+    await page.evaluate(() => window.__chat.formatting.loadMarkdown(''));
+    await page.focus('#composer .ProseMirror'); await press('ArrowUp'); await press('ArrowUp'); await press('ArrowUp');
+    const fromHistory = await shape();
+    assert.ok(fromHistory.strong.includes('bold') && fromHistory.items.length === 2, `a recalled message keeps its formatting: ${JSON.stringify(fromHistory)}`);
+    await page.evaluate(() => { window.__chat.formatting.input.value = ''; window.__chat.recall.index = null; });
+    // An open picker keeps the arrow keys.
+    await page.keyboard.type('@'); await settle(page);
+    const open = await page.evaluate(() => window.__chat.mentionAutocomplete.popup.hidden === false);
+    if (open) { await press('ArrowUp'); assert.equal(await text(), '@', 'the open mention picker takes Up'); }
+    await page.evaluate(() => { window.__chat.formatting.input.value = ''; });
+    // The thread panel: the same over the conversation's own messages (the room's own messages are not in it).
+    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
+    await page.waitForSelector('#thread-composer .ProseMirror');
+    await page.focus('#thread-composer .ProseMirror');
+    await press('ArrowUp'); assert.equal(await text(true), 'thread mine two', 'Up in the thread composer recalls the newest own message of the conversation');
+    await press('ArrowUp'); assert.equal(await text(true), 'thread mine one');
+    await press('ArrowUp'); assert.equal(await text(true), 'thread mine one', 'and stays at the oldest');
+    await press('ArrowDown'); await press('ArrowDown'); assert.equal(await text(true), '', 'past the newest the (empty) draft is back');
+    assert.equal(await text(), '', 'the room composer is untouched');
+    await page.close();
+  }
+
+  // Enter on a touch screen with no fine pointer makes a new line and the send button sends; with a fine pointer Enter sends. It is read at every key, so a device that gets a
+  // pointer behaves like a desktop at once. Both composers (room and thread panel), the rich editor and the plain textarea, and an open picker still takes Enter.
+  for (const plain of [false, true]) {
+    const page = await mount(plain ? { plain: true } : {});
+    await addReplies(page, 3);
+    // The page has no touch device: the media query that asks is answered by a switch the test flips.
+    await page.evaluate(() => { const ask = window.matchMedia.bind(window); window.__coarse = true; window.matchMedia = query => (/hover:\s*none/.test(query) && /pointer:\s*coarse/.test(query) ? { matches: window.__coarse, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} } : ask(query)); });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const room = plain ? '#composer textarea[name=body]' : '#composer .ProseMirror', thread = plain ? '#thread-composer textarea' : '#thread-composer .ProseMirror';
+    const value = which => page.evaluate(which => (which === 'thread' ? window.__chat.threadFormatting : window.__chat.formatting).input.value, which);
+    const sent = () => page.evaluate(() => window.__requests.filter(request => request.method === 'POST' && /\/messages$/.test(request.path)).length);
+    const coarse = on => page.evaluate(on => { window.__coarse = on; }, on);
+    // Room composer, touch: Enter is a new line and nothing is sent; the send button sends.
+    if (!plain) await page.waitForSelector('#composer .ProseMirror');
+    await page.focus(room); await page.keyboard.type('line one'); await page.keyboard.press('Enter'); await page.keyboard.type('line two'); await settle(page);
+    assert.deepEqual([await value('room'), await sent()], ['line one\nline two', 0], `${plain ? 'plain' : 'rich'}: Enter is a new line on a touch screen, nothing is sent`);
+    await page.click('#composer button[type=submit]'); await settle(page);
+    assert.equal(await sent(), 1, 'the send button sends');
+    // A pointer appears (a trackpad on an iPad): the next Enter sends.
+    await coarse(false);
+    await page.focus(room); await page.keyboard.type('now a desktop'); await page.keyboard.press('Enter'); await settle(page);
+    assert.equal(await sent(), 2, 'with a fine pointer Enter sends again, with no reload');
+    // Thread composer, touch.
+    await coarse(true);
+    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length >= 4); await settle(page);
+    if (!plain) await page.waitForSelector('#thread-composer .ProseMirror');
+    await page.focus(thread); await page.keyboard.type('reply one'); await page.keyboard.press('Enter'); await page.keyboard.type('reply two'); await settle(page);
+    assert.deepEqual([await value('thread'), await sent()], ['reply one\nreply two', 2], 'the thread composer: Enter is a new line too');
+    await page.click('#thread-composer button[type=submit]'); await settle(page);
+    assert.equal(await sent(), 3, 'its send button sends');
+    await coarse(false);
+    await page.focus(thread); await page.keyboard.type('thread desktop'); await page.keyboard.press('Enter'); await settle(page);
+    assert.equal(await sent(), 4, 'the thread composer sends with Enter again with a fine pointer');
+    // Shift+Enter is a new line either way, and an open picker still takes Enter on a touch screen.
+    await coarse(true);
+    await page.focus(room); await page.keyboard.type('@'); await settle(page);
+    const open = await page.evaluate(() => window.__chat.mentionAutocomplete.popup.hidden === false);
+    if (open) { const before = await value('room'); await page.keyboard.press('Enter'); await settle(page); assert.notEqual(await value('room'), before, 'Enter picks in an open picker'); assert.equal(await sent(), 4, 'and sends nothing'); }
+    await page.close();
+  }
+
   // The reader's place survives a live update: the composer keeps its text and caret and the focus, the thread's composer keeps its text, and a button of
   // a message row that has the focus keeps it while rows are added below, and after an older page is put above.
   {

@@ -15,6 +15,7 @@ import { MacroAutocomplete } from './macros.js';
 import { MentionAutocomplete, MentionIndex, highlightMentions } from './mentions.js';
 import { EmojiAutocomplete } from './emoji-suggest.js';
 import { Notice } from './notice.js';
+import { enterSends } from './enter-key.js';
 import { closeEmojiPicker, openEmojiPicker } from './emoji-picker.js';
 import { LiveAnnouncer } from './live-region.js';
 import { ComposerFormatting } from './composer.js';
@@ -100,16 +101,20 @@ export class Chat {
     this.threadForm.onsubmit = event => { event.preventDefault(); this.sendThread(); };
     document.querySelector('#close-thread').onclick = () => this.closeThread();
     this.form.onsubmit = event => { event.preventDefault(); this.send(); };
-    this.recall = { index: null, draft: '' };
-    this.draft.addEventListener('input', () => { this.recall.index = null; });
+    // ↑/↓ history of the viewer's own messages, in each composer (the room's, and the thread panel's over that conversation). The keys go through the composer's input
+    // (the editor while formatting is on, the textarea otherwise), because the editor, not the textarea, has the focus and the caret.
+    this.recall = { index: null, draft: '' }; this.threadRecall = { index: null, draft: '' };
+    this.formatting.input.addEventListener('input', () => { this.recall.index = null; });
+    this.formatting.input.addEventListener('keydown', event => { this.recallKey(event); });
+    this.threadFormatting.input.addEventListener('input', () => { this.threadRecall.index = null; });
+    this.threadFormatting.input.addEventListener('keydown', event => { this.recallKey(event, true); });
     for (const field of [this.draft, this.threadDraft]) field.addEventListener('focus', () => { if (this.room) this.loadMentionLogins(this.room); });
     this.draft.addEventListener('keydown', event => {
-      if (this.recallKey(event)) return;
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && this.quickCommands?.popup.hidden !== false && this.macroAutocomplete?.popup.hidden !== false && this.mentionAutocomplete?.popup.hidden !== false && this.emojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.form.requestSubmit(); }
+      if (event.key === 'Enter' && enterSends() && !event.shiftKey && !event.isComposing && this.quickCommands?.popup.hidden !== false && this.macroAutocomplete?.popup.hidden !== false && this.mentionAutocomplete?.popup.hidden !== false && this.emojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.form.requestSubmit(); }
     });
     this.threadDraft.addEventListener('input', () => this.resizeThreadDraft());
     this.threadDraft.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && this.threadMentionAutocomplete?.popup.hidden !== false && this.threadEmojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.threadForm.requestSubmit(); }
+      if (event.key === 'Enter' && enterSends() && !event.shiftKey && !event.isComposing && this.threadMentionAutocomplete?.popup.hidden !== false && this.threadEmojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.threadForm.requestSubmit(); }
     });
     document.querySelector('#cancel-reply').onclick = () => this.setReply(null);
     this.raw = false;
@@ -167,7 +172,7 @@ export class Chat {
     this.store.reset(); if (this.recall) this.recall.index = null; this.announcer.reset();
     this.room = null; this.syncEmpty(); this.panel.reset();
     this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.agents.clear(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.closeBlocked?.clear(); this.worktree = null;
-    this.setReply(null); this.closeThread(); this.renderPending(); this.draft.value = ''; this.resizeDraft();
+    this.setReply(null); this.closeThread(); this.renderPending(); this.draft.value = ''; this.recall.index = null; this.resizeDraft();
     this.lightbox.close();
     this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
@@ -540,21 +545,31 @@ export class Chat {
     if (kind === 'live') { if (message.author_kind === 'agent') this.legacyOpener?.(message.author_id); return; }
     return openSenderProfile({ name: this.authorName(message), authorID: message.author_id, kind, roomID: this.room?.id, messages: this.messages.values(), identity: senderIdentity(message, undefined), onStartAgent: this.legacyStarter, onOpenAgent: this.legacyOpener });
   }
-  // The viewer's own messages in this room, oldest first, consecutive duplicates collapsed.
-  recallCandidates() { return ownMessages(this.messages.values(), currentUser); }
+  // The viewer's own messages in this room, oldest first, consecutive duplicates collapsed; in the thread panel, those of the open conversation.
+  recallCandidates(thread = false) { return ownMessages(thread ? this.store.threadEntries : this.messages.values(), currentUser); }
   // Terminal-style history: Up at an empty composer or caret start walks back through own messages (once recalling, on the first line),
   // Down walks forward (restoring the in-progress draft past the newest), Esc restores the draft.
-  // Returns true when the key was consumed. Open autocomplete popups keep their own arrow keys.
-  recallKey(event) {
-    if (event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
-    if (![this.quickCommands, this.macroAutocomplete, this.mentionAutocomplete].every(popup => popup?.popup.hidden !== false)) return false;
-    const draft = this.draft, recall = this.recall;
+  // Returns true when the key was consumed. Open pickers (mentions, macros, commands, emoji) keep their own arrow keys.
+  recallKey(event, thread = false) {
+    if (event.defaultPrevented || event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
+    const popups = thread ? [this.threadMentionAutocomplete, this.threadEmojiAutocomplete] : [this.quickCommands, this.macroAutocomplete, this.mentionAutocomplete, this.emojiAutocomplete];
+    if (!popups.every(popup => popup?.popup.hidden !== false)) return false;
+    const draft = thread ? this.threadDraft : this.draft, formatting = thread ? this.threadFormatting : this.formatting, input = formatting.input, recall = thread ? this.threadRecall : this.recall;
     const walking = event.key === 'ArrowUp' || event.key === 'ArrowDown';
-    const step = recallStep({ key: event.key, value: draft.value, at: draft.selectionStart, end: draft.selectionEnd }, recall, walking ? this.recallCandidates() : []);
+    const step = recallStep({ key: event.key, value: input.value, at: input.selectionStart, end: input.selectionEnd }, recall, walking ? this.recallCandidates(thread) : []);
     if (!step) return false;
     event.preventDefault();
+    // The draft is kept as the editor's own document and put back as it was, so formatting in it survives a walk; a recalled message is loaded as Markdown, as formatting.
+    if (step.index === null) {
+      const saved = recall.saved; recall.saved = null;
+      if (saved) formatting.restoreDraft(saved); else formatting.loadMarkdown(step.value);
+    } else {
+      if (recall.index === null) recall.saved = formatting.saveDraft();
+      formatting.loadMarkdown(step.value);
+    }
     recall.index = step.index; recall.draft = step.draft;
-    draft.value = step.value; draft.setSelectionRange(step.value.length, step.value.length); this.resizeDraft();
+    if (!formatting.editor) input.setSelectionRange(step.value.length, step.value.length);
+    if (thread) this.resizeThreadDraft(); else this.resizeDraft();
     return true;
   }
   // Arrow keys move between the buttons of a focused action bar.
@@ -634,7 +649,7 @@ export class Chat {
   closeThread() { return this.store.closeThread(); }
   threadClosed() {
     this.threadNotice.clear(); this.threadRoot = null; this.setThreadReply(null); this.threadTitle.textContent = 'Thread'; this.threadUpdate(); this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false';
-    this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; this.resizeThreadDraft(); document.querySelector('#thread-error').textContent = '';
+    this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; this.threadRecall.index = null; this.resizeThreadDraft(); document.querySelector('#thread-error').textContent = '';
   }
   // The message the panel's next send replies to; none means the root. Only a reply to something other than the root is worth a chip.
   setThreadReply(message) {
@@ -668,7 +683,7 @@ export class Chat {
     return () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; };
   }
   beginThreadSend() { document.querySelector('#thread-error').textContent = ''; this.threadNotice.clear(); }
-  sentThreadReply() { this.setThreadReply(null); this.threadDraft.value = ''; this.resizeThreadDraft(); }
+  sentThreadReply() { this.setThreadReply(null); this.threadDraft.value = ''; this.threadRecall.index = null; this.resizeThreadDraft(); }
   threadToEnd() { this.threadList.scrollTop = this.threadList.scrollHeight; }
   threadSendFailed(message) { this.threadNotice.show(message); }
   restoreThreadDraft(draft) { this.threadDraft.value = draft; this.resizeThreadDraft(); this.draft.focus(); }

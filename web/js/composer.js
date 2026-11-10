@@ -162,6 +162,15 @@ export class ComposerFormatting {
     if (this.rich) this.startEditor(); else this.stopEditor();
     this.refreshState();
   }
+  // For a history walk (chat.js): the draft as it is now, to put back exactly (the editor's document, so bold, lists and links survive), and a message's Markdown
+  // loaded as formatting. Without the editor (plain text) both are the textarea's text.
+  saveDraft() { return { text: this.textarea.value, doc: this.editor ? this.editor.getDoc() : null }; }
+  restoreDraft(saved) {
+    if (this.editor && saved.doc) { this.setNative(saved.text); this.editor.setDoc(saved.doc); } else this.textarea.value = saved.text;
+  }
+  loadMarkdown(text) {
+    if (this.editor) { this.setNative(text); this.editor.setMarkdown(text); } else this.textarea.value = text;
+  }
   async startEditor() {
     if (this.editor || this.starting) return;
     this.starting = true;
