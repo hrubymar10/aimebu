@@ -12,6 +12,12 @@ export function LatestButton({ label, count, className, hidden, onClick }) {
   return html`<button type="button" class=${['btn-icon', 'back-to-latest', className].filter(Boolean).join(' ')} title=${label} aria-label=${label} hidden=${hidden} onClick=${onClick}><span class="icon-mask icon-mask-arrow-down" aria-hidden="true"></span>${count ? html`<span class="badge">${String(count)}</span>` : null}</button>`;
 }
 
+// The marker of a reply that arrived inside the conversation tree, where the reader is not looking (the thread panel's tree option draws a reply under its parent, not at the end):
+// it says how many, and which way they are (up or down from what is on screen); a click goes to the first.
+export function TreeNewButton({ label, count, dir, className, hidden, onClick }) {
+  return html`<button type="button" class=${['btn-icon', 'back-to-latest', className].filter(Boolean).join(' ')} title=${label} aria-label=${label} hidden=${hidden} data-dir=${dir} onClick=${onClick}><span class="icon-mask icon-mask-arrow-down" aria-hidden="true"></span>${count ? html`<span class="badge">${String(count)}</span>` : null}</button>`;
+}
+
 export function RoomNote({ id, text, hidden }) {
   return html`<p class="system-room-notice" id=${id} role="note" hidden=${hidden}>${text}</p>`;
 }

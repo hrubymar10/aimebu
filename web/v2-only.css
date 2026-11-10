@@ -620,41 +620,25 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .thread-root-pin[hidden] { display: none; }
 .thread-root-pin:hover, .thread-root-pin:focus-visible { color: var(--accent); outline: none; }
 
-/* Forks in the thread panel (pages/chat/rows.js; the pieces are in the markup, the experiment pill picks which show). Without the experiment a reply's quote is shown unless it
-   answers the first message. A fork is a reply whose parent is not the row directly above. */
-.thread-entry .fork-label, .thread-entry .fork-ref { display: none; font-size: 11px; color: var(--text-muted); }
-.thread-entry[data-parent-root] .quote { display: none; }
-/* A: the parent is quoted when it is not directly above (also the first message, when it is not directly above); when it is, a small "name" reference instead. */
-html[data-ui-forks="a"] .thread-entry[data-parent-root] .quote, html[data-ui-forks="c"] .thread-entry[data-parent-root] .quote { display: block; }
-html[data-ui-forks="a"] .thread-entry:not([data-fork]) .quote, html[data-ui-forks="c"] .thread-entry:not([data-fork]) .quote { display: none; }
-html[data-ui-forks="a"] .thread-entry .fork-ref, html[data-ui-forks="c"] .thread-entry .fork-ref { display: block; margin: 0 0 2px 2px; }
-/* B: indented by depth (at most 3 levels) with a thin connector line. */
-html[data-ui-forks="b"] .thread-entry { margin-left: calc(var(--fork-depth, 0) * 14px); padding-left: 6px; border-left: 1px solid var(--border-hover); }
-html[data-ui-forks="b"] .thread-entry[data-depth="0"] { border-left-color: transparent; padding-left: 0; }
-/* The viewer's own rows are right-aligned and shrink to their bubble, so they are indented from the right, with the connector on that side. */
-html[data-ui-forks="b"] .thread-entry.self { margin-left: 0; padding-left: 0; border-left: 0; margin-right: calc(var(--fork-depth, 0) * 14px); padding-right: 6px; border-right: 1px solid var(--border-hover); }
-html[data-ui-forks="b"] .thread-entry.self[data-depth="0"] { border-right-color: transparent; padding-right: 0; }
-/* C: a rail per branch, a new colour for each fork; the colours come from the theme and are calm ones (no red, which reads as an error, and no text colour, which merges with the border). */
-html[data-ui-forks="c"] .thread-entry { padding-left: 8px; border-left: 3px solid var(--fork-color, var(--accent)); }
-html[data-ui-forks="c"] .thread-entry[data-lane="0"] { --fork-color: var(--accent); }
-html[data-ui-forks="c"] .thread-entry[data-lane="1"] { --fork-color: var(--green); }
-html[data-ui-forks="c"] .thread-entry[data-lane="2"] { --fork-color: var(--orange); }
-html[data-ui-forks="c"] .thread-entry[data-lane="3"] { --fork-color: color-mix(in srgb, var(--accent) 55%, var(--green)); }
-html[data-ui-forks="c"] .thread-entry[data-lane="4"] { --fork-color: color-mix(in srgb, var(--accent) 55%, var(--orange)); }
-html[data-ui-forks="c"] .thread-entry[data-lane="5"] { --fork-color: color-mix(in srgb, var(--green) 55%, var(--orange)); }
-/* D: a label above a fork; no quotes. */
-html[data-ui-forks="d"] .thread-entry .quote { display: none; }
-html[data-ui-forks="d"] .thread-entry .fork-label { display: block; margin: 4px 0 2px 2px; }
-/* E: the main chain (lane 0) at full size, the side branches compact: a dashed edge, smaller text clamped to two lines until the row is hovered or focused. */
-html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]) { margin-left: 14px; padding-left: 8px; border-left: 1px dashed var(--border-hover); }
-html[data-ui-forks="e"] .thread-entry.self[data-lane]:not([data-lane="0"]) { margin-left: 0; padding-left: 0; border-left: 0; margin-right: 14px; padding-right: 8px; border-right: 1px dashed var(--border-hover); }
-html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]) .chat-msg-body { font-size: 12.5px; }
-/* The clamp needs a pointer to open it again (hover or focus), so a touch screen keeps the text whole: only the smaller size and the dashed edge mark the branch. */
-@media (hover: hover) {
-  html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]) .chat-msg-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-  html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]):is(:hover, :focus-within) .chat-msg-body { display: block; overflow: visible; }
-}
-html[data-ui-forks="e"] .thread-entry[data-fork] .fork-label { display: block; margin: 4px 0 2px 2px; }
+/* The thread panel shows the conversation as `tree` prints it: the rows come depth first (the list does that, see ThreadList) with the connectors drawn in a gutter on the left,
+   one cell per level: a vertical line where the ancestor has replies still to come, a tee or an elbow for the row's own. The lines run from the row's top, through the gap to
+   the next row, and the connector's horizontal arm sits at the height of the sender line. A level is --tree-step wide (narrower on a phone), and at most six are drawn; a deeper
+   row says which message it answers instead (the parent's quote is left out: the tree says it). Own rows keep the gutter on the left too, so a line goes on through them. */
+:root { --tree-step: 18px; --tree-y: 11px; --tree-gap: 2px; --tree-line: color-mix(in srgb, var(--text-muted) 55%, transparent); }
+@media (max-width: 700px) { :root { --tree-step: 11px; } }
+.thread-entry { position: relative; margin-left: 0; margin-right: 0; padding-left: calc(var(--tree-levels, 0) * var(--tree-step)); }
+.thread-entry .quote { display: none; }
+/* An own row is right-aligned and shrinks to its bubble: it spans the panel instead, so its gutter lines up with the others', and its sender line and bubble stay at the right. */
+.thread-entry.self { align-self: stretch; width: auto; max-width: none; }
+.thread-entry.self > .chat-msg-bubble { align-self: flex-end; max-width: 100%; }
+.thread-entry .tree-gutter { position: absolute; left: 0; top: 0; bottom: calc(-1 * var(--tree-gap, 0px)); width: calc(var(--tree-levels, 0) * var(--tree-step)); pointer-events: none; }
+.tree-gutter > span { position: absolute; top: 0; bottom: 0; left: calc(var(--i) * var(--tree-step)); width: var(--tree-step); }
+.tree-gutter > :is(.tree-pipe, .tree-tee, .tree-elbow)::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; border-left: 1px solid var(--tree-line); }
+.tree-gutter > .tree-elbow::before { bottom: auto; height: calc(var(--tree-y) + 1px); }
+.tree-gutter > :is(.tree-tee, .tree-elbow)::after { content: ""; position: absolute; top: var(--tree-y); left: 4px; right: 2px; border-top: 1px solid var(--tree-line); }
+.thread-entry .tree-label:not(.sr-only) { margin: 0 0 2px 2px; font-size: 11px; color: var(--text-muted); }
+
+.thread-tree-new[data-dir="up"] .icon-mask { transform: rotate(180deg); } /* the arrow of the marker for a new reply in the tree: up when it is above what is on screen */
 
 /* An agent's card has one status dot, and it says it all: green without a ring is online and cold (the next answer starts the agent), green with a ring that pulses is online and
    warm (v1's presence dot: 8px, a ring of 1px outside a 1.5px edge in the card's colour, the opacity easing between 1 and .45 every 1.6s), red is offline, orange is a state that is

@@ -209,3 +209,28 @@ func TestSidebarPreviewIsAPerAccountPreference(t *testing.T) {
 		t.Fatalf("the choice leaked to another person: %v", got)
 	}
 }
+
+// The thread panel's order choice (tree or time) is gone, the tree being the only look, but a value stored while it existed stays in the database and is read back, and a page that
+// still sends the name has it accepted and dropped without losing the valid preferences sent with it.
+func TestRetiredThreadOrderPreference(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	me := f.request("GET", "/api/me", nil, false)
+	var user struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(me.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+	me.Body.Close()
+	if err := f.db.SetUserPreferences(context.Background(), user.ID, map[string]string{"thread_order": "time", "theme": "dark"}); err != nil {
+		t.Fatal(err)
+	}
+	put := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"thread_order": "tree", "theme": "light"}}, true)
+	if put.StatusCode != 200 {
+		t.Fatalf("a retired name next to a valid one: %d", put.StatusCode)
+	}
+	if got := prefsOf(t, put.Body, json.NewDecoder(put.Body).Decode); got["theme"] != "light" || got["thread_order"] != "time" {
+		t.Fatalf("the valid one is stored, the retired one is dropped (the stored value is not replaced): %v", got)
+	}
+}

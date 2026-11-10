@@ -15,7 +15,7 @@ var userPrefNames = map[string]bool{"theme": true, "inbox_muted": true, "inbox_s
 // retiredPreferences are names an older page may still send (a cached tab, the bulk upload of a sign-in). They are accepted and
 // dropped, so one stale name never makes the server refuse the other preferences sent with it. A value stored under one earlier is
 // left alone and still read back.
-var retiredPreferences = map[string]bool{"harness_layout": true}
+var retiredPreferences = map[string]bool{"harness_layout": true, "thread_order": true}
 
 // userPrefMax is how long a value may be; most are a word or a number, the manual project order is a list of ids.
 const userPrefMaxDefault = 256

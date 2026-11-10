@@ -2402,63 +2402,109 @@ async function main() {
     assert.equal(await send(page, Array.from({ length: 120 }, (_, i) => mine(`own${i}`))), 'rm_a_m120', 'with only their own replies a send answers the first message');
     await page.close();
   }
-  // Forks in the thread panel, in each placement of the testing pill: a chain of five replies to a first message (t1..t5), a fork from the second reply (t6) and one from the
-  // first message again (t7, which is not directly under it).
+  // The thread panel shows the conversation like `tree`: the rows depth first with the connectors in a gutter. A first message m120, a chain c1..c8 under it (eight levels: the
+  // cap is six), a fork from c2 (f1, the viewer's own) and a second reply to the first message (f2).
   if (ROWS) {
     const page = await mount();
     await page.evaluate(() => {
       const messages = window.__data.rooms.rm_a.messages, start = messages.length;
-      const parents = { t1: 'rm_a_m120', t2: 'rm_a_t1', t3: 'rm_a_t2', t4: 'rm_a_t3', t5: 'rm_a_t4', t6: 'rm_a_t2', t7: 'rm_a_m120' };
-      Object.entries(parents).forEach(([name, parent], i) => messages.push({ id: `rm_a_${name}`, seq: start + 1 + i, no: start + 1 + i, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: `fork reply ${name}`, created_at: new Date(Date.parse('2026-01-10T11:00:00Z') + i * 1000).toISOString(), reply_to: parent, thread_root: 'rm_a_m120', thread_count: 7 }));
-      messages.find(message => message.id === 'rm_a_m120').thread_count = 7;
+      const chain = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8'];
+      const base = chain.map((name, i) => [name, i ? chain[i - 1] : 'm120', 'usr_ann']), spec = [...base.slice(0, 4), ['f1', 'c2', 'usr_me'], ...base.slice(4), ['f2', 'm120', 'usr_ann']];
+      spec.forEach(([name, parent, author], i) => messages.push({ id: `rm_a_${name}`, seq: start + 1 + i, no: start + 1 + i, room_id: 'rm_a', author_kind: 'user', author_id: author, author_name: author === 'usr_me' ? 'me' : 'ann', body: `tree reply ${name}`, created_at: new Date(Date.parse('2026-01-10T11:00:00Z') + i * 1000).toISOString(), reply_to: parent === 'm120' ? 'rm_a_m120' : `rm_a_${parent}`, thread_root: 'rm_a_m120', thread_count: spec.length }));
+      messages.find(message => message.id === 'rm_a_m120').thread_count = spec.length;
     });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     await chip(page, 'rm_a_m120');
-    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 8); await settle(page);
-    const read = variant => page.evaluate(variant => {
-      if (variant) document.documentElement.setAttribute('data-ui-forks', variant); else document.documentElement.removeAttribute('data-ui-forks');
-      const out = {};
-      for (const name of ['t1', 't2', 't3', 't4', 't5', 't6', 't7']) {
-        const row = document.querySelector(`#thread-messages [data-message-id=rm_a_${name}]`), shown = selector => { const node = row.querySelector(selector); return !!node && getComputedStyle(node).display !== 'none'; };
-        out[name] = { quote: shown('.quote'), ref: shown('.fork-ref'), label: shown('.fork-label'), labelText: row.querySelector('.fork-label')?.textContent || '', margin: getComputedStyle(row).marginLeft, rail: getComputedStyle(row).borderLeftColor, railWidth: getComputedStyle(row).borderLeftWidth, clamp: getComputedStyle(row.querySelector('.chat-msg-body')).webkitLineClamp, depth: row.dataset.depth, lane: row.dataset.lane, fork: row.dataset.fork || '' };
-      }
-      return out;
-    }, variant);
-    // The pill's options are CSS rules keyed on data-ui-forks: when the experiment runs, every one of them exists (a stylesheet cleanup once removed them and the pill did nothing).
-    const rules = await page.evaluate(() => { const found = new Set(); const walk = list => { for (const rule of list) { if (rule.cssRules) walk(rule.cssRules); const match = (rule.selectorText || '').match(/data-ui-forks="(\w)"/g); if (match) match.forEach(item => found.add(item.slice(-2, -1))); } }; for (const sheet of document.styleSheets) { try { walk(sheet.cssRules); } catch { /* another origin */ } } return [...found].sort().join(''); });
-    assert.equal(rules, 'abcde', `the forks pill's five options each have CSS rules: found "${rules}"`);
-    const names = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'], pick = (state, key) => names.map(name => state[name][key]);
-    const none = await read('');
-    assert.deepEqual(pick(none, 'depth'), ['1', '2', '3', '3', '3', '3', '1'], 'depth is the level below the first message, at most 3');
-    assert.deepEqual(pick(none, 'lane'), ['0', '0', '0', '0', '0', '1', '2'], 'the chain is one lane, each fork a new one');
-    assert.deepEqual(pick(none, 'fork'), ['', '', '', '', '', '1', '1'], 'only t6 and t7 are forks: their parent is not the row above');
-    assert.deepEqual(pick(none, 'quote'), [false, true, true, true, true, true, false], 'with no experiment a reply quotes its parent unless it is the first message');
-    const a = await read('a');
-    assert.deepEqual(pick(a, 'quote'), [false, false, false, false, false, true, true], 'A: only a fork quotes its parent, the first message too');
-    assert.deepEqual(pick(a, 'ref'), [true, true, true, true, true, false, false], 'A: a reply directly under its parent has the small reference instead');
-    const b = await read('b');
-    assert.deepEqual(pick(b, 'margin'), ['14px', '28px', '42px', '42px', '42px', '42px', '14px'], 'B: indented by depth, three levels at most');
-    // An own message is right-aligned and shrinks to its bubble: B indents it from the right.
-    const ownRows = await page.evaluate(() => { const own = document.querySelector('#thread-messages [data-message-id=rm_a_t3]'); own.classList.add('self'); const style = getComputedStyle(own); const out = { left: style.marginLeft, right: style.marginRight }; own.classList.remove('self'); return out; });
-    assert.deepEqual(ownRows, { left: '0px', right: '42px' }, 'B: an own row is indented from the right by its depth');
-    const c = await read('c');
-    assert.equal(c.t5.rail, c.t1.rail, 'C: a chain keeps its colour');
-    assert.notEqual(c.t6.rail, c.t5.rail, 'C: a fork starts a new colour');
-    assert.notEqual(c.t7.rail, c.t6.rail, 'C: and the next fork another');
-    assert.deepEqual(pick(c, 'quote'), [false, false, false, false, false, true, true], 'C: quotes as in A');
-    const palette = await page.evaluate(() => { const probe = name => { const i = document.createElement('i'); i.style.color = `var(${name})`; document.body.append(i); const color = getComputedStyle(i).color; i.remove(); return color; }; return { red: probe('--red'), text: probe('--text-primary') }; });
-    const rails = await page.evaluate(() => [0, 1, 2, 3, 4, 5].map(lane => { const row = document.querySelector('#thread-messages .thread-entry'); const copy = row.cloneNode(false); copy.dataset.lane = String(lane); copy.className = 'thread-entry'; row.parentElement.append(copy); const color = getComputedStyle(copy).borderLeftColor; copy.remove(); return color; }));
-    assert.equal(new Set(rails).size, 6, `C: six distinct branch colours: ${rails}`);
-    assert.ok(!rails.includes(palette.red) && !rails.includes(palette.text), 'C: no branch is the error red or the text colour');
-    const d = await read('d');
-    assert.deepEqual(pick(d, 'quote'), Array(7).fill(false), 'D: no quotes');
-    assert.deepEqual(pick(d, 'label'), [false, false, false, false, false, true, true], 'D: a label above each fork only');
-    assert.match(d.t6.labelText, /^↳ forks from #\d+ ann/, 'D: the label names the parent by number and sender');
-    const e = await read('e');
-    // The clamp needs a pointer to open it again, so it applies only where there is one (hover: hover); a touch screen keeps the text whole.
-    const pointer = await page.evaluate(() => matchMedia('(hover: hover)').matches);
-    assert.deepEqual(pick(e, 'clamp'), ['none', 'none', 'none', 'none', 'none', pointer ? '2' : 'none', pointer ? '2' : 'none'], `E: the side branches are clamped where a pointer can open them (hover: ${pointer}), the main chain never`);
-    await read('');
+    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 11); await settle(page);
+    const ids = () => page.evaluate(() => [...document.querySelectorAll('#thread-messages > article.thread-entry')].map(row => row.dataset.messageId.replace('rm_a_', '')));
+    // m120 / c1 / c2 / c3..c8 chain, then f1 (second reply to c2), then f2 (second reply to the first message): depth first.
+    const TREE = ['m120', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'f1', 'f2'];
+    assert.deepEqual(await ids(), TREE, 'depth first: a message, its first reply\'s subtree, then its next reply (f1 was written before c5 but comes after the chain it forks from)');
+    const read = () => page.evaluate(() => {
+      const list = document.querySelector('#thread-messages'), box = node => node.getBoundingClientRect();
+      return {
+        step: getComputedStyle(document.documentElement).getPropertyValue('--tree-step').trim(), overflow: list.scrollWidth > list.clientWidth,
+        rows: Object.fromEntries([...list.querySelectorAll(':scope > article.thread-entry')].map(row => {
+          const style = getComputedStyle(row), gutter = row.querySelector(':scope > .tree-gutter'), cells = [...(gutter?.querySelectorAll(':scope > span') || [])], label = row.querySelector(':scope > .tree-label');
+          const cell = name => cells.find(item => item.classList.contains(`tree-${name}`));
+          return [row.dataset.messageId.replace('rm_a_', ''), {
+            levels: row.dataset.tree, pad: style.paddingLeft, cells: cells.map(item => item.className.replace('tree-', '')), seen: gutter ? getComputedStyle(gutter).display !== 'none' : false,
+            at: gutter ? Math.round(box(gutter).left - box(row).left) : null, connector: (cell('tee') || cell('elbow')) ? Math.round(box(cell('tee') || cell('elbow')).left - box(row).left) : null,
+            label: label && getComputedStyle(label).display !== 'none' && box(label).width > 2 ? label.textContent : '', words: label ? label.textContent : '',
+            lines: [...cells].map(item => item.className.replace('tree-', '') + ':' + [getComputedStyle(item, '::before').borderLeftStyle, getComputedStyle(item, '::after').borderTopStyle].join('/')),
+            bubbleRight: Math.round(box(list).right - box(row.querySelector(':scope > .chat-msg-bubble')).right), own: row.classList.contains('self'),
+          }];
+        })),
+      };
+    });
+    let tree = await read();
+    // A level is 18px wide, and a row is that many levels in from the left, six at most.
+    assert.equal(tree.step, '18px');
+    assert.deepEqual(Object.values(tree.rows).map(row => row.levels), ['0', '1', '2', '3', '4', '5', '6', '6', '6', '3', '1'], 'a row is as many levels in as it is deep, six at most');
+    // `tree` for this conversation (the cells of each row, ancestors first):
+    //   m120
+    //   \u251c\u2500\u2500 c1             c1: tee           (f2 follows)
+    //   \u2502   \u2514\u2500\u2500 c2         c2: pipe elbow
+    //   \u2502       \u251c\u2500\u2500 c3     c3: pipe blank tee (f1 follows)
+    //   \u2502       \u2502   \u2514\u2500\u2500 c4 ...
+    //   \u2502       \u2514\u2500\u2500 f1
+    //   \u2514\u2500\u2500 f2
+    assert.deepEqual(Object.fromEntries(Object.entries(tree.rows).map(([name, row]) => [name, row.cells.join(' ')])), { m120: '', c1: 'tee', c2: 'pipe elbow', c3: 'pipe blank tee', c4: 'pipe blank pipe elbow', c5: 'pipe blank pipe blank elbow', c6: 'pipe blank pipe blank blank elbow', c7: 'pipe blank pipe blank blank elbow', c8: 'pipe blank pipe blank blank elbow', f1: 'pipe blank elbow', f2: 'elbow' });
+    assert.deepEqual([tree.rows.m120.cells.length, tree.rows.c1.seen], [0, true], 'the first message has nothing in its gutter; every other row has its lines');
+    assert.equal(tree.rows.m120.pad, '0px');
+    assert.deepEqual(['c1', 'c3', 'c5', 'c6'].map(name => tree.rows[name].pad), ['18px', '54px', '90px', '108px'], 'the row\'s own padding is its levels times the step');
+    assert.deepEqual(['c6', 'c7', 'c8'].map(name => tree.rows[name].levels), ['6', '6', '6'], 'past six levels no further step');
+    assert.deepEqual([tree.rows.c6.label, tree.rows.c7.label, tree.rows.c8.label, tree.rows.c5.label], ['', '\u21b3 to #137', '\u21b3 to #138', ''], 'a row too deep to show another step says which message it answers; the others have it for a screen reader only');
+    assert.match(tree.rows.c5.words, /^\u21b3 to #\d+$/);
+    assert.equal(tree.rows.c1.at, 0, 'the gutter starts at the row\'s left edge');
+    assert.equal(tree.rows.f1.connector, tree.rows.c3.connector, 'a sibling\'s connector is in the same column, even for an own row');
+    assert.ok(tree.rows.f1.own && Math.abs(tree.rows.f1.bubbleRight - tree.rows.c3.bubbleRight) <= 1, `an own row's bubble ends where the others' do (right-aligned): ${tree.rows.f1.bubbleRight} vs ${tree.rows.c3.bubbleRight}`);
+    assert.deepEqual(tree.rows.c3.lines, ['pipe:solid/none', 'blank:none/none', 'tee:solid/solid'], 'a pipe is a vertical line, a tee a vertical line and an arm');
+    assert.equal(tree.rows.f1.lines.at(-1), 'elbow:solid/solid');
+    assert.equal(tree.overflow, false, 'the panel does not grow sideways');
+    // A narrower window makes the step smaller.
+    await page.setViewport({ width: 700, height: 800 });
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--tree-step').trim() === '11px');
+    tree = await read();
+    assert.deepEqual([tree.rows.c1.pad, tree.rows.c6.pad, tree.overflow], ['11px', '66px', false], 'a narrow window: smaller steps, still inside the panel');
+    await page.setViewport({ width: 1280, height: 800 });
+    // The live paths of the panel, in a window short enough that the panel scrolls.
+    await page.setViewport({ width: 1280, height: 430 });
+    await settle(page);
+    const view = () => page.evaluate(() => {
+      const list = document.querySelector('#thread-messages'), box = list.getBoundingClientRect(), pill = document.querySelector('.thread-tree-new');
+      const visible = id => { const row = list.querySelector(`:scope > [data-message-id="rm_a_${id}"]`); if (!row) return null; const at = row.getBoundingClientRect(); return at.top >= box.top - 1 && at.bottom <= box.bottom + 1; };
+      return { scrolls: list.scrollHeight > list.clientHeight + 40, pill: !pill.hidden, label: pill.getAttribute('aria-label'), dir: pill.dataset.dir, count: pill.querySelector('.badge')?.textContent || '', visible: Object.fromEntries(['x1', 'x2', 'f2', 'c1'].map(id => [id, visible(id)])), flashed: [...list.querySelectorAll('.message-flash')].map(row => row.dataset.messageId.replace('rm_a_', '')), ids: [...list.querySelectorAll(':scope > article.thread-entry')].map(row => row.dataset.messageId.replace('rm_a_', '')) };
+    });
+    const live = (name, parent, author = 'usr_ann') => page.evaluate(async ({ name, parent, author }) => {
+      const messages = window.__data.rooms.rm_a.messages, seq = Math.max(...messages.map(message => message.seq)) + 1;
+      messages.push({ id: `rm_a_${name}`, seq, no: seq, room_id: 'rm_a', author_kind: 'user', author_id: author, author_name: author === 'usr_me' ? 'me' : 'ann', body: `live ${name}`, created_at: new Date(Date.parse('2026-01-10T12:00:00Z') + seq * 1000).toISOString(), reply_to: `rm_a_${parent}`, thread_root: 'rm_a_m120', thread_count: 20 });
+      await window.__chat.refreshMessages();
+    }, { name, parent, author });
+    const toEnd = () => page.evaluate(async () => { const list = document.querySelector('#thread-messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = list.scrollHeight; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
+    // A tail under f2 (three replies at the end), so a reply in the middle is well above what the reader at the bottom sees.
+    await live('t1', 'f2'); await live('t2', 't1'); await live('t3', 't2'); await settle(page);
+    await toEnd();
+    assert.equal((await view()).scrolls, true, 'the panel scrolls in this window');
+    // 1. A reply to c5 (under it, after c6's whole chain: in the middle of the tree, above f1 and f2) while the reader is at the bottom: it is marked, and the pill leads to it.
+    await live('x1', 'c5'); await settle(page);
+    let state = await view();
+    assert.deepEqual(state.ids.slice(-6), ['x1', 'f1', 'f2', 't1', 't2', 't3'], 'the new reply is under its parent, not at the end');
+    assert.deepEqual([state.pill, state.dir, state.count, state.visible.x1, state.label], [true, 'up', '1', false, '1 new reply in the conversation above'], `a reply in the middle of the tree is marked for a reader at the bottom: ${JSON.stringify(state)}`);
+    await page.evaluate(() => document.querySelector('.thread-tree-new').click()); await settle(page);
+    state = await view();
+    assert.deepEqual([state.visible.x1, state.flashed, state.pill], [true, ['x1'], false], `the pill takes the reader to it, highlighted, and goes: ${JSON.stringify(state)}`);
+    // A reply at the end (to t3) is where a live reply always was: no marker.
+    await toEnd(); await live('x2', 't3'); await settle(page);
+    state = await view();
+    assert.deepEqual([state.ids.at(-1), state.pill], ['x2', false], 'a reply at the end needs no marker');
+    // 2. The viewer's own send is shown where it lands: the panel goes to it and highlights it, not to the end. The reply answers the newest of someone else's (x3, a reply to c1: it lands in the middle, above f2).
+    await live('x3', 'c1'); await settle(page);
+    await page.evaluate(() => { const list = document.querySelector('#thread-messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 0; });
+    await page.evaluate(() => { window.__chat.threadDraft.value = 'my reply'; return window.__chat.sendThread(); }); await settle(page);
+    state = await view();
+    const mineAt = await page.evaluate(() => { const list = document.querySelector('#thread-messages'), box = list.getBoundingClientRect(), rows = [...list.querySelectorAll(':scope > article.thread-entry')]; const row = rows.find(item => item.querySelector('.chat-msg-body')?.textContent === 'my reply'); const at = row?.getBoundingClientRect(); return { found: !!row, visible: !!at && at.top >= box.top - 1 && at.bottom <= box.bottom + 1, flashed: !!row?.classList.contains('message-flash'), last: rows.at(-1) === row, before: row?.previousElementSibling?.querySelector('.chat-msg-body')?.textContent }; });
+    assert.deepEqual([mineAt.found, mineAt.visible, mineAt.flashed], [true, true, true], `a send shows the sent row, highlighted: ${JSON.stringify(mineAt)}`);
     await page.close();
   }
   assert.deepEqual(errors, []);

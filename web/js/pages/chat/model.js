@@ -96,22 +96,27 @@ export function recallStep({ key, value, at, end }, recall, candidates) {
   return null;
 }
 
-// Where each entry of a conversation sits in its tree, for the thread panel (a flat, time-ordered list in which a reply to an older message reads as the next step of the
-// chain): its depth below the first message (capped at 3 for display), its lane (the first reply to a message continues the lane of that message, a later reply starts a new
-// one: the lanes are the branches), whether it is a fork (its parent is not the row directly above) and who its parent is. A parent that is not among the entries (an older
-// page is not loaded) counts as a fork of an unknown message. entries[0] is the first message.
-export function forkLayout(entries) {
-  const place = new Map(entries.map((message, index) => [message.id, index]));
-  const depth = new Map(), lane = new Map(), continued = new Set(), layout = new Map();
-  let lanes = 0;
+// The conversation as `tree` would print it, for the thread panel: the entries depth first (a message, then the subtrees of its replies, the replies in the
+// order they were written), each with what its guide lines need. `guides` has one entry per level between the first message and the row's own: true where that level's
+// ancestor has replies still to come (a vertical line goes on through the row), false where it was the last (blank). `last` says the row is its parent's last reply (an
+// elbow, "\u2514\u2500\u2500") and not one with more after it (a tee, "\u251c\u2500\u2500"); `branch` is false for a root, which has no connector. Past `cap` levels no further step is
+// added: the row keeps the cap's guides and says which message it answers instead (`deep`). A parent that is not among the entries (an older page is not loaded) makes its
+// reply a root of its own (`orphan`). entries[0] is the first message. Returns { order, info }: the messages in tree order and the facts about each by id.
+export const TREE_DEPTH_CAP = 6;
+export function treeLayout(entries, cap = TREE_DEPTH_CAP) {
+  const present = new Set(entries.map(message => message.id)), children = new Map(), roots = [], order = [], info = new Map();
   entries.forEach((message, index) => {
-    if (index === 0) { depth.set(message.id, 0); lane.set(message.id, 0); layout.set(message.id, { depth: 0, lane: 0, fork: false, parent: null, parentIsRoot: false, known: true }); return; }
-    const at = place.get(message.reply_to), parent = at !== undefined && at < index ? entries[at] : null;
-    let own;
-    if (parent && !continued.has(parent.id)) { continued.add(parent.id); own = lane.get(parent.id); } else own = ++lanes;
-    const level = parent ? depth.get(parent.id) + 1 : 1;
-    depth.set(message.id, level); lane.set(message.id, own);
-    layout.set(message.id, { depth: Math.min(3, level), lane: own % 6, fork: parent ? at !== index - 1 : true, parent, parentIsRoot: !!parent && at === 0, known: !!parent });
+    if (index === 0 || !present.has(message.reply_to)) { roots.push(message); return; }
+    if (!children.has(message.reply_to)) children.set(message.reply_to, []);
+    children.get(message.reply_to).push(message);
   });
-  return layout;
+  const visit = (message, depth, guides, last, parent) => {
+    const shown = Math.min(depth, cap);
+    info.set(message.id, { depth, shown, guides: guides.slice(0, Math.max(0, shown - 1)), last, branch: depth > 0, deep: depth > cap, parent, orphan: depth === 0 && message !== entries[0] });
+    order.push(message);
+    const own = children.get(message.id) || [];
+    own.forEach((child, index) => visit(child, depth + 1, depth > 0 ? [...guides, !last] : guides, index === own.length - 1, message));
+  };
+  roots.forEach(root => visit(root, 0, [], true, null));
+  return { order, info };
 }

@@ -2091,7 +2091,8 @@ async function main() {
     }
     await first.evaluate(() => { delete document.documentElement.dataset.theme; });
     await first.locator('#thread-composer button.btn-primary').click();
-    await first.waitForFunction(() => document.querySelectorAll('.thread-entry').length === 2);
+    // (Not a count of the rows: the panel already held two, so that was true before the reply showed and false once it had, a race either way.)
+    await first.waitForFunction(() => [...document.querySelectorAll('.thread-entry .chat-msg-body')].some(el => el.textContent === 'Thread reply'));
     await second.waitForFunction(() => [...document.querySelectorAll('.thread-entry .chat-msg-body')].some(el => el.textContent === 'Thread reply'));
     await reachRow(first, '.chat-msg:first-child'); await reachRow(second, '.chat-msg:first-child');
     // The count is the whole conversation: the earlier room reply ("Reply body") and this panel reply both answer the root.
@@ -8700,7 +8701,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     assert.equal(await largePage.$eval('#thread-messages', node => node.dataset.hasOlder), 'true', 'a large thread still has older replies behind the loaded page');
     const threadAnchor = await largePage.$eval('#thread-messages', element => {
       element.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); element.scrollTop = 0;
-      const reply = element.children[2]; // (the first loaded reply may change shape when older ones arrive above it: its place in the tree, see forkLayout)
+      const reply = element.children[2]; // (the first loaded reply may change shape when older ones arrive above it: its place in the tree)
       return { id: reply.dataset.messageId, top: reply.getBoundingClientRect().top };
     });
     await largePage.waitForFunction(() => document.querySelectorAll('#thread-messages .thread-entry').length >= 151);

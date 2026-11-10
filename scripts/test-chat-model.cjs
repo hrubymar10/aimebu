@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'chat', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { forkLayout, plainText, messageSnippet, threadCount, threadLabel, threadTitle, threadChip, newRepliesLabel, latestLabel, groupReactions, articleClass, liveArrival, liveRoute, newestShownSeq, trimCap, overCap, answerEligible, answerArea, answersThroughInbox, recallCandidates, recallStep };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { treeLayout, plainText, messageSnippet, threadCount, threadLabel, threadTitle, threadChip, newRepliesLabel, latestLabel, groupReactions, articleClass, liveArrival, liveRoute, newestShownSeq, trimCap, overCap, answerEligible, answerArea, answersThroughInbox, recallCandidates, recallStep };', context);
 const api = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -90,19 +90,37 @@ assert.equal(step('ArrowDown', 'a\nb', { index: 0, draft: '' }, 0), null, 'Down 
 assert.deepEqual(step('Escape', 'b', { index: 1, draft: 'typing' }), { index: null, draft: 'typing', value: 'typing' });
 assert.equal(step('Escape', 'b', { index: null, draft: '' }), null);
 assert.equal(step('a', 'b', { index: 1, draft: '' }), null);
-// Where each entry of a conversation sits in its tree: a chain of five, a fork from the second message and one from the first.
+// A conversation as `tree` prints it: depth first, the replies in the order they were written, with the guide lines of each row.
 {
   const message = (id, reply_to) => ({ id, no: Number(id.slice(1)), reply_to });
   const entries = [message('m1'), message('m2', 'm1'), message('m3', 'm2'), message('m4', 'm3'), message('m5', 'm4'), message('m6', 'm2'), message('m7', 'm1')];
-  const layout = api.forkLayout(entries), at = id => { const { depth, lane, fork, known, parentIsRoot } = layout.get(id); return { depth, lane, fork, known, parentIsRoot }; };
-  assert.deepEqual(at('m1'), { depth: 0, lane: 0, fork: false, known: true, parentIsRoot: false });
-  assert.deepEqual(at('m2'), { depth: 1, lane: 0, fork: false, known: true, parentIsRoot: true }, 'the first reply continues the root\'s lane and sits right under it');
-  assert.deepEqual([at('m3'), at('m4'), at('m5')].map(item => [item.depth, item.lane, item.fork]), [[2, 0, false], [3, 0, false], [3, 0, false]], 'the chain keeps one lane, and depth stops at 3');
-  assert.deepEqual(at('m6'), { depth: 2, lane: 1, fork: true, known: true, parentIsRoot: false }, 'a second reply to m2 is a fork on a new lane');
-  assert.deepEqual(at('m7'), { depth: 1, lane: 2, fork: true, known: true, parentIsRoot: true }, 'a second reply to the first message is a fork of its own, not under it');
-  assert.equal(layout.get('m6').parent.id, 'm2');
-  // An older page is not loaded: a parent that is not among the entries is a fork of an unknown message, not a crash.
-  const partial = api.forkLayout([message('m1'), message('m9', 'm8'), message('m10', 'm9')]);
-  assert.deepEqual([partial.get('m9').known, partial.get('m9').fork, partial.get('m10').fork, partial.get('m10').lane === partial.get('m9').lane], [false, true, false, true]);
+  const { order, info } = api.treeLayout(entries), at = id => { const { depth, guides, last, branch, deep, orphan } = info.get(id); return plain({ depth, guides, last, branch, deep, orphan }); };
+  assert.deepEqual(plain(order.map(item => item.id)), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7'], 'a message, its first reply\'s whole subtree, then its next reply');
+  // m1
+  // ├── m2        (its sibling m7 follows: a tee)
+  // │   ├── m3    (the pipe of m2 goes on; m6 follows)
+  // │   │   └── m4
+  // │   │       └── m5
+  // │   └── m6
+  // └── m7
+  assert.deepEqual(at('m1'), { depth: 0, guides: [], last: true, branch: false, deep: false, orphan: false });
+  assert.deepEqual(at('m2'), { depth: 1, guides: [], last: false, branch: true, deep: false, orphan: false });
+  assert.deepEqual(at('m3'), { depth: 2, guides: [true], last: false, branch: true, deep: false, orphan: false });
+  assert.deepEqual(at('m4'), { depth: 3, guides: [true, true], last: true, branch: true, deep: false, orphan: false }, 'the pipes of m2 and m3 go on past m4 (m3 and m2 have later replies)');
+  assert.deepEqual(at('m5'), { depth: 4, guides: [true, true, false], last: true, branch: true, deep: false, orphan: false }, 'under m4, which was the last: blank');
+  assert.deepEqual(at('m6'), { depth: 2, guides: [true], last: true, branch: true, deep: false, orphan: false });
+  assert.deepEqual(at('m7'), { depth: 1, guides: [], last: true, branch: true, deep: false, orphan: false });
+  assert.equal(info.get('m6').parent.id, 'm2');
+  // Past the cap no step is added: the row keeps the guides of the cap's depth and says it is deep.
+  const chain = [message('c1'), ...Array.from({ length: 9 }, (_, i) => message(`c${i + 2}`, `c${i + 1}`))];
+  const deep = api.treeLayout(chain, 6).info;
+  assert.deepEqual(plain([6, 7, 9].map(level => { const item = deep.get(`c${level + 1}`); return [item.depth, item.shown, item.guides.length, item.deep]; })), [[6, 6, 5, false], [7, 6, 5, true], [9, 6, 5, true]], 'six steps at most, then "deep"');
+  // An older page is not loaded: a reply whose parent is not among the entries is a root of its own, with its own subtree under it, in the order written.
+  const partial = api.treeLayout([message('m1'), message('m2', 'm1'), message('m9', 'm8'), message('m10', 'm9'), message('m11', 'm1')]);
+  assert.deepEqual(plain(partial.order.map(item => item.id)), ['m1', 'm2', 'm11', 'm9', 'm10'], 'the roots in order: the first message and its replies, then the orphan and its replies');
+  assert.deepEqual(plain([partial.info.get('m9').orphan, partial.info.get('m9').branch, partial.info.get('m10').depth, partial.info.get('m10').guides]), [true, false, 1, []]);
+  // Just the first message, and nothing at all.
+  assert.deepEqual(plain(api.treeLayout([message('m1')]).order.map(item => item.id)), ['m1']);
+  assert.deepEqual(plain(api.treeLayout([]).order), []);
 }
 console.log('chat model: ok');

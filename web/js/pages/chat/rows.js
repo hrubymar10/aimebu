@@ -2,14 +2,7 @@ import { html, Component, Fragment, useCallback, useLayoutEffect, useRef } from 
 import { EXPIRED_HOURGLASS } from '../../usage-expiry.js';
 import { clearMessageActions, drawMessageActions, messageActionsProps } from '../../message-actions.js';
 import { stampTime } from '../../time.js';
-import { forkLayout } from './model.js';
-import { defineExperiment } from '../../ui-variant.js';
-
-// How a fork of the conversation shows in the thread panel, five ways on the testing pill (the CSS reads data-ui-forks on <html>; every piece is in the markup and only the chosen
-// one is shown): A a quote of the parent when it is not the row directly above (a small "\u21b3 name" when it is), B rows indented by their depth in the tree with a thin connector,
-// C a coloured rail per branch with a fork starting a new colour (quotes as in A), D a label above a row whose parent is not directly above and no quotes, E the main chain at full
-// size and the side branches compact. With no experiment the panel quotes a reply's parent unless it is the first message.
-defineExperiment('forks', 'Forks in a thread', ['Context quote', 'Indent', 'Branch rail', 'Fork label', 'Side branches compact']);
+import { treeLayout } from './model.js';
 import { applySenderIdentity, fillSenderPresence, SENDER_PRESENCE_ROOT } from '../../sender-identity.js';
 import { fillVisualPlan, hasVisualPlan, VISUAL_PLAN_ROOT } from '../../visual-plan.js';
 import { AnswerControls, AnswerHistory } from '../../components/answer-controls.js';
@@ -81,23 +74,34 @@ export function AnswerSlot({ message, view, host, listed = '' }) {
   return null;
 }
 
-export function ThreadEntry({ message, view, host, fork }) {
-  const parentName = fork?.parent ? host.authorName(fork.parent) : '';
-  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${[view.articleClass, 'thread-entry', view.needsAttention ? 'needs-attention' : ''].filter(Boolean).join(' ')} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} data-depth=${fork ? String(fork.depth) : undefined} data-lane=${fork ? String(fork.lane) : undefined} data-fork=${fork?.fork ? '1' : undefined} data-parent-root=${fork?.parentIsRoot ? '1' : undefined} style=${fork ? `--fork-depth:${fork.depth};--fork-lane:${fork.lane}` : undefined}>
-    ${fork?.fork && message.reply_to && html`<div class="fork-label">${fork.known ? `\u21b3 forks from #${fork.parent.no} ${parentName}` : '\u21b3 forks from an earlier message'}</div>`}
-    ${fork && !fork.fork && fork.parent && html`<div class="fork-ref">${`\u21b3 ${parentName}`}</div>`}
+export function ThreadEntry({ message, view, host, tree }) {
+  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${[view.articleClass, 'thread-entry', view.needsAttention ? 'needs-attention' : ''].filter(Boolean).join(' ')} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} data-tree=${String(tree.shown)} style=${`--tree-levels:${tree.shown}`}>
+    <${TreeGutter} tree=${tree} host=${host} message=${message} />
     <${MessageMeta} message=${message} view=${view} /><div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div><${AnswerSlot} message=${message} view=${view} host=${host} listed="" />
   </article>`}<//>`;
 }
 
+// The guide lines of a row of the tree: one cell per level, a vertical line where the ancestor has replies still to come and nothing where it was the last, and the
+// row's own connector (a tee when more replies to its parent follow, an elbow when it is the last). The lines are drawn by the stylesheet; the words are for a screen reader
+// (the structure is otherwise only in the picture) and, for a row too deep to show another step or one whose parent is not loaded, for everybody.
+function TreeGutter({ tree, host, message }) {
+  const parent = tree.parent || host.entryMessage?.(message.reply_to), number = parent?.no;
+  const words = tree.orphan ? (number ? `from #${number}` : 'from an earlier message') : tree.branch && number ? `to #${number}` : '';
+  return html`<${Fragment}>
+    <div class="tree-gutter" aria-hidden="true">${tree.guides.map((on, index) => html`<span key=${index} class=${on ? 'tree-pipe' : 'tree-blank'} style=${`--i:${index}`}></span>`)}${tree.branch && html`<span class=${tree.last ? 'tree-elbow' : 'tree-tee'} style=${`--i:${tree.guides.length}`}></span>`}</div>
+    ${words && html`<div class=${tree.deep || tree.orphan ? 'tree-label' : 'tree-label sr-only'}>${`\u21b3 ${words}`}</div>`}
+  <//>`;
+}
+
 export function ThreadList({ entries = [], host, viewOf, restore }) {
   useLayoutEffect(() => { restore?.(); });
-  const layout = forkLayout(entries);
-  return entries.map(message => {
-    const fork = layout.get(message.id), view = viewOf(message);
-    // The layout is part of what the row draws, so a row whose place in the tree changed (an older reply arriving) is drawn again.
-    const forked = { ...view, key: `${view.key}|${fork.depth}.${fork.lane}.${fork.fork}.${fork.parent?.id || ''}` };
-    return html`<${ThreadEntry} key=${message.id} message=${message} view=${forked} host=${host} fork=${fork} />`;
+  // The conversation as `tree` prints it: the rows depth first, each with its guide lines.
+  const { order, info } = treeLayout(entries);
+  return order.map(message => {
+    const shape = info.get(message.id), view = viewOf(message);
+    // The place in the tree is part of what the row draws, so a row whose place changed (an older reply arriving) is drawn again.
+    const placed = { ...view, key: `${view.key}|tree.${shape.shown}.${shape.guides.map(Number).join('')}.${shape.last}.${shape.deep}.${shape.orphan}.${shape.parent?.no || ''}` };
+    return html`<${ThreadEntry} key=${message.id} message=${message} view=${placed} host=${host} tree=${shape} />`;
   });
 }
 

@@ -367,7 +367,7 @@ export class ChatStore {
       else high = middle;
     }
     this.threadEntries = [...this.threadEntries.slice(0, low), message, ...this.threadEntries.slice(low)];
-    if (!this.threadBatching) this.host.threadUpdate();
+    if (!this.threadBatching) { this.host.threadUpdate(); this.host.threadInserted(message); }
   }
 
   batchThreadEntries(fill, restore) {
@@ -596,7 +596,7 @@ export class ChatStore {
         const atEnd = this.host.threadLatestHidden();
         if (atEnd) this.add(message, false, false, this.contextMode);
         else { this.markNewThreadReply(message); if (!this.contextMode) this.add(message); }
-        if (atEnd) this.host.threadToEnd();
+        if (atEnd) this.host.threadShowSent(message);
       }
     } catch (error) { if (generation === this.openGeneration) this.host.threadSendFailed(error.message); }
   }

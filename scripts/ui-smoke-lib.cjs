@@ -78,6 +78,7 @@ const installFixtureChat = page => page.evaluate(async () => {
     chat.threadEntries = []; chat.threadEntryIDs = new Set(); chat.threadBatching = false;
     if (threadList) { chat.threadList = threadList; chat.threadView = mountPreactPage(threadList, props => html`<${ThreadList} ...${props} />`); }
     chat.refreshReactions = () => {};
+    chat.treeNewIDs = new Set(); chat.threadTreeButton = { set() {} }; // the marker of a reply inside the tree, which a fixture has no panel for
     return chat;
   };
 });

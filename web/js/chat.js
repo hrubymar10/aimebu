@@ -4,7 +4,7 @@ import { retention } from './retention.js';
 import { usageTooltip } from './message-usage-format.js';
 import { toggleMessageUsage, closeMessageUsage } from './message-usage.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
-import { AttachmentStrip, Control, LatestButton, OlderStatus, RoomNote } from './components/chat-controls.js';
+import { AttachmentStrip, Control, LatestButton, OlderStatus, RoomNote, TreeNewButton } from './components/chat-controls.js';
 import { refreshRelativeTimes } from './time.js';
 import { ScrollAnchor } from './scroll-anchor.js';
 import { senderIdentity, senderKind, agentLabel } from './sender-identity.js';
@@ -27,7 +27,7 @@ import { MessageList, ThreadList } from './pages/chat/rows.js';
 import { PendingAttachments } from './pages/chat/message-box.js';
 import { mountPreactPage } from './pages/mount-page.js';
 import { html, render } from './ui.js';
-import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle } from './pages/chat/model.js';
+import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, messageSnippet, newestShownSeq as shownSeq, treeLayout, newRepliesLabel, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle } from './pages/chat/model.js';
 
 export { plainText, messageSnippet };
 
@@ -83,7 +83,13 @@ export class Chat {
     this.threadOlderStatus = new Control(OlderStatus, { text: 'Loading older replies…', className: 'thread-older', hidden: true });
     this.threadLatestButton = new Control(LatestButton, { label: 'Latest replies', count: 0, className: 'thread-latest', hidden: true, onClick: () => { if (this.threadRoot) this.openThread(this.threadRoot); } });
     this.threadNewButton = new Control(LatestButton, { label: 'New replies', count: 0, className: 'thread-new', hidden: true, onClick: () => { if (this.threadRoot) this.openThread(this.threadRoot); } });
-    this.threadList.before(this.threadOlderStatus.host, this.threadLatestButton.host, this.threadNewButton.host);
+    // Replies that arrived inside the tree (the thread panel's tree option) where the reader is not looking: ids, and the marker that leads to them.
+    this.treeNewIDs = new Set();
+    this.threadTreeButton = new Control(TreeNewButton, { label: 'New replies in the conversation', count: 0, dir: 'up', className: 'thread-tree-new', hidden: true, onClick: () => this.showTreeNew() });
+    this.threadList.before(this.threadOlderStatus.host, this.threadLatestButton.host, this.threadNewButton.host, this.threadTreeButton.host);
+    let treeFrame = 0;
+    const settleTree = () => { cancelAnimationFrame(treeFrame); treeFrame = requestAnimationFrame(() => this.updateTreeNew()); };
+    this.threadList.addEventListener('scroll', settleTree, { passive: true });
     this.threadList.addEventListener('scroll', () => { if (this.threadList.scrollTop < 80) this.loadOlderThread(); });
     // The root stays in view while the replies scroll: once its own entry is out of view, a one-line bar over the top of the list stands for it.
     this.threadPin = document.querySelector('#thread-root-pin');
@@ -639,7 +645,7 @@ export class Chat {
   closeThread() { return this.store.closeThread(); }
   threadClosed() {
     this.threadNotice.clear(); this.threadRoot = null; this.threadTitle.textContent = 'Replies'; this.threadPin.hidden = true; this.threadUpdate(); this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false';
-    this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; this.threadRecall.index = null; this.resizeThreadDraft(); document.querySelector('#thread-error').textContent = '';
+    this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.treeNewIDs.clear(); this.updateTreeNew(); this.threadPanel.hidden = true; this.threadDraft.value = ''; this.threadRecall.index = null; this.resizeThreadDraft(); document.querySelector('#thread-error').textContent = '';
   }
   // The one-line stand-in for the root while its own entry is scrolled out of view (an overlay on the list's top edge, so it moves nothing).
   updateThreadPin() {
@@ -656,7 +662,7 @@ export class Chat {
   answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body); }
   beginThread(root, focus) {
     this.threadRoot = root; this.threadTitle.textContent = 'Replies'; this.threadPanel.hidden = false; this.threadPin.hidden = true; this.threadUpdate();
-    this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewButton.hidden = true;
+    this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewButton.hidden = true; this.treeNewIDs.clear(); this.updateTreeNew();
     document.querySelector('#thread-error').textContent = '';
     this.threadDraft.focus();
   }
@@ -669,14 +675,54 @@ export class Chat {
   showThreadOlderStatus(shown) { this.threadOlderStatus.hidden = !shown; }
   holdThreadPlace() {
     // Measured after the page arrives, as in loadOlder: only the inserted height is compensated, not the reader's own scrolling.
-    // The row after the first loaded reply: that one may change shape when older replies arrive above it (its place in the tree, see forkLayout), a change above the anchor is compensated.
-    const anchor = this.threadList.children[2] || this.threadList.children[1], anchorTop = anchor?.getBoundingClientRect().top;
+    // Older replies can land anywhere among the rows of the tree (above or below what is in view), so the row held is the first one in view after the first message, which stays
+    // at the top.
+    const top = this.threadList.getBoundingClientRect().top;
+    const rows = [...this.threadList.children].filter(row => row.matches?.('article.thread-entry')).slice(1);
+    const anchor = rows.find(row => row.getBoundingClientRect().bottom > top) || rows[0], anchorTop = anchor?.getBoundingClientRect().top;
     this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
     return () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; };
   }
   beginThreadSend() { document.querySelector('#thread-error').textContent = ''; this.threadNotice.clear(); }
   sentThreadReply() { this.threadDraft.value = ''; this.threadRecall.index = null; this.resizeThreadDraft(); }
   threadToEnd() { this.threadList.scrollTop = this.threadList.scrollHeight; }
+  // A reply the viewer has just sent: it sits under the one it answers, which is not the end of the panel, so the panel goes to it and it is highlighted.
+  threadShowSent(message) {
+    const row = this.threadList.querySelector(`:scope > [data-message-id="${CSS.escape(message.id)}"]`);
+    if (!row) { this.threadToEnd(); return; }
+    row.scrollIntoView({ block: 'nearest' }); this.flash(row);
+  }
+  // A reply that came in live (not the viewer's own, and not one that opens a page): it sits under its parent, which is usually not the end of the panel, so a reader looking
+  // elsewhere would not see it. It is marked with the pill, and highlighted when it came in where the reader can see it.
+  threadInserted(message) {
+    if (message.author_kind === 'user' && message.author_id === currentUser) return;
+    const { order } = treeLayout(this.threadEntries);
+    if (order.at(-1)?.id === message.id) return; // at the end, where a live reply always was
+    this.treeNewIDs.add(message.id);
+    // Looked at once the page has drawn and the panel's own scroll has settled (a row inserted above the reader moves what is in view).
+    requestAnimationFrame(() => requestAnimationFrame(() => this.updateTreeNew({ arrived: message.id })));
+  }
+  // Which of the replies marked new are still out of view, and which way the first of them is: the pill shows the count and the direction, and goes when none is left.
+  updateTreeNew({ arrived = '' } = {}) {
+    const list = this.threadList, box = list.getBoundingClientRect(), out = [];
+    for (const id of [...this.treeNewIDs]) {
+      const row = list.querySelector(`:scope > [data-message-id="${CSS.escape(id)}"]`);
+      if (!row) { this.treeNewIDs.delete(id); continue; }
+      const at = row.getBoundingClientRect();
+      if (at.top >= box.top && at.bottom <= box.bottom) { this.treeNewIDs.delete(id); if (id === arrived) this.flash(row); continue; }
+      out.push({ id, above: at.top < box.top });
+    }
+    const first = [...list.querySelectorAll(':scope > article.thread-entry')].find(row => this.treeNewIDs.has(row.dataset.messageId));
+    const dir = first && out.find(item => item.id === first.dataset.messageId)?.above === false ? 'down' : 'up', count = this.treeNewIDs.size;
+    this.threadTreeButton.set({ label: count ? `${newRepliesLabel(count)} in the conversation ${dir === 'up' ? 'above' : 'below'}` : 'New replies in the conversation', count, dir, hidden: count === 0 });
+  }
+  showTreeNew() {
+    const first = [...this.threadList.querySelectorAll(':scope > article.thread-entry')].find(row => this.treeNewIDs.has(row.dataset.messageId));
+    if (!first) { this.treeNewIDs.clear(); this.updateTreeNew(); return; }
+    this.treeNewIDs.delete(first.dataset.messageId);
+    first.scrollIntoView({ block: 'center' }); this.flash(first);
+    this.updateTreeNew();
+  }
   threadSendFailed(message) { this.threadNotice.show(message); }
   restoreThreadDraft(draft) { this.threadDraft.value = draft; this.resizeThreadDraft(); this.draft.focus(); }
   // Whether the person has typed or attached something that is not sent: the message and the thread reply, whichever way the composer is
