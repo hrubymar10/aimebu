@@ -256,8 +256,11 @@ func TestSlowPathProbeDoesNotBlockMachineFrames(t *testing.T) {
 	<-done
 }
 
+// A probe that is still running when the connection ends is not reported afterwards. The test waits for the probe to say it has started with no deadline of its own
+// (a slow shell start under load used to expire the 2 s it was given, and the test then failed on its 8 s context); only the wait for a late report is timed, and it
+// starts after the probe's two seconds are certainly under way.
 func TestPathProbeDoesNotReportAfterConnectionEnds(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	root := t.TempDir()
 	command := filepath.Join(root, "probe-launcher")
@@ -268,7 +271,7 @@ func TestPathProbeDoesNotReportAfterConnectionEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	definition := protocol.LauncherDefinition{ID: "launch", Name: "probe", Tool: "codex", Command: command, Enabled: true}
-	closed := make(chan struct{})
+	closed, neverStarted := make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -291,14 +294,15 @@ func TestPathProbeDoesNotReportAfterConnectionEnds(t *testing.T) {
 		if write(protocol.Frame{V: protocol.Version, Type: protocol.PathProbe, ReqID: "abandoned", CheckoutPath: root, LauncherID: "launch"}) != nil {
 			return
 		}
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
+		giveUp := time.Now().Add(60 * time.Second) // a safety net, generous: the wait is for the event
+		for ctx.Err() == nil && time.Now().Before(giveUp) {
 			if _, err := os.Stat(filepath.Join(root, ".probe-started")); err == nil {
 				close(closed)
 				return
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+		close(neverStarted)
 	}))
 	defer server.Close()
 	j, err := OpenJournal(ctx, filepath.Join(root, "journal.sqlite"))
@@ -313,6 +317,8 @@ func TestPathProbeDoesNotReportAfterConnectionEnds(t *testing.T) {
 	go func() { done <- c.RunOnce(ctx) }()
 	select {
 	case <-closed:
+	case <-neverStarted:
+		t.Fatalf("launcher never started: the probe did not create .probe-started within 60 s (%s)", filepath.Join(root, ".probe-started"))
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
@@ -324,7 +330,7 @@ func TestPathProbeDoesNotReportAfterConnectionEnds(t *testing.T) {
 	select {
 	case err := <-errorsSeen:
 		t.Fatalf("completed abandoned probe after disconnect: %v", err)
-	case <-time.After(2500 * time.Millisecond):
+	case <-time.After(2500 * time.Millisecond): // the probe (two seconds) has ended by then; a late report of it would come now
 	}
 }
 
@@ -437,7 +443,7 @@ func TestStartRemovesTheAgentToolsFolderAnOlderSupervisorLeft(t *testing.T) {
 
 // A session scan answers from the machine's own Claude state without blocking machine frames, and the hello advertises it.
 func TestSessionScanListsAndFindsSessionsOfTheMachineClaudeHome(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	ctx, cancel := context.WithCancel(t.Context()) // not a deadline: every wait here is for a frame, and the test's own timeout is the bound
 	defer cancel()
 	claude := t.TempDir() // a fixture Claude configuration folder; the real one is never read
 	project := filepath.Join(t.TempDir(), "proj")

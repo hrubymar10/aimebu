@@ -172,17 +172,20 @@ async function menuAudit(page, vw) {
   return page.evaluate(async width => {
     const findings = [];
     const toggle = document.querySelector('#more-toggle'), menu = document.querySelector('#more-menu');
+    // The bar measures itself again after a change (a pill shown or hidden, a button resized), on its own schedule: what is checked waits for the state it expects, up to a
+    // generous bound, and is reported as wrong only if it never comes (a fixed sleep was enough on an idle machine and not on a busy one).
+    const until = async (condition, ms = 20000) => { const end = performance.now() + ms; while (!condition() && performance.now() < end) await new Promise(resolve => setTimeout(resolve, 20)); return condition(); };
     if (width > 900) { if (toggle && getComputedStyle(toggle).display !== 'none') findings.push('menu: the overflow button shows above 900px'); return findings; }
     if (width === 360) {
       document.querySelector('#health-toggle').classList.add('has-issues');
       const pill = document.querySelector('#ui-variant-toggle');
       pill.style.minWidth = '105px'; pill.hidden = false;
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await until(() => document.querySelector('#health-toggle').classList.contains('topbar-tucked') && toggle.classList.contains('has-issues'));
       if (!document.querySelector('#health-toggle').classList.contains('topbar-tucked') || !toggle.classList.contains('has-issues')) findings.push('menu: tucked Health warning is missing');
     }
     if (width === 440) {
       for (const pill of document.querySelectorAll('.ui-variant-toggle')) pill.hidden = true; // (the testing pills are not part of the bar being audited)
-      await new Promise(resolve => setTimeout(resolve, 200)); // the bar measures itself again without them
+      await until(() => getComputedStyle(toggle).display === 'none'); // the bar measures itself again without them
       const nav = document.querySelector('.topbar nav');
       const brand = document.querySelector('.topbar-left').getBoundingClientRect();
       const buttons = [...nav.querySelectorAll('button')].filter(button => !button.hidden && !button.classList.contains('ui-variant-toggle') && button.getBoundingClientRect().width);
@@ -192,7 +195,7 @@ async function menuAudit(page, vw) {
       document.querySelector('#health-toggle').classList.add('has-issues');
       const logout = document.querySelector('#logout');
       logout.style.flexBasis = logout.style.width = logout.style.minWidth = '112px';
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await until(() => [...nav.querySelectorAll('.topbar-tucked')].map(button => button.id).join() === 'logout' && !toggle.classList.contains('has-issues'));
       const tucked = [...nav.querySelectorAll('.topbar-tucked')].map(button => button.id);
       if (tucked.join() !== 'logout' || toggle.classList.contains('has-issues')) findings.push('menu: visible Health incorrectly colors More when only Sign out is tucked');
       return findings;
@@ -238,13 +241,13 @@ async function menuAudit(page, vw) {
     if (panel && tucked.some(button => button.id === 'system-events-toggle')) {
       if (!panel.hidden) document.querySelector('#system-events-toggle').click();
       toggle.click(); items[0].click();
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await until(() => !panel.hidden);
       if (panel.hidden) findings.push('menu: System events does nothing');
       else document.querySelector('#system-events-toggle').click();
     }
     document.querySelector('#health-toggle').classList.add('has-issues');
-    await new Promise(resolve => setTimeout(resolve, 0));
     const healthInMenu = width > 700 || tucked.some(button => button.id === 'health-toggle');
+    await until(() => toggle.classList.contains('has-issues') === healthInMenu);
     if (toggle.classList.contains('has-issues') !== healthInMenu) findings.push('menu: the health warning does not match Health visibility');
     return findings;
   }, vw);
@@ -254,7 +257,14 @@ async function menuAudit(page, vw) {
   const report = {};
   await withPages([...PHONES, ...EXTRA], async (name, page) => {
     await page.addStyleTag({ content: '*,*::before,*::after{transition:none!important;animation:none!important}' });
-    await page.evaluate(async () => { const { TopbarMenu } = await import('/js/pages/topbar/page.js'); new TopbarMenu(); await new Promise(resolve => setTimeout(resolve, 100)); });
+    // The menu lays the bar out in a frame of its own (and again when a control's size changes): the audit starts once what it tucked has not changed for a few frames, not after a fixed wait.
+    await page.evaluate(async () => {
+      const { TopbarMenu } = await import('/js/pages/topbar/page.js'); new TopbarMenu();
+      const nav = document.querySelector('.topbar nav'), snapshot = () => [...nav.querySelectorAll('.topbar-tucked')].map(button => button.id).join() + '|' + getComputedStyle(document.querySelector('#more-toggle')).display + '|' + nav.scrollWidth;
+      const frame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+      let last = '', same = 0; const end = performance.now() + 20000;
+      while (same < 5 && performance.now() < end) { await frame(); const now = snapshot(); same = now === last ? same + 1 : 0; last = now; }
+    });
     const phone = PHONES.some(([label]) => label === name), narrow = phone || page.viewport().width <= 900 && page.viewport().height >= 700;
     report[name] = narrow ? await page.evaluate(audit, MIN) : [];
     if (narrow) report[name].push(...await menuAudit(page, page.viewport().width));

@@ -290,9 +290,10 @@ func TestWarmFingerprint(t *testing.T) {
 // its environment and in no argument.
 func TestWarmProcessIsStartedForStreamInput(t *testing.T) {
 	root := t.TempDir()
-	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
+	argsPath, envPath, ready := filepath.Join(root, "args"), filepath.Join(root, "env"), filepath.Join(root, "ready")
 	path := filepath.Join(root, "claude")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" > " + envPath + "\ncat >/dev/null\n"
+	// The script says it has written both files by creating a third after them; the test reads them only then (a fixed wait raced a slow start).
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" > " + envPath + "\n: > " + ready + "\ncat >/dev/null\n"
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +303,7 @@ func TestWarmProcessIsStartedForStreamInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	waitReady(t, ready)
 	_ = session.Close(2 * time.Second)
 	args, _ := os.ReadFile(argsPath)
 	env, _ := os.ReadFile(envPath)
@@ -313,6 +314,23 @@ func TestWarmProcessIsStartedForStreamInput(t *testing.T) {
 	}
 	if strings.Contains(string(args), "aak_secret") || strings.TrimSpace(string(env)) != "aak_secret" {
 		t.Fatalf("the key must be in the environment only: args=%q env=%q", args, env)
+	}
+}
+
+// waitReady waits for the file a test launcher script creates once its trap is in place (the script puts ": > @READY@" after the trap), so a signal is
+// never sent before the trap and the process never dies of it instead of exiting the way it traps. A fixed wait raced the shell's start: on a slow start
+// the signal arrived first.
+func waitReady(t *testing.T, ready string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the launcher never said its trap is in place")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -328,17 +346,18 @@ func TestWarmContainerEndIsConfirmedByTheWrapperNotByTime(t *testing.T) {
 		confirmed             bool
 	}{
 		{"docker: exits 0 when its input closes", "#!/bin/sh\ncat >/dev/null\nexit 0\n", "docker", true},
-		{"docker: exits 143 on terminate (stop_on_signal)", "#!/bin/sh\ntrap 'exit 143' TERM\nwhile true; do sleep 0.1; done\n", "docker", true},
-		{"docker: exits 75 on terminate", "#!/bin/sh\ntrap 'exit 75' TERM\nwhile true; do sleep 0.1; done\n", "docker", false},
+		{"docker: exits 143 on terminate (stop_on_signal)", "#!/bin/sh\ntrap 'exit 143' TERM\n: > '@READY@'\nwhile true; do sleep 0.1; done\n", "docker", true},
+		{"docker: exits 75 on terminate", "#!/bin/sh\ntrap 'exit 75' TERM\n: > '@READY@'\nwhile true; do sleep 0.1; done\n", "docker", false},
 		{"docker: dies of an error when its input closes", "#!/bin/sh\ncat >/dev/null\nexit 1\n", "docker", false},
-		{"docker: ignores everything and is killed", "#!/bin/sh\ntrap '' TERM\nwhile true; do sleep 1; done\n", "docker", false},
-		{"native: ignores everything and is killed", "#!/bin/sh\ntrap '' TERM\nwhile true; do sleep 1; done\n", "native", true},
+		{"docker: ignores everything and is killed", "#!/bin/sh\ntrap '' TERM\n: > '@READY@'\nwhile true; do sleep 1; done\n", "docker", false},
+		{"native: ignores everything and is killed", "#!/bin/sh\ntrap '' TERM\n: > '@READY@'\nwhile true; do sleep 1; done\n", "native", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "claude")
-			if err := testenv.WriteExecutable(path, []byte(tc.script), 0700); err != nil {
+			ready := filepath.Join(root, "ready")
+			if err := testenv.WriteExecutable(path, []byte(strings.ReplaceAll(tc.script, "@READY@", ready)), 0700); err != nil {
 				t.Fatal(err)
 			}
 			a := &Adapter{Command: path, Variant: tc.variant, AllowNative: true}
@@ -348,7 +367,9 @@ func TestWarmContainerEndIsConfirmedByTheWrapperNotByTime(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(100 * time.Millisecond) // the traps are set
+			if strings.Contains(tc.script, "@READY@") {
+				waitReady(t, ready) // the traps are set
+			}
 			err = session.Close(200 * time.Millisecond)
 			if tc.confirmed && err != nil {
 				t.Fatalf("expected a confirmed end, got %v", err)
@@ -415,13 +436,14 @@ func TestTurnTerminateEndsOnTheSignalOrIsKilledAfterTheGrace(t *testing.T) {
 		byItself bool
 		code     int
 	}{
-		"traps TERM": {"#!/bin/sh\ntrap 'exit 143' TERM\nwhile true; do sleep 0.1; done\n", true, 143},
-		"ignores it": {"#!/bin/sh\ntrap '' TERM\nwhile true; do sleep 0.2; done\n", false, -1},
+		"traps TERM": {"#!/bin/sh\ntrap 'exit 143' TERM\n: > '@READY@'\nwhile true; do sleep 0.1; done\n", true, 143},
+		"ignores it": {"#!/bin/sh\ntrap '' TERM\n: > '@READY@'\nwhile true; do sleep 0.2; done\n", false, -1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "claude")
-			if err := testenv.WriteExecutable(path, []byte(tc.script), 0700); err != nil {
+			ready := filepath.Join(root, "ready")
+			if err := testenv.WriteExecutable(path, []byte(strings.ReplaceAll(tc.script, "@READY@", ready)), 0700); err != nil {
 				t.Fatal(err)
 			}
 			a := &Adapter{Command: path, Variant: "native", AllowNative: true}
@@ -430,7 +452,7 @@ func TestTurnTerminateEndsOnTheSignalOrIsKilledAfterTheGrace(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(150 * time.Millisecond)
+			waitReady(t, ready)
 			terminator, ok := turn.(interface{ Terminate(time.Duration) bool })
 			if !ok {
 				t.Fatal("a turn can be terminated")

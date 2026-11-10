@@ -515,18 +515,22 @@ func TestKeepAliveTurnRunsWithTheRealTurnsArguments(t *testing.T) {
 // Terminate asks a Codex turn to end with SIGTERM and kills it only if it does not: a launcher that traps the signal exits 143 on its own (a confirmed
 // end), one that ignores it is killed after the grace. Without it a containerized Codex ping could only be cancelled, which confirms nothing.
 func TestTurnTerminateEndsOnTheSignalOrIsKilledAfterTheGrace(t *testing.T) {
+	// The script says it is ready (its trap is in place) by creating a file; the signal is sent only after that. A fixed wait instead raced the
+	// shell's start: on a slow start the TERM arrived before the trap and the process died of the signal (exit code -1) instead of exiting 143.
 	for name, tc := range map[string]struct {
-		script   string
+		trap     string
 		byItself bool
 		code     int
 	}{
-		"traps TERM": {"#!/bin/sh\ncat >/dev/null &\ntrap 'exit 143' TERM\nwhile true; do sleep 0.1; done\n", true, 143},
-		"ignores it": {"#!/bin/sh\ncat >/dev/null &\ntrap '' TERM\nwhile true; do sleep 0.2; done\n", false, -1},
+		"traps TERM": {"trap 'exit 143' TERM", true, 143},
+		"ignores it": {"trap '' TERM", false, -1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "codex")
-			if err := testenv.WriteExecutable(path, []byte(tc.script), 0700); err != nil {
+			ready := filepath.Join(root, "ready")
+			script := "#!/bin/sh\ncat >/dev/null &\n" + tc.trap + "\n: > '" + ready + "'\nwhile true; do sleep 0.1; done\n"
+			if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
 			a := New(filepath.Join(root, "runtime"))
@@ -535,7 +539,16 @@ func TestTurnTerminateEndsOnTheSignalOrIsKilledAfterTheGrace(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(150 * time.Millisecond)
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				if _, err := os.Stat(ready); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the launcher never said its trap is in place")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
 			terminator, ok := turn.(interface{ Terminate(time.Duration) bool })
 			if !ok {
 				t.Fatal("a Codex turn can be terminated")

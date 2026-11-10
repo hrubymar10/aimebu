@@ -126,6 +126,24 @@ async function main() {
     return page;
   };
   const settle = page => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 100)));
+  // Hovers an element once it is really there: in the document, with a box, scrolled into view. The row a test hovers is drawn after a request the test answered, and on a loaded
+  // machine the hover came first ("Node is either not clickable or not an Element"). A row that is drawn again between finding it and moving to it (the node is gone) is looked for again.
+  // Nothing is waited for by time: the test's own timeout is the only bound.
+  const hover = async (page, selector) => {
+    for (;;) {
+      await page.waitForFunction(selector => {
+        const node = document.querySelector(selector);
+        if (!node) return false;
+        node.scrollIntoView({ block: 'center' });
+        const box = node.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+      }, {}, selector);
+      try { await page.hover(selector); return; } catch (error) {
+        if (!/not clickable|not an Element|detached|No node|Node is/i.test(String(error && error.message))) throw error;
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      }
+    }
+  };
   const answer = (page, index, status, body) => page.evaluate((index, status, body) => window.__answer(index, status, body), index, status, body);
   const hold = (page, method, re) => page.evaluate((method, re) => window.__holds.push({ method, re }), method, re);
   const release = (page, re) => page.evaluate(re => { window.__holds = window.__holds.filter(hold => hold.re !== re); }, re);
@@ -182,7 +200,7 @@ async function main() {
   {
     const page = await mount();
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.hover('[data-message-id=rm_a_m130] .chat-msg-bubble'); // the row's toolbar is made when it is reached
+    await hover(page, '[data-message-id=rm_a_m130] .chat-msg-bubble'); // the row's toolbar is made when it is reached
     await page.evaluate(() => { document.querySelector('#composer textarea[name=body]').value = 'half a thought'; document.querySelector('[data-message-id=rm_a_m130] .message-action')?.focus(); window.__focus = document.activeElement; });
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live one', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); });
     await settle(page);
@@ -501,7 +519,7 @@ async function main() {
     assert.deepEqual(await page.evaluate(() => { const head = document.querySelector('.chat > header').getBoundingClientRect(), title = document.querySelector('#thread-panel > header h2').getBoundingClientRect(), close = document.querySelector('#close-thread').getBoundingClientRect(), thread = document.querySelector('#thread-panel').getBoundingClientRect(), last = [...document.querySelectorAll('.chat > header button')].filter(node => node.offsetParent).map(node => node.getBoundingClientRect().right).reduce((a, b) => Math.max(a, b), 0);
       return { sameRow: Math.abs(title.top + title.height / 2 - (head.top + head.height / 2)) <= 2, closeAtRightEdge: close.left >= title.right && thread.right - close.right >= 0 && thread.right - close.right <= 16, iconsBeforeThread: last <= thread.left + 1 }; }),
       { sameRow: true, closeAtRightEdge: true, iconsBeforeThread: true }, 'the thread header is in the room header row, with the close button after the title');
-    await page.hover('#thread-messages .thread-entry[data-message-id=rm_a_t1] .chat-msg-bubble'); await settle(page); await new Promise(resolve => setTimeout(resolve, 500));
+    await hover(page, '#thread-messages .thread-entry[data-message-id=rm_a_t1] .chat-msg-bubble'); await settle(page); await new Promise(resolve => setTimeout(resolve, 500));
     assert.deepEqual(await page.evaluate(() => { const bar = document.querySelector('#thread-messages [data-message-id=rm_a_t1] .message-actions'); return { shown: getComputedStyle(bar).opacity, labels: [...bar.querySelectorAll('button')].filter(b => !b.closest('[hidden]') && !b.classList.contains('message-actions-wake')).map(b => b.getAttribute('aria-label') || b.title) }; }).then(x => ({ shown: x.shown, hasReact: x.labels.some(l => /react/i.test(l)), hasCopy: x.labels.some(l => /copy/i.test(l)), hasReply: x.labels.some(l => /^reply to/i.test(l)), noThread: !x.labels.some(l => /thread/i.test(l)) })),
       { shown: '1', hasReact: true, hasCopy: true, hasReply: true, noThread: true }, 'a reply in the thread has the message toolbar (react, reply, copy; no thread button, the panel is the thread)');
     // Reply on a panel message picks what the next send answers (a chip names it); cancelling goes back to the root.
@@ -870,7 +888,7 @@ async function main() {
     await page.$eval('[data-message-id=rm_a_m130] .reaction-pill[data-emoji="🎉"]', node => node.click()); await settle(page);
     assert.deepEqual([await count(page, 'PUT', '/api/messages/rm_a_m130/reactions/'), (await pills(page, 'rm_a_m130')).at(-1)], [1, ['🎉 2', 'zed, me', 'true', '🎉']], 'someone else\'s pill adds mine');
     await page.$eval('[data-message-id=rm_a_m130] .chat-msg-bubble', node => node.scrollIntoView());
-    await page.hover('[data-message-id=rm_a_m130] .chat-msg-bubble'); // a row's toolbar is made when the row is reached
+    await hover(page, '[data-message-id=rm_a_m130] .chat-msg-bubble'); // a row's toolbar is made when the row is reached
     await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m130] .message-action[aria-haspopup]').click());
     await page.$eval('[data-message-id=rm_a_m130] .quick-reaction[data-emoji="✅"]', node => node.click()); await settle(page);
     assert.deepEqual((await pills(page, 'rm_a_m130')).map(pill => pill[3]), ['👍', '🎉', '✅'], 'a quick reaction from the message actions');
@@ -957,7 +975,7 @@ async function main() {
     const page = await mount({ plain: true });
     await page.evaluate(() => { for (const [seq, body] of [[121, 'mine one'], [124, 'mine two'], [127, 'mine two'], [129, 'mine three']]) Object.assign(window.__data.rooms.rm_a.messages[seq - 1], { author_id: 'usr_me', author_name: 'me', body }); });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.hover('[data-message-id=rm_a_m120] .chat-msg-bubble');
+    await hover(page, '[data-message-id=rm_a_m120] .chat-msg-bubble');
     await page.evaluate(() => { const bar = document.querySelector('[data-message-id=rm_a_m120] .message-actions'); window.__buttons = [...bar.querySelectorAll('button')].filter(button => !button.closest('[hidden]')).map(button => button.getAttribute('aria-label')); bar.querySelector('button').focus(); });
     const focused = () => page.evaluate(() => document.activeElement.getAttribute('aria-label'));
     const labels = await page.evaluate(() => window.__buttons);
@@ -999,7 +1017,7 @@ async function main() {
     await settle(page);
     assert.deepEqual(await page.evaluate(() => { const draft = document.querySelector('#composer textarea[name=body]'); return [document.activeElement === draft, draft.value, draft.selectionStart, window.__chat.threadDraft.value, !!document.querySelector('[data-message-id=rm_a_live]')]; }), [true, 'main draft', 0, 'thread draft', true]);
     await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 0; });
-    await page.hover('[data-message-id=rm_a_m40] .chat-msg-bubble'); // the row's toolbar is made when it is reached
+    await hover(page, '[data-message-id=rm_a_m40] .chat-msg-bubble'); // the row's toolbar is made when it is reached
     await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m40] .message-action').focus());
     await page.evaluate(() => { window.__focus = document.activeElement; });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1'); await settle(page);
@@ -1524,10 +1542,10 @@ async function main() {
     const rowsNow = await page.evaluate(() => document.querySelectorAll('#messages > article.chat-msg[data-message-id]').length);
     assert.deepEqual([rowsNow > 5, await built(), await page.evaluate(() => document.querySelectorAll('#messages .message-actions button:not(.message-actions-wake)').length)], [true, [], 0], 'no row has a toolbar before it is reached');
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages .message-actions')).width), '1px', 'and an unmade toolbar is not drawn, only its hidden "Message actions" button is left');
-    await page.hover('#messages [data-message-id=rm_a_m120] .chat-msg-bubble');
+    await hover(page, '#messages [data-message-id=rm_a_m120] .chat-msg-bubble');
     assert.deepEqual(await built(), ['rm_a_m120'], 'a hovered row makes its toolbar');
     assert.equal(await page.evaluate(() => document.querySelectorAll('[data-message-id=rm_a_m120] .message-actions > button').length), 6, 'with its six buttons');
-    for (const id of ['rm_a_m121', 'rm_a_m122', 'rm_a_m123', 'rm_a_m124']) await page.hover(`#messages [data-message-id=${id}] .chat-msg-bubble`);
+    for (const id of ['rm_a_m121', 'rm_a_m122', 'rm_a_m123', 'rm_a_m124']) await hover(page, `#messages [data-message-id=${id}] .chat-msg-bubble`);
     const live = await built();
     assert.equal(live.length <= 3 && live.includes('rm_a_m124') && !live.includes('rm_a_m120'), true, `only the last three rows reached keep a toolbar: ${live}`);
     // The keyboard reaches a row's toolbar too: focus lands on something in the row, the toolbar is made, and the next Tab is its first button.
@@ -1556,7 +1574,7 @@ async function main() {
     const page = await mount();
     await addReplies(page, 3);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.hover('#messages [data-message-id=rm_a_m120] .chat-msg-bubble'); // its toolbar is made when the row is reached
+    await hover(page, '#messages [data-message-id=rm_a_m120] .chat-msg-bubble'); // its toolbar is made when the row is reached
     const state = () => page.evaluate(() => {
       const rows = [...document.querySelectorAll('#messages > article.chat-msg[data-message-id]')];
       const root = document.querySelector('#messages [data-message-id=rm_a_m120]');

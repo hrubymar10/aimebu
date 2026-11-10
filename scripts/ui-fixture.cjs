@@ -207,6 +207,9 @@ async function withPages(viewports, run, options = {}) {
       else await page.setViewport(viewport);
       page.on('pageerror', () => {});
       await page.goto(origin, { waitUntil: 'load' });
+      // The app boots on its own after the load event: it asks for the session, gets a 401 from this server, and shows the sign-in view. The fixture hides that view and shows
+      // the app's, so it must come after, or the boot (late on a busy machine) puts the sign-in back above the app and moves everything measured down by its height.
+      await page.waitForFunction(() => document.querySelector('#boot-view').hidden && !document.querySelector('#login-view').hidden, { timeout: 60000 });
       await page.evaluate(FIXTURE);
       await run(name, page);
       await page.close();

@@ -147,6 +147,11 @@ func TestTheBundleCanBeTurnedOffForDebugging(t *testing.T) {
 	}
 }
 
+// forgetSaidBundleFailures empties the process-wide memory of the bundle failures already said, so a test of what is said starts from nothing.
+func forgetSaidBundleFailures() {
+	bundleFailuresSaid.Range(func(key, _ any) bool { bundleFailuresSaid.Delete(key); return true })
+}
+
 func TestWebBundleEnv(t *testing.T) {
 	for value, want := range map[string]bool{"": true, "on": true, "1": true, "off": false, "OFF": false, " 0 ": false, "false": false, "no": false} {
 		t.Setenv(webBundleEnv, value)
@@ -158,8 +163,11 @@ func TestWebBundleEnv(t *testing.T) {
 
 // The bundle is an optimisation. When it cannot be made (a file that imports something that is not there, or a bare name the import map does not know) the
 // app is served from its modules as it was, the failure is logged loudly and sent to Sentry when telemetry is on: a broken bundler never makes a broken page.
-// This test sets the process-wide reporter, so it does not run in parallel.
+// This test sets the process-wide reporter, so it does not run in parallel. It also starts from, and leaves, an empty memory of the failures already said
+// (a process-wide map): without that, a second run in the same process (`-count=N`) finds its failures already said and sees silence.
 func TestABundleThatCannotBeMadeFallsBackToTheModulesLoudly(t *testing.T) {
+	forgetSaidBundleFailures()
+	defer forgetSaidBundleFailures()
 	index := `<!doctype html><script type="importmap">{"imports":{"preact":"/vendor/preact/preact.mjs"}}</script><script type="module" src="/js/app.js"></script>`
 	files := fstest.MapFS{
 		"index.html":               {Data: []byte(index)},
