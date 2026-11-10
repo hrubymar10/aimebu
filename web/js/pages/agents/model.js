@@ -122,20 +122,32 @@ export const writerBlockText = block => block.own_worktree
   ? `${block.holder || block.slug} is the writer of ${block.path}, so it starts in a worktree of its own`
   : `${block.holder || block.slug} is the writer of ${block.path} and worktrees are off for this project — stop it, or give this agent a non-writer role`;
 
+// Which of the card's quick (hover) buttons make sense for the agent's state, besides the private message: an active or paused one has Pause and Stop; one that is
+// being stopped (stop asked, the process not gone yet, or the harness interrupting) keeps a Stop that is already in effect, since it is not startable yet; a stopped one
+// is started again, so Start takes the place of both (Pause means nothing on it and Stop is already done); a paused one is resumed, so Resume takes the place of its Pause.
+// Start and Resume are the one action `reactivate`, named for the state it acts on.
+export function quickActionsOf(agent) {
+  if (agent.desired === 'stopped' && agent.observed === 'stopped') return ['start'];
+  if (agent.desired === 'stopped' || agent.observed === 'interrupting') return ['stop'];
+  if (agent.desired === 'not_accepting') return ['resume', 'stop'];
+  return ['pause', 'stop'];
+}
+
 // Every action says what it does; a disabled one says why. `down` is the reason when the controls are unavailable altogether.
 export function actionsOf(agent, { down = '', lifecycle = 'open' } = {}) {
   const quotaFlag = (agent.health_flags || []).some(flag => flag.code === 'out_of_quota');
+  const again = agent.desired === 'not_accepting' ? 'Resume' : 'Start'; // one action, `reactivate`, called by what it does to the state it is in
   const handoff = agent.switch;
   const reasons = {
     message: ['Send this agent a private message', ''],
-    'act-pause': ['Pause: finish the current turn, then accept no new work', down || (agent.desired === 'not_accepting' ? 'it is already paused' : agent.desired === 'stopped' ? 'it is stopped; reactivate it first' : '')],
+    'act-pause': ['Pause: finish the current turn, then accept no new work', down || (agent.desired === 'not_accepting' ? 'it is already paused' : agent.desired === 'stopped' ? 'it is stopped; start it first' : '')],
     'act-stop': ['Stop: interrupt the current turn and accept no new work', down || (agent.desired === 'stopped' ? 'it is already stopped' : '')],
-    switch: ['Switch: change this agent\'s tool, model or machine', down || (lifecycle && lifecycle !== 'open' ? 'reopen the room first' : agent.recovery_block ? 'resolve the recovery item first' : agent.desired === 'stopped' ? 'reactivate it first' : agent.boundary_pending ? 'it is waiting for folder or machine approval' : handoff && handoff.state !== 'failed' ? 'a switch is already in progress' : '')],
-    reactivate: ['Reactivate: accept new work again', down || (agent.boundary_pending ? 'it is waiting for folder or machine approval' : agent.role_deleted ? 'its role was deleted' : agent.writer_blocked_by && !agent.writer_blocked_by.own_worktree && agent.desired !== 'active' ? writerBlockText(agent.writer_blocked_by) : agent.desired === 'active' && !quotaFlag ? 'it is already active' : '')],
+    switch: ['Switch: change this agent\'s tool, model or machine', down || (lifecycle && lifecycle !== 'open' ? 'reopen the room first' : agent.recovery_block ? 'resolve the recovery item first' : agent.desired === 'stopped' ? 'start it first' : agent.boundary_pending ? 'it is waiting for folder or machine approval' : handoff && handoff.state !== 'failed' ? 'a switch is already in progress' : '')],
+    reactivate: [`${again}: ${agent.desired === 'not_accepting' ? 'accept new work again' : 'run this agent again and accept new work'}`, down || (agent.boundary_pending ? 'it is waiting for folder or machine approval' : agent.role_deleted ? 'its role was deleted' : agent.writer_blocked_by && !agent.writer_blocked_by.own_worktree && agent.desired !== 'active' ? writerBlockText(agent.writer_blocked_by) : agent.desired === 'active' && !quotaFlag ? 'it is already active' : '')],
     remove: ['Remove: take this agent out for good; its messages stay, and it cannot be started again', down || (agent.desired === 'stopped' && agent.observed === 'stopped' ? '' : 'stop it first')],
   };
   if (agent.writer_blocked_by?.own_worktree && agent.desired !== 'active' && !reasons.reactivate[1]) reasons.reactivate[0] += `; ${writerBlockText(agent.writer_blocked_by)}`;
-  const labels = { message: 'Message', 'act-pause': 'Pause', 'act-stop': 'Stop', reactivate: 'Reactivate', switch: 'Switch', remove: 'Remove' };
+  const labels = { message: 'Message', 'act-pause': 'Pause', 'act-stop': 'Stop', reactivate: again, switch: 'Switch', remove: 'Remove' };
   return Object.entries(reasons).map(([name, [what, why]]) => ({ name, label: labels[name], title: why ? `${labels[name]} is unavailable: ${why}` : what, disabled: !!why, hint: why ? `${labels[name]} is unavailable: ${why}.` : '' }));
 }
 

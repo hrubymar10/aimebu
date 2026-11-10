@@ -108,13 +108,13 @@ async function main() {
     const working = await row('a1'), stopped = await row('a2'), paused = await row('a3');
     assert.equal(working.activity, 'Working…'); assert.equal(working.dot, 'working'); assert.deepEqual(working.pause, [false, 'Pause: finish the current turn, then accept no new work']);
     assert.deepEqual([stopped.pause[0], stopped.stop, stopped.reactivate], [true, true, false]);
-    assert.deepEqual(stopped.hint, ['Pause is unavailable: it is stopped; reactivate it first.', 'Stop is unavailable: it is already stopped.', 'Switch is unavailable: reactivate it first.']);
+    assert.deepEqual(stopped.hint, ['Pause is unavailable: it is stopped; start it first.', 'Stop is unavailable: it is already stopped.', 'Switch is unavailable: start it first.']);
     assert.equal(paused.pause[1], 'Pause is unavailable: it is already paused');
     assert.deepEqual((await calls(page)).filter(call => call[0] === 'change'), [['change', ''], ['change', 'a1,a2,a3']]);
     await page.close();
   }
 
-  // A stopped writer whose folder another agent holds: with worktrees off Reactivate is disabled and its hint and the card's note name the holder;
+  // A stopped writer whose folder another agent holds: with worktrees off Start is disabled and its hint and the card's note name the holder;
   // with them on it can be reactivated and says it starts in a worktree of its own.
   {
     const page = await mount();
@@ -122,7 +122,7 @@ async function main() {
     await show(page, 'r1', [agent('a2', 'bert', { desired: 'stopped', observed: 'stopped', writer_blocked_by: holder }), agent('a3', 'cleo', { desired: 'stopped', observed: 'stopped', writer_blocked_by: { ...holder, own_worktree: true } })]);
     const read = id => page.$eval(`[data-agent-id=${id}]`, node => ({ off: node.querySelector('.agent-reactivate').disabled, title: node.querySelector('.agent-reactivate').title, activity: node.querySelector('.agent-activity').textContent }));
     const why = 'ada@test is the writer of /work/test and worktrees are off for this project — stop it, or give this agent a non-writer role';
-    assert.deepEqual(await read('a2'), { off: true, title: `Reactivate is unavailable: ${why}`, activity: `Cannot start: ${why}.` });
+    assert.deepEqual(await read('a2'), { off: true, title: `Start is unavailable: ${why}`, activity: `Cannot start: ${why}.` });
     const free = await read('a3');
     assert.deepEqual([free.off, free.title.includes('ada@test is the writer of /work/test, so it starts in a worktree of its own')], [false, true]);
     await page.close();
@@ -676,6 +676,26 @@ async function main() {
     await page.evaluate(async () => { const source = window.__panel.source; const events = []; for (let i = 0; i < 60; i++) events.push(source.onEvent({ agent_id: 'a1', room_id: 'r1', kind: 'turn_recorded', payload_json: '{}', created_at: '2026-01-01T10:05:00Z' })); await Promise.all(events); await new Promise(resolve => setTimeout(resolve, 900)); });
     const burst = (await roomReads()) - readsBefore;
     assert.ok(burst >= 2 && burst <= 4, `60 events about this room read the agents and members once, and once more after: ${burst} reads`);
+    await page.close();
+    // The hover buttons follow the agent's state: an active one has Pause and Stop; one being stopped (stop asked, or the harness interrupting) has only a Stop that is
+    // already in effect (it cannot be started yet); a stopped one has Start (reactivate) instead of both; a paused one has Resume (the same action) in place of its disabled Pause, and Stop. One word per action: Start for a stopped agent, Resume for a paused one, never "Reactivate".
+    page = await mount();
+    await show(page, 'r1', [agent('act', 'active'), agent('stopping', 'stopping', { desired: 'stopped', observed: 'in_turn' }), agent('interrupting', 'interrupting', { desired: 'active', observed: 'interrupting' }),
+      agent('stopped', 'stopped', { desired: 'stopped', observed: 'stopped' }), agent('paused', 'paused', { desired: 'not_accepting' })]);
+    const quick = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#agents-list .agent-card')].map(card => [card.dataset.agentId, [...card.querySelectorAll('.agent-quick button')].map(button => [button.getAttribute('aria-label'), button.disabled, button.querySelector('svg') ? 'svg' : 'no icon']).filter(([label]) => !/privately|Open agent profile/.test(label))])));
+    assert.deepEqual(quick, {
+      act: [['Pause', false, 'svg'], ['Stop', false, 'svg']],
+      stopping: [['Stop', true, 'svg']],
+      interrupting: [['Stop', false, 'svg']],
+      stopped: [['Start', false, 'svg']],
+      paused: [['Resume', false, 'svg'], ['Stop', false, 'svg']],
+    }, 'the hover buttons follow the state');
+    assert.deepEqual(await page.evaluate(() => Object.fromEntries(['stopped', 'paused'].map(id => [id, document.querySelector(`[data-agent-id=${id}] .agent-reactivate`)]).map(([id, button]) => [id, [button.getAttribute('aria-label'), button.title]]))), { stopped: ['Start', 'Start: run this agent again and accept new work'], paused: ['Resume', 'Resume: accept new work again'] }, 'the profile action is named for the state too');
+    // What a person reads: visible text, tooltips and accessible names. (Class names and ids such as agent-reactivate are the action's own name in the code.)
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('#agents-list, #agents-list *')].some(node => /Reactivate/i.test([node.childNodes.length === 1 && node.firstChild.nodeType === 3 ? node.textContent : '', node.getAttribute('title'), node.getAttribute('aria-label')].join(' ')))), false, 'no Reactivate in what the cards show');
+    await page.$eval('[data-agent-id=stopped] .agent-start', button => button.click());
+    const startRequest = await waitRequest(page, 'POST', '/api/agents/stopped/control');
+    assert.equal(await page.evaluate(index => window.__requests[index].body.desired, startRequest), 'active', 'Start asks for the agent to be active again');
     await page.close();
     // An event that reaches a destroyed panel through the source starts no read.
     page = await mount();

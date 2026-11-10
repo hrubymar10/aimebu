@@ -5,12 +5,13 @@ import { harnessIcon, agentLabel } from '../../sender-identity.js';
 import { relativeTime, stateAge } from '../../time.js';
 import { harnessName } from '../../harness-version.js';
 import { healthLabel } from '../health/model.js';
-import { actionsOf, activityOf, keepAliveOf, contextOf, grantsOf, liveOf, profileRows, stateBadge, stateDot, stateOf, switchStatusOf } from './model.js';
+import { actionsOf, quickActionsOf, activityOf, keepAliveOf, contextOf, grantsOf, liveOf, profileRows, stateBadge, stateDot, stateOf, switchStatusOf } from './model.js';
 
 const PATHS = {
   dm: 'M3 4h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9l-4 3v-3H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
   pause: 'M6 4h3v12H6zM11 4h3v12h-3z',
   stop: 'M5 5h10v10H5z',
+  play: 'M6 4l10 6-10 6z',
 };
 
 function Glyph({ name }) {
@@ -88,7 +89,7 @@ export class AgentCard extends Component {
     const sw = switchStatusOf(agent, harnessName), actions = actionsOf(agent, { down, lifecycle }), keep = keepAliveOf(agent);
     const { src, label } = harnessIcon(agent.tool || '');
     const name = agentLabel(agent) || agent.id, dm = `Message ${agent.name || agent.slug || 'agent'} privately`;
-    const reason = key => actions.find(action => action.name === key);
+    const reason = key => actions.find(action => action.name === key), quick = quickActionsOf(agent);
     const toggle = () => api.store.toggleProfile(agent.id);
     return html`<article class=${expanded ? 'agent-card agent-card-compact expanded' : 'agent-card agent-card-compact'} data-agent-id=${agent.id} data-woken-by=${agent.woken_by || ''} data-live-at=${live.at} data-live-label=${live.label}
       onClick=${event => { if (!event.target.closest('button, a, input, select, textarea, .profile-output')) toggle(); }}>
@@ -98,8 +99,9 @@ export class AgentCard extends Component {
         <div class="agent-state" data-since=${state.since} data-state=${state.kind} title=${state.title}><span class=${`agent-state-pill agent-state-badge agent-state-${stateBadge(state.kind)}`}><span class="agent-state-label">${state.name}</span>${' '}<${StateAge} store=${api.store} since=${state.since} /></span></div>
         <span class="agent-role" title=${agent.role_updated ? 'Role updated; respawn to apply the project definition.' : ''}>${`${agent.role_emoji || ''} ${agent.role || 'Agent'}${agent.role_deleted ? ' (deleted)' : ''}`.trim()}</span>
         <div class="agent-card-actions agent-quick"><${QuickButton} className="agent-private" label=${dm} icon="dm" onClick=${() => api.onPrivate(agent)} />
-          <${QuickButton} className="agent-pause" label="Pause" icon="pause" disabled=${reason('act-pause').disabled} onClick=${() => api.store.control(agent.id, 'pause')} />
-          <${QuickButton} className="agent-stop icon-btn-danger" label="Stop" icon="stop" disabled=${reason('act-stop').disabled} onClick=${() => api.store.control(agent.id, 'stop')} />
+          ${quick.includes('pause') && html`<${QuickButton} className="agent-pause" label="Pause" icon="pause" disabled=${reason('act-pause').disabled} onClick=${() => api.store.control(agent.id, 'pause')} />`}
+          ${(quick.includes('start') || quick.includes('resume')) && html`<${QuickButton} className=${quick.includes('start') ? 'agent-start' : 'agent-resume'} label=${reason('reactivate').label} icon="play" disabled=${reason('reactivate').disabled} title=${reason('reactivate').title} onClick=${() => api.store.control(agent.id, 'reactivate')} />`}
+          ${quick.includes('stop') && html`<${QuickButton} className="agent-stop icon-btn-danger" label="Stop" icon="stop" disabled=${reason('act-stop').disabled} onClick=${() => api.store.control(agent.id, 'stop')} />`}
           ${!expanded && html`<${IconButton} name="chevron-right" label="Open agent profile" className="agent-expand" aria-expanded="false" onClick=${toggle} />`}</div></div>
       <small class="agent-meta">${`${harnessName(agent.tool) || 'unknown'} · ${agent.model || 'unknown'}`}</small>
       <small class="agent-keepalive" hidden=${!keep || (!expanded && !keep.warning)} title=${keep?.warning || ''}>${keep ? (keep.warning || keep.text) : ''}</small>

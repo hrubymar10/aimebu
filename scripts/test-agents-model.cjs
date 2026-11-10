@@ -91,21 +91,21 @@ assert.deepEqual(plain(m.liveOf({ observed: 'idle', activity_at: at })), { at: '
 
 // Every action says what it does, or why it cannot.
 const reasons = (agent, options) => Object.fromEntries(plain(m.actionsOf(agent, options)).map(action => [action.name, action.disabled ? action.hint : '']));
-assert.deepEqual(reasons({ desired: 'active' }), { message: '', 'act-pause': '', 'act-stop': '', reactivate: 'Reactivate is unavailable: it is already active.', remove: 'Remove is unavailable: stop it first.', switch: '' });
+assert.deepEqual(reasons({ desired: 'active' }), { message: '', 'act-pause': '', 'act-stop': '', reactivate: 'Start is unavailable: it is already active.', remove: 'Remove is unavailable: stop it first.', switch: '' });
 // Remove is for a stopped agent only (nothing may still run for it), and says so otherwise.
 assert.equal(reasons({ desired: 'stopped', observed: 'stopped' }).remove, '');
 assert.equal(reasons({ desired: 'stopped', observed: 'interrupting' }).remove, 'Remove is unavailable: stop it first.');
 assert.equal(reasons({ desired: 'not_accepting', observed: 'idle' }).remove, 'Remove is unavailable: stop it first.');
-assert.equal(reasons({ desired: 'stopped' })['act-pause'], 'Pause is unavailable: it is stopped; reactivate it first.');
+assert.equal(reasons({ desired: 'stopped' })['act-pause'], 'Pause is unavailable: it is stopped; start it first.');
 assert.equal(reasons({ desired: 'not_accepting' })['act-pause'], 'Pause is unavailable: it is already paused.');
 assert.equal(reasons({ desired: 'stopped' })['act-stop'], 'Stop is unavailable: it is already stopped.');
 assert.equal(reasons({ desired: 'active', health_flags: [{ code: 'out_of_quota' }] }).reactivate, '', 'a quota-held agent can be reactivated');
-assert.equal(reasons({ desired: 'stopped', role_deleted: true }).reactivate, 'Reactivate is unavailable: its role was deleted.');
-assert.equal(reasons({ desired: 'stopped', boundary_pending: true }).reactivate, 'Reactivate is unavailable: it is waiting for folder or machine approval.');
+assert.equal(reasons({ desired: 'stopped', role_deleted: true }).reactivate, 'Start is unavailable: its role was deleted.');
+assert.equal(reasons({ desired: 'stopped', boundary_pending: true }).reactivate, 'Start is unavailable: it is waiting for folder or machine approval.');
 const blocked = { slug: 'alice', holder: 'alice@test', path: '/work/test', agent_id: 'agt_a' };
 const off = 'alice@test is the writer of /work/test and worktrees are off for this project — stop it, or give this agent a non-writer role';
-assert.equal(reasons({ desired: 'stopped', writer_blocked_by: blocked })['reactivate'], `Reactivate is unavailable: ${off}.`, 'with worktrees off a writer behind another holder cannot be reactivated');
-assert.equal(reasons({ desired: 'active', writer_blocked_by: blocked }).reactivate, 'Reactivate is unavailable: it is already active.', 'an active agent is not told it is blocked');
+assert.equal(reasons({ desired: 'stopped', writer_blocked_by: blocked })['reactivate'], `Start is unavailable: ${off}.`, 'with worktrees off a writer behind another holder cannot be reactivated');
+assert.equal(reasons({ desired: 'active', writer_blocked_by: blocked }).reactivate, 'Start is unavailable: it is already active.', 'an active agent is not told it is blocked');
 assert.match(plain(m.stateOf({ desired: 'stopped', observed: 'stopped', writer_blocked_by: blocked })).why, /^Cannot start: alice@test is the writer of \/work\/test and worktrees are off/, 'the card says why it will not start');
 const own = { ...blocked, own_worktree: true };
 assert.equal(reasons({ desired: 'stopped', writer_blocked_by: own }).reactivate, '', 'with worktrees on it can be reactivated: it starts in a worktree of its own');

@@ -4512,7 +4512,7 @@ async function main() {
     // The reviewer's last turn crashed and its recovery decision is waiting: it is not "idle". Orange dot, "needs decision", and the evidence in the tooltip.
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-state', el => el.title), 'Needs your decision: its last turn did not finish cleanly, so nothing new starts until you decide what to do in Inbox.\nProcess exited with code 17.\nCheckout is not mounted.');
     assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"]', card => [card.querySelector('.agent-state-label').textContent, card.querySelector('.agent-dot').dataset.state]), ['needs decision', 'attention']);
-    // Room members (v1 style): a compact row (dot, emoji, name, DM / Pause / Stop); Switch… and Reactivate open with the row.
+    // Room members (v1 style): a compact row (dot, emoji, name, DM / Pause / Stop); Switch… and Start open with the row.
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-switch', el => el.offsetParent === null), true, 'the row is compact until opened');
     assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-quick button', els => els.map(el => el.getAttribute('aria-label'))), ['Message Ada privately', 'Pause', 'Stop', 'Open agent profile'], 'DM, Pause, Stop (v1 order) and the detail toggle are icon buttons with accessible names');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-name', el => el.title === el.textContent && el.textContent.length > 0), true, 'the member name carries its full text as a title');
@@ -4599,10 +4599,10 @@ async function main() {
     }
     await agentPage.setViewport({ width: 1100, height: 720 });
     // The profile's actions are labelled buttons; Stop is the danger one, Pause a plain one, and the row's hover icons are not repeated.
-    assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-actions button', els => els.map(el => [el.getAttribute('aria-label'), el.textContent, el.classList.contains('btn-icon'), el.classList.contains('icon-btn-danger')])), [['Message', '', true, false], ['Pause', '', true, false], ['Stop', '', true, true], ['Switch', '', true, false], ['Reactivate', '', true, false], ['Remove', '', true, true]], 'the agent actions are icon buttons named by aria-label, with no text');
+    assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-actions button', els => els.map(el => [el.getAttribute('aria-label'), el.textContent, el.classList.contains('btn-icon'), el.classList.contains('icon-btn-danger')])), [['Message', '', true, false], ['Pause', '', true, false], ['Stop', '', true, true], ['Switch', '', true, false], ['Start', '', true, false], ['Remove', '', true, true]], 'the agent actions are icon buttons named by aria-label, with no text');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => [...el.children].filter(child => getComputedStyle(child).display !== 'none').length), 0, 'the open profile has no button in the row: the panel\'s back arrow is its one close control');
     // A disabled action says why: in its tooltip and in a line under the buttons.
-    assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const button = card.querySelector('.agent-reactivate'), hint = card.querySelector(`#${button.getAttribute('aria-describedby')}`); return { disabled: button.disabled, title: button.title, hint: hint?.textContent, shown: !!hint?.offsetParent, pauseTitle: card.querySelector('.agent-act-pause').title, pauseDescribed: card.querySelector('.agent-act-pause').hasAttribute('aria-describedby') }; }), { disabled: true, title: 'Reactivate is unavailable: it is already active', hint: 'Reactivate is unavailable: it is already active.', shown: true, pauseTitle: 'Pause: finish the current turn, then accept no new work', pauseDescribed: false });
+    assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const button = card.querySelector('.agent-reactivate'), hint = card.querySelector(`#${button.getAttribute('aria-describedby')}`); return { disabled: button.disabled, title: button.title, hint: hint?.textContent, shown: !!hint?.offsetParent, pauseTitle: card.querySelector('.agent-act-pause').title, pauseDescribed: card.querySelector('.agent-act-pause').hasAttribute('aria-describedby') }; }), { disabled: true, title: 'Start is unavailable: it is already active', hint: 'Start is unavailable: it is already active.', shown: true, pauseTitle: 'Pause: finish the current turn, then accept no new work', pauseDescribed: false });
     const factLabels = await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .profile-fact-label', els => els.map(el => el.textContent));
     for (const label of ['Runtime', 'Agent ID']) assert.ok(factLabels.includes(label), `the profile lacks ${label}: ${factLabels}`);
     for (const label of ['Status', 'Presence', 'Last seen']) assert.ok(!factLabels.includes(label), `the profile repeats the card's state line as ${label}`);
@@ -4616,7 +4616,7 @@ async function main() {
     const agentBefore = await agentPage.$('[data-agent-id="agt_mock_worker"]');
     await agentAct('agt_mock_worker', 'agent-stop');
     await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_worker"] .agent-state-label')?.textContent === 'stopping');
-    assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-switch', el => el.disabled && el.title === 'Switch is unavailable: reactivate it first'), true);
+    assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-switch', el => el.disabled && el.title === 'Switch is unavailable: start it first'), true);
     const agentAfter = await agentPage.$('[data-agent-id="agt_mock_worker"]');
     assert.equal(await agentPage.evaluate((a, b) => a === b, agentBefore, agentAfter), true, 'agent card was replaced');
     await agentAct('agt_mock_reviewer', 'agent-pause');
