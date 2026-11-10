@@ -511,25 +511,45 @@ async function main() {
     await page.evaluate(() => { window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); }); await page.evaluate(() => window.__open); await settle(page);
     assert.deepEqual(await page.evaluate(() => {
       const style = (node, props) => props.map(prop => getComputedStyle(node)[prop]);
-      const reply = document.querySelector('#thread-messages .thread-entry[data-message-id=rm_a_t1]'), room = document.querySelector('#messages [data-message-id=rm_a_m120]');
+      const reply = document.querySelector('#thread-messages .thread-entry[data-message-id=rm_a_t1]'), room = document.querySelector('#messages [data-message-id=rm_a_t1]'); // the same message, as a row of the room
       return { sameBubble: JSON.stringify(style(reply.querySelector('.chat-msg-bubble'), ['borderTopWidth', 'borderTopStyle', 'borderRadius', 'backgroundColor'])) === JSON.stringify(style(room.querySelector('.chat-msg-bubble'), ['borderTopWidth', 'borderTopStyle', 'borderRadius', 'backgroundColor'])),
         bold: getComputedStyle(reply.querySelector('.chat-msg-body strong')).color === getComputedStyle(room.querySelector('.chat-msg-body strong')).color, name: getComputedStyle(reply.querySelector('.chat-msg-from-name')).color === getComputedStyle(room.querySelector('.chat-msg-from-name')).color };
-    }), { sameBubble: true, bold: true, name: true }, 'a reply has the bubble, the bold and the name colour of a message in the room');
+    }), { sameBubble: true, bold: true, name: true }, 'a reply in the panel has the bubble, the bold and the name colour of the same message in the room');
     // The thread's title is in the room header's row (the icons end before the thread, the close button is at the panel's right edge), and a reply has the same toolbar as a room message.
     assert.deepEqual(await page.evaluate(() => { const head = document.querySelector('.chat > header').getBoundingClientRect(), title = document.querySelector('#thread-panel > header h2').getBoundingClientRect(), close = document.querySelector('#close-thread').getBoundingClientRect(), thread = document.querySelector('#thread-panel').getBoundingClientRect(), last = [...document.querySelectorAll('.chat > header button')].filter(node => node.offsetParent).map(node => node.getBoundingClientRect().right).reduce((a, b) => Math.max(a, b), 0);
       return { sameRow: Math.abs(title.top + title.height / 2 - (head.top + head.height / 2)) <= 2, closeAtRightEdge: close.left >= title.right && thread.right - close.right >= 0 && thread.right - close.right <= 16, iconsBeforeThread: last <= thread.left + 1 }; }),
       { sameRow: true, closeAtRightEdge: true, iconsBeforeThread: true }, 'the thread header is in the room header row, with the close button after the title');
     await hover(page, '#thread-messages .thread-entry[data-message-id=rm_a_t1] .chat-msg-bubble'); await settle(page); await new Promise(resolve => setTimeout(resolve, 500));
     assert.deepEqual(await page.evaluate(() => { const bar = document.querySelector('#thread-messages [data-message-id=rm_a_t1] .message-actions'); return { shown: getComputedStyle(bar).opacity, labels: [...bar.querySelectorAll('button')].filter(b => !b.closest('[hidden]') && !b.classList.contains('message-actions-wake')).map(b => b.getAttribute('aria-label') || b.title) }; }).then(x => ({ shown: x.shown, hasReact: x.labels.some(l => /react/i.test(l)), hasCopy: x.labels.some(l => /copy/i.test(l)), hasReply: x.labels.some(l => /^reply to/i.test(l)), noThread: !x.labels.some(l => /thread/i.test(l)) })),
-      { shown: '1', hasReact: true, hasCopy: true, hasReply: true, noThread: true }, 'a reply in the thread has the message toolbar (react, reply, copy; no thread button, the panel is the thread)');
-    // Reply on a panel message picks what the next send answers (a chip names it); cancelling goes back to the root.
-    await page.$eval('#thread-messages [data-message-id=rm_a_t1] .message-reply', node => node.click()); await settle(page);
-    assert.deepEqual(await page.evaluate(() => ({ shown: !document.querySelector('#thread-reply-chip').hidden, text: document.querySelector('#thread-reply-jump').textContent })), { shown: true, text: 'Replying to me: reply bold text' }, 'the chip names the message the panel replies to');
-    await page.$eval('#cancel-thread-reply', node => node.click());
-    assert.equal(await page.evaluate(() => document.querySelector('#thread-reply-chip').hidden), true, 'cancelling drops the chip');
-    await page.$eval('#thread-messages [data-message-id=rm_a_t1] .message-reply', node => node.click());
-    await page.evaluate(() => { window.__chat.threadDraft.value = 'to the reply'; return window.__chat.sendThread(); }); await settle(page);
-    assert.deepEqual(await page.evaluate(() => [window.__posted.at(-1), document.querySelector('#thread-reply-chip').hidden]), [{ body: 'to the reply', reply_to: 'rm_a_t1' }, true], 'a send from the panel answers the selected message (no thread_root is sent) and clears the chip');
+      { shown: '1', hasReact: true, hasCopy: true, hasReply: false, noThread: true }, 'a reply in the thread has the message toolbar (react, copy; no reply or thread button, a send answers the last message)');
+    // A plain send from the panel answers the conversation's last message (no chip, no thread_root sent).
+    // What a send answers: the conversation's last message that is not the viewer's own.
+    const lastEntry = await page.evaluate(async () => { const { currentUser } = await import('/js/api.js'); return window.__chat.store.threadEntries.findLast(message => !(message.author_kind === 'user' && message.author_id === currentUser)).id; });
+    await page.evaluate(() => { window.__chat.threadDraft.value = 'to the last one'; return window.__chat.sendThread(); }); await settle(page);
+    assert.deepEqual([await page.evaluate(() => window.__posted.at(-1)), await page.evaluate(() => !document.querySelector('#thread-reply-chip'))], [{ body: 'to the last one', reply_to: lastEntry }, true], 'a send from the panel answers the last message of the conversation');
+    await page.evaluate(() => { window.__chat.threadDraft.value = 'and again'; return window.__chat.sendThread(); }); await settle(page);
+    assert.equal((await page.evaluate(() => window.__posted.at(-1))).reply_to, lastEntry, 'a second send in a row answers the same message: the last one is now its own');
+    // The panel is the room's rows and composer in another container: the same row gap, header and name size, composer inset, and a clear button centred
+    // in its box, in a plain theme and a high-contrast one, at a desktop and a phone width.
+    for (const [theme, width] of [['', 1280], ['high-contrast-dark', 1280], ['', 390], ['high-contrast-dark', 390]]) {
+      await page.setViewport({ width, height: 900 }); await settle(page);
+      const shared = await page.evaluate(theme => {
+        if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
+        const cs = (node, prop) => getComputedStyle(node)[prop];
+        // Row styles are compared as computed CSS (the container's gap and padding, the row's padding, header and name size): this page's list has no height to lay rows out in.
+        const rows = (selector, container) => { const row = [...document.querySelectorAll(selector)].find(node => node.querySelector('.chat-msg-header')); if (!row) throw new Error(`${selector}: no row with a header`); const box = document.querySelector(container); return { gap: cs(box, 'rowGap'), box: cs(box, 'padding'), top: cs(row, 'paddingTop'), border: cs(row, 'borderBottomWidth'), header: cs(row.querySelector('.chat-msg-header'), 'fontSize'), name: cs(row.querySelector('.chat-msg-from-name'), 'fontSize'), margin: cs(row.querySelector('.chat-msg-header'), 'marginBottom') }; };
+        const bar = selector => { const node = document.querySelector(selector); return [cs(node, 'paddingLeft'), cs(node, 'paddingTop'), cs(node, 'borderTopWidth')]; };
+        window.__chat.setReply(window.__chat.messages.get('rm_a_m120'));
+        const clear = document.querySelector('#cancel-reply'), glyph = clear.querySelector('.icon-mask'), box = clear.getBoundingClientRect(), mark = glyph.getBoundingClientRect();
+        const centre = [Math.abs(mark.left + mark.width / 2 - (box.left + box.width / 2)), Math.abs(mark.top + mark.height / 2 - (box.top + box.height / 2))];
+        window.__chat.setReply(null);
+        return { list: rows('#messages > .chat-msg', '#messages'), panel: rows('#thread-messages > .thread-entry', '#thread-messages'), bars: [bar('.chat > .send-bar'), bar('#thread-panel > .send-bar')], centre };
+      }, theme);
+      assert.deepEqual(shared.panel, shared.list, `panel rows have the room's gap, padding and header and name size (${theme || 'plain'}, ${width}px)`);
+      assert.deepEqual(shared.bars[1], shared.bars[0], `the panel's composer bar has the room's padding and border (${theme || 'plain'}, ${width}px)`);
+      assert.ok(shared.centre.every(offset => offset <= 1), `the reply chip's clear glyph is centred in its button: ${shared.centre} (${theme || 'plain'}, ${width}px)`);
+    }
+    await page.setViewport({ width: 1280, height: 900 }); await page.evaluate(() => { delete document.documentElement.dataset.theme; }); await settle(page);
     // F4: the time of a system line stays beside its text.
     assert.deepEqual(await page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_sys] .chat-msg-system-row'), body = row.firstElementChild, stamp = row.querySelector('.chat-msg-time'); const b = body.getBoundingClientRect(), s = stamp.getBoundingClientRect(); return { sideBySide: s.left >= b.right - 1 && s.top < b.bottom, nowrap: getComputedStyle(row).flexWrap }; }), { sideBySide: true, nowrap: 'nowrap' }, 'the time of a system line is beside its text, not alone on a line below');
     // Seen-by markers sit at the column's right edge whatever they follow: one on a centred system line lines up with one on someone else's message
@@ -712,11 +732,11 @@ async function main() {
     assert.equal(await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m120] .thread-chip').textContent), '3 replies', 'the root counts its replies from the live page');
     await chip(page, 'rm_a_m120');
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
-    assert.deepEqual(await panel(page), { hidden: false, title: 'Thread · 3', entries: ['rm_a_m120', 'rm_a_t1', 'rm_a_t2', 'rm_a_t3'], error: '', focus: true });
+    assert.deepEqual(await panel(page), { hidden: false, title: 'Replies · 3', entries: ['rm_a_m120', 'rm_a_t1', 'rm_a_t2', 'rm_a_t3'], error: '', focus: true });
     assert.equal(await count(page, 'GET', 'thread_root=rm_a_m120&limit=100'), 1);
     await page.evaluate(() => { const draft = window.__chat.threadDraft; draft.value = 'my reply'; });
     await page.evaluate(() => window.__chat.sendThread()); await settle(page);
-    assert.deepEqual([(await posts(page)).at(-1), (await panel(page)).entries.at(-1), await page.evaluate(() => window.__chat.threadDraft.value)], [{ body: 'my reply', reply_to: 'rm_a_m120' }, 'rm_a_t3'.replace('t3', 't3') && (await panel(page)).entries.at(-1), ''], 'a reply is posted into the thread and the box empties');
+    assert.deepEqual([(await posts(page)).at(-1), (await panel(page)).entries.at(-1), await page.evaluate(() => window.__chat.threadDraft.value)], [{ body: 'my reply', reply_to: 'rm_a_t3' }, (await panel(page)).entries.at(-1), ''], 'a reply is posted into the thread (answering its last message) and the box empties');
     assert.equal(await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m120] .thread-chip').textContent), '4 replies');
     await page.evaluate(() => { window.__holds.push({ method: 'POST', re: '/messages$' }); window.__chat.threadDraft.value = 'will fail'; window.__sendingThread = window.__chat.sendThread(); });
     await answer(page, await waitRequest(page, 'POST', '/messages$'), 500, { message: 'Thread is closed.' }); await page.evaluate(() => window.__sendingThread); await settle(page);
@@ -845,7 +865,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 3); await settle(page);
     await page.evaluate(() => { const messages = window.__data.rooms.rm_a.messages; messages.push({ id: 'rm_a_live', seq: messages.length + 1, no: messages.length + 1, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live reply', created_at: '2026-01-10T12:00:00Z', reply_to: 'rm_a_m120', thread_root: 'rm_a_m120', thread_count: 3 }); return window.__chat.refreshMessages(); });
     await settle(page);
-    assert.deepEqual([(await panel(page)).entries.at(-1), await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m120] .thread-chip').textContent), (await panel(page)).title], ['rm_a_live', '3 replies', 'Thread · 3']);
+    assert.deepEqual([(await panel(page)).entries.at(-1), await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m120] .thread-chip').textContent), (await panel(page)).title], ['rm_a_live', '3 replies', 'Replies · 3']);
     await page.evaluate(() => { const messages = window.__data.rooms.rm_a.messages; messages.push({ id: 'rm_a_other', seq: messages.length + 1, no: messages.length + 1, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'other reply', created_at: '2026-01-10T12:01:00Z', reply_to: 'rm_a_m110', thread_root: 'rm_a_m110', thread_count: 1 }); return window.__chat.refreshMessages(); });
     await settle(page);
     assert.deepEqual([await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m110] .thread-chip').textContent), (await panel(page)).entries.length], ['1 reply', 4]);
@@ -1691,7 +1711,7 @@ async function main() {
       const root = document.querySelector('#messages [data-message-id=rm_a_m120]');
       return { expired: rows.filter(node => node.classList.contains('chat-msg-expired')).length, marks: document.querySelectorAll('#messages .chat-msg-expired-icon').length,
         boundary: rows.filter(node => node.classList.contains('expiry-boundary')).map(node => node.dataset.seq), labels: document.querySelectorAll('#messages .expiry-label').length,
-        chip: root.querySelector(':scope > .thread-chip').textContent, action: root.querySelector('.thread-action').title, toolbar: root.querySelector('.message-actions').getAttribute('aria-label') };
+        chip: root.querySelector(':scope > .chat-msg-bubble > .thread-chip').textContent, action: root.querySelector('.thread-action').title, toolbar: root.querySelector('.message-actions').getAttribute('aria-label') };
     });
     const before = await state();
     assert.equal(before.chip, '3 replies');

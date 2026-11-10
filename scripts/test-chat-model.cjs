@@ -22,8 +22,8 @@ assert.equal(api.messageSnippet(undefined), '');
 const counts = new Map([['a', 2], ['b', 5]]), server = new Map([['a', 4]]);
 assert.deepEqual(['a', 'b', 'c'].map(id => api.threadCount(counts, server, id)), [4, 5, 0]);
 assert.equal(api.threadCount(counts, undefined, 'a'), 2);
-assert.deepEqual([0, 1, 3].map(api.threadLabel), ['Reply in thread', 'Thread · 1', 'Thread · 3']);
-assert.deepEqual([0, 2].map(api.threadTitle), ['Thread', 'Thread · 2']);
+assert.deepEqual([0, 1, 3].map(api.threadLabel), ['Reply in thread', 'Replies · 1', 'Replies · 3']);
+assert.deepEqual([0, 2].map(api.threadTitle), ['Replies', 'Replies · 2']);
 assert.deepEqual([0, 1, 4].map(count => plain(api.threadChip(count))), [
   { hidden: true, text: '0 replies', label: 'Open thread, 0 replies' }, { hidden: false, text: '1 reply', label: 'Open thread, 1 reply' }, { hidden: false, text: '4 replies', label: 'Open thread, 4 replies' }]);
 assert.deepEqual([1, 3].map(api.newRepliesLabel), ['1 new reply', '3 new replies']);

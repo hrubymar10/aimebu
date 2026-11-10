@@ -16,8 +16,8 @@ export function messageSnippet(message) {
 export const MENTION_LOGINS_TTL_MS = 30000;
 
 export const threadCount = (counts, serverCounts, id) => Math.max(counts.get(id) || 0, serverCounts?.get(id) || 0);
-export const threadLabel = count => (count ? `Thread · ${count}` : 'Reply in thread');
-export const threadTitle = count => (count ? `Thread · ${count}` : 'Thread');
+export const threadLabel = count => (count ? `Replies · ${count}` : 'Reply in thread');
+export const threadTitle = count => (count ? `Replies · ${count}` : 'Replies');
 export const threadChip = count => ({ hidden: !count, text: count === 1 ? '1 reply' : `${count} replies`, label: `Open thread, ${count} ${count === 1 ? 'reply' : 'replies'}` });
 export const newRepliesLabel = count => `${count} new ${count === 1 ? 'reply' : 'replies'}`;
 export const latestLabel = count => (count ? `Back to latest · ${count} new` : 'Back to latest');

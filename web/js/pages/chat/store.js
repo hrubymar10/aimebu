@@ -567,12 +567,24 @@ export class ChatStore {
     }
   }
 
+  // The message a plain send in the panel answers: the conversation's last one that is not the sender's own (a reply to oneself addresses nobody), the root
+  // when there is none. At the panel's end that is read from its entries; a panel showing an older window (or holding replies it has not shown) asks the
+  // server for the conversation's newest messages.
+  async lastInThread(room, root) {
+    // Not answerable: the sender's own message (a reply to oneself addresses nobody) and a system message (nor does a reply to that).
+    const mine = message => message.author_kind === 'system' || (message.author_kind === 'user' && message.author_id === currentUser);
+    let recent;
+    if (this.host.threadLatestHidden() && !this.threadNewReplyIDs.size) recent = this.threadEntries;
+    else recent = await request(`/api/rooms/${room}/messages?thread_root=${encodeURIComponent(root)}&limit=50`);
+    return recent.findLast(message => !mine(message))?.id || root;
+  }
+
   async sendThread() {
     if (!this.alive || !this.host.threadRoot || this.threadUploads || (!this.host.threadDraft.value.trim() && !this.threadPending.length)) return;
     const room = this.host.room.id, root = this.host.threadRoot.id, body = this.host.threadDraft.value, generation = this.openGeneration, attachments = this.threadPending.map(item => item.id);
     this.host.beginThreadSend();
     try {
-      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, reply_to: this.host.threadReply?.id || root, ...(attachments.length ? { attachments } : {}) } });
+      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, reply_to: await this.lastInThread(room, root), ...(attachments.length ? { attachments } : {}) } });
       if (generation === this.openGeneration && this.host.threadRoot?.id === root) {
         this.threadPending = []; this.host.renderThreadPending();
         this.host.sentThreadReply();

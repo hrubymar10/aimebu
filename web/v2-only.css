@@ -611,3 +611,11 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 :root:root[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
 :root:root[data-theme^="high-contrast"] button.btn:not(.btn-primary, .btn-danger, .btn-icon, .btn-md-toggle, .agent-recovery, .proposed-answer-btn, .open-questions-open):disabled { background: var(--hc-btn-field); color: var(--text-primary); border: 1px solid var(--border); opacity: .5; }
 .send-form .msg-input { overflow-y: hidden; } /* the box shows a scrollbar only at its height limit (js/chat.js fitDraft sets it) */
+/* The reply chip's clear button (the room composer's and the thread panel's are the same markup and this one rule): the glyph is a block centred in the box
+   both ways, not an inline-block on a text baseline, which sat it low and a little off to one side. */
+.reply-pending-clear { display: inline-grid; place-items: center; box-sizing: border-box; padding: 0; line-height: 0; }
+.reply-pending-clear .icon-mask { display: block; }
+/* The root of the conversation, once its own entry has scrolled out of the panel: one line over the top edge of the list (chat.js updateThreadPin), a click goes back to it. */
+.thread-root-pin { position: absolute; left: 0; right: 0; z-index: 2; box-sizing: border-box; display: block; width: auto; margin: 0; padding: 6px 16px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: var(--bg-secondary); color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.thread-root-pin[hidden] { display: none; }
+.thread-root-pin:hover, .thread-root-pin:focus-visible { color: var(--accent); outline: none; }

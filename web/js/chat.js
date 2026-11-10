@@ -92,9 +92,11 @@ export class Chat {
     this.threadNewButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
     this.threadList.before(this.threadOlderStatus, this.threadLatestButton, this.threadNewButton);
     this.threadList.addEventListener('scroll', () => { if (this.threadList.scrollTop < 80) this.loadOlderThread(); });
-    this.threadChip = document.querySelector('#thread-reply-chip'); this.threadChipText = this.threadChip.querySelector('#thread-reply-jump'); this.threadReply = null;
-    this.threadChipText.onclick = () => { if (this.threadReply) this.jumpToMessage(this.threadReply.id); };
-    document.querySelector('#cancel-thread-reply').onclick = () => this.setThreadReply(null);
+    // The root stays in view while the replies scroll: once its own entry is out of view, a one-line bar over the top of the list stands for it.
+    this.threadPin = document.querySelector('#thread-root-pin');
+    this.threadPin.onclick = () => { this.threadList.scrollTop = 0; };
+    this.threadList.addEventListener('scroll', () => this.updateThreadPin());
+    new ResizeObserver(() => this.updateThreadPin()).observe(this.threadPanel); // a resized panel or a wrapped header moves the list's top edge
     this.list.replaceChildren(); this.listView = mountPreactPage(this.list, props => html`<${MessageList} ...${props} />`, { onError: error => console.error('message list failed', error) });
     this.threadList.replaceChildren(); this.threadView = mountPreactPage(this.threadList, props => html`<${ThreadList} ...${props} />`, { onError: error => console.error('thread list failed', error) });
     this.delegateRows(this.list); this.delegateRows(this.threadList);
@@ -242,15 +244,34 @@ export class Chat {
   wakeActions(event, container) {
     const target = event.target;
     const row = target.closest?.('article.chat-msg, article.thread-entry'); if (!row || !container.contains(row)) return;
+    if (row.classList.contains('self')) this.noteSenderLine(row);
     const bar = row.querySelector('.message-actions'); if (!bar || bar.dataset.built) return;
     const message = this.entryMessage(row.dataset.messageId); if (!message) return;
     wakeMessageActions(this, bar, message);
+    if (row.classList.contains('self')) this.noteSenderLine(row); // now that the toolbar is made, its real width is known
     this.enterActions(event, bar);
     const live = (this.liveActions ||= []).filter(item => item.isConnected && item !== bar && item.dataset.built);
     live.push(bar);
     // Only the three most recent stay made; an older one that still holds the focus, the pointer or an open pop-up stays too, and is looked at again next time.
     const older = live.slice(0, Math.max(0, live.length - 3)), kept = older.filter(item => !releaseMessageActions(item));
     this.liveActions = [...kept, ...live.slice(older.length)];
+  }
+  // The viewer's own sender line is at the right end of the row, so its toolbar sits just left of it, on the same line: the width of the line's items is
+  // handed to the stylesheet as --meta-w when the row is reached (it changes only with the name, the number and the time). When the line and the toolbar
+  // together are wider than the row (a long name in the narrow thread panel or a narrow window), the toolbar would run out past the list's left edge: the
+  // row is marked meta-stacked, and the stylesheet puts the toolbar on a row of its own above the line instead.
+  noteSenderLine(row) {
+    const items = [...(row.querySelector(':scope > .chat-msg-header')?.children || [])].filter(node => node.getClientRects().length);
+    if (!items.length) return;
+    const width = Math.round(items.at(-1).getBoundingClientRect().right - items[0].getBoundingClientRect().left);
+    if (row.style.getPropertyValue('--meta-w') !== `${width}px`) row.style.setProperty('--meta-w', `${width}px`);
+    const bar = row.querySelector(':scope .message-actions'), barWidth = bar?.dataset.built ? bar.getBoundingClientRect().width : 160;
+    // The row is right-aligned in the list and shrinks to its bubble, so what the toolbar may use to the left of the line is the list's content width.
+    const list = row.parentElement, style = getComputedStyle(list), room = list.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    row.classList.toggle('meta-stacked', width + 10 + barWidth + 6 > room);
+    // Stacked, the toolbar's bottom edge is 2px above the line, whatever the line's height (the line sits 2px above the bubble).
+    const lineHeight = row.querySelector(':scope > .chat-msg-header').getBoundingClientRect().height, barHeight = bar?.dataset.built ? bar.getBoundingClientRect().height : 28;
+    row.style.setProperty('--stack-top', `${-Math.round(lineHeight + barHeight + 4)}px`);
   }
   // The focus was on the hidden "Message actions" button that has just become the toolbar: it goes to the toolbar's first button, or to
   // its last when the row was entered from below (Shift+Tab).
@@ -609,12 +630,13 @@ export class Chat {
     const answer = this.answerView(message), bodyKey = `${this.raw}|${this.mentionIndex?.signature ?? ''}`;
     const view = { author, answer, bodyKey, raw: this.raw, mentionKey: this.mentionIndex?.signature ?? '', usageTitle: message.usage ? usageTooltip(message.usage) : '', needsAttention: !!message.needs_attention };
     view.pills = groupReactions(this.reactions.get(message.id) || [], currentUser); view.quote = this.quoteView(message);
+    view.articleClass = articleClass(message, currentUser); // the panel's entries wear the room's row classes, so one set of rules styles both
     let extra = `|${JSON.stringify(view.pills)}`;
     // The quote's text (author name included) is part of the draw key, so a name that becomes known later redraws the row.
     if (view.quote) extra += `|${view.quote.text}`;
     if (main) {
       const count = threadCount(this.threadCounts, this.serverThreadCounts, message.id);
-      view.articleClass = articleClass(message, currentUser); view.chip = threadChip(count); view.threadLabel = this.threadLabel(message.id);
+      view.chip = threadChip(count); view.threadLabel = this.threadLabel(message.id);
       view.expired = this.expiry.expired.has(message.id); view.boundary = this.expiry.divider === message.id;
       extra += `|${count}|${view.expired}|${view.boundary}`;
     }
@@ -648,14 +670,16 @@ export class Chat {
   reopenLatest() { return this.store.reopenLatest(); }
   closeThread() { return this.store.closeThread(); }
   threadClosed() {
-    this.threadNotice.clear(); this.threadRoot = null; this.setThreadReply(null); this.threadTitle.textContent = 'Thread'; this.threadUpdate(); this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false';
+    this.threadNotice.clear(); this.threadRoot = null; this.threadTitle.textContent = 'Replies'; this.threadPin.hidden = true; this.threadUpdate(); this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false';
     this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; this.threadRecall.index = null; this.resizeThreadDraft(); document.querySelector('#thread-error').textContent = '';
   }
-  // The message the panel's next send replies to; none means the root. Only a reply to something other than the root is worth a chip.
-  setThreadReply(message) {
-    const other = message && message.id !== this.threadRoot?.id ? message : null;
-    this.threadReply = other; this.threadChip.hidden = !other; this.threadChipText.textContent = other ? `Replying to ${this.authorName(other)}: ${messageSnippet(other)}` : '';
-    if (message) this.threadDraft.focus();
+  // The one-line stand-in for the root while its own entry is scrolled out of view (an overlay on the list's top edge, so it moves nothing).
+  updateThreadPin() {
+    const root = this.threadRoot, entry = this.threadList.firstElementChild;
+    // Out of view: its entry is scrolled past, or the panel shows an older window that does not hold the root at all.
+    const out = !!root && !!entry && (entry.dataset.messageId !== root.id || this.threadList.scrollTop > entry.offsetTop + entry.offsetHeight - 4);
+    if (out) { this.threadPin.textContent = `${this.authorName(root)} · #${root.no}: ${messageSnippet(root)}`; this.threadPin.style.top = `${this.threadList.offsetTop}px`; }
+    this.threadPin.hidden = !out;
   }
   setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
   // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
@@ -663,8 +687,7 @@ export class Chat {
   // an answer and sending it unedited acts like the button, while edited text is an ordinary reply).
   answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body); }
   beginThread(root, focus) {
-    if (this.threadRoot?.id !== root.id) this.setThreadReply(null);
-    this.threadRoot = root; this.threadTitle.textContent = 'Thread'; this.threadPanel.hidden = false; this.threadUpdate();
+    this.threadRoot = root; this.threadTitle.textContent = 'Replies'; this.threadPanel.hidden = false; this.threadPin.hidden = true; this.threadUpdate();
     this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewButton.hidden = true;
     document.querySelector('#thread-error').textContent = '';
     this.threadDraft.focus();
@@ -683,7 +706,7 @@ export class Chat {
     return () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; };
   }
   beginThreadSend() { document.querySelector('#thread-error').textContent = ''; this.threadNotice.clear(); }
-  sentThreadReply() { this.setThreadReply(null); this.threadDraft.value = ''; this.threadRecall.index = null; this.resizeThreadDraft(); }
+  sentThreadReply() { this.threadDraft.value = ''; this.threadRecall.index = null; this.resizeThreadDraft(); }
   threadToEnd() { this.threadList.scrollTop = this.threadList.scrollHeight; }
   threadSendFailed(message) { this.threadNotice.show(message); }
   restoreThreadDraft(draft) { this.threadDraft.value = draft; this.resizeThreadDraft(); this.draft.focus(); }

@@ -189,15 +189,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .thread-panel { background: var(--bg-primary); border-color: var(--border); box-shadow: -12px 0 24px var(--overlay-shadow); }
 .thread-panel header { background: var(--bg-secondary); border-color: var(--border); }
 .thread-panel h2 { font-size: 14px; }
-.thread-entry { border-color: var(--border); }
 /* A reply in the thread looks like a message in the room: the same bubble and the same border (green for the viewer's own), the sender's name in
    the accent colour, and bold text in the body as in the room, not link blue. */
-.thread-entry .chat-msg-from-name { color: var(--accent); }
-.thread-entry.thread-self .chat-msg-bubble { background: var(--bg-tertiary); border-color: var(--green); }
-.thread-entry.thread-self .chat-msg-bubble:hover { border-color: var(--green-text); }
 .thread-entry .chat-msg-body.md-rendered strong { color: var(--text-primary); }
-.thread-panel form { background: var(--bg-secondary); border-color: var(--border); }
-.thread-panel textarea { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
 
 .agents-panel { top: 51px; width: var(--agents-w, 260px); background: var(--bg-secondary); border-color: var(--border); }
 .agents-panel header { min-height: 43px; border-bottom: 1px solid var(--border); }
@@ -859,9 +853,9 @@ body:has(.import-v1-dialog[open]) #app-view { visibility: hidden; }
   :is(#project-dialog, #spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, .invite-dialog, .import-v1-dialog) label:has(> input:is([type=checkbox], [type=radio])) { display: flex; align-items: center; gap: 8px; min-height: 40px; }
 }
 
-/* Touch thread panel: 40px reply and close targets. */
+/* Touch: the thread panel's close button and both composers' buttons (the room's and the panel's are the same .send-form) are 40px targets. */
 @media (hover: none) and (pointer: coarse) {
-  .thread-panel form button, .thread-panel header button { min-width: 40px; min-height: 40px; }
+  .thread-panel header button, .send-bar .send-form button { min-width: 40px; min-height: 40px; }
 }
 .usage-spark { display: block; width: 100%; height: 20px; margin: 2px 0 3px; color: var(--usage-color); }
 .usage-spark-line { stroke: currentColor; stroke-width: 1.25; stroke-linejoin: round; stroke-linecap: round; opacity: 0.85; }
@@ -1020,32 +1014,27 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
    two other looks in the A/B/C trial). It floats over the message's header line, at the right end of it, and covers whatever of that line is
    there while it is shown (the viewer's own right-aligned sender line, or the time of someone else's in a narrow column); it reserves no
    space, so the bubble is under the header at v1's 2px at rest, and it ends above the bubble's text (it is placed from the bubble's top edge, 24px up: the header line is 15px tall and 2px above the bubble, so the
-   toolbar's middle is the line's middle), so it reaches none of it. When the bubble is narrower than the toolbar the toolbar extends to its left. */
+   toolbar's middle is the line's middle), so it reaches none of it. When the bubble is narrower than the toolbar the toolbar extends to its left.
+   The viewer's own sender line is at the right end of the row, where the toolbar would cover it: an own message's toolbar sits just left of that line instead,
+   on the same line, level with it and above the bubble (--meta-w is the line's width, set when the row is reached: chat.js noteSenderLine). */
 .message-actions { position: absolute; top: -24px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
+.chat-msg.self .message-actions { right: calc(var(--meta-w, 0px) + 10px); }
+/* Too narrow for the sender line and the toolbar side by side (chat.js noteSenderLine): the toolbar takes a row of its own above the line, at the right end. A touch
+   screen has its own rules (a tablet stacks at its 46px toolbar's offset, a phone's tap-to-open toolbar is under the text). */
+@media not all and (hover: none) and (pointer: coarse) {
+  .chat-msg.self.meta-stacked .message-actions { top: var(--stack-top, -52px); right: 6px; }
+}
 .chat-msg:hover .message-actions, .chat-msg:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
 /* A toolbar that has not been made yet (it is made when its row is reached, see message-actions.js) is not drawn. */
 .message-actions:not([data-built]) { position: absolute !important; display: block !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: hidden !important; clip-path: inset(50%) !important; opacity: 0 !important; pointer-events: none !important; box-shadow: none !important; }
-/* A touch tablet's toolbar is 46px tall: sitting over the bubble's top edge it would cover the first line, so it sits wholly above the bubble,
-   and a selected message takes the room it needs there (an own message has its toolbar beside it and needs none). */
+/* A touch tablet's toolbar is 46px tall: sitting over the bubble's top edge it would cover the first line, so it sits wholly above the bubble, and a selected
+   message takes the room it needs there. Beside an own message's sender line it would not fit a narrow column (its buttons are 40px), so an own message's
+   toolbar sits on a row of its own above that line, at the right end. */
 @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
-  .chat-msg:not(.self) .message-actions { top: -48px; }
-  .chat-msg.actions-open:not(.self):not(.chat-msg-system) { margin-top: 34px; }
-}
-/* ... and its own messages keep the toolbar beside the bubble, in the free space to its left (about 250px wide here: buttons are 40px), so an own
-   message stops short of it, though never narrower than 60% of the column. */
-@media (hover: none) and (pointer: coarse) and (min-width: 701px) {
-  .chat-msg.self { max-width: clamp(60%, calc(100% - 290px), 75%); }
-  .chat-msg.self .message-actions { top: 0; right: calc(100% + 6px); }
-}
-#messages { container-type: inline-size; }
-@container (max-width: 420px) {
-  /* A touch tablet's column this narrow has no free space beside an own bubble either: it is treated like anyone's message, the toolbar wholly
-     above the bubble (the same selectors and weights as the tablet rules above, which this comes after). */
-  @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
-    .chat-msg.self { max-width: 75%; }
-    .chat-msg.self .message-actions { top: -48px; right: 6px; }
-    .chat-msg.actions-open.self:not(.chat-msg-system) { margin-top: 34px; }
-  }
+  .chat-msg .message-actions { top: -48px; }
+  .chat-msg.self .message-actions { top: -67px; right: 6px; }
+  .chat-msg.actions-open:not(.chat-msg-system) { margin-top: 34px; }
+  .chat-msg.actions-open.self:not(.chat-msg-system) { margin-top: 53px; }
 }
 .message-actions .message-action { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 6px; background: transparent; border-color: transparent; }
 .message-actions .message-action:hover, .message-actions .message-action:focus-visible { border-color: var(--border-hover); }
@@ -1236,7 +1225,6 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
    starting at the composer's left edge, with "Aa" as its last item. With formatting off (Aa) there is no toolbar or editor: the plain
    textarea shows, with "Aa" tucked into its right edge. The textarea stays, hidden, as the Markdown the app reads. The composer's
    form wraps so the toolbar and the link row can each take a full row. */
-#composer, .thread-panel form { flex-wrap: wrap; }
 .composer-field { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
 .composer-box { position: relative; display: grid; min-width: 0; }
 .composer-box > * { grid-area: 1 / 1; min-width: 0; }
@@ -1321,31 +1309,18 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .hl-hunk { color: var(--accent); background: var(--accent-dim); }
 .hl-file { color: var(--text-primary); font-weight: 700; }
 .hl-meta { color: var(--text-secondary); }
-/* Send in the thread composer (the main composer uses v1's .btn-send) is v1's: a filled green 38px square with a white paper plane and no outline. The plane's ink
-   sits up and to the right of its box (centroid 13.8, 10.1 in a 24 box), so the glyph is nudged back by about a pixel to look
-   centred. Hover is the lighter green with a matching border; disabled (uploads in flight) is half opacity. */
-#thread-composer button.btn-primary { display: inline-grid; place-items: center; flex: 0 0 38px; width: 38px; min-width: 38px; height: 38px; min-height: 38px; padding: 0; border-radius: 8px; }
-:is(#thread-composer button, #spawn-open, .btn-send).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
-:is(#thread-composer button, #spawn-open, .btn-send).btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-:is(#thread-composer button).btn-primary svg { transform: translate(-.8px, .8px); }
-/* The thread composer's attach and emoji buttons, while they sit in its bottom row (no toolbar: a phone, a touch tablet, formatting off): the same
-   size as the room composer's, a thumb-sized square on touch. In the toolbar they are the 26px quiet buttons the rule further down gives them. */
-#thread-composer > .attachment-picker-btn { flex: none; align-self: flex-end; box-sizing: border-box; width: 34px; height: 38px; min-height: 0; padding: 0; display: inline-grid; place-items: center; }
-@media (max-width: 700px), (pointer: coarse) { #thread-composer > .attachment-picker-btn { width: 40px; height: 40px; min-width: 40px; min-height: 40px; } }
-/* In the toolbar the thread's emoji button is centred in the row like attach and the format buttons (style.css's `.thread-panel form button { align-self: end }` meant the bottom row
-   and dropped it a few px below its neighbours). */
-#thread-composer .composer-toolbar > :is(.attachment-picker-btn, .composer-format, .composer-aa) { align-self: center; }
 /* On a mouse every button of the toolbar (attach, emoji, the formats, "Aa") is the same 26px square-ish box, so they share one top; the generic .btn-icon height had made the
    formats 28px and "Aa" 32px, a pixel or three off their neighbours. (A touch screen has its own 40px rule.) */
 @media (min-width: 701px) and (not (pointer: coarse)) {
   :is(#composer, #thread-composer) .composer-toolbar :is(.composer-format, .composer-aa) { height: 26px; min-height: 26px; }
 }
+:is(#spawn-open, .btn-send).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
+:is(#spawn-open, .btn-send).btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 /* The high-contrast themes restyle every .btn/.btn-icon as an outlined box on the page colour; Send stays green there, as in v1
    (dark green fill, white glyph; the bright green with a dark glyph on hover). */
-[data-theme^="high-contrast"] :is(#thread-composer button, #spawn-open, .btn-send).btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
-[data-theme^="high-contrast"] :is(#thread-composer button, #spawn-open, .btn-send).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
-[data-theme="high-contrast-dark"] :is(#thread-composer button, #spawn-open, .btn-send).btn-primary:hover:not(:disabled) { color: var(--bg-primary); }
-@media (max-width: 700px), (pointer: coarse) { #thread-composer button.btn-primary { flex-basis: 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; } }
+[data-theme^="high-contrast"] :is(#spawn-open, .btn-send).btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
+[data-theme^="high-contrast"] :is(#spawn-open, .btn-send).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
+[data-theme="high-contrast-dark"] :is(#spawn-open, .btn-send).btn-primary:hover:not(:disabled) { color: var(--bg-primary); }
 
 /* Navbar: every control is an icon button of one size (28px like the other header icon buttons, 40px on touch and narrow screens) with a tooltip and an accessible name,
    never text; the bar is v1's height (53px, 49px up to 480px wide); the Inbox and Health counts are a small pill in the button's
@@ -1990,16 +1965,6 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 }
 @media (min-width: 1280px) {
   .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > header { margin-right: min(calc(calc(var(--agents-w, 260px) + var(--gap, 0px)) + var(--thread-w, 420px)), 100%); }
-}
-.thread-entry { border-bottom: 0; }
-#thread-composer .msg-input { min-width: 0; min-height: 38px; max-height: 180px; resize: none; overflow-y: hidden; }
-
-/* A reply in the thread panel has the room's message toolbar (react, find, copy): shown on hover and focus like a message in the room, and on a tap on a touch screen. */
-.thread-entry .chat-msg-bubble { position: relative; }
-.thread-entry:hover .message-actions, .thread-entry:focus-within .message-actions { opacity: 1; pointer-events: auto; }
-@media (hover: none) and (pointer: coarse) {
-  .thread-entry:hover .message-actions { opacity: 0; pointer-events: none; }
-  .thread-entry.actions-open .message-actions, .thread-entry:has(:focus-visible) .message-actions { opacity: 1; pointer-events: auto; }
 }
 
 /* the thread column is resizable (column-resize.js sets --thread-w on the app element); its handle sits on the panel's left edge */

@@ -105,7 +105,7 @@ function surfaceAudit(MIN) {
       const rect = box(element); if (!rect.width || !rect.height) continue;
       let width = rect.width, height = rect.height;
       if (element.matches('input[type=checkbox],input[type=radio]')) { const label = element.closest('label'); if (label) { const labelRect = box(label); width = labelRect.width; height = labelRect.height; } }
-      if (Math.min(width, height) < MIN) out.push(`${label}: ${name(element)} is ${Math.round(width)}x${Math.round(height)}`);
+      if (Math.min(width, height) < MIN) out.push(`${label}: ${name(element)} (in ${name(element.parentElement).split(' ')[0]}) is ${Math.round(width)}x${Math.round(height)}`);
     }
   };
   const fits = (element, label) => {

@@ -79,7 +79,7 @@ export function AnswerSlot({ message, view, host, listed = '' }) {
 }
 
 export function ThreadEntry({ message, view, host }) {
-  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${['thread-entry', view.needsAttention ? 'needs-attention' : '', /\bself\b/.test(view.articleClass || '') ? 'thread-self' : ''].filter(Boolean).join(' ')} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)}>
+  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${[view.articleClass, 'thread-entry', view.needsAttention ? 'needs-attention' : ''].filter(Boolean).join(' ')} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)}>
     <${MessageMeta} message=${message} view=${view} /><div class="chat-msg-bubble">${view.quote && message.reply_to !== host.threadRoot?.id && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div><${AnswerSlot} message=${message} view=${view} host=${host} />
   </article>`}<//>`;
 }
@@ -129,8 +129,7 @@ export function MessageRow({ message, view, host }) {
   return html`<${Row} kind="main" message=${message} view=${view} host=${host}>${() => message.author_kind === 'system' ? html`<${SystemRow} message=${message} view=${view} host=${host} classes=${classes} register=${register} />` : html`<${Fragment}><article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
     ${view.boundary && html`<span class="expiry-label">Older AI chatter won't reach agents automatically</span>`}
     <${MessageMeta} message=${message} view=${view} />
-    <div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div>
-    ${!view.chip.hidden && html`<button type="button" class="row-btn thread-chip" title="Open thread" aria-label=${view.chip.label}>${view.chip.text}</button>`}
+    <div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} />${!view.chip.hidden && html`<button type="button" class="row-btn thread-chip" title="Open the replies" aria-label=${view.chip.label}>${view.chip.text}</button>`}</div>
   </article><${AnswerSlot} message=${message} view=${view} host=${host} listed=${/\bself\b/.test(view.articleClass || '') ? ' answer-row answer-row-self' : ' answer-row'} /><//>`}<//>`;
 }
 
