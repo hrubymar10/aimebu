@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'agents', 'model.js'), 'utf8');
 const context = vm.createContext({ Date, Number, Math, JSON, Map, Intl, Object, Array, String });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateBadge, stateDot, stateOf, activityOf, warmOf, keepAliveOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateBadge, stateDot, stateOf, activityOf, warmOf, warmBadgeOf, keepAliveOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -67,6 +67,15 @@ assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'sleeping' } }, nowMs).
 assert.equal(m.warmOf({ observed: 'in_turn', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs), null);
 assert.equal(m.warmOf({ observed: 'idle' }, nowMs), null);
 assert.equal(m.activityOf({ observed: 'idle', warm: { state: 'sleeping' } }, state({ observed: 'idle' })).text, 'Sleeping', 'the card shows it where an idle agent has nothing else to say');
+
+// The warm or cold badge: fire while the process is kept up (minutes left, never zero), a snowflake while there is none, nothing when warm mode does not apply, the state is not
+// known, or the agent is working. The tooltips are the ones asked for.
+assert.deepEqual(plain(m.warmBadgeOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs)), { state: 'warm', minutes: 5, pill: '5m', title: 'Warm, the next answer skips the start (≈5 min left)' });
+assert.equal(m.warmBadgeOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: '2026-11-08T16:00:20Z' } }, nowMs).pill, '1m', 'a window almost over still says one minute');
+assert.deepEqual(plain(m.warmBadgeOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: 'garbage' } }, nowMs)), { state: 'warm', minutes: 0, pill: '', title: 'Warm, the next answer skips the start' });
+assert.deepEqual(plain(m.warmBadgeOf({ observed: 'idle', warm: { state: 'sleeping' } }, nowMs)), { state: 'cold', minutes: 0, pill: '', title: 'Cold, the next answer starts the agent' });
+assert.equal(m.warmBadgeOf({ observed: 'in_turn', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs), null, 'working: neither');
+assert.equal(m.warmBadgeOf({ observed: 'idle' }, nowMs), null, 'no warm state (off, unknown or not Claude): no badge');
 
 assert.equal(m.activityOf({ woken_by: 'reply', activity: 'tool inspect' }, state({})).text, 'Woken by reply · tool inspect');
 assert.equal(m.activityOf({}, state({ observed: 'in_turn' })).text, 'Working…');

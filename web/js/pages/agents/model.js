@@ -67,6 +67,20 @@ export function warmOf(agent, now = Date.now()) {
   return { text: 'Sleeping', title: 'Its process is stopped; the next message starts it, a few seconds slower than a warm agent.' };
 }
 
+// The warm/cold badge of an idle agent's card: a fire while its process is kept up for the next message (with the minutes left), a snowflake while there
+// is none and the next answer starts the agent. Null when warm mode does not apply to the agent, its state is not known, or it is working. It is the data
+// the card already has (`agent.warm`), shown as an icon; `now` is a parameter so the result is a function of the data and the time.
+export function warmBadgeOf(agent, now = Date.now()) {
+  const warm = agent.warm;
+  if (!warm || agent.observed !== 'idle') return null;
+  if (warm.state === 'warm') {
+    const left = Date.parse(warm.sleeps_at) - now;
+    const minutes = Number.isFinite(left) ? Math.max(1, Math.ceil(left / 60000)) : 0;
+    return { state: 'warm', minutes, pill: minutes ? `${minutes}m` : '', title: minutes ? `Warm, the next answer skips the start (≈${minutes} min left)` : 'Warm, the next answer skips the start' };
+  }
+  return { state: 'cold', minutes: 0, pill: '', title: 'Cold, the next answer starts the agent' };
+}
+
 // What a card says about the prompt cache keep-alive: how often it is pinged, what a stretch of pings costs (measured from the last ping when there is
 // one), and a warning when the last ping missed the cache or failed. Null when keep-alive does not apply to the agent.
 export function keepAliveOf(agent) {

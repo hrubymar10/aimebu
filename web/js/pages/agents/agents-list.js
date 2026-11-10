@@ -5,7 +5,13 @@ import { harnessIcon, agentLabel } from '../../sender-identity.js';
 import { relativeTime, stateAge } from '../../time.js';
 import { harnessName } from '../../harness-version.js';
 import { healthLabel } from '../health/model.js';
-import { actionsOf, quickActionsOf, activityOf, keepAliveOf, contextOf, grantsOf, liveOf, profileRows, stateBadge, stateDot, stateOf, switchStatusOf } from './model.js';
+import { defineExperiment } from '../../ui-variant.js';
+import { actionsOf, quickActionsOf, activityOf, keepAliveOf, contextOf, grantsOf, liveOf, profileRows, stateBadge, stateDot, stateOf, switchStatusOf, warmBadgeOf } from './model.js';
+
+// Warm or cold on an agent's card, five placements tried on the testing pill (the CSS reads data-ui-warmicon on <html>; every placement is in the markup and only the chosen one is
+// shown): A a small icon right after the name, B the icon in place of the status dot, C an icon with the minutes left as a pill on the card's right, D a fire after the name only while
+// the agent is warm (nothing when cold), E a coloured rail down the card's left edge.
+defineExperiment('warmicon', 'Warm or cold icon', ['After the name', 'Over the status dot', 'Pill with minutes', 'Warm only', 'Left rail']);
 
 const PATHS = {
   dm: 'M3 4h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9l-4 3v-3H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
@@ -32,6 +38,21 @@ function LiveChip({ store, live }) {
   const at = Date.parse(live.at || '');
   const known = Number.isFinite(at);
   return html`<span class="agent-live-chip" hidden=${!known}>${known ? `${live.label} ${stateAge(Math.max(0, Math.floor((store.now.value - at) / 1000)))}` : ''}</span>`;
+}
+
+// The warm or cold icon of an idle agent, in one of the card's places (a: after the name, c: the pill on the right). Read here, so a tick of the clock renders the minutes
+// and nothing else of the card.
+function WarmBadge({ store, agent, slot }) {
+  const badge = warmBadgeOf(agent, store.now.value);
+  if (!badge) return null;
+  return html`<span class=${`warm-badge warm-slot-${slot}`} data-warm=${badge.state} title=${badge.title} aria-label=${badge.title} role="img"><span class=${`icon-mask icon-mask-${badge.state === 'warm' ? 'warm' : 'cold'}`} aria-hidden="true"></span>${slot === 'c' && badge.pill ? html`<span class="warm-pill-text">${badge.pill}</span>` : null}</span>`;
+}
+
+// The same words as text for a screen reader, in the placements that have no icon of their own to carry them (B turns the dot into the icon, E is a rail): visually hidden, and
+// absent for assistive technology in the placements whose icon is labelled itself, so nothing is read twice.
+function WarmText({ store, agent }) {
+  const badge = warmBadgeOf(agent, store.now.value);
+  return badge ? html`<span class="sr-only warm-sr" data-warm=${badge.state}>${badge.title}</span>` : null;
 }
 
 function CopyButton({ value, label, target }) {
@@ -91,11 +112,12 @@ export class AgentCard extends Component {
     const name = agentLabel(agent) || agent.id, dm = `Message ${agent.name || agent.slug || 'agent'} privately`;
     const reason = key => actions.find(action => action.name === key), quick = quickActionsOf(agent);
     const toggle = () => api.store.toggleProfile(agent.id);
-    return html`<article class=${expanded ? 'agent-card agent-card-compact expanded' : 'agent-card agent-card-compact'} data-agent-id=${agent.id} data-woken-by=${agent.woken_by || ''} data-live-at=${live.at} data-live-label=${live.label}
+    const warm = warmBadgeOf(agent);
+    return html`<article class=${expanded ? 'agent-card agent-card-compact expanded' : 'agent-card agent-card-compact'} data-agent-id=${agent.id} data-woken-by=${agent.woken_by || ''} data-live-at=${live.at} data-live-label=${live.label} data-warm=${warm?.state || null}
       onClick=${event => { if (!event.target.closest('button, a, input, select, textarea, .profile-output')) toggle(); }}>
-      <div class="agent-id agent-title"><span class=${`agent-online-dot ${stateDot(state.kind)} agent-dot`} aria-hidden="true" data-state=${state.kind} title=${state.title}></span>
+      <div class="agent-id agent-title"><span class=${`agent-online-dot ${stateDot(state.kind)} agent-dot`} aria-hidden="true" data-state=${state.kind} data-warm=${warm?.state || null} title=${warm ? `${state.title} · ${warm.title}` : state.title}></span>
         <img class="harness-icon agent-harness-icon" alt="" src=${src} title=${`${agent.model || 'unknown'} · ${label}`} /><span class="agent-emoji" aria-hidden="true">${agent.role_emoji || ''}</span>
-        <span class="agent-identity"><span class="agent-id-text agent-name" title=${name}>${name}</span></span>
+        <span class="agent-identity"><span class="agent-id-text agent-name" title=${name}>${name}</span></span><${WarmBadge} store=${api.store} agent=${agent} slot="a" /><${WarmBadge} store=${api.store} agent=${agent} slot="c" /><${WarmText} store=${api.store} agent=${agent} />
         <div class="agent-state" data-since=${state.since} data-state=${state.kind} title=${state.title}><span class=${`agent-state-pill agent-state-badge agent-state-${stateBadge(state.kind)}`}><span class="agent-state-label">${state.name}</span>${' '}<${StateAge} store=${api.store} since=${state.since} /></span></div>
         <span class="agent-role" title=${agent.role_updated ? 'Role updated; respawn to apply the project definition.' : ''}>${`${agent.role_emoji || ''} ${agent.role || 'Agent'}${agent.role_deleted ? ' (deleted)' : ''}`.trim()}</span>
         <div class="agent-card-actions agent-quick"><${QuickButton} className="agent-private" label=${dm} icon="dm" onClick=${() => api.onPrivate(agent)} />

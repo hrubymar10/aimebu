@@ -619,3 +619,24 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .thread-root-pin { position: absolute; left: 0; right: 0; z-index: 2; box-sizing: border-box; display: block; width: auto; margin: 0; padding: 6px 16px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: var(--bg-secondary); color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .thread-root-pin[hidden] { display: none; }
 .thread-root-pin:hover, .thread-root-pin:focus-visible { color: var(--accent); outline: none; }
+
+/* Warm or cold on an agent's card, five placements on the testing pill ("warmicon"; the markup holds every one and only the chosen one is shown). The colours are the theme's:
+   warm is --orange, cold is --accent, in the high-contrast themes too. A and D put the icon right after the name (on a card that has the icon the name stops growing, so the icon follows it and the state
+   stays at the right; a card with no warm state keeps its name as wide as it always was); B turns the status dot into the icon, keeping the dot's colour; C shows the icon with the minutes left as a pill before the state; D shows only the fire;
+   E draws a rail down the card's left edge. */
+.warm-badge { display: none; align-items: center; gap: 3px; flex: 0 0 auto; line-height: 1; color: var(--accent); }
+.warm-badge[data-warm="warm"] { color: var(--orange); }
+.warm-badge .icon-mask { width: 13px; height: 13px; }
+html[data-ui-warmicon="a"] .warm-slot-a, html[data-ui-warmicon="d"] .warm-slot-a { display: inline-flex; }
+html[data-ui-warmicon="d"] .warm-slot-a[data-warm="cold"] { display: none; }
+html[data-ui-warmicon="a"] .agent-card[data-warm] .agent-identity, html[data-ui-warmicon="d"] .agent-card[data-warm="warm"] .agent-identity { flex: 0 1 auto; }
+html[data-ui-warmicon="a"] .agent-card[data-warm] .agent-state, html[data-ui-warmicon="d"] .agent-card[data-warm="warm"] .agent-state { margin-left: auto; }
+html[data-ui-warmicon="c"] .warm-slot-c { display: inline-flex; padding: 1px 6px; border: 1px solid currentColor; border-radius: 999px; font-size: 11px; }
+html[data-ui-warmicon="c"] .warm-slot-c .icon-mask { width: 11px; height: 11px; }
+html[data-ui-warmicon="b"] .agent-online-dot[data-warm] { width: 13px; height: 13px; border-radius: 0; -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat; }
+html[data-ui-warmicon="b"] .agent-online-dot[data-warm="warm"] { -webkit-mask-image: url("/icons/warm.svg"); mask-image: url("/icons/warm.svg"); }
+html[data-ui-warmicon="b"] .agent-online-dot[data-warm="cold"] { -webkit-mask-image: url("/icons/cold.svg"); mask-image: url("/icons/cold.svg"); }
+.warm-sr { display: none; }
+html[data-ui-warmicon="b"] .warm-sr, html[data-ui-warmicon="e"] .warm-sr { display: block; }
+html[data-ui-warmicon="e"] .agent-card[data-warm="warm"] { box-shadow: inset 3px 0 0 var(--orange); }
+html[data-ui-warmicon="e"] .agent-card[data-warm="cold"] { box-shadow: inset 3px 0 0 var(--accent); }

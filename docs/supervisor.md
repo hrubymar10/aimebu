@@ -573,7 +573,11 @@ while it works again is reported by that turn's exit, not twice. The web treats 
 replaces (an agent's activity, the refresh of its card) and refreshes a card on `warm_process_ended`, so
 the warm or sleeping state follows the process without polling.
 
-*What the owner sees.* A supervisor that keeps processes warm sends the server a `warm_state` frame (at
+*What the owner sees.* An idle Claude agent's card shows whether its process is warm: a flame (with the minutes left) while it is kept up, a snowflake while it is
+cold, nothing while it works or when the state is unknown. Where the icon sits is being chosen on the testing pill ("Warm or cold icon": after the name, over the status
+dot, a pill with the minutes, warm only, or a rail down the card's edge). It reads the card's `warm` field, refreshed when a process starts or ends, with no polling of its own.
+
+A supervisor that keeps processes warm sends the server a `warm_state` frame (at
 connect, and whenever the picture changes: a process goes idle, is taken for a turn, ends): the agents with a
 live process (idle until when, or working), the counts started and reused since it started, the memory of
 the warm processes it runs itself, and what every running container uses. An idle Claude agent's card says
