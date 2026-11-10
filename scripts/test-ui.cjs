@@ -808,7 +808,7 @@ async function main() {
     });
     assert.deepEqual(changedBackup, { first: { opened: true, open: true, text: 'the v1 backup was modified after it was made', buttons: ['Decide later'] }, later: { closed: true, posts: 0 }, skipped: { posts: 'POST', closed: true } }, 'a modified v1 backup is explained in the wizard with Skip and Decide later');
     const answerControlsResult = await first.evaluate(async () => {
-      const { answerControls } = await import('/js/answer-controls.js');
+      const answerControls = await (async () => { const { options } = await import('preact'); options.debounceRendering = run => run(); /* these checks read the page straight after a click: draw at once, not on the next turn */ const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js'); return (item, submit, options = {}) => { const host = document.createElement('div'); render(html`<${AnswerControls} item=${item} submit=${submit} ...${options} />`, host); return host.firstElementChild; }; })();
       const sent = [];
       const buttons = answerControls({ proposed_answers: ['Proceed', 'Hold'], free_text: true }, async value => { sent.push(value); }, { mention: '@tess' });
       document.body.append(buttons);
@@ -864,7 +864,7 @@ async function main() {
     });
     // Open Questions: moving between the options with the arrow keys is looking around, not answering (it does not move on); a click does.
     const arrowing = await first.evaluate(async () => {
-      const { answerControls } = await import('/js/answer-controls.js');
+      const answerControls = await (async () => { const { options } = await import('preact'); options.debounceRendering = run => run(); /* these checks read the page straight after a click: draw at once, not on the next turn */ const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js'); return (item, submit, options = {}) => { const host = document.createElement('div'); render(html`<${AnswerControls} item=${item} submit=${submit} ...${options} />`, host); return host.firstElementChild; }; })();
       const host = answerControls({ id: 'oq-arrow', open_questions: [{ question: 'Scope?', options: ['Small', 'Large'] }, { question: 'When?', options: ['Now', 'Later'] }] }, async () => {});
       document.body.append(host); host.querySelector('.open-questions-open').click();
       const dialog = [...document.querySelectorAll('.open-questions-dialog')].pop(), where = () => dialog.querySelector('.open-questions-subtitle').textContent;
@@ -877,9 +877,54 @@ async function main() {
       return { afterArrow, afterClick };
     });
     assert.deepEqual(arrowing, { afterArrow: ['Question 1 of 2', '1/2 answered'], afterClick: 'Question 2 of 2' }, 'the arrow keys choose without moving on; a click moves on');
+    // An open Open Questions dialog survives its row being drawn again (a reaction, a receipt, a new revision of the item): it stays open on the same question with the
+    // answers given so far, still sends through the newest controls, and the count of the controls follows it.
+    assert.deepEqual(await first.evaluate(async () => {
+      const { options } = await import('preact'); options.debounceRendering = run => run();
+      const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js');
+      for (let i = 0; i < 200 && document.querySelector('.open-questions-dialog'); i++) await new Promise(resolve => setTimeout(resolve, 10)); // the dialog of the check before is still closing
+      const questions = [{ question: 'Scope?', options: ['Small', 'Large'] }, { question: 'When?', options: ['Now', 'Later'] }];
+      const sent = [], host = document.createElement('div'); document.body.append(host);
+      const draw = (rev, tag) => render(html`<${AnswerControls} item=${{ id: 'oq-redraw', rev, open_questions: questions }} submit=${async text => { sent.push([tag, text]); }} />`, host);
+      draw(1, 'old');
+      host.querySelector('.open-questions-open').click();
+      const dialog = document.querySelector('.open-questions-dialog');
+      dialog.querySelector('input[name="question-0"][value="1"]').click(); // Large: moves on to question 2
+      draw(2, 'new'); // the row is drawn again with another revision
+      const after = document.querySelector('.open-questions-dialog');
+      const state = { same: after === dialog, open: after?.open, subtitle: after?.querySelector('.open-questions-subtitle').textContent, kept: after?.querySelector('input[name="question-0"][value="1"]').checked, stored: !!sessionStorage.getItem('aimebu2.oq.oq-redraw'),
+        count: host.querySelector('.open-questions-count').textContent, dialogs: document.querySelectorAll('.open-questions-dialog').length };
+      host.querySelector('.open-questions-open').click(); // asking again while it is open opens no second one
+      const second = document.querySelectorAll('.open-questions-dialog').length;
+      after.querySelector('input[name="question-1"][value="0"]').click();
+      after.querySelector('form').requestSubmit();
+      for (let i = 0; i < 200 && document.querySelector('.open-questions-dialog'); i++) await new Promise(resolve => setTimeout(resolve, 10)); // sent, then closed
+      const result = { ...state, second, sent, closed: !document.querySelector('.open-questions-dialog') };
+      render(null, host); host.remove(); sessionStorage.removeItem('aimebu2.oq.oq-redraw');
+      return result;
+    }), { same: true, open: true, subtitle: 'Question 2 of 2', kept: true, stored: true, count: '1/2', dialogs: 1, second: 1, sent: [['new', 'Q1) b) Large\nQ2) a) Now']], closed: true }, 'an open Open Questions dialog survives its row being drawn again, with its answers, and sends through the newest controls');
+    // When the last controls of an item unmount while its dialog is open (answered, removed, the row left), the dialog closes with them instead of sending later through an old revision.
+    assert.deepEqual(await first.evaluate(async () => {
+      const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js');
+      const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      for (let i = 0; i < 200 && document.querySelector('.open-questions-dialog'); i++) await new Promise(resolve => setTimeout(resolve, 10));
+      const questions = [{ question: 'Scope?', options: ['Small', 'Large'] }];
+      const sent = [], host = document.createElement('div'); document.body.append(host);
+      const draw = rev => render(html`<${AnswerControls} item=${{ id: 'oq-gone', rev, open_questions: questions }} submit=${async text => { sent.push(text); }} />`, host);
+      draw(1); host.querySelector('.open-questions-open').click();
+      const opened = !!document.querySelector('.open-questions-dialog');
+      render(null, host); await frame(); // the row is gone, with nothing drawn in its place
+      const closed = !document.querySelector('.open-questions-dialog');
+      draw(2); host.querySelector('.open-questions-open').click(); // the same item comes back: a fresh dialog, through the new controls
+      const again = document.querySelectorAll('.open-questions-dialog').length;
+      draw(3); await frame(); // drawn again in place: still open
+      const kept = document.querySelectorAll('.open-questions-dialog').length;
+      render(null, host); host.remove(); await frame(); sessionStorage.removeItem('aimebu2.oq.oq-gone');
+      return { opened, closed, again, kept, sent, left: document.querySelectorAll('.open-questions-dialog').length };
+    }), { opened: true, closed: true, again: 1, kept: 1, sent: [], left: 0 }, 'an Open Questions dialog closes when its last controls unmount');
     // The inbox has no composer, so its chips come with an "Answer…" button that opens a small field for an answer of one's own, which is sent as it stands.
     assert.deepEqual(await first.evaluate(async () => {
-      const { answerControls } = await import('/js/answer-controls.js');
+      const answerControls = await (async () => { const { options } = await import('preact'); options.debounceRendering = run => run(); /* these checks read the page straight after a click: draw at once, not on the next turn */ const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js'); return (item, submit, options = {}) => { const host = document.createElement('div'); render(html`<${AnswerControls} item=${item} submit=${submit} ...${options} />`, host); return host.firstElementChild; }; })();
       const sent = [], host = answerControls({ proposed_answers: ['Proceed'], free_text: true }, async value => { sent.push(value); }, { freeAnswer: true });
       document.body.append(host);
       const open = host.querySelector('.answer-free-open'), form = host.querySelector('form');
@@ -892,6 +937,7 @@ async function main() {
     }), { closed: ['Answer…', true, 'false'], opened: [false, 'true', true], sent: ['Proceed, but carefully'], room: false }, 'the inbox can give a free-text answer; the room view has no such box');
     // A reply to a message with a free-text request open for this person is sent as the answer (so the item resolves) when it mentions no one but
     // the requester and has no attachment; every other reply is an ordinary one that leaves the request open.
+    await first.evaluate(async () => { (await import('preact')).options.debounceRendering = undefined; }); // the answer-control checks above draw at once; the chat fixture draws as the app does
     await installFixtureChat(first);
     assert.deepEqual(await first.evaluate(async () => {
       const base = { room: { id: 'r' }, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
@@ -954,7 +1000,7 @@ async function main() {
     // A proposed answer is the v1 button: a click sends "@author answer"; Shift-click puts it in the composer with the reply link (when the
     // page can do that) and sends nothing; a refused send keeps the buttons and says why.
     const proposedAnswers = await first.evaluate(async () => {
-      const { answerControls } = await import('/js/answer-controls.js');
+      const answerControls = await (async () => { const { options } = await import('preact'); options.debounceRendering = run => run(); /* these checks read the page straight after a click: draw at once, not on the next turn */ const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js'); return (item, submit, options = {}) => { const host = document.createElement('div'); render(html`<${AnswerControls} item=${item} submit=${submit} ...${options} />`, host); return host.firstElementChild; }; })();
       const sent = [], composed = [];
       const wrap = answerControls({ proposed_answers: ['Proceed', 'Hold'] }, async value => { sent.push(value); }, { mention: '@tess', compose: text => composed.push(text) });
       document.body.append(wrap);
@@ -988,7 +1034,7 @@ async function main() {
     // stays on screen with long content, and tapping the Other box chooses Other.
     await first.setViewport({ width: 390, height: 780 });
     const phoneQuestions = await first.evaluate(async () => {
-      const { answerControls } = await import('/js/answer-controls.js');
+      const answerControls = await (async () => { const { options } = await import('preact'); options.debounceRendering = run => run(); /* these checks read the page straight after a click: draw at once, not on the next turn */ const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js'); return (item, submit, options = {}) => { const host = document.createElement('div'); render(html`<${AnswerControls} item=${item} submit=${submit} ...${options} />`, host); return host.firstElementChild; }; })();
       const options = Array.from({ length: 8 }, (_, index) => `Option ${index + 1}: a deliberately long label that wraps across more than one line on a narrow phone screen`);
       const host = answerControls({ id: 'oq-phone', open_questions: [
         { question: 'Which rollout approach should we use for the production database migration this quarter?', description: 'A long description. '.repeat(30), options },
@@ -1030,6 +1076,7 @@ async function main() {
     assert.ok(phoneQuestions.targets.every(target => target.h >= 39.5) && phoneQuestions.rows.every(height => height >= 39.5), `Open Questions targets under 40px: ${JSON.stringify([phoneQuestions.targets, phoneQuestions.rows])}`);
     assert.deepEqual([phoneQuestions.before.disabled, phoneQuestions.before.checked, phoneQuestions.afterFocus.checked, phoneQuestions.afterFocus.answered, phoneQuestions.afterTyping], [false, false, true, '0/2 answered', '1/2 answered'], 'tapping Other did not choose it');
     assert.deepEqual([phoneQuestions.closeQuiet, phoneQuestions.backQuiet, phoneQuestions.nextQuiet], [true, true, false], 'Close and Back must be secondary, Next primary');
+    await first.evaluate(async () => { (await import('preact')).options.debounceRendering = undefined; }); // the answer-control checks above draw at once; the chat fixture draws as the app does
     await installFixtureChat(first);
     const stableAnswerControls = await first.evaluate(async () => {
       const main = document.createElement('div'), thread = document.createElement('div'); document.body.append(main, thread);
@@ -1257,10 +1304,11 @@ async function main() {
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => { writes.push(value); } } });
         const buttons = [...bar.querySelectorAll(':scope > .message-action')];
         const result = { labels: buttons.map(button => button.getAttribute('aria-label')), role: bar.getAttribute('role'), title: buttons.every(button => button.title && button.matches('.btn-icon')), text: buttons.map(button => button.textContent), menu: [...bar.querySelectorAll('.message-menu-item')].map(item => item.textContent), emoji: [...bar.querySelectorAll('.message-reaction-row .quick-reaction')].map(button => button.textContent), threadChipHidden: !one.querySelector(':scope > .chat-msg-bubble > .chat-msg-bubble > .thread-chip'), oldTextButtons: one.querySelectorAll('.message-actions button.quiet:not(.btn-icon):not(.quick-reaction):not(.message-menu-item)').length, debugText: one.querySelector('.chat-msg-debug-toggle')?.textContent, debugInHeader: !!one.querySelector('.chat-msg-header .chat-msg-debug-toggle') };
-        const react = bar.querySelector('.message-react'); react.click();
+        const drawn = () => new Promise(resolve => requestAnimationFrame(() => resolve())); // a state change of the toolbar is drawn before the next frame
+        const react = bar.querySelector('.message-react'); react.click(); await drawn();
         result.rowOpen = !bar.querySelector('.message-reaction-row').hidden && react.getAttribute('aria-expanded') === 'true';
-        bar.querySelector('.quick-reaction').click(); result.reacted = chat.reacted; result.rowClosed = bar.querySelector('.message-reaction-row').hidden;
-        react.click(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); result.escapeCloses = bar.querySelector('.message-reaction-row').hidden && react.getAttribute('aria-expanded') === 'false';
+        bar.querySelector('.quick-reaction').click(); await drawn(); result.reacted = chat.reacted; result.rowClosed = bar.querySelector('.message-reaction-row').hidden;
+        react.click(); await drawn(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await drawn(); result.escapeCloses = bar.querySelector('.message-reaction-row').hidden && react.getAttribute('aria-expanded') === 'false';
         // Copy text and link are toolbar buttons.
         { for (const button of bar.querySelectorAll('.message-copy')) { button.click(); await new Promise(resolve => setTimeout(resolve, 30)); } }
         // Arrow keys move along the toolbar.
@@ -2149,14 +2197,16 @@ async function main() {
     {
       await post('Narrow column check. ' + 'This is a long message of my own that wraps across lines. '.repeat(8));
       await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg.self .chat-msg-body')].some(el => el.textContent.startsWith('Narrow column check.')));
+      await post('Narrow column other. ' + 'This is a long message of my own that wraps across lines. '.repeat(8));
+      await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg.self .chat-msg-body')].some(el => el.textContent.startsWith('Narrow column other.')));
       // A short own message too: its bubble is narrower than the toolbar, which then extends to the left of it.
       await post('ok');
       await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg.self .chat-msg-body')].some(el => el.textContent === 'ok'));
       await first.evaluate(() => {
         const own = [...document.querySelectorAll('.chat-msg.self')].find(item => item.querySelector('.chat-msg-body').textContent.startsWith('Narrow column check.'));
         own.dataset.narrowCheck = 'own';
-        const other = own.cloneNode(true); other.classList.remove('self'); other.dataset.narrowCheck = 'other'; // someone else's message, laid out by the same rules
-        own.after(other);
+        const other = [...document.querySelectorAll('.chat-msg.self')].find(item => item.querySelector('.chat-msg-body').textContent.startsWith('Narrow column other.'));
+        other.classList.remove('self'); other.dataset.narrowCheck = 'other'; // someone else's message, laid out by the same rules
         [...document.querySelectorAll('.chat-msg.self')].find(item => item.querySelector('.chat-msg-body').textContent === 'ok').dataset.narrowCheck = 'short';
       });
       for (const width of [800, 1100, 1500]) {
@@ -2474,7 +2524,8 @@ async function main() {
       const before = first.viewport();
       for (const width of [1440, 390]) {
         await first.setViewport({ width, height: 900 });
-        await installFixtureChat(first);
+        await first.evaluate(async () => { (await import('preact')).options.debounceRendering = undefined; }); // the answer-control checks above draw at once; the chat fixture draws as the app does
+    await installFixtureChat(first);
         const fit = await first.evaluate(async () => {
           const { Chat } = await import('/js/chat.js');
           const held = document.querySelector('#messages'); held.id = 'messages-held';
@@ -2513,7 +2564,8 @@ async function main() {
     // Hovering a thumbnail never moves the image out of its frame: the frame (the button, whose border shows on hover) hugs the image, the
     // image stays inside it before and while the pointer is over it, and a long file name never widens the figure past the image.
     {
-      await installFixtureChat(first);
+      await first.evaluate(async () => { (await import('preact')).options.debounceRendering = undefined; }); // the answer-control checks above draw at once; the chat fixture draws as the app does
+    await installFixtureChat(first);
       const added = await first.evaluate(async () => {
         const held = document.querySelector('#messages'); held.id = 'messages-held';
         const list = document.createElement('div'); list.id = 'messages'; list.className = held.className; held.after(list);

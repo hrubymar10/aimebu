@@ -52,8 +52,8 @@ const server = http.createServer((req, res) => {
 
 // Elements are forced visible while measured so hidden popovers and dialogs report real styles.
 const FIXTURE = async () => {
-  const [{ renderMarkdown }, { renderVisualPlan }, { settingsRow, settingsGroup }, { usageWindowRow }, { MentionIndex, highlightMentions }, { HttpQuotaSource }, { buildMessageActions }] = await Promise.all([
-    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/settings-row.js'), import('/js/usage-format.js'), import('/js/mentions.js'), import('/js/quota-source.js'), import('/js/message-actions.js')]);
+  const [{ renderMarkdown }, { renderVisualPlan }, { SettingsRow, SettingsGroup }, { usageWindowRow }, { MentionIndex, highlightMentions }, { HttpQuotaSource }, { drawMessageActions, wakeMessageActions, messageActionsProps }] = await Promise.all([
+    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/components/settings-row.js'), import('/js/usage-format.js'), import('/js/mentions.js'), import('/js/quota-source.js'), import('/js/message-actions.js')]);
   const freeze = document.createElement('style'); freeze.textContent = '*,*::before,*::after{transition:none!important;animation:none!important}'; document.head.append(freeze);
   document.querySelector('#login-view').hidden = true;
   document.querySelector('#app-view').hidden = false;
@@ -69,7 +69,11 @@ const FIXTURE = async () => {
     highlightMentions(content, new MentionIndex([{ slug: 'ada', role_key: 'worker', tool: 'codex', model: 'm' }], 'p'));
     const plan = renderVisualPlan({ visual_plan: [{ type: 'markdown', title: 'Plan', data: { markdown: 'Plan **text**' } }, { type: 'checklist', data: { items: [{ text: 'a', checked: true }, { text: 'b' }] } }, { type: 'file-tree', data: { root: { name: 'src', type: 'dir', children: [{ name: 'a.js', type: 'file', note: 'entry' }] } } }] });
     if (plan) bubble.append(plan);
-    bubble.append(buildMessageActions({ setReply() {}, toggleReaction() {}, openThread() {}, threadLabel: () => 'Reply in thread' }, { id: 'fixture', seq: 7, no: 7, body: 'text' }));
+    {
+      const chat = { setReply() {}, toggleReaction() {}, openThread() {}, threadLabel: () => 'Reply in thread' }, message = { id: 'fixture', seq: 7, no: 7, body: 'text' }, props = messageActionsProps(message);
+      const bar = make(props.tag, props.class, '', bubble); bar.setAttribute('role', props.role); bar.setAttribute('aria-label', props['aria-label']);
+      drawMessageActions(bar, { chat, message }); wakeMessageActions(chat, bar, message);
+    }
     make('button', 'row-btn quiet-glyph chat-msg-debug-toggle', '', meta); meta.lastChild.append(Object.assign(document.createElement('span'), { className: 'icon-mask icon-mask-bug' })); meta.lastChild.setAttribute('aria-label', 'Open debug inspector');
     const pills = make('span', 'reaction-pills', '', bubble); const pill = make('button', 'row-btn reaction-pill', '👍 2', pills); pill.setAttribute('aria-pressed', 'true');
     return article;
@@ -77,7 +81,7 @@ const FIXTURE = async () => {
   const expiredFixture = message(); const boundaryFixture = message('self'); message('needs-attention');
   // Proposed answers (the real renderer), for the accessibility and contrast audits.
   {
-    const { answerControls } = await import('/js/answer-controls.js');
+    const answerControls = await (async () => { const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js'); return (item, submit, options = {}) => { const host = document.createElement('div'); render(html`<${AnswerControls} item=${item} submit=${submit} ...${options} />`, host); return host.firstElementChild; }; })();
     const asked = message('answer-fixture', 'Should I go ahead with the migration?');
     const controls = answerControls({ proposed_answers: ['Proceed', 'Hold', 'Revise'], free_text: true }, async () => {}, { mention: '@tess' });
     controls.classList.add('answer-row'); asked.after(controls); // a row of the list under the message's card, as in the chat
@@ -148,10 +152,13 @@ const FIXTURE = async () => {
   const macroPopup = make('div', 'quick-commands macro-commands', '', document.querySelector('#composer')); macroPopup.dataset.fixture = 'macros';
   for (const [key, body, selected] of [['<BRAINSTORM-IDEAS>', 'Brainstorm ten ideas for the next...', true], ['<DO-CR>', 'Run the code review on this pull request', false]]) { const row = make('div', 'quick-command', '', macroPopup); row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(selected)); make('strong', '', key, row); make('span', '', body, row); }
   const section = document.querySelector('#settings-general');
-  const select = make('select'); select.append(make('option', '', 'Dark'));
-  const check = make('input'); check.type = 'checkbox';
-  const area = make('textarea');
-  section.append(settingsGroup([settingsRow({ label: 'Fixture select', desc: 'A description for the select', control: select, id: 'fx-select' }), settingsRow({ label: 'Fixture toggle', desc: 'A description for the toggle', control: check, id: 'fx-check', className: 'settings-row-toggle' }), settingsRow({ label: 'Fixture area', desc: 'A stacked row', control: area, id: 'fx-area', className: 'settings-row-stack' })]));
+  const { html: fixtureHtml, render: fixtureRender } = await import('/js/ui.js');
+  const fixtureRows = make('div', '', '', section);
+  fixtureRender(fixtureHtml`<${SettingsGroup}>
+    <${SettingsRow} label="Fixture select" desc="A description for the select" id="fx-select"><select><option>Dark</option></select><//>
+    <${SettingsRow} label="Fixture toggle" desc="A description for the toggle" id="fx-check" className="settings-row-toggle"><input type="checkbox" /><//>
+    <${SettingsRow} label="Fixture area" desc="A stacked row" id="fx-area" className="settings-row-stack"><textarea></textarea><//>
+  <//>`, fixtureRows);
   // The real automatic-switching and limit-guard blocks over the mock APIs, with the decision list opened, so the audits see every control.
   const { QuotaStore } = await import('/js/pages/usages/quota-store.js'), { QuotaBlock } = await import('/js/pages/usages/quota-block.js');
   const { GuardStore } = await import('/js/pages/usages/guard-store.js'), { GuardBlock } = await import('/js/pages/usages/guard-block.js');

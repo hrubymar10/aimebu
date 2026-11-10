@@ -4,7 +4,7 @@ import { retention } from './retention.js';
 import { usageTooltip } from './message-usage-format.js';
 import { toggleMessageUsage, closeMessageUsage } from './message-usage.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
-import { iconGlyph } from './icon-button.js';
+import { AttachmentStrip, Control, LatestButton, OlderStatus, RoomNote } from './components/chat-controls.js';
 import { refreshRelativeTimes } from './time.js';
 import { ScrollAnchor } from './scroll-anchor.js';
 import { senderIdentity, senderKind, agentLabel } from './sender-identity.js';
@@ -19,25 +19,21 @@ import { enterSends } from './enter-key.js';
 import { closeEmojiPicker, openEmojiPicker } from './emoji-picker.js';
 import { LiveAnnouncer } from './live-region.js';
 import { ComposerFormatting } from './composer.js';
-import { messageAction, wakeMessageActions, releaseMessageActions } from './message-actions.js';
+import { wakeMessageActions, releaseMessageActions } from './message-actions.js';
 import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
 import { ChatStore } from './pages/chat/store.js';
 import { MessageList, ThreadList } from './pages/chat/rows.js';
 import { PendingAttachments } from './pages/chat/message-box.js';
 import { mountPreactPage } from './pages/mount-page.js';
-import { html } from './ui.js';
+import { html, render } from './ui.js';
 import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle } from './pages/chat/model.js';
 
 export { plainText, messageSnippet };
 
-// "Back to latest" and its thread twins are icon buttons; a count of missed messages is a pill on the icon, and the tooltip and
+// "Back to latest" and its thread twins are icon buttons (components/chat-controls.js); a count of missed messages is a pill on the icon, and the tooltip and
 // accessible name carry the full wording ("Back to latest · 2 new").
-function setLatest(button, label, count = 0) {
-  button.replaceChildren(iconGlyph('arrow-down'));
-  if (count) { const pill = document.createElement('span'); pill.className = 'badge'; pill.textContent = String(count); button.append(pill); }
-  button.title = label; button.setAttribute('aria-label', label);
-}
+function setLatest(control, label, count = 0) { control.set({ label, count }); }
 
 export const FLASH_MS = 1500;
 // Sizes a message box to its text, up to 180px: it never shows a scrollbar until it is at its height limit (a line of text and its borders can
@@ -55,11 +51,10 @@ export class Chat {
     this.list = document.querySelector('#messages'); this.title = document.querySelector('#room-title'); this.roomIcon = document.querySelector('#room-icon'); this.members = document.querySelector('#room-members'); this.form = document.querySelector('#composer'); this.draft = this.form.elements.body; this.formatting = new ComposerFormatting(this.draft, { onFiles: files => this.addFiles(files) });
     this.announcer = new LiveAnnouncer(document.querySelector('#live-announcer'));
     // Older pages load by themselves when the list is scrolled (or keyboard-scrolled: Home, PageUp) to the top; this only says so while it fetches.
-    this.olderStatus = document.createElement('div'); this.olderStatus.className = 'older-status'; this.olderStatus.setAttribute('role', 'status'); this.olderStatus.textContent = 'Loading older messages…'; this.olderStatus.hidden = true;
-    this.list.before(this.olderStatus);
-    this.latestButton = document.createElement('button'); this.latestButton.type = 'button'; this.latestButton.className = 'btn-icon back-to-latest'; setLatest(this.latestButton, 'Back to latest'); this.latestButton.hidden = true;
-    this.latestButton.onclick = () => this.open(this.room);
-    this.title.parentElement.append(this.latestButton);
+    this.olderStatus = new Control(OlderStatus, { text: 'Loading older messages…', hidden: true });
+    this.list.before(this.olderStatus.host);
+    this.latestButton = new Control(LatestButton, { label: 'Back to latest', count: 0, hidden: true, onClick: () => this.open(this.room) });
+    this.title.parentElement.append(this.latestButton.host);
     this.list.addEventListener('scroll', () => {
       if (this.list.scrollTop < 80) this.loadOlder();
       // A history window pages forward again when its bottom is reached (only then is scrollHeight read on scroll).
@@ -85,12 +80,10 @@ export class Chat {
     setInterval(() => refreshRelativeTimes(this.list), 30000);
     this.lightbox = document.querySelector('#image-lightbox'); document.querySelector('#image-lightbox-close').onclick = () => this.lightbox.close();
     this.agents = new Map(); this.threadPanel = document.querySelector('#thread-panel'); this.threadTitle = this.threadPanel.querySelector('h2'); this.threadList = document.querySelector('#thread-messages'); this.threadForm = document.querySelector('#thread-composer'); this.threadDraft = this.threadForm.elements.body; this.threadFormatting = new ComposerFormatting(this.threadDraft);
-    this.threadOlderStatus = document.createElement('div'); this.threadOlderStatus.className = 'older-status thread-older'; this.threadOlderStatus.setAttribute('role', 'status'); this.threadOlderStatus.textContent = 'Loading older replies…'; this.threadOlderStatus.hidden = true;
-    this.threadLatestButton = document.createElement('button'); this.threadLatestButton.type = 'button'; this.threadLatestButton.className = 'btn-icon back-to-latest thread-latest'; setLatest(this.threadLatestButton, 'Latest replies'); this.threadLatestButton.hidden = true;
-    this.threadLatestButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
-    this.threadNewButton = document.createElement('button'); this.threadNewButton.type = 'button'; this.threadNewButton.className = 'btn-icon back-to-latest thread-new'; setLatest(this.threadNewButton, 'New replies'); this.threadNewButton.hidden = true;
-    this.threadNewButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
-    this.threadList.before(this.threadOlderStatus, this.threadLatestButton, this.threadNewButton);
+    this.threadOlderStatus = new Control(OlderStatus, { text: 'Loading older replies…', className: 'thread-older', hidden: true });
+    this.threadLatestButton = new Control(LatestButton, { label: 'Latest replies', count: 0, className: 'thread-latest', hidden: true, onClick: () => { if (this.threadRoot) this.openThread(this.threadRoot); } });
+    this.threadNewButton = new Control(LatestButton, { label: 'New replies', count: 0, className: 'thread-new', hidden: true, onClick: () => { if (this.threadRoot) this.openThread(this.threadRoot); } });
+    this.threadList.before(this.threadOlderStatus.host, this.threadLatestButton.host, this.threadNewButton.host);
     this.threadList.addEventListener('scroll', () => { if (this.threadList.scrollTop < 80) this.loadOlderThread(); });
     // The root stays in view while the replies scroll: once its own entry is out of view, a one-line bar over the top of the list stands for it.
     this.threadPin = document.querySelector('#thread-root-pin');
@@ -301,7 +294,6 @@ export class Chat {
     else if (is('image-thumb')) { const full = this.lightbox.querySelector('img'); full.src = control.dataset.url; this.lightbox.showModal(); }
     else if (is('thread-chip')) this.openConversation(message);
     else if (is('reaction-pill')) this.toggleReaction(message.id, control.dataset.emoji);
-    else messageAction(this, control, message);
   }
   // A departed or historical sender's name is a role=button: Enter and Space open its profile like a click.
   onAuthorKey(event) {
@@ -376,13 +368,11 @@ export class Chat {
     spawn.disabled = !open || room.kind === 'dm' || viewer;
     this.spawnTitle ||= spawn.title;
     spawn.title = viewer ? 'Viewers cannot spawn agents' : this.spawnTitle;
-    const note = this.viewerNote ||= (() => { const node = document.createElement('p'); node.className = 'system-room-notice'; node.id = 'composer-viewer-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
-    note.hidden = !(open && viewer && (room.kind !== 'dm' || agentChat));
-    note.textContent = agentChat ? 'You can read this chat. Writing here takes the owner or operator role in one of the agents\' projects.' : 'You can read this room as a viewer. Only owners and operators of the project can write here or run agents.';
+    const note = this.viewerNote ||= (() => { const control = new Control(RoomNote, { id: 'composer-viewer-note', text: '', hidden: true }); this.form.before(control.host); return control; })();
+    note.set({ hidden: !(open && viewer && (room.kind !== 'dm' || agentChat)), text: agentChat ? 'You can read this chat. Writing here takes the owner or operator role in one of the agents\' projects.' : 'You can read this room as a viewer. Only owners and operators of the project can write here or run agents.' });
     // An archived project is read-only for everyone; the composer says why and where to undo it.
-    const archivedNote = this.archivedNote ||= (() => { const node = document.createElement('p'); node.className = 'system-room-notice'; node.id = 'composer-archived-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
-    archivedNote.hidden = !archivedProject;
-    archivedNote.textContent = 'This project is archived and read-only. The owner or an admin can reopen it in the project\'s home-room settings.';
+    const archivedNote = this.archivedNote ||= (() => { const control = new Control(RoomNote, { id: 'composer-archived-note', text: '', hidden: true }); this.form.before(control.host); return control; })();
+    archivedNote.set({ hidden: !archivedProject, text: 'This project is archived and read-only. The owner or an admin can reopen it in the project\'s home-room settings.' });
   }
   get renameForm() { return this.panel.renameForm; }
   get memorySection() { return this.panel.memorySection; }
@@ -440,31 +430,9 @@ export class Chat {
   showRow(message) { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.chat-msg-bubble') || row); }
   renderBody(element, message) { element.replaceChildren(); if (this.raw) element.append(renderRaw(message.body)); else { element.append(renderMarkdown(message.body)); highlightMentions(element, this.mentionIndex); expandShortcodes(element); } if (message.attachments?.length) this.renderAttachments(element, message.attachments); }
   renderAttachments(element, attachments) {
-    const strip = document.createElement('div'); strip.className = 'message-images';
-    for (const attachment of attachments) {
-      // Retention removed the file; the message keeps this note where the attachment was.
-      if (attachment.removed_at) {
-        const note = document.createElement('span'); note.className = 'attachment-removed'; note.dataset.attachmentId = attachment.id;
-        const days = attachment.removed_after_days;
-        note.textContent = `${attachment.name || (attachment.mime.startsWith('image/') ? 'Image' : 'Attachment')}: attachment removed${days > 0 ? ` after ${days} days` : ''}`;
-        strip.append(note); continue;
-      }
-      if (!attachment.mime.startsWith('image/')) {
-        const link = document.createElement('a'); link.href = attachment.url; link.className = 'attachment-file';
-        link.textContent = attachment.name || 'Attachment'; link.download = attachment.name || 'attachment';
-        strip.append(link); continue;
-      }
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'row-btn image-thumb'; button.setAttribute('aria-label', 'Open attached image');
-      const img = document.createElement('img'); img.src = attachment.url; img.alt = 'Attached image'; img.loading = 'lazy';
-      // The size, when known, keeps the thumbnail's place so the list does not jump as images load.
-      if (attachment.width > 0 && attachment.height > 0) { img.width = attachment.width; img.height = attachment.height; }
-      button.append(img);
-      button.dataset.url = attachment.url; // opened by onMessageClick
-      // v1 names the file under its thumbnail.
-      const figure = document.createElement('figure'); figure.className = 'image-item'; const caption = document.createElement('figcaption'); caption.textContent = attachment.name || 'Image'; caption.title = caption.textContent;
-      figure.append(button, caption); strip.append(figure);
-    }
-    element.append(strip);
+    const host = document.createElement('div'); host.style.display = 'contents'; // takes no part in the layout: the strip is the box the page's styles see
+    render(html`<${AttachmentStrip} attachments=${attachments} />`, host);
+    element.append(host);
   }
   addFiles(files) { return this.store.addFiles(files); }
   renderThreadPending() {

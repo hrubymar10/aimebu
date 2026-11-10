@@ -12,8 +12,8 @@ const PROPS = ['display', 'position', 'color', 'backgroundColor', 'fontSize', 'f
 
 // Elements are forced visible while measured so hidden popovers and dialogs report real styles.
 const FIXTURE = async () => {
-  const [{ renderMarkdown }, { renderVisualPlan }, { settingsRow, settingsGroup }, { usageWindowRow }, { MentionIndex, highlightMentions }] = await Promise.all([
-    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/settings-row.js'), import('/js/usage-format.js'), import('/js/mentions.js')]);
+  const [{ renderMarkdown }, { renderVisualPlan }, { SettingsRow, SettingsGroup }, { usageWindowRow }, { MentionIndex, highlightMentions }] = await Promise.all([
+    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/components/settings-row.js'), import('/js/usage-format.js'), import('/js/mentions.js')]);
   const freeze = document.createElement('style'); freeze.textContent = '*,*::before,*::after{transition:none!important;animation:none!important}'; document.head.append(freeze);
   document.querySelector('#login-view').hidden = true;
   document.querySelector('#app-view').hidden = false;
@@ -47,10 +47,13 @@ const FIXTURE = async () => {
   const quick = make('div', 'quick-commands', '', document.querySelector('#composer')); quick.dataset.fixture = 'quick'; const option = make('button', 'quick-command', '', quick); make('strong', '', '/archive', option); make('span', '', 'Archive room', option); option.setAttribute('aria-selected', 'true');
   make('button', 'quick-command', '', quick).append(make('strong', '', '/spawn'), make('span', '', 'Open spawn dialog'));
   const section = document.querySelector('#settings-general');
-  const select = make('select'); select.append(make('option', '', 'Dark'));
-  const check = make('input'); check.type = 'checkbox';
-  const area = make('textarea');
-  section.append(settingsGroup([settingsRow({ label: 'Fixture select', desc: 'A description for the select', control: select, id: 'fx-select' }), settingsRow({ label: 'Fixture toggle', desc: 'A description for the toggle', control: check, id: 'fx-check', className: 'settings-row-toggle' }), settingsRow({ label: 'Fixture area', desc: 'A stacked row', control: area, id: 'fx-area', className: 'settings-row-stack' })]));
+  const { html: fixtureHtml, render: fixtureRender } = await import('/js/ui.js');
+  const fixtureRows = make('div', '', '', section);
+  fixtureRender(fixtureHtml`<${SettingsGroup}>
+    <${SettingsRow} label="Fixture select" desc="A description for the select" id="fx-select"><select><option>Dark</option></select><//>
+    <${SettingsRow} label="Fixture toggle" desc="A description for the toggle" id="fx-check" className="settings-row-toggle"><input type="checkbox" /><//>
+    <${SettingsRow} label="Fixture area" desc="A stacked row" id="fx-area" className="settings-row-stack"><textarea></textarea><//>
+  <//>`, fixtureRows);
   const usage = make('div', 'usages-popover-body-fixture', '', document.querySelector('#usages-popover .usages-popover-body') || document.body);
   usage.append(usageWindowRow({ key: 'session', percent_used: 42, reset_at: new Date(Date.now() + 7200000).toISOString(), pace: { expected_percent: 55, delta_percent: -13, state: 'reserve' } }, false));
   const providerSection = make('section', 'usages-popover-provider', '', usage); providerSection.dataset.provider = 'codex'; make('h4', 'usages-popover-provider-name', 'Codex', providerSection);

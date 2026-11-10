@@ -1,6 +1,6 @@
 import { html, Component, Fragment, useCallback, useLayoutEffect, useRef } from '../../ui.js';
 import { EXPIRED_HOURGLASS } from '../../usage-expiry.js';
-import { fillMessageActions, messageActionsProps, placeholderMessageActions } from '../../message-actions.js';
+import { clearMessageActions, drawMessageActions, messageActionsProps } from '../../message-actions.js';
 import { stampTime } from '../../time.js';
 import { forkLayout } from './model.js';
 import { defineExperiment } from '../../ui-variant.js';
@@ -12,7 +12,7 @@ import { defineExperiment } from '../../ui-variant.js';
 defineExperiment('forks', 'Forks in a thread', ['Context quote', 'Indent', 'Branch rail', 'Fork label', 'Side branches compact']);
 import { applySenderIdentity, fillSenderPresence, SENDER_PRESENCE_ROOT } from '../../sender-identity.js';
 import { fillVisualPlan, hasVisualPlan, VISUAL_PLAN_ROOT } from '../../visual-plan.js';
-import { ANSWER_CONTROLS_ROOT, ANSWER_HISTORY_ROOT, fillAnswerControls, fillAnswerHistory } from '../../answer-controls.js';
+import { AnswerControls, AnswerHistory } from '../../components/answer-controls.js';
 
 export const rowRenders = { count: 0, thread: 0, main: 0 };
 
@@ -74,14 +74,9 @@ export function Plan({ message }) {
 // The controls, the history or the "Answered" marker under a question; which one follows from the page's answer view.
 // `listed` is the slot as a row of the message list, under its message's card and aligned with it (`self`: the viewer's own); in the thread panel it is part of the entry.
 export function AnswerSlot({ message, view, host, listed = '' }) {
-  const root = useRef(null), answer = view.answer;
-  useLayoutEffect(() => {
-    if (!root.current) return;
-    if (answer.kind === 'controls') fillAnswerControls(root.current, answer.item, value => host.answer(answer.item, value), host.answerOptions(answer.parent));
-    else if (answer.kind === 'history') fillAnswerHistory(root.current, message, answer.answered);
-  }, [message, answer.key]);
-  if (answer.kind === 'controls') return html`<${ANSWER_CONTROLS_ROOT.tag} key=${answer.key} class=${`${ANSWER_CONTROLS_ROOT.class}${listed}`} data-inbox-id=${answer.item.id} data-rev=${String(answer.item.rev)} ref=${root} />`;
-  if (answer.kind === 'history') return html`<${ANSWER_HISTORY_ROOT.tag} key=${answer.key} class=${`${ANSWER_HISTORY_ROOT.class}${listed}`} data-answered=${String(answer.answered)} ref=${root} />`;
+  const answer = view.answer;
+  if (answer.kind === 'controls') return html`<${AnswerControls} key=${answer.key} className=${listed} data-inbox-id=${answer.item.id} data-rev=${String(answer.item.rev)} item=${answer.item} submit=${value => host.answer(answer.item, value)} ...${host.answerOptions(answer.parent)} />`;
+  if (answer.kind === 'history') return html`<${AnswerHistory} key=${answer.key} className=${listed} message=${message} answered=${answer.answered} />`;
   if (answer.kind === 'done') return html`<div key=${answer.key} class=${`answer-done${listed}`}><button type="button" class="btn" disabled>Answered</button></div>`;
   return null;
 }
@@ -106,11 +101,11 @@ export function ThreadList({ entries = [], host, viewOf, restore }) {
   });
 }
 
-function Actions({ message, host, label }) {
+function Actions({ message, host, label, thread }) {
   const root = useRef(null), props = messageActionsProps(message);
-  // The toolbar's buttons are made when the row is reached (Chat.wakeActions); one that was already made follows its message.
-  useLayoutEffect(() => { if (root.current.dataset.built) fillMessageActions(root.current, host, message); else placeholderMessageActions(root.current); }, [message]);
-  useLayoutEffect(() => { for (const button of root.current.querySelectorAll('.thread-action')) { button.title = label; button.setAttribute('aria-label', label); } }, [message, label]);
+  // The toolbar is its own Preact root (message-actions.js): the placeholder until the row is reached (Chat.wakeActions), then the buttons, which follow the message and label.
+  useLayoutEffect(() => { drawMessageActions(root.current, { chat: host, message, label, thread }); }, [message, label]);
+  useLayoutEffect(() => () => clearMessageActions(root.current), []);
   return html`<${props.tag} class=${props.class} role=${props.role} aria-label=${props['aria-label']} ref=${root} />`;
 }
 

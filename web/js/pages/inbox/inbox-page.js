@@ -1,17 +1,15 @@
 import { html, useLayoutEffect, useRef, useState } from '../../ui.js';
 import { rights } from '../../api.js';
 import { IconButton } from '../../components/icon-button.js';
-import { answerControls } from '../../answer-controls.js';
+import { AnswerControls } from '../../components/answer-controls.js';
 import { renderMarkdown } from '../../markdown.js';
 import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, questionParts, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
 
-// answerControls is shared with the chat, so its DOM is built by that function and held in this island; the wrapper takes no space of its own.
+// The answer controls are the chat's component too; the wrapper takes no space of its own, and every control is off while the item is being answered.
 function AnswerIsland({ item, store, pending }) {
-  const host = useRef(null), latest = useRef(item);
+  const latest = useRef(item);
   latest.current = item;
-  useLayoutEffect(() => { host.current.replaceChildren(answerControls(item, value => store.answer(latest.current, value), { freeAnswer: true })); }, [item.id]);
-  useLayoutEffect(() => { for (const control of host.current.querySelectorAll('button,textarea,input')) control.disabled = pending; }, [pending]);
-  return html`<div class="inbox-answer-host" ref=${host}></div>`;
+  return html`<div class="inbox-answer-host"><${AnswerControls} key=${item.id} item=${item} submit=${value => store.answer(latest.current, value)} freeAnswer disabled=${pending} /></div>`;
 }
 
 // The rest of a long question, rendered like a chat message's Markdown (lists, code, links) under the one-line heading.

@@ -2,7 +2,7 @@ import { html, effect } from '../../ui.js';
 import { mountPreactPage } from '../mount-page.js';
 import { rights } from '../../api.js';
 import { RoomNotifySettings } from '../../room-notify-settings.js';
-import { Schedules } from '../../schedules.js';
+import { SchedulesPanel } from './schedules.js';
 import { RoomMembers } from '../members/page.js';
 import { RoomScopeControl, RoomUsage } from '../project/room-panels.js';
 import { InfoError, MemorySection, NotesSection, RenameForm, RoomActions, RoomFacts, ViewActions, WorktreeSection } from './room-panel.js';
@@ -44,7 +44,7 @@ export class RoomPanel {
     this.renameForm.onsubmit = event => { event.preventDefault(); this.saveTitle(); };
     this.notifySettings = new RoomNotifySettings(document.querySelector('#room-member-list'), (field, value) => chat.setRoomPreference?.(chat.roomView?.(chat.room?.id) || chat.room, field, value), () => chat.roomView?.(chat.room?.id) || chat.room);
     this.scopeControl = new RoomScopeControl(document.querySelector('#room-scope-control'));
-    this.schedules = new Schedules(document.querySelector('#room-schedules'));
+    this.schedules = new SchedulesPanel(document.querySelector('#room-schedules'));
     this.memberList = new RoomMembers(document.querySelector('#room-member-list'));
     this.roomUsage = new RoomUsage(document.querySelector('#room-usage'));
     document.querySelector('#room-info').onclick = () => this.show();

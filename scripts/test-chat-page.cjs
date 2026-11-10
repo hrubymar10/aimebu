@@ -2138,19 +2138,15 @@ async function main() {
     {
       const page = await mount();
       const same = await page.evaluate(async () => {
-        const plan = await import('/js/visual-plan.js'), answers = await import('/js/answer-controls.js'), actions = await import('/js/message-actions.js'), sender = await import('/js/sender-identity.js');
+        const plan = await import('/js/visual-plan.js'), sender = await import('/js/sender-identity.js');
         const make = ({ tag, class: className, ...attributes }, fill) => { const root = document.createElement(tag); root.className = className; for (const [name, value] of Object.entries(attributes)) root.setAttribute(name, value); fill(root); return root.outerHTML; };
         const message = { id: 'm1', no: 7, visual_plan: [{ type: 'markdown', title: 'Plan', data: { markdown: 'Plan **text**' } }], appendix_pages: [{ title: 'Page', body: 'Body' }], proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Scope?', options: ['Small', 'Large'] }] };
-        const item = { id: 'inb', rev: 1, proposed_answers: ['Proceed', 'Hold'], open_questions: message.open_questions, free_text: true }, chat = { threadLabel: () => 'Reply in thread' };
         return [
           [plan.renderVisualPlan(message).outerHTML, make(plan.VISUAL_PLAN_ROOT, root => plan.fillVisualPlan(root, message))],
-          [answers.answerControls(item, async () => {}, { mention: '@tess', freeAnswer: true }).outerHTML, make(answers.ANSWER_CONTROLS_ROOT, root => answers.fillAnswerControls(root, item, async () => {}, { mention: '@tess', freeAnswer: true }))],
-          [answers.answerHistory(message, true).outerHTML, make({ ...answers.ANSWER_HISTORY_ROOT, 'data-answered': 'true' }, root => answers.fillAnswerHistory(root, message, true))],
-          [actions.buildMessageActions(chat, message).outerHTML, make(actions.messageActionsProps(message), root => actions.fillMessageActions(root, chat, message))],
           [sender.createSenderPresence().outerHTML, make(sender.SENDER_PRESENCE_ROOT, root => sender.fillSenderPresence(root))],
         ].map(([built, filled]) => built === filled);
       });
-      assert.deepEqual(same, [true, true, true, true, true], 'each leaf equals its root plus fill');
+      assert.deepEqual(same, [true, true], 'each leaf equals its root plus fill');
       await page.close();
     }
     // a pick of several files stops once the room has changed

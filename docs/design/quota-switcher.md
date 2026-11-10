@@ -225,7 +225,7 @@ Retries after an action error (`409`, busy, refresh failed) back off 30 s, 1 min
 ## 9. Settings UI
 
 Settings → Usages gets an **Automatic account switching** section per tool, owner
-only, built from the existing `settingsRow`/`settingsGroup` helpers:
+only, built from the existing `SettingsRow`/`SettingsGroup` components (`web/js/components/settings-row.js`):
 
 - Toggle (enabled), toggle (dry run), a status line: *last decision* (action, reason,
   time), *next evaluation*, and the current hold if any. Plain text only.
