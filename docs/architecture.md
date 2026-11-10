@@ -75,7 +75,10 @@ gate (paused) at room and project level, inherited by spawned/moved agents.
 addressed elsewhere (a lead that is in the room only because leads are put into
 every project room, see `room_member.auto` in the contract, is woken only when
 addressed: by name, role, group tag, a reply to it, or a handoff); AI message wakes explicit mentions, DM peers, addressed
-roles, and the lead on task-result handoffs. An AI reply to another AI alone
+roles, and the lead on task-result handoffs; an AI message that names nobody and
+answers nothing is a broadcast that wakes every other agent in the room as an FYI
+(the note is marked `fyi` and the agent answers only if it has to act); what an agent
+writes in a turn woken by a person in that room is said to the person and is never one, nor is a message that asks a person for something (an Inbox ask, `needs_attention`, proposed answers, open questions). An AI reply to another AI alone
 keeps the thread link without waking its parent author; replies to humans
 still target them. Inbox answers
 wake the requester; routine system chatter never wakes; role/control changes

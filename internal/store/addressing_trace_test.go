@@ -238,7 +238,7 @@ func TestReplySourceFollowsTheServerRule(t *testing.T) {
 	}{
 		{"usr_casey", "user", "agt_ada", "agent", "addresses its parent's author"},
 		{"usr_casey", "user", "usr_casey", "user", "reply to yourself"},
-		{"agt_ada", "agent", "agt_bob1", "agent", "does not wake it"},
+		{"agt_ada", "agent", "agt_bob1", "agent", "wakes it, but only 4 times in a row"},
 		{"agt_ada", "agent", "usr_casey", "user", "addresses its parent's author"},
 		{"usr_casey", "user", "system", "system", "system message"},
 		{"usr_casey", "user", "agt_gone", "agent", "not in this room now"},

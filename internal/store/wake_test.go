@@ -100,9 +100,10 @@ func TestMessageWakeTargetsAndHandoff(t *testing.T) {
 		{"full mention", Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@one@wake please work"}, true, false},
 		{"uppercase full ID", Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@" + strings.ToUpper(one.ID) + " please work"}, true, false},
 		{"escaped", Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "`@one` and \\@lead are examples"}, true, true},
-		{"agent unaddressed", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "status"}, false, false},
+		{"agent unaddressed is a broadcast", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "status"}, false, true},
 		{"role mention", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "@lead review"}, false, true},
-		{"quoted double backticks", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "``@lead `still code``"}, false, false},
+		{"quoted double backticks name nobody, so it is a broadcast", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "``@lead `still code``"}, false, true},
+		{"mention of nobody is still a mention", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "@ghost status"}, false, false},
 		{"address after double backticks", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "``@lead `still code`` @lead review"}, false, true},
 		{"unmatched single before double", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "` unmatched `` @lead review"}, false, true},
 		{"handoff", Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: one.ID, Body: "finished", Handoff: true}, false, true},
@@ -530,11 +531,12 @@ func TestTwoRepliersStopAfterTheHopLimit(t *testing.T) {
 	t.Parallel()
 	s, _, room, worker, lead := wakeFixture(t)
 	ctx := context.Background()
-	first, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: worker.ID, Body: "status?"})
+	first, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: worker.ID, Body: "@lead status?"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The lead replying to it is what sets the exchange going (an agent's plain message wakes nobody by itself).
+	// The lead replying to it is what sets the exchange going. (The question names the lead, so it is a mention and not a broadcast, which would
+	// count against the limit like a reply.)
 	opening, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: lead.ID, Body: "looking", ReplyTo: first.ID})
 	if err != nil {
 		t.Fatal(err)

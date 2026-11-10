@@ -447,7 +447,7 @@ func TestGroupOnlyMessagesAreDerivedFromTheNotesDispatchWrote(t *testing.T) {
 	answered := post(Message{AuthorKind: "agent", AuthorID: one.ID, Body: "@channel answer", OnlyTargets: []string{lead.ID}})
 	mention := post(Message{AuthorKind: "agent", AuthorID: one.ID, Body: "@channel @" + lead.Slug + " look"})
 	role := post(Message{AuthorKind: "agent", AuthorID: one.ID, Body: "@channel and @lead look"})
-	quiet := post(Message{AuthorKind: "agent", AuthorID: one.ID, Body: "just talking, nobody addressed"})
+	quiet := post(Message{AuthorKind: "agent", AuthorID: one.ID, Body: "just talking, nobody addressed"}) // a broadcast: every note is room-wide
 	// A group tag that reaches no agent: the other agent has left the room, so nothing was queued and nothing can expire.
 	if _, err := s.db.Exec(`UPDATE room_member SET left_at='2026-01-01T00:00:00.000000000Z' WHERE room_id=? AND member_kind='agent' AND member_id=?`, room.ID, lead.ID); err != nil {
 		t.Fatal(err)
@@ -458,7 +458,7 @@ func TestGroupOnlyMessagesAreDerivedFromTheNotesDispatchWrote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[string]bool{chatter.ID: true, ais.ID: true, handoff.ID: false, answered.ID: false, mention.ID: false, role.ID: false, quiet.ID: false, nobody.ID: false, "msg_missing": false} {
+	for id, want := range map[string]bool{chatter.ID: true, ais.ID: true, handoff.ID: false, answered.ID: false, mention.ID: false, role.ID: false, quiet.ID: true, nobody.ID: false, "msg_missing": false} {
 		if groupOnly[id] != want {
 			t.Errorf("message %s: group-only = %v, want %v", id, groupOnly[id], want)
 		}

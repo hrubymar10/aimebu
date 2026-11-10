@@ -133,7 +133,7 @@ func TestProjectListCarriesTheCallersRole(t *testing.T) {
 	}
 }
 
-// The room's message list says which messages expiry may leave out of an agent's context: AI group chatter
+// The room's message list says which messages expiry may leave out of an agent's context: AI group chatter and broadcasts
 // only (not a human's message, a reply, or anything in a private chat).
 func TestMessageListFlagsOnlyAIGroupChatterAsExpirable(t *testing.T) {
 	t.Parallel()
@@ -149,7 +149,7 @@ func TestMessageListFlagsOnlyAIGroupChatterAsExpirable(t *testing.T) {
 		return m
 	}
 	chatter := post("agent", agent.ID, "@channel status update", "")
-	plain := post("agent", agent.ID, "just talking", "")
+	plain := post("agent", agent.ID, "just talking", "") // names nobody: a broadcast, room-wide like a group tag
 	human := post("user", "owner", "@channel everyone look", "")
 	reply := post("agent", agent.ID, "@ais answer", human.ID)
 	mention := post("agent", agent.ID, "please look @owner", "")
@@ -164,7 +164,7 @@ func TestMessageListFlagsOnlyAIGroupChatterAsExpirable(t *testing.T) {
 	for _, m := range list {
 		got[m["id"].(string)] = m["expirable"]
 	}
-	want := map[string]any{chatter.ID: true, plain.ID: false, human.ID: false, reply.ID: false, mention.ID: false, both.ID: true}
+	want := map[string]any{chatter.ID: true, plain.ID: true, human.ID: false, reply.ID: false, mention.ID: false, both.ID: true}
 	for id, flag := range want {
 		if got[id] != flag {
 			t.Errorf("message %s expirable = %v, want %v (all: %v)", id, got[id], flag, got)

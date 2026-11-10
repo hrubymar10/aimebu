@@ -460,6 +460,9 @@ type DeliveryNote struct {
 	// Why says in a few words why this message reached the agent: "a reply to your message #12", "you are mentioned", "a person's
 	// message to the room"...
 	Why string `json:"why,omitempty"`
+	// FYI says the message was not addressed to the agent: it is a broadcast an agent wrote to the whole room, with no mention and no reply. The agent
+	// answers only if it has to act, and otherwise ends the turn without writing a message.
+	FYI bool `json:"fyi,omitempty"`
 	// InReplyTo is the message this one replies to, and Conversation the first message of its conversation when that is another one: its
 	// number, who wrote it, an excerpt, and whether the agent wrote it itself, so the agent knows what is being answered without looking it up.
 	InReplyTo    *NoteParent `json:"in_reply_to,omitempty"`

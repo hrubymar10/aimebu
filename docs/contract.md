@@ -1084,7 +1084,7 @@ it never silently reruns a turn with uncertain effects.
   stop missed while the machine was offline.
 - S→M `deliver{v, agent_id, generation, turn_id, mode, parent_turn_id?,
   notes[{note_id, room_id, from, message_id, no?, body, reply_to?, thread_root?,
-  attachments[{id,name?,mime,size,sha256}], why?, in_reply_to?:{no, from,
+  attachments[{id,name?,mime,size,sha256}], why?, fyi?, in_reply_to?:{no, from,
   body, yours?}, conversation?:{no, from, body, yours?}}], attachment_bearer?,
   context{role_body, rooms[{room_id, title, kind}],
   you_are:{id,name,role,harness,model},
@@ -1156,7 +1156,8 @@ CC/Codex, prompt-only on pi):
 - One concept, the reply: a message that answers a delivered note sets
   `reply_to` to it (its `no` or message ID) and so joins that message's
   conversation; `thread_root` is derived, not part of the answer (one still
-  sent is ignored). Each note says why it reached the agent (`why`: "a reply to your
+  sent is ignored). `fyi: true` marks a note that was not addressed to the agent (an
+  agent's broadcast, §6). Each note says why it reached the agent (`why`: "a reply to your
   message #N", "you are mentioned", "a person's message to the room", "a
   person's reply in a conversation you started"…), and carries the message it
   replies to (`in_reply_to`) and the first message of its conversation when
@@ -1292,10 +1293,32 @@ Computed in the message-insert transaction; every decision → note or
   (`message_not_woken` reason `auto_member`), only when addressed by name,
   role, group tag, reply or handoff;
 - AI message → resolved targets (mentions, addressed role), the human peer in
-  a DM; `handoff` → the lead. An AI reply to another AI wakes the parent author
-  (reason `reply`) while the room has seen fewer than 4 such wakes since the last
-  person's message, within 30 minutes (the hop guard, counted per room, not per
-  chain); the next reply keeps its thread link and wakes nobody, with one
+  a DM; `handoff` → the lead. An AI message that names nobody and answers
+  nothing (no live `@mention` token of any kind, no `reply_to`, no `handoff`,
+  not in a private chat with a person, not `OnlyTargets`) is a **broadcast**: it
+  wakes every other AI agent in the room as an FYI (reason `broadcast`; the
+  sender is never woken; a lead whose membership is `auto` is skipped with
+  `message_not_woken` reason `auto_member`, as for a person's unaddressed
+  message). A mention that reaches nobody (an unknown name, a person) is still
+  a mention, so it is not a broadcast; a mention written inside code is not a
+  mention, so it is. Nor is what an agent writes in a turn that has a note from a
+  person written in the same room (found through the message's outbox row and
+  the turn's notes): it is said to that person, however many notes or messages
+  there are, and does not wake the room. Nor is a message that asks a person
+  for something (an Inbox ask, `needs_attention`, proposed answers, open
+  questions): it is addressed to that person. The delivered note says it was not addressed to the agent
+  (`fyi: true`, and its `why`), and the agent answers only if it has to act,
+  otherwise it returns an empty `messages` array. A broadcast is room-wide AI
+  chatter like a group tag: message expiry drops it the same way
+  (docs/retention.md). A broadcast is an automatic wake like a reply, and the
+  hop guard below counts both together: after 4 such wakes in the room with no
+  person's message between them, the next broadcast is stored and shown and
+  wakes nobody (`loop_guard` event with `kind: broadcast`, one system notice
+  per run). The prompt's etiquette (always `@mention` whoever should act next)
+  keeps them rare. An AI reply to another AI wakes the parent author
+  (reason `reply`) while the room has seen fewer than 4 such wakes (replies and
+  broadcasts together) since the last person's message, within 30 minutes (the
+  hop guard, counted per room, not per chain); the next reply keeps its thread link and wakes nobody, with one
   `loop_guard` event and one system notice per run, and a person's message
   resets the count. Mentions and handoffs are not limited and are never
   overwritten by the `reply` reason.

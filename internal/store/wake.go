@@ -209,6 +209,43 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 				}
 			}
 		}
+		// An agent's message that names nobody and answers nothing (no live @mention of any kind, no reply, no handoff, not a private chat with a
+		// person) is a broadcast: it wakes every other agent in the room, as an FYI (the note says it was not addressed to them, and they answer only
+		// if they have to act). Without it such a message wakes nobody, and a chain of agents that forgot a mention stops there without a word. A
+		// mention that reaches nobody (an unknown name, a person) is still a mention: it addresses somebody, it is not a broadcast. Neither is what an
+		// agent writes in a turn that was woken by a person in this room (a status, a result, several messages back to them): that is said to the
+		// person, whether or not the reply link could be defaulted (it cannot with two notes or two messages), and waking the room for it would put
+		// every agent through an FYI turn on the most common flow there is. Neither is a message that asks a person for something (an Inbox ask,
+		// needs_attention, proposed answers, open questions): it is addressed to that person, who sees it in the Inbox, and the agents have nothing to add.
+		if message.AuthorKind == "agent" && message.OnlyTargets == nil && message.ReplyTo == "" && !message.Handoff && kind != "dm" && len(proseMentions(message.Body)) == 0 && !asksAPerson(message) {
+			answersPerson, err := tx.turnHasPersonNote(message.SourceOutID, message.RoomID)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if !answersPerson {
+				// A broadcast is an automatic wake like a reply to another agent, and counts with them against the same limit: agents that answer each
+				// other's broadcasts with broadcasts would go on for ever, so after ReplyWakeHops such wakes in a row with no person's message between
+				// them the next one is stored and shown and wakes nobody (said once, like a reply).
+				prior, err := tx.recentReplyWakes(message.RoomID, message.ID)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				switch {
+				case prior < ReplyWakeHops:
+					for _, member := range members {
+						if member.kind == "agent" {
+							add(member, "broadcast")
+						}
+					}
+				default:
+					if announced, err := tx.loopGuardAnnounced(message.RoomID); err != nil {
+						return nil, nil, nil, err
+					} else if !announced {
+						guard = &LoopGuard{Hops: prior, Broadcast: true}
+					}
+				}
+			}
+		}
 	}
 	if message.OnlyTargets != nil {
 		targets = map[string]string{}
@@ -224,6 +261,18 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 	}
 	sort.Strings(ids)
 	return ids, targets, guard, nil
+}
+
+// turnHasPersonNote says the turn that wrote a message (named by the outbox row the message came from; none for a message not written by a turn) was
+// woken by a note from a person written in the given room.
+func (tx *Tx) turnHasPersonNote(outboxID, roomID string) (bool, error) {
+	if outboxID == "" {
+		return false, nil
+	}
+	var found int
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM outbox o JOIN turn_note tn ON tn.turn_id=o.turn_id JOIN note n ON n.id=tn.note_id
+		JOIN message m ON m.id=n.message_id WHERE o.id=? AND m.author_kind='user' AND m.room_id=?)`, outboxID, roomID).Scan(&found)
+	return found == 1, err
 }
 
 // resolveMentionTargets applies the same name, role, project, and group
@@ -458,28 +507,29 @@ func mentionReasonStrength(reason string) int {
 	}
 }
 
-// ReplyWakeHops is how many agent-to-agent reply wakes a room allows in a row, with no person's message between them, inside
-// ReplyWakeWindow.
+// ReplyWakeHops is how many automatic agent-to-agent wakes (a reply to another agent's message, or a broadcast) a room allows in a row, with no
+// person's message between them, inside ReplyWakeWindow.
 const ReplyWakeHops = 4
 
 // ReplyWakeWindow bounds the count to recent history, so an old exchange does not silence replies hours later.
 const ReplyWakeWindow = 30 * time.Minute
 
-// LoopGuard says an agent's reply was threaded but deliberately did not wake its parent's author, because the room had already seen
-// ReplyWakeHops such wakes. Hops is the number of wakes that were allowed.
+// LoopGuard says an agent's reply was threaded but deliberately did not wake its parent's author (or an agent's broadcast woke nobody), because the
+// room had already seen ReplyWakeHops such wakes. Hops is the number of wakes that were allowed.
 type LoopGuard struct {
-	ReplyTo string
-	Hops    int
+	ReplyTo   string
+	Hops      int
+	Broadcast bool // the blocked message was a broadcast, not a reply
 }
 
-// recentReplyWakes counts, in a room, the agent messages that woke another agent by reply since the last message from a person, within
-// ReplyWakeWindow. Counting per room rather than up one reply chain means a reply to an older message does not start the count again;
+// recentReplyWakes counts, in a room, the agent messages that woke another agent by reply or by broadcast since the last message from a person, within
+// ReplyWakeWindow (one message counts once however many agents a broadcast woke). Counting per room rather than up one reply chain means a reply to an older message does not start the count again;
 // a person's message does. Only wakes that happened count, so a reply that was blocked, or whose parent a mention woke anyway, adds nothing.
 func (tx *Tx) recentReplyWakes(roomID, excludeID string) (int, error) {
 	cutoff := time.Now().UTC().Add(-ReplyWakeWindow).Format(timestampLayout)
 	var count int
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(DISTINCT m.id) FROM note n JOIN message m ON m.id=n.message_id
-		WHERE m.room_id=? AND m.id<>? AND m.author_kind='agent' AND n.wake_reason='reply' AND m.created_at>=?
+		WHERE m.room_id=? AND m.id<>? AND m.author_kind='agent' AND n.wake_reason IN ('reply','broadcast') AND m.created_at>=?
 		AND m.seq>COALESCE((SELECT MAX(seq) FROM message WHERE room_id=? AND author_kind='user'),0)`,
 		roomID, excludeID, cutoff, roomID).Scan(&count)
 	return count, err
@@ -547,7 +597,7 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 			skip = "system_chatter"
 		case reason == "":
 			skip = "not_addressed"
-		case reason == "human_message" && member.auto:
+		case (reason == "human_message" || reason == "broadcast") && member.auto:
 			skip = "auto_member" // the lead reads this room but was not put in it; an unaddressed message is the worker's
 		}
 		if skip == "" && reason == "agent_dm" && agentChatFull {
@@ -710,4 +760,16 @@ func hasClosingBacktickRun(line string, from, length int) bool {
 		i = end - 1
 	}
 	return false
+}
+
+// asksAPerson is whether a message carries a request to a person: an Inbox ask, needs_attention, proposed answers or open questions.
+func asksAPerson(message Message) bool {
+	filled := func(raw string) bool {
+		switch strings.TrimSpace(raw) {
+		case "", "null", "[]", "{}":
+			return false
+		}
+		return true
+	}
+	return message.NeedsAttention || filled(message.AskJSON) || filled(message.ProposedAnswersJSON) || filled(message.OpenQuestionsJSON)
 }

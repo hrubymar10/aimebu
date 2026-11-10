@@ -715,13 +715,13 @@ func (s *Store) SweepUndispatchedNormalTurns(ctx context.Context) (int, error) {
 type expiredNote struct{ noteID, messageID string }
 
 // ambientWakeReason says whether a note woke the agent by being room-wide rather
-// than aimed at it: a group tag (@channel, @here, @ais, ...). Only such a note written
+// than aimed at it: a group tag (@channel, @here, @ais, ...) or an agent's message that names nobody (a broadcast). Only such a note written
 // by an agent is ever expired (AI room chatter); a human's message is always
 // delivered, including a human's own group tag. Everything else is never expired
 // either: a mention, a role mention, a reply, a DM, a handoff, an inbox answer, and an
 // untargeted human message (humans are default-respond for AIs, so a room-wide
 // human message is a request, not chatter).
-func ambientWakeReason(reason string) bool { return reason == "group" }
+func ambientWakeReason(reason string) bool { return reason == "group" || reason == "broadcast" }
 
 // expirableNote is the whole rule for what message expiry may drop: AI group chatter. A note is expirable only
 // when an agent wrote it, it reached this agent through a group tag, it is not a reply (a reply names the
@@ -775,7 +775,7 @@ func (tx *Tx) dropExpiredNotes(projectID, roomID, agentID string, expired []expi
 }
 
 // GroupOnlyMessages returns the ids, among the given messages, that dispatch queued at least one note for and whose
-// every note has the group wake reason. It reads what dispatch actually did, so a handoff, an answer sent to named
+// every note has a room-wide wake reason (group, or broadcast). It reads what dispatch actually did, so a handoff, an answer sent to named
 // agents, a mention or a role mention (each a direct wake reason) takes a message out, with no second rule that
 // could drift from the first. One query per call; callers pass a page of ids.
 func (s *Store) GroupOnlyMessages(ctx context.Context, ids []string) (map[string]bool, error) {
@@ -791,7 +791,7 @@ func (s *Store) GroupOnlyMessages(ctx context.Context, ids []string) (map[string
 			args = append(args, id)
 		}
 		rows, err := s.db.QueryContext(ctx, `SELECT message_id FROM note WHERE message_id IN (`+marks+`)
-			GROUP BY message_id HAVING COUNT(*)>0 AND SUM(wake_reason<>'group')=0`, args...)
+			GROUP BY message_id HAVING COUNT(*)>0 AND SUM(wake_reason NOT IN ('group','broadcast'))=0`, args...)
 		if err != nil {
 			return nil, err
 		}

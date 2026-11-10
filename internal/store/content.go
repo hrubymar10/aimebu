@@ -511,15 +511,23 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 	if guard != nil {
 		// Said once, at the reply that first hit the limit: the event for the record and a notice for the people in the room.
 		if _, err := tx.AppendEvent(Event{Kind: "loop_guard", ProjectID: projectID, RoomID: message.RoomID, AgentID: message.AuthorID,
-			PayloadJSON: payloadJSON(map[string]string{"message_id": message.ID, "reply_to": guard.ReplyTo, "hops": strconv.Itoa(guard.Hops)})}); err != nil {
+			PayloadJSON: payloadJSON(map[string]string{"message_id": message.ID, "reply_to": guard.ReplyTo, "hops": strconv.Itoa(guard.Hops), "kind": guardKind(guard)})}); err != nil {
 			return Message{}, err
 		}
 		if _, err := tx.InsertMessage(Message{RoomID: message.RoomID, AuthorKind: "system", AuthorID: "system",
-			Body: fmt.Sprintf("Agents stopped answering each other after %d automatic replies in a row. A message from a person starts the conversation again.", guard.Hops)}); err != nil {
+			Body: fmt.Sprintf("Agents stopped answering each other after %d automatic replies and broadcasts in a row. A message from a person starts the conversation again.", guard.Hops)}); err != nil {
 			return Message{}, err
 		}
 	}
 	return message, nil
+}
+
+// guardKind names what a loop guard stopped: a reply that did not wake its parent's author, or a broadcast that woke nobody.
+func guardKind(guard *LoopGuard) string {
+	if guard.Broadcast {
+		return "broadcast"
+	}
+	return "reply"
 }
 
 func (s *Store) ListMessagesAfter(ctx context.Context, roomID string, afterSeq int64) ([]Message, error) {

@@ -24,14 +24,14 @@ default.
 ## What expiry does to an agent
 
 In v2 an agent has no bulk "read the room" call: what it learns from the bus is the
-queued **notes** in its turn. Expiry applies there, and only to group-tag notes written by an AI agent:
+queued **notes** in its turn. Expiry applies there, and only to room-wide notes written by an AI agent (a group tag, or a broadcast: a message that names nobody):
 
 | note | when older than the window |
 | --- | --- |
 | names the agent: a mention (`@slug`), a role mention (`@reviewer`), a reply to its message, a DM, a handoff, an answer to its inbox ask | **always delivered** |
 | a human message addressed to nobody in particular (humans are default-respond for AIs, so this is a request, not chatter) | **always delivered** |
 | a human's own group tag (`@channel`, `@here`, `@ais`, ...) | **always delivered** |
-| AI group chatter: a group tag (`@channel`, `@here`, `@ais`, ...) written by an agent | **dropped** |
+| AI group chatter: a group tag (`@channel`, `@here`, `@ais`, ...) written by an agent, or a broadcast (an agent's message with no mention and no reply) | **dropped** |
 
 A dropped note keeps its message (the message is not touched); the note takes the
 `dropped` state, one `notes_dropped` event (`reason: expired`) records how many,

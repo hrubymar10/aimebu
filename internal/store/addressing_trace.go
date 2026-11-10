@@ -107,8 +107,10 @@ func (s *Store) messageAddressingTrace(ctx context.Context, messageID, roomID, a
 // replySource says what a reply to a parent message did, following the rule
 // the server applies: the parent's author is addressed only while a member of
 // the room (system messages and departed members never count), never the
-// replier themself, and an agent replying to another agent keeps the thread
-// without waking it.
+// replier themself, and an agent replying to another agent wakes it behind the
+// hop guard (after ReplyWakeHops such wakes, replies and broadcasts together, in
+// a row with no person's message between them, a reply keeps the thread but
+// wakes nobody).
 func replySource(members []roomRecipient, names map[string]string, authorID, authorKind, parentAuthor, parentKind string) string {
 	var parent *roomRecipient
 	for i := range members {
@@ -128,7 +130,7 @@ func replySource(members []roomRecipient, names map[string]string, authorID, aut
 	case parentAuthor == authorID:
 		return fmt.Sprintf("reply to a message by %s: a reply to yourself addresses nobody", who)
 	case authorKind == "agent" && parent.kind != "user":
-		return fmt.Sprintf("reply to a message by %s: an agent's reply to another agent keeps the thread but does not wake it; use a live @mention", who)
+		return fmt.Sprintf("reply to a message by %s: an agent's reply to another agent wakes it, but only %d times in a row with no person's message between them, replies and broadcasts counted together (then it keeps the thread and wakes nobody; use a live @mention)", who, ReplyWakeHops)
 	default:
 		return fmt.Sprintf("reply to a message by %s: a reply addresses its parent's author", who)
 	}

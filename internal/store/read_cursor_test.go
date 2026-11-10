@@ -22,18 +22,18 @@ func agentReceipts(t *testing.T, s *Store, roomID string) map[string]int64 {
 	return seen
 }
 
-// Two agents say hello one after the other, neither addressing the other. The second hello is not for the first agent, so the router
-// hands it over as nothing to do; like an unaddressed message a waiting v1 agent received, it counts as seen at once, and both markers
-// end under the second hello.
+// Two agents say hello one after the other, each to the person and neither to the other. The second hello is not for the first agent, so the
+// router hands it over as nothing to do; like a message a waiting v1 agent received that was not for it, it counts as seen at once, and both
+// markers end under the second hello. (A message that names nobody is a broadcast and wakes the others: it is queued, not seen.)
 func TestAgentMarkerFollowsMessagesDeliveredAsNothingToDo(t *testing.T) {
 	t.Parallel()
 	s, _, room, owen, alice := wakeFixture(t)
 	ctx := context.Background()
-	first, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: owen.ID, Body: "HI"})
+	first, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: owen.ID, Body: "HI @owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: alice.ID, Body: "HI"})
+	second, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: alice.ID, Body: "HI @owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestAgentMarkerStaysBelowAQueuedNoteWhenChatterFollows(t *testing.T) {
 	}
 	var last Message
 	for i := 0; i < 3; i++ {
-		if last, err = s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: two.ID, Body: fmt.Sprintf("chatter %d", i)}); err != nil {
+		if last, err = s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: two.ID, Body: fmt.Sprintf("chatter %d for @owner", i)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -178,10 +178,10 @@ func TestMigrationNinetySixBackfillsSeenFromEvents(t *testing.T) {
 	t.Parallel()
 	s, project, room, owen, alice := wakeFixture(t)
 	ctx := context.Background()
-	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: owen.ID, Body: "HI"}); err != nil {
+	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: owen.ID, Body: "HI @owner"}); err != nil {
 		t.Fatal(err)
 	}
-	hi, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: alice.ID, Body: "HI"})
+	hi, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: alice.ID, Body: "HI @owner"})
 	if err != nil {
 		t.Fatal(err)
 	}

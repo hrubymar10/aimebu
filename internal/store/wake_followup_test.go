@@ -45,7 +45,7 @@ func (h *replyHarness) guards() int {
 
 // exchange has the two agents answer each other until the room is at the limit; it returns the first message and the last.
 func (h *replyHarness) exchange() (Message, Message) {
-	root := h.say("agent", h.worker.ID, "root", "")
+	root := h.say("agent", h.worker.ID, "@lead root", "") // a mention: a broadcast would count against the limit
 	previous := root
 	agents := []string{h.lead.ID, h.worker.ID}
 	for hop := 0; hop < ReplyWakeHops; hop++ {
@@ -80,7 +80,7 @@ func TestLoopGuardOnlyAnnouncesARealBlock(t *testing.T) {
 	t.Parallel()
 	h := newReplyHarness(t)
 	_, last := h.exchange()
-	mine := h.say("agent", h.worker.ID, "a note to self", "")
+	mine := h.say("agent", h.worker.ID, "a note to self for @owner", "") // names a person: a broadcast here would be a blocked wake of its own
 	h.say("agent", h.worker.ID, "following up on myself", mine.ID)
 	if h.guards() != 0 {
 		t.Fatalf("a self-reply is not a blocked wake: guards=%d", h.guards())

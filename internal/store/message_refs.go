@@ -145,6 +145,8 @@ func noteWhy(reason string, parent *protocol.NoteParent) string {
 		return "your role is mentioned"
 	case "group":
 		return "a group tag that includes you"
+	case "broadcast":
+		return "an agent's message to the whole room, not addressed to you: answer only if you have to act, otherwise end the turn without writing a message"
 	case "dm":
 		return "a private message to you"
 	case "agent_dm":
@@ -200,6 +202,7 @@ func (tx *Tx) noteContext(agentID string, notes []protocol.DeliveryNote, reasons
 		}
 		if i < len(reasons) {
 			note.Why = noteWhy(reasons[i], replyParent)
+			note.FYI = reasons[i] == "broadcast"
 		}
 	}
 	return nil
