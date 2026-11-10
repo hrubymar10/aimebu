@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'agents', 'model.js'), 'utf8');
 const context = vm.createContext({ Date, Number, Math, JSON, Map, Intl, Object, Array, String });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateBadge, stateDot, stateOf, activityOf, warmOf, warmBadgeOf, keepAliveOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateBadge, stateDot, stateOf, activityOf, warmOf, dotOf, keepAliveOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -67,15 +67,6 @@ assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'sleeping' } }, nowMs).
 assert.equal(m.warmOf({ observed: 'in_turn', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs), null);
 assert.equal(m.warmOf({ observed: 'idle' }, nowMs), null);
 assert.equal(m.activityOf({ observed: 'idle', warm: { state: 'sleeping' } }, state({ observed: 'idle' })).text, 'Sleeping', 'the card shows it where an idle agent has nothing else to say');
-
-// The warm or cold badge: fire while the process is kept up (minutes left, never zero), a snowflake while there is none, nothing when warm mode does not apply, the state is not
-// known, or the agent is working. The tooltips are the ones asked for.
-assert.deepEqual(plain(m.warmBadgeOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs)), { state: 'warm', minutes: 5, pill: '5m', title: 'Warm, the next answer skips the start (≈5 min left)' });
-assert.equal(m.warmBadgeOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: '2026-11-08T16:00:20Z' } }, nowMs).pill, '1m', 'a window almost over still says one minute');
-assert.deepEqual(plain(m.warmBadgeOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: 'garbage' } }, nowMs)), { state: 'warm', minutes: 0, pill: '', title: 'Warm, the next answer skips the start' });
-assert.deepEqual(plain(m.warmBadgeOf({ observed: 'idle', warm: { state: 'sleeping' } }, nowMs)), { state: 'cold', minutes: 0, pill: '', title: 'Cold, the next answer starts the agent' });
-assert.equal(m.warmBadgeOf({ observed: 'in_turn', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs), null, 'working: neither');
-assert.equal(m.warmBadgeOf({ observed: 'idle' }, nowMs), null, 'no warm state (off, unknown or not Claude): no badge');
 
 assert.equal(m.activityOf({ woken_by: 'reply', activity: 'tool inspect' }, state({})).text, 'Woken by reply · tool inspect');
 assert.equal(m.activityOf({}, state({ observed: 'in_turn' })).text, 'Working…');
@@ -164,4 +155,24 @@ assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, estimate_us
 assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: true }).warning, '');
 assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: false, last_error: 'no key' }).warning, /^The last ping failed: no key\.$/);
 assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: true, missed: true }).warning, /did not find the cache/);
+// The one status dot: green and cold, green and warm, red offline, orange when it is not known.
+{
+  const dot = (agent, at = nowMs) => plain(m.dotOf(agent, m.stateOf(agent), at));
+  const idle = { desired: 'active', observed: 'idle', tool: 'claude' };
+  assert.equal(dot({ ...idle, warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }).kind, 'warm');
+  assert.equal(dot({ ...idle, warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }).title, 'Online \u00b7 warm, the next answer skips the start (\u22485 min left)');
+  assert.match(dot({ ...idle, warm: { state: 'warm', sleeps_at: '2026-11-08T16:00:20Z' } }).title, /\(\u22481 min left\)$/, 'a window almost over still says one minute, never zero');
+  assert.deepEqual(dot({ ...idle, warm: { state: 'warm', sleeps_at: 'garbage' } }), { kind: 'warm', title: 'Online \u00b7 warm, the next answer skips the start' }, 'an end that cannot be read is still warm, without minutes');
+  assert.deepEqual(dot({ ...idle, warm: { state: 'sleeping' } }), { kind: 'cold', title: 'Online \u00b7 cold, the next answer starts the agent' });
+  assert.equal(dot({ ...idle }).kind, 'cold', 'warm mode off or not applicable: cold, the next answer starts the agent');
+  assert.equal(dot({ ...idle, tool: 'codex' }).kind, 'cold');
+  assert.equal(dot({ ...idle, warm: { state: 'unknown' } }).kind, 'unknown', 'a warm state that is not known is orange, not cold');
+  assert.match(dot({ ...idle, warm: { state: 'unknown' } }).title, /^State unknown/);
+  assert.equal(dot({ desired: 'active', observed: 'in_turn', tool: 'claude' }).kind, 'working', 'a working agent is online');
+  assert.deepEqual([dot({ desired: 'stopped', observed: 'stopped' }).kind, dot({ desired: 'active', observed: 'lost' }).kind], ['offline', 'offline']);
+  assert.match(dot({ desired: 'stopped', observed: 'stopped' }).title, /^Offline/);
+  assert.deepEqual([dot({ desired: 'not_accepting', observed: 'idle' }).kind, dot({ desired: 'active', observed: 'idle', boundary_pending: true }).kind], ['unknown', 'unknown'], 'paused or waiting for a decision: orange');
+  assert.deepEqual([dot({ desired: 'not_accepting', observed: 'idle' }).title, dot({ desired: 'active', observed: 'idle', boundary_pending: true }).title], ['Paused; no new work is accepted.', 'Waiting for project owner approval in Inbox.'], 'a paused or waiting agent says so, in its own words');
+  assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'unknown' } }, nowMs), null, 'and says neither warm nor sleeping');
+}
 console.log('agents model: keep-alive ok');

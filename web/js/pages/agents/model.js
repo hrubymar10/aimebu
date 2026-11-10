@@ -57,7 +57,7 @@ export const stateDot = kind => ({ idle: 'active', working: 'active', paused: 's
 // `now` is a parameter so the text is a function of the data and the time.
 export function warmOf(agent, now = Date.now()) {
   const warm = agent.warm;
-  if (!warm || agent.observed !== 'idle') return null;
+  if (!warm || warm.state === 'unknown' || agent.observed !== 'idle') return null;
   if (warm.state === 'warm') {
     const left = Date.parse(warm.sleeps_at) - now;
     if (!Number.isFinite(left)) return { text: 'Warm', title: 'Its process is kept running for the next message.' };
@@ -67,18 +67,24 @@ export function warmOf(agent, now = Date.now()) {
   return { text: 'Sleeping', title: 'Its process is stopped; the next message starts it, a few seconds slower than a warm agent.' };
 }
 
-// The warm/cold badge of an idle agent's card: a fire while its process is kept up for the next message (with the minutes left), a snowflake while there
-// is none and the next answer starts the agent. Null when warm mode does not apply to the agent, its state is not known, or it is working. It is the data
-// the card already has (`agent.warm`), shown as an icon; `now` is a parameter so the result is a function of the data and the time.
-export function warmBadgeOf(agent, now = Date.now()) {
-  const warm = agent.warm;
-  if (!warm || agent.observed !== 'idle') return null;
-  if (warm.state === 'warm') {
-    const left = Date.parse(warm.sleeps_at) - now;
-    const minutes = Number.isFinite(left) ? Math.max(1, Math.ceil(left / 60000)) : 0;
-    return { state: 'warm', minutes, pill: minutes ? `${minutes}m` : '', title: minutes ? `Warm, the next answer skips the start (≈${minutes} min left)` : 'Warm, the next answer skips the start' };
+// The one status dot of a card: it says whether the agent is online and, for an idle one, whether its process is warm (and is the only place the card says so).
+// `kind` is what the dot looks like: `cold` (green), `warm` (green with a ring that pulses), `working` (green: the process is alive, whether it was warm is not told), `unknown`
+// (orange: a paused or waiting agent, which says so in its own words, or a Claude agent whose warm state is not known) or `offline` (red: stopped, lost or gone). `title` is the sentence for the tooltip and for
+// a screen reader. `state` is stateOf(agent); `now` is a parameter so the text is a function of the data and the time.
+export function dotOf(agent, state, now = Date.now()) {
+  const detail = state.title ? `\n${state.title}` : '';
+  const dot = stateDot(state.kind);
+  if (dot === 'dead') return { kind: 'offline', title: `Offline${detail}` };
+  // Paused or waiting for a decision is a known state, with its own words, and the dot is orange all the same; only a kind this does not know is "State unknown".
+  if (dot === 'stale') return { kind: 'unknown', title: state.title || state.name };
+  if (dot === 'offline') return { kind: 'unknown', title: `State unknown${detail}` };
+  if (state.kind === 'working') return { kind: 'working', title: `Online \u00b7 working${detail}` };
+  if (agent.warm?.state === 'unknown') return { kind: 'unknown', title: 'State unknown \u00b7 whether its process is kept warm is not known (an older supervisor, or no report yet)' };
+  if (agent.warm?.state === 'warm') {
+    const left = Date.parse(agent.warm.sleeps_at) - now, minutes = Number.isFinite(left) ? Math.max(1, Math.ceil(left / 60000)) : 0;
+    return { kind: 'warm', title: minutes ? `Online \u00b7 warm, the next answer skips the start (\u2248${minutes} min left)` : 'Online \u00b7 warm, the next answer skips the start' };
   }
-  return { state: 'cold', minutes: 0, pill: '', title: 'Cold, the next answer starts the agent' };
+  return { kind: 'cold', title: 'Online \u00b7 cold, the next answer starts the agent' };
 }
 
 // What a card says about the prompt cache keep-alive: how often it is pinged, what a stretch of pings costs (measured from the last ping when there is

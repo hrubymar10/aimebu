@@ -561,17 +561,24 @@ func (s *Server) agentWarmState(card store.AgentCard) *agentWarm {
 	report := machine.warm
 	machine.warmMu.Unlock()
 	// What the supervisor itself says decides, never the server's guess: a live idle process is warm; no process is sleeping only when the supervisor says
-	// it works to a window (idle_seconds above 0). A report without idle_seconds (an older supervisor, whose own default may be off) or no report yet is
-	// unknown, and an unknown state is shown as neither warm nor sleeping.
-	if report == nil {
+	// it works to a window (idle_seconds above 0). No report yet, or a report without idle_seconds (an older supervisor, whose own default may be off), is
+	// unknown: the card says so (state "unknown", which a card shows as neither warm nor sleeping), so it can be told from warm mode being off, where the
+	// supervisor says the window is 0 and the field is absent.
+	if card.Observed == "in_turn" {
 		return nil
+	}
+	if report == nil {
+		return &agentWarm{State: "unknown"}
 	}
 	for _, agent := range report.Agents {
 		if agent.AgentID == card.ID && agent.State == "idle" {
 			return &agentWarm{State: "warm", SleepsAt: agent.SleepsAt}
 		}
 	}
-	if report.IdleSeconds == nil || *report.IdleSeconds <= 0 || card.Observed == "in_turn" {
+	if report.IdleSeconds == nil {
+		return &agentWarm{State: "unknown"}
+	}
+	if *report.IdleSeconds <= 0 {
 		return nil
 	}
 	return &agentWarm{State: "sleeping"}

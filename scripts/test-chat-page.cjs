@@ -2424,6 +2424,9 @@ async function main() {
       }
       return out;
     }, variant);
+    // The pill's options are CSS rules keyed on data-ui-forks: when the experiment runs, every one of them exists (a stylesheet cleanup once removed them and the pill did nothing).
+    const rules = await page.evaluate(() => { const found = new Set(); const walk = list => { for (const rule of list) { if (rule.cssRules) walk(rule.cssRules); const match = (rule.selectorText || '').match(/data-ui-forks="(\w)"/g); if (match) match.forEach(item => found.add(item.slice(-2, -1))); } }; for (const sheet of document.styleSheets) { try { walk(sheet.cssRules); } catch { /* another origin */ } } return [...found].sort().join(''); });
+    assert.equal(rules, 'abcde', `the forks pill's five options each have CSS rules: found "${rules}"`);
     const names = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'], pick = (state, key) => names.map(name => state[name][key]);
     const none = await read('');
     assert.deepEqual(pick(none, 'depth'), ['1', '2', '3', '3', '3', '3', '1'], 'depth is the level below the first message, at most 3');

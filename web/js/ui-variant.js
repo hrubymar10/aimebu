@@ -19,7 +19,7 @@ export function chooseVariant(key, variant) { choosers[key]?.(variant, true); }
 export function defineExperiment(key, name, labels, { hidden = false } = {}) { experiments[key] = { name, labels, hidden }; }
 
 // The experiments that are on right now (each gets its own pill), or [] for none.
-export const ACTIVE = ['warmicon', 'forks']; // the warm / cold icon of the agent card and the way a thread panel shows forks are being chosen (see pages/agents/agents-list.js, pages/chat/rows.js)
+export const ACTIVE = ['forks']; // the way a thread panel shows forks is being chosen (see pages/chat/rows.js)
 
 // The option of experiment `key`: its pill's choice while it runs ('a' otherwise). Each experiment keeps its own attribute on <html>
 // (data-ui-<key>), so several can run at once; data-ui and data-ui-experiment still say which pill was set last.

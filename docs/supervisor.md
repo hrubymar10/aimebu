@@ -554,7 +554,7 @@ duration, 0 is off, unset or unreadable is 5 minutes). A supervisor applies a wi
 turning it off ends every idle process at once. It says the window it works to in its `warm_state` report
 (`idle_seconds`), and a card's warm or sleeping follows that and nothing else: a live idle process is "warm"; no
 process is "sleeping" only when the supervisor says it works to a window above 0; no report yet, or a report
-without `idle_seconds`, is unknown and a card then says neither. So a supervisor started with
+without `idle_seconds`, is unknown (the card's `warm.state` is `unknown`) and a card then says neither warm nor sleeping. So a supervisor started with
 `AIMEBU2_WARM_IDLE=0` shows no "Sleeping".
 
 *Mixed versions.* The server of the build before this one sent `warm_idle_seconds: 0` on every delivery when the
@@ -573,9 +573,12 @@ while it works again is reported by that turn's exit, not twice. The web treats 
 replaces (an agent's activity, the refresh of its card) and refreshes a card on `warm_process_ended`, so
 the warm or sleeping state follows the process without polling.
 
-*What the owner sees.* An idle Claude agent's card shows whether its process is warm: a flame (with the minutes left) while it is kept up, a snowflake while it is
-cold, nothing while it works or when the state is unknown. Where the icon sits is being chosen on the testing pill ("Warm or cold icon": after the name, over the status
-dot, a pill with the minutes, warm only, or a rail down the card's edge). It reads the card's `warm` field, refreshed when a process starts or ends, with no polling of its own.
+*What the owner sees.* Every agent's card has one status dot, and for an idle Claude agent it says whether the process is warm: green without a ring is online and cold (the
+next answer starts the agent), green with a ring that pulses (as v1's presence dot did; a ring only under reduced motion) is online and warm, red is offline, and orange is a state
+that is not plain online or offline: a paused or waiting agent (its tooltip says which), or a Claude agent whose warm state is `unknown`. The dot's tooltip says it in words
+("Online · warm, the next answer skips the start (≈4 min left)", "Online · cold…", "Offline", "State unknown"), and the same sentence is there for a screen reader. A working
+agent is green (its process is alive; whether it was warm is not told). The members panel's people have the same 8px dot. It reads the card's `warm` field, refreshed when a
+process starts or ends, with no polling of its own (the minutes follow the panel's clock).
 
 A supervisor that keeps processes warm sends the server a `warm_state` frame (at
 connect, and whenever the picture changes: a process goes idle, is taken for a turn, ends): the agents with a

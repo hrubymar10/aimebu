@@ -63,11 +63,6 @@ Vendored frontend dependency:
   `1.59.0`, from `https://github.com/lucide-icons/lucide/tree/1.59.0/icons`. The only change is dropping the fixed
   `width="24" height="24"` and the line breaks; they are drawn through a CSS mask in the current colour.
 
-- `web/icons/warm.svg` is the SVG Repo "fire" icon (svgrepo.com/svg/509111) and `web/icons/cold.svg` the SVG Repo "snowflake" icon (svgrepo.com/svg/438853), both **MIT** per
-  the owner, chosen by him: the warm or cold badge of an agent's card (a fire while its process is kept up, a snowflake while the next answer starts the agent). The paths are
-  unchanged; the download's XML declaration, header comment, fixed 800 px size, black fill and class were removed and the fill is `currentColor`. They are drawn through a CSS
-  mask, in the theme's colours.
-
 - `web/icons/health.svg` is the SVG Repo "heart pulse" icon (svgrepo.com/svg/529638), **CC0** (public domain dedication), chosen by the
   owner. The paths are unchanged; the black strokes and fills use `currentColor`, and the download's header is not carried. It is
   drawn through a CSS mask: it is the Health button in the top bar.

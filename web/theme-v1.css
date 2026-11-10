@@ -1384,8 +1384,6 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-stop { -webkit-mask-image: url("/icons/stop.svg"); mask-image: url("/icons/stop.svg"); }
 .icon-mask-pause { -webkit-mask-image: url("/icons/pause.svg"); mask-image: url("/icons/pause.svg"); }
 .icon-mask-play { -webkit-mask-image: url("/icons/play.svg"); mask-image: url("/icons/play.svg"); }
-.icon-mask-warm { -webkit-mask-image: url("/icons/warm.svg"); mask-image: url("/icons/warm.svg"); }
-.icon-mask-cold { -webkit-mask-image: url("/icons/cold.svg"); mask-image: url("/icons/cold.svg"); }
 .icon-mask-arrow-down { -webkit-mask-image: url("/icons/arrow-down.svg"); mask-image: url("/icons/arrow-down.svg"); }
 .icon-mask-arrow-up { -webkit-mask-image: url("/icons/arrow-up.svg"); mask-image: url("/icons/arrow-up.svg"); }
 .icon-mask-arrow-up-down { -webkit-mask-image: url("/icons/arrow-up-down.svg"); mask-image: url("/icons/arrow-up-down.svg"); }

@@ -102,6 +102,11 @@ async function main() {
     // The role label ends at the same right edge on every person's card, yours (no private-chat button) and another's (with one).
     const edges = await page.$$eval('#agents-humans .human-card .human-role', nodes => nodes.map(node => Math.round(node.getBoundingClientRect().right * 10) / 10));
     assert.ok(edges.length === 2 && edges[0] === edges[1], `role labels share a right edge: ${edges}`);
+    // A person's status dot is the same size as an agent's, so the dots of the members panel line up.
+    const dotBox = selector => page.$eval(selector, node => { const box = node.getBoundingClientRect(); return [Math.round(box.width * 10) / 10, Math.round(box.height * 10) / 10, Math.round((box.left + box.width / 2) * 10) / 10]; });
+    const human = await dotBox('#agents-humans .human-card .agent-online-dot'), agentDot = await dotBox('[data-agent-id=a1] .agent-online-dot');
+    assert.deepEqual([human[0], human[1], agentDot[0], agentDot[1]], [8, 8, 8, 8], `a person's dot and an agent's are both 8px: ${human} / ${agentDot}`);
+    assert.equal(human[2], agentDot[2], 'and they are centred on the same line');
     const row = id => page.$eval(`[data-agent-id=${id}]`, node => ({ activity: node.querySelector('.agent-activity').textContent, dot: node.querySelector('.agent-dot').dataset.state,
       pause: [node.querySelector('.agent-act-pause').disabled, node.querySelector('.agent-act-pause').title], stop: node.querySelector('.agent-act-stop').disabled, reactivate: node.querySelector('.agent-reactivate').disabled,
       hint: [...node.querySelectorAll('.agent-action-hint:not([hidden])')].map(hint => hint.textContent) }));
@@ -759,82 +764,70 @@ async function main() {
     await page.close();
   }
 
-  // The warm or cold icon on an idle agent's card, in each placement of the "warmicon" experiment (the markup holds them all; the attribute on <html> picks one).
+  // On a collapsed card the state pill of an idle agent says just "idle" (how long is detail for the open card); a working agent keeps its time, and an open card shows it too.
+  {
+    const page = await mount();
+    await show(page, 'r1', [agent('t1', 'idle1', { last_activity_at: new Date(Date.now() - 31 * 60000).toISOString() }), agent('t2', 'busy1', { observed: 'in_turn', activity_at: new Date(Date.now() - 90000).toISOString() })]);
+    const pill = id => page.$eval(`[data-agent-id=${id}] .agent-state-pill`, node => node.textContent.replace(/\s+/g, ' ').trim());
+    assert.deepEqual([await pill('t1'), /^working \d/.test(await pill('t2'))], ['idle', true], 'a collapsed idle card says no time, a working one does');
+    await page.$eval('[data-agent-id=t1] .agent-name', node => node.click()); await settle(page);
+    assert.match(await pill('t1'), /^idle \d/, 'an open idle card shows how long');
+    await page.$eval('[data-agent-id=t1] .agent-name', node => node.click()); await settle(page);
+    assert.equal(await pill('t1'), 'idle', 'and a collapsed one again says just idle');
+    await page.close();
+  }
+
+  // An agent's one status dot says online or offline and warm. Green is online and cold, green with a ring that pulses is online and warm (v1's presence dot),
+  // red is offline, orange is a state not known (a paused or waiting agent, a warm state the supervisor did not tell). No icon and no second dot, in every theme.
   {
     const page = await mount();
     const soon = new Date(Date.now() + 4 * 60000 + 30000).toISOString();
-    await show(page, 'r1', [agent('w1', 'warm1', { tool: 'claude', warm: { state: 'warm', sleeps_at: soon } }), agent('w2', 'cold1', { tool: 'claude', warm: { state: 'sleeping' } }),
-      agent('w3', 'busy1', { tool: 'claude', observed: 'in_turn', warm: { state: 'warm', sleeps_at: soon } }), agent('w4', 'none1', { tool: 'codex' })]);
-    const set = value => page.evaluate(value => { if (value) document.documentElement.setAttribute('data-ui-warmicon', value); else document.documentElement.removeAttribute('data-ui-warmicon'); }, value);
+    await show(page, 'r1', [agent('f1', 'warm1', { tool: 'claude', warm: { state: 'warm', sleeps_at: soon } }), agent('f2', 'cold1', { tool: 'claude', warm: { state: 'sleeping' } }),
+      agent('f3', 'work1', { tool: 'claude', observed: 'in_turn' }), agent('f4', 'unk1', { tool: 'claude', warm: { state: 'unknown' } }), agent('f5', 'off1', { tool: 'claude', desired: 'stopped', observed: 'stopped' }),
+      agent('f6', 'pause1', { tool: 'claude', desired: 'not_accepting' }), agent('f7', 'plain1', { tool: 'codex' })]);
     const read = id => page.$eval(`[data-agent-id=${id}]`, node => {
-      const shown = selector => [...node.querySelectorAll(selector)].filter(el => getComputedStyle(el).display !== 'none');
-      const slot = shown('.warm-badge').map(el => ({ slot: el.className.match(/warm-slot-(\w)/)[1], warm: el.dataset.warm, title: el.title, text: el.textContent.trim() }));
-      const dot = node.querySelector('.agent-dot'), dotStyle = getComputedStyle(dot);
-      return { slot, card: node.dataset.warm || null, dotIcon: dotStyle.maskImage !== 'none' && dotStyle.maskImage !== '' ? new URL(dotStyle.maskImage.replace(/^url\("?|"?\)$/g, ''), 'http://x').pathname : '', rail: getComputedStyle(node).boxShadow !== 'none' };
+      const dot = node.querySelector('.agent-dot'), style = getComputedStyle(dot), words = node.querySelector('.dot-words'), sr = node.querySelector('.dot-sr');
+      return { kind: dot.dataset.dot, background: style.backgroundColor, ring: style.boxShadow !== 'none', animation: style.animationName, size: [Math.round(dot.getBoundingClientRect().width), Math.round(dot.getBoundingClientRect().height)],
+        tooltip: words.title, spoken: sr.textContent, hiddenVisually: sr.getBoundingClientRect().width <= 1,
+        icons: [...node.querySelectorAll('.warm-badge, .warm-sr, .icon-mask-warm, .icon-mask-cold')].length, dots: node.querySelectorAll('.agent-online-dot').length };
     });
-    const warmTitle = text => /^Warm, the next answer skips the start \(≈[45] min left\)$/.test(text);
-    // No placement chosen (the page tests run without the app, so nothing sets the attribute): nothing is drawn.
-    await set(null);
-    assert.deepEqual((await read('w1')).slot, [], 'without the experiment nothing is shown');
-    // A: after the name.
-    await set('a');
-    let w1 = await read('w1'), w2 = await read('w2');
-    assert.deepEqual([w1.slot.length, w1.slot[0].slot, w1.slot[0].warm, warmTitle(w1.slot[0].title), w1.slot[0].text], [1, 'a', 'warm', true, '']);
-    assert.deepEqual([w2.slot.length, w2.slot[0].warm, w2.slot[0].title], [1, 'cold', 'Cold, the next answer starts the agent']);
-    assert.deepEqual((await read('w3')).slot, [], 'a working agent shows neither');
-    assert.deepEqual((await read('w4')).slot, [], 'an agent with no warm state shows nothing');
-    // Only a card that has the icon lets its name stop growing; one with no warm state keeps its name as wide as it was (the member-row shape the smoke measures).
-    const grow = id => page.$eval(`[data-agent-id=${id}] .agent-identity`, el => getComputedStyle(el).flexGrow);
-    assert.deepEqual([await grow('w1'), await grow('w2'), await grow('w4')], ['0', '0', '1'], 'A: the name stops growing only where the icon follows it');
-    // The icon sits right after the name, before the state.
-    const order = await page.$eval('[data-agent-id=w1]', node => { const at = selector => node.querySelector(selector).getBoundingClientRect(); return [at('.agent-name').right <= at('.warm-slot-a').left + 1, at('.warm-slot-a').right <= at('.agent-state').left + 1]; });
-    assert.deepEqual(order, [true, true], 'the icon follows the name and comes before the state');
-    // B: in place of the status dot, keeping its place; the dot becomes the icon.
-    await set('b');
-    w1 = await read('w1'); w2 = await read('w2');
-    assert.deepEqual([w1.slot.length, w1.dotIcon, w2.dotIcon], [0, '/icons/warm.svg', '/icons/cold.svg']);
-    assert.equal((await read('w3')).dotIcon, '', 'a working agent keeps its dot');
-    assert.equal((await read('w4')).dotIcon, '', 'an agent with no warm state keeps its dot');
-    // B and E have no labelled icon of their own, so the same words are there as hidden text for a screen reader (and only there: A, C and D carry them on their own icon).
-    const spoken = id => page.$eval(`[data-agent-id=${id}]`, node => [...node.querySelectorAll('.warm-sr')].filter(el => getComputedStyle(el).display !== 'none').map(el => ({ text: el.textContent, hiddenVisually: el.getBoundingClientRect().width <= 1 && el.getBoundingClientRect().height <= 1 })));
-    const said = text => /^Warm, the next answer skips the start \(≈[45] min left\)$/.test(text);
-    let words = await spoken('w1'), cold = await spoken('w2');
-    assert.deepEqual([words.length, said(words[0].text), words[0].hiddenVisually, cold.length, cold[0].text], [1, true, true, 1, 'Cold, the next answer starts the agent'], 'B: the words are there for a screen reader');
-    assert.deepEqual([(await spoken('w3')).length, (await spoken('w4')).length], [0, 0], 'a working agent and one with no warm state say nothing');
-    await set('e');
-    words = await spoken('w1');
-    assert.deepEqual([words.length, said(words[0].text), (await spoken('w2'))[0].text], [1, true, 'Cold, the next answer starts the agent'], 'E: the words are there for a screen reader');
-    for (const other of ['a', 'c', 'd']) { await set(other); assert.deepEqual(await spoken('w1'), [], `${other}: the icon is labelled itself, so the hidden text is not there to be read twice`); }
-    await set('b');
-    // C: icon and the minutes left as a pill on the right (the cold one has no minutes).
-    await set('c');
-    w1 = await read('w1'); w2 = await read('w2');
-    assert.deepEqual([w1.slot.length, w1.slot[0].slot, w1.slot[0].text, w2.slot[0].text], [1, 'c', /^[45]m$/.test(w1.slot[0].text) ? w1.slot[0].text : 'no minutes', '']);
-    // D: warm only: a fire while warm, nothing when cold.
-    await set('d');
-    assert.deepEqual([(await read('w1')).slot.length, (await read('w2')).slot.length], [1, 0]);
-    // E: a rail down the card's edge, in the theme's colours.
-    await set('e');
-    w1 = await read('w1'); w2 = await read('w2');
-    assert.deepEqual([w1.rail, w2.rail, w1.slot.length, (await read('w4')).rail], [true, true, 0, false]);
-    // The theme's colours, high contrast included: warm is the orange, cold the accent, read from the page and not fixed.
-    await set('a');
+    const colours = () => page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement), probe = value => { const el = document.createElement('i'); el.style.color = value; document.body.append(el); const c = getComputedStyle(el).color; el.remove(); return c; };
+      return { green: probe(root.getPropertyValue('--green-text')), orange: probe(root.getPropertyValue('--orange')), red: probe(root.getPropertyValue('--red')) };
+    });
     for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-      const colours = await page.evaluate(() => {
-        const root = getComputedStyle(document.documentElement), colour = id => getComputedStyle(document.querySelector(`[data-agent-id=${id}] .warm-badge`)).color;
-        const probe = value => { const el = document.createElement('i'); el.style.color = value; document.body.append(el); const c = getComputedStyle(el).color; el.remove(); return c; };
-        return { warm: colour('w1'), cold: colour('w2'), orange: probe(root.getPropertyValue('--orange')), accent: probe(root.getPropertyValue('--accent')) };
-      });
-      assert.deepEqual([colours.warm, colours.cold], [colours.orange, colours.accent], `${theme}: warm is the theme's orange and cold its accent`);
+      const want = await colours();
+      const states = Object.fromEntries(await Promise.all(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map(async id => [id, await read(id)])));
+      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map(id => states[id].kind), ['warm', 'cold', 'working', 'unknown', 'offline', 'unknown', 'cold'], `${theme}: what each card's dot says`);
+      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map(id => states[id].background), [want.green, want.green, want.green, want.orange, want.red, want.orange, want.green], `${theme}: green online, orange not known, red offline, from the theme`);
+      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map(id => states[id].ring), [true, false, false, false, false, false, false], `${theme}: only a warm dot has the ring`);
+      assert.equal(states.f1.animation, 'presence-pulse', `${theme}: and it pulses`);
+      assert.deepEqual(['f2', 'f3', 'f4', 'f5'].map(id => states[id].animation), Array(4).fill('none'), `${theme}: nothing else moves`);
+      assert.deepEqual(['f1', 'f2', 'f5'].map(id => states[id].size.join('x')), Array(3).fill('8x8'), `${theme}: every dot is the same size, so nothing shifts when a card turns warm`);
+      assert.deepEqual([Object.values(states).map(item => item.icons), Object.values(states).map(item => item.dots)], [Array(7).fill(0), Array(7).fill(1)], `${theme}: no icon, one dot and no other warm words`);
     }
-    // The minutes count down with the clock, without another request.
     await page.evaluate(() => { document.documentElement.removeAttribute('data-theme'); });
-    await set('c');
+    const f1 = await read('f1');
+    assert.match(f1.tooltip, /^Online \u00b7 warm, the next answer skips the start \(\u2248[45] min left\)$/, 'the warm dot says so in its tooltip');
+    assert.deepEqual([f1.spoken === f1.tooltip, f1.hiddenVisually], [true, true], 'and in words for a screen reader, hidden visually');
+    assert.equal((await read('f2')).tooltip, 'Online \u00b7 cold, the next answer starts the agent');
+    assert.match((await read('f3')).tooltip, /^Online \u00b7 working/);
+    assert.match((await read('f4')).tooltip, /^State unknown/, 'an unknown warm state says so');
+    assert.match((await read('f5')).tooltip, /^Offline/);
+    assert.equal((await read('f6')).tooltip, 'Paused; no new work is accepted.', 'a paused agent is orange and says it is paused');
+    // Reduced motion: the ring stays, nothing moves.
+    await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+    let reduced = await read('f1');
+    assert.deepEqual([reduced.ring, reduced.animation], [true, 'none'], 'under reduced motion the warm ring stays and does not pulse');
+    await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+    reduced = await read('f1');
+    assert.deepEqual([reduced.ring, reduced.animation], [true, 'presence-pulse'], 'and pulses again when motion is allowed');
+    // The minutes in the tooltip follow the clock, with no request of its own.
     const before = await count(page, 'GET', '/api/rooms/r1/agents');
     await page.evaluate(() => { window.__panel.store.now.value = Date.now() + 3 * 60000; });
     await settle(page);
-    assert.equal(await page.$eval('[data-agent-id=w1] .warm-pill-text', node => node.textContent), '2m', 'three minutes later: the minutes left follow the clock');
+    assert.match((await read('f1')).tooltip, /\u2248[12] min left\)$/, 'three minutes later the tooltip counts fewer minutes');
     assert.equal(await count(page, 'GET', '/api/rooms/r1/agents'), before, 'no new request for it');
     await page.close();
   }

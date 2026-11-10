@@ -546,10 +546,10 @@ behind it. The guard judges the host machine's account, so only agents on the ho
 paused, stopped, lost or waiting on a recovery decision does not. A `hold` with `code` `docker_only` (text "native launcher refused") marks any agent that is not stopped on a native launcher while "Only run agents in docker" is on, whatever its machine or state. The card shows an agent that needs a recovery decision
 (`recovery_block`) or has a `hold` as an orange dot with the state "needs decision" or "held: claude session 95%" and the reason on
 the card, instead of the green "idle" of an agent that is free; a lost process stays red.
-Listed room agent cards also carry an optional `warm` (`{state, sleeps_at}`) when the machine's supervisor says it works to a warm window (a live idle process is `warm`; no process is `sleeping` only when the window it reports is above 0, and a report without one is unknown and shows neither) and the
-agent is an active Claude agent on a machine that keeps processes warm: `state` is `warm` (with `sleeps_at`, RFC 3339, when its
-process goes to sleep) while its process is kept up for the next message, `sleeping` when there is none, and the field is absent
-while the agent is in a turn. The machine rows of `GET /api/machines` carry an optional `warm` (`{idle, busy, started, reused,
+Listed room agent cards also carry an optional `warm` (`{state, sleeps_at}`) for an active Claude agent on a machine that keeps processes warm: `state` is `warm` (with
+`sleeps_at`, RFC 3339, when its process goes to sleep) while the supervisor reports a live idle process for it, `sleeping` when there is none and the supervisor says it works to a
+warm window above 0, and `unknown` when the supervisor has not said what window it works to (no report yet, or a report without `idle_seconds` from an older supervisor), which a card
+shows as neither warm nor sleeping. The field is absent while the agent is in a turn and when warm mode is off (the window the supervisor reports is 0). The machine rows of `GET /api/machines` carry an optional `warm` (`{idle, busy, started, reused,
 rss_bytes, container_wide_bytes, unconfirmed_ping_ends?}`; `unconfirmed_ping_ends` counts keep-alive pings in a container whose end was never confirmed
 and whose quarantine ran out, present only when above 0) for a connected machine whose supervisor keeps processes warm; the memory is not per agent
 (`rss_bytes` is the processes the supervisor runs itself, `container_wide_bytes` everything running in containers).

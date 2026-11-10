@@ -620,27 +620,6 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .thread-root-pin[hidden] { display: none; }
 .thread-root-pin:hover, .thread-root-pin:focus-visible { color: var(--accent); outline: none; }
 
-/* Warm or cold on an agent's card, five placements on the testing pill ("warmicon"; the markup holds every one and only the chosen one is shown). The colours are the theme's:
-   warm is --orange, cold is --accent, in the high-contrast themes too. A and D put the icon right after the name (on a card that has the icon the name stops growing, so the icon follows it and the state
-   stays at the right; a card with no warm state keeps its name as wide as it always was); B turns the status dot into the icon, keeping the dot's colour; C shows the icon with the minutes left as a pill before the state; D shows only the fire;
-   E draws a rail down the card's left edge. */
-.warm-badge { display: none; align-items: center; gap: 3px; flex: 0 0 auto; line-height: 1; color: var(--accent); }
-.warm-badge[data-warm="warm"] { color: var(--orange); }
-.warm-badge .icon-mask { width: 13px; height: 13px; }
-html[data-ui-warmicon="a"] .warm-slot-a, html[data-ui-warmicon="d"] .warm-slot-a { display: inline-flex; }
-html[data-ui-warmicon="d"] .warm-slot-a[data-warm="cold"] { display: none; }
-html[data-ui-warmicon="a"] .agent-card[data-warm] .agent-identity, html[data-ui-warmicon="d"] .agent-card[data-warm="warm"] .agent-identity { flex: 0 1 auto; }
-html[data-ui-warmicon="a"] .agent-card[data-warm] .agent-state, html[data-ui-warmicon="d"] .agent-card[data-warm="warm"] .agent-state { margin-left: auto; }
-html[data-ui-warmicon="c"] .warm-slot-c { display: inline-flex; padding: 1px 6px; border: 1px solid currentColor; border-radius: 999px; font-size: 11px; }
-html[data-ui-warmicon="c"] .warm-slot-c .icon-mask { width: 11px; height: 11px; }
-html[data-ui-warmicon="b"] .agent-online-dot[data-warm] { width: 13px; height: 13px; border-radius: 0; -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat; }
-html[data-ui-warmicon="b"] .agent-online-dot[data-warm="warm"] { -webkit-mask-image: url("/icons/warm.svg"); mask-image: url("/icons/warm.svg"); }
-html[data-ui-warmicon="b"] .agent-online-dot[data-warm="cold"] { -webkit-mask-image: url("/icons/cold.svg"); mask-image: url("/icons/cold.svg"); }
-.warm-sr { display: none; }
-html[data-ui-warmicon="b"] .warm-sr, html[data-ui-warmicon="e"] .warm-sr { display: block; }
-html[data-ui-warmicon="e"] .agent-card[data-warm="warm"] { box-shadow: inset 3px 0 0 var(--orange); }
-html[data-ui-warmicon="e"] .agent-card[data-warm="cold"] { box-shadow: inset 3px 0 0 var(--accent); }
-
 /* Forks in the thread panel (pages/chat/rows.js; the pieces are in the markup, the experiment pill picks which show). Without the experiment a reply's quote is shown unless it
    answers the first message. A fork is a reply whose parent is not the row directly above. */
 .thread-entry .fork-label, .thread-entry .fork-ref { display: none; font-size: 11px; color: var(--text-muted); }
@@ -676,3 +655,17 @@ html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]) .chat-msg-
   html[data-ui-forks="e"] .thread-entry[data-lane]:not([data-lane="0"]):is(:hover, :focus-within) .chat-msg-body { display: block; overflow: visible; }
 }
 html[data-ui-forks="e"] .thread-entry[data-fork] .fork-label { display: block; margin: 4px 0 2px 2px; }
+
+/* An agent's card has one status dot, and it says it all: green without a ring is online and cold (the next answer starts the agent), green with a ring that pulses is online and
+   warm (v1's presence dot: 8px, a ring of 1px outside a 1.5px edge in the card's colour, the opacity easing between 1 and .45 every 1.6s), red is offline, orange is a state that is
+   not plain (a paused or waiting agent, or a warm state not told). The tooltip and the screen reader's words are the dot's own (DotWords); under reduced motion the ring stays and
+   nothing moves. Every dot of a member card, a person's included, is 8px, so the rows line up and nothing shifts when a card turns warm. */
+.agent-title > .agent-online-dot { width: 8px; height: 8px; }
+.agent-dot { position: relative; }
+.dot-words { display: block; position: absolute; inset: -5px; }
+.agent-dot[data-dot="cold"], .agent-dot[data-dot="working"], .agent-dot[data-dot="warm"] { background: var(--green-text); }
+.agent-dot[data-dot="unknown"] { background: var(--orange); }
+.agent-dot[data-dot="offline"] { background: var(--red); }
+.agent-dot[data-dot="warm"] { color: var(--green-text); border: 1.5px solid var(--bg-secondary); box-shadow: 0 0 0 1px currentColor; animation: presence-pulse 1.6s ease-in-out infinite; }
+@keyframes presence-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .agent-dot[data-dot="warm"] { animation: none; } }
