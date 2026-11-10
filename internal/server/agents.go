@@ -548,9 +548,9 @@ type agentWarm struct {
 	SleepsAt string `json:"sleeps_at,omitempty"`
 }
 
-// agentWarmState works out what a card says about warm mode, from the window the owner set and what the card's machine last reported.
-func (s *Server) agentWarmState(card store.AgentCard, windowOn bool) *agentWarm {
-	if !windowOn || card.Desired != "active" || card.Tool != "claude" {
+// agentWarmState works out what a card says about warm mode, from what the card's machine last reported (its live processes and the window it works to).
+func (s *Server) agentWarmState(card store.AgentCard) *agentWarm {
+	if card.Desired != "active" || card.Tool != "claude" {
 		return nil
 	}
 	machine, err := s.machineForID(card.MachineID)
@@ -560,14 +560,18 @@ func (s *Server) agentWarmState(card store.AgentCard, windowOn bool) *agentWarm 
 	machine.warmMu.Lock()
 	report := machine.warm
 	machine.warmMu.Unlock()
-	if report != nil {
-		for _, agent := range report.Agents {
-			if agent.AgentID == card.ID && agent.State == "idle" {
-				return &agentWarm{State: "warm", SleepsAt: agent.SleepsAt}
-			}
+	// What the supervisor itself says decides, never the server's guess: a live idle process is warm; no process is sleeping only when the supervisor says
+	// it works to a window (idle_seconds above 0). A report without idle_seconds (an older supervisor, whose own default may be off) or no report yet is
+	// unknown, and an unknown state is shown as neither warm nor sleeping.
+	if report == nil {
+		return nil
+	}
+	for _, agent := range report.Agents {
+		if agent.AgentID == card.ID && agent.State == "idle" {
+			return &agentWarm{State: "warm", SleepsAt: agent.SleepsAt}
 		}
 	}
-	if card.Observed == "in_turn" {
+	if report.IdleSeconds == nil || *report.IdleSeconds <= 0 || card.Observed == "in_turn" {
 		return nil
 	}
 	return &agentWarm{State: "sleeping"}
@@ -678,7 +682,6 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		withUsage := make([]agentCardWithUsage, 0, len(cards))
 		holds := s.agentHolds(r.Context(), cards)
-		window, _ := s.warmIdleSeconds(r.Context())
 		keepConfig, _ := s.keepAliveConfig(r.Context())
 		for _, card := range cards {
 			usage, err := s.Store.AgentUsage(r.Context(), card.ID)
@@ -691,7 +694,7 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 				fail(w, err)
 				return
 			}
-			withUsage = append(withUsage, agentCardWithUsage{card, usage, flags, holds[card.ID], s.agentWarmState(card, window > 0), s.agentKeepAliveState(card, usage, keepConfig)})
+			withUsage = append(withUsage, agentCardWithUsage{card, usage, flags, holds[card.ID], s.agentWarmState(card), s.agentKeepAliveState(card, usage, keepConfig)})
 		}
 		writeJSON(w, 200, withUsage)
 		return

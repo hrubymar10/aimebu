@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
@@ -49,12 +50,16 @@ const (
 	warmCloseGrace         = 3 * time.Second
 )
 
-// WarmConfigFromEnv reads the settings: AIMEBU2_WARM_IDLE (a duration such as 5m; unset or 0 is off), AIMEBU2_WARM_MAX_LIFETIME (default 1h),
-// AIMEBU2_WARM_MIN_FREE_MB (default 1536) and AIMEBU2_WARM_MIN_FREE_PERCENT (default 10).
+// DefaultWarmIdle is how long an agent's process is kept up after a turn when nobody has said otherwise: the owner's saved setting wins, then
+// AIMEBU2_WARM_IDLE, then this.
+const DefaultWarmIdle = 5 * time.Minute
+
+// WarmConfigFromEnv reads the settings: AIMEBU2_WARM_IDLE (a duration such as 10m; 0 is off; unset or unreadable is DefaultWarmIdle),
+// AIMEBU2_WARM_MAX_LIFETIME (default 1h), AIMEBU2_WARM_MIN_FREE_MB (default 1536) and AIMEBU2_WARM_MIN_FREE_PERCENT (default 10).
 func WarmConfigFromEnv() WarmConfig {
-	config := WarmConfig{MinFreeBytes: 1536 << 20, MinFreePercent: 10}
+	config := WarmConfig{Idle: DefaultWarmIdle, MinFreeBytes: 1536 << 20, MinFreePercent: 10}
 	if value := strings.TrimSpace(os.Getenv("AIMEBU2_WARM_IDLE")); value != "" {
-		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+		if d, err := time.ParseDuration(value); err == nil && d >= 0 {
 			config.Idle = d
 		}
 	}
@@ -89,7 +94,11 @@ type warmEntry struct {
 	agentID       string
 	tool          string // the harness tool (claude, ...): an account switch retires by it
 	session       adapter.WarmSession
-	fp            string
+	fp            string // what the process was started with (the adapter's fingerprint: command, arguments, environment, folder)
+	login         string // the login it works under (warmCredentials' stamp), taken again when a turn ends, see loginHolds
+	account       string // which account that login is (warmAccount); "" when it could not be told
+	loginNow      func() (stamp, account string, ok bool)
+	loginMoved    bool // a turn ended with another account's login on disk (guarded by the slot's lock)
 	started       time.Time
 	stderr        *swapWriter
 	containerized bool // runs through a Docker launcher: its memory is the container's, not the supervisor's
@@ -99,6 +108,7 @@ type warmEntry struct {
 	idleStop      chan struct{} // closed when the process leaves the idle state, ending its crash watcher
 	retire        bool          // an end was asked for while it ran a turn: it ends when the turn does
 	gone          atomic.Bool   // its end was confirmed and counted (warmLive), once
+	kept          bool          // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
 }
 
 // swapWriter is the stderr sink of a warm process: it writes to the output log of the turn that is running, and to nothing between turns (a
@@ -241,9 +251,26 @@ func (c *Client) endWarm(entry *warmEntry, reason string, grace time.Duration) b
 	}
 	if entry.gone.CompareAndSwap(false, true) {
 		c.warmLive.Add(-1)
+		if entry.kept {
+			c.noteWarmEnded(entry.agentID, reason) // the turns that ended in it said the process lived on: this is where it ends
+		}
 	}
 	c.warmChanged()
 	return true
+}
+
+// noteWarmEnded tells the server a warm process that was kept idle has ended, and why. Best effort: not connected, nothing is sent (the warm picture the
+// server holds corrects itself with the next report).
+func (c *Client) noteWarmEnded(agentID, reason string) {
+	if c.warmEnded != nil {
+		c.warmEnded(agentID, reason)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmEndedFrame, AgentID: agentID, Message: reason})
+	}()
 }
 
 // finish ends a process the slot held and keeps hold of it as stuck when it is not confirmed gone, so that nothing starts another process on the
@@ -453,16 +480,9 @@ func warmCredentials(spec adapter.TurnSpec, sharesHome bool) (stamp string, ok b
 	if !sharesHome {
 		return "", false
 	}
-	dir := adapter.EnvValue("CLAUDE_CONFIG_DIR", spec.LauncherEnvRefs)
-	if dir == "" {
-		home := adapter.EnvValue("HOME", spec.LauncherEnvRefs)
-		if home == "" {
-			var err error
-			if home, err = os.UserHomeDir(); err != nil {
-				return "", false
-			}
-		}
-		dir = filepath.Join(home, ".claude")
+	dir, _, ok := claudeLoginDir(spec)
+	if !ok {
+		return "", false
 	}
 	file := filepath.Join(dir, ".credentials.json")
 	info, err := os.Stat(file)
@@ -475,6 +495,68 @@ func warmCredentials(spec adapter.TurnSpec, sharesHome bool) (stamp string, ok b
 	}
 	sum := sha256.Sum256(content)
 	return fmt.Sprintf("%s:%d:%d:%x", dir, info.Size(), info.ModTime().UnixNano(), sum[:8]), true
+}
+
+// claudeLoginDir is the configuration directory a Claude process of the turn would use (CLAUDE_CONFIG_DIR through the launcher's variable
+// references, else the home's .claude), and the home it would find its account file in when it has no such variable.
+func claudeLoginDir(spec adapter.TurnSpec) (dir, accountHome string, ok bool) {
+	if dir = adapter.EnvValue("CLAUDE_CONFIG_DIR", spec.LauncherEnvRefs); dir != "" {
+		return dir, "", true
+	}
+	home := adapter.EnvValue("HOME", spec.LauncherEnvRefs)
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return "", "", false
+		}
+	}
+	return filepath.Join(home, ".claude"), home, true
+}
+
+// warmAccount is which account the login is, as Claude's own account-state file names it (oauthAccount.accountUuid, else the e-mail address, lower
+// case): the credentials file holds tokens only, and a renewed token is another stamp of the same account. The file beside the credentials is the one
+// a process started with CLAUDE_CONFIG_DIR uses; without that variable it is the one in the home's root; the newest that names an account wins, as
+// a /login rewrites the one its process uses. "" when no file names one.
+func warmAccount(spec adapter.TurnSpec) string {
+	if spec.Agent.Tool != "claude" {
+		return ""
+	}
+	dir, home, ok := claudeLoginDir(spec)
+	if !ok {
+		return ""
+	}
+	candidates := []string{filepath.Join(dir, ".claude.json")}
+	if home != "" {
+		candidates = append(candidates, filepath.Join(home, ".claude.json"))
+	}
+	best, bestTime := "", time.Time{}
+	for _, path := range candidates {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var file struct {
+			OAuthAccount struct {
+				AccountUUID  string `json:"accountUuid"`
+				EmailAddress string `json:"emailAddress"`
+			} `json:"oauthAccount"`
+		}
+		if json.Unmarshal(data, &file) != nil {
+			continue
+		}
+		who := strings.ToLower(strings.TrimSpace(file.OAuthAccount.AccountUUID))
+		if who == "" {
+			who = strings.ToLower(strings.TrimSpace(file.OAuthAccount.EmailAddress))
+		}
+		if who != "" && (best == "" || info.ModTime().After(bestTime)) {
+			best, bestTime = who, info.ModTime()
+		}
+	}
+	return best
 }
 
 // startTurn starts a turn: in an agent's live process when there is one that is still what the turn needs, in a new warm process when warm
@@ -518,7 +600,6 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		}
 		return c.Adapter.Start(ctx, spec)
 	}
-	fp += "|" + cred.stamp
 	pool := c.pool()
 	slot := pool.slot(spec.Agent.ID)
 	slot.mu.Lock()
@@ -532,7 +613,9 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		reason := ""
 		switch {
 		case entry.fp != fp:
-			reason = "what it was started with changed"
+			reason = "what it was started with changed (its command, arguments or environment)"
+		case entry.login != cred.stamp:
+			reason = loginChangedReason
 		case !entry.session.Alive():
 			reason = "it had ended"
 		case now.Sub(entry.started) >= cfg.lifetime():
@@ -561,7 +644,7 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 			}
 			return c.Adapter.Start(ctx, spec)
 		}
-		entry = &warmEntry{agentID: spec.Agent.ID, tool: spec.Agent.Tool, session: session, fp: fp, started: now, stderr: stderr, containerized: spec.LauncherContainerized || spec.Agent.Variant == "docker"}
+		entry = &warmEntry{agentID: spec.Agent.ID, tool: spec.Agent.Tool, session: session, fp: fp, login: cred.stamp, account: cred.account, loginNow: cred.now, started: now, stderr: stderr, containerized: spec.LauncherContainerized || spec.Agent.Variant == "docker"}
 		c.warmLive.Add(1) // counted from the moment it exists until its end is confirmed (endWarm)
 		// A process nobody can find again if this supervisor dies is not kept warm: the journal's note, with the process's own start time, is
 		// what a later supervisor ends it by.
@@ -589,12 +672,14 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 	}
 	turn, err := entry.session.Run(spec)
 	if err != nil {
+		// Still as it was reported (kept idle): its end is reported with this reason, because no turn of its own is going to say it.
 		c.report(fmt.Errorf("agent %s: handing the turn to its warm process: %w; the turn runs cold", spec.Agent.ID, err))
 		if !c.finish(slot, entry, "it could not take the turn", 0) {
 			return nil, errWarmUnconfirmed
 		}
 		return c.Adapter.Start(ctx, spec)
 	}
+	entry.kept = false // it works again: if it ends during this turn, the turn's own exit says so
 	slot.busy = entry
 	c.warmChanged()
 	pool.mu.Lock()
@@ -613,6 +698,10 @@ var errWarmUnconfirmed = errors.New("the agent's warm process could not be confi
 type credentials struct {
 	stamp string
 	ok    bool
+	// account is which account the stamp's login is ("" when it cannot be told), and now reads both again, at another time; nil when a caller has
+	// nothing to read them with.
+	account string
+	now     func() (stamp, account string, ok bool)
 	// containerOK says the process may be kept warm: it does not run in a container, or its launcher advertises that it confirms the end of
 	// the session inside the container (see containerEndFeature). Nothing else proves that process gone, so without it the agent runs cold.
 	containerOK bool
@@ -626,10 +715,10 @@ const containerEndFeature = "stop_on_signal"
 // it, and is ended otherwise. It holds the agent's slot throughout, so a stop that lands meanwhile is settled against: the stop has already set
 // the desired state this reads, and its own retire waits for this and then finds the process idle. It runs before the turn's admission is
 // released, so the next delivery finds it in the pool or finds it gone.
-func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) {
+func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) (kept bool) {
 	wt, ok := turn.(*warmTurn)
 	if !ok {
-		return
+		return false
 	}
 	entry := wt.entry
 	pool := c.pool()
@@ -655,15 +744,19 @@ func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) {
 	}
 	if !keep {
 		reason := "its turn did not end cleanly, or the agent was stopped, or its lifetime is over"
+		if entry.loginMoved {
+			reason = loginChangedReason
+		}
 		if claimErr != nil {
 			c.report(fmt.Errorf("agent %s: its warm process is not kept: %w", entry.agentID, claimErr))
 			reason = "the server did not confirm that it is kept"
 		}
 		c.finish(slot, entry, reason, 0)
-		return
+		return false
 	}
 	now := pool.now()
 	cfg := c.warmCfg()
+	entry.kept = true // the turn is reported as finished with the process alive: its end is reported when it comes
 	entry.idleAt = now
 	entry.idleGen++
 	gen := entry.idleGen
@@ -672,6 +765,7 @@ func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) {
 	slot.idle = entry
 	go c.watchIdle(slot, entry, entry.idleStop)
 	c.warmChanged()
+	return true
 }
 
 // warmKeepable says the process of a turn that has ended should be kept idle: warm mode is on, the agent is active, nothing asked for its end, the turn
@@ -682,7 +776,34 @@ func (c *Client) warmKeepable(pool *warmPool, entry *warmEntry, exit adapter.Exi
 	c.mu.Unlock()
 	cfg := c.warmCfg()
 	return cfg.Idle > 0 && active && !entry.retire && exit.TerminalEvent && exit.ExitCode == 0 && !exit.CancelIntent &&
-		entry.session.Alive() && pool.now().Sub(entry.started) < cfg.lifetime()
+		entry.session.Alive() && pool.now().Sub(entry.started) < cfg.lifetime() && entry.loginHolds()
+}
+
+// loginChangedReason is why a process ends when the login it works under is not the one on disk.
+const loginChangedReason = "the login it works under changed"
+
+// loginHolds says the login on disk, after a turn, is still the process's own. Claude renews an expired token itself while it works and writes the
+// credentials file, so the stamp moves under a process that is perfectly fine: when the file still names the same account the new stamp is adopted
+// (the next turn must not take the process's own renewal for another login). A different account (someone ran `claude /login`, outside aimebu's
+// account switch, which refuses while a turn runs), or one that cannot be told, is not adopted: the process ends with loginChangedReason rather than
+// stay on under a login that was never checked.
+func (e *warmEntry) loginHolds() bool {
+	if e.loginNow == nil {
+		return true
+	}
+	stamp, account, ok := e.loginNow()
+	switch {
+	case !ok:
+		e.loginMoved = true
+		return false
+	case stamp == e.login:
+		return true
+	case account != "" && account == e.account:
+		e.login = stamp
+		return true
+	}
+	e.loginMoved = true
+	return false
 }
 
 // warmClaimWait is how long the server's answer to a warm claim is waited for.
@@ -975,7 +1096,8 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 	}
 }
 
-// applyWarmIdle takes the instance's warm window from a delivery (nil: the server has no such setting, and the supervisor's own stays). Turning it
+// applyWarmIdle takes the instance's warm window from a delivery (nil: the owner has not saved one, and the supervisor's own stays: AIMEBU2_WARM_IDLE,
+// else DefaultWarmIdle). Turning it
 // off ends every idle process at once.
 func (c *Client) applyWarmIdle(seconds *int) {
 	if seconds == nil || *seconds < 0 {
@@ -986,6 +1108,9 @@ func (c *Client) applyWarmIdle(seconds *int) {
 	changed := c.Warm.Idle != idle
 	c.Warm.Idle = idle
 	c.mu.Unlock()
+	if changed {
+		c.warmChanged() // the server shows what the window is (a card's warm or sleeping), so it hears when it changes
+	}
 	if changed && idle <= 0 {
 		c.RetireAllWarm("warm mode was turned off")
 	}
@@ -997,6 +1122,8 @@ func (c *Client) WarmReport() protocol.WarmReport {
 	// The number comes first: what is counted below is at least as new as it, so a count can never be older than its number (the server ignores a report
 	// whose number is older than one it holds, and a ping that begins after this line carries a later one).
 	report.Seq = c.warmSeq.Add(1)
+	idleSeconds := int(c.warmCfg().Idle / time.Second)
+	report.IdleSeconds = &idleSeconds // the window in force, whoever set it: a card says warm or sleeping by it
 	counted := func() protocol.WarmReport {
 		report.UnconfirmedPingEnds = int(c.kaUnconfirmed.Load())
 		report.Processes = int(c.warmLive.Load())

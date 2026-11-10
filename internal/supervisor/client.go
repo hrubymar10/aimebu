@@ -102,6 +102,8 @@ type Client struct {
 	warmSeq         atomic.Uint64                                          // the one counter that orders what the supervisor says of its running processes
 	warmLive        atomic.Int64                                           // warm processes alive (counted from the start of one until its end is confirmed)
 	warmClaim       func(ctx context.Context, seq uint64, count int) error // tests replace the server's answer to a warm claim (see claimWarm)
+	warmEnded       func(agentID, reason string)                           // tests see the real end of a kept warm process here (see noteWarmEnded)
+	processSink     func(turnID string, exit adapter.ExitInfo)             // tests see each turn's exit as it is sent to the server
 	kaRenewEvery    time.Duration                                          // tests shorten protocol.KeepAliveScopeRenewEvery here; zero is the default
 	kaWaitTerminate time.Duration                                          // tests shorten keepAliveWaitTerminate here; zero is the default
 	warmNow         func() time.Time
@@ -1041,6 +1043,11 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	cred := credentials{}
 	cred.stamp, cred.ok = warmCredentials(spec, sharesHome)
 	cred.containerOK = !containerized || launcherConfirmsEnd
+	cred.account = warmAccount(spec)
+	cred.now = func() (string, string, bool) {
+		stamp, ok := warmCredentials(spec, sharesHome)
+		return stamp, warmAccount(spec), ok
+	}
 	// The harness's stderr is kept in the agent's output log for as long as the turn runs. A log that cannot be opened is reported and the
 	// turn runs without one: it is a debugging aid, never a reason not to work.
 	var sink *agentlog.Turn
@@ -1283,12 +1290,15 @@ events:
 	// The process is durably finished before the server sees this frame. A warm process is settled (kept idle or ended) first, so that the
 	// delivery admitted next finds it in the pool or finds it gone; then local admission is freed so an immediate follow-up delivery is not
 	// rejected.
-	c.warmTurnEnded(turn, exit)
+	exit.ProcessAlive = c.warmTurnEnded(turn, exit) // a kept warm process outlives its turn: the server is told the turn finished, not that a process exited
 	if delivery.Mode == adapter.ModeNormal {
 		c.keepAliveTurnEnded(delivery.AgentID, exit)
 	}
 	release()
 	c.sendDeferredStopAck(ctx, delivery.AgentID)
+	if c.processSink != nil {
+		c.processSink(delivery.TurnID, exit)
+	}
 	if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.Process, AgentID: delivery.AgentID, Generation: delivery.Generation, TurnID: delivery.TurnID, Exit: &exit}); err != nil {
 		c.report(err)
 	}

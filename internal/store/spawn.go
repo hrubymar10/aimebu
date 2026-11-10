@@ -564,7 +564,7 @@ func (s *Store) AgentSlugTaken(ctx context.Context, projectID, slug string) (boo
 // activity is the newest event of the first kind only, because anyone posting in a room it belongs to queues a note for it, and a stopped agent whose
 // state age restarted at every message would look as if it had just done something. A kind not listed here is not its own doing until it is added.
 const agentOwnActivitySQL = `(e.kind IN ('agent_created','agent_spawn_confirmed','agent_spawn_failed','agent_stopped','agent_control_applied','agent_worktree_recorded',
-	'native_session_started','native_session_reset','provider_limit_detected','turn_recorded','turn_process_exit','turn_lost','turn_never_started')
+	'native_session_started','native_session_reset','provider_limit_detected','turn_recorded','turn_process_exit','turn_finished','turn_lost','turn_never_started','warm_process_ended')
 	OR e.kind LIKE 'turn\_ack\_%' ESCAPE '\' OR e.kind LIKE 'answer\_%' ESCAPE '\' OR e.kind LIKE 'supervisor\_%' ESCAPE '\')`
 
 func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCard, error) {

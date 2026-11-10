@@ -553,7 +553,7 @@ async function signedIn(session) {
       else if (event.kind === 'reaction_changed' && chat.nodes.has(payload.message_id)) await chat.refreshReactions(payload.message_id);
       if ((event.kind === 'project_member_changed' || event.kind === 'user_invite_redeemed') && chat.room && chat.room.project_id === event.project_id) chat.loadMentionLogins(chat.room, true);
       if (!active()) return;
-      if (event.room_id && event.room_id === chat.room?.id && ['room_read_changed', 'message_created', 'turn_recorded', 'turn_process_exit'].includes(event.kind)) receipts.schedule();
+      if (event.room_id && event.room_id === chat.room?.id && ['room_read_changed', 'message_created', 'turn_recorded', 'turn_process_exit', 'turn_finished'].includes(event.kind)) receipts.schedule();
       if (event.kind.startsWith('inbox_item_')) { await inbox.source.changed?.(); if (active() && event.project_id) await sidebar.refreshProject(event.project_id); }
       if (!active()) return;
       if ((event.agent_id && agents.cards.has(event.agent_id)) || event.kind.startsWith('inbox_item_') || event.kind.startsWith('machine_')) health.schedule();

@@ -147,15 +147,15 @@ export class HttpAgentSource {
   async onEvent(event) {
     if (event.agent_id) {
       let payload = {}; try { payload = JSON.parse(event.payload_json); } catch {}
-      const labels = { turn_recorded: 'Queued', turn_dispatch_requested: 'Starting', answer_committed: 'Replied', answer_held: 'Reply held', turn_process_exit: 'Finished', turn_lost: 'Needs recovery', turn_never_started: 'Never started' };
+      const labels = { turn_recorded: 'Queued', turn_dispatch_requested: 'Starting', answer_committed: 'Replied', answer_held: 'Reply held', turn_process_exit: 'Finished', turn_finished: 'Finished', turn_lost: 'Needs recovery', turn_never_started: 'Never started' };
       const label = labels[event.kind] || (event.kind.startsWith('turn_ack_') ? 'Working' : '');
       const previous = this.activity.get(event.agent_id);
       if (payload.summary) this.activity.set(event.agent_id, { summary: payload.summary, turnID: event.turn_id, kind: event.kind, at: event.created_at });
-      else if (label && !(event.kind === 'turn_process_exit' && previous?.turnID === event.turn_id && previous.kind === 'answer_committed')) {
+      else if (label && !((event.kind === 'turn_process_exit' || event.kind === 'turn_finished') && previous?.turnID === event.turn_id && previous.kind === 'answer_committed')) {
         const when = new Date(event.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         this.activity.set(event.agent_id, { summary: `${label} ${when}`, turnID: event.turn_id, kind: event.kind, at: event.created_at });
       }
-      if (event.kind.startsWith('agent_') || event.kind.startsWith('turn_') || event.kind.startsWith('answer_') || event.kind.startsWith('supervisor_') || event.kind.startsWith('provider_') || event.kind === 'activity') await this.changed(event);
+      if (event.kind.startsWith('agent_') || event.kind.startsWith('turn_') || event.kind.startsWith('answer_') || event.kind.startsWith('supervisor_') || event.kind.startsWith('provider_') || event.kind === 'activity' || event.kind === 'warm_process_ended') await this.changed(event);
     }
   }
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }

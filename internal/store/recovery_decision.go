@@ -123,7 +123,7 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT seq FROM event WHERE kind IN ('inbox_item_created','inbox_item_updated') AND json_extract(payload_json,'$.inbox_item_id')=? ORDER BY seq DESC LIMIT 1`, itemID).Scan(&itemSeq); err != nil {
 				return "", err
 			}
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM event WHERE turn_id=? AND seq>? AND kind IN ('turn_process_exit','turn_lost','turn_ack_accepted','answer_committed','answer_held','recovery_override')`, source.String, itemSeq).Scan(&newer); err != nil {
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM event WHERE turn_id=? AND seq>? AND kind IN ('turn_process_exit','turn_finished','turn_lost','turn_ack_accepted','answer_committed','answer_held','recovery_override')`, source.String, itemSeq).Scan(&newer); err != nil {
 				return "", err
 			}
 			if newer > 0 {

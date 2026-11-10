@@ -63,9 +63,10 @@ var environment = []envVar{
 		"Supervisor stall deadlines per turn: silence with no tool running, and",
 		"wall-clock cap (Go durations, 0 disables; defaults depend on the harness)"}},
 	{[]string{"AIMEBU2_WARM_IDLE", "AIMEBU2_WARM_MAX_LIFETIME", "AIMEBU2_WARM_MIN_FREE_MB", "AIMEBU2_WARM_MIN_FREE_PERCENT"}, []string{
-		"Warm agents (off by default): AIMEBU2_WARM_IDLE (a Go duration such as 5m) keeps an agent's",
-		"harness process up that long after a turn so the next message skips the start; 0 or unset is",
-		"off. AIMEBU2_WARM_MAX_LIFETIME (default 1h) ends a process that old at the end of its turn;",
+		"Warm agents (on by default, 5 minutes): AIMEBU2_WARM_IDLE (a Go duration such as 10m) keeps an",
+		"agent's harness process up that long after a turn so the next message skips the start; 0 is",
+		"off, unset is 5m, and the owner's setting in Settings -> General wins over it when one is saved.",
+		"AIMEBU2_WARM_MAX_LIFETIME (default 1h) ends a process that old at the end of its turn;",
 		"AIMEBU2_WARM_MIN_FREE_MB (default 1536) and AIMEBU2_WARM_MIN_FREE_PERCENT (default 10) end",
 		"the longest-idle process while free memory is below either"}},
 	{[]string{"AIMEBU2_TEST_RESTRICT_PATH"}, []string{

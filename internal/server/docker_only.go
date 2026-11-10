@@ -16,7 +16,8 @@ import (
 // delivery frame carries the setting so a supervisor refuses it as well.
 const agentsDockerOnlyKey = "agents_docker_only"
 
-// agentsWarmIdleKey holds how many seconds an agent's harness process is kept up after a turn (see supervisor/warm.go); absent or 0 is off.
+// agentsWarmIdleKey holds how many seconds an agent's harness process is kept up after a turn (see supervisor/warm.go); absent is the default
+// (defaultWarmIdleSeconds), a saved 0 is off.
 const agentsWarmIdleKey = "agents_warm_idle_seconds"
 
 // The cache keep-alive settings (see supervisor/keepalive.go). On by default: a ping every fifty minutes keeps Claude Code's one-hour prompt cache
@@ -124,21 +125,46 @@ func (s *Server) refusedAgent(ctx context.Context, machineID, tool, variant, lau
 	return !launcher.Containerized, nil
 }
 
-// warmIdleSeconds is the instance's warm window in seconds; 0 is off (the default).
-func (s *Server) warmIdleSeconds(ctx context.Context) (int, error) {
+// defaultWarmIdleSeconds is the warm window when the owner has saved none: five minutes, as decided when warm mode was planned.
+const defaultWarmIdleSeconds = 5 * 60
+
+// warmIdleSetting is the owner's saved warm window in seconds (0 is off) and whether one is saved. A value that cannot be read counts as none.
+func (s *Server) warmIdleSetting(ctx context.Context) (seconds int, saved bool, err error) {
 	value, ok, err := s.Store.GlobalSettingValue(ctx, agentsWarmIdleKey)
 	if err != nil || !ok {
-		return 0, err
+		return 0, false, err
 	}
 	seconds, convErr := strconv.Atoi(value)
 	if convErr != nil || seconds < 0 {
-		return 0, nil
+		return 0, false, nil
+	}
+	return seconds, true, nil
+}
+
+// warmIdleSeconds is the instance's warm window in seconds as the server knows it: the owner's saved value, else the default (0 is off). A supervisor
+// started with its own AIMEBU2_WARM_IDLE may work to another when nothing is saved; it says which in its warm report.
+func (s *Server) warmIdleSeconds(ctx context.Context) (int, error) {
+	seconds, saved, err := s.warmIdleSetting(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !saved {
+		return defaultWarmIdleSeconds, nil
 	}
 	return seconds, nil
 }
 
+// warmIdleToSend is what a delivery and an agent_settings frame carry: the owner's saved window, or nil when none is saved (the supervisor's own applies).
+func (s *Server) warmIdleToSend(ctx context.Context) (*int, error) {
+	seconds, saved, err := s.warmIdleSetting(ctx)
+	if err != nil || !saved {
+		return nil, err
+	}
+	return &seconds, nil
+}
+
 // agentIsolation answers GET and PUT /api/agent-isolation: any signed-in person reads it, an admin writes it. The same document carries the warm
-// window of the agents (`warm_idle_minutes`, 0 is off), which only the owner changes: it decides how much memory the machines hold between turns.
+// window of the agents (`warm_idle_minutes`: the owner's saved value, else the default of 5; `warm_idle_saved` says which; 0 is off), which only the owner changes: it decides how much memory the machines hold between turns.
 func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut {
 		if !s.adminMachine(w, r) {
@@ -246,6 +272,11 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	_, warmSaved, err := s.warmIdleSetting(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	canEditWarm, err := s.Store.IsGlobalOwner(r.Context(), userID(r))
 	if err != nil {
 		fail(w, err)
@@ -256,5 +287,5 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"docker_only": on, "can_edit": canEdit, "warm_idle_minutes": warm / 60, "can_edit_warm": canEditWarm, "keep_alive": keep})
+	writeJSON(w, 200, map[string]any{"docker_only": on, "can_edit": canEdit, "warm_idle_minutes": warm / 60, "warm_idle_saved": warmSaved, "can_edit_warm": canEditWarm, "keep_alive": keep})
 }

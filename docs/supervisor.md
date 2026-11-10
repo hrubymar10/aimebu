@@ -542,14 +542,36 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
   the cost views count it; a Claude ping's cost is the difference from the session's running total, which is kept,
   so the next real turn is not charged for the ping.
 
-### Warm agents (off by default)
+### Warm agents (5 minutes by default)
 
 *Instance setting.* The window is set by the owner in Settings → General → Agents ("Keep agents warm
-(minutes)", 0 is off, at most 1440; `GET`/`PUT /api/agent-isolation`, `warm_idle_minutes`, owner only to
-change). The server puts it on every delivery as `warm_idle_seconds` (always present when the server has
-the setting, so 0 means off and absent means no setting); a supervisor applies it before the turn, and
-turning it off ends every idle process at once. `AIMEBU2_WARM_IDLE` is the supervisor's default until
-its first delivery.
+(minutes)", 5 until the owner saves another, 0 is off, at most 1440; `GET`/`PUT /api/agent-isolation`,
+`warm_idle_minutes` with `warm_idle_saved`, owner only to change). The order is **the owner's saved value, then
+`AIMEBU2_WARM_IDLE` on the supervisor, then 5 minutes**: the server puts a window on a delivery and on an
+`agent_settings` frame (`warm_idle_seconds`) only when the owner has saved one (a saved 0 is sent and means
+off); with none saved the field is absent and the supervisor works to its own (`AIMEBU2_WARM_IDLE`, a Go
+duration, 0 is off, unset or unreadable is 5 minutes). A supervisor applies a window before the turn, and
+turning it off ends every idle process at once. It says the window it works to in its `warm_state` report
+(`idle_seconds`), and a card's warm or sleeping follows that and nothing else: a live idle process is "warm"; no
+process is "sleeping" only when the supervisor says it works to a window above 0; no report yet, or a report
+without `idle_seconds`, is unknown and a card then says neither. So a supervisor started with
+`AIMEBU2_WARM_IDLE=0` shows no "Sleeping".
+
+*Mixed versions.* The server of the build before this one sent `warm_idle_seconds: 0` on every delivery when the
+owner had saved nothing, so a **new supervisor under that older server stays cold** (it reads the 0 as a saved off)
+until the server is updated or the owner saves a window. A **new server with an older supervisor** is shown as
+unknown (no "Sleeping"): the older supervisor's own default is off and it does not say its window.
+
+*What the record says.* A turn that ends cleanly in a process that is kept warm is recorded as `turn_finished`
+(`{process: "kept"}`): nothing exited, so there is no `turn_process_exit` with exit code 0 for it (the supervisor's
+process frame carries `process_alive: true`). A process that ended with its turn, a failed or cancelled turn, and
+every turn without a warm process keep `turn_process_exit` as before. The real end of a kept process is recorded when
+it comes, as `warm_process_ended` with the reason (the supervisor's own words: "the idle window ended", an account
+switch or other retire, "it ended while idle" for a crash, memory pressure, the supervisor stopping), sent in a
+`warm_process_ended` frame that the server accepts only from the machine that runs the agent. A process that ends
+while it works again is reported by that turn's exit, not twice. The web treats `turn_finished` like the exit it
+replaces (an agent's activity, the refresh of its card) and refreshes a card on `warm_process_ended`, so
+the warm or sleeping state follows the process without polling.
 
 *What the owner sees.* A supervisor that keeps processes warm sends the server a `warm_state` frame (at
 connect, and whenever the picture changes: a process goes idle, is taken for a turn, ends): the agents with a
@@ -614,7 +636,7 @@ its timer is armed again, to find the hold and look again later; the pings go on
 A supervisor announces `supports_warm` in `hello`; the server asks only one that does (a machine without
 it has no warm process, and `aimebu doctor` says so).
 
-With `AIMEBU2_WARM_IDLE=5m` (a Go duration; unset or `0` is off) a supervisor keeps an agent's
+With a window (5 minutes unless set otherwise, see above) a supervisor keeps an agent's
 harness process up for that window after a turn, so the next message goes straight into the
 live process instead of starting a new one and resuming the session (on dev that start was
 4 to 5 of the 6.5 to 7.5 seconds a short reply took). Only an adapter that implements
@@ -639,8 +661,14 @@ processes are never on one session.
   launcher, folder, key or login change is seen without a trigger list.
 - **Login.** The login is the Claude credentials file in the configuration directory the
   *launcher* gives the process (`CLAUDE_CONFIG_DIR` through the owner's variable references, else
-  the home's `.claude`), by size, modification time and a hash of the content. Each token refresh or account switch
-  changes it, so **the next turn after one is cold**. When it cannot be told reliably the turn
+  the home's `.claude`), by size, modification time and a hash of the content. A refresh by someone else or an account switch
+  between two turns changes it, so **the next turn after one is cold** (the end is reported as "the login it works under changed",
+  where a change of the command, arguments or environment says "what it was started with changed"). The stamp is taken again when a turn
+  ends, because Claude renews an expired token itself and writes the file during the turn: when the file still names the process's account (the
+  account-state file's `oauthAccount.accountUuid`, else the e-mail address: the one beside the credentials for a process started with
+  `CLAUDE_CONFIG_DIR`, the home's `.claude.json` without it, the newest that names one) the new stamp is the process's own and is adopted. Another
+  account (a `claude /login` in a terminal during the turn), or one that cannot be told, ends the process with the turn ("the login it works under
+  changed"), so a login that was never checked is not kept running; an agent whose account file names nobody therefore runs cold after each renewal. When it cannot be told reliably the turn
   runs cold and no process is kept: no credentials file (a login in the macOS keychain, or none),
   or a Docker launcher that does not report `claude_home_shared`.
 - **Ended at once** (and reaped before the stop is acknowledged and before the key is dropped):

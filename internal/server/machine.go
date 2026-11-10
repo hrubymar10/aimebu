@@ -450,6 +450,10 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			s.handleWarmClaim(c, frame)
 			continue
 		}
+		if frame.Type == protocol.WarmEndedFrame {
+			s.handleWarmEnded(ctx, c, frame)
+			continue
+		}
 		if frame.Type == protocol.WarmStateFrame {
 			if frame.Warm != nil {
 				c.warmMu.Lock()
@@ -787,11 +791,10 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	if err != nil {
 		return err
 	}
-	warm, err := s.warmIdleSeconds(ctx)
+	delivery.WarmIdleSeconds, err = s.warmIdleToSend(ctx)
 	if err != nil {
 		return err
 	}
-	delivery.WarmIdleSeconds = &warm
 	keep, err := s.keepAliveConfig(ctx)
 	if err != nil {
 		return err

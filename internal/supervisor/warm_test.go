@@ -933,6 +933,138 @@ func TestWarmLoginChangeAndUnknownLogin(t *testing.T) {
 	}
 }
 
+// Claude renews an expired login itself while it works and writes the credentials file: the stamp moves under a process that is fine, and the next turn
+// must not start a new process for it (turn two of a fresh agent was cold for it). That holds while the file still names the process's account; another
+// account's login (a /login in a terminal during the turn), or one that cannot be told, ends the process when the turn does.
+func TestWarmProcessRenewingItsOwnLoginStaysWarm(t *testing.T) {
+	login := func(stamp, account string, now func() (string, string, bool)) credentials {
+		return credentials{stamp: stamp, account: account, ok: true, containerOK: true, now: now}
+	}
+	type onDisk struct{ stamp, account string }
+	for name, test := range map[string]struct {
+		after    onDisk // what the file says when the first turn ends
+		ok       bool   // the file could be read
+		stays    bool
+		reasonIs string
+	}{
+		"the same account, a renewed token": {onDisk{"login-2", "acct-a"}, true, true, ""},
+		"nothing changed":                   {onDisk{"login-1", "acct-a"}, true, true, ""},
+		"another account":                   {onDisk{"login-2", "acct-b"}, true, false, loginChangedReason},
+		"an account that cannot be told":    {onDisk{"login-2", ""}, true, false, loginChangedReason},
+		"a login that cannot be read":       {onDisk{}, false, false, loginChangedReason},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newWarmHarness(t)
+			var mu sync.Mutex
+			var reasons []string
+			h.c.warmEnded = func(_, reason string) { mu.Lock(); reasons = append(reasons, reason); mu.Unlock() }
+			h.spawn("agt_a")
+			h.cred = login("login-1", "acct-a", func() (string, string, bool) { return test.after.stamp, test.after.account, test.ok })
+			h.run("agt_a", nil)
+			if stays := h.idle("agt_a"); stays != test.stays {
+				t.Fatalf("kept idle = %v, want %v", stays, test.stays)
+			}
+			if test.stays {
+				// The next turn finds the renewed stamp, which is the process's now.
+				h.cred = login(test.after.stamp, test.after.account, func() (string, string, bool) { return test.after.stamp, test.after.account, true })
+				h.run("agt_a", nil)
+				if h.f.started != 1 || !h.f.sessions[0].Alive() {
+					t.Fatalf("a process that renewed its own login must stay: started=%d", h.f.started)
+				}
+				return
+			}
+			if h.f.sessions[0].Alive() {
+				t.Fatal("a process under another login must end with its turn")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(reasons) != 0 && reasons[len(reasons)-1] != test.reasonIs {
+				t.Fatalf("reasons = %q, want %q", reasons, test.reasonIs)
+			}
+		})
+	}
+	// Someone else changes the file between two turns: that is another login, whoever's account it names.
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.cred = login("login-1", "acct-a", func() (string, string, bool) { return "login-1", "acct-a", true })
+	h.run("agt_a", nil)
+	h.cred = login("login-3", "acct-a", func() (string, string, bool) { return "login-3", "acct-a", true })
+	h.run("agt_a", nil)
+	if h.f.started != 2 || h.f.sessions[0].Alive() {
+		t.Fatalf("a login changed between turns must start a new process: started=%d", h.f.started)
+	}
+}
+
+// The account is what Claude's own account-state file names: the file beside the credentials for a process started with CLAUDE_CONFIG_DIR, the home's
+// root file without it, the newest one that names an account; a renewed token does not change it, the e-mail stands in for a missing uuid.
+func TestWarmAccountOfTheLogin(t *testing.T) {
+	write := func(path, content string, age time.Duration) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-age)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claude := func(refs map[string]string) adapter.TurnSpec {
+		return adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "claude"}, LauncherEnvRefs: refs}
+	}
+	t.Run("config directory", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("DIR_VAR", dir)
+		write(filepath.Join(dir, ".claude.json"), `{"oauthAccount":{"accountUuid":"AAAA-1","emailAddress":"a@example.test"}}`, 0)
+		if got := warmAccount(claude(map[string]string{"CLAUDE_CONFIG_DIR": "DIR_VAR"})); got != "aaaa-1" {
+			t.Fatalf("account = %q", got)
+		}
+	})
+	t.Run("home, newest file wins, e-mail without a uuid", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME_VAR", home)
+		t.Setenv("CLAUDE_CONFIG_DIR", "") // this process's own variable would otherwise name the directory
+		write(filepath.Join(home, ".claude", ".claude.json"), `{"oauthAccount":{"accountUuid":"old-account"}}`, time.Hour)
+		write(filepath.Join(home, ".claude.json"), `{"oauthAccount":{"emailAddress":" B@Example.test "}}`, 0)
+		if got := warmAccount(claude(map[string]string{"HOME": "HOME_VAR"})); got != "b@example.test" {
+			t.Fatalf("account = %q", got)
+		}
+	})
+	t.Run("no file names one", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME_VAR", home)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		write(filepath.Join(home, ".claude.json"), `{"projects":{}}`, 0)
+		if got := warmAccount(claude(map[string]string{"HOME": "HOME_VAR"})); got != "" {
+			t.Fatalf("account = %q", got)
+		}
+		if got := warmAccount(adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex"}}); got != "" {
+			t.Fatalf("only Claude has an account here: %q", got)
+		}
+	})
+}
+
+// What ends a process at a delivery says which part of its start changed, so a restart that nobody expects can be told from the report.
+func TestWarmRestartReasonNamesWhatChanged(t *testing.T) {
+	h := newWarmHarness(t)
+	var mu sync.Mutex
+	var reasons []string
+	h.c.warmEnded = func(_, reason string) { mu.Lock(); reasons = append(reasons, reason); mu.Unlock() }
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	h.cred = credentials{stamp: "login-2", ok: true, containerOK: true}
+	h.run("agt_a", nil)
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.Agent.Model = "opus" })
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"the login it works under changed", "what it was started with changed (its command, arguments or environment)"}
+	if len(reasons) != len(want) || reasons[0] != want[0] || reasons[1] != want[1] {
+		t.Fatalf("reasons = %q, want %q", reasons, want)
+	}
+}
+
 // For a process in a container the guard also looks at the container side: the Docker host's memory less what the containers use.
 func TestWarmMemoryGuardLooksAtDockerForContainerProcesses(t *testing.T) {
 	h := newWarmHarness(t)
@@ -1398,5 +1530,168 @@ func TestWarmClaimDoesNotHoldTheSlotWhileWaiting(t *testing.T) {
 	<-done
 	if h.idle("agt_a") || h.c.warmLive.Load() != 0 {
 		t.Fatalf("a process whose end was asked for while it waited was kept: idle=%v live=%d", h.idle("agt_a"), h.c.warmLive.Load())
+	}
+}
+
+// The warm window: the owner's saved value (a delivery or an agent_settings frame carries it), else AIMEBU2_WARM_IDLE, else five minutes. Unset and
+// unreadable are the default, 0 is off, and a delivery that carries nothing (the owner saved none, or an older server) leaves the supervisor's own.
+func TestWarmWindowOrderIsOwnerThenEnvThenFiveMinutes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		env  string
+		want time.Duration
+	}{
+		"unset":       {"", DefaultWarmIdle},
+		"10 minutes":  {"10m", 10 * time.Minute},
+		"zero is off": {"0", 0},
+		"unreadable":  {"soon", DefaultWarmIdle},
+		"negative":    {"-5m", DefaultWarmIdle},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("AIMEBU2_WARM_IDLE", tc.env)
+			if got := WarmConfigFromEnv().Idle; got != tc.want {
+				t.Fatalf("AIMEBU2_WARM_IDLE=%q: %v, want %v", tc.env, got, tc.want)
+			}
+		})
+	}
+	if DefaultWarmIdle != 5*time.Minute {
+		t.Fatalf("the default window is five minutes: %v", DefaultWarmIdle)
+	}
+	t.Setenv("AIMEBU2_WARM_IDLE", "10m")
+	h := newWarmHarness(t)
+	h.c.Warm = WarmConfigFromEnv()
+	h.c.applyWarmIdle(nil) // nothing saved by the owner: the env stays
+	if h.c.warmCfg().Idle != 10*time.Minute {
+		t.Fatalf("a delivery with no value changed the window: %v", h.c.warmCfg().Idle)
+	}
+	saved := 1200
+	h.c.applyWarmIdle(&saved) // the owner's value wins over the env
+	if h.c.warmCfg().Idle != 20*time.Minute {
+		t.Fatalf("the owner's value must win: %v", h.c.warmCfg().Idle)
+	}
+	off := 0
+	h.c.applyWarmIdle(&off) // a saved 0 is off, whatever the env says
+	if h.c.warmCfg().Idle != 0 {
+		t.Fatalf("a saved 0 is off: %v", h.c.warmCfg().Idle)
+	}
+}
+
+// A supervisor of a new build under a server that sends no warm_idle_seconds when the owner saved none keeps agents warm by its own default. (A server of
+// the earlier build sends 0 when nothing is saved: that is a saved off as far as the supervisor can tell, and the agents stay cold until the server is
+// updated or the owner saves a window.)
+func TestWarmDefaultKeepsAnAgentWarmWithoutAnOwnerValue(t *testing.T) {
+	t.Setenv("AIMEBU2_WARM_IDLE", "")
+	h := newWarmHarness(t)
+	h.c.Warm = WarmConfigFromEnv()
+	h.c.applyWarmIdle(nil) // the delivery carries no window: the owner saved none
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	if !h.idle("agt_a") || h.f.started != 1 {
+		t.Fatalf("with no owner value the default window keeps the process: idle=%v started=%d", h.idle("agt_a"), h.f.started)
+	}
+	if r := h.c.WarmReport(); r.IdleSeconds == nil || *r.IdleSeconds != 300 {
+		t.Fatalf("the report says the window the supervisor works to: %+v", r.IdleSeconds)
+	}
+	off := 0
+	h.c.applyWarmIdle(&off) // what the earlier server build sends when nothing is saved, and what a saved off sends
+	if r := h.c.WarmReport(); r.IdleSeconds == nil || *r.IdleSeconds != 0 {
+		t.Fatalf("a window of 0 from the server is off, the supervisor cannot tell it from a saved off: %+v", r.IdleSeconds)
+	}
+	if h.idle("agt_a") {
+		t.Fatal("turning it off ends the idle process")
+	}
+}
+
+// The real end of a warm process that was kept idle is reported, with the reason, and only then: the idle window, a retire (an account switch), a crash. A
+// process that was never reported as kept (its turn did not end cleanly) says nothing, and one that works again forgets it was kept.
+func TestWarmProcessEndIsReportedWithItsReasonOnceItReallyEnds(t *testing.T) {
+	type ended struct{ agent, reason string }
+	setup := func(t *testing.T) (*warmHarness, func() []ended) {
+		h := newWarmHarness(t)
+		var mu sync.Mutex
+		var got []ended
+		h.c.warmEnded = func(agent, reason string) { mu.Lock(); got = append(got, ended{agent, reason}); mu.Unlock() }
+		return h, func() []ended { mu.Lock(); defer mu.Unlock(); return append([]ended(nil), got...) }
+	}
+	t.Run("idle window", func(t *testing.T) {
+		h, got := setup(t)
+		h.spawn("agt_a")
+		h.run("agt_a", nil)
+		if len(got()) != 0 {
+			t.Fatalf("a kept process has not ended: %v", got())
+		}
+		h.liveTimers()[0].f() // the idle window is over
+		if g := got(); len(g) != 1 || g[0].agent != "agt_a" || g[0].reason != "the idle window ended" {
+			t.Fatalf("reported ends: %v", g)
+		}
+	})
+	t.Run("account switch", func(t *testing.T) {
+		h, got := setup(t)
+		h.spawn("agt_a")
+		h.run("agt_a", nil)
+		if !h.c.RetireWarmTool("claude", "an account switch") {
+			t.Fatal("retire")
+		}
+		if g := got(); len(g) != 1 || g[0].reason != "an account switch" {
+			t.Fatalf("reported ends: %v", g)
+		}
+	})
+	t.Run("crash while idle", func(t *testing.T) {
+		h, got := setup(t)
+		h.spawn("agt_a")
+		h.run("agt_a", nil)
+		h.f.sessions[0].crash()
+		eventually(t, "the crash to be reported", func() bool { return len(got()) == 1 })
+		if g := got(); g[0].reason != "it ended while idle" {
+			t.Fatalf("reported ends: %v", g)
+		}
+	})
+	t.Run("never kept", func(t *testing.T) {
+		h, got := setup(t)
+		h.spawn("agt_a")
+		h.f.next = "fail" // the turn ends without an answer and the process with it
+		h.run("agt_a", nil)
+		if len(got()) != 0 {
+			t.Fatalf("a process that ended with its turn was never reported as kept, so its end is the turn's exit: %v", got())
+		}
+	})
+	t.Run("it cannot take the next turn", func(t *testing.T) {
+		h, got := setup(t)
+		h.spawn("agt_a")
+		h.run("agt_a", nil) // kept idle, and reported as kept
+		h.f.mu.Lock()
+		h.f.runErr = errors.New("stdin closed") // reusing it fails: the process is ended and the turn runs cold
+		h.f.mu.Unlock()
+		h.run("agt_a", nil)
+		if g := got(); len(g) != 1 || g[0].agent != "agt_a" || g[0].reason != "it could not take the turn" {
+			t.Fatalf("the end of a process that was reported as kept and could not take the turn must be reported once: %v", g)
+		}
+	})
+	t.Run("working again", func(t *testing.T) {
+		h, got := setup(t)
+		h.spawn("agt_a")
+		h.run("agt_a", nil)
+		h.f.next = "fail" // the next turn, in the same process, kills it: that is the turn's own exit
+		h.run("agt_a", nil)
+		if len(got()) != 0 {
+			t.Fatalf("a process that ended during a turn is reported by that turn's exit, not twice: %v", got())
+		}
+	})
+}
+
+// A kept warm process makes its turn's exit a finish: the process frame says the process is alive. A process that ended with the turn, or a turn that
+// failed, does not say so.
+func TestWarmTurnExitSaysWhetherTheProcessLivesOn(t *testing.T) {
+	h := newWarmHarness(t)
+	var mu sync.Mutex
+	var exits []adapter.ExitInfo
+	h.c.processSink = func(_ string, exit adapter.ExitInfo) { mu.Lock(); exits = append(exits, exit); mu.Unlock() }
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	h.f.next = "fail" // the next turn in the same process fails and ends it
+	h.run("agt_a", nil)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(exits) != 2 || !exits[0].ProcessAlive || exits[1].ProcessAlive {
+		t.Fatalf("exits = %+v: want the first with the process alive and the failed one without", exits)
 	}
 }

@@ -315,7 +315,7 @@ func (tx *Tx) AppendEvent(event Event) (Event, error) {
 	}
 	if event.TurnID != "" {
 		switch event.Kind {
-		case "turn_process_exit", "turn_lost", "turn_ack_accepted", "answer_committed", "answer_held":
+		case "turn_process_exit", "turn_finished", "turn_lost", "turn_ack_accepted", "answer_committed", "answer_held":
 			if err := tx.refreshRecoveryItemsAfterEvidence(event); err != nil {
 				return Event{}, err
 			}

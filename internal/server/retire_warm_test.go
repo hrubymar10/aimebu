@@ -103,29 +103,47 @@ func TestAccountSwitchWarmRetireGoneOrSilent(t *testing.T) {
 	_ = silent
 }
 
-// A card says warm (until when) while the supervisor reports a live idle process, sleeping when warm mode is on and there is none, and nothing when
-// the window is off, the agent is not active or not Claude, the machine keeps nothing warm, or the agent is in a turn.
+// A card says warm (until when) while the supervisor reports a live idle process, sleeping when the supervisor says it works to a window and there is
+// none, and nothing when the window is 0 or unknown (no report yet, or one without idle_seconds from an older supervisor), the agent is not active or
+// not Claude, the machine keeps nothing warm, or the agent is in a turn.
 func TestAgentCardWarmState(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
 	machine := connectHost(t, f, true)
 	card := store.AgentCard{ID: "agt_w", MachineID: machine.id, Tool: "claude", Desired: "active", Observed: "idle"}
-	if got := f.srv.agentWarmState(card, false); got != nil {
+	if got := f.srv.agentWarmState(card); got != nil {
+		t.Fatalf("no report yet: the state is unknown, not sleeping: %+v", got)
+	}
+	five, zero := 300, 0
+	report := func(window *int, agents ...protocol.WarmAgent) {
+		machine.warmMu.Lock()
+		machine.warm = &protocol.WarmReport{Agents: agents, IdleSeconds: window, Started: 3, Reused: 2, RSSBytes: 5 << 20}
+		machine.warmMu.Unlock()
+	}
+	report(&zero)
+	if got := f.srv.agentWarmState(card); got != nil {
 		t.Fatalf("window off: %+v", got)
 	}
-	if got := f.srv.agentWarmState(card, true); got == nil || got.State != "sleeping" {
+	report(nil)
+	if got := f.srv.agentWarmState(card); got != nil {
+		t.Fatalf("a report without idle_seconds (an older supervisor) is unknown, never sleeping: %+v", got)
+	}
+	report(&five)
+	if got := f.srv.agentWarmState(card); got == nil || got.State != "sleeping" {
 		t.Fatalf("no live process: %+v", got)
 	}
-	machine.warmMu.Lock()
-	machine.warm = &protocol.WarmReport{Agents: []protocol.WarmAgent{{AgentID: "agt_w", State: "idle", SleepsAt: "2026-11-08T17:00:00Z"}, {AgentID: "agt_b", State: "busy"}}, Started: 3, Reused: 2, RSSBytes: 5 << 20}
-	machine.warmMu.Unlock()
-	if got := f.srv.agentWarmState(card, true); got == nil || got.State != "warm" || got.SleepsAt != "2026-11-08T17:00:00Z" {
+	report(&five, protocol.WarmAgent{AgentID: "agt_w", State: "idle", SleepsAt: "2026-11-08T17:00:00Z"}, protocol.WarmAgent{AgentID: "agt_b", State: "busy"})
+	if got := f.srv.agentWarmState(card); got == nil || got.State != "warm" || got.SleepsAt != "2026-11-08T17:00:00Z" {
 		t.Fatalf("live idle process: %+v", got)
+	}
+	report(nil, protocol.WarmAgent{AgentID: "agt_w", State: "idle", SleepsAt: "2026-11-08T17:00:00Z"})
+	if got := f.srv.agentWarmState(card); got == nil || got.State != "warm" {
+		t.Fatalf("a live idle process is warm whatever the report says of its window: %+v", got)
 	}
 	busy := card
 	busy.ID, busy.Observed = "agt_b", "in_turn"
-	if got := f.srv.agentWarmState(busy, true); got != nil {
+	if got := f.srv.agentWarmState(busy); got != nil {
 		t.Fatalf("an agent in a turn says nothing: %+v", got)
 	}
 	other := card
@@ -133,13 +151,13 @@ func TestAgentCardWarmState(t *testing.T) {
 	stopped := card
 	stopped.Desired = "stopped"
 	for name, c := range map[string]store.AgentCard{"another tool": other, "stopped": stopped} {
-		if got := f.srv.agentWarmState(c, true); got != nil {
+		if got := f.srv.agentWarmState(c); got != nil {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
 	old := connectHost(t, f, false)
 	_ = old
-	if got := f.srv.agentWarmState(card, true); got != nil {
+	if got := f.srv.agentWarmState(card); got != nil {
 		t.Fatalf("a machine that keeps nothing warm: %+v", got)
 	}
 }
@@ -178,12 +196,13 @@ func TestWarmStateFrameIsKept(t *testing.T) {
 		machine.warm = &report
 		machine.warmMu.Unlock()
 	}
-	apply(protocol.WarmReport{Agents: []protocol.WarmAgent{{AgentID: "agt_x", State: "idle", SleepsAt: "2026-11-08T17:00:00Z"}}})
-	if got := f.srv.agentWarmState(card, true); got == nil || got.State != "warm" {
+	five := 300
+	apply(protocol.WarmReport{Agents: []protocol.WarmAgent{{AgentID: "agt_x", State: "idle", SleepsAt: "2026-11-08T17:00:00Z"}}, IdleSeconds: &five})
+	if got := f.srv.agentWarmState(card); got == nil || got.State != "warm" {
 		t.Fatalf("warm: %+v", got)
 	}
-	apply(protocol.WarmReport{Agents: []protocol.WarmAgent{}})
-	if got := f.srv.agentWarmState(card, true); got == nil || got.State != "sleeping" {
+	apply(protocol.WarmReport{Agents: []protocol.WarmAgent{}, IdleSeconds: &five})
+	if got := f.srv.agentWarmState(card); got == nil || got.State != "sleeping" {
 		t.Fatalf("after the next report: %+v", got)
 	}
 }
@@ -394,7 +413,7 @@ func TestAgentSettingsReachAnIdleSupervisor(t *testing.T) {
 	}
 	w.f.srv.sendAgentSettings(t.Context(), machine)
 	frame := settings()
-	if frame.Type != protocol.AgentSettingsFrame || frame.WarmIdleSeconds == nil || *frame.WarmIdleSeconds != 0 || frame.KeepAliveByTool["claude"].IntervalSeconds != 3000 || frame.KeepAliveByTool["codex"].IntervalSeconds != 600 {
+	if frame.Type != protocol.AgentSettingsFrame || frame.WarmIdleSeconds != nil || frame.KeepAliveByTool["claude"].IntervalSeconds != 3000 || frame.KeepAliveByTool["codex"].IntervalSeconds != 600 {
 		t.Fatalf("first frame: %+v", frame)
 	}
 	w.f.srv.sendAgentSettings(t.Context(), machine)
@@ -670,5 +689,44 @@ func TestWarmCountThatCannotBeSavedIsNotAcknowledged(t *testing.T) {
 	f.srv.handleWarmClaim(machine, protocol.Frame{ReqID: "c2", WarmSeq: 5, WarmCount: 1})
 	if ack := <-machine.sendQueue; ack.ReqID != "c2" {
 		t.Fatalf("once it can be saved the claim is answered: %+v", ack)
+	}
+}
+
+// A warm process's real end is recorded as an event naming the agent and the reason, but only when it comes from the machine that runs the agent; the
+// reason is bounded.
+func TestWarmProcessEndedFrameRecordsAnEventFromTheAgentsMachine(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	machine := connectHost(t, f, true)
+	agent, _ := f.createToolAgent(t, "role_worker_default")
+	runtime, err := f.db.AgentRuntimeByID(t.Context(), agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine.id = runtime.MachineID
+	events := func() (count int, longest int) {
+		t.Helper()
+		all, err := f.db.EventsAfter(t.Context(), f.room.CreatedBy, 0, 1<<62)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range all {
+			if e.Kind == "warm_process_ended" && e.AgentID == agent.ID {
+				count++
+				longest = max(longest, len(e.PayloadJSON))
+			}
+		}
+		return count, longest
+	}
+	f.srv.handleWarmEnded(t.Context(), machine, protocol.Frame{Type: protocol.WarmEndedFrame, AgentID: agent.ID, Message: strings.Repeat("x", 500)})
+	if n, longest := events(); n != 1 || longest > 260 {
+		t.Fatalf("the end of a warm process must be recorded once, its reason bounded: %d events, %d bytes", n, longest)
+	}
+	other := &machineConn{id: "mch_other", sendQueue: make(chan protocol.Frame, 2), done: make(chan struct{})}
+	f.srv.handleWarmEnded(t.Context(), other, protocol.Frame{Type: protocol.WarmEndedFrame, AgentID: agent.ID, Message: "not mine"})
+	f.srv.handleWarmEnded(t.Context(), machine, protocol.Frame{Type: protocol.WarmEndedFrame, AgentID: "agt_nobody", Message: "no such agent"})
+	if n, _ := events(); n != 1 {
+		t.Fatalf("a machine that does not run the agent, or an unknown agent, must not add one: %d", n)
 	}
 }

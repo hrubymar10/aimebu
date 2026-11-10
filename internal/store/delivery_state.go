@@ -503,7 +503,14 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 				}
 			}
 		}
-		_, err := tx.AppendEvent(Event{Kind: "turn_process_exit", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: turnID, PayloadJSON: payloadJSON(payload)})
+		kind := "turn_process_exit"
+		if info.ProcessAlive && terminal && !cancel {
+			// The turn ended cleanly and its process did not: a warm process kept for the next turn. That is a finished turn, not an exited
+			// process (nothing exited); the process's own end is recorded when it comes (warm_process_ended).
+			kind = "turn_finished"
+			payload = map[string]string{"process": "kept"}
+		}
+		_, err := tx.AppendEvent(Event{Kind: kind, ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: turnID, PayloadJSON: payloadJSON(payload)})
 		if err != nil {
 			return err
 		}

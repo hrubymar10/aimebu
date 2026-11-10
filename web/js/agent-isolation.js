@@ -4,7 +4,7 @@ import { request } from './api.js';
 export const agentIsolation = {
   dockerOnly: false,
   canEdit: false,
-  warmIdleMinutes: 0, // how long agents are kept warm after a turn (0 is off); only the owner changes it
+  warmIdleMinutes: 5, // how long agents are kept warm after a turn (5 until the owner saves another, 0 is off); only the owner changes it
   canEditWarm: false,
   keepAlive: { enabled: true, claude_minutes: 50, codex_minutes: 10, stop_after_hours: 24 }, // the cache keep-alive: pings that keep an idle agent's prompt cache
   listeners: new Set(),
@@ -15,7 +15,7 @@ export const agentIsolation = {
   apply(body) {
     this.dockerOnly = !!body?.docker_only;
     this.canEdit = !!body?.can_edit;
-    this.warmIdleMinutes = Number(body?.warm_idle_minutes) || 0;
+    if (typeof body?.warm_idle_minutes === 'number' && Number.isFinite(body.warm_idle_minutes)) this.warmIdleMinutes = body.warm_idle_minutes; // a server that says none leaves the default
     this.canEditWarm = !!body?.can_edit_warm;
     if (body?.keep_alive) this.keepAlive = { ...this.keepAlive, ...body.keep_alive };
     for (const listener of this.listeners) listener(this);

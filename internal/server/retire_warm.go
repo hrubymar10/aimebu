@@ -195,6 +195,31 @@ func (s *Server) setWarmSeenLocked(machineID string, entry warmSeenEntry) error 
 	return nil
 }
 
+// handleWarmEnded records that a warm process the supervisor had kept idle for an agent has ended, and why: the turns that ended in it were recorded as
+// finished with the process alive, so this is where its end is on the record. Only the machine that runs the agent may say it; the reason is bounded and
+// plain text.
+func (s *Server) handleWarmEnded(ctx context.Context, c *machineConn, frame protocol.Frame) {
+	if frame.AgentID == "" {
+		return
+	}
+	agent, err := s.Store.AgentRuntimeByID(ctx, frame.AgentID)
+	if err != nil || agent.MachineID != c.id {
+		return
+	}
+	reason := frame.Message
+	if len(reason) > 200 {
+		reason = reason[:200]
+	}
+	payload, _ := json.Marshal(map[string]string{"reason": reason})
+	err = s.Store.Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.AppendEvent(store.Event{Kind: "warm_process_ended", ProjectID: agent.ProjectID, AgentID: agent.ID, PayloadJSON: string(payload)})
+		return err
+	})
+	if err != nil {
+		log.Printf("machine %s: a warm process's end was not recorded: %v", c.id, err)
+	}
+}
+
 // handleWarmClaim applies a warm claim and answers it: the supervisor keeps the process only once it has the answer.
 func (s *Server) handleWarmClaim(c *machineConn, frame protocol.Frame) {
 	if s.applyWarmCount(c, frame.WarmSeq, frame.WarmCount, false) {
@@ -302,7 +327,7 @@ func (s *Server) sendAgentSettings(ctx context.Context, c *machineConn) {
 	if !c.supportsWarm {
 		return
 	}
-	warm, err := s.warmIdleSeconds(ctx)
+	warm, err := s.warmIdleToSend(ctx)
 	if err != nil {
 		return
 	}
@@ -310,11 +335,15 @@ func (s *Server) sendAgentSettings(ctx context.Context, c *machineConn) {
 	if err != nil {
 		return
 	}
-	frame := protocol.Frame{V: protocol.Version, Type: protocol.AgentSettingsFrame, WarmIdleSeconds: &warm, KeepAliveByTool: map[string]protocol.KeepAliveSettings{}}
+	frame := protocol.Frame{V: protocol.Version, Type: protocol.AgentSettingsFrame, WarmIdleSeconds: warm, KeepAliveByTool: map[string]protocol.KeepAliveSettings{}}
 	for _, tool := range []string{"claude", "codex"} {
 		frame.KeepAliveByTool[tool] = *keep.settingsFor(tool)
 	}
-	key := fmt.Sprintf("%d|%v", warm, frame.KeepAliveByTool)
+	saved := -1
+	if warm != nil {
+		saved = *warm
+	}
+	key := fmt.Sprintf("%d|%v", saved, frame.KeepAliveByTool)
 	c.settingsMu.Lock()
 	defer c.settingsMu.Unlock()
 	if c.settingsSent && key == c.settingsLast {

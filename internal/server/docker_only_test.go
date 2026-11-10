@@ -253,7 +253,7 @@ func TestDockerOnlyHoldsAnAgentWhoseLauncherCannotBeRead(t *testing.T) {
 }
 
 // The warm window of the agents is read by anyone signed in and changed only by the owner (an admin may change "only in docker" but not how much
-// memory the machines hold between turns). It is off until set, is in minutes, and is bounded.
+// memory the machines hold between turns). It is five minutes until set, 0 is off, it is in minutes, and is bounded.
 func TestWarmIdleSettingIsOwnerOnly(t *testing.T) {
 	t.Parallel()
 	w := newAdminWorld(t)
@@ -265,16 +265,19 @@ func TestWarmIdleSettingIsOwnerOnly(t *testing.T) {
 		}
 		return body["warm_idle_minutes"], body["can_edit_warm"]
 	}
-	if minutes, canEdit := read(w.viewer); minutes != float64(0) || canEdit != false {
+	if minutes, canEdit := read(w.viewer); minutes != float64(5) || canEdit != false {
 		t.Fatalf("default for a viewer: %v %v", minutes, canEdit)
+	}
+	if _, body := w.json(t, w.viewer, "GET", "/api/agent-isolation", nil); body["warm_idle_saved"] != false {
+		t.Fatalf("nothing is saved yet: %v", body["warm_idle_saved"])
 	}
 	for _, who := range []adminActor{w.admin, w.pOwner, w.oper, w.viewer, w.out} {
 		if code := w.call(t, who, "PUT", "/api/agent-isolation", map[string]int{"warm_idle_minutes": 5}); code != 403 {
 			t.Errorf("%s changed the warm window: %d", who.name, code)
 		}
 	}
-	if seconds, err := w.f.srv.warmIdleSeconds(t.Context()); err != nil || seconds != 0 {
-		t.Fatalf("a refused write changed it: %d %v", seconds, err)
+	if _, saved, err := w.f.srv.warmIdleSetting(t.Context()); err != nil || saved {
+		t.Fatalf("a refused write saved something: %v %v", saved, err)
 	}
 	for _, bad := range []int{-1, 1441} {
 		if code := w.call(t, w.owner, "PUT", "/api/agent-isolation", map[string]int{"warm_idle_minutes": bad}); code != 400 {
@@ -290,8 +293,8 @@ func TestWarmIdleSettingIsOwnerOnly(t *testing.T) {
 	if minutes, _ := read(w.viewer); minutes != float64(5) {
 		t.Fatalf("a viewer reads %v", minutes)
 	}
-	if seconds, _ := w.f.srv.warmIdleSeconds(t.Context()); seconds != 300 {
-		t.Fatalf("stored as seconds: %d", seconds)
+	if seconds, saved, _ := w.f.srv.warmIdleSetting(t.Context()); seconds != 300 || !saved {
+		t.Fatalf("stored as seconds: %d saved=%v", seconds, saved)
 	}
 	// Setting docker-only alone leaves the window as it was, and an admin may do that.
 	if code := w.call(t, w.admin, "PUT", "/api/agent-isolation", map[string]bool{"docker_only": true}); code != 200 {
@@ -299,5 +302,47 @@ func TestWarmIdleSettingIsOwnerOnly(t *testing.T) {
 	}
 	if seconds, _ := w.f.srv.warmIdleSeconds(t.Context()); seconds != 300 {
 		t.Fatalf("docker-only changed the window: %d", seconds)
+	}
+}
+
+// The warm window is the owner's saved value when there is one, else five minutes; a saved 0 is off (not "unset"), and what a delivery and an
+// agent_settings frame carry is only the saved value, so a supervisor's own default applies when the owner saved none.
+func TestWarmIdleDefaultSavedZeroAndWhatIsSent(t *testing.T) {
+	t.Parallel()
+	w := newAdminWorld(t)
+	ctx := t.Context()
+	effective := func() (int, bool) {
+		t.Helper()
+		seconds, err := w.f.srv.warmIdleSeconds(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sent, err := w.f.srv.warmIdleToSend(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return seconds, sent != nil
+	}
+	if seconds, sent := effective(); seconds != 300 || sent {
+		t.Fatalf("nothing saved: effective %d, sent=%v; want 300 and nothing sent", seconds, sent)
+	}
+	if code := w.call(t, w.owner, "PUT", "/api/agent-isolation", map[string]int{"warm_idle_minutes": 0}); code != 200 {
+		t.Fatalf("the owner turns it off: %d", code)
+	}
+	if seconds, sent := effective(); seconds != 0 || !sent {
+		t.Fatalf("a saved 0 is off and is sent: effective %d, sent=%v", seconds, sent)
+	}
+	if code := w.call(t, w.owner, "PUT", "/api/agent-isolation", map[string]int{"warm_idle_minutes": 20}); code != 200 {
+		t.Fatalf("the owner sets 20: %d", code)
+	}
+	if seconds, sent := effective(); seconds != 1200 || !sent {
+		t.Fatalf("saved 20 minutes: effective %d, sent=%v", seconds, sent)
+	}
+	// A stored value that cannot be read counts as none: the default applies and nothing is sent.
+	if err := w.f.srv.Store.SetGlobalSettingValue(ctx, agentsWarmIdleKey, "soon"); err != nil {
+		t.Fatal(err)
+	}
+	if seconds, sent := effective(); seconds != 300 || sent {
+		t.Fatalf("an unreadable value: effective %d, sent=%v", seconds, sent)
 	}
 }

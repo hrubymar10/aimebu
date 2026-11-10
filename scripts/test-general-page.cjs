@@ -122,27 +122,31 @@ async function main() {
       await page.close();
     }
     // The warm window: an owner types minutes and it is saved when the field is left (one PUT with only that field); a bad value is not sent; anyone
-    // else sees the field disabled, with the reason.
+    // else sees the field disabled, with the reason. It reads 5 until the owner saves another (the server's default), and a saved 0 reads 0 (off).
     {
-      const page = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 0, can_edit_warm: true } } });
+      const page = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 5, warm_idle_saved: false, can_edit_warm: true } } });
       await page.evaluate(() => window.__general.open());
       await page.waitForFunction(() => !document.querySelector('#agent-warm-idle').disabled);
-      assert.equal(await page.$eval('#agent-warm-idle', el => el.value), '0', 'off by default');
+      assert.equal(await page.$eval('#agent-warm-idle', el => el.value), '5', 'five minutes by default');
       await page.$eval('#agent-warm-idle', el => { el.focus(); el.value = '9999'; el.dispatchEvent(new Event('input', { bubbles: true })); });
       await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50))); // the draft is state: the blur must see the render that follows the typing
       await page.$eval('#agent-warm-idle', el => el.blur());
       await page.waitForFunction(() => /whole number of minutes/.test(document.querySelector('#agent-warm-idle-error').textContent));
       assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT').length), 0, 'a value out of range is not sent');
-      await page.$eval('#agent-warm-idle', el => { el.focus(); el.value = '5'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.$eval('#agent-warm-idle', el => { el.focus(); el.value = '10'; el.dispatchEvent(new Event('input', { bubbles: true })); });
       await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
       await page.$eval('#agent-warm-idle', el => el.blur());
       await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/agent-isolation' && !request.answered));
       const put = await page.evaluate(() => window.__requests.findIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));
-      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { warm_idle_minutes: 5 });
-      await page.evaluate(index => window.__answer(index, 200, { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: true }), put);
-      await page.waitForFunction(() => document.querySelector('#agent-warm-idle').value === '5' && !document.querySelector('#agent-warm-idle').disabled);
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { warm_idle_minutes: 10 });
+      await page.evaluate(index => window.__answer(index, 200, { docker_only: false, can_edit: true, warm_idle_minutes: 10, warm_idle_saved: true, can_edit_warm: true }), put);
+      await page.waitForFunction(() => document.querySelector('#agent-warm-idle').value === '10' && !document.querySelector('#agent-warm-idle').disabled);
       assert.equal(await page.$eval('#agent-warm-idle-error', el => el.textContent), '');
       await page.close();
+      const off = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 0, warm_idle_saved: true, can_edit_warm: true } } });
+      await off.evaluate(() => window.__general.open());
+      await off.waitForFunction(() => document.querySelector('#agent-warm-idle').value === '0');
+      await off.close();
       const admin = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: false } } });
       await admin.evaluate(() => window.__general.open());
       await admin.waitForFunction(() => document.querySelector('#agent-warm-idle').value === '5');

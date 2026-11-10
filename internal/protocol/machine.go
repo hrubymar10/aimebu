@@ -69,7 +69,11 @@ const (
 	// keeps the process only once it has that answer, and ends it otherwise. What the server knows of a host can then only be ahead of reality, never
 	// behind: a host that drops is judged by the last count it gave, which was given before the process existed. Decreases are not claims; they go in
 	// warm_state reports, and a stale higher count only makes the server refuse, which is safe.
-	WarmClaimFrame    = "warm_claim"
+	WarmClaimFrame = "warm_claim"
+	// WarmEndedFrame is a supervisor telling the server that a warm process it had kept idle for an agent has really ended (Frame.AgentID, with the
+	// reason in Frame.Message: the idle window, an account switch, a stop, a crash, ...). The turns that ended in it were reported as finished with the
+	// process alive, so this is where its end is recorded.
+	WarmEndedFrame    = "warm_process_ended"
 	WarmClaimAckFrame = "warm_claim_ack"
 	// KeepAliveFrame is a supervisor's report of one cache keep-alive ping (Frame.KeepAlive).
 	KeepAliveFrame = "keep_alive"
@@ -197,8 +201,9 @@ type Frame struct {
 	// DockerOnly, on a spawn and a delivery, says the instance runs agents only in docker: a supervisor refuses an agent whose launcher is not
 	// containerized. An older supervisor ignores the field, which is why the server refuses it too.
 	DockerOnly bool `json:"docker_only,omitempty"`
-	// WarmIdleSeconds, on a delivery, is the instance's setting for how long a supervisor keeps an agent's harness process up after a turn
-	// (0 is off). It is always sent by a server that has the setting; a supervisor that does not know it ignores it and runs every turn cold.
+	// WarmIdleSeconds, on a delivery, is the owner's saved setting for how long a supervisor keeps an agent's harness process up after a turn (0 is
+	// off). It is sent only when the owner has saved one: without it the supervisor uses its own (AIMEBU2_WARM_IDLE, else five minutes). A supervisor
+	// that does not know the field ignores it.
 	WarmIdleSeconds *int `json:"warm_idle_seconds,omitempty"`
 	// KeepAliveSettings, on a delivery: see Delivery.KeepAliveSettings.
 	KeepAliveSettings    *KeepAliveSettings `json:"keep_alive,omitempty"`
@@ -578,6 +583,9 @@ type WarmReport struct {
 	// picture for the screen and may omit what it cannot show.
 	Seq       uint64 `json:"seq,omitempty"`
 	Processes int    `json:"processes,omitempty"`
+	// IdleSeconds is the warm window the supervisor is working to (0 is off): the owner's setting when one is saved, else the supervisor's own default
+	// (AIMEBU2_WARM_IDLE, else five minutes). Absent from an older supervisor.
+	IdleSeconds *int `json:"idle_seconds,omitempty"`
 	// PingsActive counts cache keep-alive pings that run or are not confirmed gone yet (a ping in a container held in quarantine counts until its end
 	// is confirmed or the quarantine is over). They are processes on the login too, though they are not warm slots: the server counts them with the
 	// agents when it asks whether a host that has dropped may still have something running.

@@ -4,7 +4,7 @@ import { useAlive } from '../../hooks/use-alive.js';
 import { agentIsolation } from '../../agent-isolation.js';
 
 const READ_ONLY = 'Only the owner or an admin can change this.';
-const WARM_DESC = 'After a turn, an agent\'s harness stays running for this many minutes, so a message that arrives in the window skips the start (a few seconds) and the agent answers faster. After the window it goes back to sleep and the next turn starts it again. Each warm agent holds memory (roughly 0.3 GB for Claude Code), and when the machine runs low the longest-idle one is put to sleep first. 0 turns it off, which is the default. Only Claude Code agents are kept warm so far.';
+const WARM_DESC = 'After a turn, an agent\'s harness stays running for this many minutes, so a message that arrives in the window skips the start (a few seconds) and the agent answers faster. After the window it goes back to sleep and the next turn starts it again. Each warm agent holds memory (roughly 0.3 GB for Claude Code), and when the machine runs low the longest-idle one is put to sleep first. 5 minutes unless you set another; 0 turns it off. Only Claude Code agents are kept warm so far.';
 const WARM_OWNER_ONLY = 'Only the owner can change this.';
 const DESC = 'Agents on a native launcher run as the person who runs the supervisor, with that person’s files within reach, including other agents’ working folders. With this on, a native launcher is refused: no new agent is started on one, and an agent already on one gets no turns until it is moved to a Docker launcher. Off by default.';
 
