@@ -5223,8 +5223,9 @@ async function main() {
     assert.equal(await first.$eval('#system-events-toggle', el => !el.hidden), true, 'system events bell is on by default');
     await first.setViewport({ width: 1280, height: 720 }); await new Promise(resolve => setTimeout(resolve, 300)); // (two experiment pills crowd a 1100px bar, which folds the bell into the menu)
     await domClick(first, '#system-events-toggle');
-    await first.waitForFunction(() => !document.querySelector('#system-events-popover').hidden && document.querySelectorAll('#system-events-popover .system-event-row').length > 0);
-    assert.equal(await first.$eval('#system-events-popover .system-event-row .system-event-text', el => el.textContent.length > 0), true);
+    // The feed holds only what needs a look (the server's notable events), so this run may have none: the panel then says so. (The panel's rows are tested in test-system-events-page.)
+    await first.waitForFunction(() => !document.querySelector('#system-events-popover').hidden && document.querySelectorAll('#system-events-popover .system-event-row, #system-events-popover .system-events-empty').length > 0);
+    assert.equal(await first.$eval('#system-events-popover .system-event-row .system-event-text, #system-events-popover .system-events-empty', el => el.textContent.length > 0), true);
     assert.deepEqual(await first.$$eval('#system-events-popover > header button', els => els.map(el => el.textContent.trim())), [], 'the feed has no button of its own to hide the bell; Settings -> General is the only switch');
     await first.keyboard.press('Escape');
     await first.waitForFunction(() => document.querySelector('#system-events-popover').hidden);

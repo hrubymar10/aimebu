@@ -48,7 +48,7 @@ assert.equal(describe(alert({})).details, '');
 // textContent, so it is never parsed. (Escaping here would double-escape.)
 view = describe(alert({ kind: 'expiring', detail: '<img src=x onerror=alert(1)> & "quoted"' }));
 assert.equal(view.details, 'expiring: <img src=x onerror=alert(1)> & "quoted"');
-assert.match(source, /node\('span', 'system-event-details', view\.details\)/, 'the feed must render details through node(), which uses textContent');
+assert.match(source, /node\('div', 'system-event-details', view\.details\)/, 'the feed must render details through node(), which uses textContent');
 assert.doesNotMatch(source, /innerHTML\s*=\s*[^;]*view\.details/, 'details must never be written with innerHTML');
 
 // `kind` and `detail` must not leak into other events through detailKeys.
@@ -98,6 +98,19 @@ assert.equal(describe(named('user_admin_changed', { user_id: 'usr_1', admin: 'tr
 assert.equal(describe(named('user_admin_changed', { user_id: 'usr_1', admin: 'false' }, { usr_1: 'wren' })).text, 'Admin changed: wren is no longer an admin');
 // A name is text, never markup.
 assert.equal(describe(named('user_created', { user_id: 'usr_1' }, { usr_1: '<b>x</b>' })).text, 'User created: <b>x</b>');
+
+// Who started, stopped or paused an agent reads as one row: "owen@test: started by wren". The system or the limit guard is named when it was not a person.
+const control = (payload, names = { agt_1: 'owen@test', usr_1: 'wren' }, extra = {}) => ({ kind: 'agent_control_requested', agent_id: 'agt_1', payload_json: JSON.stringify(payload), names, ...extra });
+assert.equal(describe(control({ desired: 'active', actor_kind: 'user', actor_id: 'usr_1' })).text, 'owen@test: started by wren');
+assert.equal(describe(control({ desired: 'stopped', actor_kind: 'user', actor_id: 'usr_1' })).text, 'owen@test: stopped by wren');
+assert.equal(describe(control({ desired: 'not_accepting', actor_kind: 'user', actor_id: 'usr_1' })).text, 'owen@test: paused by wren');
+assert.equal(describe(control({ desired: 'stopped', actor_kind: 'user', actor_id: 'usr_9' })).text, 'owen@test: stopped by someone', 'a person nobody can name');
+assert.equal(describe(control({ desired: 'stopped', actor_kind: 'system', actor_id: 'x' })).text, 'owen@test: stopped by the system');
+assert.equal(describe(control({ desired: 'active', actor_kind: 'system', reason: 'provider_limit_retry' })).text, 'owen@test: started by the limit guard');
+assert.equal(describe(control({ desired: 'stopped', actor_kind: 'user', actor_id: 'usr_1' }, undefined, { room_id: 'r1' }), { roomTitle: () => 'general' }).where, 'general', 'the agent is in the title, the room is where');
+
+// (What the bell shows is decided by the server, which marks each event `notable`; the store's tests hold that list.)
+assert.equal(describe(control({ desired: 'active', actor: 'usr_1' }, undefined)).text, 'owen@test: started by wren', 'a recovery decision names its actor `actor`, not `actor_id`');
 
 // Every other kind keeps its own label.
 assert.equal(describe({ kind: 'agent_stopped', payload_json: '{}' }).text, 'Agent stopped');

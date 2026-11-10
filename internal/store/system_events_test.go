@@ -51,6 +51,14 @@ func TestRecentSystemEventsFiltersKindsAndAccess(t *testing.T) {
 	}
 }
 
+// The loop guard is an event a person wants to see in the feed (the panel then decides how much of it to show).
+func TestLoopGuardIsASystemEventKind(t *testing.T) {
+	t.Parallel()
+	if !IsSystemEventKind("loop_guard") {
+		t.Fatal("loop_guard is not in the system events feed")
+	}
+}
+
 func TestMessageDebugShowsAddressingNotesTurnsAndReceipts(t *testing.T) {
 	t.Parallel()
 	s, f, _ := recoveryFixture(t, false)
@@ -190,6 +198,8 @@ func TestNameEventsResolvesAgentsAndUsers(t *testing.T) {
 		{Kind: "provider_limit_detected", AgentID: f.agent.ID, PayloadJSON: "{}"},
 		{Kind: "user_invite_redeemed", PayloadJSON: `{"user_id":"` + owner + `","by":"usr_unknown"}`},
 		{Kind: "room_member_joined", AgentID: "agt_unknown", PayloadJSON: "not json but has _id\""},
+		{Kind: "agent_control_requested", AgentID: f.agent.ID, PayloadJSON: `{"desired":"stopped","actor_kind":"user","actor_id":"` + owner + `"}`},
+		{Kind: "agent_control_requested", AgentID: f.agent.ID, PayloadJSON: `{"desired":"active","actor":"` + owner + `"}`}, // what a recovery decision writes
 	}
 	if err := s.NameEvents(ctx, events); err != nil {
 		t.Fatal(err)
@@ -203,6 +213,12 @@ func TestNameEventsResolvesAgentsAndUsers(t *testing.T) {
 	}
 	if _, ok := events[1].Names["usr_unknown"]; ok {
 		t.Fatalf("an unknown id gets no name: %+v", events[1].Names)
+	}
+	if events[3].Names[owner] != "owner" {
+		t.Fatalf("who started, stopped or paused an agent is named: %+v", events[3].Names)
+	}
+	if events[4].Names[owner] != "owner" {
+		t.Fatalf("so is the actor of a recovery decision: %+v", events[4].Names)
 	}
 	if len(events[2].Names) != 0 {
 		t.Fatalf("unknown agent and bad payload: %+v", events[2].Names)

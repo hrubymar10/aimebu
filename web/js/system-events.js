@@ -55,6 +55,12 @@ export function describeEvent(event, names = {}) {
     const kind = event.kind === 'user_invite_created' && payload.kind ? `${String(payload.kind).replaceAll('_', ' ')} link` : '';
     return { text, where, details: kind };
   }
+  if (event.kind === 'agent_control_requested') {
+    // One row for a start, stop or pause: "owen@test: started by wren". (The control being applied is the same fact and is not shown; the server decides what is notable.)
+    const what = { active: 'started', stopped: 'stopped', not_accepting: 'paused' }[payload.desired] || 'changed';
+    const by = payload.actor_kind === 'user' || (!payload.actor_kind && payload.actor) ? person(payload.actor_id || payload.actor) || 'someone' : payload.reason === 'provider_limit_retry' ? 'the limit guard' : 'the system';
+    return { text: `${agent || 'An agent'}: ${what} by ${by}`, where: room || '', details: payload.reason ? `reason: ${String(payload.reason).replaceAll('_', ' ')}` : '' };
+  }
   if (event.kind === 'credential_alert') {
     // The payload is {kind, detail}: `kind` names the alert (login imported, refresh
     // needs a human, expiring, ...) and `detail` is already redacted by the server.
@@ -88,7 +94,7 @@ const keep = 200;
 // live stream, filtered by the kind list the server returned.
 export class SystemEvents {
   constructor(names) {
-    this.names = names; this.events = []; this.kinds = new Set(); this.unread = 0; this.ticket = 0;
+    this.names = names; this.events = []; this.unread = 0; this.ticket = 0;
     this.toggle = node('button', 'btn-icon'); this.toggle.id = 'system-events-toggle'; this.toggle.type = 'button';
     this.toggle.title = 'System events'; this.toggle.setAttribute('aria-label', 'System events'); this.toggle.setAttribute('aria-haspopup', 'dialog'); this.toggle.setAttribute('aria-expanded', 'false');
     this.toggle.innerHTML = '<svg width="14" height="18" viewBox="0 0 400 512" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="25" stroke-linecap="round" stroke-linejoin="round" d="M222,240l92,248 -180-126 108-53m-84,0 108,53-180,126 92-248M80,318a172,172 0 1,1 240,0M130,266a100,100 0 1,1 140,0M199,144a50,50 0 1,0 2,0"/></svg>';
@@ -119,9 +125,8 @@ export class SystemEvents {
   async load() {
     const ticket = ++this.ticket;
     try {
-      const data = await request('/api/system-events?limit=100');
+      const data = await request('/api/system-events?limit=100&notable=1'); // the server's list of what is worth a look (see the store's IsNotableSystemEvent); the web keeps none
       if (ticket !== this.ticket) return;
-      this.kinds = new Set(data.kinds || []);
       const known = new Set(this.events.map(event => event.id));
       this.events = [...this.events, ...(data.events || []).filter(event => !known.has(event.id))].sort((a, b) => b.seq - a.seq).slice(0, keep);
       this.renderList();
@@ -129,24 +134,32 @@ export class SystemEvents {
   }
 
   onEvent(event) {
-    if (!this.kinds.has(event.kind) || this.events.some(item => item.id === event.id)) return;
+    if (!event.notable || this.events.some(item => item.id === event.id)) return; // the server marks the events the bell shows; only those are listed and counted
     this.events.unshift(event); this.events.length = Math.min(this.events.length, keep);
     if (this.popover.hidden) { this.unread++; this.renderBadge(); } else this.renderList();
   }
 
   renderBadge() { this.badge.textContent = String(this.unread); this.badge.hidden = !this.unread; }
 
+  // One line per event: what happened, which agent, which room, how long ago. The detail (an exit code, a reason) is behind the row: a click, Enter or Space opens it.
   renderList() {
-    if (!this.events.length) { this.list.replaceChildren(node('p', 'system-events-empty', 'No system events yet.')); return; }
+    if (!this.events.length) { this.list.replaceChildren(node('p', 'system-events-empty', 'Nothing needs a look.')); return; }
     this.list.replaceChildren(...this.events.map(event => {
       const view = describeEvent(event, this.names);
       const row = node('div', 'system-event-row'); row.dataset.kind = event.kind;
+      const line = node('div', 'system-event-line');
       const main = node('div', 'system-event-main');
       main.append(node('span', 'system-event-text', view.text));
       if (view.where) main.append(node('span', 'system-event-where', view.where));
-      if (view.details) main.append(node('span', 'system-event-details', view.details));
       const time = node('time', 'system-event-time', relativeTime(event.created_at)); time.dateTime = event.created_at; time.title = new Date(event.created_at).toLocaleString();
-      row.append(main, time);
+      line.append(main, time); row.append(line);
+      if (view.details) {
+        const details = node('div', 'system-event-details', view.details); details.hidden = true; row.append(details);
+        row.classList.add('system-event-expandable'); row.tabIndex = 0; row.setAttribute('role', 'button'); row.setAttribute('aria-expanded', 'false');
+        const toggle = () => { details.hidden = !details.hidden; row.setAttribute('aria-expanded', String(!details.hidden)); };
+        row.addEventListener('click', toggle);
+        row.addEventListener('keydown', key => { if (key.target === row && (key.key === 'Enter' || key.key === ' ')) { key.preventDefault(); toggle(); } });
+      }
       return row;
     }));
   }

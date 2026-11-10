@@ -287,6 +287,8 @@ type Event struct {
 	// Names says who the ids of the event are (its agent, and the users its payload names: user_id, by), for the feed that shows the event to a person;
 	// only NameEvents fills it, and an event that is stored or compared has none. Agents are slug@project (a removed agent keeps the name it had), users their login.
 	Names map[string]string `json:"names,omitempty"`
+	// Notable is set on the events of the system-events feed that the bell shows (IsNotableSystemEvent); the web shows exactly those and keeps no list of its own.
+	Notable bool `json:"notable,omitempty"`
 }
 
 func (tx *Tx) AppendEvent(event Event) (Event, error) {

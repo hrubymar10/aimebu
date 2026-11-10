@@ -21,7 +21,12 @@ func (s *Server) systemEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = value
 	}
-	events, err := s.Store.RecentSystemEvents(r.Context(), userID(r), limit)
+	// ?notable=1 is what the bell asks for: only the events it shows (the one list in the store), as the newest `limit` of those.
+	read := s.Store.RecentSystemEvents
+	if r.URL.Query().Get("notable") == "1" {
+		read = s.Store.RecentNotableSystemEvents
+	}
+	events, err := read(r.Context(), userID(r), limit)
 	if err == nil {
 		err = s.Store.NameEvents(r.Context(), events) // who the ids are, so the feed reads "hana@tmp" and not agt_…
 	}

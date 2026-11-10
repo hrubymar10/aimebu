@@ -20,7 +20,7 @@ var systemEventKinds = []string{
 	"agent_spawn_requested", "agent_spawn_confirmed", "agent_spawn_failed",
 	"agent_control_requested", "agent_control_applied",
 	"agent_switch_requested", "agent_switch_starting", "agent_switch_completed", "agent_switch_failed",
-	"agent_turn_budget_exceeded",
+	"agent_turn_budget_exceeded", "loop_guard",
 	"room_created", "room_renamed", "room_closing", "room_closed", "room_reopened", "room_close_blocked",
 	"room_member_joined", "room_member_left",
 	"room_worktree_requested", "room_worktree_updated", "room_worktree_cancelled",
@@ -56,6 +56,16 @@ func SystemEventKinds() []string { return append([]string(nil), systemEventKinds
 // RecentSystemEvents returns the newest operational events the user may see,
 // newest first, under the same eventVisible rule as the live event stream.
 func (s *Store) RecentSystemEvents(ctx context.Context, userID string, limit int) ([]Event, error) {
+	return s.recentSystemEvents(ctx, userID, limit, false)
+}
+
+// RecentNotableSystemEvents is RecentSystemEvents narrowed to the events the bell shows (see IsNotableSystemEvent): the filter is part of the query, so a page of
+// `limit` is the newest `limit` notable events, however many routine ones came after them.
+func (s *Store) RecentNotableSystemEvents(ctx context.Context, userID string, limit int) ([]Event, error) {
+	return s.recentSystemEvents(ctx, userID, limit, true)
+}
+
+func (s *Store) recentSystemEvents(ctx context.Context, userID string, limit int, notableOnly bool) ([]Event, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
@@ -67,10 +77,16 @@ func (s *Store) RecentSystemEvents(ctx context.Context, userID string, limit int
 	for _, kind := range systemEventKinds {
 		args = append(args, kind)
 	}
+	notable := ""
+	if notableOnly {
+		clause, more := notableSQL()
+		notable = " AND " + clause
+		args = append(args, more...)
+	}
 	args = append(args, userID, userID, userID, userID, userID, userID, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at
 		FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id
-		WHERE e.kind IN (`+marks+`) AND `+eventVisible+`
+		WHERE e.kind IN (`+marks+`)`+notable+` AND `+eventVisible+`
 		ORDER BY e.seq DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -82,6 +98,7 @@ func (s *Store) RecentSystemEvents(ctx context.Context, userID string, limit int
 		if err := rows.Scan(&e.ID, &e.Seq, &e.Kind, &e.ProjectID, &e.RoomID, &e.AgentID, &e.TurnID, &e.PayloadJSON, &e.CreatedAt); err != nil {
 			return nil, err
 		}
+		e.Notable = IsNotableSystemEvent(e.Kind, e.PayloadJSON)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -267,8 +284,8 @@ func rawOrStringJSON(text string) json.RawMessage {
 	return encoded
 }
 
-// eventNameKeys are the payload fields that hold a user's id, in the events that have one (an invite redeemed, an admin changed, a user deactivated).
-var eventNameKeys = []string{"user_id", "by"}
+// eventNameKeys are the payload fields that hold a user's id, in the events that have one (an invite redeemed, an admin changed, a user deactivated, and who started, stopped or paused an agent: `actor_id`, or `actor` where a recovery decision wrote it).
+var eventNameKeys = []string{"user_id", "by", "actor_id", "actor"}
 
 // NameEvents fills Names of the events with who their ids are (see Event.Names), with one query for the agents and one for the users of the whole batch, so
 // a feed shows "hana@tmp" and "wren" and not agt_01M6MDS… and usr_… . An id nobody can be found for is left out, and the client falls back to what it knew.
@@ -282,7 +299,7 @@ func (s *Store) NameEvents(ctx context.Context, events []Event) error {
 		if event.AgentID != "" {
 			agents[event.AgentID] = true
 		}
-		if !strings.Contains(event.PayloadJSON, "_id\"") && !strings.Contains(event.PayloadJSON, "\"by\"") {
+		if !strings.Contains(event.PayloadJSON, "_id\"") && !strings.Contains(event.PayloadJSON, "\"by\"") && !strings.Contains(event.PayloadJSON, "\"actor\"") {
 			continue
 		}
 		var payload map[string]any

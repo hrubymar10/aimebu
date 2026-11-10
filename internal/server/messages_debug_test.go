@@ -8,6 +8,56 @@ import (
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
+// ?notable=1 is what the bell reads: the notable events only, marked, as the newest `limit` of those; the plain history keeps everything.
+func TestSystemEventsNotableOnly(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		for _, event := range []store.Event{
+			{Kind: "agent_spawn_failed", ProjectID: f.project.ID, RoomID: f.room.ID, PayloadJSON: `{"error":"x"}`},
+			{Kind: "turn_process_exit", ProjectID: f.project.ID, RoomID: f.room.ID, PayloadJSON: `{"exit_code":"0"}`},
+			{Kind: "turn_process_exit", ProjectID: f.project.ID, RoomID: f.room.ID, PayloadJSON: `{"exit_code":"1"}`},
+			{Kind: "room_renamed", ProjectID: f.project.ID, RoomID: f.room.ID, PayloadJSON: `{}`},
+		} {
+			if _, err := tx.AppendEvent(event); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(query string) (kinds []string, marked []bool) {
+		resp := f.request(http.MethodGet, "/api/system-events"+query, nil, false)
+		defer resp.Body.Close()
+		var body struct {
+			Events []struct {
+				Kind    string `json:"kind"`
+				Notable bool   `json:"notable"`
+			} `json:"events"`
+		}
+		if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&body) != nil {
+			t.Fatalf("system events %s: %d", query, resp.StatusCode)
+		}
+		for _, event := range body.Events {
+			kinds = append(kinds, event.Kind)
+			marked = append(marked, event.Notable)
+		}
+		return kinds, marked
+	}
+	kinds, marked := read("?notable=1")
+	if len(kinds) != 2 || kinds[0] != "turn_process_exit" || kinds[1] != "agent_spawn_failed" || !marked[0] || !marked[1] {
+		t.Fatalf("the notable feed: %v %v", kinds, marked)
+	}
+	if one, _ := read("?notable=1&limit=1"); len(one) != 1 || one[0] != "turn_process_exit" {
+		t.Fatalf("a page is the newest notable events: %v", one)
+	}
+	if all, _ := read(""); len(all) < 4 {
+		t.Fatalf("the plain history has everything: %v", all)
+	}
+}
+
 func TestSystemEventsAndMessageDebugEndpoints(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

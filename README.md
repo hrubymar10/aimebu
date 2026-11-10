@@ -414,8 +414,14 @@ The choice is saved to the account (`/api/me/preferences`), so it follows
 the person to other devices; the browser keeps a cached copy to apply it
 before the page renders. Settings → General also holds two chat switches, saved
 the same way: the
-System events bell (on by default; a feed of joins, spawns, recoveries,
-quota limits, and machine changes with an unread count) and the Message
+System events bell (on by default; a feed of what needs a look, with an unread count
+that counts only what the feed shows: agents spawned, started, stopped or removed, failures, a
+process that exited with a code other than 0, lost or unstarted turns, the loop guard,
+credential alerts, usage limits and their clears, automatic account switches, a session reset, an admin changed or a user deactivated. Routine events (an exit with
+code 0, a key rotated, a rename, someone joining, a machine approved) are left out, with no
+"show all". A start, stop or pause is one row, "owen@test: started by wren". Each row is one
+line, event, agent and room, time; a click or Enter on it opens the detail, such as an exit
+code. The server decides which events are notable, marks them `notable` and can return only those with `?notable=1`; see the API guide) and the Message
 debug inspector (off by default; v1's bug icon in each message's header line, next to its `#id`, opens its
 stored record, who it addressed, the wake note and turn each agent got,
 and the related events, with previous and next to walk the room's messages and the Reply in thread, Copy

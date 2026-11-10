@@ -45,6 +45,7 @@ func (s *Server) batch(ctx context.Context, user string, after, through int64) (
 		}
 		for k, i := range at {
 			events[i].Names = feed[k].Names
+			events[i].Notable = store.IsNotableSystemEvent(events[i].Kind, events[i].PayloadJSON)
 		}
 	}
 	return events, nil
