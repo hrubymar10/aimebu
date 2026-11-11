@@ -190,8 +190,6 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 			apiError(w, 400, "invalid_choice", "this item does not offer that choice")
 		case errors.Is(err, store.ErrInvalidTransition):
 			apiError(w, 409, "invalid_transition", "choice is invalid for this recovery item")
-		case errors.Is(err, store.ErrWriterOccupied):
-			writerOccupied(w, err, "another agent holds the checkout writer role")
 		case errors.Is(err, store.ErrProjectArchived):
 			apiError(w, 409, "project_archived", "this project is archived: only Abandon is possible, and it ends with the agent stopped; reopen the project to continue")
 		default:

@@ -5128,8 +5128,8 @@ async function main() {
     });
     await domClick(first, '#spawn-open');
     await first.waitForFunction(() => document.querySelector('#spawn-form [name=model]')?.value === 'test' && !document.querySelector('#spawn-form button[type=submit]').disabled);
-    // A worktree is offered where the project folder is a Git repository (this one is); where the machine says it is not, the box is off
-    // with the reason, and a machine that does not say leaves it available.
+    // A task-room worktree is offered where the project folder is a Git repository (this one is).
+    // A non-Git folder hides the option without a warning; an unknown machine leaves it available.
     assert.deepEqual(await first.evaluate(async () => {
       const { worktreeOption } = await import('/js/spawn-model.js');
       const form = document.querySelector('#spawn-form'), option = form.querySelector('.spawn-worktree-option');
@@ -5142,8 +5142,8 @@ async function main() {
       const live = state(), notRepo = sync(false), reason = option.querySelector('.spawn-worktree-note').textContent, unknown = sync(undefined), home = sync(false, 'home'); sync(undefined);
       return { live, notRepo, reason, unknown, home };
     }), {
-      live: { hidden: false, disabled: false, note: true, display: 'flex' }, notRepo: { hidden: false, disabled: true, note: false, display: 'flex' },
-      reason: 'No worktree here: Git cannot use the project folder: detected dubious ownership',
+      live: { hidden: false, disabled: false, note: true, display: 'flex' }, notRepo: { hidden: true, disabled: true, note: false, display: 'none' },
+      reason: '',
       unknown: { hidden: false, disabled: false, note: true, display: 'flex' }, home: { hidden: true, disabled: true, note: false, display: 'none' },
     }, 'the worktree box follows whether the project folder is a Git repository');
     await first.select('#spawn-form [name=tool]', '1');
@@ -9139,7 +9139,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await domClick(first, '#spawn-cancel');
 
     }
-    // Two workers in one task room both start: the second is not refused, it works in a worktree of its own, a folder other than the first's.
+    // Two workers in one task room both start and share that room's checkout.
     {
       const two = await first.evaluate(async (projectID, firstID, room0) => {
         const { csrf_token } = await (await fetch('/api/me')).json();
@@ -9152,9 +9152,8 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
         const profile = id => call(`/api/rooms/${room.id}/agents/${id}/profile`, 'GET');
         return { first: await profile(one.id), second: await profile(other.id), role: base.role_key };
       }, actualProjectID, realAgentID, roomID);
-      assert.ok(two.first.cwd && two.second.cwd && two.first.cwd !== two.second.cwd, `two workers in one room work in different folders: ${JSON.stringify(two)}`);
-      assert.equal(two.second.worktree, true, 'the second worker works in a worktree');
-      assert.match(two.second.cwd, /\.aimebu\/worktrees\/room_[^/]+-[a-z]/, 'named after its room and the agent');
+      assert.ok(two.first.cwd && two.first.cwd === two.second.cwd, `two workers in one room share a checkout: ${JSON.stringify(two)}`);
+      assert.equal(two.first.branch, two.second.branch, 'the second worker uses the room branch');
     }
   } finally {
     await ctx.close();

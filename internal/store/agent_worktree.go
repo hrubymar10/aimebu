@@ -6,8 +6,8 @@ import (
 	"errors"
 )
 
-// AgentWorktree is the Git worktree a second writer of a room works in, so that it does not have to wait for the room's folder: one per
-// agent, on one machine. Name is its directory and branch suffix under .aimebu/worktrees (see AgentWorktreeName).
+// AgentWorktree records an agent-specific Git worktree, used when a session is explicitly copied.
+// Name is its directory and branch suffix under .aimebu/worktrees (see AgentWorktreeName).
 type AgentWorktree struct {
 	AgentID    string `json:"agent_id"`
 	RoomID     string `json:"room_id"`
@@ -73,9 +73,7 @@ func (s *Store) AgentWorktreeOf(ctx context.Context, agentID string) (AgentWorkt
 	return w, err == nil, err
 }
 
-// RecordAgentWorktree makes the worktree the agent's checkout: it records the worktree and points the agent at the checkout of its path
-// (made when it is new), so that checkout's writer slot is the agent's own. The agent's previous checkout is let go of when this agent held
-// its writer slot. The checkout of the path must belong to the agent's project.
+// RecordAgentWorktree makes the worktree the agent's checkout. The checkout of the path must belong to the agent's project.
 func (tx *Tx) RecordAgentWorktree(w AgentWorktree) error {
 	projectID, err := tx.pointAgentAtCheckout(w.AgentID, w.MachineID, w.Path)
 	if err != nil {
@@ -112,8 +110,8 @@ func (s *Store) SetAgentWorktreeState(ctx context.Context, agentID, state string
 	})
 }
 
-// pointAgentAtCheckout makes the checkout of the path (made when new) the agent's, and lets go of the old one when this agent held its writer
-// slot; it returns the agent's project. The checkout of the path must belong to that project.
+// pointAgentAtCheckout moves the agent to the checkout of the path (creating it when needed) and returns the project.
+// The checkout of the path must belong to that project.
 func (tx *Tx) pointAgentAtCheckout(agentID, machineID, path string) (string, error) {
 	var projectID, oldCheckout string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,checkout_id FROM agent WHERE id=?`, agentID).Scan(&projectID, &oldCheckout); err != nil {
@@ -146,11 +144,10 @@ func (tx *Tx) pointAgentAtCheckout(agentID, machineID, path string) (string, err
 }
 
 // DetachAgentWorktree records that a person removed an agent's worktree and sends the agent back to the checkout of path (its room's), so that
-// no way of starting it ever goes to the folder that is gone. Starting it then takes that checkout's writer slot, or, if another writer holds it,
-// makes a worktree for it again.
+// no way of starting it ever goes to the folder that is gone.
 func (s *Store) DetachAgentWorktree(ctx context.Context, agentID, machineID, path string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
-		// An agent started while its folder was being taken away is not sent to another checkout it holds no writer slot of.
+		// An agent started while its folder was being taken away cannot be moved to another checkout.
 		var desired string
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT desired FROM agent WHERE id=?`, agentID).Scan(&desired); err != nil {
 			return err

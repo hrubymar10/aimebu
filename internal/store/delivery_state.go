@@ -128,14 +128,6 @@ func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
 		if membership != 1 {
 			return ErrNotMember
 		}
-		var writerRole bool
-		var writerAgent, writerState sql.NullString
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT role.cap_singleton_writer,checkout.writer_agent_id,checkout.writer_state FROM agent JOIN role ON role.id=agent.role_id JOIN checkout ON checkout.id=agent.checkout_id WHERE agent.id=?`, input.AgentID).Scan(&writerRole, &writerAgent, &writerState); err != nil {
-			return err
-		}
-		if mode == "normal" && writerRole && (!writerAgent.Valid || writerAgent.String != input.AgentID || writerState.String != "reserved") {
-			return ErrAgentNotActive
-		}
 		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.id,n.state FROM turn_note tn JOIN note n ON n.id=tn.note_id WHERE tn.turn_id=?`, input.TurnID)
 		if err != nil {
 			return err

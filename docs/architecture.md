@@ -37,7 +37,7 @@
 
 **Data model additions** — RoomMembership; Message.targets; Turn (id,
 originating room, input-note set, attempt); Session ≠ process generation;
-Checkout + writer reservation; Role; Attachment; Reaction; InboxItem
+Checkout; Role; Attachment; Reaction; InboxItem
 (message_id, assignee); Machine (machine key); auth sessions/codes;
 provider-account ownership; usage keyed by source-event id + originating
 turn's room. Room = lifecycle (open/closed) + separate persistent dispatch
@@ -142,9 +142,7 @@ closed) and leaves the messages.
 **Control, spawning, rooms**
 - Lead spawn/stop: same server path as the UI, idempotency keys, max live
   agents per project (default 10) + spawn-rate cap, system message + event for
-  each, single-writer check on spawn, role change and move.
-- Writer reservation releases only on confirmed termination/quiescence or an
-  informed owner override; never on request, machine loss or revocation.
+  each; agents may share a checkout on spawn, role change and move.
 - Close: persist the no-new-work gate first; children closed first or cascade
   with confirmation; in-flight work interrupted/drained; late replies held
   with "delivery failed" visible; nothing discarded.

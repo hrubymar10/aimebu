@@ -44,7 +44,6 @@ export function chipsOf(role, roles) {
   }
   if (role.cap_is_lead) chips.push(['lead']);
   if (role.cap_can_spawn) chips.push(['can spawn']);
-  if (role.cap_singleton_writer) chips.push(['writer']);
   if (role.builtin) chips.push(['built in']);
   return chips;
 }

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 )
@@ -214,7 +213,7 @@ func TestOutsideCheckoutSwitchWaitsForOwner(t *testing.T) {
 	}
 }
 
-func TestLegacyWriterSpawnApprovalAndDenialRelease(t *testing.T) {
+func TestLegacySpawnApprovalAndDenial(t *testing.T) {
 	t.Parallel()
 	for _, decision := range []string{"approve", "deny"} {
 		t.Run(decision, func(t *testing.T) {
@@ -243,17 +242,17 @@ func TestLegacyWriterSpawnApprovalAndDenialRelease(t *testing.T) {
 			if _, _, err := s.DecideBoundary(ctx, card.BoundaryPending, "usr_writer", "writer-"+decision, decision, 0); err != nil {
 				t.Fatal(err)
 			}
-			var state string
-			var holder sql.NullString
-			if err := s.db.QueryRow(`SELECT writer_state,writer_agent_id FROM checkout WHERE id=?`, agent.CheckoutID).Scan(&state, &holder); err != nil {
+			var desired string
+			if err := s.db.QueryRow(`SELECT desired FROM agent WHERE id=?`, agent.ID).Scan(&desired); err != nil {
 				t.Fatal(err)
 			}
-			if decision == "approve" && (state != "reserved" || holder.String != agent.ID) {
-				t.Fatalf("approved writer state=%s holder=%v", state, holder)
+			if decision == "approve" && desired != "active" {
+				t.Fatalf("approved desired=%s", desired)
 			}
-			if decision == "deny" && (state != "none" || holder.Valid) {
-				t.Fatalf("denied writer state=%s holder=%v", state, holder)
+			if decision == "deny" && desired != "stopped" {
+				t.Fatalf("denied desired=%s", desired)
 			}
+
 		})
 	}
 }

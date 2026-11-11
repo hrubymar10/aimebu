@@ -1,16 +1,10 @@
 // Import-free: scripts/test-claude-session-import.cjs runs this module in a vm.
 
-// The first session of a folder works there (a folder has one writer), the others review, so the first import does not run into that rule.
+// Sessions in the same folder can all start as workers. The person may change
+// each row's role before import.
 export function presetRoles(sessions, roles) {
-  const writer = roles.includes('worker') ? 'worker' : roles[0] || '';
-  const other = roles.includes('reviewer') ? 'reviewer' : writer;
-  const seen = new Set();
-  return sessions.map(session => {
-    const folder = session.cwd || '';
-    if (seen.has(folder)) return other;
-    seen.add(folder);
-    return writer;
-  });
+  const role = roles.includes('worker') ? 'worker' : roles[0] || '';
+  return sessions.map(() => role);
 }
 
 // Only a native claude harness, or a Docker one that shares the host's Claude home, can continue (or copy) a session; any other container

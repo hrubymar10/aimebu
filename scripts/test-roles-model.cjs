@@ -35,7 +35,7 @@ assert.deepEqual(plain(m.extendsOptions([reviewer, sec], null)).map(([value]) =>
 assert.deepEqual(plain(m.extendsOptions([reviewer], { ...sec, extends: 'gone' })).at(-1), ['gone', 'gone (missing)']);
 
 // Chips, summary and texts.
-assert.deepEqual(plain(m.chipsOf(sec, [sec, reviewer])), [['one holder'], ['extends Reviewer', 'Adds to the instructions of reviewer'], ['lead'], ['can spawn'], ['writer']]);
+assert.deepEqual(plain(m.chipsOf(sec, [sec, reviewer])), [['one holder'], ['extends Reviewer', 'Adds to the instructions of reviewer'], ['lead'], ['can spawn']]);
 assert.deepEqual(plain(m.chipsOf(reviewer, [])), [['many holders'], ['built in']]);
 assert.equal(m.chipsOf({ ...sec, extends: 'gone' }, []).find(([text]) => text.startsWith('extends'))[0], 'extends gone');
 assert.equal(m.summaryOf(sec), 'Review it. Look at secrets.');

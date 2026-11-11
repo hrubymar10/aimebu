@@ -112,12 +112,12 @@ func (tx *Tx) scopeAgentTransition(id, actor, desired string, rev int64, restore
 	var updated AgentCard
 	var err error
 	if restorePaused {
-		updated, err = tx.setDesiredInOwnWorktree(id, actor, "active", rev)
+		updated, err = tx.SetAgentDesired(id, actor, "active", rev)
 		if err == nil {
 			updated, err = tx.SetAgentDesired(id, actor, "not_accepting", updated.DesiredRev)
 		}
 	} else {
-		updated, err = tx.setDesiredInOwnWorktree(id, actor, desired, rev)
+		updated, err = tx.SetAgentDesired(id, actor, desired, rev)
 	}
 	if err != nil {
 		_, _ = tx.Exec(`ROLLBACK TO scope_agent_transition`)
@@ -435,20 +435,6 @@ func (tx *Tx) ControlScope(kind, id, action, actor string, rev int64) (ScopeCont
 	return out, nil
 }
 
-// setDesiredInOwnWorktree is SetAgentDesired for a bulk control. A start that finds the agent's folder held by another writer moves the
-// agent to the worktree made for it beforehand (UseScopeWorktrees) and starts it there; without one the refusal stands.
-func (tx *Tx) setDesiredInOwnWorktree(id, actor, desired string, rev int64) (AgentCard, error) {
-	updated, err := tx.SetAgentDesired(id, actor, desired, rev)
-	own, ok := tx.scopeWorktrees[id]
-	if desired != "active" || !errors.Is(err, ErrWriterOccupied) || !ok {
-		return updated, err
-	}
-	if err := tx.RecordAgentWorktree(own); err != nil {
-		return AgentCard{}, err
-	}
-	return tx.SetAgentDesired(id, actor, desired, rev)
-}
-
 // ScopeBudgetPaused says whether the scope's daily budget has paused it today, which a resume is refused for.
 func (s *Store) ScopeBudgetPaused(ctx context.Context, kind, id string) (paused bool, err error) {
 	err = s.Tx(ctx, func(tx *Tx) (err error) {
@@ -456,50 +442,6 @@ func (s *Store) ScopeBudgetPaused(ctx context.Context, kind, id string) (paused 
 		return err
 	})
 	return paused, err
-}
-
-// ScopeWriter is a stopped singleton writer that a bulk resume of a room or project would find its folder's writer slot taken for.
-type ScopeWriter struct {
-	AgentID   string
-	Slug      string
-	RoomID    string
-	MachineID string
-}
-
-// ScopeResumeWriters lists the agents a resume of the scope would start (those it holds, still at the revision it applied) that are
-// singleton writers and would not get their folder's writer slot: it is held by another agent now, or an agent earlier in the order the
-// resume goes in takes it. The server makes a worktree for each before the resume, so none fails.
-func (s *Store) ScopeResumeWriters(ctx context.Context, kind, id string) ([]ScopeWriter, error) {
-	if err := s.checkTxReentry(ctx); err != nil {
-		return nil, err
-	}
-	if _, err := scopeTable(kind); err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.slug,a.machine_id,a.checkout_id,c.writer_state,
-		COALESCE(a.home_room_id,(SELECT m.room_id FROM room_member m WHERE m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL ORDER BY m.joined_at LIMIT 1),'')
-		FROM scope_control_agent sc JOIN agent a ON a.id=sc.agent_id JOIN role r ON r.id=a.role_id JOIN checkout c ON c.id=a.checkout_id
-		WHERE sc.scope_kind=? AND sc.scope_id=? AND a.desired=sc.bulk_desired AND a.desired_rev=sc.bulk_rev AND a.desired='stopped' AND sc.restore_desired!='stopped'
-		AND a.revoked_at IS NULL AND r.cap_singleton_writer=1 ORDER BY a.id`, kind, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	taken := map[string]bool{}
-	var out []ScopeWriter
-	for rows.Next() {
-		var w ScopeWriter
-		var checkout, state string
-		if err := rows.Scan(&w.AgentID, &w.Slug, &w.MachineID, &checkout, &state, &w.RoomID); err != nil {
-			return nil, err
-		}
-		if state != "none" || taken[checkout] {
-			out = append(out, w)
-			continue
-		}
-		taken[checkout] = true
-	}
-	return out, rows.Err()
 }
 
 // ScopeOwnWorktreeNames lists the worktrees of the agents a bulk control of the scope holds that are in use as their folder (ready), by name.

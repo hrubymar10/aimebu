@@ -12,6 +12,26 @@ import (
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
+// Put an agent in an explicit worktree so removal tests cover its lifecycle.
+func (f *fixture) agentWorktreeForTest(t *testing.T, card store.AgentCard) store.AgentWorktree {
+	t.Helper()
+	machine, err := f.db.MachineByID(t.Context(), card.MachineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slug := card.Slug
+	own, reason := f.srv.agentWorktreeFor(t.Context(), f.room, machine, &slug, "")
+	if own == nil {
+		t.Fatalf("make worktree: %s", reason)
+	}
+	defer own.Done()
+	own.AgentID = card.ID
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error { return tx.RecordAgentWorktree(*own) }); err != nil {
+		t.Fatal(err)
+	}
+	return *own
+}
+
 // Removing an agent: only a stopped one, only by the project's owner or an operator. Its worktree of its own is removed the way the worktree's
 // own removal does (the branch stays), it leaves its rooms, and what it said stays under its name, marked as removed.
 func TestRemoveAgentTakesAStoppedWriterOutAndItsMessagesStay(t *testing.T) {
@@ -25,10 +45,7 @@ func TestRemoveAgentTakesAStoppedWriterOutAndItsMessagesStay(t *testing.T) {
 	if status != 201 {
 		t.Fatalf("second writer %d %+v", status, raw)
 	}
-	own, found, err := f.db.AgentWorktreeOf(t.Context(), second.ID)
-	if err != nil || !found {
-		t.Fatalf("worktree %+v found=%v err=%v", own, found, err)
-	}
+	own := f.agentWorktreeForTest(t, second)
 	if _, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "agent", AuthorID: second.ID, Body: "two was here"}); err != nil {
 		t.Fatal(err)
 	}
@@ -144,10 +161,7 @@ func TestRemoveAgentKeepsItsWorkAndFreesTheNameForAFreshStart(t *testing.T) {
 	if status != 201 {
 		t.Fatalf("second writer %d %+v", status, raw)
 	}
-	own, found, err := f.db.AgentWorktreeOf(t.Context(), second.ID)
-	if err != nil || !found {
-		t.Fatalf("worktree %+v found=%v err=%v", own, found, err)
-	}
+	own := f.agentWorktreeForTest(t, second)
 	stop := func(id string) {
 		t.Helper()
 		card, err := f.db.AgentCardByID(t.Context(), id)

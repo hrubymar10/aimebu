@@ -91,6 +91,7 @@ async function main() {
       assert.equal((await shown(page)).open, false, 'the editor stays closed until a role is opened');
       await click(page, '#role-new');
       assert.deepEqual(await shown(page).then(({ open, heading, key, keyReadOnly, selected, focus }) => ({ open, heading, key, keyReadOnly, selected, focus })), { open: true, heading: 'New role', key: '', keyReadOnly: false, selected: [], focus: 'role_key' }, 'New role opens a blank form on its key');
+      assert.equal(await page.$('#role-writer'), null, 'legacy writer capability is not offered as a role setting');
       await click(page, '#roles-cards [data-role-key=sec] .role-card-edit');
       assert.deepEqual(await page.evaluate(() => {
         const form = document.querySelector('#role-editor');

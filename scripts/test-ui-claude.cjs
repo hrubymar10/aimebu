@@ -136,7 +136,7 @@ async function main() {
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       assert.equal(await first.$eval('#spawn-form h2', el => el.textContent), 'Spawn', 'closing the dialog restores the ordinary one');
       // Bulk import (the home room's settings → Project): the dialog is driven here with a scripted source, so no agent is really started. Roles are preset
-      // (the first session of a folder works, the rest review), what is ticked is started in order as copies in rooms of their own, and a
+      // (each session starts as a worker, and a row can be changed), what is ticked is started in order as copies in rooms of their own, and a
       // spawn limit stops the rest and says so.
       const imported = await first.evaluate(async projectID => {
         const { ClaudeSessionImport } = await import('/js/pages/claude-import/page.js');
@@ -184,11 +184,11 @@ async function main() {
         return shown;
       }, actualProjectID);
       assert.deepEqual({ harnesses: imported.harnesses, models: imported.models, roles: imported.roles, roleOptions: imported.roleOptions, status: imported.status, runDisabled: imported.runDisabled, flags: imported.flags }, {
-        harnesses: ['Claude Code'], models: [['opus', false], ['haiku', true]], roles: ['worker', 'reviewer', 'worker'], roleOptions: ['worker', 'reviewer'],
+        harnesses: ['Claude Code'], models: [['opus', false], ['haiku', true]], roles: ['worker', 'worker', 'worker'], roleOptions: ['worker', 'reviewer'],
         status: '3 sessions (2 sessions could not be read)', runDisabled: true, flags: [[], ['continued by olive'], ['outside the project folder', 'needs approval']] }, 'the import dialog lists the sessions with preset roles and only a native harness');
       assert.deepEqual(imported.afterAll, { ticked: 3, runDisabled: false });
       assert.deepEqual(imported.calls, [['list', actualProjectID, 'l_native'],
-        ['spawn', 'home_room', 'reviewer', '1', 'fork', true, 'l_native', 'haiku'], ['spawn', 'home_room', 'reviewer', '2', 'fork', true, 'l_native', 'haiku'], ['spawn', 'home_room', 'worker', '3', 'fork', true, 'l_native', 'haiku']],
+        ['spawn', 'home_room', 'reviewer', '1', 'fork', true, 'l_native', 'haiku'], ['spawn', 'home_room', 'worker', '2', 'fork', true, 'l_native', 'haiku'], ['spawn', 'home_room', 'worker', '3', 'fork', true, 'l_native', 'haiku']],
         'each ticked session is started in order as a copy in a room of its own, through the native harness');
       assert.deepEqual(imported.states, ['Started as copy-1', 'Started as copy-2', 'Not started: limit reached']);
       assert.equal(imported.final, '2 of 3 sessions started; the project\'s agent or spawn-rate limit was reached, import the rest later.');

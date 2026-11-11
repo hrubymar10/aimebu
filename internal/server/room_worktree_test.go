@@ -298,16 +298,15 @@ func TestViewerDoesNotSeeTheWorktreesAbsolutePath(t *testing.T) {
 	}
 }
 
-// A viewer's agent card says who blocks an agent but not where on the machine's disk: the blocker's checkout path and the grants' paths are
-// blanked, on a copy (the card the server holds keeps them).
+// A viewer's agent card hides boundary grant paths on a copy, retaining the
+// original paths for the owner.
 func TestCardWithoutPathsBlanksTheAbsolutePaths(t *testing.T) {
-	card := store.AgentCard{ID: "agt_x", WriterBlock: &store.WriterBlock{AgentID: "agt_y", Slug: "y", Path: "/srv/secret/project"},
-		BoundaryGrants: []store.BoundaryGrant{{MachineID: "mch_1", Path: "/srv/secret/other", ApprovedAt: "then"}}}
+	card := store.AgentCard{ID: "agt_x", BoundaryGrants: []store.BoundaryGrant{{MachineID: "mch_1", Path: "/srv/secret/other", ApprovedAt: "then"}}}
 	shown := cardWithoutPaths(card)
-	if shown.WriterBlock.Path != "" || shown.WriterBlock.Slug != "y" || shown.BoundaryGrants[0].Path != "" || shown.BoundaryGrants[0].MachineID != "mch_1" {
-		t.Fatalf("shown=%+v block=%+v", shown, shown.WriterBlock)
+	if shown.BoundaryGrants[0].Path != "" || shown.BoundaryGrants[0].MachineID != "mch_1" {
+		t.Fatalf("shown=%+v", shown)
 	}
-	if card.WriterBlock.Path == "" || card.BoundaryGrants[0].Path == "" {
+	if card.BoundaryGrants[0].Path == "" {
 		t.Fatal("the card the server holds lost its paths")
 	}
 }

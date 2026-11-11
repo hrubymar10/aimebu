@@ -91,7 +91,7 @@ func TestAnotherMachineIsNotReadOrWrittenBeforeItIsAdmitted(t *testing.T) {
 		t.Fatalf("a room worktree on a machine that is not admitted: %v", err)
 	}
 	slug := "ada"
-	if tree, reason := f.srv.agentWorktreeForLocked(t.Context(), room, machine, &slug, "", false); tree != nil || reason != errMachineNotAdmitted.Error() {
+	if tree, reason := f.srv.agentWorktreeFor(t.Context(), room, machine, &slug, ""); tree != nil || reason != errMachineNotAdmitted.Error() {
 		t.Fatalf("an agent worktree on a machine that is not admitted: %+v %q", tree, reason)
 	}
 	if len(conn.sendQueue) != before {

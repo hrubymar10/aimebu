@@ -25,13 +25,11 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		var projectID, machineID, desired, observed, tool, variant, launcherID, model, provider, sessionID, roleID, roleBody, checkoutPath string
 		var generation int
 		var desiredRev int64
-		var blocked, revoked, writer bool
-		var writerID, writerState sql.NullString
+		var blocked, revoked bool
 		err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.machine_id,a.desired,a.observed,a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,
-			a.generation,a.desired_rev,a.recovery_block,a.revoked_at IS NOT NULL,r.id,r.cap_singleton_writer,
-			c.writer_agent_id,c.writer_state,c.canonical_path
+			a.generation,a.desired_rev,a.recovery_block,a.revoked_at IS NOT NULL,r.id,c.canonical_path
 			FROM agent a JOIN role r ON r.id=a.role_id JOIN checkout c ON c.id=a.checkout_id WHERE a.id=?`, agentID).
-			Scan(&projectID, &machineID, &desired, &observed, &tool, &variant, &launcherID, &model, &provider, &generation, &desiredRev, &blocked, &revoked, &roleID, &writer, &writerID, &writerState, &checkoutPath)
+			Scan(&projectID, &machineID, &desired, &observed, &tool, &variant, &launcherID, &model, &provider, &generation, &desiredRev, &blocked, &revoked, &roleID, &checkoutPath)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -126,7 +124,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if observed != "idle" && (special.Mode != "correction" || observed != "in_turn") {
 				return nil
 			}
-			if special.Mode == "normal" && (blocked || writer && (!writerID.Valid || writerID.String != agentID || writerState.String != "reserved")) {
+			if special.Mode == "normal" && (blocked) {
 				return nil
 			}
 			var other int
@@ -252,7 +250,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			ready = true
 			return nil
 		}
-		if observed != "idle" || blocked || writer && (!writerID.Valid || writerID.String != agentID || writerState.String != "reserved") {
+		if observed != "idle" || blocked {
 			return nil
 		}
 		var openTurns int

@@ -70,7 +70,7 @@ async function main() {
         models: [...document.querySelectorAll('#cc-import-model option')].map(o => [o.value, o.selected]), roles: [...document.querySelectorAll('#cc-import-list select')].map(s => s.value),
         status: document.querySelector('#cc-import-status').textContent, run: [document.querySelector('#cc-import-run').disabled, document.querySelector('#cc-import-run').title], all: document.querySelector('#cc-import-all').title,
         order: [...document.querySelector('#cc-import-dialog').children].map(n => n.tagName.toLowerCase() + (n.id ? `#${n.id}` : '')) })),
-        { open: true, machines: [['Box · Host', false], ['Away · Offline', true]], machine: 'm1', models: [['opus', false], ['haiku', true]], roles: ['worker', 'reviewer', 'reviewer'], status: '3 sessions',
+        { open: true, machines: [['Box · Host', false], ['Away · Offline', true]], machine: 'm1', models: [['opus', false], ['haiku', true]], roles: ['worker', 'worker', 'worker'], status: '3 sessions',
           run: [true, 'Import the selected sessions as agents'], all: 'Select all or none', order: ['h2#cc-import-title', 'p', 'div', 'div', 'div#cc-import-list', 'p#cc-import-error', 'div'] });
       assert.equal((await page.evaluate(() => window.__calls.find(call => call[0] === 'machines')[1])), '/api/machines?project_id=p1');
       await page.close();

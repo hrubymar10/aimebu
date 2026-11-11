@@ -125,12 +125,12 @@ func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID
 // SetAgentRoleAsTool changes the role used for the target's next turn. A live
 // turn keeps its original instructions, so role changes wait for an idle agent.
 func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (AgentCard, error) {
-	var projectID, observed, desired, checkoutID, oldRoleID, oldRoleKey string
+	var projectID, observed, desired, oldRoleID, oldRoleKey string
 	var oldRev int64
-	var oldLead, oldWriter bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.observed,a.desired,a.desired_rev,a.checkout_id,a.role_id,r.role_key,r.cap_is_lead,r.cap_singleton_writer
+	var oldLead bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.observed,a.desired,a.desired_rev,a.role_id,r.role_key,r.cap_is_lead
 		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.revoked_at IS NULL`, agentID).
-		Scan(&projectID, &observed, &desired, &oldRev, &checkoutID, &oldRoleID, &oldRoleKey, &oldLead, &oldWriter); err != nil {
+		Scan(&projectID, &observed, &desired, &oldRev, &oldRoleID, &oldRoleKey, &oldLead); err != nil {
 		return AgentCard{}, err
 	}
 	if err := tx.authorizeSpawnActor(projectID, "agent", actorID, false); err != nil {
@@ -146,9 +146,9 @@ func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (A
 		return AgentCard{}, ErrInvalidTransition
 	}
 	var newRoleID, cardinality string
-	var newLead, newWriter bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,cardinality,cap_is_lead,cap_singleton_writer FROM role WHERE role_key=? AND deleted_at IS NULL`, roleKey).
-		Scan(&newRoleID, &cardinality, &newLead, &newWriter); err != nil {
+	var newLead bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,cardinality,cap_is_lead FROM role WHERE role_key=? AND deleted_at IS NULL`, roleKey).
+		Scan(&newRoleID, &cardinality, &newLead); err != nil {
 		return AgentCard{}, err
 	}
 	if newLead {
@@ -180,28 +180,6 @@ func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (A
 		}
 		if occupied > 0 {
 			return AgentCard{}, ErrRoleOccupied
-		}
-	}
-	if oldWriter != newWriter && desired != "stopped" {
-		var state string
-		var owner sql.NullString
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT writer_state,writer_agent_id FROM checkout WHERE id=?`, checkoutID).Scan(&state, &owner); err != nil {
-			return AgentCard{}, err
-		}
-		if newWriter {
-			if state != "none" {
-				return AgentCard{}, tx.writerOccupied(checkoutID)
-			}
-			if _, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id=?`, agentID, checkoutID); err != nil {
-				return AgentCard{}, err
-			}
-		} else {
-			if owner.String != agentID {
-				return AgentCard{}, ErrInvalidTransition
-			}
-			if _, err := tx.Exec(`UPDATE checkout SET writer_state='none',writer_agent_id=NULL WHERE id=?`, checkoutID); err != nil {
-				return AgentCard{}, err
-			}
 		}
 	}
 	if _, err := tx.Exec(`UPDATE agent SET role_id=?,desired_rev=desired_rev+1 WHERE id=?`, newRoleID, agentID); err != nil {

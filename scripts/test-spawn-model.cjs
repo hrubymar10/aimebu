@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'spawn-model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerHolder, writerHolderText, modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, startRoomLabel, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, startRoomLabel, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason };', context);
 const { modelFamily, modelVersion, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
 const plain = value => JSON.parse(JSON.stringify(value)); // plain objects: a vm context has its own Object
 const { switchRows, switchStart, switchModel, switchUnchanged, switchReason } = context.api;
@@ -111,10 +111,10 @@ assert.equal(resumeToolChoice([{ tool: 'claude', containerized: true, available:
 assert.deepEqual(plain(resumeToolChoice(catalog, undefined)), { index: null, disabled: null, note: '' });
 assert.equal(resumeToolChoice([{ tool: 'codex', available: true }], { tool: 'claude', resumable: false }).index, null, 'a fresh start leaves the choice alone');
 
-// The worktree box: a task room only, refused with the machine's reason, not for a continued session.
+// The optional worktree box appears in task rooms with a usable Git folder, not for continued sessions.
 assert.deepEqual(plain(worktreeOption({ roomKind: 'task', resumable: false })), { hidden: false, disabled: false, refused: false, note: '' });
-assert.deepEqual(plain(worktreeOption({ roomKind: 'task', check: { ok: false, reason: 'not a repo' } })), { hidden: false, disabled: true, refused: true, note: 'No worktree here: not a repo' });
-assert.equal(worktreeOption({ roomKind: 'task', check: { ok: false } }).note, 'No worktree here: the project folder cannot have one.');
+assert.deepEqual(plain(worktreeOption({ roomKind: 'task', check: { ok: false, reason: 'not a repo' } })), { hidden: true, disabled: true, refused: true, note: '' });
+assert.equal(worktreeOption({ roomKind: 'task', check: { ok: false } }).note, '');
 assert.deepEqual([worktreeOption({ roomKind: 'home' }).hidden, worktreeOption({ roomKind: 'task', resumable: true }).hidden], [true, true]);
 
 // A hint names Settings → Harnesses as a button for an admin, and gives anyone else plain words.
@@ -220,20 +220,6 @@ assert.equal(switchReason({ tool: { available: true }, modelCount: 1, unchanged:
 assert.equal(switchReason({ tool: { available: true, toolbox: false, toolbox_reason: 'no channel' }, modelCount: 1 }), 'No agent toolbox: no channel.');
 assert.equal(switchReason({ tool: { available: true }, modelCount: 1 }), '');
 
-// A writer role is held back by another live writer of the room on the machine, unless the room gets a worktree of its own.
-const { writerHolder, writerHolderText } = context.api;
-const agents = [{ slug: 'alice', role_key: 'worker', desired: 'active', machine_id: 'm1' }, { slug: 'bob', role_key: 'reviewer', desired: 'active', machine_id: 'm1' }];
-const writerRoles = new Set(['worker']);
-const holder = extra => plain(writerHolder({ writer: true, agents, writerRoles, machineID: 'm1', worktree: false, worktreeRefused: true, ...extra }));
-assert.equal(holder().slug, 'alice');
-assert.equal(writerHolder({ writer: false, agents, writerRoles, machineID: 'm1', worktree: false }), null, 'a non-writer role is never held back');
-assert.equal(holder({ worktree: true }), null, 'a worktree is a checkout of its own');
-assert.equal(holder({ worktreeRefused: false }), null, 'with a worktree available the newcomer gets one: nothing blocks, so nothing is said');
-assert.equal(holder({ machineID: 'm2' }), null, 'another machine is another checkout');
-assert.equal(holder({ agents: [{ ...agents[0], machine_id: '' }] }), null, 'an agent whose machine is unknown is not counted');
-assert.equal(holder({ machineID: '' }), null, 'nor is anyone before a machine is chosen');
-assert.equal(holder({ agents: [{ ...agents[0], desired: 'stopped' }] }), null, 'a stopped writer holds nothing');
-assert.equal(holder({ agents: [agents[1]] }), null, 'a reviewer is not a writer');
-assert.equal(writerHolderText(agents[0], 'No worktree here: the project folder is not a Git repository'), 'alice is already working in this folder, and a separate copy of it cannot be made (the project folder is not a Git repository), so a new writer here will be refused until alice is stopped.');
-assert.equal(writerHolderText(agents[0]), 'alice is already working in this folder, and a separate copy of it cannot be made, so a new writer here will be refused until alice is stopped.');
+// A non-Git folder simply has no worktree option.
+assert.deepEqual(plain(worktreeOption({ roomKind: 'task', check: { ok: false, reason: 'not Git' } })), { hidden: true, disabled: true, refused: true, note: '' });
 console.log('spawn model tests passed');

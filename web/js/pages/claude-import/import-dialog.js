@@ -28,7 +28,7 @@ export function ImportDialog({ store }) {
     store.start(roles);
   };
   return html`<h2 id="cc-import-title">Import Claude Code sessions</h2>
-    <p class="cc-sessions-intro">Pick the sessions a machine has for this project's folder. Each becomes an agent in a room of its own, working on a copy of its session (the originals stay as they are), idle until it is sent a message. A folder has one writer: the others review.</p>
+    <p class="cc-sessions-intro">Pick the sessions a machine has for this project's folder. Each becomes an agent in a room of its own, working on a copy of its session (the originals stay as they are), idle until it is sent a message.</p>
     <div class="cc-import-pickers">
       <label>Machine<select id="cc-import-machine" value=${store.machine.value} disabled=${locked} onChange=${event => store.selectMachine(event.currentTarget.value)}>${store.machines.value.map(machine => html`<option value=${machine.id} disabled=${machine.disabled}>${machine.label}</option>`)}</select></label>
       <label>Harness<select id="cc-import-harness" value=${store.harness.value} disabled=${locked} onChange=${event => store.selectHarness(event.currentTarget.value)}>${tools.map((item, index) => html`<option value=${String(index)}>${item.label || 'Claude Code'}</option>`)}</select></label>

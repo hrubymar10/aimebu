@@ -195,7 +195,7 @@ async function main() {
       assert.ok(cols.length === 2 && cols.every(c => c[0] === cols[0][0] && c[1] === cols[0][1]), `bar and value columns line up: ${JSON.stringify(cols)}`);
       await page.close();
     }
-    // A second writer's worktree is listed under its agent and has a Remove button (off while an agent still works in it); a room's own has none.
+    // An agent-specific worktree is listed under its agent and has a Remove button (off while an agent still works in it); a room's own has none.
     {
       const trees = [{ room: 'task', room_id: 'r9', state: 'ready', bytes: 10, path: '/tmp/w/task' },
         { room: 'task · ada', agent: 'ada', agent_id: 'a1', room_id: 'r9', state: 'ready', bytes: 20, path: '/tmp/w/task-ada' },

@@ -120,7 +120,7 @@ after the folder it is started in, as spelled, so a session made through a link
 (saved under the link's name, for example a home folder that is a link to another
 volume) is not found from the resolved path. When the session's folder and the
 resolved one are the **same directory**, the agent keeps the canonical checkout
-(every boundary, launcher and single-writer rule is about that), and its turns
+(for boundary and launcher checks), and its turns
 start Claude **in the session's own spelling** (`launch_path` on the delivery; the
 supervisor starts the harness there with `PWD` set, and uses it only when it
 resolves to exactly the checkout). It is kept on the agent (`agent.launch_path`) for its
@@ -143,7 +143,7 @@ dialog always sends its choice, and offers `continue` first. An unknown value is
 
 `work_on_copy: true` (with `resume_session` or `resume_legacy`, and `resume_mode`
 `fork`, which it implies) starts the session as a copy **in a worktree of its own**
-instead of in the folder it was made in, which another writer may hold: the server
+instead of in the folder it was made in: the server
 makes the agent's worktree (`<project>/.aimebu/worktrees/<room-id>-<name>`, see
 [cleanup](cleanup.md); the room is the one the agent starts in, the new room with
 `new_room`), has the machine copy the session (the transcript and the
@@ -161,10 +161,8 @@ session, with `resume_legacy`) made outside the project's folder answers 409
 unlike continuing it where it is, a copy has no owner approval to wait for); a supervisor without
 `supports_session_copy` answers 409 `supervisor_update_needed` (it would ignore the
 request and answer as a plain lookup, so the server never asks it). Without
-`work_on_copy`, a session whose folder another agent writes in is refused with
-`writer_occupied`, which the Spawn dialog turns into three choices: start as a role
-that does not write, stop the writer, or work on a copy.
-
+`work_on_copy`, the agent continues in the session's folder even when another
+agent works there.
 Refusals that protect the transcript (they apply to `continue`; a copy leaves the
 original as it is, so none of them stands in its way):
 
@@ -200,8 +198,8 @@ whose session is the copy, and its later turns resume that id without the flag.
 - A copy needs no `confirm_session_closed` and ignores `session_active` and
   `already_started`: it only reads the original.
 - Everything else is as for a continued session: the agent works in the folder the
-  session was made in (so the single-writer-per-folder rule and the approval for a
-  folder outside the project apply), counts against the project's limits, and the
+  session was made in (so approval for a folder outside the project applies),
+  counts against the project's limits, and the
   room's note reads `<agent> joined as <role>, working on a copy of the Claude Code
   session "<title>" (<id8>) in <folder>`.
 - The supervisor must advertise `supports_session_fork`; a fork through an older one
@@ -220,14 +218,13 @@ The home room's settings → Project → **Claude Code sessions → Import sessi
 machine has for the project's folder (the same list as the picker, for a chosen
 machine, native `claude` harness and model), each with a checkbox and a role. Every
 ticked session becomes **one agent in one room of its own, working on a copy**, idle
-until it is sent a message. The roles are preset the way the single-writer rule needs
-them: the first session of a folder is a worker, the others of that folder reviewers.
+until it is sent a message. Every session defaults to Worker, and the person may
+choose another role for each one.
 
 The dialog starts the agents one by one through the ordinary spawn request, so
 nothing is bypassed: the project's `max_live_agents` and spawn rate apply (429
 `spawn_limit` stops the rest, which stay ticked and are said not to have started, to
-import later), a folder's writer rule can refuse one row (409 `writer_occupied`, shown on
-that row; the others go on), and sessions outside the project folder wait for the owner's
+import later), and sessions outside the project folder wait for the owner's
 approval in the Inbox. Nothing of what was said in a session is copied anywhere.
 
 ## What continues, and what does not

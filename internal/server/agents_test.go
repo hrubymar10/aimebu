@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -469,13 +468,12 @@ func TestSpawnEchoIdempotencyWriterAndControl(t *testing.T) {
 	if status != 201 || again.ID != card.ID {
 		t.Fatalf("duplicate spawn %d %+v", status, again)
 	}
-	status, _, raw = f.spawnRequest(t, "second", "worker")
-	if status != 409 || raw["error"] != "writer_occupied" {
-		t.Fatalf("second writer %d %+v", status, raw)
+	status, second, raw := f.spawnRequest(t, "second", "worker")
+	if status != 201 || second.ID == card.ID {
+		t.Fatalf("second worker should share the folder: %d %+v", status, raw)
 	}
-	if message, _ := raw["message"].(string); raw["writer_agent_id"] != card.ID || raw["writer_slug"] != card.Slug || raw["path"] == "" ||
-		!strings.Contains(message, card.Slug+"@") || !strings.Contains(message, fmt.Sprint(raw["path"])) || !strings.Contains(message, "non-writer role") {
-		t.Fatalf("the refusal should name the holder and the folder: %+v", raw)
+	if path, err := f.db.AgentCheckoutPath(t.Context(), second.ID); err != nil || path != f.project.Folder {
+		t.Fatalf("shared checkout %q err=%v", path, err)
 	}
 	response := f.request("POST", "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "Hello demo"}, true)
 	response.Body.Close()
@@ -1004,20 +1002,17 @@ func TestRemovedModelKeepsKeyedSpawnReplayButRejectsNewRequests(t *testing.T) {
 	}
 }
 
-// A second writer in a room is not refused: it is started in a worktree of its own, <project>/.aimebu/worktrees/<room-id>-<slug> on branch
-// aimebu/<room-id>-<slug>, so its writer slot is its own; the first one keeps the room's folder. With the project's worktree mode off, or
-// a folder that is not a Git root, the refusal stays and says why.
-func TestSecondWriterGetsAWorktreeOfItsOwn(t *testing.T) {
+// Workers may share a non-Git folder, including when worktree mode is off.
+func TestWorkersShareFolderWithoutGit(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	journal, err := supervisor.OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	j, err := supervisor.OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
-	fake := adapter.NewFake()
-	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, fake)
+	defer j.Close()
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, j, adapter.NewFake())
 	ready := make(chan struct{}, 1)
 	client.OnReady = func() { ready <- struct{}{} }
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1028,98 +1023,26 @@ func TestSecondWriterGetsAWorktreeOfItsOwn(t *testing.T) {
 	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not connect")
 	}
-	root := f.project.Folder
-	// Not a Git repository: the second writer is refused, and the refusal says why it got no worktree.
-	status, first, raw := f.spawnRequest(t, "first", "worker")
-	if status != 201 {
-		t.Fatalf("first writer %d %+v", status, raw)
-	}
-	status, _, raw = f.spawnRequest(t, "plain", "worker")
-	if message, _ := raw["message"].(string); status != 409 || raw["error"] != "writer_occupied" || !strings.Contains(message, "cannot get a worktree of its own") {
-		t.Fatalf("a folder that is not a Git root keeps the refusal, with the reason: %d %+v", status, raw)
-	}
-	initRepo(t, root)
-	status, second, raw := f.spawnRequest(t, "second", "worker")
-	if status != 201 {
-		t.Fatalf("second writer %d %+v", status, raw)
-	}
-	wantPath := filepath.Join(root, ".aimebu", "worktrees", f.room.ID+"-"+second.Slug)
-	own, found, err := f.db.AgentWorktreeOf(t.Context(), second.ID)
-	if err != nil || !found || own.Path != wantPath || own.Branch != "aimebu/"+f.room.ID+"-"+second.Slug || own.State != "ready" {
-		t.Fatalf("second writer's worktree %+v found=%v err=%v", own, found, err)
-	}
-	if _, err := os.Stat(filepath.Join(wantPath, "tracked.txt")); err != nil {
-		t.Fatalf("the worktree should hold the project's files: %v", err)
-	}
-	if path, err := f.db.AgentCheckoutPath(t.Context(), second.ID); err != nil || path != wantPath {
-		t.Fatalf("second writer's checkout %q err=%v", path, err)
-	}
-	// Health lists it under the agent's name, and the agent's profile says it works in a worktree.
-	listed, err := f.db.ReadyWorktrees(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := false
-	for _, item := range listed {
-		if item.Path == wantPath && item.AgentSlug == second.Slug && item.Name == f.room.ID+"-"+second.Slug && item.RoomID == f.room.ID {
-			seen = true
+	for i := 0; i < 3; i++ {
+		status, card, raw := f.spawnRequest(t, fmt.Sprintf("worker-%d", i), "worker")
+		if status != 201 {
+			t.Fatalf("worker %d: %d %+v", i, status, raw)
+		}
+		if path, err := f.db.AgentCheckoutPath(t.Context(), card.ID); err != nil || path != f.project.Folder {
+			t.Fatalf("checkout %q err=%v", path, err)
+		}
+		if _, found, err := f.db.AgentWorktreeOf(t.Context(), card.ID); err != nil || found {
+			t.Fatalf("unexpected worktree found=%v err=%v", found, err)
 		}
 	}
-	if !seen {
-		t.Fatalf("Health should list the agent's worktree: %+v", listed)
-	}
-	if profile, err := f.db.AgentProfile(t.Context(), f.room.ID, second.ID); err != nil || !profile.Worktree || profile.Branch != own.Branch {
-		t.Fatalf("profile %+v err=%v", profile, err)
-	}
-	if path, err := f.db.AgentCheckoutPath(t.Context(), first.ID); err != nil || path != root {
-		t.Fatalf("the first writer keeps the room's folder: %q err=%v", path, err)
-	}
-	if _, found, _ := f.db.AgentWorktreeOf(t.Context(), first.ID); found {
-		t.Fatal("the first writer has no worktree of its own")
-	}
-	// A third gets another, and a named one is named by it.
-	body, _ := json.Marshal(map[string]string{"role_key": "worker", "tool": "fake", "variant": "test", "model": "test", "name": "named"})
-	req, _ := http.NewRequest("POST", f.http.URL+"/api/rooms/"+f.room.ID+"/agents", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-CSRF-Token", f.csrf)
-	req.Header.Set("Idempotency-Key", "third")
-	req.AddCookie(f.cookie)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := f.request(http.MethodPut, "/api/projects/"+f.project.ID+"/settings", map[string]any{"worktree_mode": "off"}, true)
 	resp.Body.Close()
-	if own, found, _ := f.db.AgentWorktreeOf(t.Context(), mustAgentID(t, f, "named")); resp.StatusCode != 201 || !found || filepath.Base(own.Path) != f.room.ID+"-named" {
-		t.Fatalf("a named third writer: %d %+v found=%v", resp.StatusCode, own, found)
-	}
-	// With the mode off there is no worktree: the refusal names the holder and the reason.
-	resp = f.request(http.MethodPut, "/api/projects/"+f.project.ID+"/settings", map[string]any{"worktree_mode": "off"}, true)
-	resp.Body.Close()
-	status, _, raw = f.spawnRequest(t, "off", "worker")
-	if message, _ := raw["message"].(string); status != 409 || !strings.Contains(message, "worktree mode is off") || raw["writer_slug"] != first.Slug {
+	status, card, raw := f.spawnRequest(t, "worker-off", "worker")
+	if status != 201 {
 		t.Fatalf("mode off: %d %+v", status, raw)
 	}
-	// Spawns racing for the room's slots each end up with a worktree of their own: nobody is refused and no two share a folder.
-	resp = f.request(http.MethodPut, "/api/projects/"+f.project.ID+"/settings", map[string]any{"worktree_mode": "auto"}, true)
-	resp.Body.Close()
-	var wg sync.WaitGroup
-	statuses := make([]int, 2)
-	cards := make([]store.AgentCard, 2)
-	for i := range statuses {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			statuses[i], cards[i], _ = f.spawnRequest(t, fmt.Sprintf("race-%d", i), "worker")
-		}()
-	}
-	wg.Wait()
-	paths := map[string]bool{root: true}
-	for i, card := range cards {
-		path, err := f.db.AgentCheckoutPath(t.Context(), card.ID)
-		if statuses[i] != 201 || err != nil || paths[path] {
-			t.Fatalf("racing spawn %d: status %d path %q (taken %v) err=%v", i, statuses[i], path, paths[path], err)
-		}
-		paths[path] = true
+	if path, err := f.db.AgentCheckoutPath(t.Context(), card.ID); err != nil || path != f.project.Folder {
+		t.Fatalf("mode-off checkout %q err=%v", path, err)
 	}
 }
 
@@ -1138,96 +1061,17 @@ func mustAgentID(t *testing.T, f *fixture, slug string) string {
 	return ""
 }
 
-// A writer that is reactivated into a folder another writer now holds is not refused: it moves to a worktree of its own and starts there.
-func TestReactivatedWriterMovesToItsOwnWorktree(t *testing.T) {
+// Reactivation keeps the existing checkout when another worker uses it.
+func TestReactivatedWorkerSharesFolder(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	initRepo(t, f.project.Folder)
-	journal, err := supervisor.OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	j, err := supervisor.OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
-	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, adapter.NewFake())
-	ready := make(chan struct{}, 1)
-	client.OnReady = func() { ready <- struct{}{} }
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = client.RunOnce(ctx) }()
-	select {
-	case <-ready:
-	case <-time.After(machineWaitGuard):
-		t.Fatal("supervisor did not connect")
-	}
-	control := func(id, desired string) (int, store.AgentCard, map[string]any) {
-		t.Helper()
-		current, err := f.db.AgentCardByID(t.Context(), id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		response := f.request("POST", "/api/agents/"+id+"/control", map[string]any{"desired": desired, "rev": current.DesiredRev}, true)
-		defer response.Body.Close()
-		var raw map[string]any
-		_ = json.NewDecoder(response.Body).Decode(&raw)
-		data, _ := json.Marshal(raw)
-		var card store.AgentCard
-		_ = json.Unmarshal(data, &card)
-		return response.StatusCode, card, raw
-	}
-	_, first, _ := f.spawnRequest(t, "one", "worker")
-	roomPath, err := f.db.AgentCheckoutPath(t.Context(), first.ID) // the room's own worktree: the project is a Git repository
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status, _, raw := control(first.ID, "stopped"); status != 200 {
-		t.Fatalf("stop %d %+v", status, raw)
-	}
-	// Someone else takes the room's folder while the first writer is away.
-	status, late, raw := f.spawnRequest(t, "two", "worker")
-	if status != 201 {
-		t.Fatalf("late writer %d %+v", status, raw)
-	}
-	if path, _ := f.db.AgentCheckoutPath(t.Context(), late.ID); path != roomPath {
-		t.Fatalf("the late writer should take the room's checkout, got %q", path)
-	}
-	blocked, err := f.db.AgentCardByID(t.Context(), first.ID)
-	if err != nil || blocked.WriterBlock == nil || blocked.WriterBlock.AgentID != late.ID {
-		t.Fatalf("the stopped writer should say who holds its folder: %+v err=%v", blocked.WriterBlock, err)
-	}
-	status, back, raw := control(first.ID, "active")
-	if status != 200 || back.Desired != "active" {
-		t.Fatalf("reactivate %d %+v", status, raw)
-	}
-	want := filepath.Join(f.project.Folder, ".aimebu", "worktrees", f.room.ID+"-"+first.Slug)
-	if path, err := f.db.AgentCheckoutPath(t.Context(), first.ID); err != nil || path != want {
-		t.Fatalf("the reactivated writer's checkout %q err=%v", path, err)
-	}
-	if own, found, err := f.db.AgentWorktreeOf(t.Context(), first.ID); err != nil || !found || own.Path != want {
-		t.Fatalf("worktree %+v found=%v err=%v", own, found, err)
-	}
-	if card, err := f.db.AgentCardByID(t.Context(), first.ID); err != nil || card.WriterBlock != nil {
-		t.Fatalf("nothing blocks it any more: %+v err=%v", card.WriterBlock, err)
-	}
-	if path, _ := f.db.AgentCheckoutPath(t.Context(), late.ID); path != roomPath {
-		t.Fatalf("the other writer keeps the room's checkout, got %q", path)
-	}
-}
-
-// A second writer's worktree can be removed by a person, by the room's rules: refused while its agent runs, kept when it holds work (until a
-// typed confirmation), removed when clean; the branch stays, and the agent is sent back to its room's checkout (starting it makes the worktree again when another writer holds that). A room cannot be deleted while
-// the worktree exists.
-func TestAgentWorktreeCanBeRemovedAndComesBackOnReactivation(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	f.seed()
-	initRepo(t, f.project.Folder)
-	journal, err := supervisor.OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer journal.Close()
-	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, adapter.NewFake())
+	defer j.Close()
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, j, adapter.NewFake())
 	ready := make(chan struct{}, 1)
 	client.OnReady = func() { ready <- struct{}{} }
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1239,91 +1083,33 @@ func TestAgentWorktreeCanBeRemovedAndComesBackOnReactivation(t *testing.T) {
 		t.Fatal("supervisor did not connect")
 	}
 	_, first, _ := f.spawnRequest(t, "one", "worker")
-	status, second, raw := f.spawnRequest(t, "two", "worker")
+	current, err := f.db.AgentCardByID(t.Context(), first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := f.request("POST", "/api/agents/"+first.ID+"/control", map[string]any{"desired": "stopped", "rev": current.DesiredRev}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("stop: %d", resp.StatusCode)
+	}
+	status, _, raw := f.spawnRequest(t, "two", "worker")
 	if status != 201 {
-		t.Fatalf("second writer %d %+v", status, raw)
+		t.Fatalf("second worker: %d %+v", status, raw)
 	}
-	own, found, err := f.db.AgentWorktreeOf(t.Context(), second.ID)
-	if err != nil || !found {
-		t.Fatalf("worktree %+v found=%v err=%v", own, found, err)
-	}
-	remove := func(body map[string]any) (int, map[string]any) {
-		t.Helper()
-		resp := f.request(http.MethodDelete, "/api/agents/"+second.ID+"/worktree", body, true)
-		defer resp.Body.Close()
-		var out map[string]any
-		_ = json.NewDecoder(resp.Body).Decode(&out)
-		return resp.StatusCode, out
-	}
-	control := func(id, desired string) int {
-		t.Helper()
-		current, err := f.db.AgentCardByID(t.Context(), id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp := f.request("POST", "/api/agents/"+id+"/control", map[string]any{"desired": desired, "rev": current.DesiredRev}, true)
-		resp.Body.Close()
-		return resp.StatusCode
-	}
-	if status, body := remove(map[string]any{}); status != 409 || body["error"] != "worktree_in_use" {
-		t.Fatalf("a running agent's worktree: %d %v", status, body)
-	}
-	if control(second.ID, "stopped") != 200 {
-		t.Fatal("stop")
-	}
-	// Work in it: kept, until it is confirmed by name.
-	if err := os.WriteFile(filepath.Join(own.Path, "scratch.txt"), []byte("work\n"), 0o600); err != nil {
+	current, err = f.db.AgentCardByID(t.Context(), first.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if status, body := remove(map[string]any{}); status != 200 || body["state"] != "preserved" {
-		t.Fatalf("a worktree with work in it is kept: %d %v", status, body)
+	resp = f.request("POST", "/api/agents/"+first.ID+"/control", map[string]any{"desired": "active", "rev": current.DesiredRev}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("reactivate: %d", resp.StatusCode)
 	}
-	if status, body := remove(map[string]any{"force": true, "confirm": "REMOVE nothing"}); status != 400 || body["error"] != "confirmation_required" {
-		t.Fatalf("force needs the name: %d %v", status, body)
-	}
-	if err := os.Remove(filepath.Join(own.Path, "scratch.txt")); err != nil {
-		t.Fatal(err)
-	}
-	if status, body := remove(map[string]any{}); status != 200 || body["state"] != "removed" {
-		t.Fatalf("a clean worktree is removed: %d %v", status, body)
-	}
-	if _, err := os.Stat(own.Path); !os.IsNotExist(err) {
-		t.Fatalf("the directory should be gone: %v", err)
-	}
-	if got, _, _ := f.db.AgentWorktreeOf(t.Context(), second.ID); got.State != "removed" {
-		t.Fatalf("recorded state %q", got.State)
-	}
-	if listed, _ := f.db.ReadyWorktrees(t.Context()); len(listed) != 0 && func() bool {
-		for _, item := range listed {
-			if item.AgentID == second.ID {
-				return true
-			}
-		}
-		return false
-	}() {
-		t.Fatalf("a removed worktree is not listed: %+v", listed)
-	}
-	// The agent is back on its room's checkout, so no way of starting it goes to the folder that is gone.
-	if path, _ := f.db.AgentCheckoutPath(t.Context(), second.ID); path == own.Path || path != func() string { p, _ := f.db.AgentCheckoutPath(t.Context(), first.ID); return p }() {
-		t.Fatalf("a removed worktree sends its agent back to the room's checkout: %q", path)
-	}
-	// Reactivating while the first writer still holds that checkout makes the worktree again, on its kept branch.
-	if control(second.ID, "active") != 200 {
-		t.Fatal("reactivate")
-	}
-	if _, err := os.Stat(filepath.Join(own.Path, "tracked.txt")); err != nil {
-		t.Fatalf("the worktree should be back: %v", err)
-	}
-	if got, _, _ := f.db.AgentWorktreeOf(t.Context(), second.ID); got.State != "ready" {
-		t.Fatalf("recorded state %q after reactivation", got.State)
-	}
-	if path, _ := f.db.AgentCheckoutPath(t.Context(), first.ID); path == own.Path {
-		t.Fatal("the first writer is not in the second's worktree")
+	if path, err := f.db.AgentCheckoutPath(t.Context(), first.ID); err != nil || path != f.project.Folder {
+		t.Fatalf("checkout %q err=%v", path, err)
 	}
 }
 
-// The spawn catalog is shown for a machine one of the person's projects is mapped to, as a project they can start agents in; any other
-// machine, one that does not exist included, is "not found", and the owner can look at any.
 func TestSpawnCatalogIsOnlyForMachinesTheCallerCanSpawnOn(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

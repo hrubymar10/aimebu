@@ -54,7 +54,7 @@ type spawnRequest struct {
 	// with --fork-session) and leaves the original as it is. Whoever does not say gets "fork": the safe choice for a caller that cannot ask.
 	ResumeMode string `json:"resume_mode,omitempty"`
 	// WorkOnCopy starts a continued session as a copy in a worktree of its own (a copy of the session is put under that folder's Claude
-	// project directory and forked there) instead of in the folder it was made in, which another writer may hold. It implies resume_mode fork.
+	// project directory and forked there) instead of in the folder it was made in. It implies resume_mode fork.
 	WorkOnCopy bool `json:"work_on_copy,omitempty"`
 }
 
@@ -713,13 +713,8 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 	s.spawnAgentRequest(w, r, room, req, "user", userID(r))
 }
 
-// cardWithoutPaths is the card as a viewer sees it: the checkout path of the writer that blocks it and the paths of its boundary grants are gone.
+// cardWithoutPaths is the card as a viewer sees it: boundary grant paths are hidden.
 func cardWithoutPaths(card store.AgentCard) store.AgentCard {
-	if card.WriterBlock != nil {
-		block := *card.WriterBlock
-		block.Path = ""
-		card.WriterBlock = &block
-	}
 	if len(card.BoundaryGrants) > 0 {
 		grants := make([]store.BoundaryGrant, len(card.BoundaryGrants))
 		for i, grant := range card.BoundaryGrants {
@@ -1035,14 +1030,14 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		own.Done()
 	}()
 	if req.WorkOnCopy && (session != nil || resuming) {
-		// The session is copied to a worktree made for this agent and forked there, so the folder it was made in, and whoever writes in it, is
-		// left alone. The agent's own name names the worktree: a continued v1 agent keeps its v1 name.
+		// The session is copied to a worktree made for this agent and forked there. The original folder stays in place.
+		// The agent's own name names the worktree: a continued v1 agent keeps its v1 name.
 		handle := req.ResumeSession
 		if session == nil {
 			handle = legacy.SessionID
 		}
 		if !machine.supportsSessionCopy {
-			apiError(w, 409, "supervisor_update_needed", "this machine's supervisor predates working on a copy in a worktree of its own; update it, or stop the agent that holds the folder")
+			apiError(w, 409, "supervisor_update_needed", "this machine's supervisor predates working on a copy in a worktree of its own; update it or continue the session in its current folder")
 			return
 		}
 		// Copying puts the transcript into this project, so a session made outside the project's folder needs the owner's approval first,
@@ -1092,9 +1087,8 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	agentKey := "aak_" + base64.RawURLEncoding.EncodeToString(secret)
 	keyHashBytes := sha256.Sum256([]byte(agentKey))
 	var card store.AgentCard
-	// The spawn runs where the room works (path). A second writer finds that checkout's writer slot taken; it is then spawned again in a
-	// worktree of its own (own), so a worker is never refused for sharing a room. The slot is claimed in the spawn transaction, so two spawns
-	// racing for it cannot both get it: the one that loses takes a worktree.
+	// The spawn runs where the room works (path). Workers may share that checkout;
+	// an agent-specific worktree is used only for an explicit session copy.
 	spawn := func(where string, own *store.AgentWorktree) (string, bool, error) {
 		return s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
 			input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: where, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, KeyHash: hex.EncodeToString(keyHashBytes[:])}
@@ -1155,20 +1149,6 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		})
 	}
 	result, reused, err := spawn(path, own)
-	if errors.Is(err, store.ErrWriterOccupied) && session == nil && !resuming {
-		made, reason := s.agentWorktreeFor(r.Context(), room, machineInfo, &slug, req.BaseRef)
-		if made != nil {
-			own = made // the deferred clean-up takes it away again if the request does not use it
-			if checkErr := s.validateLauncherCheckout(r.Context(), machineInfo, launcherID, own.Path); checkErr != nil {
-				apiError(w, 409, "folder_unverified", checkErr.Error())
-				return
-			}
-			result, reused, err = spawn(own.Path, own)
-		} else if reason != "" {
-			writerOccupied(w, err, "checkout already has a writer", reason)
-			return
-		}
-	}
 	// A replay of an earlier request with the same key stored that request's result: the worktree made for this one is not recorded.
 	spawned = err == nil && !reused
 	if err != nil {
@@ -1303,23 +1283,6 @@ func (s *Server) enqueuePendingSpawns(ctx context.Context, machine *machineConn)
 	return nil
 }
 
-// writerOccupied answers a 409 for a taken writer slot. When the holder is known the message names it and the folder, and the body carries
-// writer_agent_id, writer_slug and path so a client can say the same. extra says why the agent could not be given a worktree of its own.
-func writerOccupied(w http.ResponseWriter, err error, fallback string, extra ...string) {
-	var held *store.WriterOccupiedError
-	message := fallback
-	body := map[string]string{"error": "writer_occupied"}
-	if errors.As(err, &held) && held.Holder() != "" {
-		message = fmt.Sprintf("%s is the writer of %s — stop it, or give this agent a non-writer role", held.Holder(), held.Path)
-		body["writer_agent_id"], body["writer_slug"], body["path"] = held.HolderID, held.HolderSlug, held.Path
-	}
-	if len(extra) > 0 && extra[0] != "" {
-		message += " (it cannot get a worktree of its own: " + extra[0] + ")"
-	}
-	body["message"] = message
-	writeJSON(w, 409, body)
-}
-
 func spawnError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrProjectArchived):
@@ -1328,8 +1291,6 @@ func spawnError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "invalid_scope", "bulk controls are unavailable in private chats")
 	case errors.Is(err, store.ErrForbidden):
 		apiError(w, 403, "forbidden", "actor is not allowed to manage this agent")
-	case errors.Is(err, store.ErrWriterOccupied):
-		writerOccupied(w, err, "checkout already has a writer")
 	case errors.Is(err, store.ErrHomeLeadOnly):
 		apiError(w, 409, "home_is_lead_only", "this project's home room accepts only lead roles; spawn other agents into a task room such as general, or turn off Home room: lead only in the project settings")
 	case errors.Is(err, store.ErrRoleOccupied):
@@ -1446,31 +1407,6 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	release()
-	// A writer that comes back to a folder another writer holds is not refused: it moves to a worktree of its own and starts there. (A
-	// fresh native session starts at every reactivation, so no session needs to follow it to the new folder.)
-	if errors.Is(err, store.ErrWriterOccupied) && req.Desired == "active" {
-		var own *store.AgentWorktree
-		if own, err = s.reactivateInOwnWorktree(w, r, id, err); own == nil {
-			return
-		}
-		defer own.Done() // held through the transaction and, if it fails, the clean-up
-		if checkErr := s.ownWorktreeUsable(r.Context(), id, own); checkErr != nil {
-			s.discardAgentWorktree(r.Context(), own)
-			apiError(w, 409, "folder_unverified", checkErr.Error())
-			return
-		}
-		err = s.Store.Tx(r.Context(), func(tx *store.Tx) error {
-			if err := tx.RecordAgentWorktree(*own); err != nil {
-				return err
-			}
-			var err error
-			updated, err = tx.SetAgentDesired(id, userID(r), req.Desired, req.Rev)
-			return err
-		})
-		if err != nil {
-			s.discardAgentWorktree(r.Context(), own)
-		}
-	}
 	if err != nil {
 		spawnError(w, err)
 		return
@@ -1761,17 +1697,11 @@ func (s *Server) lockAgentWorktree(name string) func() {
 	return lock.(*sync.Mutex).Unlock
 }
 
-// agentWorktreeFor makes the Git worktree a second writer works in, <project>/.aimebu/worktrees/<room-id>-<slug> on branch aimebu/<room-id>-<slug>,
+// agentWorktreeFor makes an agent-specific Git worktree, <project>/.aimebu/worktrees/<room-id>-<slug> on branch aimebu/<room-id>-<slug>,
 // from the room's base ref (the project's current HEAD when the room has none). The slug is the agent's, picked here when it was not named, so
 // the worktree and the agent carry the same name. It returns nil and why when it cannot: the project's worktree mode is off, the folder is not
 // the root of a Git repository, or the supervisor refuses.
 func (s *Server) agentWorktreeFor(ctx context.Context, room store.Room, machine store.Machine, slug *string, baseRef string) (*store.AgentWorktree, string) {
-	return s.agentWorktreeForLocked(ctx, room, machine, slug, baseRef, false)
-}
-
-// agentWorktreeForLocked is agentWorktreeFor for a caller that holds the worktree's lock already (a bulk resume locks the names it needs
-// once, in order): the lock is not taken again, and the worktree it returns has none to release.
-func (s *Server) agentWorktreeForLocked(ctx context.Context, room store.Room, machine store.Machine, slug *string, baseRef string, held bool) (*store.AgentWorktree, string) {
 	mode, err := s.Store.ProjectWorktreeMode(ctx, room.ProjectID)
 	if err != nil {
 		return nil, err.Error()
@@ -1803,10 +1733,7 @@ func (s *Server) agentWorktreeForLocked(ctx context.Context, room store.Room, ma
 		}
 	}
 	name := store.AgentWorktreeName(room.ID, *slug)
-	unlock := func() {}
-	if !held {
-		unlock = s.lockAgentWorktree(name)
-	}
+	unlock := s.lockAgentWorktree(name)
 	// A worktree that was already there (a retry, one made before) is not ours to take away if the request fails.
 	before, inspectErr := s.machineWorktree(ctx, machine, root, name, baseRef, "inspect", false)
 	fresh := inspectErr == nil && before.State != "ready"
@@ -1815,38 +1742,7 @@ func (s *Server) agentWorktreeForLocked(ctx context.Context, room store.Room, ma
 		unlock()
 		return nil, err.Error()
 	}
-	if held {
-		unlock = nil
-	}
 	return &store.AgentWorktree{Unlock: unlock, Fresh: fresh, ProjectID: room.ProjectID, RoomID: room.ID, MachineID: machine.ID, Name: name, Branch: "aimebu/" + name, Path: result.Path, BaseRef: result.BaseRef, BaseCommit: result.BaseCommit, DirtyBase: result.DirtyBase}, ""
-}
-
-// reactivateInOwnWorktree makes the worktree for an agent that cannot start in its folder because another writer holds it. It returns nil
-// after answering the request itself when it cannot: with the refusal (and why there is no worktree), or with the error that stopped it.
-func (s *Server) reactivateInOwnWorktree(w http.ResponseWriter, r *http.Request, id string, occupied error) (*store.AgentWorktree, error) {
-	card, err := s.Store.AgentCardByID(r.Context(), id)
-	if err != nil {
-		fail(w, err)
-		return nil, err
-	}
-	room, err := s.Store.RoomByID(r.Context(), card.RoomID)
-	if err != nil {
-		fail(w, err)
-		return nil, err
-	}
-	machine, err := s.Store.MachineByID(r.Context(), card.MachineID)
-	if err != nil {
-		fail(w, err)
-		return nil, err
-	}
-	slug := card.Slug
-	own, reason := s.agentWorktreeFor(r.Context(), room, machine, &slug, "")
-	if own == nil {
-		writerOccupied(w, occupied, "checkout already has a writer", reason)
-		return nil, occupied
-	}
-	own.AgentID = id
-	return own, nil
 }
 
 var errSessionCopyUnsupported = errors.New("this machine's supervisor predates copying a Claude Code session; update it")

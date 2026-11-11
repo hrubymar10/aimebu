@@ -197,7 +197,8 @@ Roles, agents
   role, '' for none), cardinality[multi|singleton],
   cap_is_lead, cap_can_spawn, cap_singleton_writer, spawn_defaults_json,
   spawn_pick_mode[in_turn|randomly], rev, deleted_at?) — active
-  public `role_key` is unique. Roles are global only. Deletion preserves historical agent
+  public `role_key` is unique. `cap_singleton_writer` is a legacy field with no
+  effect on checkout access and is hidden in the role editor. Roles are global only. Deletion preserves historical agent
   references and hides the role from new selection; stopped agents with a
   deleted role cannot reactivate. Existing agents retain their `role_id` until
   respawn or explicit role change. Editing a row's body affects its agents on their next
@@ -300,13 +301,9 @@ Machines and workspace
   machine's independent Git worktree. No row means the project folder.
 - **agent_worktree**(agent_id, room_id, machine_id, name, branch_name,
   canonical_path, base_ref, base_commit, dirty_base_count,
-  state[ready|preserved|removed]) — the Git worktree a second singleton writer
-  of a room works in, so it never waits for the room's folder. `name` is
-  `<room-id>-<slug>` (flat: the room's own branch `aimebu/<room-id>` already
-  exists, and Git cannot keep a branch under another's name), the directory is
-  `.aimebu/worktrees/<name>` and the branch `aimebu/<name>`. The agent's
-  checkout is the checkout of that path, so the writer slot is its own.
-  Nothing removes one automatically.
+  state[ready|preserved|removed]) — an agent-specific Git worktree created by
+  an earlier release. Agents may share a room checkout; no writer slot is
+  required. Existing worktrees remain available until explicitly removed.
 - **machine_launcher**(id, machine_id, tool, name, label, command, args_json,
   env_refs_json, enabled, containerized, agent_server_url?, path_maps_json,
   visible_roots_json, supports_toolbox, preset) — the **harness** a machine
@@ -355,7 +352,7 @@ Machines and workspace
 - **checkout**(id, project_id, machine_id, canonical_path, writer_agent_id?,
   writer_state[none|reserved|releasing]) — UNIQUE (machine_id,
   canonical_path); container mounts map to the host canonical path so
-  aliases cannot evade the writer rule
+  aliases resolve to the same checkout
 
 Execution
 - **note**(id, agent_id, message_id, room_id, state (§3.1), wake_reason,
@@ -444,7 +441,7 @@ Inbox, usage, events, settings
   read, by number, any message of any room of its own project (rooms it is not
   in and archived ones included; a private chat only as a member), for
   `referenced_messages`, `message_get`, and paginated `room_history`. Another project's messages never,
-  except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, and preserves singleton writer ownership and role cardinality.
+  except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, and preserves role cardinality.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
 - **room_view_preference**(user_id, room_id, hidden 0|1, notify[default|all|
@@ -620,7 +617,7 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   classifies the turn outcome as `unknown`, resolves `lost` according to the
   current desired state. There is no `idle→lost` edge.
   Process-per-wake: `idle` with no process is the normal resting state and
-  **never** implies stop or writer release.
+  **never** implies stop.
 - `stop` with no running **or pending** turn, after any dispatch/start
   uncertainty is reconciled with the supervisor → desired=stopped,
   observed=stopped immediately. With a running turn → interrupt sent, observed=interrupting
@@ -751,15 +748,11 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
   (its project is gone) and names `user_ids`, the members it concerned, who are
   the people it is visible to (plus the instance owner).
 
-### 3.6 writer reservation (checkout)
-`none → reserved` (S, on spawn/assign of a `cap_singleton_writer` agent) →
-`releasing` (S, on stop/close/reassign/role-change/move request) → `none`
-only when the old writer is **no longer dispatchable for writing**
-(desired≠active, or its role lost `cap_singleton_writer`, or it moved off
-the checkout) **and** observed ∈ {idle, stopped} with no running process (held/unsettled replies do not block —
-they write no files), or on owner override (event + UI keep the
-uncertainty). Every writing-turn
-dispatch re-checks that the agent is the checkout's current writer.
+### 3.6 checkout sharing
+Agents in the same room may use the same checkout. Role cardinality still
+limits singleton roles. The legacy writer-reservation columns remain in the
+schema for compatibility but do not gate spawn, reactivation, role changes,
+switches, or dispatch.
 
 ### 3.7 inbox item
 `open → resolved | withdrawn`, compare-and-set on (state=open, rev):
@@ -767,8 +760,7 @@ dispatch re-checks that the agent is the checkout's current writer.
   may choose Approve or Deny. Approve records the project-machine admission
   and the agent's exact canonical path grant in the same transaction as
   releasing the pending spawn, switch, or reactivation. Deny leaves the
-  agent stopped and releases its writer reservation, or cancels the pending
-  switch. A paused legacy spawn stays paused on approval. Stop, room close, and machine
+  agent stopped or cancels the pending switch. A paused legacy spawn stays paused on approval. Stop, room close, and machine
   revocation withdraw pending admission. Request-key replay returns the same
   decision; a stale revision cannot release the agent.
 - Answer: in one transaction write a **message** (author = user, reply_to =
@@ -1347,7 +1339,7 @@ Computed in the message-insert transaction; every decision → note or
   `deliver` context.
 Dispatch (separate): agent desired=active, room/project gate open, switch
 gate open, room lifecycle=open, `recovery_block=false`, no pending **and**
-no running turn, writer check for writing roles → batch =
+no running turn → batch =
 all `queued` notes of the agent's oldest-queued room, ≤ 20, rooms
 round-robin.
 - Special turns: a **diagnostic** turn may dispatch while
@@ -1368,7 +1360,7 @@ that equals an agent slug is ambiguous, as for two agents with one slug.
 
 Adapter-listed (tool, variant, model, provider) with provider pinned; actor
 authorised (owner/operator, or an agent whose role has `cap_can_spawn`);
-`max_live_agents` and spawn rate; depth cap; writer rule (§3.6).
+`max_live_agents` and spawn rate; depth cap; singleton role cardinality.
 
 When the role has a nonempty effective default list, a spawn that omits the harness
 and model uses its next available `{launcher_id,model}`. In-turn selection
@@ -1433,7 +1425,7 @@ verification).
 ## 9. Error codes
 
 `room_closed`, `room_closing`, `not_member`,
-`stale_generation`, `stale_rev`, `snapshot_required`, `writer_occupied`, `spawn_limit`,
+`stale_generation`, `stale_rev`, `snapshot_required`, `spawn_limit`,
 `invalid_answer`, `conflict`, `unauthorized`,
 `forbidden`, `depth_exceeded`, `already_resolved`, `already_withdrawn`,
 `agent_not_active`, `invalid_transition`, `invalid_request`, `not_found`,

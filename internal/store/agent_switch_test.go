@@ -166,15 +166,12 @@ func TestAgentSwitchMovesMachineCheckoutAfterDrain(t *testing.T) {
 	if launch, err := s.AgentLaunchPath(ctx, agent.ID); err != nil || launch != "" {
 		t.Fatalf("the old checkout's spelling followed the agent to another machine: %q %v", launch, err)
 	}
-	var oldState, newState, newWriter string
-	if err := s.db.QueryRow(`SELECT writer_state FROM checkout WHERE id='chk_wake'`).Scan(&oldState); err != nil {
+	var newState string
+	if err := s.db.QueryRow(`SELECT writer_state FROM checkout WHERE machine_id='mch_remote' AND canonical_path='/remote/wake'`).Scan(&newState); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.QueryRow(`SELECT writer_state,writer_agent_id FROM checkout WHERE machine_id='mch_remote' AND canonical_path='/remote/wake'`).Scan(&newState, &newWriter); err != nil {
-		t.Fatal(err)
-	}
-	if oldState != "none" || newState != "reserved" || newWriter != agent.ID {
-		t.Fatalf("writer transfer: old=%s new=%s owner=%s", oldState, newState, newWriter)
+	if newState != "none" {
+		t.Fatalf("new checkout should not reserve a writer: %s", newState)
 	}
 	messages, err := s.ListMessagesAfter(ctx, room.ID, 0)
 	if err != nil {

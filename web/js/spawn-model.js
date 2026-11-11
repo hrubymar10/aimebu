@@ -117,23 +117,12 @@ export function resumeToolChoice(catalog, resume) {
     note: none ? `${resume.tool} is not available natively on the chosen machine, so the session cannot be continued here.` : '' };
 }
 
-// The worktree choice exists only in a task room, and is offered only where the server would make one: the machine's row carries the
-// server's own check for the host (with git's reason when it refuses), and is silent for other machines, where the box stays available.
+// Offer the optional task-room worktree only when the chosen machine can make one.
+// A non-Git folder simply starts agents in the project folder.
 export function worktreeOption({ roomKind, resumable, check }) {
   const refused = check?.ok === false;
-  return { hidden: roomKind !== 'task' || !!resumable, disabled: refused, refused, note: refused ? `No worktree here: ${check.reason || 'the project folder cannot have one.'}` : '' };
+  return { hidden: roomKind !== 'task' || !!resumable || refused, disabled: refused, refused, note: '' };
 }
-
-// A guess for the Spawn dialog's hint only (the server decides): a live singleton writer of this room on the chosen machine, whose folder is
-// presumably the one a new writer would share. Another folder (a resumed session, a worktree of its own) is not known here, so nothing hangs on this.
-// A Git worktree ticked for the room is a checkout of its own. Returns that agent's card, or null.
-// It only counts while nothing else can make room for the newcomer: with a worktree available (the project is a Git repository that allows them) a
-// new writer simply starts in a checkout of its own, so there is nothing to warn about; `worktreeRefused` says the machine cannot make one.
-export function writerHolder({ writer, agents, writerRoles, machineID, worktree, worktreeRefused = false }) {
-  if (!writer || worktree || !machineID || !worktreeRefused) return null;
-  return (agents || []).find(agent => writerRoles.has(agent.role_key) && agent.desired !== 'stopped' && agent.machine_id === machineID) || null;
-}
-export const writerHolderText = (agent, reason = '') => `${agent.slug} is already working in this folder, and a separate copy of it cannot be made${reason ? ` (${reason.replace(/^No worktree here: /, '')})` : ''}, so a new writer here will be refused until ${agent.slug} is stopped.`;
 
 // A hint that names Settings → Harnesses makes that name a button that opens it, so an empty machine says where to go. Only the owner
 // can add or change a harness (an admin reads them), so anyone else gets plain words (the link would only end in a refusal).

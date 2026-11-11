@@ -25,7 +25,7 @@ stop when their room closes and stay stopped after it reopens.
 Task rooms can opt into a Git worktree at
 `<project>/.aimebu/worktrees/<room-id>` on `aimebu/<room-id>`.
 New agents in that room use its worktree checkout, allowing separate rooms to
-hold separate writer reservations. The worktree starts from committed HEAD of
+keep their files separate. The worktree starts from committed HEAD of
 the selected base ref; if the base has uncommitted changes, the room and API
 show their count because those changes are not copied. Archiving removes a
 clean, merged worktree and keeps its branch. Dirty or unmerged worktrees stay

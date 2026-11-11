@@ -272,7 +272,7 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 				}
 				if item.machineID != currentMachine {
 					if err := tx.moveSwitchCheckout(item.id, projectID, item.machineID, item.checkoutPath); err != nil {
-						if errors.Is(err, ErrWriterOccupied) || errors.Is(err, ErrScopeMismatch) || errors.Is(err, ErrInvalidTransition) || errors.Is(err, errSwitchTargetUnavailable) {
+						if errors.Is(err, ErrScopeMismatch) || errors.Is(err, ErrInvalidTransition) || errors.Is(err, errSwitchTargetUnavailable) {
 							if _, updateErr := tx.Exec(`UPDATE agent_switch SET state='failed',error=? WHERE agent_id=?`, err.Error(), item.id); updateErr != nil {
 								return updateErr
 							}
@@ -384,13 +384,8 @@ func (tx *Tx) moveSwitchCheckout(agentID, projectID, machineID, path string) err
 	if !approved || revoked {
 		return errSwitchTargetUnavailable
 	}
-	var oldCheckout string
-	var writer bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.checkout_id,r.cap_singleton_writer FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, agentID).Scan(&oldCheckout, &writer); err != nil {
-		return err
-	}
-	var targetID, state, targetProject string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,writer_state,project_id FROM checkout WHERE machine_id=? AND canonical_path=?`, machineID, path).Scan(&targetID, &state, &targetProject)
+	var targetID, targetProject string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,project_id FROM checkout WHERE machine_id=? AND canonical_path=?`, machineID, path).Scan(&targetID, &targetProject)
 	if errors.Is(err, sql.ErrNoRows) {
 		targetID, err = newID("chk")
 		if err != nil {
@@ -399,24 +394,12 @@ func (tx *Tx) moveSwitchCheckout(agentID, projectID, machineID, path string) err
 		if _, err = tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES (?,?,?,?)`, targetID, projectID, machineID, path); err != nil {
 			return err
 		}
-		state = "none"
 		targetProject = projectID
 	} else if err != nil {
 		return err
 	}
 	if targetProject != projectID {
 		return ErrScopeMismatch
-	}
-	if writer && state != "none" {
-		return tx.writerOccupied(targetID)
-	}
-	if writer {
-		if _, err := tx.Exec(`UPDATE checkout SET writer_agent_id=NULL,writer_state='none' WHERE id=? AND writer_agent_id=?`, oldCheckout, agentID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`UPDATE checkout SET writer_agent_id=?,writer_state='reserved' WHERE id=?`, agentID, targetID); err != nil {
-			return err
-		}
 	}
 	// A spelling of the old checkout's folder (agent.launch_path) means nothing in another checkout, which may be on another machine.
 	_, err = tx.Exec(`UPDATE agent SET machine_id=?,checkout_id=?,key_hash='',launch_path=CASE WHEN checkout_id=? THEN launch_path ELSE '' END WHERE id=?`, machineID, targetID, targetID, agentID)

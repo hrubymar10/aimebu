@@ -271,26 +271,12 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 			}
 			switch operation {
 			case "spawn":
-				var writer bool
-				var checkoutID, desired string
-				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT c.id,a.desired,r.cap_singleton_writer FROM agent a JOIN checkout c ON c.id=a.checkout_id JOIN role r ON r.id=a.role_id WHERE a.id=?`, agentID).Scan(&checkoutID, &desired, &writer); err != nil {
+				var desired string
+				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT desired FROM agent WHERE id=?`, agentID).Scan(&desired); err != nil {
 					return "", err
 				}
 				if desired != "not_accepting" {
 					return "", ErrInvalidTransition
-				}
-				if writer {
-					var state string
-					var holder sql.NullString
-					if err := tx.tx.QueryRowContext(tx.ctx, `SELECT writer_state,writer_agent_id FROM checkout WHERE id=?`, checkoutID).Scan(&state, &holder); err != nil {
-						return "", err
-					}
-					if state != "none" && (state != "reserved" || !holder.Valid || holder.String != agentID) {
-						return "", tx.writerOccupied(checkoutID)
-					}
-					if _, err := tx.Exec(`UPDATE checkout SET writer_agent_id=?,writer_state='reserved' WHERE id=?`, agentID, checkoutID); err != nil {
-						return "", err
-					}
 				}
 				if priorDesired != "not_accepting" {
 					priorDesired = "active"

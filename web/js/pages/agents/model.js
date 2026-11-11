@@ -37,11 +37,6 @@ export function stateOf(agent) {
     return { name: 'needs decision', kind: 'attention', title: agent.last_exit_evidence ? `${why}\n${agent.last_exit_evidence}` : why, since, observed, why };
   }
   if (free && agent.hold) return { name: `held: ${agent.hold.text}`, kind: 'attention', title: agent.hold.detail, since, observed, why: agent.hold.detail };
-  if (agent.writer_blocked_by && agent.desired !== 'active') {
-    if (agent.writer_blocked_by.own_worktree) return { name, kind, title: `${title}\nReactivating: ${writerBlockText(agent.writer_blocked_by)}.`, since, observed };
-    const why = `Cannot start: ${writerBlockText(agent.writer_blocked_by)}.`;
-    return { name, kind, title: `${title}\n${why}`, since, observed, why };
-  }
   return { name, kind, title, since, observed };
 }
 
@@ -137,11 +132,6 @@ export function liveOf(agent) {
   return { at: agent.observed === 'in_turn' ? (agent.activity_at || agent.last_activity_at || '') : '', label: /^tool\b/i.test(agent.activity || '') ? 'tool' : 'working' };
 }
 
-// A singleton writer whose folder another agent holds: with worktrees on it starts in a worktree of its own, with them off it cannot start.
-export const writerBlockText = block => block.own_worktree
-  ? `${block.holder || block.slug} is the writer of ${block.path}, so it starts in a worktree of its own`
-  : `${block.holder || block.slug} is the writer of ${block.path} and worktrees are off for this project — stop it, or give this agent a non-writer role`;
-
 // Which of the card's quick (hover) buttons make sense for the agent's state, besides the private message: an active or paused one has Pause and Stop; one that is
 // being stopped (stop asked, the process not gone yet, or the harness interrupting) keeps a Stop that is already in effect, since it is not startable yet; a stopped one
 // is started again, so Start takes the place of both (Pause means nothing on it and Stop is already done); a paused one is resumed, so Resume takes the place of its Pause.
@@ -163,10 +153,9 @@ export function actionsOf(agent, { down = '', lifecycle = 'open' } = {}) {
     'act-pause': ['Pause: finish the current turn, then accept no new work', down || (agent.desired === 'not_accepting' ? 'it is already paused' : agent.desired === 'stopped' ? 'it is stopped; start it first' : '')],
     'act-stop': ['Stop: interrupt the current turn and accept no new work', down || (agent.desired === 'stopped' ? 'it is already stopped' : '')],
     switch: ['Switch: change this agent\'s tool, model or machine', down || (lifecycle && lifecycle !== 'open' ? 'reopen the room first' : agent.recovery_block ? 'resolve the recovery item first' : agent.desired === 'stopped' ? 'start it first' : agent.boundary_pending ? 'it is waiting for folder or machine approval' : handoff && handoff.state !== 'failed' ? 'a switch is already in progress' : '')],
-    reactivate: [`${again}: ${agent.desired === 'not_accepting' ? 'accept new work again' : 'run this agent again and accept new work'}`, down || (agent.boundary_pending ? 'it is waiting for folder or machine approval' : agent.role_deleted ? 'its role was deleted' : agent.writer_blocked_by && !agent.writer_blocked_by.own_worktree && agent.desired !== 'active' ? writerBlockText(agent.writer_blocked_by) : agent.desired === 'active' && !quotaFlag ? 'it is already active' : '')],
+    reactivate: [`${again}: ${agent.desired === 'not_accepting' ? 'accept new work again' : 'run this agent again and accept new work'}`, down || (agent.boundary_pending ? 'it is waiting for folder or machine approval' : agent.role_deleted ? 'its role was deleted' : agent.desired === 'active' && !quotaFlag ? 'it is already active' : '')],
     remove: ['Remove: take this agent out for good; its messages stay, and it cannot be started again', down || (agent.desired === 'stopped' && agent.observed === 'stopped' ? '' : 'stop it first')],
   };
-  if (agent.writer_blocked_by?.own_worktree && agent.desired !== 'active' && !reasons.reactivate[1]) reasons.reactivate[0] += `; ${writerBlockText(agent.writer_blocked_by)}`;
   const labels = { message: 'Message', 'act-pause': 'Pause', 'act-stop': 'Stop', reactivate: again, switch: 'Switch', remove: 'Remove' };
   return Object.entries(reasons).map(([name, [what, why]]) => ({ name, label: labels[name], title: why ? `${labels[name]} is unavailable: ${why}` : what, disabled: !!why, hint: why ? `${labels[name]} is unavailable: ${why}.` : '' }));
 }

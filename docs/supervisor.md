@@ -121,8 +121,8 @@ compares it with the current stored hash on those checks.
 The `hello` includes capability reports keyed by tool, version, and
 environment. The server snapshots the matching flags into each admitted
 turn's policy. A missing or unmatched report leaves all flags false.
-The server sends `spawn` after an agent, session, room membership, and writer
-reservation commit. The supervisor binds that agent's generation and replies
+The server sends `spawn` after an agent, session, room membership, and checkout
+selection commit. The supervisor binds that agent's generation and replies
 with `spawn_result`. A spawn carries a stable request ID per agent generation.
 Before acknowledging a spawn, the supervisor checks that its checkout path
 is an existing directory on this machine, then holds that agent's `aak_` key **in memory only**:
@@ -257,8 +257,7 @@ only if the agent is already observed stopped (one with no running turn is).
 The ack of a stop that interrupts a running turn is dropped and that stop stays
 pending, so deleting the project is refused (409) until the supervisor is
 upgraded or the machine is revoked.
-A lost turn retains its writer reservation until recovery establishes
-quiescence.
+A lost turn remains unsettled until recovery establishes quiescence.
 
 `POST /api/agents/{id}/switch` first sets the agent to `not_accepting`,
 letting an active turn finish without admitting another. Once open work has
@@ -414,7 +413,6 @@ that agent's queued notes there.
 The server runs a dispatcher every 100 ms. It batches at most 20 queued notes
 from one room per agent, rotating rooms between passes. Paused rooms/projects,
 stopped agents, recovery blocks, provider quota, active or unsettled turns,
-writer reservations,
 and the per-machine/tool `dispatch_switch_gate` pause prevent ordinary dispatch
 without discarding notes. A pending correction or verified read-only diagnostic
 turn can bypass the ordinary recovery block while still respecting gates.

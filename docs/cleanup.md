@@ -33,27 +33,16 @@ explicit worktree request is the person's choice and does change it.
 
 The lead's home room always uses the project folder.
 
-**A second writer gets a worktree of its own.** A room's checkout has one
-writer slot (a role with the *singleton writer* capability, such as Worker). When
-a worker is spawned or reactivated into a room whose checkout already has a
-writer, it is not refused: it works in
-`<project>/.aimebu/worktrees/<room-id>-<agent-slug>` on branch
-`aimebu/<room-id>-<agent-slug>` (flat, because the room's own branch
-`aimebu/<room-id>` already exists and Git cannot keep a branch under another's
-name), made from the room's base ref, or the project's HEAD when the room has
-none. The first writer keeps the room's checkout, and reviewers and other
-non-writers stay on it. With `worktree_mode: off`, or a folder that is not the
-root of a Git repository, the refusal stays and says who holds the folder and
-why there is no worktree. These worktrees are listed in Health under the
-agent's name (`<room> · <agent>`), count toward the project's disk use, block
-deleting the room and the project, and are **never removed automatically**. A
-person removes one from Health (its Remove button) or with
-`DELETE /api/agents/{agent}/worktree`: a clean, merged one goes, one with
-uncommitted or unmerged work is kept and says why unless `force` is sent with the
-confirmation `REMOVE <name>`, and one whose agent is running is refused (409
-`worktree_in_use`). The branch is kept, and the agent goes back to its room's
-folder: starting it takes that folder's writer slot, or, if another writer holds
-it, makes the worktree again.
+Any number of agents may share a room checkout or the project folder. The Git
+worktree option separates task-room files when chosen; it is not required to
+start another worker. If the project folder is not a Git repository, agents
+work in that folder without a worktree.
+
+Existing agent-specific worktrees are still listed in Health and can be removed
+there or with `DELETE /api/agents/{agent}/worktree`. A clean, merged worktree
+is removed; uncommitted or unmerged work is preserved unless the person uses
+`force` and confirms `REMOVE <name>`. A running agent's worktree cannot be
+removed (`worktree_in_use`). After removal, that agent uses its room's checkout.
 
 **Worktrees are never removed automatically.** Health lists each one with its
 size and state (*in use*, *uncommitted work*, *merged*, *room closed,

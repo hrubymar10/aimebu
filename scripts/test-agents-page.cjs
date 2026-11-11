@@ -119,17 +119,11 @@ async function main() {
     await page.close();
   }
 
-  // A stopped writer whose folder another agent holds: with worktrees off Start is disabled and its hint and the card's note name the holder;
-  // with them on it can be reactivated and says it starts in a worktree of its own.
+  // Legacy writer metadata does not disable Start.
   {
     const page = await mount();
-    const holder = { agent_id: 'a1', slug: 'ada', holder: 'ada@test', path: '/work/test' };
-    await show(page, 'r1', [agent('a2', 'bert', { desired: 'stopped', observed: 'stopped', writer_blocked_by: holder }), agent('a3', 'cleo', { desired: 'stopped', observed: 'stopped', writer_blocked_by: { ...holder, own_worktree: true } })]);
-    const read = id => page.$eval(`[data-agent-id=${id}]`, node => ({ off: node.querySelector('.agent-reactivate').disabled, title: node.querySelector('.agent-reactivate').title, activity: node.querySelector('.agent-activity').textContent }));
-    const why = 'ada@test is the writer of /work/test and worktrees are off for this project — stop it, or give this agent a non-writer role';
-    assert.deepEqual(await read('a2'), { off: true, title: `Start is unavailable: ${why}`, activity: `Cannot start: ${why}.` });
-    const free = await read('a3');
-    assert.deepEqual([free.off, free.title.includes('ada@test is the writer of /work/test, so it starts in a worktree of its own')], [false, true]);
+    await show(page, 'r1', [agent('a2', 'bert', { desired: 'stopped', observed: 'stopped', writer_blocked_by: { holder: 'ada@test' } })]);
+    assert.equal(await page.$eval('[data-agent-id=a2] .agent-reactivate', node => node.disabled), false);
     await page.close();
   }
 

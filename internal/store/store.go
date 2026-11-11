@@ -250,13 +250,7 @@ type Tx struct {
 	tx       *sql.Tx
 	ctx      context.Context
 	maxDepth int
-	// scopeWorktrees are the worktrees made ahead of a bulk resume for agents that would find their folder's writer slot taken (see
-	// ScopeResumeWriters); the resume moves such an agent to its worktree instead of failing.
-	scopeWorktrees map[string]AgentWorktree
 }
-
-// UseScopeWorktrees hands a bulk control the worktrees of the agents it may find blocked.
-func (tx *Tx) UseScopeWorktrees(worktrees map[string]AgentWorktree) { tx.scopeWorktrees = worktrees }
 
 // Context carries the active transaction marker for fail-fast Store calls.
 func (tx *Tx) Context() context.Context { return tx.ctx }

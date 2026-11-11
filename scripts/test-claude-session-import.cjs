@@ -11,11 +11,8 @@ vm.createContext(context);
 vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { presetRoles, usableTool, defaultModel, machineLabel, finalStatus };', context);
 const presetRoles = (sessions, roles) => Array.from(context.api.presetRoles(sessions, roles));
 
-// The first session of a folder works there; the others of that folder review, so one import does not run into the writer rule.
-assert.deepEqual(presetRoles([{ cwd: '/a' }, { cwd: '/a' }, { cwd: '/b' }, { cwd: '/a' }, { cwd: '/b' }], ['worker', 'reviewer']),
-  ['worker', 'reviewer', 'worker', 'reviewer', 'reviewer']);
-// Without a reviewer role everything falls back to the writer role; with neither named, to the first role offered.
-assert.deepEqual(presetRoles([{ cwd: '/a' }, { cwd: '/a' }], ['worker']), ['worker', 'worker']);
+// Sessions may share a folder and each starts as a worker by default.
+assert.deepEqual(presetRoles([{ cwd: '/a' }, { cwd: '/a' }, { cwd: '/b' }], ['worker', 'reviewer']), ['worker', 'worker', 'worker']);
 assert.deepEqual(presetRoles([{ cwd: '/a' }, { cwd: '/a' }], ['helper', 'critic']), ['helper', 'helper']);
 assert.deepEqual(presetRoles([], ['worker']), []);
 const plain = value => JSON.parse(JSON.stringify(value));

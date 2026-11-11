@@ -163,65 +163,15 @@ async function main() {
     await free.close(); await page.close();
   }
 
-  // A singleton-writer role finds the room's folder held by another live agent. That only matters when no worktree can be made for the newcomer (a
-  // folder that is not a Git repository): then the dialog says so in plain words, Spawn waits (the server would refuse it), and the two ways on are
-  // offered under the words. With a worktree available, with another role, or with a worktree ticked for the room, there is nothing to say.
+  // A non-Git project hides the optional worktree while Spawn remains available.
   {
-    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
-    const hint = page => page.evaluate(() => ({ text: document.querySelector('#spawn-writer-hint').textContent, hidden: document.querySelector('#spawn-writer-block').hidden, off: document.querySelector('#spawn-form button[type=submit]').disabled }));
-    const free = await mount({ auto: stable({ 'GET /api/roles': writerRoles }), withCard: true });
-    await open(free);
-    await free.evaluate(() => window.__opening); await settle(free);
-    assert.equal((await hint(free)).hidden, true, 'a worktree can be made: the newcomer gets one, so nothing blocks and nothing is said');
-    await free.close();
-    const refused = machines.machines.map(machine => (machine.id === 'm1' ? { ...machine, project_worktree: { ok: false, reason: 'the folder is not a git repository' } } : machine));
-    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles, 'GET /api/machines?project_id=p1': { machines: refused } }), withCard: true });
-    await open(page);
-    await page.evaluate(() => window.__opening); await settle(page);
-    const held = await hint(page);
-    assert.deepEqual([held.hidden, held.off, held.text], [false, true, 'ada is already working in this folder, and a separate copy of it cannot be made (the folder is not a git repository), so a new writer here will be refused until ada is stopped.'], 'with no worktree possible a writer role is told, in plain words, that the live writer holds the folder, and Spawn waits instead of inviting a refusal');
-    assert.deepEqual(await page.evaluate(() => { const spawn = document.querySelector('#spawn-form button[type=submit]'), stop = document.querySelector('#spawn-writer-stop'), reader = document.querySelector('#spawn-writer-reader');
-      return { why: spawn.title, described: spawn.getAttribute('aria-describedby'), stop: [stop.hidden, stop.textContent, stop.getClientRects().length > 0], reader: [reader.hidden, reader.textContent, reader.getClientRects().length > 0] }; }),
-      { why: 'ada holds this folder: stop it, or start as a role that does not write', described: 'spawn-writer-hint', stop: [false, 'Stop ada and start', true], reader: [false, 'Start as 🧭 Lead', true] }, 'the disabled Spawn says why, and both ways on are right there');
-    await select(page, 'role', 'lead');
-    assert.deepEqual([(await hint(page)).hidden, (await hint(page)).off], [true, false], 'another role is not held up');
-    await select(page, 'role', 'worker');
-    assert.equal((await hint(page)).hidden, false);
-    // The worktree box that cannot be ticked looks disabled; the control height is one for the name, the selects and the dice.
-    assert.deepEqual(await page.evaluate(() => { const label = document.querySelector('#spawn-form .spawn-worktree-option'), box = label.querySelector('input'), words = label.querySelector('span'), note = label.querySelector('.spawn-worktree-note');
-      const heights = [...document.querySelectorAll('#spawn-form input:not([type=checkbox]):not([type=radio]), #spawn-form select, #spawn-name-dice')].filter(node => node.offsetParent).map(node => Math.round(node.getBoundingClientRect().height));
-      return { disabled: box.disabled, box: getComputedStyle(box).opacity, words: getComputedStyle(words).opacity, cursor: getComputedStyle(box).cursor, note: getComputedStyle(note).opacity, oneHeight: new Set(heights).size === 1 && heights.length >= 4 }; }),
-      { disabled: true, box: '0.5', words: '0.5', cursor: 'not-allowed', note: '1', oneHeight: true }, 'the disabled worktree box and its words are dimmed (its note is not), and every control is one height');
+    const refused = machines.machines.map(machine => machine.id === 'm1' ? { ...machine, project_worktree: { ok: false, reason: 'not a Git repository' } } : machine);
+    const page = await mount({ auto: stable({ 'GET /api/machines?project_id=p1': { machines: refused } }), withCard: true });
+    await open(page); await page.evaluate(() => window.__opening); await settle(page);
+    assert.equal(await page.$eval('#spawn-form .spawn-worktree-option', node => node.hidden), true);
+    assert.equal(await page.$eval('#spawn-form button[type=submit]', node => node.disabled), false);
+    assert.equal(await page.$eval('#spawn-writer-block', node => !!node).catch(() => false), false);
     await page.close();
-    const ticked = await mount({ auto: stable({ 'GET /api/roles': writerRoles }), withCard: true });
-    await open(ticked);
-    await ticked.evaluate(() => window.__opening); await settle(ticked);
-    await ticked.evaluate(() => { const box = document.querySelector('#spawn-form [name=worktree]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); });
-    assert.equal((await hint(ticked)).hidden, true, 'a worktree for the room is a checkout of its own');
-    await ticked.close();
-  }
-
-  // The two ways on under the warning start from the form as it stands: one with the role that does not write, the other after stopping the holder.
-  {
-    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
-    const refused = machines.machines.map(machine => (machine.id === 'm1' ? { ...machine, project_worktree: { ok: false, reason: 'the folder is not a git repository' } } : machine));
-    const auto = stable({ 'GET /api/roles': writerRoles, 'GET /api/machines?project_id=p1': { machines: refused }, 'POST /api/agents/a1/control': agent('a1', 'ada') });
-    const reader = await mount({ auto, withCard: true });
-    await open(reader); await reader.evaluate(() => window.__opening); await settle(reader);
-    await reader.$eval('#spawn-writer-reader', node => node.click());
-    const asLead = await waitRequest(reader, 'POST', '/api/rooms/r1/agents');
-    assert.equal((await body(reader, asLead)).role_key, 'lead', 'the role that does not write is sent');
-    assert.equal(await count(reader, 'POST', '/api/agents/a1/control'), 0, 'and the holder is left alone');
-    await reader.close();
-    const stopper = await mount({ auto, withCard: true });
-    await open(stopper); await stopper.evaluate(() => window.__opening); await settle(stopper);
-    await stopper.$eval('#spawn-writer-stop', node => node.click());
-    const started = await waitRequest(stopper, 'POST', '/api/rooms/r1/agents');
-    assert.equal(await count(stopper, 'POST', '/api/agents/a1/control'), 1, 'the holder is stopped first');
-    assert.equal((await body(stopper, started)).role_key, 'worker', 'then the writer is started as chosen');
-    await answer(stopper, started, 200, agent('a2', 'bert')); await settle(stopper);
-    assert.equal(await stopper.$eval('#spawn-dialog', node => node.open), false, 'the dialog closes once it started');
-    await stopper.close();
   }
 
   // Answers meant for an earlier opening fill nothing: the roles of a dialog that was closed and opened again, a name that arrives after the
@@ -294,14 +244,14 @@ async function main() {
     await page.close();
   }
 
-  // A task room can ask for a git worktree: the option and its base ref follow the box, the machine can refuse it with its reason, and the
+  // A task room can ask for a git worktree: the option and its base ref follow the box, a non-Git machine hides it, and the
   // request carries the choice only from a task room.
   {
     const refused = machines.machines.map(machine => (machine.id === 'm1' ? { ...machine, project_worktree: { ok: false, reason: 'the folder is not a git repository' } } : machine));
     const page = await mount({ auto: stable({ 'GET /api/machines?project_id=p1': { machines: refused } }) });
     await open(page); await ready(page);
     const option = () => page.evaluate(() => { const f = document.querySelector('#spawn-form'); return { hidden: f.querySelector('.spawn-worktree-option').hidden, disabled: f.elements.worktree.disabled, note: f.querySelector('.spawn-worktree-note').textContent, base: f.querySelector('.spawn-worktree-base').hidden }; });
-    assert.deepEqual(await option(), { hidden: false, disabled: true, note: 'No worktree here: the folder is not a git repository', base: true });
+    assert.deepEqual(await option(), { hidden: true, disabled: true, note: '', base: true });
     await page.evaluate(() => document.querySelector('#spawn-cancel').click());
     const page2 = await mount();
     await open(page2); await ready(page2);
@@ -320,95 +270,6 @@ async function main() {
     await open(home); await ready(home);
     assert.equal(await home.$eval('#spawn-form .spawn-worktree-option', node => node.hidden), true, 'only a task room offers it');
     await home.close(); await page.close();
-  }
-
-  // A v1 agent whose folder another agent writes in: the refusal keeps the dialog open and offers three ways on, each of which sends the request
-  // again: a copy in a worktree of its own, stopping the writer, or a role that does not write.
-  {
-    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
-    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles }) });
-    const resume = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: false, reason: '' };
-    await open(page, { resume }); await ready(page);
-    const occupied = () => page.evaluate(() => ({ hidden: document.querySelector('#spawn-occupied').hidden, text: document.querySelector('#spawn-occupied p').textContent, stop: document.querySelector('#spawn-occupied-stop').hidden, open: document.querySelector('#spawn-dialog').open }));
-    const refuse = async () => {
-      await page.$eval('#spawn-form button[type=submit]', node => node.click());
-      const sent = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
-      await answer(page, sent, 409, { error: 'writer_occupied', message: 'ada@test is the writer of /work/old — stop it, or give this agent a non-writer role', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' });
-      await settle(page);
-      return sent;
-    };
-    await refuse();
-    assert.deepEqual(await occupied(), { hidden: false, text: 'ada@test is the writer of /work/old — stop it, or give this agent a non-writer role', stop: false, open: true });
-    assert.equal(await page.$eval('#spawn-occupied-stop', node => node.textContent), 'Stop ada and start');
-    await page.$eval('#spawn-occupied-copy', node => node.click());
-    const copy = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
-    assert.deepEqual(await body(page, copy), { role_key: 'worker', tool: 'codex', variant: 'native', model: 'gpt-6-sol', launcher_id: 'l1', machine_id: 'm1', resume_legacy: 'old-bot', resume_mode: 'fork', confirm_v1_idle: false, work_on_copy: true });
-    await answer(page, copy, 200, agent('a2', 'old-bot')); await settle(page);
-    assert.equal((await occupied()).open, false, 'the dialog closes once it started');
-    await open(page, { resume }); await ready(page);
-    await refuse();
-    await page.$eval('#spawn-occupied-reader', node => node.click());
-    const reader = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
-    assert.equal((await body(page, reader)).role_key, 'lead', 'the role that does not write is sent');
-    await page.close();
-  }
-
-  // A new agent (no session) whose folder another agent writes in and that cannot get a worktree of its own: the refusal names the holder inline and
-  // offers stopping it or a role that does not write, but no copy (that is for sessions), instead of closing the dialog on an error.
-  {
-    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
-    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles }) });
-    await open(page); await ready(page);
-    await page.$eval('#spawn-form button[type=submit]', node => node.click());
-    const sent = await waitRequest(page, 'POST', '/api/rooms/r1/agents');
-    await answer(page, sent, 409, { error: 'writer_occupied', message: 'ada@test is the writer of /work/old — stop it, or give this agent a non-writer role (it cannot get a worktree of its own: the project\'s worktree mode is off)', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' });
-    await settle(page);
-    const state = await page.evaluate(() => ({ open: document.querySelector('#spawn-dialog').open, hidden: document.querySelector('#spawn-occupied').hidden, copy: document.querySelector('#spawn-occupied-copy').hidden, stop: document.querySelector('#spawn-occupied-stop').hidden, text: document.querySelector('#spawn-occupied p').textContent }));
-    assert.equal(state.open, true, 'the dialog stays open');
-    assert.equal(state.hidden, false); assert.equal(state.copy, true, 'no copy for a new agent'); assert.equal(state.stop, false);
-    assert.match(state.text, /ada@test is the writer of \/work\/old/);
-    await page.$eval('#spawn-occupied-reader', node => node.click());
-    const reader = await waitRequest(page, 'POST', '/api/rooms/r1/agents');
-    assert.equal((await body(page, reader)).role_key, 'lead', 'the role that does not write is sent');
-    await page.close();
-  }
-
-  // "Stop and start" for a holder in the middle of a turn: the stop only marks its slot as releasing, so the first request meets the writer again.
-  // The dialog asks again until the slot is free, and when it never is, says the holder is still stopping instead of offering the same choices.
-  {
-    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
-    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles, 'POST /api/agents/a1/control': agent('a1', 'ada') }), withCard: true });
-    const resume = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: false, reason: '' };
-    await open(page, { resume }); await ready(page);
-    const occupiedAnswer = { error: 'writer_occupied', message: 'ada@test is the writer of /work/old', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' };
-    await page.$eval('#spawn-form button[type=submit]', node => node.click());
-    await answer(page, await waitRequest(page, 'POST', '/api/rooms/r2/agents'), 409, occupiedAnswer); await settle(page);
-    await page.$eval('#spawn-occupied-stop', node => node.click());
-    const first = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
-    assert.equal(await count(page, 'POST', '/api/agents/a1/control'), 1, 'the holder is stopped first');
-    await answer(page, first, 409, occupiedAnswer);
-    const resent = await waitRequest(page, 'POST', '/api/rooms/r2/agents'); // asked again a second later: the holder's slot was still releasing
-    assert.notEqual(resent, first);
-    await answer(page, resent, 200, agent('a2', 'old-bot')); await settle(page);
-    assert.equal(await page.$eval('#spawn-dialog', node => node.open), false, 'the dialog closes once the retry started the agent');
-    await page.close();
-  }
-
-  // The waiting is the opening's: a dialog closed (and opened for another room) while the holder is still releasing sends nothing more.
-  {
-    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
-    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles, 'POST /api/agents/a1/control': agent('a1', 'ada') }), withCard: true });
-    const resume = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: false, reason: '' };
-    await open(page, { resume }); await ready(page);
-    const occupiedAnswer = { error: 'writer_occupied', message: 'ada@test is the writer of /work/old', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' };
-    await page.$eval('#spawn-form button[type=submit]', node => node.click());
-    await answer(page, await waitRequest(page, 'POST', '/api/rooms/r2/agents'), 409, occupiedAnswer); await settle(page);
-    await page.$eval('#spawn-occupied-stop', node => node.click());
-    await answer(page, await waitRequest(page, 'POST', '/api/rooms/r2/agents'), 409, occupiedAnswer); await settle(page);
-    await page.evaluate(() => document.querySelector('#spawn-cancel').click());
-    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1500)));
-    assert.equal(await count(page, 'POST', '/api/rooms/r2/agents'), 2, 'a closed dialog does not ask again');
-    await page.close();
   }
 
   // An imported agent is started where its v1 history is: in that room when it is open, and otherwise the dialog says where the history is, and an
@@ -456,14 +317,9 @@ async function main() {
     await answer(archived, reopen, 200, { id: 'r3', project_id: 'p1', kind: 'task', title: 'old', lifecycle: 'open' });
     const spawn = await waitRequest(archived, 'POST', '/api/rooms/r3/agents');
     assert.equal((await body(archived, spawn)).resume_legacy, 'old-bot');
-    // A start that fails after the reopen (a writer holds the folder) leaves the dialog open on the room itself: the way on goes there, with no second
-    // reopen (the server would refuse it with the revision of the archived room), and the reopen choice is gone.
-    await answer(archived, spawn, 409, { error: 'writer_occupied', message: 'ada@test is the writer of /work/old', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' }); await settle(archived);
+    await answer(archived, spawn, 400, { error: 'invalid_name', message: 'name in use' }); await settle(archived);
     const after = await archived.evaluate(() => { const f = document.querySelector('#spawn-form').elements.start_room; return { value: f.value, options: [...f.options].map(o => o.value) }; });
-    assert.deepEqual([after.value, after.options.some(value => value.startsWith('reopen:'))], ['r3', false], 'the choice is the reopened room, and the reopen option is gone');
-    await archived.$eval('#spawn-occupied-reader', node => node.click());
-    await waitRequest(archived, 'POST', '/api/rooms/r3/agents');
-    assert.equal(await count(archived, 'POST', '/api/rooms/r3/reopen'), 1, 'a retry does not reopen the room again');
+    assert.deepEqual([after.value, after.options.some(value => value.startsWith('reopen:'))], ['r3', false], 'a retry stays in the reopened room');
     await archived.close();
   }
 
