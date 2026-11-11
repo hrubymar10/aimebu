@@ -561,8 +561,8 @@ off); with none saved the field is absent and the supervisor works to its own (`
 duration, 0 is off, unset or unreadable is 5 minutes). A supervisor applies a window before the turn, and
 turning it off ends every idle process at once. It says the window it works to in its `warm_state` report
 (`idle_seconds`), and a card's warm or sleeping follows that and nothing else: a live idle process is "warm"; no
-process is "sleeping" only when the supervisor says it works to a window above 0; no report yet, or a report
-without `idle_seconds`, is unknown (the card's `warm.state` is `unknown`) and a card then says neither warm nor sleeping. So a supervisor started with
+process is "sleeping" only when the supervisor says it works to a window above 0; before its first report the card stays cold, while a report
+without `idle_seconds` is unknown (the card's `warm.state` is `unknown`) and the card says neither warm nor sleeping. So a supervisor started with
 `AIMEBU2_WARM_IDLE=0` shows no "Sleeping".
 
 *Mixed versions.* The server of the build before this one sent `warm_idle_seconds: 0` on every delivery when the

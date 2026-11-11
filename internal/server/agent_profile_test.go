@@ -14,7 +14,7 @@ func TestAgentProfileShowsWhereTheAgentRunsAndWhoStartedIt(t *testing.T) {
 	f.seed()
 	agent, _ := f.createToolAgent(t, "role_worker_default")
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
-		if _, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,native_session_id,start_mode,started_at) VALUES ('ses_p',?,0,'3b241101-e2bb-4255-8caf-4136c566a962','native_resume','2026-10-17T10:00:00.000000000Z')`, agent.ID); err != nil {
+		if _, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,native_session_id,native_session_started_at,start_mode,started_at) VALUES ('ses_p',?,0,'3b241101-e2bb-4255-8caf-4136c566a962','2026-10-17T10:00:00.000000000Z','native_resume','2026-10-17T10:00:00.000000000Z')`, agent.ID); err != nil {
 			return err
 		}
 		_, err := tx.Exec(`UPDATE agent SET tool='claude' WHERE id=?`, agent.ID)

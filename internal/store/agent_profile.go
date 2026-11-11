@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -46,16 +49,18 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 		return AgentProfile{}, err
 	}
 	p := AgentProfile{AgentID: agentID}
-	var tool, machineID, checkoutID, launcherID, projectID, createdBy string
-	err := s.db.QueryRowContext(ctx, `SELECT a.tool,a.machine_id,a.checkout_id,COALESCE(a.launcher_id,''),a.project_id,a.created_by,a.created_at
-		FROM agent a LEFT JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL AND m.room_id=?
-		WHERE a.id=? AND (m.member_id IS NOT NULL OR EXISTS (SELECT 1 FROM message WHERE room_id=? AND author_kind='agent' AND author_id=a.id))`, roomID, agentID, roomID).Scan(&tool, &machineID, &checkoutID, &launcherID, &projectID, &createdBy, &p.SpawnedAt)
+	var tool, variant, machineID, checkoutID, launcherID, projectID, createdBy string
+	var host bool
+	err := s.db.QueryRowContext(ctx, `SELECT a.tool,a.variant,a.machine_id,a.checkout_id,COALESCE(a.launcher_id,''),a.project_id,a.created_by,a.created_at,machine.is_host
+		FROM agent a JOIN machine ON machine.id=a.machine_id
+		LEFT JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL AND m.room_id=?
+		WHERE a.id=? AND (m.member_id IS NOT NULL OR EXISTS (SELECT 1 FROM message WHERE room_id=? AND author_kind='agent' AND author_id=a.id))`, roomID, agentID, roomID).Scan(&tool, &variant, &machineID, &checkoutID, &launcherID, &projectID, &createdBy, &p.SpawnedAt, &host)
 	if err != nil {
 		return AgentProfile{}, err
 	}
-	var native, forkOf sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT native_session_id,start_mode,started_at,fork_of FROM session WHERE agent_id=? ORDER BY generation DESC LIMIT 1`, agentID).
-		Scan(&native, &p.StartMode, &p.SessionStartedAt, &forkOf)
+	var native, nativeStarted, forkOf sql.NullString
+	err = s.db.QueryRowContext(ctx, `SELECT native_session_id,native_session_started_at,start_mode,started_at,fork_of FROM session WHERE agent_id=? ORDER BY generation DESC LIMIT 1`, agentID).
+		Scan(&native, &nativeStarted, &p.StartMode, &p.SessionStartedAt, &forkOf)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return AgentProfile{}, err
 	}
@@ -120,9 +125,9 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 			p.SpawnedBy = slug
 		}
 	}
-	// A session inside a container cannot be resumed from the host with this command, so none is offered.
-	if !containerized {
-		p.ResumeCommand = resumeCommand(tool, p.NativeSessionID, p.Cwd)
+	// Only a confirmed session on the host has a command the browser can copy and run locally.
+	if host && !containerized && variant != "docker" && nativeStarted.Valid && nativeStarted.String != "" {
+		p.ResumeCommand = resumeCommand(tool, p.NativeSessionID, p.Cwd, agentID, filepath.Dir(filepath.Dir(s.dbPath)))
 	}
 	if p.ResumedFrom, err = s.LegacyStarted(ctx, agentID); err != nil {
 		return AgentProfile{}, err
@@ -143,16 +148,28 @@ const agentTodaySQL = `SELECT COUNT(DISTINCT turn_id),SUM(cost_est),COALESCE(MAX
 
 // resumeCommand is the command a person types to continue the agent's native session by hand. It is only
 // given for tools whose resume syntax is known, and only when the session id is known.
-func resumeCommand(tool, session, cwd string) string {
+func resumeCommand(tool, session, cwd, agentID, configRoot string) string {
 	if session == "" {
 		return ""
 	}
+	hash := sha256.Sum256([]byte(agentID))
+	agentHash := hex.EncodeToString(hash[:])
+	runtime := func(tool string) string { return filepath.Join(configRoot, "supervisor", tool, agentHash) }
 	var command string
 	switch tool {
 	case "claude":
 		command = "claude --resume " + shellQuote(session)
 	case "codex":
-		command = "codex resume " + shellQuote(session)
+		command = "CODEX_HOME=" + shellQuote(runtime("codex")) + " codex resume " + shellQuote(session)
+	case "pi":
+		if cwd == "" {
+			return ""
+		}
+		command = "PI_CODING_AGENT_DIR=" + shellQuote(runtime("pi")) + " pi --session-dir " + shellQuote(filepath.Join(cwd, ".aimebu", "pi-sessions", agentHash)) + " --session-id " + shellQuote(session)
+	case "opencode":
+		command = "OPENCODE_DB=" + shellQuote(filepath.Join(runtime("opencode"), "opencode.db")) + " opencode --session " + shellQuote(session)
+	case "vibe":
+		command = "VIBE_HOME=" + shellQuote(filepath.Join(runtime("vibe"), "home")) + " VIBE_SESSION_LOGGING__SAVE_DIR=" + shellQuote(filepath.Join(runtime("vibe"), "sessions")) + " vibe --resume " + shellQuote(session)
 	default:
 		return ""
 	}

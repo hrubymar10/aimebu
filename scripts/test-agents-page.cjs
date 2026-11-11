@@ -277,6 +277,7 @@ async function main() {
     await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
     const profile = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
     await answer(page, profile, 200, { native_session_id: '2c081365-8e68-4ebb-9d7f-a083a581d530', cwd: '/Users/someone/work/some-project/tmp', machine_name: 'Host' }); await settle(page);
+    assert.equal(await page.$('[data-agent-id=a1] .profile-copy-resume'), null, 'a session without a confirmed resume command has no copy button');
     const open = await controls();
     assert.deepEqual([open.header[0], open.header.includes('edge-agents'), open.header.includes('agents-close'), open.back, open.cardButton, open.closeLooking], ['agent-profile-close', false, false, ['Back to members', true], false, ['agent-profile-close']], `one way out of a profile, first in the header: ${JSON.stringify(open)}`);
     // The path and the id: cut after / - _ . only, whole width under the label, text unchanged.
@@ -431,7 +432,10 @@ async function main() {
     const full = await state();
     assert.deepEqual(full.facts.map(fact => fact[0]), ['Runtime', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Project', 'Spawned', 'Last 24 h', 'Agent ID']);
     assert.deepEqual(full.facts.find(fact => fact[0] === 'Last 24 h'), ['Last 24 h', '3 turns · $0.42']);
-    assert.equal(await page.$eval('[data-agent-id=a1] .profile-copy', node => node.getAttribute('aria-label')), 'Copy resume');
+    assert.deepEqual(await page.$eval('[data-agent-id=a1] .profile-copy-resume', node => [node.getAttribute('aria-label'), node.title, !!node.querySelector('.icon-mask-copy')]), ['Copy resume command', 'Copy resume command', true], 'the resume command has a labelled copy icon');
+    await page.evaluate(() => { window.__copiedResume = ''; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => { window.__copiedResume = value; } } }); });
+    await page.$eval('[data-agent-id=a1] .profile-copy-resume', button => button.click());
+    await page.waitForFunction(() => window.__copiedResume === 'codex resume sess-1');
     await page.$eval('#agent-profile-close', node => node.click());
     assert.deepEqual((await state()).title, 'Members');
     await page.waitForFunction(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')).catch(() => {}); // the focus goes back a frame after the card is drawn closed
@@ -705,6 +709,24 @@ async function main() {
     const freshRequest = await waitRequest(page, 'POST', '/api/agents/stopped/control');
     assert.equal(await page.evaluate(index => window.__requests[index].body.start_fresh, freshRequest), true, 'Start fresh requests a new native session');
     await page.close();
+    page = await mount();
+    await show(page, 'r1', [agent('stopped', 'stopped', { desired: 'stopped', observed: 'stopped' })]);
+    assert.equal(await page.$eval('[data-agent-id=stopped] .agent-state-pill', pill => pill.textContent.trim()), 'stopped', 'a collapsed stopped card has no elapsed time');
+    await page.$eval('[data-agent-id=stopped] .agent-expand', button => button.click());
+    assert.equal(await page.$eval('[data-agent-id=stopped] .agent-state-pill', pill => pill.textContent.trim()), 'stopped', 'an expanded stopped card has no elapsed time');
+    assert.equal(await page.$('[data-agent-id=stopped] .agent-state-age'), null, 'a stopped card does not render an age');
+    const actionRows = () => page.$$eval('[data-agent-id=stopped] .agent-actions button', buttons => [...new Set(buttons.map(button => Math.round(button.getBoundingClientRect().top)))]);
+    assert.equal((await actionRows()).length, 1, 'expanded actions fit one row in the desktop members panel');
+    await page.setViewport({ width: 390, height: 800 });
+    await page.evaluate(() => window.__panel.setMobileOpen(true));
+    assert.equal((await actionRows()).length, 1, 'expanded actions fit one row in the phone members panel');
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.evaluate(() => document.documentElement.style.setProperty('--agents-w', '220px'));
+    assert.deepEqual(await page.$eval('[data-agent-id=stopped] .agent-actions', row => {
+      const remove = row.querySelector('.agent-remove').getBoundingClientRect(), edge = row.getBoundingClientRect();
+      return { wrapped: remove.top > row.querySelector('button').getBoundingClientRect().top, rightAligned: Math.abs(remove.right - edge.right) < 2 };
+    }), { wrapped: true, rightAligned: true }, 'when space is tight the remove action ends its own row');
+    await page.close();
     // An event that reaches a destroyed panel through the source starts no read.
     page = await mount();
     await show(page, 'r1', [agent('a1', 'ada')]);
@@ -787,7 +809,7 @@ async function main() {
     const soon = new Date(Date.now() + 4 * 60000 + 30000).toISOString();
     await show(page, 'r1', [agent('f1', 'warm1', { tool: 'claude', warm: { state: 'warm', sleeps_at: soon } }), agent('f2', 'cold1', { tool: 'claude', warm: { state: 'sleeping' } }),
       agent('f3', 'work1', { tool: 'claude', observed: 'in_turn' }), agent('f4', 'unk1', { tool: 'claude', warm: { state: 'unknown' } }), agent('f5', 'off1', { tool: 'claude', desired: 'stopped', observed: 'stopped' }),
-      agent('f6', 'pause1', { tool: 'claude', desired: 'not_accepting' }), agent('f7', 'plain1', { tool: 'codex' })]);
+      agent('f6', 'pause1', { tool: 'claude', desired: 'not_accepting' }), agent('f7', 'plain1', { tool: 'codex' }), agent('f8', 'pending1', { tool: 'claude' })]);
     const read = id => page.$eval(`[data-agent-id=${id}]`, node => {
       const dot = node.querySelector('.agent-dot'), style = getComputedStyle(dot), words = node.querySelector('.dot-words'), sr = node.querySelector('.dot-sr');
       return { kind: dot.dataset.dot, background: style.backgroundColor, ring: style.boxShadow !== 'none', animation: style.animationName, size: [Math.round(dot.getBoundingClientRect().width), Math.round(dot.getBoundingClientRect().height)],
@@ -801,14 +823,14 @@ async function main() {
     for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
       const want = await colours();
-      const states = Object.fromEntries(await Promise.all(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map(async id => [id, await read(id)])));
-      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map(id => states[id].kind), ['warm', 'cold', 'working', 'unknown', 'offline', 'unknown', 'cold'], `${theme}: what each card's dot says`);
-      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map(id => states[id].background), [want.green, want.green, want.green, want.orange, want.red, want.orange, want.green], `${theme}: green online, orange not known, red offline, from the theme`);
-      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map(id => states[id].ring), [true, false, false, false, false, false, false], `${theme}: only a warm dot has the ring`);
+      const states = Object.fromEntries(await Promise.all(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(async id => [id, await read(id)])));
+      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(id => states[id].kind), ['warm', 'cold', 'working', 'unknown', 'offline', 'unknown', 'cold', 'cold'], `${theme}: what each card's dot says`);
+      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(id => states[id].background), [want.green, want.green, want.green, want.orange, want.red, want.orange, want.green, want.green], `${theme}: green online, orange not known, red offline, from the theme`);
+      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(id => states[id].ring), [true, false, false, false, false, false, false, false], `${theme}: only a warm dot has the ring`);
       assert.equal(states.f1.animation, 'presence-pulse', `${theme}: and it pulses`);
       assert.deepEqual(['f2', 'f3', 'f4', 'f5'].map(id => states[id].animation), Array(4).fill('none'), `${theme}: nothing else moves`);
       assert.deepEqual(['f1', 'f2', 'f5'].map(id => states[id].size.join('x')), Array(3).fill('8x8'), `${theme}: every dot is the same size, so nothing shifts when a card turns warm`);
-      assert.deepEqual([Object.values(states).map(item => item.icons), Object.values(states).map(item => item.dots)], [Array(7).fill(0), Array(7).fill(1)], `${theme}: no icon, one dot and no other warm words`);
+      assert.deepEqual([Object.values(states).map(item => item.icons), Object.values(states).map(item => item.dots)], [Array(8).fill(0), Array(8).fill(1)], `${theme}: no icon, one dot and no other warm words`);
     }
     await page.evaluate(() => { document.documentElement.removeAttribute('data-theme'); });
     const f1 = await read('f1');

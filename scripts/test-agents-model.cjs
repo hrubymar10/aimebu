@@ -34,6 +34,7 @@ const state = patch => plain(m.stateOf({ desired: 'active', observed: 'idle', la
 assert.deepEqual(state({}), { name: 'idle', kind: 'idle', title: 'Idle; waiting for new work.', since: at, observed: 'Idle' });
 assert.deepEqual(state({ observed: 'in_turn', activity_at: '2026-01-01T10:05:00Z' }), { name: 'working', kind: 'working', title: 'Working on a turn.', since: '2026-01-01T10:05:00Z', observed: 'Working' });
 assert.equal(state({ observed: 'in_turn' }).since, at, 'a working agent without a turn start counts from its last activity');
+assert.equal(state({ desired: 'stopped', observed: 'stopped' }).since, '', 'a stopped agent has no state age');
 assert.deepEqual([state({ desired: 'stopped', observed: 'stopped' }).name, state({ desired: 'stopped', observed: 'in_turn' }).name, state({ observed: 'interrupting' }).name, state({ desired: 'not_accepting' }).name, state({ observed: 'lost' }).name, state({ boundary_pending: true }).name],
   ['stopped', 'stopping', 'stopping', 'paused', 'lost', 'awaiting approval']);
 assert.deepEqual([state({ observed: 'lost' }).kind, state({ boundary_pending: true }).kind, state({ desired: 'stopped', observed: 'stopped' }).kind], ['error', 'paused', 'stopped']);
@@ -126,6 +127,7 @@ assert.equal(rows({ ...base, variant: 'codex' }, null)[0][1], 'gpt-6-sol · Code
 // The state is not a row: the card's pill is the one status line, so Status, Presence and Last seen are not repeated.
 assert.deepEqual(['Status', 'Presence', 'Last seen'].filter(label => rows(base, null).some(row => row[0] === label)), []);
 const full = rows(base, { native_session_id: 's1', resume_command: 'codex resume s1', cwd: '/w', branch: 'main', machine_name: 'Host', launcher_name: 'Codex', project_name: 'Alpha', repo_url: 'git@x', spawned_by: 'owner', spawned_at: at, resumed_from: 'old-bot', turns_today: 1, cost_today: 0.004, cost_today_estimated: true });
+assert.equal(rows(base, { native_session_id: 's1' }).some(row => row[0] === 'Resume'), false, 'an unconfirmed session has no resume action');
 assert.deepEqual(full.map(row => row[0]), ['Runtime', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Launcher', 'Project', 'Repo', 'Spawned', 'Continues', 'Last 24 h', 'Agent ID']);
 assert.deepEqual(full.find(row => row[0] === 'Resume'), ['Resume', 'codex resume s1', { mono: true, copy: true }]);
 assert.equal(full.find(row => row[0] === 'Last 24 h')[1], '1 turn · $0.0040 estimated');
@@ -159,6 +161,7 @@ assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: tr
   assert.deepEqual(dot({ ...idle, warm: { state: 'warm', sleeps_at: 'garbage' } }), { kind: 'warm', title: 'Online \u00b7 warm, the next answer skips the start' }, 'an end that cannot be read is still warm, without minutes');
   assert.deepEqual(dot({ ...idle, warm: { state: 'sleeping' } }), { kind: 'cold', title: 'Online \u00b7 cold, the next answer starts the agent' });
   assert.equal(dot({ ...idle }).kind, 'cold', 'warm mode off or not applicable: cold, the next answer starts the agent');
+  assert.equal(dot({ ...idle, warm: undefined }).kind, 'cold', 'a missing first supervisor report leaves the dot green and cold');
   assert.equal(dot({ ...idle, tool: 'codex' }).kind, 'cold');
   assert.equal(dot({ ...idle, warm: { state: 'unknown' } }).kind, 'unknown', 'a warm state that is not known is orange, not cold');
   assert.match(dot({ ...idle, warm: { state: 'unknown' } }).title, /^State unknown/);

@@ -603,7 +603,7 @@ agents one per line (state-coloured presence dot, role emoji, the full name, the
 text, as in v1: `idle 0:44`, `working 1:12`, `paused`, `stopped`); DM, Pause and Stop are icon buttons that appear on hover or focus (a stopped agent shows Start, a play icon, in place of Pause and Stop; a paused one shows Resume in place of Pause; one that is still stopping shows only its Stop; always
 shown on touch screens); clicking a row opens that agent's Agent profile in place
 of the list, as in v1 (status, presence, last seen, runtime, role, native session,
-a copyable resume command, working directory and branch, machine, launcher,
+a copyable resume command for a confirmed native session on the host (including its private session path when needed), working directory and branch, machine, launcher,
 project, who spawned it, the last 24 hours' turns and cost, memory; the state shows as a pill, and the actions are labelled
 buttons: Message, Pause, Stop (the red one), Switch…, Start (Resume on a paused agent) and Remove (the red trash can: a project owner or operator removes a **stopped** agent for good after a confirmation; it leaves its rooms, its name and role slot are free, its worktree of its own is removed by the worktree rules, and its messages stay, shown as "name (removed)"), each with a tooltip saying what it does and, when
 unavailable, why (also written under the buttons);

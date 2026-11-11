@@ -24,7 +24,7 @@ function QuickButton({ className, label, icon, ...rest }) {
 
 // Read here, so a tick of the clock renders these two texts and nothing else of the card.
 // How long the agent has been in its state, on the state pill. A collapsed card of an idle agent leaves it out ("idle", not "idle 31:23": how long nothing happened is detail for the
-// open card); a working agent keeps it on a collapsed card too, since that is useful while something runs.
+// open card); a stopped agent never shows an age. A working agent keeps it on a collapsed card too, since that is useful while something runs.
 function StateAge({ store, since, hidden }) {
   if (hidden) return null;
   const at = Date.parse(since || '');
@@ -48,7 +48,7 @@ function DotWords({ store, agent, state }) {
 
 function CopyButton({ value, label, target }) {
   const [state, setState] = useState('copy');
-  const copyLabel = `Copy ${label.toLowerCase()}`;
+  const copyLabel = label === 'Resume' ? 'Copy resume command' : `Copy ${label.toLowerCase()}`;
   const click = async () => {
     try { await navigator.clipboard.writeText(String(value)); setState('check'); } catch {
       setState('failed');
@@ -56,7 +56,7 @@ function CopyButton({ value, label, target }) {
     }
     setTimeout(() => setState('copy'), 1500);
   };
-  return html`<${IconButton} name=${state === 'check' ? 'check' : 'copy'} label=${state === 'check' ? 'Copied' : state === 'failed' ? 'Copy failed: press Ctrl or ⌘ C' : copyLabel} className="profile-copy" onClick=${click} />`;
+  return html`<${IconButton} name=${state === 'check' ? 'check' : 'copy'} label=${state === 'check' ? 'Copied' : state === 'failed' ? 'Copy failed: press Ctrl or ⌘ C' : copyLabel} className=${`profile-copy${label === 'Resume' ? ' profile-copy-resume' : ''}`} onClick=${click} />`;
 }
 
 // A path or an id is cut at its separators, never in the middle of a name: a break opportunity after each of / - _ . (the characters of the text itself are
@@ -109,7 +109,7 @@ export class AgentCard extends Component {
       <div class="agent-id agent-title"><span class=${`agent-online-dot ${stateDot(state.kind)} agent-dot`} data-state=${state.kind} data-dot=${dot.kind}><${DotWords} store=${api.store} agent=${agent} state=${state} /></span>
         <img class="harness-icon agent-harness-icon" alt="" src=${src} title=${`${agent.model || 'unknown'} · ${label}`} /><span class="agent-emoji" aria-hidden="true">${agent.role_emoji || ''}</span>
         <span class="agent-identity"><span class="agent-id-text agent-name" title=${name}>${name}</span></span>
-        <div class="agent-state" data-since=${state.since} data-state=${state.kind} title=${state.title}><span class=${`agent-state-pill agent-state-badge agent-state-${stateBadge(state.kind)}`}><span class="agent-state-label">${state.name}</span>${' '}<${StateAge} store=${api.store} since=${state.since} hidden=${!expanded && state.kind === 'idle'} /></span></div>
+        <div class="agent-state" data-since=${state.since} data-state=${state.kind} title=${state.title}><span class=${`agent-state-pill agent-state-badge agent-state-${stateBadge(state.kind)}`}><span class="agent-state-label">${state.name}</span>${' '}<${StateAge} store=${api.store} since=${state.since} hidden=${state.kind === 'stopped' || (!expanded && state.kind === 'idle')} /></span></div>
         <span class="agent-role" title=${agent.role_updated ? 'Role updated; respawn to apply the project definition.' : ''}>${`${agent.role_emoji || ''} ${agent.role || 'Agent'}${agent.role_deleted ? ' (deleted)' : ''}`.trim()}</span>
         <div class="agent-card-actions agent-quick"><${QuickButton} className="agent-private" label=${dm} icon="dm" onClick=${() => api.onPrivate(agent)} />
           ${quick.includes('pause') && html`<${QuickButton} className="agent-pause" label="Pause" icon="pause" disabled=${reason('act-pause').disabled} onClick=${() => api.store.control(agent.id, 'pause')} />`}

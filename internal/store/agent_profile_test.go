@@ -1,6 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"path/filepath"
 	"testing"
 
 	"github.com/goccy/go-json"
@@ -25,16 +28,22 @@ func TestAgentProfileLabelsEstimatedDailyCost(t *testing.T) {
 
 func TestResumeCommandKnownToolsAndQuoting(t *testing.T) {
 	t.Parallel()
+	hash := sha256.Sum256([]byte("agt_one"))
+	agentHash := hex.EncodeToString(hash[:])
+	runtime := func(tool string) string { return filepath.Join("/config", "supervisor", tool, agentHash) }
 	for _, c := range []struct{ tool, session, cwd, want string }{
 		{"claude", "3b24-11", "/work/app", "cd /work/app && claude --resume 3b24-11"},
-		{"codex", "abc", "/work/app", "cd /work/app && codex resume abc"},
+		{"codex", "abc", "/work/app", "cd /work/app && CODEX_HOME=" + runtime("codex") + " codex resume abc"},
+		{"pi", "abc", "/work/app", "cd /work/app && PI_CODING_AGENT_DIR=" + runtime("pi") + " pi --session-dir /work/app/.aimebu/pi-sessions/" + agentHash + " --session-id abc"},
+		{"opencode", "abc", "/work/app", "cd /work/app && OPENCODE_DB=" + filepath.Join(runtime("opencode"), "opencode.db") + " opencode --session abc"},
+		{"vibe", "abc", "/work/app", "cd /work/app && VIBE_HOME=" + filepath.Join(runtime("vibe"), "home") + " VIBE_SESSION_LOGGING__SAVE_DIR=" + filepath.Join(runtime("vibe"), "sessions") + " vibe --resume abc"},
 		{"claude", "abc", "", "claude --resume abc"},
-		{"codex", "abc", "/path with space/it's", `cd '/path with space/it'\''s' && codex resume abc`},
+		{"codex", "abc", "/path with space/it's", `cd '/path with space/it'\''s' && CODEX_HOME=` + runtime("codex") + ` codex resume abc`},
 		{"claude", "", "/work", ""},
-		{"pi", "abc", "/work", ""},
+		{"pi", "abc", "", ""},
 		{"fake", "abc", "/work", ""},
 	} {
-		if got := resumeCommand(c.tool, c.session, c.cwd); got != c.want {
+		if got := resumeCommand(c.tool, c.session, c.cwd, "agt_one", "/config"); got != c.want {
 			t.Errorf("resumeCommand(%q,%q,%q) = %q, want %q", c.tool, c.session, c.cwd, got, c.want)
 		}
 	}
@@ -85,6 +94,13 @@ func TestAgentProfileOffersNoResumeCommandInsideAContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile, err := s.AgentProfile(t.Context(), room.ID, one.ID)
+	if err != nil || profile.ResumeCommand != "" {
+		t.Fatalf("an unconfirmed handle gets no command: %+v %v", profile, err)
+	}
+	if _, err := s.db.Exec(`UPDATE session SET native_session_started_at='2026-10-17T10:00:00Z' WHERE agent_id=?`, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	profile, err = s.AgentProfile(t.Context(), room.ID, one.ID)
 	if err != nil || profile.ResumeCommand == "" {
 		t.Fatalf("a host launcher gets the command: %+v %v", profile, err)
 	}
@@ -101,6 +117,34 @@ func TestAgentProfileOffersNoResumeCommandInsideAContainer(t *testing.T) {
 	profile, err = s.AgentProfile(t.Context(), room.ID, one.ID)
 	if err != nil || profile.ResumeCommand != "" || profile.LauncherName != "docker" || profile.NativeSessionID != "abc" {
 		t.Fatalf("a container launcher gets no resume command: %+v %v", profile, err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET launcher_id=NULL,variant='docker' WHERE id=?`, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	profile, err = s.AgentProfile(t.Context(), room.ID, one.ID)
+	if err != nil || profile.ResumeCommand != "" {
+		t.Fatalf("a docker variant gets no host command: %+v %v", profile, err)
+	}
+}
+
+func TestAgentProfileCodexResumeUsesPrivateHome(t *testing.T) {
+	t.Parallel()
+	s, _, room, one, _ := wakeFixture(t)
+	if _, err := s.db.Exec(`UPDATE agent SET tool='codex' WHERE id=?`, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE session SET native_session_id='sess-1',native_session_started_at='2026-10-17T10:00:00Z' WHERE agent_id=?`, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := s.AgentProfile(t.Context(), room.ID, one.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256([]byte(one.ID))
+	home := filepath.Join(filepath.Dir(filepath.Dir(s.dbPath)), "supervisor", "codex", hex.EncodeToString(hash[:]))
+	want := "cd " + shellQuote(profile.Cwd) + " && CODEX_HOME=" + shellQuote(home) + " codex resume sess-1"
+	if profile.ResumeCommand != want {
+		t.Fatalf("resume command = %q, want %q", profile.ResumeCommand, want)
 	}
 }
 

@@ -104,7 +104,7 @@ func TestAccountSwitchWarmRetireGoneOrSilent(t *testing.T) {
 }
 
 // A card says warm (until when) while the supervisor reports a live idle process, sleeping when the supervisor says it works to a window and there is
-// none, unknown when the supervisor has not said what window it works to (no report yet, or one without idle_seconds from an older supervisor), and nothing
+// none, unknown when an older supervisor report lacks idle_seconds, and nothing before the first report
 // when the window is 0 (warm mode off), the agent is not active or not Claude, the machine keeps nothing warm, or the agent is in a turn.
 func TestAgentCardWarmState(t *testing.T) {
 	t.Parallel()
@@ -112,8 +112,8 @@ func TestAgentCardWarmState(t *testing.T) {
 	f.seed()
 	machine := connectHost(t, f, true)
 	card := store.AgentCard{ID: "agt_w", MachineID: machine.id, Tool: "claude", Desired: "active", Observed: "idle"}
-	if got := f.srv.agentWarmState(card); got == nil || got.State != "unknown" {
-		t.Fatalf("no report yet: the state is unknown, not sleeping and not absent: %+v", got)
+	if got := f.srv.agentWarmState(card); got != nil {
+		t.Fatalf("no report yet: the card stays cold: %+v", got)
 	}
 	five, zero := 300, 0
 	report := func(window *int, agents ...protocol.WarmAgent) {

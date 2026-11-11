@@ -28,7 +28,7 @@ export function stateOf(agent) {
     : 'Idle; waiting for new work.';
   if (agent.recovery_block && agent.last_exit_evidence) title += `\n${agent.last_exit_evidence}`;
   // A working agent counts from the start of its turn, any other state from the last thing it did.
-  const since = (agent.observed === 'in_turn' ? agent.activity_at || agent.last_activity_at : agent.last_activity_at) || '';
+  const since = kind === 'stopped' ? '' : (agent.observed === 'in_turn' ? agent.activity_at || agent.last_activity_at : agent.last_activity_at) || '';
   // An idle agent that accepts work but will not start is not "idle": its last turn needs the person's decision, or the limit guard is
   // holding new turns of its tool. The dot goes orange and the state says which, and `why` is the sentence the card shows beside it.
   const free = agent.desired === 'active' && agent.observed === 'idle' && !agent.boundary_pending;
@@ -74,7 +74,7 @@ export function dotOf(agent, state, now = Date.now()) {
   if (dot === 'stale') return { kind: 'unknown', title: state.title || state.name };
   if (dot === 'offline') return { kind: 'unknown', title: `State unknown${detail}` };
   if (state.kind === 'working') return { kind: 'working', title: `Online \u00b7 working${detail}` };
-  if (agent.warm?.state === 'unknown') return { kind: 'unknown', title: 'State unknown \u00b7 whether its process is kept warm is not known (an older supervisor, or no report yet)' };
+  if (agent.warm?.state === 'unknown') return { kind: 'unknown', title: 'State unknown \u00b7 whether its process is kept warm is not known (an older supervisor)' };
   if (agent.warm?.state === 'warm') {
     const left = Date.parse(agent.warm.sleeps_at) - now, minutes = Number.isFinite(left) ? Math.max(1, Math.ceil(left / 60000)) : 0;
     return { kind: 'warm', title: minutes ? `Online \u00b7 warm, the next answer skips the start (\u2248${minutes} min left)` : 'Online \u00b7 warm, the next answer skips the start' };
