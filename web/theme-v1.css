@@ -1010,31 +1010,16 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .sidebar > header { justify-content: flex-start; gap: 6px; padding-right: 12px; }
 .sidebar > header > strong { flex: 1 1 auto; }
 .sidebar form.room-filter { margin: 8px 0 10px; padding: 0; border: 0; }
-/* Message actions: one compact toolbar of framed icon buttons, revealed by hover or focus and shown by a tap on touch screens (chosen over
-   two other looks in the A/B/C trial). It floats over the message's header line, at the right end of it, and covers whatever of that line is
-   there while it is shown (the viewer's own right-aligned sender line, or the time of someone else's in a narrow column); it reserves no
-   space, so the bubble is under the header at v1's 2px at rest, and it ends above the bubble's text (it is placed from the bubble's top edge, 24px up: the header line is 15px tall and 2px above the bubble, so the
-   toolbar's middle is the line's middle), so it reaches none of it. When the bubble is narrower than the toolbar the toolbar extends to its left.
-   The viewer's own sender line is at the right end of the row, where the toolbar would cover it: an own message's toolbar sits just left of that line instead,
-   on the same line, level with it and above the bubble (--meta-w is the line's width, set when the row is reached: chat.js noteSenderLine). */
+/* Message actions float at the bubble's top-right for every sender. The toolbar
+   covers the header while shown and leaves the message text unobstructed. */
 .message-actions { position: absolute; top: -24px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
-.chat-msg.self .message-actions { right: calc(var(--meta-w, 0px) + 10px); }
-/* Too narrow for the sender line and the toolbar side by side (chat.js noteSenderLine): the toolbar takes a row of its own above the line, at the right end. A touch
-   screen has its own rules (a tablet stacks at its 46px toolbar's offset, a phone's tap-to-open toolbar is under the text). */
-@media not all and (hover: none) and (pointer: coarse) {
-  .chat-msg.self.meta-stacked .message-actions { top: var(--stack-top, -52px); right: 6px; }
-}
 .chat-msg:hover .message-actions, .chat-msg:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
 /* A toolbar that has not been made yet (it is made when its row is reached, see message-actions.js) is not drawn. */
 .message-actions:not([data-built]) { position: absolute !important; display: block !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: hidden !important; clip-path: inset(50%) !important; opacity: 0 !important; pointer-events: none !important; box-shadow: none !important; }
-/* A touch tablet's toolbar is 46px tall: sitting over the bubble's top edge it would cover the first line, so it sits wholly above the bubble, and a selected
-   message takes the room it needs there. Beside an own message's sender line it would not fit a narrow column (its buttons are 40px), so an own message's
-   toolbar sits on a row of its own above that line, at the right end. */
+/* A touch tablet's larger toolbar sits above the bubble and gets room while selected. */
 @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
   .chat-msg .message-actions { top: -48px; }
-  .chat-msg.self .message-actions { top: -67px; right: 6px; }
   .chat-msg.actions-open:not(.chat-msg-system) { margin-top: 34px; }
-  .chat-msg.actions-open.self:not(.chat-msg-system) { margin-top: 53px; }
 }
 .message-actions .message-action { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 6px; background: transparent; border-color: transparent; }
 .message-actions .message-action:hover, .message-actions .message-action:focus-visible { border-color: var(--border-hover); }

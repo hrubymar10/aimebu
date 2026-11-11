@@ -995,6 +995,14 @@ async function main() {
     const page = await mount({ plain: true });
     await page.evaluate(() => { for (const [seq, body] of [[121, 'mine one'], [124, 'mine two'], [127, 'mine two'], [129, 'mine three']]) Object.assign(window.__data.rooms.rm_a.messages[seq - 1], { author_id: 'usr_me', author_name: 'me', body }); });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    for (const id of ['rm_a_m120', 'rm_a_m121']) {
+      await hover(page, `[data-message-id=${id}] .chat-msg-bubble`);
+      assert.equal(await page.$eval(`[data-message-id=${id}]`, row => {
+        const bubble = row.querySelector('.chat-msg-bubble').getBoundingClientRect();
+        const actions = row.querySelector('.message-actions').getBoundingClientRect();
+        return Math.abs(bubble.right - actions.right - 6) < 2;
+      }), true, `message actions sit at the bubble's top-right for ${id}`);
+    }
     await hover(page, '[data-message-id=rm_a_m120] .chat-msg-bubble');
     await page.evaluate(() => { const bar = document.querySelector('[data-message-id=rm_a_m120] .message-actions'); window.__buttons = [...bar.querySelectorAll('button')].filter(button => !button.closest('[hidden]')).map(button => button.getAttribute('aria-label')); bar.querySelector('button').focus(); });
     const focused = () => page.evaluate(() => document.activeElement.getAttribute('aria-label'));

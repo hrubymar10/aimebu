@@ -1907,8 +1907,16 @@ async function main() {
     assert.equal(await first.$eval('.chat-msg:first-child .message-actions', el => !el.dataset.built && el.querySelectorAll('button:not(.message-actions-wake)').length === 0 && getComputedStyle(el).width === '1px'), true, 'the message actions are not even made until the message is hovered or focused');
     await first.hover('.chat-msg:first-child');
     await first.waitForFunction(() => getComputedStyle(document.querySelector('.chat-msg:first-child .message-actions')).opacity === '1');
-    // The toolbar of the viewer's own message is level with the sender line, just left of its items (the line is at the right end), above the bubble; it covers none of the line and no text.
-    assert.deepEqual(await first.evaluate(() => { const bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), bar = document.querySelector('.chat-msg:first-child .message-actions').getBoundingClientRect(); const header = document.querySelector('.chat-msg:first-child .chat-msg-header').getBoundingClientRect(); const items = [...document.querySelector('.chat-msg:first-child .chat-msg-header').children].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()); const coversHeader = items.some(meta => bar.right > meta.left && bar.left < meta.right && bar.bottom > meta.top && bar.top < meta.bottom); const level = bar.top < header.bottom && bar.bottom > header.top; const text = document.querySelector('.chat-msg:first-child .chat-msg-body').getBoundingClientRect(); const clearOfText = bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom; const atTheEnd = bar.right <= items.reduce((left, meta) => Math.min(left, meta.left), Infinity) && items.reduce((left, meta) => Math.min(left, meta.left), Infinity) - bar.right < 16; return { levelWithTheHeader: level, coversTheSenderLine: coversHeader, atTheRightEnd: atTheEnd, clearOfTheText: clearOfText, buttons: document.querySelectorAll('.chat-msg:first-child .message-actions > .message-action').length }; }), { levelWithTheHeader: true, coversTheSenderLine: false, atTheRightEnd: true, clearOfTheText: true, buttons: 6 }, 'the toolbar (react, more reactions, reply, thread, copy, link) of the viewer\'s own message is level with its sender line and just left of the line\'s items, covering neither them nor any message text');
+    // Own messages use the same bubble corner as every other message.
+    assert.deepEqual(await first.evaluate(() => {
+      const root = document.querySelector('.chat-msg:first-child');
+      const bubble = root.querySelector('.chat-msg-bubble').getBoundingClientRect();
+      const bar = root.querySelector('.message-actions').getBoundingClientRect();
+      const text = root.querySelector('.chat-msg-body').getBoundingClientRect();
+      return { atTopRight: Math.abs(bar.right - (bubble.right - 6)) < 2 && bar.top < bubble.top && bar.bottom > bubble.top,
+        clearOfText: bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom,
+        buttons: root.querySelectorAll('.message-actions > .message-action').length };
+    }), { atTopRight: true, clearOfText: true, buttons: 6 }, 'an own message has its actions at the bubble\'s top-right without covering text');
     // v1 parity of the message frame: the bubble sits right under the sender line, at v1's gap, for the viewer's own message too (the hover toolbar
     // reserves no space), and the sender's name is plain text until it is hovered or focused.
     assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.chat-msg:first-child .chat-msg-header').getBoundingClientRect(), bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), author = document.querySelector('.chat-msg:first-child .chat-msg-from-name'); return { gap: Math.round(bubble.top - meta.bottom), own: document.querySelector('.chat-msg:first-child').classList.contains('self'), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 2, own: true, underline: 'none' }, 'the bubble is 2px under the sender line (v1\'s gap) for the viewer\'s own message too, and the sender name has no permanent underline');
@@ -2221,28 +2229,13 @@ async function main() {
             const box = node => node.getBoundingClientRect(), hit = (a, b) => !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
             const list = box(document.querySelector('#messages')), root = document.querySelector(selector), bubble = box(root.querySelector('.chat-msg-bubble')), bar = box(root.querySelector('.message-actions')), text = box(root.querySelector('.chat-msg-body'));
             const items = [...root.querySelector('.chat-msg-header').children].filter(node => node.getClientRects().length).map(box);
-            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.chat-msg-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), levelWithHeader: bar.top < box(root.querySelector('.chat-msg-header')).bottom && bar.bottom > box(root.querySelector('.chat-msg-header')).top, overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: root.classList.contains('self') ? bar.right <= Math.min(...items.map(item => item.left)) && Math.min(...items.map(item => item.left)) - bar.right < 16 : Math.abs(bar.right - (bubble.right - 6)) < 2, clearOfItems: !items.some(item => hit(bar, item)), list: Math.round(list.width), bubble: Math.round(bubble.width) };
+            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.chat-msg-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), levelWithHeader: bar.top < box(root.querySelector('.chat-msg-header')).bottom && bar.bottom > box(root.querySelector('.chat-msg-header')).top, overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2, list: Math.round(list.width), bubble: Math.round(bubble.width) };
           }, message);
-          assert.deepEqual([geometry.readable, geometry.insideList, geometry.clearOfText, geometry.levelWithHeader, geometry.overlapsTopEdge, geometry.atTopRightCorner, geometry.clearOfItems], [true, true, true, true, true, true, true], `${kind} message at ${width}px (the toolbar is level with the header line and over the bubble's top edge: at the bubble's top-right corner for someone else's message, just left of the sender line's items for an own one; it covers none of them): ${JSON.stringify(geometry)}`);
+          assert.deepEqual([geometry.readable, geometry.insideList, geometry.clearOfText, geometry.levelWithHeader, geometry.overlapsTopEdge, geometry.atTopRightCorner], [true, true, true, true, true, true], `${kind} message at ${width}px (the toolbar is at the bubble's top-right corner): ${JSON.stringify(geometry)}`);
         }
       }
-      // A sender line too wide to leave room for the toolbar beside it (a long name in a narrow column): the toolbar takes a row of its own above the line, inside the list.
-      {
-        await first.setViewport({ width: 800, height: 720 });
-        await first.evaluate(() => { const name = document.querySelector('[data-narrow-check=own] .chat-msg-from-name'); name.dataset.was = name.style.paddingLeft; name.style.paddingLeft = '170px'; document.querySelector('[data-narrow-check=own]').scrollIntoView({ block: 'center' }); });
-        await first.hover('[data-narrow-check=own] .chat-msg-bubble');
-        await first.waitForFunction(() => getComputedStyle(document.querySelector('[data-narrow-check=own] .message-actions')).opacity === '1');
-        const wide = await first.evaluate(() => {
-          const box = node => node.getBoundingClientRect(), root = document.querySelector('[data-narrow-check=own]'), list = box(document.querySelector('#messages')), bar = box(root.querySelector('.message-actions')), bubble = box(root.querySelector('.chat-msg-bubble'));
-          const items = [...root.querySelector('.chat-msg-header').children].filter(node => node.getClientRects().length).map(box);
-          return { stacked: root.classList.contains('meta-stacked'), insideList: bar.left >= list.left - 1 && bar.right <= list.right + 1, aboveLine: bar.bottom <= Math.min(...items.map(item => item.top)) + 1, barBottom: Math.round(bar.bottom), lineTop: Math.round(Math.min(...items.map(item => item.top))), lineBottom: Math.round(Math.max(...items.map(item => item.bottom))), bubbleTop: Math.round(bubble.top) };
-        });
-        assert.ok(wide.stacked && wide.insideList && wide.aboveLine, `a wide sender line stacks the toolbar above it, inside the list: ${JSON.stringify(wide)}`);
-        await first.evaluate(() => { const name = document.querySelector('[data-narrow-check=own] .chat-msg-from-name'); name.style.paddingLeft = name.dataset.was || ''; });
-        await first.mouse.move(2, 2);
-      }
       // The same on a touch tablet (hover: none, a coarse pointer, 701px or wider), whose 46px-tall toolbar appears on a selected message: it sits wholly
-      // above the bubble, for an own message as for someone else's (an own one beside its sender line, which is at the other end), inside the list.
+      // above the bubble for every message, inside the list.
       {
         const session = await first.createCDPSession();
         await first.setViewport({ width: 800, height: 720 });
@@ -2255,9 +2248,9 @@ async function main() {
             const box = node => node.getBoundingClientRect(), root = document.querySelector(selector);
             const list = box(document.querySelector('#messages')), bubble = box(root.querySelector('.chat-msg-bubble')), bar = box(root.querySelector('.message-actions'));
             const items = [...root.querySelector('.chat-msg-header').children].filter(node => node.getClientRects().length).map(box);
-            return { column: Math.round(list.width), insideList: bar.left >= list.left - 1 && bar.right <= list.right + 1 && bubble.right <= list.right + 1, aboveBubble: bar.bottom <= bubble.top + 1, clearOfItems: !items.some(item => !(bar.right <= item.left || bar.left >= item.right || bar.bottom <= item.top || bar.top >= item.bottom)) };
+            return { column: Math.round(list.width), insideList: bar.left >= list.left - 1 && bar.right <= list.right + 1 && bubble.right <= list.right + 1, aboveBubble: bar.bottom <= bubble.top + 1, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2 };
           }, message);
-          assert.ok(geometry.column < 420 && geometry.insideList && geometry.aboveBubble && (kind === 'other' || geometry.clearOfItems), `${kind} message on a touch tablet in a narrow column: ${JSON.stringify(geometry)}`);
+          assert.ok(geometry.column < 420 && geometry.insideList && geometry.aboveBubble && geometry.atTopRightCorner, `${kind} message on a touch tablet in a narrow column: ${JSON.stringify(geometry)}`);
         }
         await first.evaluate(() => document.querySelectorAll('.actions-open').forEach(node => node.classList.remove('actions-open')));
         await session.send('Emulation.setTouchEmulationEnabled', { enabled: false });

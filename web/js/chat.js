@@ -243,34 +243,15 @@ export class Chat {
   wakeActions(event, container) {
     const target = event.target;
     const row = target.closest?.('article.chat-msg, article.thread-entry'); if (!row || !container.contains(row)) return;
-    if (row.classList.contains('self')) this.noteSenderLine(row);
     const bar = row.querySelector('.message-actions'); if (!bar || bar.dataset.built) return;
     const message = this.entryMessage(row.dataset.messageId); if (!message) return;
     wakeMessageActions(this, bar, message);
-    if (row.classList.contains('self')) this.noteSenderLine(row); // now that the toolbar is made, its real width is known
     this.enterActions(event, bar);
     const live = (this.liveActions ||= []).filter(item => item.isConnected && item !== bar && item.dataset.built);
     live.push(bar);
     // Only the three most recent stay made; an older one that still holds the focus, the pointer or an open pop-up stays too, and is looked at again next time.
     const older = live.slice(0, Math.max(0, live.length - 3)), kept = older.filter(item => !releaseMessageActions(item));
     this.liveActions = [...kept, ...live.slice(older.length)];
-  }
-  // The viewer's own sender line is at the right end of the row, so its toolbar sits just left of it, on the same line: the width of the line's items is
-  // handed to the stylesheet as --meta-w when the row is reached (it changes only with the name, the number and the time). When the line and the toolbar
-  // together are wider than the row (a long name in the narrow thread panel or a narrow window), the toolbar would run out past the list's left edge: the
-  // row is marked meta-stacked, and the stylesheet puts the toolbar on a row of its own above the line instead.
-  noteSenderLine(row) {
-    const items = [...(row.querySelector(':scope > .chat-msg-header')?.children || [])].filter(node => node.getClientRects().length);
-    if (!items.length) return;
-    const width = Math.round(items.at(-1).getBoundingClientRect().right - items[0].getBoundingClientRect().left);
-    if (row.style.getPropertyValue('--meta-w') !== `${width}px`) row.style.setProperty('--meta-w', `${width}px`);
-    const bar = row.querySelector(':scope .message-actions'), barWidth = bar?.dataset.built ? bar.getBoundingClientRect().width : 160;
-    // The row is right-aligned in the list and shrinks to its bubble, so what the toolbar may use to the left of the line is the list's content width.
-    const list = row.parentElement, style = getComputedStyle(list), room = list.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-    row.classList.toggle('meta-stacked', width + 10 + barWidth + 6 > room);
-    // Stacked, the toolbar's bottom edge is 2px above the line, whatever the line's height (the line sits 2px above the bubble).
-    const lineHeight = row.querySelector(':scope > .chat-msg-header').getBoundingClientRect().height, barHeight = bar?.dataset.built ? bar.getBoundingClientRect().height : 28;
-    row.style.setProperty('--stack-top', `${-Math.round(lineHeight + barHeight + 4)}px`);
   }
   // The focus was on the hidden "Message actions" button that has just become the toolbar: it goes to the toolbar's first button, or to
   // its last when the row was entered from below (Shift+Tab).
