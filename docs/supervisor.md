@@ -218,6 +218,12 @@ paths fail. An older supervisor does not receive the unknown frame: the
 server returns `folder_unverified` without disconnecting it. Missing host
 project folders also return `folder_unverified` before agent creation. The path is checked
 again when the supervisor receives `spawn`.
+For project folder completion, owner and admin requests for a selected remote
+machine use its `supports_directory_list` capability. The supervisor returns
+up to 200 matching immediate directory names, including symlinks only when
+they point to directories; unreadable paths return an empty list. A short
+server timeout keeps the field responsive if the machine stops answering. An
+older supervisor without the flag gets no listing frame and gives no suggestions.
 An opted-in task room sends `worktree_op` to each selected remote supervisor
 that advertises `supports_worktree` in its hello.
 It creates or restores the room branch beneath that machine's mapped project

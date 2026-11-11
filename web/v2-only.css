@@ -602,6 +602,10 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .folder-field > button.folder-home-btn:is(:hover, :focus-visible) { border-color: var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
 .folder-field > button.folder-home-btn .icon-mask { width: 16px; height: 16px; }
 .folder-field[data-home-button] > input { padding-left: 40px; }
+.folder-suggestions { position: fixed; z-index: 30; max-height: 420px; overflow-y: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-primary); box-shadow: 0 8px 24px #0003; }
+.folder-suggestions[hidden] { display: none; }
+.folder-suggestions [role="option"] { padding: 6px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.folder-suggestions [role="option"]:is(:hover, [aria-selected="true"]) { background: var(--bg-tertiary); }
 
 /* A plain .btn in the high-contrast themes: the tertiary fill with the outline and the primary text, the accent outline on hover and focus, and a disabled one is the same
    button dimmed (as v1 dims a disabled control). The chips, the Review in Inbox control and the Memory viewer's own buttons keep their own looks, and so do the primary,

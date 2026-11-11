@@ -206,6 +206,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/sounds/{sound}", s.Auth.RequireUser(http.HandlerFunc(s.deleteSound)))
 	mux.HandleFunc("GET /api/session", s.sessionProbe)
 	mux.Handle("GET /api/machines", s.Auth.RequireUser(http.HandlerFunc(s.machineList)))
+	mux.Handle("GET /api/machines/directories", s.Auth.RequireUser(http.HandlerFunc(s.directoryList)))
 	mux.Handle("GET /api/machines/{id}/harnesses", s.Auth.RequireUser(http.HandlerFunc(s.machineHarnesses)))
 	mux.Handle("PUT /api/machines/{id}/harnesses/{tool}/{variant}", s.Auth.RequireUser(http.HandlerFunc(s.machineHarness)))
 	mux.Handle("GET /api/machines/{id}/launchers", s.Auth.RequireUser(http.HandlerFunc(s.machineLaunchers)))

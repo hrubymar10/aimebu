@@ -1,4 +1,6 @@
 import { html } from '../../ui.js';
+import { useLayoutEffect, useRef } from '../../ui.js';
+import { attachFolderField } from '../../folder-field.js';
 import { IconButton } from '../../components/icon-button.js';
 import { ScopeControl } from '../../components/scope-control.js';
 import { UsageSummary } from '../../components/usage-summary.js';
@@ -12,12 +14,14 @@ function Toggle({ id, label, desc, risk, flag, onChange }) {
 }
 
 function Details({ store }) {
+  const folderInput = useRef(null);
+  useLayoutEffect(() => { attachFolderField(folderInput.current, () => ''); }, []);
   const view = store.view.value, project = store.project.value;
   return html`<form id="project-details" class="settings-group" role="group" aria-label="Project details" onSubmit=${event => { event.preventDefault(); const form = event.currentTarget.elements; store.saveDetails({ name: form.name.value, folder: form.folder.value }); }}>
     <div class="settings-row"><div class="settings-row-info"><label class="settings-label" for="project-details-name">Name</label><span class="settings-desc" id="project-details-name-desc">How the project is listed in the sidebar.</span></div>
       <div class="settings-control"><input class="settings-text-input" id="project-details-name" name="name" autocomplete="off" aria-describedby="project-details-name-desc" required value=${store.name.value} disabled=${!view.canName} onInput=${event => { store.name.value = event.currentTarget.value; }} /></div></div>
     <div class="settings-row"><div class="settings-row-info"><label class="settings-label" for="project-details-folder">Folder</label><span class="settings-desc" id="project-details-folder-desc">An absolute path to a folder on the machine running the server. It can change only while the project has no agents.</span><p id="project-details-status" class="settings-desc" role="status">${store.detailsStatus.value}</p></div>
-      <div class="settings-control"><input class="settings-text-input" id="project-details-folder" name="folder" autocomplete="off" aria-describedby="project-details-folder-desc" required value=${store.folder.value} disabled=${!view.canFolder} onInput=${event => { store.folder.value = event.currentTarget.value; }} />
+      <div class="settings-control"><input ref=${folderInput} class="settings-text-input" id="project-details-folder" name="folder" autocomplete="off" aria-describedby="project-details-folder-desc" required value=${store.folder.value} disabled=${!view.canFolder} onInput=${event => { store.folder.value = event.currentTarget.value; }} />
         <button type="submit" class="btn btn-primary" id="project-details-save" disabled=${(!view.canName && !view.canFolder) || view.archived || store.detailsBusy.value}>Save</button></div></div></form>`;
 }
 

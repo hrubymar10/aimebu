@@ -870,7 +870,7 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
+  supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_warm?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
@@ -940,6 +940,14 @@ it never silently reruns a turn with uncertain effects.
   The server sends this frame only to supervisors that advertised
   `supports_path_probe`. Older supervisors fail admission without receiving
   the unknown frame; the server does not fall back to lexical comparison.
+- S→M `directory_list{v,req_id,checkout_path,directory_prefix?}`; M→S
+  `directory_list_result{v,req_id,directory_names?}`. The path is absolute;
+  the supervisor reads only its immediate entries and returns at most 200
+  matching directory names, including links only when their target is a
+  directory. Hidden names match only a prefix beginning with `.`. Missing or
+  unreadable paths yield an empty list. The server waits at most three seconds.
+  It sends the frame only when hello advertises `supports_directory_list`;
+  without the flag the field gets no suggestions, without an unknown frame.
 - S→M `deliver` carries `fork_session` for the first turn of a copy of a Claude Code
   session: `native_session` is the original and `native_session_started` is true; the
   Claude adapter resumes it with `--fork-session`, and the turn's first `system`/`init`

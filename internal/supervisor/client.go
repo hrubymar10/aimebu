@@ -27,6 +27,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/agentlog"
 	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/internal/pathlist"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/tlsclient"
 	"github.com/hrubymar10/aimebu/internal/worktree"
@@ -272,7 +273,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -543,6 +544,16 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				}
 				if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
 					c.report(err)
+				}
+			}(frame)
+		case protocol.DirectoryList:
+			go func(request protocol.Frame) {
+				result := protocol.Frame{V: protocol.Version, Type: protocol.DirectoryListResult, ReqID: request.ReqID,
+					DirectoryNames: pathlist.Directories(request.CheckoutPath, request.DirectoryPrefix)}
+				if probeCtx.Err() == nil {
+					if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
+						c.report(err)
+					}
 				}
 			}(frame)
 		case protocol.HarnessSet:

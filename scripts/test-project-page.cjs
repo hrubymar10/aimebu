@@ -91,6 +91,19 @@ async function main() {
   const answer = (page, index, status, body) => page.evaluate((index, status, body) => window.__answer(index, status, body), index, status, body);
   const confirmOk = async page => { await page.waitForFunction(() => document.querySelector('#app-dialog')?.open); await page.$eval('#app-dialog .app-dialog-ok', el => el.click()); };
   try {
+    // The editable project folder uses the shared directory completion field.
+    {
+      const page = await mount({ admin: true });
+      await ready(page);
+      await page.focus('#project-details-folder');
+      await page.$eval('#project-details-folder', input => { input.value = '/srv/al'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+      const index = await waitRequest(page, 'GET', '/api/machines/directories?path=%2Fsrv%2F&prefix=al');
+      await answer(page, index, 200, { directories: ['alpha'] });
+      await page.waitForSelector('#project-details-folder + .folder-suggestions [role=option]');
+      await page.keyboard.press('Tab');
+      assert.equal(await page.$eval('#project-details-folder', input => input.value), '/srv/alpha/');
+      await page.close();
+    }
     // What the form is made of, in order, with the rows named and described; the values from the server's answers.
     {
       const page = await mount();

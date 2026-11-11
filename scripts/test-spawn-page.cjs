@@ -648,6 +648,20 @@ async function main() {
     await page.close();
   }
 
+  // The folder suggestion reads the selected machine and completes the typed path.
+  {
+    const page = await mount({ admin: true });
+    await open(page); await ready(page); await select(page, 'machine', 'm2');
+    await page.focus('#spawn-form [name=machine_folder]');
+    await page.$eval('#spawn-form [name=machine_folder]', input => { input.value = '/srv/pr'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    const index = await waitRequest(page, 'GET', '/api/machines/directories?path=%2Fsrv%2F&prefix=pr&machine_id=m2');
+    await answer(page, index, 200, { directories: ['project'] });
+    await page.waitForSelector('#spawn-form .folder-suggestions [role=option]');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.$eval('#spawn-form [name=machine_folder]', input => input.value), '/srv/project/');
+    await page.close();
+  }
+
   // A folder save that is still out when the dialog was opened again, or another machine was picked, neither says "saved" in the new view nor
   // reads the catalog again for it.
   for (const how of ['reopen', 'machine']) {

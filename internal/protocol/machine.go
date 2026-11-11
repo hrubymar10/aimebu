@@ -49,6 +49,8 @@ const (
 	DetectResult         = "detect_result"
 	PathProbe            = "path_probe"
 	PathResult           = "path_result"
+	DirectoryList        = "directory_list"
+	DirectoryListResult  = "directory_list_result"
 	WorktreeOp           = "worktree_op"
 	WorktreeResult       = "worktree_result"
 	AgentLogRead         = "agent_log_read"
@@ -114,12 +116,13 @@ type AgentKeyGrant struct {
 // agent_id and generation; machine frames carry machine_id. The server binds
 // the socket from its authenticated machine key, never from frame claims.
 type Frame struct {
-	V                 int    `json:"v"`
-	Type              string `json:"type"`
-	MachineID         string `json:"machine_id,omitempty"`
-	JournalID         string `json:"journal_id,omitempty"`
-	SupervisorVersion string `json:"supervisor_version,omitempty"`
-	SupportsPathProbe bool   `json:"supports_path_probe,omitempty"`
+	V                     int    `json:"v"`
+	Type                  string `json:"type"`
+	MachineID             string `json:"machine_id,omitempty"`
+	JournalID             string `json:"journal_id,omitempty"`
+	SupervisorVersion     string `json:"supervisor_version,omitempty"`
+	SupportsPathProbe     bool   `json:"supports_path_probe,omitempty"`
+	SupportsDirectoryList bool   `json:"supports_directory_list,omitempty"`
 	// SupportsWarm says the supervisor keeps agents' harness processes warm and answers a retire_warm request. A server asks only one that does.
 	SupportsWarm bool `json:"supports_warm,omitempty"`
 	// PausedTools and PausedAgents, on a keep_alive_paused frame, are the tools whose limit guard is holding turns (the account is near its limit) and the
@@ -209,6 +212,8 @@ type Frame struct {
 	KeepAliveSettings    *KeepAliveSettings `json:"keep_alive,omitempty"`
 	CheckoutPath         string             `json:"checkout_path,omitempty"`
 	CanonicalPath        string             `json:"canonical_path,omitempty"`
+	DirectoryNames       []string           `json:"directory_names,omitempty"`
+	DirectoryPrefix      string             `json:"directory_prefix,omitempty"`
 	RoomID               string             `json:"room_id,omitempty"`
 	BaseRef              string             `json:"base_ref,omitempty"`
 	WorktreeAction       string             `json:"worktree_action,omitempty"`

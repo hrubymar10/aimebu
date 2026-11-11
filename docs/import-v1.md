@@ -39,7 +39,10 @@ it at once: a link to each field, the same message beside each field, each field
 marked invalid and tied to its message, and the first one focused. Back keeps
 every choice. A Workspace folder field is empty until you ask: a house button at the left edge of the field
 fills the home folder of the machine the server
-runs on, and typed text is never replaced. The draft (the
+runs on, and typed text is never replaced. As the owner types an absolute path,
+the field offers matching directories on that machine (files are omitted;
+hidden directories appear after typing `.`). Arrow keys choose a directory,
+Enter or Tab completes it, `/` enters it, and Escape closes the list. The draft (the
 choices and the page) is kept in the browser for each backup, so a reload
 continues where you left off; a choice in it for something the backup no longer offers (for example a macro that is now left out) is dropped, with a note on the page that opens; **Start over** on the first page drops the draft. The
 Summary is the dry run in words. It opens with one line of totals ("Bringing across

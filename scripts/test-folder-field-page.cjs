@@ -18,6 +18,12 @@ const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'te
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/fixture.html') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(fixture); return; }
+  if (url.pathname === '/api/machines/directories') {
+    const parent = url.searchParams.get('path'), prefix = url.searchParams.get('prefix') || '';
+    const entries = { '/home/ana/': ['odd', 'other', '.private'], '/home/ana/odd/': ['deeper'], '/home/ana/many/': Array.from({ length: 20 }, (_, i) => `folder-${i}`) }[parent] || [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ directories: entries.filter(name => name.startsWith(prefix) && (!name.startsWith('.') || prefix.startsWith('.'))) })); return;
+  }
   const file = path.join(root, url.pathname);
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' }); res.end(fs.readFileSync(file));
@@ -77,6 +83,72 @@ async function main() {
     const page = await mount({ home: '' });
     const none = await state(page);
     assert.deepEqual([none.button, none.value, none.inset], [null, '', false], 'nothing is offered without a home folder');
+    await page.close();
+  }
+  // Path completion uses the machine's directory list and leaves files/hidden names out.
+  {
+    const page = await mount();
+    const input = '#project-form [name=folder]';
+    await page.focus(input); await page.keyboard.type('/home/ana/od');
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    assert.deepEqual(await page.$$eval('.folder-suggestions [role=option]', items => items.map(item => item.textContent)), ['odd/']);
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+    assert.equal((await state(page)).value, '/home/ana/odd/');
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    await page.keyboard.press('/');
+    assert.equal((await state(page)).value, '/home/ana/odd/deeper/');
+    await page.$eval(input, node => { node.value = '/home/ana/'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.$eval('.folder-suggestions', node => node.hidden), true);
+    await page.$eval(input, node => { node.value = '/home/ana/.'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    assert.deepEqual(await page.$$eval('.folder-suggestions [role=option]', items => items.map(item => item.textContent)), ['.private/']);
+    await page.keyboard.press('Tab');
+    assert.equal((await state(page)).value, '/home/ana/.private/');
+    await page.close();
+  }
+  // A long list escapes the dialog's scrolling box and is still hit-testable outside its border.
+  {
+    const page = await mount();
+    await page.evaluate(() => {
+      const dialog = document.querySelector('#project-dialog');
+      dialog.style.position = 'fixed'; dialog.style.top = '40px'; dialog.style.left = '200px'; dialog.style.margin = '0';
+      dialog.style.height = '180px'; dialog.style.maxHeight = '180px'; dialog.style.overflow = 'auto';
+      const input = document.querySelector('#project-form [name=folder]');
+      input.scrollIntoView({ block: 'end' }); input.focus();
+      input.value = '/home/ana/many/'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    const geometry = await page.evaluate(() => {
+      const dialog = document.querySelector('#project-dialog').getBoundingClientRect();
+      const list = document.querySelector('.folder-suggestions').getBoundingClientRect();
+      const x = list.left + 20, y = Math.min(list.bottom - 10, dialog.bottom + 20);
+      return { dialogBottom: dialog.bottom, listBottom: list.bottom, maxHeight: getComputedStyle(document.querySelector('.folder-suggestions')).maxHeight,
+        hit: document.elementFromPoint(x, y)?.closest('.folder-suggestions') !== null };
+    });
+    assert.ok(geometry.listBottom > geometry.dialogBottom + 20 && geometry.hit, `the list escapes the dialog and accepts a click: ${JSON.stringify(geometry)}`);
+    assert.ok(parseFloat(geometry.maxHeight) > 220, `the list can show roughly twelve rows: ${JSON.stringify(geometry)}`);
+    await page.close();
+  }
+  // Near the bottom of a short viewport the list flips above its field.
+  {
+    const page = await mount();
+    await page.setViewport({ width: 900, height: 350 });
+    await page.evaluate(() => {
+      const dialog = document.querySelector('#project-dialog');
+      dialog.style.height = '200px'; dialog.style.maxHeight = '200px'; dialog.style.overflow = 'auto';
+      const input = document.querySelector('#project-form [name=folder]');
+      input.scrollIntoView({ block: 'end' }); input.focus();
+      input.value = '/home/ana/many/'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    const geometry = await page.evaluate(() => {
+      const field = document.querySelector('#project-form [name=folder]').getBoundingClientRect();
+      const list = document.querySelector('.folder-suggestions').getBoundingClientRect();
+      return { fieldTop: field.top, listTop: list.top, listBottom: list.bottom };
+    });
+    assert.ok(geometry.listBottom <= geometry.fieldTop - 3 && geometry.listTop >= 8, `the list flips above and stays in view: ${JSON.stringify(geometry)}`);
     await page.close();
   }
   assert.deepEqual(errors, [], `the page reported errors: ${errors.join(' | ')}`);

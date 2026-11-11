@@ -442,7 +442,8 @@ project's own settings (name and folder, agents in this project, daily
 limits, recovery and worktrees; there is no separate Settings → Project page),
 its Schedules, a Project memory entry where task rooms have Task notes, and one
 line saying that the home room works in the project folder while task rooms can
-have their own Git worktree. Room settings (one control size throughout; Kind and Room ID show only while the message debug
+have their own Git worktree. Project folder inputs offer matching directories
+as a path is typed, using the machine that holds the folder. Room settings (one control size throughout; Kind and Room ID show only while the message debug
 inspector is on) offers
 Archive/Reopen for non-home rooms and, for an archived task room, a destructive
 Remove room (project owner only; the room and its messages are deleted for good,
