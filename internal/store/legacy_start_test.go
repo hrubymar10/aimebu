@@ -7,11 +7,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/answer"
 )
 
 func TestHarnessNamesMapToTheToolsThatCanResume(t *testing.T) {
 	t.Parallel()
-	for harness, tool := range map[string]string{"claude-code": "claude", "Claude": "claude", "codex": "", "pi": "", "opencode": "", "vibe": "", "cursor": "", "aider": "", "": ""} {
+	for harness, tool := range map[string]string{"claude-code": "claude", "Claude": "claude", "codex": "codex", "pi": "pi", "opencode": "opencode", "vibe": "vibe", "cursor": "", "aider": "", "": ""} {
 		if got := ResumableTool(harness); got != tool {
 			t.Fatalf("%q -> %q, want %q", harness, got, tool)
 		}
@@ -75,7 +77,7 @@ func TestStartFromLegacyContinuesTheSessionKeepsTheNameAndLinksBothWays(t *testi
 	s, _, room := legacyStartFixture(t)
 	ctx := context.Background()
 	info, err := s.LegacyStart(ctx, room.ProjectID, "sage@old")
-	if err != nil || info.Tool != "claude" || info.RoleKey != "leader" || info.Slug != "sage" || info.StartedID != "" {
+	if err != nil || info.Tool != "claude" || info.RoleKey != "lead" || info.Slug != "sage" || info.StartedID != "" {
 		t.Fatalf("before: %+v %v", info, err)
 	}
 	card, err := startFromLegacy(t, s, room, SpawnInput{Path: "/tmp/wake/sub", Slug: "sage", ResumeLegacyID: "sage@old", ResumeHandle: info.SessionID})
@@ -106,6 +108,12 @@ func TestStartFromLegacyContinuesTheSessionKeepsTheNameAndLinksBothWays(t *testi
 	if err != nil || again.StartedID != card.ID || again.StartedSlg != "sage" {
 		t.Fatalf("legacy link: %+v %v", again, err)
 	}
+	if again.HistoryRoom.ID != room.ID {
+		t.Fatalf("history room after claim: %+v", again.HistoryRoom)
+	}
+	if old, err := s.LegacyAgentProfile(ctx, room.ID, "sage@old"); err != nil || !old.Imported || old.AgentID != "sage@old" {
+		t.Fatalf("historical profile after claim: %+v %v", old, err)
+	}
 	if from, err := s.LegacyStarted(ctx, card.ID); err != nil || from != "sage@old" {
 		t.Fatalf("agent link: %q %v", from, err)
 	}
@@ -116,6 +124,62 @@ func TestStartFromLegacyContinuesTheSessionKeepsTheNameAndLinksBothWays(t *testi
 	// It cannot be started a second time; that is what is said, not that the name is taken (the first start's agent holds it).
 	if _, err := startFromLegacy(t, s, room, SpawnInput{Path: "/tmp/wake/sub", Slug: "sage", ResumeLegacyID: "sage@old", ResumeHandle: info.SessionID}); !errors.Is(err, ErrLegacyStarted) {
 		t.Fatalf("a second start: %v", err)
+	}
+}
+
+func TestStartFromLegacyClaimsOnlyMessagesInTheStartingProject(t *testing.T) {
+	t.Parallel()
+	s, project, room := legacyStartFixture(t)
+	ctx := context.Background()
+	foreign, err := s.CreateProject(ctx, Project{Name: "foreign-claim", Folder: "/tmp/foreign-claim"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignRoom, err := s.CreateRoom(ctx, Room{ProjectID: foreign.ID, Kind: "task", Title: "foreign", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectDM, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "dm", DMKey: "claim:project", Title: "project dm", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalDM, err := s.CreateRoom(ctx, Room{ProjectID: AgentDMProjectID, Kind: "dm", DMKey: "claim:global", Title: "global dm", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []string{foreignRoom.ID, projectDM.ID, globalDM.ID} {
+		if _, err := s.db.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES (?,?,?,'agent','sage@old','from v1','[]','2026-10-02T09:00:00.000000000Z')`, "msg_claim_"+id, 901000+i, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	card, err := startFromLegacy(t, s, room, SpawnInput{Path: "/tmp/wake/sub", Slug: "sage", ResumeLegacyID: "sage@old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOnly, err := s.CreateProject(ctx, Project{Name: "new-only-claim", Folder: "/tmp/new-only-claim"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOnlyRoom, err := s.CreateRoom(ctx, Room{ProjectID: newOnly.ID, Kind: "task", Title: "new only", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_claim_v2_only',902000,?,'agent',?,'v2 only','[]','2026-10-03T09:00:00.000000000Z')`, newOnlyRoom.ID, card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LegacyStart(ctx, newOnly.ID, "sage@old"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("v2 activity in another project does not expose v1 identity: %v", err)
+	}
+	if _, err := s.LegacyAgentProfile(ctx, newOnlyRoom.ID, "sage@old"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("v2 activity in another project does not expose a v1 profile: %v", err)
+	}
+	for _, tc := range []struct{ roomID, want string }{
+		{room.ID, card.ID}, {projectDM.ID, card.ID}, {foreignRoom.ID, "sage@old"}, {globalDM.ID, "sage@old"},
+	} {
+		var got string
+		if err := s.db.QueryRow(`SELECT author_id FROM message WHERE room_id=? AND body='from v1' AND author_id IN (?, 'sage@old') LIMIT 1`, tc.roomID, card.ID).Scan(&got); err != nil || got != tc.want {
+			t.Fatalf("room %s: author=%q want=%q err=%v", tc.roomID, got, tc.want, err)
+		}
 	}
 }
 
@@ -142,21 +206,20 @@ func TestStartFromLegacyRefusesBadNamesAndALinkAlreadyTaken(t *testing.T) {
 	}
 }
 
-// A harness that cannot resume still gets its name and its link, with a fresh session.
-// codex, pi, opencode and vibe run with a private home per agent in v2, so their v1 sessions cannot be continued; the dialog says so in words.
-func TestOnlyClaudeSessionsCanBeContinuedAndTheOthersSayWhy(t *testing.T) {
+// A supported native harness offers its recorded session; one without a usable id starts fresh.
+func TestSupportedLegacyHarnessesOfferNativeContinuation(t *testing.T) {
 	t.Parallel()
-	for harness, wantReason := range map[string]string{"codex": "v2 keeps codex sessions per agent", "pi": "v2 keeps pi sessions per agent", "opencode": "v2 keeps opencode sessions per agent", "vibe": "v2 keeps vibe sessions per agent"} {
+	for _, harness := range []string{"claude-code", "codex", "pi", "opencode", "vibe"} {
 		info := LegacyStart{Harness: harness, SessionID: "abc-12345678", CWD: "/work"}
 		info.Tool = ResumableTool(harness)
 		view := info.StartInfo(time.Now(), "/work")
-		if view.Resumable || !strings.Contains(view.Reason, wantReason) {
+		if !view.Resumable || view.Reason != "" {
 			t.Fatalf("%s: %+v", harness, view)
 		}
 	}
-	claude := LegacyStart{Harness: "claude-code", Tool: ResumableTool("claude-code"), SessionID: "abc-12345678", CWD: "/work"}
-	if view := claude.StartInfo(time.Now(), "/work"); !view.Resumable || view.Reason != "" {
-		t.Fatalf("claude: %+v", view)
+	missing := LegacyStart{Harness: "vibe", Tool: "vibe", CWD: "/work"}
+	if view := missing.StartInfo(time.Now(), "/work"); view.Resumable || !strings.Contains(view.Reason, "usable session id") {
+		t.Fatalf("missing: %+v", view)
 	}
 }
 
@@ -165,11 +228,11 @@ func TestStartFromLegacyWithoutAResumableSessionStartsFreshUnderTheSameName(t *t
 	s, _, room := legacyStartFixture(t)
 	ctx := context.Background()
 	info, _ := s.LegacyStart(ctx, room.ProjectID, "vib@old")
-	if info.Tool != "" {
-		t.Fatalf("vibe cannot resume: %+v", info)
+	if info.Tool != "vibe" {
+		t.Fatalf("vibe maps to native continuation: %+v", info)
 	}
 	view := info.StartInfo(time.Now(), "/tmp/wake")
-	if view.Resumable || !strings.Contains(view.Reason, "cannot be continued") {
+	if view.Resumable || !strings.Contains(view.Reason, "usable session id") {
 		t.Fatalf("start info: %+v", view)
 	}
 	card, err := startFromLegacy(t, s, room, SpawnInput{Path: "/tmp/wake", Slug: "vib", ResumeLegacyID: "vib@old"})
@@ -183,6 +246,159 @@ func TestStartFromLegacyWithoutAResumableSessionStartsFreshUnderTheSameName(t *t
 	}
 	if got, _ := s.LegacyStart(ctx, room.ProjectID, "vib@old"); got.StartedID != card.ID {
 		t.Fatalf("link: %+v", got)
+	}
+}
+
+func TestStartFromLegacyNativeSessionRequestsPrivateCopy(t *testing.T) {
+	t.Parallel()
+	s, _, room := legacyStartFixture(t)
+	if _, err := s.db.Exec(`UPDATE legacy_agent_session SET harness='codex',harness_session_id=? WHERE agent_id='vib@old'`, "0f7c6a1e-1111-4222-8333-444455556666"); err != nil {
+		t.Fatal(err)
+	}
+	card, err := startFromLegacy(t, s, room, SpawnInput{Tool: "codex", Variant: "native", Model: "gpt-6-sol", Path: "/tmp/wake", Slug: "vib", ResumeLegacyID: "vib@old", ResumeHandle: "0f7c6a1e-1111-4222-8333-444455556666"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var copyNeeded bool
+	if err := s.Tx(context.Background(), func(tx *Tx) error {
+		var sessionID string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM session WHERE agent_id=?`, card.ID).Scan(&sessionID); err != nil {
+			return err
+		}
+		var err error
+		copyNeeded, err = tx.importLegacySession(card.ID, sessionID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !copyNeeded {
+		t.Fatal("the first resumed native turn must stage its v1 session")
+	}
+	pending, err := s.AgentLegacyCopyPending(context.Background(), card.ID)
+	if err != nil || !pending {
+		t.Fatalf("supervisor capability hold: pending=%v err=%v", pending, err)
+	}
+	if _, err := s.db.Exec(`UPDATE session SET native_session_started_at=NULL WHERE agent_id=?`, card.ID); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = s.AgentLegacyCopyPending(context.Background(), card.ID)
+	if err != nil || pending {
+		t.Fatalf("new native session must not be held: pending=%v err=%v", pending, err)
+	}
+	if _, err := s.db.Exec(`UPDATE session SET native_session_started_at=? WHERE agent_id=?`, timestamp(), card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES (?,?,1,'fresh_with_history',?)`, "ses_new", card.ID, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = s.AgentLegacyCopyPending(context.Background(), card.ID)
+	if err != nil || pending {
+		t.Fatalf("later generation must not be held: pending=%v err=%v", pending, err)
+	}
+}
+
+func TestLegacyNativeCopySurvivesStopBeforeFirstTurn(t *testing.T) {
+	for _, tool := range []string{"codex", "pi", "opencode", "vibe"} {
+		t.Run(tool, func(t *testing.T) {
+			s, _, room := legacyStartFixture(t)
+			const handle = "0f7c6a1e-1111-4222-8333-444455556666"
+			if _, err := s.db.Exec(`UPDATE legacy_agent_session SET harness=?,harness_session_id=? WHERE agent_id='vib@old'`, tool, handle); err != nil {
+				t.Fatal(err)
+			}
+			card, err := startFromLegacy(t, s, room, SpawnInput{Tool: tool, Variant: "native", Model: "m", Path: "/tmp/wake", Slug: "vib", ResumeLegacyID: "vib@old", ResumeHandle: handle})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			var stopped, restarted AgentCard
+			if err := s.Tx(ctx, func(tx *Tx) error {
+				stopped, err = tx.SetAgentDesired(card.ID, "usr_start", "stopped", card.DesiredRev)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, card.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Tx(ctx, func(tx *Tx) error {
+				restarted, err = tx.SetAgentDesired(card.ID, "usr_start", "active", stopped.DesiredRev)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			pending, err := s.AgentLegacyCopyPending(ctx, card.ID)
+			if err != nil || !pending {
+				t.Fatalf("copy hold after restart: pending=%v err=%v", pending, err)
+			}
+			message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "system", AuthorID: "system", Body: "Continue"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`INSERT INTO note(id,agent_id,message_id,room_id,state,wake_reason,created_at) VALUES (?,?,?,?,'queued','mention',?)`, "note_legacy_restart", card.ID, message.ID, room.ID, timestamp()); err != nil {
+				t.Fatal(err)
+			}
+			delivery, ready, err := s.PrepareDispatch(ctx, card.ID, "")
+			if err != nil || !ready || delivery.Generation != restarted.Generation || !delivery.ImportLegacySession || delivery.NativeSessionHandle != handle {
+				t.Fatalf("restarted delivery: %+v ready=%v err=%v", delivery, ready, err)
+			}
+			if err := s.AdmitTurn(ctx, Admission{TurnID: delivery.TurnID, AgentID: card.ID, MachineID: card.MachineID,
+				Generation: restarted.Generation, DesiredRev: restarted.DesiredRev, NoteIDs: []string{"note_legacy_restart"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AckTurn(ctx, delivery.TurnID, card.ID, restarted.Generation, "accepted"); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RecordProcess(ctx, delivery.TurnID, card.ID, restarted.Generation, 0, true, false); err != nil {
+				t.Fatal(err)
+			}
+			pending, err = s.AgentLegacyCopyPending(ctx, card.ID)
+			if err != nil || !pending {
+				t.Fatalf("process exit alone does not prove a settled copy: pending=%v err=%v", pending, err)
+			}
+			raw := []byte(`{"messages":[]}`)
+			parsed, err := answer.Parse(raw, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ApplyAnswer(ctx, AnswerInput{TurnID: delivery.TurnID, AgentID: card.ID, Generation: restarted.Generation,
+				AnswerRev: 0, Digest: "legacy-copy-settled", Candidate: raw, Parsed: &parsed}); err != nil {
+				t.Fatal(err)
+			}
+			pending, err = s.AgentLegacyCopyPending(ctx, card.ID)
+			if err != nil || pending {
+				t.Fatalf("completed turn satisfies copy hold: pending=%v err=%v", pending, err)
+			}
+			var copyNeeded bool
+			if err := s.Tx(ctx, func(tx *Tx) error {
+				var sessionID string
+				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT session_id FROM turn WHERE id=?`, delivery.TurnID).Scan(&sessionID); err != nil {
+					return err
+				}
+				copyNeeded, err = tx.importLegacySession(card.ID, sessionID)
+				return err
+			}); err != nil || copyNeeded {
+				t.Fatalf("completed turn must clear future copy deliveries: copy=%v err=%v", copyNeeded, err)
+			}
+			if err := s.Tx(ctx, func(tx *Tx) error {
+				stopped, err = tx.SetAgentDesired(card.ID, "usr_start", "stopped", restarted.DesiredRev)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, card.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Tx(ctx, func(tx *Tx) error {
+				restarted, err = tx.SetAgentDesired(card.ID, "usr_start", "active", stopped.DesiredRev)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			pending, err = s.AgentLegacyCopyPending(ctx, card.ID)
+			if err != nil || pending {
+				t.Fatalf("completed copy must stay released after another restart: pending=%v err=%v", pending, err)
+			}
+		})
 	}
 }
 

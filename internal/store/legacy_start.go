@@ -45,13 +45,20 @@ type HistoryRoom struct {
 	Lifecycle string `json:"lifecycle,omitempty"` // "open", or "closed" when the room was archived
 }
 
-// ResumableTool maps a v1 harness name to the v2 tool that can continue its session, or "" when none can. Only Claude Code can: it keeps
-// its transcripts in the user's own claude home, which v1 and v2 share. v2 runs codex, pi, opencode and vibe with a private home or data
-// directory per agent (CODEX_HOME, PI_CODING_AGENT_DIR, an opencode database, VIBE_HOME), so a session v1 made is not visible to them.
+// ResumableTool maps a v1 harness name to the v2 tool that can continue its session, or "" when none can. The non-Claude tools copy the
+// recorded native session from the user's home into the agent's private runtime before its first resumed turn.
 func ResumableTool(harness string) string {
 	switch strings.ToLower(strings.TrimSpace(harness)) {
 	case "claude-code", "claude":
 		return "claude"
+	case "codex":
+		return "codex"
+	case "pi":
+		return "pi"
+	case "opencode":
+		return "opencode"
+	case "vibe":
+		return "vibe"
 	}
 	return ""
 }
@@ -99,7 +106,9 @@ func ValidSessionHandle(handle string) bool { return sessionHandlePattern.MatchS
 // index message_agent_author_room), so it does not read the messages of every room of the project. A private chat is not a room of the
 // project for this purpose.
 const legacyStartQuery = `SELECT harness,model,cwd,harness_session_id,last_seen,started_agent_id FROM legacy_agent_session l
-	WHERE l.agent_id=? AND EXISTS (SELECT 1 FROM message m JOIN room r ON r.id=m.room_id WHERE m.author_kind='agent' AND m.author_id=l.agent_id AND r.project_id=? AND r.kind<>'dm')`
+	WHERE l.agent_id=? AND EXISTS (SELECT 1 FROM message m JOIN room r ON r.id=m.room_id WHERE m.author_kind='agent'
+		AND m.author_id IN (l.agent_id,l.started_agent_id) AND r.project_id=? AND r.kind<>'dm'
+		AND (m.author_id=l.agent_id OR r.project_id=(SELECT a.project_id FROM agent a WHERE a.id=l.started_agent_id)))`
 
 // LegacyStart reads one legacy agent for starting in projectID: it must be an agent that wrote in some room of that project (a private chat
 // does not count: whoever is not in it must not learn that the agent wrote there), so that one
@@ -131,10 +140,14 @@ func (s *Store) LegacyStart(ctx context.Context, projectID, agentID string) (Leg
 			return LegacyStart{}, err
 		}
 	}
+	historyAuthor := agentID
+	if out.StartedID != "" {
+		historyAuthor = out.StartedID
+	}
 	// Where the agent's history is: the room of the project with most of its messages, a private chat excluded.
 	err = s.db.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,r.lifecycle FROM message m JOIN room r ON r.id=m.room_id
 		WHERE m.author_kind='agent' AND m.author_id=? AND r.project_id=? AND r.kind IN ('task','home')
-		GROUP BY r.id ORDER BY COUNT(*) DESC, MAX(m.seq) DESC LIMIT 1`, agentID, projectID).
+		GROUP BY r.id ORDER BY COUNT(*) DESC, MAX(m.seq) DESC LIMIT 1`, historyAuthor, projectID).
 		Scan(&out.HistoryRoom.ID, &out.HistoryRoom.Title, &out.HistoryRoom.Kind, &out.HistoryRoom.Lifecycle)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return LegacyStart{}, err
@@ -167,6 +180,9 @@ func (s *Store) LegacyStart(ctx context.Context, projectID, agentID string) (Leg
 	})
 	if len(counts) > 0 {
 		out.RoleKey = counts[0].key
+		if out.RoleKey == "leader" {
+			out.RoleKey = "lead" // v1's leader role is named lead in v2.
+		}
 	}
 	return out, nil
 }
@@ -363,7 +379,7 @@ func (l LegacyStart) StartInfo(now time.Time, projectFolder string) LegacyStartI
 	case l.Tool == "":
 		info.Tool = ToolForHarness(l.Harness)
 		if info.Tool != "" {
-			info.Reason = "v2 keeps " + info.Tool + " sessions per agent, apart from v1's, so this v1 session cannot be continued: the agent starts fresh with the same name"
+			info.Reason = "this session cannot be continued by the current adapter: the agent starts fresh with the same name"
 		} else {
 			info.Reason = "this harness (" + l.Harness + ") has no v2 adapter and cannot resume a session: the agent starts fresh with the same name"
 		}

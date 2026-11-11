@@ -193,8 +193,8 @@ func (p AgentProfile) WithoutHostDetails() AgentProfile {
 	return p
 }
 
-// LegacyAgentProfile is the profile of a sender that exists only in imported v1 history: the session v1 recorded for that agent id,
-// shown only for an id that wrote in roomID. It has no resume command: v1's ran against v1, and a database imported before that
+// LegacyAgentProfile is the profile of a sender from imported v1 history: the session v1 recorded for that agent id,
+// shown only for an id that wrote in roomID or whose messages there were claimed by its v2 agent. It has no resume command: v1's ran against v1, and a database imported before that
 // was dropped still holds the old text, which is never read. sql.ErrNoRows when v1 recorded none or the agent never wrote there.
 func (s *Store) LegacyAgentProfile(ctx context.Context, roomID, agentID string) (AgentProfile, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
@@ -203,7 +203,9 @@ func (s *Store) LegacyAgentProfile(ctx context.Context, roomID, agentID string) 
 	p := AgentProfile{AgentID: agentID, Imported: true}
 	var harness, model string
 	err := s.db.QueryRowContext(ctx, `SELECT harness,model,harness_session_id,cwd,registered_at,last_seen,project FROM legacy_agent_session l
-		WHERE l.agent_id=? AND EXISTS (SELECT 1 FROM message WHERE room_id=? AND author_kind='agent' AND author_id=l.agent_id)`, agentID, roomID).
+		WHERE l.agent_id=? AND EXISTS (SELECT 1 FROM message m JOIN room r ON r.id=m.room_id WHERE m.room_id=? AND m.author_kind='agent'
+		AND m.author_id IN (l.agent_id,l.started_agent_id)
+		AND (m.author_id=l.agent_id OR r.project_id=(SELECT a.project_id FROM agent a WHERE a.id=l.started_agent_id)))`, agentID, roomID).
 		Scan(&harness, &model, &p.NativeSessionID, &p.Cwd, &p.SpawnedAt, &p.LastSeen, &p.ProjectName)
 	if err != nil {
 		return p, err

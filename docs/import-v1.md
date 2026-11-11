@@ -366,7 +366,8 @@ An imported sender's profile (the dialog its name opens in the chat) offers
 automatic. The button opens the Spawn dialog for the old name (the
 v1 slug, if it is free in the project and fits the agent-name rule; otherwise
 the start is refused; the dialog has no Name field because the agent keeps it), the tool and model v1 ran, and the role v1 gave the
-agent most often, if v2 has it (otherwise worker). The dialog has a **Start in**
+agent most often, if v2 has it (otherwise worker). v1's `leader` maps to v2's
+`lead`. The dialog has a **Start in**
 picker listing the project's open task rooms, each named by where it sits (`project › room`, with the rooms it is nested under in between): the room that holds most of the
 agent's imported messages (`history_room` in the profile's start info) when that is an open task
 room, otherwise `general`. The dialog says where the history is in every case. When it is an
@@ -434,11 +435,20 @@ The session is chosen, in this order:
   continue one (`needs_native`) unless it reports that it shares the host's Claude home
   (`claude_home_shared`, [sessions](claude-sessions.md)); another machine is not checked, and a failing
   first turn surfaces like any failed turn.
-- **codex, pi, opencode and vibe** sessions cannot be continued: v2 runs each with a
-  private home or data directory per agent, so a session v1 made is not visible
-  to it. The dialog says so, and the agent starts **fresh with the same name**
-  (still linked to the v1 agent). Harnesses v2 has no adapter for (cursor,
-  aider) are the same.
+- **Codex, Pi, OpenCode and Vibe** sessions are continued by copying the selected
+  native session from the machine's v1 user home into the new agent's private
+  runtime before its first resumed turn. Codex copies the matching rollout,
+  Pi the matching session file, Vibe the matching session folder, and OpenCode
+  makes a read-only SQLite snapshot then removes other sessions and account
+  data before installing it. The v1 source remains unchanged. The copy
+  requirement survives stopping and restarting the agent until a resumed turn
+  finishes successfully; repeated requests reuse the private copy. These tools use
+  **Continue**; the explicit **Work on a copy** fork choice is available only
+  for Claude Code. A missing native source makes the first turn fail with its
+  normal start-failure evidence, and an older supervisor refuses the start
+  until updated. If v1 kept no usable session id, the agent starts fresh under
+  the same name. Harnesses v2 has no adapter for (cursor, aider) also start
+  fresh.
 - If v1 saw the agent in the last ten minutes it may still be using the session
   (`v1_may_be_active`); two processes on one transcript corrupt it, so the
   dialog asks to confirm that v1 is stopped.
@@ -446,7 +456,11 @@ The session is chosen, in this order:
   agent is started once (`already_started`); afterwards the historical profile
   says "Running as v2 agent X" and opens it, the v2 agent's profile says it
   continues the v1 session of the old agent (`resumed_from`), and the agent is
-  restarted with the ordinary controls.
+  restarted with the ordinary controls. Starting also gives the v2 agent
+  authorship of that v1 agent's imported messages in this project, including
+  direct messages scoped to this project. Messages in other projects and
+  global direct messages retain the v1 author. The claim and reassignment
+  commit together, so a refused start leaves history unchanged.
 
 Each mapped human's hidden and pinned rooms (v1's `room_prefs`) become that
 login's v2 view preferences: a hidden room becomes the sidebar's Hide. v2 has no pins: a pinned room puts the project it landed in at

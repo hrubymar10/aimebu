@@ -322,6 +322,12 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		if _, err = tx.Exec(`UPDATE agent SET resumed_from_legacy_id=? WHERE id=?`, in.ResumeLegacyID, agent.ID); err != nil {
 			return AgentCard{}, err
 		}
+		// The imported history in this project now belongs to the agent that took over the v1 name.
+		// Other projects and unscoped private chats keep their legacy author.
+		if _, err = tx.Exec(`UPDATE message SET author_id=? WHERE author_kind='agent' AND author_id=?
+			AND room_id IN (SELECT id FROM room WHERE project_id=?)`, agent.ID, in.ResumeLegacyID, projectID); err != nil {
+			return AgentCard{}, err
+		}
 	}
 	if err = tx.AddMember(in.RoomID, "agent", agent.ID); err != nil {
 		return AgentCard{}, err

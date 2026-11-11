@@ -235,6 +235,10 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if err != nil {
 				return err
 			}
+			legacyCopy, err := tx.importLegacySession(agentID, special.SessionID)
+			if err != nil {
+				return err
+			}
 			launchPath, err := tx.agentLaunchPath(agentID, tool, checkoutPath)
 			if err != nil {
 				return err
@@ -246,7 +250,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			delivery = protocol.Delivery{AgentID: agentID, Generation: generation, DesiredRev: desiredRev, TurnID: special.ID, Providers: providers,
 				Mode: adapter.Mode(special.Mode), ParentTurnID: special.ParentTurnID, Notes: specialNotes,
 				Agent: adapter.AgentSpec{ID: agentID, Tool: tool, Variant: variant, LauncherID: launcherID, Model: model, Provider: provider}, Context: contextJSON, AllowedTools: allowedTools,
-				NativeSessionHandle: handle, NativeSessionStarted: started, ForkSession: forking, CheckoutPath: checkoutPath, LaunchPath: launchPath}
+				NativeSessionHandle: handle, NativeSessionStarted: started, ImportLegacySession: legacyCopy, ForkSession: forking, CheckoutPath: checkoutPath, LaunchPath: launchPath}
 			ready = true
 			return nil
 		}
@@ -494,6 +498,10 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if err != nil {
 			return err
 		}
+		legacyCopy, err := tx.importLegacySession(agentID, sessionID)
+		if err != nil {
+			return err
+		}
 		launchPath, err := tx.agentLaunchPath(agentID, tool, checkoutPath)
 		if err != nil {
 			return err
@@ -504,11 +512,22 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		}
 		delivery = protocol.Delivery{AgentID: agentID, Generation: generation, DesiredRev: desiredRev, TurnID: turn.ID, Mode: adapter.ModeNormal, Notes: notes, Providers: providers,
 			Agent: adapter.AgentSpec{ID: agentID, Tool: tool, Variant: variant, LauncherID: launcherID, Model: model, Provider: provider}, Context: contextJSON,
-			NativeSessionHandle: handle, NativeSessionStarted: started, ForkSession: forking, CheckoutPath: checkoutPath, LaunchPath: launchPath}
+			NativeSessionHandle: handle, NativeSessionStarted: started, ImportLegacySession: legacyCopy, ForkSession: forking, CheckoutPath: checkoutPath, LaunchPath: launchPath}
 		ready = true
 		return nil
 	})
 	return delivery, ready, err
+}
+
+func (tx *Tx) importLegacySession(agentID, sessionID string) (bool, error) {
+	var needed bool
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.resumed_from_legacy_id IS NOT NULL AND a.tool IN ('codex','pi','opencode','vibe')
+		AND s.start_mode='native_resume' AND s.native_session_started_at IS NOT NULL
+		AND NOT EXISTS(SELECT 1 FROM turn t JOIN session completed ON completed.id=t.session_id
+			WHERE t.agent_id=a.id AND completed.start_mode='native_resume' AND completed.native_session_id=s.native_session_id
+			AND t.exec='exited' AND t.outcome='completed' AND t.settle='settled')
+		FROM agent a JOIN session s ON s.agent_id=a.id WHERE a.id=? AND s.id=?`, agentID, sessionID).Scan(&needed)
+	return needed, err
 }
 
 // recentRoomHistory gives a new native session bounded conversation context

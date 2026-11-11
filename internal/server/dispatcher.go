@@ -153,7 +153,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 		// churn turns, and said once in the agent's room.
 		// The same wait for a turn that must start Claude in the spelling its session was saved under.
 		// And for a turn on a custom OpenCode provider, which an older supervisor would start without the endpoint.
-		if !machine.supportsSessionFork || !machine.supportsLaunchPath || !machine.supportsProviders {
+		if !machine.supportsSessionFork || !machine.supportsLaunchPath || !machine.supportsProviders || !machine.supportsLegacySessionCopy {
 			// A failure here is this agent's, not the pass's: it is logged, the agent waits (fails closed, nothing is sent), and the
 			// other agents go on.
 			why := ""
@@ -185,6 +185,16 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 				}
 				if pending {
 					why = store.HeldForProviders
+				}
+			}
+			if why == "" && !machine.supportsLegacySessionCopy {
+				pending, err := d.Server.Store.AgentLegacyCopyPending(ctx, id)
+				if err != nil {
+					log.Printf("dispatch: does %s need an imported session copy: %v", id, err)
+					continue
+				}
+				if pending {
+					why = store.HeldForLegacyCopy
 				}
 			}
 			if why != "" {

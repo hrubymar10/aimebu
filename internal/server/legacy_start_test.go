@@ -255,11 +255,10 @@ func TestStartAsV2AgentNeedsAPersonAndTheNameFree(t *testing.T) {
 	}
 }
 
-// A harness that cannot continue its v1 session (here codex, which v2 runs with a private home per agent) still starts under the same
-// name, with a fresh session, and is linked like any other.
+// A supported harness with no usable v1 session id still starts under the same name, with a fresh session, and is linked like any other.
 func TestStartAsV2AgentFreshWhenTheHarnessCannotResume(t *testing.T) {
 	f := newLegacyFixture(t)
-	if _, err := f.exec(`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('coder@old','codex','gpt','old','/tmp/anywhere','thread-abcdef123456','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`); err != nil {
+	if _, err := f.exec(`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('coder@old','codex','gpt','old','/tmp/anywhere','','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_coder',999998,?,'agent','coder@old','from codex','[]','2026-10-02T09:00:00.000000000Z')`, f.room.ID); err != nil {
@@ -443,7 +442,7 @@ func TestStartAsV2AgentCopyNeedsAResumableSession(t *testing.T) {
 	f.srv.machineMu.Lock()
 	f.srv.machines[f.machineID].supportsSessionFork = true
 	f.srv.machineMu.Unlock()
-	if _, err := f.exec(`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('coder@old','codex','gpt','old','/tmp/anywhere','thread-abcdef123456','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`); err != nil {
+	if _, err := f.exec(`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('coder@old','cursor','gpt','old','/tmp/anywhere','thread-abcdef123456','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_coder',999998,?,'agent','coder@old','from codex','[]','2026-10-02T09:00:00.000000000Z')`, f.room.ID); err != nil {
@@ -452,6 +451,30 @@ func TestStartAsV2AgentCopyNeedsAResumableSession(t *testing.T) {
 	status, body := f.start(t, "fork-codex", map[string]any{"resume_legacy": "coder@old", "tool": "fake", "variant": "test", "model": "test", "provider": "", "resume_mode": "fork"})
 	if status != 400 || body["error"] != "invalid_request" {
 		t.Fatalf("a copy of a session that cannot be continued: %d %+v", status, body)
+	}
+}
+
+func TestStartAsV2AgentNativeCopyRequiresUpdatedSupervisor(t *testing.T) {
+	f := newLegacyFixture(t)
+	models, err := f.db.HarnessModels(t.Context(), f.harness(t, "codex", "native").ID)
+	if err != nil || len(models) == 0 {
+		t.Fatalf("no codex model on the harness: %v", err)
+	}
+	if _, err := f.exec(`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('coder@old','codex',?,'old',?,'0f7c6a1e-1111-4222-8333-444455556666','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`, models[0].Slug, f.cwd); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_coder',999998,?,'agent','coder@old','from codex','[]','2026-10-02T09:00:00.000000000Z')`, f.room.ID); err != nil {
+		t.Fatal(err)
+	}
+	request := map[string]any{"resume_legacy": "coder@old", "tool": "codex", "variant": "native", "model": models[0].Slug, "provider": "openai"}
+	if status, body := f.start(t, "codex-old-supervisor", request); status != 409 || body["error"] != "supervisor_update_needed" {
+		t.Fatalf("old supervisor: %d %+v", status, body)
+	}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID].supportsLegacySessionCopy = true
+	f.srv.machineMu.Unlock()
+	if status, body := f.start(t, "codex-new-supervisor", request); status != 201 || body["slug"] != "coder" {
+		t.Fatalf("native continuation: %d %+v", status, body)
 	}
 }
 

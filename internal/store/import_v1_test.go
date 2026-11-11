@@ -1605,13 +1605,13 @@ func TestV1ImportCarriesAgentSessionsAndImageSizes(t *testing.T) {
 		t.Fatal("a session for an agent that never wrote in the room is not shown")
 	}
 	// What v1 had recorded is what "Start as v2 agent" works from: the session id and folder carry over, the role v1 gave the agent most
-	// often is suggested, and codex (which v2 cannot continue a v1 session for) is not resumable.
+	// often is suggested, and codex can continue its v1 session after staging the native file in its private runtime.
 	var projectID string
 	if err := s.db.QueryRow(`SELECT project_id FROM room WHERE id=?`, roomID).Scan(&projectID); err != nil {
 		t.Fatal(err)
 	}
 	start, err := s.LegacyStart(t.Context(), projectID, "bot@repo")
-	if err != nil || start.Tool != "" || start.Harness != "codex" || start.SessionID != "sess-1" || start.CWD != "/work/repo" || start.RoleKey != "reviewer" || start.Slug != "bot" || start.StartedID != "" {
+	if err != nil || start.Tool != "codex" || start.Harness != "codex" || start.SessionID != "sess-1" || start.CWD != "/work/repo" || start.RoleKey != "reviewer" || start.Slug != "bot" || start.StartedID != "" {
 		t.Fatalf("legacy start: %+v %v", start, err)
 	}
 	if _, err := s.LegacyAgentProfile(t.Context(), roomID, "broken@repo"); err == nil {

@@ -135,6 +135,10 @@ func (s *Server) legacyStartChecks(w http.ResponseWriter, r *http.Request, room 
 		apiError(w, 400, "invalid_request", "this agent's session cannot be continued, so there is nothing to work on a copy of")
 		return legacy, false, false
 	}
+	if req.ResumeMode == resumeFork && legacy.Tool != "claude" {
+		apiError(w, 400, "invalid_request", "working on a copy is available only for Claude Code sessions")
+		return legacy, false, false
+	}
 	return legacy, resuming, true
 }
 

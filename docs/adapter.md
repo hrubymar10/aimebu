@@ -282,10 +282,10 @@ opt-in two-turn native resume canary.
 A v2 turn continues an existing harness session when the agent's session row
 has a native session id and `native_session_started_at`: `claude --resume <id>`,
 `codex exec resume <id>`, `opencode run -s <id>`, `vibe -p --resume <id>`; Pi passes `--session-id <id>` on
-every turn. Only Claude Code runs in the user's own home, so only it can
-continue a session that v1 made (see [Start as v2 agent](import-v1.md#start-as-v2-agent));
-codex, pi, opencode and vibe run with a private home or data directory per agent, which
-a v1 session is not in.
+every turn. Claude Code reads v1's transcript from the user's own home.
+Codex, Pi, OpenCode and Vibe run with private state per agent, so the
+supervisor first copies the selected v1 native session into that state (see
+[Start as v2 agent](import-v1.md#start-as-v2-agent)).
 
 Both standalone and embedded supervisors route `fake`, `claude`, `codex`, `pi`, `opencode`, and `vibe`
 turns through `adapter.Multi` when their CLIs are available.
@@ -381,6 +381,10 @@ the agent gets a private `XDG_CONFIG_HOME`, a private session database
 config with autoupdate and sharing disabled, project config and Claude Code
 compatibility files ignored, and the title-generation call turned off. Only a
 bounded list of provider API-key variables passes through.
+When an imported v1 OpenCode session is continued natively, the supervisor
+snapshots the user's database read-only and keeps only the selected session,
+its project, and their related rows before placing the result at the agent's
+private `OPENCODE_DB`. The source database and its account rows stay untouched.
 
 The owner lists the models of an OpenCode harness in
 Settings → Harnesses (Auto-detect models runs `opencode models`); ids must be

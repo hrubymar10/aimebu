@@ -81,6 +81,14 @@ Projects, rooms, people
   — what v1 recorded for an imported sender, kept for its read-only profile and
   for "Start as v2 agent"; `started_agent_id` links the one v2 agent started
   from it, and `agent.resumed_from_legacy_id` links back.
+  Starting the agent reassigns its imported messages in the starting project,
+  including project-scoped direct messages, to its v2 ID in the same transaction.
+  Other projects and global direct messages retain the v1 author; a failed or
+  repeated start cannot partially reassign authorship.
+  For a native-resumed Codex, Pi, OpenCode or Vibe session, deliveries carry
+  `import_legacy_session`; the supervisor stages the selected session in the
+  agent's private runtime before running the harness. The source remains
+  read-only and a marker makes later deliveries reuse the private copy.
 - **legacy_agent_session_history**(agent_id, harness_session_id, harness, model,
   project, cwd, origin, registered_at, last_seen; PRIMARY KEY(agent_id,
   harness_session_id)) and **message.author_session** — migration 88: every
@@ -877,7 +885,7 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
+  supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_warm?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
@@ -965,6 +973,16 @@ it never silently reruns a turn with uncertain effects.
   turn): the dispatcher holds such an agent before preparing a turn and posts one
   system note in the room where its note is queued, and `Dispatch` refuses the delivery with
   `supervisor_update_needed`.
+- S→M `deliver` carries `import_legacy_session` for a native Codex, Pi,
+  OpenCode or Vibe agent when its v1 session must be
+  copied into private runtime before resume. The supervisor copies only
+  the selected session from read-only source state and keeps a marker for
+  redelivery. The requirement survives stop and start until a turn on that
+  resumed session exits and settles successfully; a repeated request after
+  staging uses the marker.
+  The dispatcher holds the agent when hello lacks
+  `supports_legacy_session_copy`, and `Dispatch` checks the capability on
+  each delivery so a supervisor downgrade cannot resume without the copy.
 - S→M `deliver` carries `launch_path` for an agent started from a Claude Code session
   that was saved under another spelling of its folder (a link): the folder the harness is
   started in (`cmd.Dir` and `PWD`), because Claude keys sessions by the folder as spelled.
@@ -1109,7 +1127,7 @@ it never silently reruns a turn with uncertain effects.
   agent_shared_notes[], task_notes[]},
   control_changes?, recovery_evidence?, correction_error?}, desired_rev,
   allowed_tools?, agent:{id, tool, variant, model, provider},
-  native_session?}` — rooms in context are information, not grants. For pi agents on gemma models `knowledge` is trimmed to a
+  native_session?, native_session_started?, import_legacy_session?}` — rooms in context are information, not grants. For pi agents on gemma models `knowledge` is trimmed to a
   shared 2048-byte budget of record bodies; later records are dropped. The
   attachment bearer is used only by Pi Docker, never journaled, and authorizes
   reads only for a delivered file in a live turn while the agent remains a

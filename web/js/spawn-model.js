@@ -191,8 +191,8 @@ export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relativ
   const empty = { hidden: true, title: 'Spawn', text: '', card: null, notes: '', choosing: false, held: false, forking: false, confirmHidden: true, confirmText: ' v1 is not running this session any more' };
   if (!resume) return empty;
   const continuing = resume.kind === 'claude_session';
-  // A v1 agent whose Claude Code session can be continued is offered the same choice: continue the original, or work on a copy.
-  const choosing = continuing || !!resume.resumable;
+  // Claude Code supports an explicit fork. Other native sessions are copied into a private runtime as part of continuing.
+  const choosing = continuing || !!resume.resumable && resume.tool === 'claude';
   const held = continuing && !!resume.held_by;
   const forking = choosing && mode === 'fork';
   const title = continuing ? (forking ? 'Work on a copy of a Claude Code session' : 'Continue a Claude Code session') : (forking ? `Start ${resume.slug} on a copy of its v1 session` : `Start ${resume.slug} as a v2 agent`);
@@ -216,7 +216,10 @@ export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relativ
     : `${resume.reason || 'This agent starts fresh with the same name.'}`;
   if (!hasRoom) lines.push('This project has no open task room to start it in.');
   if (resume.resumable && resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
-  if (resume.v1_active && !forking) lines.push('v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.');
+  if (resume.resumable && resume.tool !== 'claude') lines.push('The native session is copied into this agent\'s private runtime; v1 files stay unchanged.');
+  if (resume.v1_active && !forking) lines.push(resume.tool === 'claude'
+    ? 'v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.'
+    : 'v1 saw this agent a moment ago and may still be writing the session. Stop it in v1 first so the copy includes completed work.');
   if (resume.resumable) lines.push(toolNote, warning);
   lines.push(history);
   return { hidden: false, title, choosing, held: false, forking, confirmHidden, confirmText, card: null, text, notes: lines.filter(Boolean).join(' ') };
@@ -230,6 +233,7 @@ export function spawnRequest({ role, tool, model, typed, machineID, resume, mode
   const name = resume && !continuing ? '' : typed.trim();
   if (!validName(name)) return { nameError: NAME_RULE };
   if (resume?.resumable && tool.tool !== resume.tool) return { error: `To continue this session the tool must be ${resume.tool}.` };
+  if (resume?.resumable && !continuing && resume.tool !== 'claude' && fork) return { error: 'Working on a copy is available only for Claude Code sessions.' };
   if (continuing && !fork && resume.active && !confirmed) return { confirm: 'Confirm that you closed this session.' };
   const legacyFork = !continuing && !!resume?.resumable && fork;
   if (!continuing && !legacyFork && resume?.v1_active && !confirmed) return { confirm: 'Confirm that v1 is not running this session any more.' };

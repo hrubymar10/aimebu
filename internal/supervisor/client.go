@@ -273,7 +273,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -1075,6 +1075,12 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	var sinkWriter io.Writer
 	if sink != nil {
 		sinkWriter = sink
+	}
+	if err := c.copyLegacySession(ctx, delivery, containerized); err != nil {
+		if sink != nil {
+			_ = sink.Close()
+		}
+		return c.reportStartFailure(ctx, conn, delivery, err)
 	}
 	turn, err := c.startTurn(ctx, spec, sinkWriter, cred)
 	if err != nil {

@@ -295,7 +295,14 @@ reported while the socket was down still reaches the daily cost cap and the
 room notice. The next
 delivery includes the handle and started flag, while a first delivery has no
 started flag. The journal also records activity, usage, compaction, process
-exit, final answer and receipt evidence. The final-answer event
+exit, final answer and receipt evidence. For a continued v1 Codex, Pi,
+OpenCode or Vibe session, the first delivery instead carries the recorded
+handle, `native_session_started`, and `import_legacy_session`. A supervisor
+advertising `supports_legacy_session_copy` copies that native state from the
+machine's user home into the agent's private runtime before launching the
+resumed turn. A copy failure is reported through the same journaled start
+failure path; an older supervisor is refused at spawn.
+The final-answer event
 carries the adapter's raw candidate; process exit alone never signals
 completion. For a non-terminal process exit, the journal retains a bounded,
 redacted stderr tail with the exit code. The server exposes that evidence in

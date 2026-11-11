@@ -327,7 +327,7 @@ async function main() {
   // person confirms that v1 is not using the session.
   {
     const page = await mount();
-    const resume = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: true, outside_folder: true, reason: '' };
+    const resume = { slug: 'old-bot', legacy_id: 'old-bot', role_key: 'lead', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: true, outside_folder: true, reason: '' };
     await open(page, { resume }); await ready(page);
     const state = await form(page);
     assert.deepEqual([state.title, state.nameHidden, state.tool, state.model], ['Start old-bot as a v2 agent', true, 'Codex', 'gpt-6-sol']);
@@ -335,18 +335,18 @@ async function main() {
       mode: !document.querySelector('#spawn-resume-mode').hidden, rooms: [...document.querySelector('#spawn-form').elements.start_room.options].map(o => o.textContent), room: document.querySelector('#spawn-form').elements.start_room.selectedOptions[0].textContent }));
     assert.equal(banner.text, 'This continues the v1 session of old-bot, working in /work/old.');
     assert.match(banner.notes, /outside the project folder.*v1 saw this agent a moment ago/);
-    assert.deepEqual([banner.confirm, banner.mode, banner.rooms, banner.room], [true, true, ['Alpha › one', 'Alpha › general'], 'Alpha › general']);
+    assert.deepEqual([banner.confirm, banner.mode, banner.rooms, banner.room], [true, false, ['Alpha › one', 'Alpha › general'], 'Alpha › general']);
     await page.$eval('#spawn-form button[type=submit]', node => node.click());
     assert.equal(await page.$eval('#spawn-resume-notes', node => node.textContent), 'Confirm that v1 is not running this session any more.');
     assert.equal(await count(page, 'POST', '/api/rooms/r2/agents'), 0);
     await page.$eval('#spawn-resume-confirm', node => node.click());
     await page.$eval('#spawn-form button[type=submit]', node => node.click());
     const spawn = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
-    assert.deepEqual(await body(page, spawn), { role_key: 'worker', tool: 'codex', variant: 'native', model: 'gpt-6-sol', launcher_id: 'l1', machine_id: 'm1', resume_legacy: 'old-bot', resume_mode: 'continue', confirm_v1_idle: true });
+    assert.deepEqual(await body(page, spawn), { role_key: 'lead', tool: 'codex', variant: 'native', model: 'gpt-6-sol', launcher_id: 'l1', machine_id: 'm1', resume_legacy: 'old-bot', resume_mode: 'continue', confirm_v1_idle: true });
     await answer(page, spawn, 200, agent('a2', 'old-bot')); await settle(page);
     assert.deepEqual(await calls(page), [['showRoom', 'r2']], 'the person is taken to the room it started in');
     // A copy needs no confirmation.
-    await open(page, { resume }); await ready(page);
+    await open(page, { resume: { ...resume, tool: 'claude', model: 'haiku' } }); await ready(page);
     await page.$eval('#spawn-resume-mode input[value=fork]', node => node.click());
     assert.equal(await page.$eval('#spawn-resume-confirm-label', node => node.hidden), true);
     assert.equal((await form(page)).title, 'Start old-bot on a copy of its v1 session');

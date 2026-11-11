@@ -150,6 +150,23 @@ func (s *Store) AgentForkPending(ctx context.Context, agentID string) (bool, err
 	return pending.Valid && pending.Bool, err
 }
 
+// AgentLegacyCopyPending says the next native turn needs a v1 transcript
+// copied into this agent's private runtime before its original handle resumes.
+func (s *Store) AgentLegacyCopyPending(ctx context.Context, agentID string) (bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return false, err
+	}
+	var pending bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent a JOIN session s ON s.agent_id=a.id
+		WHERE a.id=? AND a.resumed_from_legacy_id IS NOT NULL AND a.tool IN ('codex','pi','opencode','vibe')
+		AND s.start_mode='native_resume' AND s.native_session_started_at IS NOT NULL
+		AND NOT EXISTS(SELECT 1 FROM turn t JOIN session completed ON completed.id=t.session_id
+			WHERE t.agent_id=a.id AND completed.start_mode='native_resume' AND completed.native_session_id=s.native_session_id
+			AND t.exec='exited' AND t.outcome='completed' AND t.settle='settled')
+		AND s.generation=(SELECT MAX(generation) FROM session WHERE agent_id=a.id))`, agentID).Scan(&pending)
+	return pending, err
+}
+
 // AgentLaunchPathPending says the agent's turns must start in a spelling of its folder other than the canonical one: it is a Claude agent that
 // continues a Claude Code session made under a link, and Claude finds the session only from the folder as it was spelled then. Sending such a
 // turn to a supervisor that ignores the spelling would start Claude where the session cannot be found. An agent switched to another tool needs
@@ -181,6 +198,7 @@ const (
 	HeldForFork       = "it works on a copy of a Claude Code session, and the supervisor on %s predates that (it would write into the original)"
 	HeldForProviders  = "it runs on a custom OpenCode provider, and the supervisor on %s predates that (OpenCode would start without the endpoint)"
 	HeldForLaunchPath = "it continues a Claude Code session made under a link to its folder, and the supervisor on %s predates starting Claude in that spelling (it would not find the session)"
+	HeldForLegacyCopy = "it continues an imported native session, and the supervisor on %s cannot copy that session into a private runtime before resuming it"
 )
 
 // NoteSessionHeld tells the room(s) where the agent has queued notes why it is not starting: its machine's supervisor cannot run its turns,

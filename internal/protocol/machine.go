@@ -153,6 +153,8 @@ type Frame struct {
 	// SupportsSessionCopy says the supervisor copies a Claude Code session to another folder's project directory when a session_scan names
 	// ScanSessionID and CopyTo. One that does not would ignore CopyTo and answer as a plain lookup, so the server never asks it.
 	SupportsSessionCopy bool `json:"supports_session_copy,omitempty"`
+	// SupportsLegacySessionCopy says native v1 sessions can be staged into per-agent private state before their first resumed turn.
+	SupportsLegacySessionCopy bool `json:"supports_legacy_session_copy,omitempty"`
 	// SupportsSessionAttribution says the supervisor answers a session scan that asks for attribution (ScanAttribution).
 	SupportsSessionAttribution bool `json:"supports_session_attribution,omitempty"`
 	SupportsLaunchPath         bool `json:"supports_launch_path,omitempty"`
@@ -230,6 +232,8 @@ type Frame struct {
 	Agent                *adapter.AgentSpec `json:"agent,omitempty"`
 	NativeSessionHandle  string             `json:"native_session,omitempty"`
 	NativeSessionStarted bool               `json:"native_session_started,omitempty"`
+	// ImportLegacySession asks a native supervisor to copy the imported v1 session into this agent's isolated runtime before resume.
+	ImportLegacySession bool `json:"import_legacy_session,omitempty"`
 	// ForkSession says this turn resumes NativeSessionHandle as a copy: the harness saves it under a new id, which the turn reports as its
 	// native session.
 	ForkSession bool `json:"fork_session,omitempty"`
@@ -367,14 +371,14 @@ type CapabilityReport struct {
 
 func DeliverFrame(d Delivery) Frame {
 	agent := d.Agent
-	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers, DockerOnly: d.DockerOnly, WarmIdleSeconds: d.WarmIdleSeconds, KeepAliveSettings: d.KeepAliveSettings}
+	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ImportLegacySession: d.ImportLegacySession, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers, DockerOnly: d.DockerOnly, WarmIdleSeconds: d.WarmIdleSeconds, KeepAliveSettings: d.KeepAliveSettings}
 }
 func (f Frame) Delivery() Delivery {
 	agent := adapter.AgentSpec{}
 	if f.Agent != nil {
 		agent = *f.Agent
 	}
-	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers, DockerOnly: f.DockerOnly, WarmIdleSeconds: f.WarmIdleSeconds, KeepAliveSettings: f.KeepAliveSettings}
+	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ImportLegacySession: f.ImportLegacySession, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers, DockerOnly: f.DockerOnly, WarmIdleSeconds: f.WarmIdleSeconds, KeepAliveSettings: f.KeepAliveSettings}
 }
 
 type HelloAgent struct {
@@ -412,6 +416,7 @@ type Delivery struct {
 	Agent                adapter.AgentSpec `json:"agent"`
 	NativeSessionHandle  string            `json:"native_session,omitempty"`
 	NativeSessionStarted bool              `json:"native_session_started,omitempty"`
+	ImportLegacySession  bool              `json:"import_legacy_session,omitempty"`
 	ForkSession          bool              `json:"fork_session,omitempty"`
 	CheckoutPath         string            `json:"checkout_path,omitempty"`
 	// LaunchPath: see Frame.LaunchPath.

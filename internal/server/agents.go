@@ -945,6 +945,10 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		apiError(w, 409, "needs_native", sessionsMessage(req.Tool, resolvedLauncher))
 		return
 	}
+	if resuming && req.Tool != "claude" && !machine.supportsLegacySessionCopy {
+		apiError(w, 409, "supervisor_update_needed", "this machine's supervisor cannot copy v1 sessions into a private agent runtime; update it before continuing")
+		return
+	}
 	var session *protocol.SessionCandidate
 	if req.ResumeSession != "" {
 		var ok bool
