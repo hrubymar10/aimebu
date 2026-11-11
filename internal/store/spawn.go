@@ -78,6 +78,15 @@ func nativeSessionID(tool string) (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:]), nil
 }
 
+func nativeSessionResumable(tool string) bool {
+	switch tool {
+	case "claude", "codex", "pi", "opencode", "vibe":
+		return true
+	default:
+		return false
+	}
+}
+
 func nullableString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
 }
@@ -580,20 +589,25 @@ func (s *Store) AuthorizeAgentControl(ctx context.Context, id, actorID string) e
 }
 
 func (tx *Tx) SetAgentDesired(id, actorID, desired string, rev int64) (AgentCard, error) {
-	return tx.setAgentDesired(id, "user", actorID, desired, rev, true)
+	return tx.setAgentDesired(id, "user", actorID, desired, rev, true, false)
+}
+
+// StartAgentFresh explicitly discards the previous native session on a stopped agent.
+func (tx *Tx) StartAgentFresh(id, actorID string, rev int64) (AgentCard, error) {
+	return tx.setAgentDesired(id, "user", actorID, "active", rev, true, true)
 }
 
 // setAgentDesiredTrusted is SetAgentDesired for a caller that has already decided the actor may do this to every agent of the project
 // (archiving a project is the owner's or an admin's, who need not be an operator member): the per-agent membership check is skipped.
 func (tx *Tx) setAgentDesiredTrusted(id, actorID, desired string, rev int64) (AgentCard, error) {
-	return tx.setAgentDesired(id, "user", actorID, desired, rev, false)
+	return tx.setAgentDesired(id, "user", actorID, desired, rev, false, false)
 }
 
 func (tx *Tx) SetAgentDesiredByAgent(id, actorID, desired string, rev int64) (AgentCard, error) {
-	return tx.setAgentDesired(id, "agent", actorID, desired, rev, true)
+	return tx.setAgentDesired(id, "agent", actorID, desired, rev, true, false)
 }
 
-func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64, authorize bool) (AgentCard, error) {
+func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64, authorize, fresh bool) (AgentCard, error) {
 	var projectID, current, observed, checkoutID, tool, roleKey, roleCardinality string
 	var roleDeleted bool
 	var oldRev int64
@@ -609,6 +623,9 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 	}
 	if rev != oldRev {
 		return AgentCard{}, ErrStaleRev
+	}
+	if fresh && (current != "stopped" || desired != "active") {
+		return AgentCard{}, ErrInvalidTransition
 	}
 	if desired == "active" {
 		// Stopping and pausing an agent of an archived project stay possible (they are how it is freed); starting one is not.
@@ -645,6 +662,11 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 		if !allowed {
 			if _, err := tx.createBoundaryPending(projectID, roomID, id, machineID, path, "reactivate", actorKind, actorID); err != nil {
 				return AgentCard{}, err
+			}
+			if fresh {
+				if _, err := tx.Exec(`UPDATE boundary_pending SET start_fresh=1 WHERE agent_id=? AND state='open'`, id); err != nil {
+					return AgentCard{}, err
+				}
 			}
 			return tx.agentCardByID(id)
 		}
@@ -728,7 +750,20 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 		if err != nil {
 			return AgentCard{}, err
 		}
-		if _, err = tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at,native_session_id) VALUES (?,?,?,'fresh_with_history',?,?)`, sessionID, id, generation, timestamp(), nullableString(nativeSessionID)); err != nil {
+		mode := "fresh_with_history"
+		var priorHandle, priorStarted, priorFork sql.NullString
+		if !fresh && nativeSessionResumable(tool) {
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT native_session_id,native_session_started_at,fork_of FROM session WHERE agent_id=? ORDER BY generation DESC LIMIT 1`, id).Scan(&priorHandle, &priorStarted, &priorFork); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return AgentCard{}, err
+			}
+			if priorHandle.Valid && priorStarted.Valid {
+				mode, nativeSessionID = "native_resume", priorHandle.String
+			}
+		}
+		if mode != "native_resume" || !priorFork.Valid || priorFork.String != nativeSessionID {
+			priorFork = sql.NullString{} // the copy has its own native id, or this starts a new session
+		}
+		if _, err = tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at,native_session_id,native_session_started_at,fork_of) VALUES (?,?,?,?,?,?,?,?)`, sessionID, id, generation, mode, timestamp(), nullableString(nativeSessionID), priorStarted, priorFork); err != nil {
 			return AgentCard{}, err
 		}
 	}

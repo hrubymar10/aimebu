@@ -167,6 +167,41 @@ func TestOutsideCheckoutReactivationWaitsForOwner(t *testing.T) {
 	}
 }
 
+func TestFreshStartChoiceSurvivesBoundaryApproval(t *testing.T) {
+	t.Parallel()
+	s, project, _, agent, _ := wakeFixture(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_fresh','owner','hash','{}','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,'usr_fresh','owner')`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET tool='claude',desired='stopped',observed='stopped' WHERE id=?`, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE session SET native_session_id='aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',native_session_started_at=? WHERE agent_id=?`, timestamp(), agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE checkout SET canonical_path='/outside/folder' WHERE id=?`, agent.CheckoutID); err != nil {
+		t.Fatal(err)
+	}
+	var pending AgentCard
+	if err := s.Tx(ctx, func(tx *Tx) (err error) {
+		pending, err = tx.StartAgentFresh(agent.ID, "usr_fresh", 0)
+		return err
+	}); err != nil || pending.BoundaryPending == "" {
+		t.Fatalf("pending fresh start: %+v %v", pending, err)
+	}
+	if _, _, err := s.DecideBoundary(ctx, pending.BoundaryPending, "usr_fresh", "approve-fresh", "approve", 0); err != nil {
+		t.Fatal(err)
+	}
+	var mode string
+	if err := s.db.QueryRow(`SELECT start_mode FROM session WHERE agent_id=? AND generation=1`, agent.ID).Scan(&mode); err != nil || mode != "fresh_with_history" {
+		t.Fatalf("approved fresh start: %q %v", mode, err)
+	}
+}
+
 func TestOutsideCheckoutSwitchWaitsForOwner(t *testing.T) {
 	t.Parallel()
 	s, project, room, agent, _ := wakeFixture(t)

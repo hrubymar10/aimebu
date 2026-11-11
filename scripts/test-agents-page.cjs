@@ -686,15 +686,24 @@ async function main() {
       act: [['Pause', false, 'svg'], ['Stop', false, 'svg']],
       stopping: [['Stop', true, 'svg']],
       interrupting: [['Stop', false, 'svg']],
-      stopped: [['Start', false, 'svg']],
+      stopped: [['Start', false, 'svg'], ['Start fresh', false, 'no icon']],
       paused: [['Resume', false, 'svg'], ['Stop', false, 'svg']],
     }, 'the hover buttons follow the state');
     assert.deepEqual(await page.evaluate(() => Object.fromEntries(['stopped', 'paused'].map(id => [id, document.querySelector(`[data-agent-id=${id}] .agent-reactivate`)]).map(([id, button]) => [id, [button.getAttribute('aria-label'), button.title]]))), { stopped: ['Start', 'Start: run this agent again and accept new work'], paused: ['Resume', 'Resume: accept new work again'] }, 'the profile action is named for the state too');
     // What a person reads: visible text, tooltips and accessible names. (Class names and ids such as agent-reactivate are the action's own name in the code.)
     assert.equal(await page.evaluate(() => [...document.querySelectorAll('#agents-list, #agents-list *')].some(node => /Reactivate/i.test([node.childNodes.length === 1 && node.firstChild.nodeType === 3 ? node.textContent : '', node.getAttribute('title'), node.getAttribute('aria-label')].join(' ')))), false, 'no Reactivate in what the cards show');
+    assert.equal(await page.$eval('[data-agent-id=stopped] .agent-start-fresh', button => button.getAttribute('aria-label')), 'Start fresh');
+    assert.equal(await page.$eval('[data-agent-id=stopped] .agent-start-fresh .icon-mask', icon => icon.classList.contains('icon-mask-refresh')), true, 'the quick Start fresh button uses refresh');
+    assert.equal(await page.$eval('[data-agent-id=stopped] .agent-actions .agent-start-fresh .icon-mask', icon => icon.classList.contains('icon-mask-refresh')), true, 'the profile Start fresh action uses refresh');
     await page.$eval('[data-agent-id=stopped] .agent-start', button => button.click());
     const startRequest = await waitRequest(page, 'POST', '/api/agents/stopped/control');
     assert.equal(await page.evaluate(index => window.__requests[index].body.desired, startRequest), 'active', 'Start asks for the agent to be active again');
+    await page.close();
+    page = await mount();
+    await show(page, 'r1', [agent('stopped', 'stopped', { desired: 'stopped', observed: 'stopped' })]);
+    await page.$eval('[data-agent-id=stopped] .agent-start-fresh', button => button.click());
+    const freshRequest = await waitRequest(page, 'POST', '/api/agents/stopped/control');
+    assert.equal(await page.evaluate(index => window.__requests[index].body.start_fresh, freshRequest), true, 'Start fresh requests a new native session');
     await page.close();
     // An event that reaches a destroyed panel through the source starts no read.
     page = await mount();

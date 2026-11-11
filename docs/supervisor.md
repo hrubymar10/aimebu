@@ -335,8 +335,10 @@ A resumed Codex turn that fails with `failed to record rollout items` and
 case either. The server clears the session's native handle, marks the turn
 failed, requeues its notes (with the same `retry_notice` caution when the turn
 showed activity), and records a `native_session_reset` event; the next
-delivery starts a fresh Codex thread. A resumed OpenCode or Vibe turn that prints
-`Error: Session not found` on stderr is handled the same way (the event's
+delivery starts a fresh Codex thread. A resumed Claude turn that reports
+`No conversation found with session ID:` is handled the same way. A resumed
+OpenCode or Vibe turn that prints `Error: Session not found` on stderr is
+handled the same way (the event's
 reason is `opencode_session_missing` or `vibe_session_missing`). It does not apply to a turn that opened
 its own thread and then lost it, so a fresh start that fails the same way falls
 through to ordinary recovery instead of looping.
@@ -485,7 +487,9 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
   about 150 tokens of context and about 10 KB of transcript each (measured), which is one reason the pings stop.
 - **When.** One interval after the last real turn ended cleanly: Claude **50 minutes** (at most 55: the
   cache lives an hour, so a later ping always finds it gone, and a larger stored value is read as 55), Codex **10 minutes** (an
-  assumption: Codex states no lifetime, so each ping's cache read and write are logged to tune it from). Both
+  assumption: Codex states no lifetime, so each ping's cache read and write are logged to tune it from). The
+  supervisor skips a ping quietly until the real turn has reported a native
+  session handle; there is no resumable session to ping before then. Both
   adapters implement `adapter.KeepAliver`: Codex runs `codex exec resume` with the real turn's arguments and the
   instruction in the turn JSON after the unchanged instruction text; its cost is the price list's, per ping,
   where Claude's is the difference of the session's running total. Settings -> General -> Agents holds a switch (on by default), the interval

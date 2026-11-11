@@ -1320,14 +1320,19 @@ func spawnError(w http.ResponseWriter, err error) {
 
 func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Desired string `json:"desired"`
-		Rev     int64  `json:"rev"`
+		Desired    string `json:"desired"`
+		Rev        int64  `json:"rev"`
+		StartFresh bool   `json:"start_fresh"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
 	if req.Desired != "active" && req.Desired != "not_accepting" && req.Desired != "stopped" {
 		apiError(w, 400, "invalid_request", "desired must be active, not_accepting, or stopped")
+		return
+	}
+	if req.StartFresh && req.Desired != "active" {
+		apiError(w, 400, "invalid_request", "start_fresh requires desired active")
 		return
 	}
 	id := r.PathValue("id")
@@ -1403,7 +1408,11 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.Store.Tx(r.Context(), func(tx *store.Tx) error {
 		var err error
-		updated, err = tx.SetAgentDesired(id, userID(r), req.Desired, req.Rev)
+		if req.StartFresh {
+			updated, err = tx.StartAgentFresh(id, userID(r), req.Rev)
+		} else {
+			updated, err = tx.SetAgentDesired(id, userID(r), req.Desired, req.Rev)
+		}
 		return err
 	})
 	release()

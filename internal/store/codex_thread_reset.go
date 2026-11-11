@@ -14,6 +14,8 @@ var codexThreadNotFound = regexp.MustCompile(`thread [0-9A-Za-z-]+ not found`)
 func nativeSessionMissingEvidence(tool, stderr, errorEvent string) bool {
 	evidence := stderr + "\n" + errorEvent
 	switch tool {
+	case "claude":
+		return strings.Contains(evidence, "No conversation found with session ID:")
 	case "codex":
 		return strings.Contains(evidence, "failed to record rollout items") && codexThreadNotFound.MatchString(evidence)
 	case "opencode", "vibe":
@@ -32,7 +34,7 @@ func (tx *Tx) recordNativeSessionReset(turnID, agentID, projectID, roomID, tool 
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT session_id FROM turn WHERE id=?`, turnID).Scan(&sessionID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE session SET native_session_id=NULL,native_session_started_at=NULL WHERE id=?`, sessionID); err != nil {
+	if _, err := tx.Exec(`UPDATE session SET native_session_id=NULL,native_session_started_at=NULL,start_mode='fresh_with_history' WHERE id=?`, sessionID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE turn SET outcome='failed',settle='settled' WHERE id=?`, turnID); err != nil {

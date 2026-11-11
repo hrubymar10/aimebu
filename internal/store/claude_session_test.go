@@ -231,6 +231,52 @@ func TestForkedSessionsLeaveTheOriginalFree(t *testing.T) {
 	}
 }
 
+func TestPendingClaudeForkSurvivesStopAndStart(t *testing.T) {
+	s, _, task, _ := ccSpawnFixture(t)
+	in := forking(ccSessionA, "Fix the login bug")
+	in.RoomID = task.ID
+	card, err := ccSpawn(s, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	var stopped, restarted AgentCard
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		stopped, err = tx.SetAgentDesired(card.ID, "usr_cc", "stopped", card.DesiredRev)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		restarted, err = tx.SetAgentDesired(card.ID, "usr_cc", "active", stopped.DesiredRev)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.AgentForkPending(ctx, card.ID)
+	if err != nil || !pending {
+		t.Fatalf("fork hold after restart: pending=%v err=%v", pending, err)
+	}
+	var native, forkOf string
+	if err := s.db.QueryRow(`SELECT native_session_id,fork_of FROM session WHERE agent_id=? AND generation=?`, card.ID, restarted.Generation).Scan(&native, &forkOf); err != nil || native != ccSessionA || forkOf != ccSessionA {
+		t.Fatalf("restarted fork: native=%q fork_of=%q err=%v", native, forkOf, err)
+	}
+	message, err := s.InsertMessage(ctx, Message{RoomID: task.ID, AuthorKind: "system", AuthorID: "system", Body: "Continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO note(id,agent_id,message_id,room_id,state,wake_reason,created_at) VALUES (?,?,?,?,'queued','mention',?)`, "note_fork_restart", card.ID, message.ID, task.ID, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, card.ID, "")
+	if err != nil || !ready || delivery.Generation != restarted.Generation || !delivery.ForkSession || delivery.NativeSessionHandle != ccSessionA {
+		t.Fatalf("restarted delivery: %+v ready=%v err=%v", delivery, ready, err)
+	}
+}
+
 func mustSession(t *testing.T, s *Store, agentID string) string {
 	t.Helper()
 	var id string

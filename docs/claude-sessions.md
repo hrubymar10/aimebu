@@ -188,9 +188,9 @@ whose session is the copy, and its later turns resume that id without the flag.
 
 - Until the first turn names the copy, `session.native_session_id` still holds the
   original and `session.fork_of` says so (that is the "pending" state: the next
-  delivery carries `fork_session`, so a lost turn forks again from the original
-  instead of resuming it). The agent profile shows no session id and no resume
-  command then, because the original is not the agent's session.
+  delivery carries `fork_session`, so a lost turn or a stop and start forks again
+  from the original instead of resuming it). The agent profile shows no session
+  id and no resume command then, because the original is not the agent's session.
 - `imported_session` keeps the original's id and the mode, and stores the copy's id
   as `forked_session_id` once known. A copy does not hold its original: any number
   of agents can work on copies of one session, and the original can still be

@@ -104,6 +104,31 @@ func TestClaudeCostIsPricedAsTheDifferenceFromTheSessionTotal(t *testing.T) {
 	}
 }
 
+func TestResumedGenerationKeepsNativeSessionCostBaseline(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	f := seedExecution(t, s)
+	ctx := context.Background()
+	const handle = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
+	if _, err := s.db.Exec(`UPDATE session SET native_session_id=? WHERE id='ses_test'`, handle); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordTurnEvent(ctx, f.turn.ID, f.agent.ID, "before-stop", "usage", "", usageFrame(map[string]any{"cost_estimate": 1.25, "cost_cumulative": true})); err != nil {
+		t.Fatal(err)
+	}
+	continued := nextTurn(t, s, f, "ses_continued", 1)
+	if _, err := s.db.Exec(`UPDATE session SET native_session_id=?,start_mode='native_resume' WHERE id='ses_continued'`, handle); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordTurnEvent(ctx, continued.ID, f.agent.ID, "after-start", "usage", "", usageFrame(map[string]any{"cost_estimate": 1.40, "cost_cumulative": true})); err != nil {
+		t.Fatal(err)
+	}
+	cost, _ := costOf(t, s, "after-start")
+	if !cost.Valid || math.Abs(cost.Float64-0.15) > 1e-9 {
+		t.Fatalf("continued native session charged %+v rather than 0.15", cost)
+	}
+}
+
 // A Claude session that spans the upgrade carries on from the total its last pre-upgrade turn stored, so its next turn is priced as the
 // difference and not as the whole session over again. Only Claude's stored cost was a running total.
 func TestMigrationStartsTheCostChainFromTheLastStoredClaudeCost(t *testing.T) {

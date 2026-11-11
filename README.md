@@ -613,6 +613,9 @@ stream. Open `/?mock_agents=1` to preview cards and controls
 without spawning. Run `make test-ui` against an isolated scratch server; it
 requires Chromium or Chrome (set `CHROMIUM_PATH` if needed) and globally
 available `puppeteer-core`.
+On a stopped agent's card, **Start** continues its last native session when
+available. **Start fresh** begins a new session with recent conversation from
+the agent's rooms.
 Agent cards open a private chat with the signed-in user, and a person's card in the
 members panel opens one with that person (project members, including people with viewer
 access); the Direct messages section only lists the chats. Each pair has one room per

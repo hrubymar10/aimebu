@@ -91,7 +91,9 @@ assert.deepEqual(plain(m.liveOf({ observed: 'idle', activity_at: at })), { at: '
 
 // Every action says what it does, or why it cannot.
 const reasons = (agent, options) => Object.fromEntries(plain(m.actionsOf(agent, options)).map(action => [action.name, action.disabled ? action.hint : '']));
-assert.deepEqual(reasons({ desired: 'active' }), { message: '', 'act-pause': '', 'act-stop': '', reactivate: 'Start is unavailable: it is already active.', remove: 'Remove is unavailable: stop it first.', switch: '' });
+assert.deepEqual(reasons({ desired: 'active' }), { message: '', 'act-pause': '', 'act-stop': '', reactivate: 'Start is unavailable: it is already active.', 'start-fresh': 'Start fresh is unavailable: stop this agent first.', remove: 'Remove is unavailable: stop it first.', switch: '' });
+assert.equal(reasons({ desired: 'stopped', observed: 'stopped' })['start-fresh'], '');
+assert.equal(reasons({ desired: 'stopped', observed: 'stopped', role_deleted: true })['start-fresh'], 'Start fresh is unavailable: its role was deleted.');
 // Remove is for a stopped agent only (nothing may still run for it), and says so otherwise.
 assert.equal(reasons({ desired: 'stopped', observed: 'stopped' }).remove, '');
 assert.equal(reasons({ desired: 'stopped', observed: 'interrupting' }).remove, 'Remove is unavailable: stop it first.');

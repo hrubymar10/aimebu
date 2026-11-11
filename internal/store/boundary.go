@@ -218,11 +218,12 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 	digest := sha256.Sum256([]byte(itemID + "\x00" + choice + "\x00" + strconv.Itoa(rev)))
 	result, reused, err := s.WithRequestKey(ctx, RequestKey{ActorKind: "user", ActorID: userID, Kind: "recovery_decision", Key: key, Digest: hex.EncodeToString(digest[:])}, func(tx *Tx) (string, error) {
 		var projectID, roomID, agentID, machineID, path, operation, state, role, priorDesired, requestedRoot string
+		var startFresh bool
 		var currentRev int
-		err := tx.tx.QueryRowContext(tx.ctx, `SELECT i.project_id,i.room_id,b.agent_id,b.machine_id,b.canonical_path,b.operation,i.state,i.rev,m.role,b.prior_desired,b.mapped_root
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT i.project_id,i.room_id,b.agent_id,b.machine_id,b.canonical_path,b.operation,i.state,i.rev,m.role,b.prior_desired,b.mapped_root,b.start_fresh
 			FROM boundary_pending b JOIN inbox_item i ON i.id=b.inbox_id
 			JOIN membership m ON m.project_id=i.project_id AND m.user_id=? WHERE b.inbox_id=?`, userID, itemID).
-			Scan(&projectID, &roomID, &agentID, &machineID, &path, &operation, &state, &currentRev, &role, &priorDesired, &requestedRoot)
+			Scan(&projectID, &roomID, &agentID, &machineID, &path, &operation, &state, &currentRev, &role, &priorDesired, &requestedRoot, &startFresh)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrForbidden
 		}
@@ -315,7 +316,7 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 				if _, err := tx.Exec(`UPDATE boundary_pending SET state='resolved' WHERE inbox_id=?`, itemID); err != nil {
 					return "", err
 				}
-				if _, err := tx.setAgentDesired(agentID, "user", userID, "active", desiredRev, true); err != nil {
+				if _, err := tx.setAgentDesired(agentID, "user", userID, "active", desiredRev, true, startFresh); err != nil {
 					return "", err
 				}
 			}

@@ -20,6 +20,7 @@ func TestCodexThreadMissingEvidenceNeedsBothPhrases(t *testing.T) {
 		{"codex", "thread abc not found", "", false},
 		{"codex", "failed to record rollout items: disk full", "", false},
 		{"claude", threadMissingStderr, "", false},
+		{"claude", "No conversation found with session ID: aaaa", "", true},
 		{"opencode", "Error: Session not found", "", true},
 		{"opencode", "", "OpenCode error: Session not found", false},
 		{"opencode", "Error: Something else not found", "", false},

@@ -178,6 +178,7 @@ func TestReplyMigrationDerivesConversations(t *testing.T) {
 		{`UPDATE message SET reply_to=?, thread_root=NULL WHERE id=?`, foreign.ID, crossReply.ID},
 		{`UPDATE message SET reply_to=?, thread_root=NULL WHERE id=?`, crossReply.ID, afterCross.ID},
 		{`DROP INDEX message_reply_to`},
+		{`ALTER TABLE boundary_pending DROP COLUMN start_fresh`},
 		{`DELETE FROM schema_version WHERE version>=98`},
 	} {
 		if _, err := s.db.Exec(statement[0].(string), statement[1:]...); err != nil {

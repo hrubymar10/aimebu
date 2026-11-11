@@ -140,8 +140,8 @@ export class HttpAgentSource {
   async control(id, action) {
     const current = this.agents.get(id);
     if (!current) throw new Error('Agent not found');
-    const desired = { stop: 'stopped', pause: 'not_accepting', reactivate: 'active' }[action];
-    const card = await request(`/api/agents/${id}/control`, { method: 'POST', body: { desired, rev: current.desired_rev } });
+    const desired = { stop: 'stopped', pause: 'not_accepting', reactivate: 'active', 'start-fresh': 'active' }[action];
+    const card = await request(`/api/agents/${id}/control`, { method: 'POST', body: { desired, rev: current.desired_rev, ...(action === 'start-fresh' ? { start_fresh: true } : {}) } });
     this.agents.set(id, card); await this.changed(); return this.normalize(card);
   }
   async onEvent(event) {

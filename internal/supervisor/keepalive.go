@@ -67,20 +67,21 @@ const (
 )
 
 type keepAliveEntry struct {
-	agentID  string
-	spec     adapter.TurnSpec // the agent's last real turn, made ready to be pinged
-	settings protocol.KeepAliveSettings
-	cred     credentials // how the last real turn's login was told
-	shares   bool        // whether the launcher shares the host's Claude home (to tell the login again)
-	lastReal time.Time
-	timer    *time.Timer
-	gen      int
-	fails    int
-	cancel   context.CancelFunc // set while a ping runs
-	done     chan struct{}      // closed when the ping that runs has ended
-	docker   bool
-	held     bool    // the ping that runs was ended for an account switch: that is not a failure of the ping
-	lastCost float64 // the session's cumulative cost as last seen, to tell what a ping cost
+	agentID   string
+	spec      adapter.TurnSpec // the agent's last real turn, made ready to be pinged
+	confirmed bool             // the harness reported the native session, or the turn resumed one
+	settings  protocol.KeepAliveSettings
+	cred      credentials // how the last real turn's login was told
+	shares    bool        // whether the launcher shares the host's Claude home (to tell the login again)
+	lastReal  time.Time
+	timer     *time.Timer
+	gen       int
+	fails     int
+	cancel    context.CancelFunc // set while a ping runs
+	done      chan struct{}      // closed when the ping that runs has ended
+	docker    bool
+	held      bool    // the ping that runs was ended for an account switch: that is not a failure of the ping
+	lastCost  float64 // the session's cumulative cost as last seen, to tell what a ping cost
 }
 
 // keepAlivePause is what the server says to hold pings back for.
@@ -138,6 +139,7 @@ func (c *Client) keepAliveRemember(spec adapter.TurnSpec, settings *protocol.Kee
 		c.ka[spec.Agent.ID] = entry
 	}
 	entry.spec, entry.settings, entry.cred, entry.shares = ping, *settings, cred, sharesHome
+	entry.confirmed = spec.NativeSessionStarted && spec.NativeSessionHandle != ""
 	entry.docker = spec.LauncherContainerized || spec.Agent.Variant == "docker"
 	entry.lastReal = c.pool().now()
 	entry.fails = 0
@@ -159,8 +161,26 @@ func (c *Client) keepAliveTurnEnded(agentID string, exit adapter.ExitInfo) {
 		c.keepAliveDisarmLocked(entry)
 		return
 	}
+	// A first turn may fail before reporting a native session. There is then
+	// nothing to resume, so leave the timer unarmed without reporting a failure.
+	if !entry.confirmed || entry.spec.NativeSessionHandle == "" {
+		c.keepAliveDisarmLocked(entry)
+		return
+	}
 	entry.lastReal = c.pool().now()
 	c.keepAliveArmLocked(entry)
+}
+
+func (c *Client) keepAliveNativeSessionStarted(agentID, handle string) {
+	if handle == "" {
+		return
+	}
+	c.kaMu.Lock()
+	defer c.kaMu.Unlock()
+	if entry := c.ka[agentID]; entry != nil {
+		entry.spec.NativeSessionHandle = handle
+		entry.confirmed = true
+	}
 }
 
 func (c *Client) keepAliveDisarmLocked(entry *keepAliveEntry) {
@@ -386,6 +406,10 @@ func (c *Client) keepAlivePing(agentID string, gen int) {
 	c.kaMu.Lock()
 	entry := c.ka[agentID]
 	if entry == nil || entry.gen != gen || entry.cancel != nil {
+		c.kaMu.Unlock()
+		return
+	}
+	if !entry.confirmed || entry.spec.NativeSessionHandle == "" {
 		c.kaMu.Unlock()
 		return
 	}

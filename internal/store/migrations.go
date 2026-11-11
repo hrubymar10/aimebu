@@ -1648,6 +1648,10 @@ WITH RECURSIVE chain(id, room_id, root, depth) AS (
 INSERT OR IGNORE INTO reply_root(id, root) SELECT id, root FROM chain;
 UPDATE message SET thread_root=(SELECT root FROM reply_root WHERE reply_root.id=message.id) WHERE id IN (SELECT id FROM reply_root) AND thread_root IS NOT (SELECT root FROM reply_root WHERE reply_root.id=message.id);
 DROP TABLE reply_root;
+`}, {99, `
+-- Preserve an explicit fresh start while folder or machine admission waits
+-- for the owner. Approval must not silently resume the old native session.
+ALTER TABLE boundary_pending ADD COLUMN start_fresh INTEGER NOT NULL DEFAULT 0 CHECK (start_fresh IN (0,1));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

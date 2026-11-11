@@ -1233,6 +1233,7 @@ events:
 		case adapter.EventNativeSessionStarted:
 			frame.Type = protocol.NativeSessionStarted
 			frame.NativeSessionHandle = event.NativeSessionHandle
+			c.keepAliveNativeSessionStarted(delivery.AgentID, event.NativeSessionHandle)
 		case adapter.EventFinalAnswer:
 			frame.Type = protocol.Answer
 			if delivery.Mode == adapter.ModeCorrection {

@@ -102,8 +102,10 @@ Projects, rooms, people
 - **session.fork_of?** — migration 86. For a session started as a copy of a Claude
   Code session: the original's id. While `native_session_id = fork_of` the copy
   has not been named yet (the "pending" fork: the next delivery carries
-  `fork_session`); `RecordNativeSessionStarted` then accepts exactly one different
-  handle, the copy's, and records it in `imported_session.forked_session_id`.
+  `fork_session`). Stop and start carries that pending marker into the new
+  generation; it never resumes the original in place.
+  `RecordNativeSessionStarted` then accepts exactly one different handle, the
+  copy's, and records it in `imported_session.forked_session_id`.
   Any other handle change is still `conflict`.
 - **room_member**(room_id, member_kind[user|agent], member_id, joined_at,
   left_at?) — UNIQUE active (room_id, member_kind, member_id)
@@ -256,7 +258,18 @@ Roles, agents
   the project, is rewritten to a tombstone so the name is free, and `removed_slug`
   keeps the name its messages are shown under)
 - **session**(id, agent_id, generation, native_session_id?,
-  start_mode[native_resume|fresh_with_history], started_at, ended_at?)
+  native_session_started_at?, start_mode[native_resume|fresh_with_history],
+  started_at, ended_at?)
+  Stopping and starting an agent increments the generation but carries the
+  latest native session handle into a `native_resume` session when the harness
+  has reported one. An explicit Start fresh creates `fresh_with_history`.
+  A missing or broken native session also starts fresh. The first turn of a
+  fresh session receives up to 40 recent messages from rooms the agent is in,
+  newest selected by message sequence and shown in chronological order;
+  imported messages and the agent's own messages are included. Each body is
+  limited to 1,500 characters. These are prior context, not new requests.
+  If starting needs folder or machine approval, the pending request retains
+  the explicit fresh choice until it is approved.
 - **agent_switch**(agent_id UNIQUE, room_id, tool, variant, launcher_id?, model,
   provider, machine_id?, checkout_path?, state[draining|starting|failed],
   error, requested_at) — durable target for an in-place tool, model, or
@@ -403,7 +416,8 @@ Inbox, usage, events, settings
   turn cost and is the only cost anything sums (limits, cards, totals). Claude
   reports a resumed session's whole spend in every result, so the store keeps
   that running total in `cost_total` and prices a turn as the difference from
-  the session's previous total (a session's first report is its own cost; a
+  the native session's previous total, including across a stopped/start
+  generation boundary (a fresh session's first report is its own cost; a
   total that went down is an unknown cost, never zero). `partial` marks what a
   turn spent before it ended without a report (killed, crashed): Claude gives
   its input and cache tokens only (its output tokens and cost stay unknown),
@@ -640,8 +654,9 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   reconciliation (§5), never a blind re-run. A requested kill without recorded termination is
   `unknown`.
 - **Reactivate** (admin; named so it never collides with the recovery
-  "Resume" button): desired → active; a new session (native resume or
-  fresh) bumps `generation`.
+  "Resume" button): desired → active; a new session that resumes the last
+  known native handle bumps `generation`. Start fresh explicitly drops that
+  handle and supplies recent room history on the first turn.
 - **Switch model/tool** (owner/operator): an active or not-accepting agent
   enters `not_accepting` with a new desired revision. After its open work
   settles and no recovery block remains, the old session ends and a fresh

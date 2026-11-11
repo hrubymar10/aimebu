@@ -185,7 +185,12 @@ func (tx *Tx) costSinceLastTotalInSession(sessionID, agentID string, total float
 	return &difference, &remembered, nil
 }
 
-// previousTotalSQL finds the running total of the agent's session at its latest report; the agent+time index gives the order, and the walk
-// stops at the first match, which is nearly always the newest row.
+// previousTotalSQL follows a native session across stopped/start generations.
+// A resumed Claude turn reports the whole native session's cost, even when
+// aimebu gave that continuation a new session row.
 const previousTotalSQL = `SELECT u.cost_total FROM usage_record u LEFT JOIN turn t ON t.id=u.turn_id
-	WHERE u.agent_id=? AND COALESCE(t.session_id,u.session_id)=? AND u.cost_total IS NOT NULL ORDER BY u.created_at DESC,u.rowid DESC LIMIT 1`
+	WHERE u.agent_id=? AND u.cost_total IS NOT NULL AND EXISTS (
+		SELECT 1 FROM session current JOIN session prior ON prior.id=COALESCE(t.session_id,u.session_id)
+		WHERE current.id=? AND (current.id=prior.id OR
+			(current.native_session_id IS NOT NULL AND current.native_session_id=prior.native_session_id)))
+	ORDER BY u.created_at DESC,u.rowid DESC LIMIT 1`

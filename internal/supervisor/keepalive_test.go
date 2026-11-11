@@ -53,6 +53,29 @@ func newKAHarness(t *testing.T) *kaHarness {
 	return h
 }
 
+// The test harness models a native session already reported by a real turn.
+func (h *kaHarness) run(agent string, mutate func(*adapter.TurnSpec)) adapter.Turn {
+	return h.warmHarness.run(agent, func(spec *adapter.TurnSpec) {
+		spec.NativeSessionHandle = "sess-1"
+		spec.NativeSessionStarted = true
+		if mutate != nil {
+			mutate(spec)
+		}
+	})
+}
+
+func TestKeepAliveSkipsUnknownNativeSession(t *testing.T) {
+	h := newKAHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", func(spec *adapter.TurnSpec) {
+		spec.NativeSessionHandle = ""
+		spec.NativeSessionStarted = false
+	})
+	if h.count() != 0 || len(h.timerList()) != 0 {
+		t.Fatalf("an unknown native session must not arm or report a ping: timers=%d reports=%d", len(h.timerList()), h.count())
+	}
+}
+
 func (h *kaHarness) count() int { h.mu.Lock(); defer h.mu.Unlock(); return len(h.reports) }
 
 // fire runs the armed keep-alive timer (the newest one that has not been stopped) and waits for its report.

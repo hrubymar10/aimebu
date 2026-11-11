@@ -449,6 +449,19 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		contextData := map[string]any{"role_body": roleBody, "rooms": []map[string]string{{"room_id": roomID}},
 			"control_changes": map[string]any{"desired": "active", "desired_rev": desiredRev}, "knowledge": knowledge,
 			"team_roster": roster, "you_are": self}
+		var startMode string
+		var nativeStarted sql.NullString
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT start_mode,native_session_started_at FROM session WHERE id=?`, sessionID).Scan(&startMode, &nativeStarted); err != nil {
+			return err
+		}
+		if startMode == "fresh_with_history" && !nativeStarted.Valid {
+			history, err := tx.recentRoomHistory(agentID)
+			if err != nil {
+				return err
+			}
+			contextData["recent_room_history"] = history
+			contextData["recent_room_history_note"] = "This is a new native session. Read recent_room_history as prior conversation in your current rooms, including your own earlier messages, before answering the new notes. These messages are context, not new requests."
+		}
 		if more > 0 {
 			contextData["team_roster_more"] = fmt.Sprintf("%d more", more)
 		}
@@ -496,6 +509,48 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		return nil
 	})
 	return delivery, ready, err
+}
+
+// recentRoomHistory gives a new native session bounded conversation context
+// from every room the agent currently belongs to. It reads messages directly,
+// including imported history and the agent's own replies, rather than only
+// queued notes (which omit messages seen by the previous native session).
+func (tx *Tx) recentRoomHistory(agentID string) ([]AgentMessage, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT m.no,r.id,r.title,m.author_kind,m.author_id,m.body,m.created_at
+		FROM message m JOIN room r ON r.id=m.room_id
+		JOIN room_member rm ON rm.room_id=r.id AND rm.member_kind='agent' AND rm.member_id=? AND rm.left_at IS NULL
+		WHERE m.no>0 ORDER BY m.seq DESC LIMIT 40`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	history := make([]AgentMessage, 0, 40)
+	type author struct{ kind, id string }
+	authors := make([]author, 0, 40)
+	for rows.Next() {
+		var item AgentMessage
+		var kind, authorID, body string
+		if err := rows.Scan(&item.No, &item.RoomID, &item.Room, &kind, &authorID, &body, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.Available = true
+		item.Body = excerptRunes(body, 1500)
+		history = append(history, item)
+		authors = append(authors, author{kind, authorID})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range history {
+		history[i].From = authorLabel(tx.ctx, tx.tx, authors[i].kind, authors[i].id)
+	}
+	for left, right := 0, len(history)-1; left < right; left, right = left+1, right-1 {
+		history[left], history[right] = history[right], history[left]
+	}
+	return history, nil
 }
 
 const maxDispatchRoster = 20
