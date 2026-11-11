@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/sqliteutil"
@@ -68,24 +67,22 @@ func TestV1WorkspaceSuggestionIsTheMostFrequentFolder(t *testing.T) {
 	}
 }
 
-// A room with a message in the last 30 days starts open, an older one archived; memory and the debug button follow v1's settings.
+// Every room starts open; memory and the debug button still follow v1's settings.
 func TestV1PreviewDefaultsFollowTheV1Data(t *testing.T) {
-	source, _ := v1Fixture(t) // not parallel: it moves the preview clock
+	source, _ := v1Fixture(t)
 	db := openV1Fixture(t, source)
 	if _, err := db.Exec(`INSERT INTO settings(id,data) VALUES (1,'{"memory_enabled":true,"debug_button_enabled":true,"theme":"dark"}')`); err != nil {
 		t.Fatal(err)
 	}
-	old := v1PreviewNow
-	defer func() { v1PreviewNow = old }()
 	ctx := context.Background()
-
-	v1PreviewNow = func() time.Time { return time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC) } // 19 days after the fixture's messages
 	preview, err := PreviewV1Import(ctx, source, "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := preview.Suggested.Rooms["work"].Lifecycle; got != "open" {
-		t.Errorf("a room with a message 19 days ago should start open, got %q", got)
+	for name, room := range preview.Suggested.Rooms {
+		if room.Lifecycle != "open" {
+			t.Errorf("room %q should start open, got %q", name, room.Lifecycle)
+		}
 	}
 	if !preview.V1DebugButton {
 		t.Error("v1 had the debug button on")
@@ -104,14 +101,6 @@ func TestV1PreviewDefaultsFollowTheV1Data(t *testing.T) {
 		}
 	}
 
-	v1PreviewNow = func() time.Time { return time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC) }
-	preview, err = PreviewV1Import(ctx, source, "owner")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := preview.Suggested.Rooms["work"].Lifecycle; got != "closed" {
-		t.Errorf("a room quiet for two months should start archived, got %q", got)
-	}
 }
 
 func TestV1PreviewMemoryAndDebugDefaultOffWhenV1HadThemOff(t *testing.T) {

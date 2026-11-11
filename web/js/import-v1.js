@@ -363,20 +363,16 @@ export class ImportV1Wizard {
     this[`page_${step.id}`]();
     this.refreshTotals();
     if (step.id !== 'summary') this.actions.append(this.button('Next', () => this.next()));
+    this.actions.append(this.button('Start over', () => this.startOver(), true));
     if (index === 0) {
       this.offerSkip();
-      if (this.restored) this.skipZone.prepend(this.button('Start over', () => this.startOver(), true));
     }
   }
 
-  startOver() {
+  async startOver() {
     this.clearDraft();
-    this.mapping = structuredClone(this.preview.suggested);
-    for (const key of ['macro_conflicts', 'role_conflicts', 'project_members', 'memory_projects', 'enable_project_memory']) this.mapping[key] ||= {};
-    this.mapping.skip_macros ||= [];
-    this.defaultPeople(this.mapping);
-    this.restored = false; this.staleNote = null; this.stepID = this.steps[0].id;
-    this.render();
+    this.report = null; this.digest = null; this.newProject = null; this.staleNote = null;
+    await this.open();
   }
 
   async go(id) {
@@ -584,7 +580,7 @@ export class ImportV1Wizard {
     const rooms = shown.filter(room => !room.dm);
     const tree = planTree(this.mapping, shown);
     const kept = rooms.filter(room => !this.mapping.rooms[room.id]?.skip && this.mapping.rooms[room.id]?.project).length;
-    this.status.textContent = `${kept} of ${rooms.length} rooms will be imported. Choose where each v1 room goes; a room with a message in the last 30 days starts open, an older one archived. Rooms sent to the same place merge, their messages interleaved by their v1 numbers.`;
+    this.status.textContent = `${kept} of ${rooms.length} rooms will be imported. Every room starts open; archive individual rooms or use Archive all if you want. Rooms sent to the same place merge, their messages interleaved by their v1 numbers.`;
     const layout = node('div', '', 'import-rooms'); const list = node('div', '', 'import-room-list'), aside = node('aside', '', 'import-room-tree');
     aside.setAttribute('aria-label', 'Rooms in v2');
     for (const group of mergeGroups(tree)) { const warning = node('p', `${group.rooms.length} v1 rooms will be merged into ${group.where}: ${group.rooms.join(', ')}.`, 'import-warning'); warning.setAttribute('role', 'note'); list.append(warning); }
@@ -963,6 +959,15 @@ export class ImportV1Wizard {
     for (const entry of report.skipped_memory) this.content.append(node('p', `${entry.scope} · ${entry.scope_key} · ${entry.id}: ${entry.reason}`));
   }
 
+  renderFinishedSummary(report) {
+    const counts = report.imported || {};
+    this.content.append(node('h3', 'Imported from v1'));
+    this.content.append(node('p', `${number(counts.rooms)} rooms · ${number(counts.messages)} messages · Historical agents: ${number(report.historical_agents)}`, 'import-finished-summary'));
+    this.content.append(node('h3', 'Destination projects'));
+    if (!(report.destinations || []).length) this.content.append(node('p', 'No projects were selected.'));
+    for (const destination of report.destinations || []) this.content.append(node('p', `${destination.name} · ${destination.folder}`, 'import-destination'));
+  }
+
   async commit() {
     this.error.textContent = '';
     const result = await request('/api/import-v1/commit', { method: 'POST', body: { mapping: this.mapping, digest: this.digest } });
@@ -1035,7 +1040,7 @@ export class ImportV1Wizard {
         // The links come first: they are shown only here, so they must not sit below a long report where a scroll would hide them.
         this.renderInvites(job);
         if (!(job.invites || []).length && !job.invite_error) this.content.append(node('p', 'No new accounts were created, so there are no invite links.', 'settings-intro import-no-accounts'));
-        if (job.report) { this.renderReportCounts(job.report); this.renderSkippedMemory(job.report); this.content.append(...(job.report.carried_over_files?.length ? [node('h3', 'Files kept for v2'), ...job.report.carried_over_files.map(path => node('p', path))] : [])); }
+        if (job.report) { this.renderFinishedSummary(job.report); this.renderReportCounts(job.report); this.renderSkippedMemory(job.report); this.content.append(...(job.report.carried_over_files?.length ? [node('h3', 'Files kept for v2'), ...job.report.carried_over_files.map(path => node('p', path))] : [])); }
         else this.content.append(node('p', 'Import completed. Refresh to see the imported rooms.'));
         this.actions.append(this.button('Close and refresh', () => location.reload()));
         return;

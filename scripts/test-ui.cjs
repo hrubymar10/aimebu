@@ -516,7 +516,7 @@ async function main() {
         const draft = JSON.parse(localStorage.getItem('aimebu2.import-draft.v1-flow'));
         out.draft = { step: draft.step, project: draft.mapping.projects['fresh-start']?.name, role: draft.mapping.role_conflicts.reviewer };
         wizard = new ImportV1Wizard(); statusState = 'ready'; await wizard.open();
-        out.restored = { label: wizard.progressLabel.textContent, note: !!find('.import-restored'), mapping: wizard.mapping.projects['fresh-start']?.name, startOver: [...wizard.skipZone.querySelectorAll('button')].map(button => button.textContent) };
+        out.restored = { label: wizard.progressLabel.textContent, note: !!find('.import-restored'), mapping: wizard.mapping.projects['fresh-start']?.name, startOver: buttons().filter(label => label === 'Start over') };
         // From the summary, Import now commits, clears the draft and carries the debug button.
         for (const key of Object.keys(localStorage)) if (key.startsWith('aimebu2.ui.debug-inspector.')) localStorage.removeItem(key);
         await wizard.go('summary'); await settle(); await settle();
@@ -549,9 +549,9 @@ async function main() {
     });
     assert.deepEqual(importWizardFlow, {
       closedWithoutBackup: true, closedWhenSkipped: true, closedWhenDone: true, cannotEscape: true,
-      first: { label: 'Step 1 of 8 · Projects', now: '1', max: '8', buttons: ['Next'], skipOffered: true, steps: ['projects', 'people', 'rooms', 'dms', 'memory', 'macros', 'roles', 'summary'] },
+      first: { label: 'Step 1 of 8 · Projects', now: '1', max: '8', buttons: ['Next', 'Start over'], skipOffered: true, steps: ['projects', 'people', 'rooms', 'dms', 'memory', 'macros', 'roles', 'summary'] },
       blocked: { still: 'Step 1 of 8 · Projects', error: true, link: true, focused: true, invalid: 'true' },
-      second: { label: 'Step 2 of 8 · People', buttons: ['Back', 'Next'], skipOffered: false }, backToProjects: true, systemDraft: { project: '', skip: true }, addProject: { formAtEnd: true, formFocus: true, stayed: true, last: 'last-one', nameFocused: true, buttonAfter: true },
+      second: { label: 'Step 2 of 8 · People', buttons: ['Back', 'Next', 'Start over'], skipOffered: false }, backToProjects: true, systemDraft: { project: '', skip: true }, addProject: { formAtEnd: true, formFocus: true, stayed: true, last: 'last-one', nameFocused: true, buttonAfter: true },
       account: { login: 'bob', role: 'viewer', mapped: 'bob', takenBlocked: true, shortBlocked: true, kept: { users: '{"bob":{"login":"bobby","role":"operator"}}', mapped: 'bobby' } },
       rooms: {
         label: 'Step 3 of 8 · Rooms', status: '2 of 4 rooms',
@@ -567,13 +567,13 @@ async function main() {
       macros: { label: 'Step 6 of 8 · Macros', status: '2 of 2 macros', none: ['greet', 'other'], noneStatus: '0 of 2 macros', all: 0, one: ['other'], conflict: true },
       roles: { label: 'Step 7 of 8 · Roles', choice: 'use_v1' },
       summary: {
-        label: 'Step 8 of 8 · Summary', buttons: ['Back', 'Import now'], skipOffered: false,
+        label: 'Step 8 of 8 · Summary', buttons: ['Back', 'Import now', 'Start over'], skipOffered: false,
         where: ['a-leader → ⌂ a', 'a → a › general', 'solo → kcd2 › general (archived)', 'scratch → Fresh Start › general (archived)', 'nina → direct message in a · dm:alice:nina@repo'], headers: ['Record', 'New', 'Skipped'], rowKeys: ['rooms', 'messages', 'macros'],
         lists: ['Where each room goes', 'Rooms not imported: no project', 'Memory switched off', 'Merged rooms', 'Accounts created', 'Role conflicts', 'Not carried over'], accounts: true, noProject: true, plans: true,
         sent: { accounts: '{"bob":{"login":"bobby","role":"operator"}}', skipMacros: ['other'], rooms: ['root', 'general', false, 'a'], projects: ['a', 'kcd2', 'fresh-start'], roles: 'use_v1' },
       },
       backKept: { label: 'Step 5 of 8 · Memory', macro: 'other' }, draft: { step: 'memory', project: 'Fresh Start', role: 'use_v1' },
-      restored: { label: 'Step 5 of 8 · Memory', note: false, mapping: 'Fresh Start', startOver: [] },
+      restored: { label: 'Step 5 of 8 · Memory', note: false, mapping: 'Fresh Start', startOver: ['Start over'] },
       invites: { value: 'http://example.test/#invite=aui_one', copy: true, heading: true, first: true, hint: true },
       committed: { digest: 'digest-1', status: 'v1 import complete', draftCleared: true },
       skipKept: true, skipped: { posts: 1, closed: true, draftCleared: true }, reserved: { text: true, empty: true, skip: true },
@@ -649,7 +649,7 @@ async function main() {
         const again = new ImportV1Wizard();
         await again.open();
         out.reopened = { tomas: again.mapping.humans.tomas, tomasAccount: !!again.mapping.new_users.tomas, rae: again.mapping.humans.rae, raeAccount: !!again.mapping.new_users.rae, owner: again.mapping.humans.sam };
-        again.startOver();
+        await again.startOver();
         out.startedOver = { tomas: again.mapping.humans.tomas, rae: again.mapping.humans.rae };
         again.dialog.close(); again.dialog.remove();
         return out;
@@ -4661,7 +4661,7 @@ async function main() {
     }
     await agentPage.setViewport({ width: 1100, height: 720 });
     // The profile's actions are labelled buttons; Stop is the danger one, Pause a plain one, and the row's hover icons are not repeated.
-    assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-actions button', els => els.map(el => [el.getAttribute('aria-label'), el.textContent, el.classList.contains('btn-icon'), el.classList.contains('icon-btn-danger')])), [['Message', '', true, false], ['Pause', '', true, false], ['Stop', '', true, true], ['Switch', '', true, false], ['Start', '', true, false], ['Remove', '', true, true]], 'the agent actions are icon buttons named by aria-label, with no text');
+    assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-actions button', els => els.map(el => [el.getAttribute('aria-label'), el.textContent, el.classList.contains('btn-icon'), el.classList.contains('icon-btn-danger')])), [['Message', '', true, false], ['Pause', '', true, false], ['Stop', '', true, true], ['Switch', '', true, false], ['Start', '', true, false], ['Start fresh', '', true, false], ['Remove', '', true, true]], 'the agent actions are icon buttons named by aria-label, with no text');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => [...el.children].filter(child => getComputedStyle(child).display !== 'none').length), 0, 'the open profile has no button in the row: the panel\'s back arrow is its one close control');
     // A disabled action says why: in its tooltip and in a line under the buttons.
     assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const button = card.querySelector('.agent-reactivate'), hint = card.querySelector(`#${button.getAttribute('aria-describedby')}`); return { disabled: button.disabled, title: button.title, hint: hint?.textContent, shown: !!hint?.offsetParent, pauseTitle: card.querySelector('.agent-act-pause').title, pauseDescribed: card.querySelector('.agent-act-pause').hasAttribute('aria-describedby') }; }), { disabled: true, title: 'Start is unavailable: it is already active', hint: 'Start is unavailable: it is already active.', shown: true, pauseTitle: 'Pause: finish the current turn, then accept no new work', pauseDescribed: false });

@@ -62,6 +62,12 @@ async function main() {
     // the second text field is the folder; the name stays "repo"
     await page.evaluate((selector, folder) => { const input = [...document.querySelectorAll(`${selector} .import-v1-content input[type=text]`)][1]; input.value = folder; input.dispatchEvent(new Event('input', { bubbles: true })); }, DIALOG, folder);
     await next(page, 'Step 2 of 7 · People');
+    await clickButton(page, 'Start over');
+    await stepIs(page, 'Step 1 of 7 · Projects');
+    assert.equal(await page.$eval(`${DIALOG} [data-project-folder="repo"]`, input => input.value), '', 'starting over clears the project choice');
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.includes('import-draft'))), false, 'starting over clears the saved draft');
+    await page.evaluate((selector, folder) => { const input = document.querySelector(`${selector} [data-project-folder="repo"]`); input.value = folder; input.dispatchEvent(new Event('input', { bubbles: true })); }, DIALOG, folder);
+    await next(page, 'Step 2 of 7 · People');
     heights.push(await height(page));
     assert.match(await page.$eval(DIALOG, dialog => dialog.textContent), /messages show under the account you map them to/, 'the copy says what the rendering does');
     assert.doesNotMatch(await page.$eval(DIALOG, dialog => dialog.textContent), /original names remain/);
@@ -74,10 +80,12 @@ async function main() {
     await next(page, 'Step 3 of 7 · Rooms');
     heights.push(await height(page));
     assert.equal(await footer(page), '2 of 2 rooms selected · 5 messages go in', 'the rooms page says how much is selected');
-    // `repo` has had no message for 60 days, so it is suggested archived; `repo-leader` is recent and stays open.
+    // Both rooms start open, even though `repo` has had no message for 60 days.
     const rooms = await page.evaluate(selector => [...document.querySelectorAll(`${selector} .import-room-row`)].map(row => ({ name: row.querySelector('strong, b, h3, .import-room-name')?.textContent || row.textContent.split('\n')[0], archived: row.querySelector('input[type=checkbox]')?.checked ?? null })), DIALOG);
     assert.equal(rooms.length, 2, `two rooms are offered (the event room and the chat are not): ${JSON.stringify(rooms)}`);
+    assert.equal(rooms.find(room => room.name === 'repo')?.archived, false, 'an older room starts open');
     assert.match(await page.$eval(DIALOG, dialog => dialog.textContent), /A project's home room is never archived\./, 'a row with no archive choice says why');
+    await page.$eval(`${DIALOG} [data-archived="repo"]`, box => box.click());
     await next(page, 'Step 4 of 7 · Direct messages');
     assert.match(await page.$eval(`${DIALOG} .settings-intro`, node => node.textContent), /^The chat is not going to be imported\./);
     assert.doesNotMatch(await page.$eval(DIALOG, node => node.textContent), /dm:alice/, 'the raw v1 id is not shown when the title is unambiguous');
@@ -108,6 +116,7 @@ async function main() {
       parts: Object.fromEntries([...document.querySelectorAll(`${selector} .import-accounting-group`)].map(group => [group.dataset.key, Object.fromEntries([...group.querySelectorAll('tr[data-part]')].map(row => [row.dataset.part, Number(row.lastChild.textContent.replace(/,/g, ''))]))])),
       keys: [...document.querySelectorAll(`${selector} > .import-v1-content > table td[data-key]`)].map(cell => cell.dataset.key) }), DIALOG); };
     const first = await summary();
+    assert.equal(await page.evaluate(selector => [...document.querySelector(`${selector} .dialog-actions`).querySelectorAll('button')].some(button => button.textContent === 'Start over'), DIALOG), true, 'start over remains available through review');
     // Every count of the backup is accounted for, with a reason for each part left out.
     assert.equal(first.headline, `Bringing across ${FIXTURE.imported} of ${FIXTURE.messages} messages, 2 of ${FIXTURE.rooms} rooms, ${FIXTURE.attachments} of ${FIXTURE.attachments} attachments.`);
     assert.deepEqual(first.parts.messages, { imported: FIXTURE.imported, presence_lines: FIXTURE.presence, system_room: 1, dm_not_imported: 1 });
@@ -141,13 +150,16 @@ async function main() {
     await page.waitForFunction(selector => /v1 import complete/.test(document.querySelector(selector).textContent), { timeout: 60000 }, DIALOG);
     assert.equal(calls.filter(call => call.endsWith('/commit')).length, 1);
     assert.equal(await page.$eval(`${DIALOG} h2`, node => node.textContent), 'Import finished', 'the finished page has a heading');
+    assert.equal(await page.$eval(`${DIALOG} .import-finished-summary`, node => node.textContent), `2 rooms · ${FIXTURE.imported} messages · Historical agents: 1`);
+    assert.deepEqual(await page.$$eval(`${DIALOG} .import-destination`, nodes => nodes.map(node => node.textContent)), [`${FIXTURE.projectName} · ${folder}`]);
+    assert.equal(await page.evaluate(selector => [...document.querySelector(`${selector} .dialog-actions`).querySelectorAll('button')].some(button => button.textContent === 'Start over'), DIALOG), false, 'start over is absent after commit');
     const owner = await server.ownerClient();
     const projects = await owner('/api/projects');
     assert.equal(projects.status, 200);
     const project = projects.body.find(item => item.name === FIXTURE.projectName);
     assert.ok(project, `the imported project exists: ${JSON.stringify(projects.body)}`);
     assert.equal(project.folder, folder, 'with the folder typed in step 1');
-    // `repo-leader` became the project's home room and stays open; `repo`, archived in step 3, is its "general" and must be archived too.
+    // `repo-leader` became the project's home room; the owner chose to archive `repo` on the Rooms page.
     const placed = (await owner(`/api/projects/${project.id}/rooms`)).body;
     const list = Array.isArray(placed) ? placed : placed.rooms;
     assert.deepEqual(list.map(room => [room.kind, room.title, room.lifecycle]).sort(), [['home', 'repo', 'open'], ['task', 'general', 'closed']], JSON.stringify(list));

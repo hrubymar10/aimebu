@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/sqliteutil"
@@ -21,9 +20,6 @@ import (
 // ErrV1BackupChanged means the backup no longer matches the key recorded when it was made: something wrote to it (a v1 server
 // started on a copy of it, or a manual edit) after the move.
 var ErrV1BackupChanged = errors.New("the v1 backup changed after the manifest was written")
-
-// v1PreviewNow is the clock the preview's room defaults use; tests replace it.
-var v1PreviewNow = time.Now
 
 var ErrV1NoRooms = errors.New("v1 source has no rooms")
 
@@ -198,7 +194,6 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 			paired[strings.TrimSuffix(room.ID, "-leader")] = true
 		}
 	}
-	lastMessage := map[string]time.Time{}
 	for _, msg := range data.Messages {
 		if msg.ID > out.HighestMessageID {
 			out.HighestMessageID = msg.ID
@@ -206,9 +201,6 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 		// v1's presence bookkeeping is not imported, so it is neither a message of the room nor activity in it.
 		if isV1PresenceLine(msg) {
 			continue
-		}
-		if at, err := time.Parse(time.RFC3339Nano, msg.CreatedAt); err == nil && at.After(lastMessage[msg.RoomID]) {
-			lastMessage[msg.RoomID] = at
 		}
 		roomCount[msg.RoomID]++
 		if v1ImportMessageKind(msg, data.Agents) == "user" {
@@ -324,12 +316,8 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 			alias = strings.TrimSuffix(room.ID, "-leader")
 		}
 		skip := room.ID == V1SystemRoom || alias == "" || isV1DM(room.ID) // a DM is decided below, once its project is known
-		// A room with traffic in the last 30 days stays open; an older one is archived (the owner can flip either, or all at once).
-		lifecycle := "closed"
-		if last, ok := lastMessage[room.ID]; ok && v1PreviewNow().Sub(last) <= 30*24*time.Hour {
-			lifecycle = "open"
-		}
-		spec := V1ImportRoom{Project: alias, Lifecycle: lifecycle, Skip: skip}
+		// Every room starts open; the owner can archive individual rooms or all at once.
+		spec := V1ImportRoom{Project: alias, Lifecycle: "open", Skip: skip}
 		// v1 "x-leader" was the project's lead room and "x" its working room. In v2 the first is the project root and the second a
 		// "general" sub-room of it. A room named like a project that has no leader room is the project's root.
 		if alias != "" && room.ID != V1SystemRoom && !isV1DM(room.ID) {

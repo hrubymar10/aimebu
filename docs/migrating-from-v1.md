@@ -121,7 +121,8 @@ including skip, answers `410 import_closed`. (Repeating a skip is the one no-op
 that still answers `204`.)
 
 The wizard walks you through these choices one page at a time (Projects, People, Rooms,
-Direct messages, Memory, Macros, Roles, Summary) and keeps your place if you reload:
+Direct messages, Memory, Macros, Roles, Summary) and keeps your place if you reload.
+Before importing, **Start over** on any page clears your choices and returns to Projects:
 
 - where each v1 room goes. Rooms are suggested into projects (a `x` room and
   its `x-leader` room share one; the leader room is suggested into the project's
@@ -129,7 +130,7 @@ Direct messages, Memory, Macros, Roles, Summary) and keeps your place if you rel
   is suggested into the root; each room can instead be a
   separate room, any sub-room title, or skipped; rooms sent to the same place merge,
   and the wizard warns before you check); v1's `_system` room is never imported and is not listed. A room with
-  a message in the last 30 days starts open and an older one archived; change
+  starts open regardless of its last message; change
   any room, or use **Open all** / **Archive all**. Each project needs a
   workspace folder: v2 suggests the working directory most of that project's v1
   agents ran from (even if they used several checkouts, such as git
@@ -146,7 +147,8 @@ Direct messages, Memory, Macros, Roles, Summary) and keeps your place if you rel
 The **Summary** is a dry run. It shows the counts, any access gaps, every v1 setting
 that has no v2 equivalent, and a **Not carried over** list of the v1 data v2
 does not bring. Resolve the gaps, then choose **Import** and wait for completion.
-Running it again changes nothing. The detailed choices are explained in the
+The finished page lists imported rooms, messages, historical agents, and destination
+projects with their workspace folders. Running it again changes nothing. The detailed choices are explained in the
 [import guide](import-v1.md).
 
 What comes across: rooms, messages, replies, reactions and attachments; project
@@ -175,9 +177,9 @@ See the [import guide](import-v1.md) for mapping choices.
 
 Open a few familiar rooms and confirm their messages, replies, reactions, and
 attachments. Check who can see each project and private chat. Imported rooms
-that were quiet for 30 days start archived unless you opened them, so look in each project's
-**Archived** list if a room seems missing; rooms with unread messages show their
-count there. Reopen the rooms you want to keep working in. Old AI sessions do
+start open by default. Rooms you chose to archive appear in each project's
+**Archived** list, with unread counts when they have unread messages. Reopen
+the rooms you want to keep working in. Old AI sessions do
 not resume automatically. Check imported memory in **Memory** (it arrives as ordinary
 records, and project facts reach agents only once you enable the project's
 memory), check **Settings → Harnesses** for each harness and its models (the v1 import does not carry model lists), and run

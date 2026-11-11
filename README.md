@@ -634,14 +634,15 @@ from v1. For a same-root cutover, stop v1 and point `AIMEBU2_CONFIG_DIR` and
 `.old-v1-bkp/` with crash recovery, then first owner sign-in opens a Review → Check
 → Import wizard. This is the only import opportunity; Skip import closes it permanently. The wizard
 offers per-room, person, project, memory, setting, and role
-choices; a dry run shows counts and access gaps before commit. Start with
+choices; a dry run shows counts and access gaps before commit. Start over clears
+the review choices before import; the finished page summarizes counts and destination projects. Start with
 [Migrating from aimebu v1](docs/migrating-from-v1.md); see
 [the import guide](docs/import-v1.md) for detailed mapping choices.
 
 The wizard imports v1 rooms, messages, attachments, reactions, all three memory scopes, shared
 macros, compatible global roles, each mapped human's read
-position per room, and the owner's custom notification sounds. Rooms are archived
-by default. The mapping makes project visibility and human identity explicit; see
+position per room, and the owner's custom notification sounds. Rooms start open
+unless you choose to archive them. The mapping makes project visibility and human identity explicit; see
 [the import guide](docs/import-v1.md). Message numbers and reply links retain their
 v1 IDs; native messages continue above the highest v1 number. Imported messages
 use native message fields and renderers.

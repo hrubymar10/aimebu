@@ -44,7 +44,7 @@ the field offers matching directories on that machine (files are omitted;
 hidden directories appear after typing `.`). Arrow keys choose a directory,
 Enter or Tab completes it, `/` enters it, and Escape closes the list. The draft (the
 choices and the page) is kept in the browser for each backup, so a reload
-continues where you left off; a choice in it for something the backup no longer offers (for example a macro that is now left out) is dropped, with a note on the page that opens; **Start over** on the first page drops the draft. The
+continues where you left off; a choice in it for something the backup no longer offers (for example a macro that is now left out) is dropped, with a note on the page that opens; **Start over** on any review page drops the draft and returns to Projects. The
 Summary is the dry run in words. It opens with one line of totals ("Bringing across
 23,889 of 28,002 messages, …") and, per count of the backup (rooms, messages,
 attachments, reactions), a block that adds up to the backup's own number: what is
@@ -66,7 +66,7 @@ is not listed), then what is not imported and why, merged rooms, and what v2 doe
 Choose **Import now** there, or **Skip the
 import…** (a separate link on the first page only, never next to **Import
 now**) and confirm **Skip import forever** in the dialog that names the
-consequence. A completed or skipped import (skip after a completed import answers `410 import_closed`) cannot be reopened from
+consequence. A finished import shows imported room and message counts, the number of historical agents in those rooms, and each destination project and workspace folder. Start over is unavailable once the import is committed. A completed or skipped import (skip after a completed import answers `410 import_closed`) cannot be reopened from
 Settings, the normal API, or the CLI. The choice is stored in the v2 database.
 The workspace offers Retry if startup reads time out; a late read still checks
 the first-run import choice. An empty backup or no backup has no import wizard,
@@ -81,8 +81,7 @@ import**, every direct message starts as **Don't import** (it is imported only w
 ticks it), and a room or memory scope that
 reaches an import with no project is not imported and is listed in the report as
 `skipped_no_project`. An import with no projects at all is allowed (the rest of the backup,
-macros and the like, still imports). `_system` is never imported and is not listed: the preview skips it (with a `skip_reason`) and the importer ignores any mapping that puts it in a project, so a saved draft or a hand-written map cannot bring it across. A room with a message in the last 30 days starts open and an older one
-archived; **Open all** and **Archive all** set every kept room at once. Each room has one
+macros and the like, still imports). `_system` is never imported and is not listed: the preview skips it (with a `skip_reason`) and the importer ignores any mapping that puts it in a project, so a saved draft or a hand-written map cannot bring it across. Every room starts open; **Open all** and **Archive all** set every kept room at once. Each room has one
 **Import into** choice: the project's root room, its `general` room, a new sub-room named like
 the v1 room, or **Don't import**; a live tree of the v2 rooms (with message counts) sits beside
 the list, **Archived after import** is a toggle on the room, and every project select ends
@@ -137,7 +136,7 @@ section with an import box and a project choice. No direct message is imported
 unless the owner ticks it; the project is already filled in (the agent's own
 project when the wizard proposes one), so ticking a chat needs no further
 choice. Direct messages always import open, because v2 has no
-archive for them; when a mapping asked for the archive default the Check
+archive for them; when a mapping asked to archive one, the Check
 report lists those DMs under **Direct messages opened** (`opened_dms`). Each
 entry shows its source id and message count, since two chats can share a title,
 and the title follows the current people mapping. The owner is added to every imported DM, so a chat between two

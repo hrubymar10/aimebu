@@ -9,7 +9,7 @@ const DAY = 24 * 3600 * 1000;
 const ago = days => new Date(Date.now() - days * DAY).toISOString().replace(/\.\d+Z$/, 'Z');
 
 // What the fixture holds, for the test to count against:
-//   rooms: repo-leader + repo (a project and its working room; `repo` is old, so it is suggested archived), a DM, and v1's _system room
+//   rooms: repo-leader + repo (a project and its working room; `repo` is old, but starts open), a DM, and v1's _system room
 //   people: alice (human, maps to the owner), bob (human); agent bot@repo
 //   messages: 5 in rooms + 1 presence line ("bot joined") + 1 in the DM + 1 in _system, 1 reaction, 1 attachment, 2 memory records, 4 macro rows (2 yours, a built-in as shipped, a deleted built-in), 1 room view preference (alice pinned repo-leader)
 const FIXTURE = { rooms: 4, messages: 8, imported: 5, presence: 1, skippedRooms: 2, skippedMessages: 2, attachments: 1, memory: 2, macros: 4, macrosOffered: 2, roomPrefs: 1, humans: ['alice', 'bob'], projectName: 'repo' };

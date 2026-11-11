@@ -164,8 +164,15 @@ type V1ImportReport struct {
 	SkippedSounds  map[string]string `json:"skipped_sounds"`
 	NotCarried     map[string]int    `json:"not_carried"`
 	// Accounting reconciles the backup's room, message, attachment and reaction totals to what the import does with them, a reason per part.
-	Accounting       []V1AccountingGroup `json:"accounting"`
-	CarriedOverFiles []string            `json:"carried_over_files,omitempty"`
+	Accounting       []V1AccountingGroup   `json:"accounting"`
+	CarriedOverFiles []string              `json:"carried_over_files,omitempty"`
+	Destinations     []V1ImportDestination `json:"destinations,omitempty"`
+	HistoricalAgents int                   `json:"historical_agents"`
+}
+
+type V1ImportDestination struct {
+	Name   string `json:"name"`
+	Folder string `json:"folder"`
 }
 
 type V1SkippedMemory struct {
@@ -1349,6 +1356,11 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 			report.Imported["projects"]++
 		}
 		projectIDs[alias] = id
+		var destination V1ImportDestination
+		if err := tx.QueryRowContext(ctx, "SELECT name,folder FROM project WHERE id=?", id).Scan(&destination.Name, &destination.Folder); err != nil {
+			return report, err
+		}
+		report.Destinations = append(report.Destinations, destination)
 		ownerGrant, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO membership(project_id,user_id,role) VALUES (?,?,'owner')", id, ownerID)
 		if err != nil {
 			return report, err
@@ -1460,6 +1472,7 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 	}
 	roomIDs := map[string]string{}
 	newRooms := map[string]bool{}
+	historicalAgents := map[string]bool{}
 	for _, room := range data.Rooms {
 		spec := mapping.Rooms[room.ID]
 		if spec.Skip {
@@ -1469,6 +1482,11 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 		}
 		if spec.Project == "" {
 			spec.Project = mapping.DefaultProject
+		}
+		for _, member := range room.Members {
+			if v1ImportKind(member, data.Agents) == "agent" {
+				historicalAgents[member] = true
+			}
 		}
 		projectID := projectIDs[spec.Project]
 		if mapping.Wizard {
@@ -1603,6 +1621,12 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 			}
 		}
 	}
+	for _, message := range data.Messages {
+		if roomIDs[message.RoomID] != "" && v1ImportMessageKind(message, data.Agents) == "agent" {
+			historicalAgents[message.From] = true
+		}
+	}
+	report.HistoricalAgents = len(historicalAgents)
 	report.TargetWarnings = targets.warnings()
 	var sourceMaxID int64
 	for _, message := range data.Messages {
