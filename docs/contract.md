@@ -18,6 +18,21 @@ system note with the held text and options to send in the agent's task room,
 use `dm_agent`, or repeat with `force:true`. A future agent toolbox room-send
 tool must apply the same guard and report the missed agent and alternatives.
 
+## Project handbook
+
+Each project has a durable handbook with fixed Markdown sections Current state,
+Open backlog, Conventions, Gotchas, and Timeline. SQLite keeps a current
+snapshot and append-only revision snapshots, including section, operation,
+author, time, and a textual diff. No existing file is imported. A lead role
+identified by `cap_is_lead` can read and update it by section using optimistic
+revisions. Only a dispatcher in the leader-dispatcher flow can read Current
+state and Open backlog; workers and reviewers cannot access it. Any project
+member can read the document, snapshots, and paginated history through the
+user API, with no human write route. The first delivery of each new native
+lead session includes the full handbook and marks it as previous-leader state
+to verify; later deliveries carry an over-budget nudge when needed. Plain
+prune preserves the handbook, while full prune and project deletion remove it.
+
 ## 1. Identifiers and ordering
 
 - Server ids: opaque sortable `<prefix>_<ulid>` (`prj_ room_ msg_ agt_ ses_

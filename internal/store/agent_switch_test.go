@@ -112,8 +112,21 @@ func TestAgentSwitchWaitsForTurnAndHandsOffRoomLocalContext(t *testing.T) {
 	if err != nil || card.Switch != nil {
 		t.Fatalf("completed switch %+v %v", card, err)
 	}
-	if _, ready, err := s.PrepareDispatch(ctx, agent.ID, ""); err != nil || !ready {
+	// A switched leader's new native session receives the durable handbook on
+	// its first delivery, even when the handoff already has room context.
+	if _, err := s.db.Exec(`UPDATE role SET cap_is_lead=1 WHERE id='role_worker'`); err != nil {
+		t.Fatal(err)
+	}
+	state := "Decision retained across switch"
+	if _, err := s.UpdateHandbook(ctx, project.ID, agent.ID, "current_state", &state, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, agent.ID, "")
+	if err != nil || !ready {
 		t.Fatalf("handoff not dispatched after spawn confirmation: ready=%t %v", ready, err)
+	}
+	if !strings.Contains(string(delivery.Context), state) || !strings.Contains(string(delivery.Context), "previous leader") {
+		t.Fatalf("switched lead missing handbook: %s", delivery.Context)
 	}
 }
 

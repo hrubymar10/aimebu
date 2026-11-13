@@ -323,7 +323,7 @@ func TestRoomMentionMigrationUpdatesOnlyUneditedBuiltins(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, item := range []struct{ id, want string }{
-		{"role_lead_default", leadRoleBody},
+		{"role_lead_default", priorHandbookLeadRoleBody},
 		{"role_worker_default", currentWorkerRoleBody},
 		{"role_reviewer_default", reviewerRoleBody + " owner edit"},
 	} {

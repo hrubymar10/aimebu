@@ -1361,6 +1361,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 /* Glyphs for buttons that used to carry a text character or word (close, plus, copy, stop, ...): Lucide icons (ISC, see
    web/vendor/README.md), drawn through a mask in the current colour like the navbar glyphs. */
 .icon-mask-close { -webkit-mask-image: url("/icons/close.svg"); mask-image: url("/icons/close.svg"); }
+.icon-mask-book-open { -webkit-mask-image: url("/icons/book-open.svg"); mask-image: url("/icons/book-open.svg"); }
 .icon-mask-trash { -webkit-mask-image: url("/icons/trash.svg"); mask-image: url("/icons/trash.svg"); }
 .icon-mask-select-all { -webkit-mask-image: url("/icons/select-all.svg"); mask-image: url("/icons/select-all.svg"); }
 .icon-mask-plus { -webkit-mask-image: url("/icons/plus.svg"); mask-image: url("/icons/plus.svg"); }

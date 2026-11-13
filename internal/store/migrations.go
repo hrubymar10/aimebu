@@ -1700,7 +1700,26 @@ INSERT OR IGNORE INTO role(id,key,label,body,cap_is_lead,cap_can_spawn,cap_singl
 VALUES ('role_dispatcher_default','dispatcher','Dispatcher',
 'Take specifications from the leader in routing. Create task rooms, spawn and brief workers and reviewers, run review, gate, and fix rounds. Report to the leader in routing only: done <what, SHA, how verified>; blocked <why>; or needs decision <question>. Do not send routine worker traffic to the home room.',
 0,1,0,NULL,'dispatcher','📨','singleton');
-`}}
+`}, {107, `
+CREATE TABLE IF NOT EXISTS project_handbook (
+  project_id TEXT PRIMARY KEY REFERENCES project(id) ON DELETE CASCADE,
+  rev INTEGER NOT NULL CHECK (rev > 0),
+  sections_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_handbook_revision (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  rev INTEGER NOT NULL CHECK (rev > 0),
+  sections_json TEXT NOT NULL,
+  section TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  diff TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL,
+  PRIMARY KEY(project_id,rev)
+);
+` + roleHandbookMigration()}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.

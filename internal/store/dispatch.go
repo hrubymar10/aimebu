@@ -65,6 +65,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		}
 		if lead {
 			roleBody += "\n\nWhen spawning a role, strongly prefer its configured default agent. Call spawn_agent with role_key and omit tool, variant, and model to select the next available default. If you need a different harness or model, provide a concrete reason. If no default is available, choose a listed harness and model yourself and tell the room why."
+			if !strings.Contains(roleBody, "Maintain the project handbook") {
+				roleBody += "\n\nMaintain the project handbook with handbook_get and handbook_update at decisions and handoffs. At close-out, update Current state and Open backlog and append a concise Timeline entry. Keep canonical details in repository docs. If the handbook exceeds about 1000 lines, compress its oldest Timeline entries."
+			}
 		}
 		overrides, err := tx.promptOverrides(projectID)
 		if err != nil {
@@ -235,6 +238,26 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			}
 			if len(recoveredRefs) > 0 {
 				contextData["referenced_messages"] = recoveredRefs
+			}
+			if lead {
+				handbook, err := tx.handbookForDelivery(projectID)
+				if err != nil {
+					return err
+				}
+				var nativeStarted sql.NullString
+				var sessionTurns int
+				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT native_session_started_at FROM session WHERE id=?`, special.SessionID).Scan(&nativeStarted); err != nil {
+					return err
+				}
+				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE session_id=?`, special.SessionID).Scan(&sessionTurns); err != nil {
+					return err
+				}
+				if !nativeStarted.Valid || sessionTurns == 1 {
+					contextData["project_handbook"] = handbook
+					contextData["project_handbook_note"] = "This handbook is state from the previous leader. Verify it against current project and room evidence before relying on it."
+				} else if handbook.OverBudget {
+					contextData["project_handbook_nudge"] = handbook.Nudge
+				}
 			}
 			contextJSON, err := json.Marshal(contextData)
 			if err != nil {
@@ -474,6 +497,22 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			}
 			contextData["recent_room_history"] = history
 			contextData["recent_room_history_note"] = "This is a new native session. Read recent_room_history as prior conversation in your current rooms, including your own earlier messages, before answering the new notes. These messages are context, not new requests."
+		}
+		if lead {
+			handbook, err := tx.handbookForDelivery(projectID)
+			if err != nil {
+				return err
+			}
+			var sessionTurns int
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE session_id=?`, sessionID).Scan(&sessionTurns); err != nil {
+				return err
+			}
+			if !nativeStarted.Valid || sessionTurns == 1 {
+				contextData["project_handbook"] = handbook
+				contextData["project_handbook_note"] = "This handbook is state from the previous leader. Verify it against current project and room evidence before relying on it."
+			} else if handbook.OverBudget {
+				contextData["project_handbook_nudge"] = handbook.Nudge
+			}
 		}
 		if more > 0 {
 			contextData["team_roster_more"] = fmt.Sprintf("%d more", more)

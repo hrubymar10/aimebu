@@ -69,6 +69,11 @@ var catalog = []tool{
 		"room_id": map[string]string{"type": "string"}, "lifecycle_rev": map[string]string{"type": "integer"},
 		"cascade": map[string]string{"type": "boolean"}, "request_key": map[string]string{"type": "string"},
 	}, "required": []string{"room_id", "lifecycle_rev", "request_key"}}},
+	{"handbook_get", "Read the project handbook. The lead sees all sections; a leader-dispatcher flow dispatcher sees Current state and Open backlog only.", empty},
+	{"handbook_update", "Active lead only. Replace one handbook section with content or append patch, using the current revision.", map[string]any{"type": "object", "properties": map[string]any{
+		"section": map[string]any{"type": "string", "enum": []string{"current_state", "open_backlog", "conventions", "gotchas", "timeline"}},
+		"content": map[string]string{"type": "string"}, "patch": map[string]string{"type": "string"}, "rev": map[string]string{"type": "integer"},
+	}, "required": []string{"section", "rev"}}},
 	{"memory_add", "Add a curated project fact, the profile of a member of your project, or a shared agent note when project memory is enabled, or a note to a joined task room. A shared note waits for the owner's approval before other agents see it.", map[string]any{"type": "object", "properties": map[string]any{
 		"scope":             map[string]any{"type": "string", "enum": []string{"project", "task", "user_profile", "agent_shared_notes"}},
 		"room_id":           map[string]string{"type": "string", "description": "Required for task notes"},
@@ -302,6 +307,38 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		method, path = http.MethodPost, "/api/agent/rooms/"+roomID+"/close"
 		requestKey = getString("request_key")
 		body = map[string]any{"lifecycle_rev": rev, "cascade": cascade}
+	case "handbook_get":
+		path = "/api/agent/handbook"
+	case "handbook_update":
+		section := getString("section")
+		if section != "current_state" && section != "open_backlog" && section != "conventions" && section != "gotchas" && section != "timeline" {
+			return toolResult("invalid handbook section", true)
+		}
+		var rev int64
+		if json.Unmarshal(args["rev"], &rev) != nil || rev < 0 {
+			return toolResult("rev must be a nonnegative integer", true)
+		}
+		_, hasContent := args["content"]
+		_, hasPatch := args["patch"]
+		if hasContent == hasPatch {
+			return toolResult("provide exactly one of content or patch", true)
+		}
+		method, path = http.MethodPut, "/api/agent/handbook"
+		body = map[string]any{"section": section, "rev": rev}
+		if hasContent {
+			var content string
+			if json.Unmarshal(args["content"], &content) != nil {
+				return toolResult("content must be a string", true)
+			}
+			body.(map[string]any)["content"] = content
+		}
+		if hasPatch {
+			var patch string
+			if json.Unmarshal(args["patch"], &patch) != nil {
+				return toolResult("patch must be a string", true)
+			}
+			body.(map[string]any)["patch"] = patch
+		}
 	case "memory_add":
 		method, path = http.MethodPost, "/api/agent/memory"
 		scope, roomID, scopeKey, content := getString("scope"), getString("room_id"), getString("scope_key"), getString("body")

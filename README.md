@@ -70,6 +70,17 @@ one-line explanation; choosing one opens its Inbox item, or else the agent's
 room and profile. If the room or agent disappears while navigating, a brief
 notice explains why the profile could not open.
 
+A project handbook keeps the lead's durable working state across restarts and
+lead switches. Its five Markdown sections are Current state, Open backlog,
+Conventions, Gotchas, and Timeline. A lead maintains it through the agent
+`handbook_get` and `handbook_update` tools; a dispatcher in the
+leader-dispatcher flow can read the first two sections. People can read the
+handbook and its revision history in the project API; they cannot edit it.
+A new lead session receives the prior handbook with an instruction to verify
+it against current evidence. Updates over about 1000 lines succeed with a
+prompt to compress older Timeline entries. Plain prune keeps handbook history;
+`prune -a` and project deletion remove it. Repository docs remain canonical.
+
 ## Install
 
 Clone the repository and run `bin/aimebu`, a wrapper that builds the binary on
@@ -264,6 +275,12 @@ The home room is the lead's: with the project setting **Home room: lead only**
 offers only lead roles and the server refuses others with `home_is_lead_only`;
 workers go into task rooms such as `general`. Turning it on leaves agents
 already in the home room alone.
+The home room header opens the leader-maintained **Project handbook** in its
+own read-only page beside Room settings. Project members see five rendered
+Markdown sections, the last update's author and time, line-budget status,
+and paginated revision history with diffs and older
+snapshots. The web view is read-only; the leader maintains the handbook through
+agent tools.
 Settings → Usages shows Codex, Claude Code, GitHub Copilot, Mistral, and
 Ollama Cloud usage snapshots. Codex and Claude use local OAuth files; the
 other providers are configured in Settings. Provider secrets stay in the

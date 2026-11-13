@@ -17,6 +17,7 @@ import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './pages/topbar/page.js';
 import { createUsagesSource } from './usages-source.js';
 import { KnowledgePanel } from './pages/knowledge/page.js';
+import { HandbookView } from './pages/project/handbook-view.js';
 import { Health } from './pages/health/page.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
@@ -102,9 +103,9 @@ setProjectNames(projectID => sidebar.projects.get(projectID)?.name || '');
 sidebar.holdRead = id => chat.room?.id === id && (chat.contextMode || chat.catchingUp);
 sidebar.shownSeq = id => chat.room?.id === id ? chat.newestShownSeq() : 0;
 chat.onLatest = room => { if (sidebar.active === room.id) sidebar.markSeen(sidebar.rooms.get(room.id)); };
-// A room that was open here is closed: no chat, no knowledge, no room in the address.
+// A room that was open here is closed: no chat or project content, and no room in the address.
 function closeOpenRoom() {
-  chat.reset(); teamFlowHome.reset(); knowledge.setRoom(null);
+  chat.reset(); teamFlowHome.reset(); knowledge.setRoom(null); handbook.setRoom(null);
   history.replaceState(null, '', `${location.pathname}${location.search}`);
 }
 // A removed room is gone for everyone: refresh its project and, if it was open here, go to the project's home room.
@@ -340,6 +341,7 @@ const topbarMenu = new TopbarMenu();
 new ColumnResize();
 const roomMenu = new RoomMenu();
 const knowledge = new KnowledgePanel(() => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), () => chat.room);
+const handbook = new HandbookView(projectID => sidebar.projects.get(projectID)?.name || '');
 chat.openProjectMemory = projectID => knowledge.openProjectFacts(projectID);
 chat.openTaskNotes = () => knowledge.openTask();
 let stream;
@@ -357,7 +359,7 @@ function resetWorkspace() {
   cancelStartup();
   sessionGeneration++;
   stream?.stop(); stream = null;
-  sidebar.reset(); chat.reset(); teamFlowHome.reset(); inbox.reset(); agents.reset(); knowledge.setRoom(null);
+  sidebar.reset(); chat.reset(); teamFlowHome.reset(); inbox.reset(); agents.reset(); knowledge.setRoom(null); handbook.setRoom(null);
   health.ticket++;
   systemEvents.reset(); messageDebug.reset();
   onboarding.close(); // its card covers the viewport, so it must not outlive the session (it would sit over the sign-in page)
@@ -419,6 +421,7 @@ async function openRoom(room, messageID, { listed = false } = {}) {
   }
   if (!current()) return false;
   room = sidebar.rooms.get(room.id) || room;
+  handbook.setRoom(room);
   sidebar.setActive(room.id);
   inbox.setRoom(room);
   // An older agent-list request must not restore spawn controls for the
@@ -430,6 +433,7 @@ async function openRoom(room, messageID, { listed = false } = {}) {
     // The room was removed (or taken away) after the list was read, in another tab or by another person: say so and go to the project's home
     // room. A 403 is the same: the person no longer reaches it.
     if (![403, 404].includes(error?.status) || !current()) throw error;
+    handbook.setRoom(null);
     await roomGone(room);
     return false;
   }
@@ -448,7 +452,7 @@ async function openRoom(room, messageID, { listed = false } = {}) {
 // Resolves 'synced', 'gone' (the room cannot be read any more: open it the ordinary way, which says so) or 'stale' (the session it began in ended
 // meanwhile: nothing more is done for it).
 async function syncOpenRoom(room, generation = sessionGeneration) {
-  chat.setRoomFacts(room); agents.setRoomFacts(room); inbox.setRoom(room); knowledge.setRoom(room);
+  chat.setRoomFacts(room); agents.setRoomFacts(room); inbox.setRoom(room); knowledge.setRoom(room); handbook.setRoom(room);
   try { await Promise.all([chat.syncInPlace(), agents.refresh()]); } catch (error) {
     if (generation !== sessionGeneration) return 'stale';
     if ([403, 404].includes(error?.status)) return 'gone';

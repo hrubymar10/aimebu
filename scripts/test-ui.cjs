@@ -1889,6 +1889,14 @@ async function main() {
     assert.equal((await first.evaluate(async id => (await (await fetch(`/api/rooms/${id}`)).json()).unread_count, homeID)), 0, 'server unread_count counted a same-account post');
     await domClick(first, `[data-room-id="${homeID}"] .room-item-name`);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
+    assert.equal(await first.$eval('#room-handbook', node => node.hidden), false, 'the home room offers the project handbook beside settings');
+    await domClick(first, '#room-handbook');
+    await first.waitForFunction(() => document.querySelector('#handbook-dialog')?.open && document.querySelectorAll('#project-handbook .handbook-section').length === 5);
+    assert.deepEqual(await first.$$eval('#project-handbook .handbook-section h4', nodes => nodes.map(node => node.textContent)), ['Current state', 'Open backlog', 'Conventions', 'Gotchas', 'Timeline']);
+    await domClick(first, '#project-handbook .handbook-actions button');
+    await first.waitForFunction(() => document.querySelector('#project-handbook .handbook-history')?.textContent.includes('No revisions yet.'));
+    await domClick(first, '#project-handbook .handbook-header button');
+    await first.waitForFunction(() => !document.querySelector('#handbook-dialog').open);
     await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task' && document.querySelectorAll('.chat-msg').length === 1 && document.querySelector('.chat-msg-body')?.textContent === 'First message');
     // The header shows where the room sits: its project above the title, the crumb leads back to the project's home room, a home room has no path, and on a
@@ -4856,6 +4864,8 @@ async function main() {
     await agentPage.evaluate(async () => { document.querySelector('.room-item.active .room-item-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden);
     await domClick(agentPage, '#health-toggle');
+    // The popover's items render from the agents store once its refresh lands; wait for the item instead of racing it.
+    await agentPage.waitForSelector('#health-popover .health-item[data-code="recovery_waiting"]');
     await agentPage.click('#health-popover .health-item[data-code="recovery_waiting"]');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_approval"]'));
     assert.equal(await agentPage.$eval('#health-popover', el => el.hidden), true, 'choosing a health item closes the list');
@@ -4863,6 +4873,7 @@ async function main() {
     await agentPage.evaluate(async () => { document.querySelector('.room-item.active .room-item-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden);
     await domClick(agentPage, '#health-toggle');
+    await agentPage.waitForSelector('#health-popover .health-item[data-code="held_answer"]');
     await domClick(agentPage, '#health-popover .health-item[data-code="held_answer"]');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_held"]'));
     await agentPage.evaluate(async () => { document.querySelector('.room-item.active .room-item-name').click(); });

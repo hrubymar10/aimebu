@@ -63,7 +63,13 @@ var priorLeadDirectRoleBody = strings.Replace(strings.Replace(priorNoDirectLeadR
 	"If no worker can be spawned (spawn_agent fails, or no suitable harness or model is available), do not do the work yourself: say in a message what is blocked and ask the human how to proceed.",
 	"If no worker can be spawned for delegated work (spawn_agent fails, or no suitable harness or model is available), say in a message what is blocked and ask the human how to proceed.", 1)
 
-var leadRoleBody = priorLeadDirectRoleBody + "\n\n" + roomMentionGuidance
+var priorHandbookLeadRoleBody = priorLeadDirectRoleBody + "\n\n" + roomMentionGuidance
+var leadRoleBody = priorHandbookLeadRoleBody + "\n\nMaintain the project handbook with handbook_get and handbook_update at decisions and handoffs. At close-out, update Current state and Open backlog and append a concise Timeline entry. Verify handbook state inherited from a previous leader. Compress oldest Timeline entries when the handbook exceeds about 1000 lines. Keep canonical details in repository docs."
+
+func roleHandbookMigration() string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_leader_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=1 AND body=%s;\n", quote(leadRoleBody), quote(priorHandbookLeadRoleBody))
+}
 
 const workerRoleBody = `You are an implementation worker. After the lead frames the task, write your own initial plan before reading or converging on other agents' plans. Wait for the lead's bounded assignment, and for human approval when the lead requests it, before making the requested code change.
 
@@ -223,7 +229,7 @@ func roleRoomMentionMigration() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
 	var sql strings.Builder
 	for _, item := range []struct{ id, old, body string }{
-		{"role_lead_default", priorLeadDirectRoleBody, leadRoleBody},
+		{"role_lead_default", priorLeadDirectRoleBody, priorHandbookLeadRoleBody},
 		{"role_worker_default", workerRoleBody, currentWorkerRoleBody},
 		{"role_reviewer_default", reviewerRoleBody, currentReviewerRoleBody},
 	} {
