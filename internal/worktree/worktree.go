@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/runtimeignore"
 )
 
 type Result struct {
@@ -132,7 +134,7 @@ func ensureDirectories(root string) error {
 			return problem("unsafe_path", ".aimebu worktree parent must be a real directory")
 		}
 	}
-	return nil
+	return runtimeignore.Ensure(root)
 }
 
 func ensureExclude(exclude string) error {

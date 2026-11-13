@@ -811,7 +811,7 @@ async function main() {
     const soon = new Date(Date.now() + 4 * 60000 + 30000).toISOString();
     await show(page, 'r1', [agent('f1', 'warm1', { tool: 'claude', warm: { state: 'warm', sleeps_at: soon } }), agent('f2', 'cold1', { tool: 'claude', warm: { state: 'sleeping' } }),
       agent('f3', 'work1', { tool: 'claude', observed: 'in_turn' }), agent('f4', 'unk1', { tool: 'claude', warm: { state: 'unknown' } }), agent('f5', 'off1', { tool: 'claude', desired: 'stopped', observed: 'stopped' }),
-      agent('f6', 'pause1', { tool: 'claude', desired: 'not_accepting' }), agent('f7', 'plain1', { tool: 'codex' }), agent('f8', 'pending1', { tool: 'claude' })]);
+      agent('f6', 'pause1', { tool: 'claude', desired: 'not_accepting' }), agent('f7', 'plain1', { tool: 'codex', warm: { state: 'na' } }), agent('f8', 'pending1', { tool: 'claude' })]);
     const read = id => page.$eval(`[data-agent-id=${id}]`, node => {
       const dot = node.querySelector('.agent-dot'), style = getComputedStyle(dot), words = node.querySelector('.dot-words'), sr = node.querySelector('.dot-sr');
       return { kind: dot.dataset.dot, background: style.backgroundColor, ring: style.boxShadow !== 'none', animation: style.animationName, size: [Math.round(dot.getBoundingClientRect().width), Math.round(dot.getBoundingClientRect().height)],
@@ -820,14 +820,14 @@ async function main() {
     });
     const colours = () => page.evaluate(() => {
       const root = getComputedStyle(document.documentElement), probe = value => { const el = document.createElement('i'); el.style.color = value; document.body.append(el); const c = getComputedStyle(el).color; el.remove(); return c; };
-      return { green: probe(root.getPropertyValue('--green-text')), orange: probe(root.getPropertyValue('--orange')), red: probe(root.getPropertyValue('--red')) };
+      return { green: probe(root.getPropertyValue('--green-text')), orange: probe(root.getPropertyValue('--orange')), red: probe(root.getPropertyValue('--red')), muted: probe(root.getPropertyValue('--text-muted')) };
     });
     for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
       const want = await colours();
       const states = Object.fromEntries(await Promise.all(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(async id => [id, await read(id)])));
-      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(id => states[id].kind), ['warm', 'cold', 'working', 'unknown', 'offline', 'unknown', 'cold', 'cold'], `${theme}: what each card's dot says`);
-      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(id => states[id].background), [want.green, want.green, want.green, want.orange, want.red, want.orange, want.green, want.green], `${theme}: green online, orange not known, red offline, from the theme`);
+      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(id => states[id].kind), ['warm', 'cold', 'working', 'unknown', 'offline', 'unknown', 'na', 'cold'], `${theme}: what each card's dot says`);
+      assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(id => states[id].background), [want.green, want.green, want.green, want.orange, want.red, want.orange, want.muted, want.green], `${theme}: online, unknown, offline and warm n/a colours follow the theme`);
       assert.deepEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].map(id => states[id].ring), [true, false, false, false, false, false, false, false], `${theme}: only a warm dot has the ring`);
       assert.equal(states.f1.animation, 'presence-pulse', `${theme}: and it pulses`);
       assert.deepEqual(['f2', 'f3', 'f4', 'f5'].map(id => states[id].animation), Array(4).fill('none'), `${theme}: nothing else moves`);
@@ -839,6 +839,8 @@ async function main() {
     assert.match(f1.tooltip, /^Online \u00b7 warm, the next answer skips the start \(\u2248[45] min left\)$/, 'the warm dot says so in its tooltip');
     assert.deepEqual([f1.spoken === f1.tooltip, f1.hiddenVisually], [true, true], 'and in words for a screen reader, hidden visually');
     assert.equal((await read('f2')).tooltip, 'Online \u00b7 cold, the next answer starts the agent');
+    assert.equal((await read('f7')).tooltip, "Online \u00b7 warm n/a: this harness doesn't keep its process warm");
+    assert.equal(await page.$eval('[data-agent-id=f7] .agent-activity', node => node.textContent), 'Warm n/a');
     assert.match((await read('f3')).tooltip, /^Online \u00b7 working/);
     assert.match((await read('f4')).tooltip, /^State unknown/, 'an unknown warm state says so');
     assert.match((await read('f5')).tooltip, /^Offline/);

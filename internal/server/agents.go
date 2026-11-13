@@ -477,7 +477,7 @@ type agentCardWithUsage struct {
 	// Hold says why this agent's next turn will not start although it is idle and accepting work: the limit guard is holding new turns of its tool.
 	Hold *agentHold `json:"hold,omitempty"`
 	// Warm says whether the agent's process is being kept up for its next turn: State "warm" (with SleepsAt, RFC 3339, when it goes to sleep) or
-	// "sleeping" (warm mode is on for it and there is no live process). Absent when warm mode is off or does not apply to the agent.
+	// "sleeping" (warm mode is on for it and there is no live process), or "na" for a harness without warm mode.
 	Warm *agentWarm `json:"warm,omitempty"`
 	// KeepAlive is about the agent's prompt cache being kept warm with pings: what the last ping did and what a stretch of them costs. Absent when
 	// keep-alive is off or does not apply to the agent.
@@ -548,10 +548,13 @@ type agentWarm struct {
 	SleepsAt string `json:"sleeps_at,omitempty"`
 }
 
-// agentWarmState works out what a card says about warm mode, from what the card's machine last reported (its live processes and the window it works to).
+// agentWarmState works out what a card says about warm mode. Only Claude has a WarmAdapter today; for it, use what the machine last reported.
 func (s *Server) agentWarmState(card store.AgentCard) *agentWarm {
-	if card.Desired != "active" || card.Tool != "claude" {
+	if card.Desired != "active" {
 		return nil
+	}
+	if card.Tool != "claude" {
+		return &agentWarm{State: "na"}
 	}
 	machine, err := s.machineForID(card.MachineID)
 	if err != nil || !machine.supportsWarm {

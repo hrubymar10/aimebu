@@ -105,7 +105,7 @@ func TestAccountSwitchWarmRetireGoneOrSilent(t *testing.T) {
 
 // A card says warm (until when) while the supervisor reports a live idle process, sleeping when the supervisor says it works to a window and there is
 // none, unknown when an older supervisor report lacks idle_seconds, and nothing before the first report
-// when the window is 0 (warm mode off), the agent is not active or not Claude, the machine keeps nothing warm, or the agent is in a turn.
+// when the window is 0 (warm mode off), the agent is not active, the machine keeps nothing warm, or the agent is in a turn. Other harnesses say n/a.
 func TestAgentCardWarmState(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -148,9 +148,12 @@ func TestAgentCardWarmState(t *testing.T) {
 	}
 	other := card
 	other.Tool = "codex"
+	if got := f.srv.agentWarmState(other); got == nil || got.State != "na" {
+		t.Fatalf("a harness without warm mode says n/a: %+v", got)
+	}
 	stopped := card
 	stopped.Desired = "stopped"
-	for name, c := range map[string]store.AgentCard{"another tool": other, "stopped": stopped} {
+	for name, c := range map[string]store.AgentCard{"stopped": stopped} {
 		if got := f.srv.agentWarmState(c); got != nil {
 			t.Errorf("%s: %+v", name, got)
 		}

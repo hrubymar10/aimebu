@@ -164,7 +164,8 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if spec.NativeSessionStarted {
 		args = append(args, "resume")
 	}
-	schemaPath, err := adapter.VisiblePath(spec, filepath.Join(runtimeDir, "schema.json"))
+	schemaFile := filepath.Join(runtimeDir, "schema.json")
+	schemaPath, err := adapter.VisiblePath(spec, schemaFile)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +197,15 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		return nil, err
+	}
+	// A shared checkout can be cleaned between preparation and process launch.
+	// Restore a missing schema at the last point before the CLI reads it.
+	schema := responseSchema
+	if spec.Mode == adapter.ModeDiagnostic {
+		schema = diagnosticSchema
+	}
+	if err := ensureSchema(schemaFile, schema); err != nil {
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
@@ -413,6 +423,20 @@ func writePrivate(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+func ensureSchema(path string, schema []byte) error {
+	data, err := os.ReadFile(path)
+	if err == nil && string(data) == string(schema) {
+		return nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return writePrivate(path, schema)
 }
 
 type turn struct {

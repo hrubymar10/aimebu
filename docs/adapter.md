@@ -249,7 +249,7 @@ the rest of the person's config (model, profile, approvals) still does not apply
 The same rules hold for every harness that carries a person's own servers (Codex,
 OpenCode, Pi and Vibe: normal turns only, a read-only turn gets none). A Docker turn
 carries the person's remote (HTTP or SSE) servers only, because a command on the host is
-not in the container (each one left out is logged with that reason): Codex passes each as
+not in the container (each one left out is logged once per supervisor process with that reason): Codex passes each as
 a `-c mcp_servers.<name>=…` override and keeps `--ignore-user-config`, with aimebu's own two entries
 last. The Codex path fails closed: a server is carried only when its parsed table holds nothing but a
 `url`, `enabled = true` and the two timeouts. Any other key (a header or tools table in any
@@ -586,9 +586,9 @@ and output schema paths to their container-visible locations; Pi translates
 its session directory. The supervisor runs a bounded
 launcher version probe from the requested checkout before recording the agent;
 an unmounted path fails spawn with the launcher's error. The adapters create
-`<checkout>/.aimebu/` for Codex's output schema and Pi sessions, and add `.aimebu/` to the
+`<checkout>/.aimebu/` for generated state, write `.aimebu/.gitignore` containing `*` when missing, and add `.aimebu/` to the
 repository's `info/exclude` (shared by its worktrees, carried by no commit) so an agent's `git add -A` cannot publish that
-runtime state. The Docker
+runtime state. Ordinary `git clean -fd` leaves ignored state alone; `git clean -fdx` can still remove it. The Docker
 launcher version probe supplies the catalog version. The owner adds and enables
 native or containerized harnesses per machine in Settings → Harnesses; a new
 machine has none.
@@ -603,7 +603,11 @@ spawn, switch, and reactivation requests.
 The server checks the agent key and exposes the same managed toolbox as stdio
 MCP.
 Codex's response schema is written below the mirrored checkout, while its
-credentials stay in the container's configured Codex home. Codex Docker turns
+credentials stay in the container's configured Codex home. The adapter checks
+that the schema still exists immediately before launch and recreates it
+if checkout cleanup removed it after preparation. A forced `git clean -fdx`
+or another cleanup of the shared checkout can still remove it during a turn.
+Codex Docker turns
 pass `exec --ignore-user-config`, retaining those credentials while skipping
 the mounted user's `config.toml` and its MCP servers. The only MCP configured
 for a normal turn is aimebu's HTTP endpoint. Claude Docker is not strict

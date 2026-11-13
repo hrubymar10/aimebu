@@ -53,6 +53,7 @@ export const stateDot = kind => ({ idle: 'active', working: 'active', paused: 's
 export function warmOf(agent, now = Date.now()) {
   const warm = agent.warm;
   if (!warm || warm.state === 'unknown' || agent.observed !== 'idle') return null;
+  if (warm.state === 'na') return { text: 'Warm n/a', title: "This harness doesn't keep its process warm." };
   if (warm.state === 'warm') {
     const left = Date.parse(warm.sleeps_at) - now;
     if (!Number.isFinite(left)) return { text: 'Warm', title: 'Its process is kept running for the next message.' };
@@ -74,6 +75,7 @@ export function dotOf(agent, state, now = Date.now()) {
   if (dot === 'stale') return { kind: 'unknown', title: state.title || state.name };
   if (dot === 'offline') return { kind: 'unknown', title: `State unknown${detail}` };
   if (state.kind === 'working') return { kind: 'working', title: `Online \u00b7 working${detail}` };
+  if (agent.warm?.state === 'na') return { kind: 'na', title: "Online \u00b7 warm n/a: this harness doesn't keep its process warm" };
   if (agent.warm?.state === 'unknown') return { kind: 'unknown', title: 'State unknown \u00b7 whether its process is kept warm is not known (an older supervisor)' };
   if (agent.warm?.state === 'warm') {
     const left = Date.parse(agent.warm.sleeps_at) - now, minutes = Number.isFinite(left) ? Math.max(1, Math.ceil(left / 60000)) : 0;

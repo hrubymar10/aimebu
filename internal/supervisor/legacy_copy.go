@@ -16,6 +16,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/runtimeignore"
 	"github.com/hrubymar10/aimebu/internal/sqliteutil"
 	_ "modernc.org/sqlite"
 )
@@ -39,6 +40,9 @@ func (c *Client) copyLegacySession(ctx context.Context, d protocol.Delivery, con
 	var private string
 	if d.Agent.Tool == "pi" {
 		private = filepath.Join(d.CheckoutPath, ".aimebu", "pi-sessions", agentHash)
+		if err := runtimeignore.Ensure(d.CheckoutPath); err != nil {
+			return err
+		}
 	} else {
 		private = filepath.Join(c.ConfigDir, "supervisor", d.Agent.Tool, agentHash)
 	}

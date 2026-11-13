@@ -1424,8 +1424,8 @@ A task room (opted in, or by default while the project's `worktree_mode` is
 made, else the project folder is used; see [cleanup](cleanup.md)) creates
 `<project>/.aimebu/worktrees/<room-id>` on
 `aimebu/<room-id>` from the committed HEAD of its base ref. The server adds
-`.aimebu/` once to Git's `info/exclude`; it never edits `.gitignore` or
-commits. Dirty base files stay in the base checkout, and their count is
+`.aimebu/` once to Git's `info/exclude` and creates
+`.aimebu/.gitignore` with `*` when absent; neither is committed. Dirty base files stay in the base checkout, and their count is
 reported in the room and API. New agents homed in the room use that path;
 an existing lead that joins another room keeps its current checkout. Each
 machine creates the equivalent worktree in its mapped project root, and the

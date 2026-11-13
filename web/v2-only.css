@@ -652,6 +652,7 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .agent-dot { position: relative; }
 .dot-words { display: block; position: absolute; inset: -5px; }
 .agent-dot[data-dot="cold"], .agent-dot[data-dot="working"], .agent-dot[data-dot="warm"] { background: var(--green-text); }
+.agent-dot[data-dot="na"] { background: var(--text-muted); }
 .agent-dot[data-dot="unknown"] { background: var(--orange); }
 .agent-dot[data-dot="offline"] { background: var(--red); }
 .agent-dot[data-dot="warm"] { color: var(--green-text); border: 1.5px solid var(--bg-secondary); box-shadow: 0 0 0 1px currentColor; animation: presence-pulse 1.6s ease-in-out infinite; }

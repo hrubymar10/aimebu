@@ -73,6 +73,23 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 	}
 }
 
+func TestEnsureSchemaRestoresDeletedCheckoutFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".aimebu", "codex-schemas", "agent", "schema.json")
+	if err := ensureSchema(path, responseSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSchema(path, diagnosticSchema); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != string(diagnosticSchema) {
+		t.Fatalf("restored schema = %q, %v", data, err)
+	}
+}
+
 func TestFailedLauncherCapturesRedactedStderr(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "codex")

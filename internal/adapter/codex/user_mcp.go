@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	toml "github.com/pelletier/go-toml/v2"
 
@@ -143,6 +144,16 @@ type userMCP struct {
 	envVars []string
 }
 
+// A rejected entry is a property of the user's config, not of an individual
+// turn. Keep the warning visible once without printing it on every delivery.
+var skippedMCPWarnings sync.Map
+
+func logSkippedMCPOnce(key, format string, args ...any) {
+	if _, loaded := skippedMCPWarnings.LoadOrStore(key, struct{}{}); !loaded {
+		log.Printf(format, args...)
+	}
+}
+
 // readUserMCP reads the person's Codex config next to their auth file once. A missing config has none; one that cannot be read or parsed is left
 // out with a line in the log (the path, never the content), and the turn goes on without the servers.
 func readUserMCP(authPath string) userMCP {
@@ -163,7 +174,7 @@ func readUserMCP(authPath string) userMCP {
 		return userMCP{}
 	}
 	for _, name := range dropped {
-		log.Printf("codex: the MCP server %q of %s is not carried: it is aimebu's own bus of v1, or not a table", name, path)
+		logSkippedMCPOnce("native\x00"+path+"\x00"+name, "codex: the MCP server %q of %s is not carried: it is aimebu's own bus of v1, or not a table", name, path)
 	}
 	if tables == "" {
 		return userMCP{}
@@ -329,7 +340,7 @@ func userDockerOverrides() []string {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		log.Printf("codex: the MCP server %q of %s is not carried to the container: %s", name, path, skipped[name])
+		logSkippedMCPOnce("docker\x00"+path+"\x00"+name+"\x00"+skipped[name], "codex: the MCP server %q of %s is not carried to the container: %s", name, path, skipped[name])
 	}
 	return overrides
 }

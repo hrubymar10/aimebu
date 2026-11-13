@@ -592,7 +592,7 @@ the warm or sleeping state follows the process without polling.
 next answer starts the agent), green with a ring that pulses (as v1's presence dot did; a ring only under reduced motion) is online and warm, red is offline, and orange is a state
 that is not plain online or offline: a paused or waiting agent (its tooltip says which), or a Claude agent whose warm state is `unknown`. The dot's tooltip says it in words
 ("Online · warm, the next answer skips the start (≈4 min left)", "Online · cold…", "Offline", "State unknown"), and the same sentence is there for a screen reader. A working
-agent is green (its process is alive; whether it was warm is not told). The members panel's people have the same 8px dot. It reads the card's `warm` field, refreshed when a
+agent is green (its process is alive; whether it was warm is not told). An idle agent on a harness without a warm process (currently every harness except Claude) shows a neutral dot and “Warm n/a”, with a tooltip explaining that the harness does not keep its process warm. The members panel's people have the same 8px dot. It reads the card's `warm` field, refreshed when a
 process starts or ends, with no polling of its own (the minutes follow the panel's clock).
 
 A supervisor that keeps processes warm sends the server a `warm_state` frame (at

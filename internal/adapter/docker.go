@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/cmdprobe"
+	"github.com/hrubymar10/aimebu/internal/runtimeignore"
 )
 
 // DockerPreflight checks the requested checkout through the actual launcher.
@@ -164,6 +165,9 @@ func DockerCheckout(checkout string) error {
 // agent's `git add -A && git push` cannot publish it. The exclude file is the repository's own (info/exclude, shared by its worktrees), which
 // no commit carries. A folder that is not a git checkout has nothing to exclude it from and is left alone.
 func ExcludeRuntimeState(checkout string) error {
+	if err := runtimeignore.Ensure(checkout); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")
