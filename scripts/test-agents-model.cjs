@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'agents', 'model.js'), 'utf8');
 const context = vm.createContext({ Date, Number, Math, JSON, Map, Intl, Object, Array, String });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { reconcile, stateBadge, stateDot, stateOf, activityOf, warmOf, dotOf, keepAliveOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { reconcile, stateBadge, stateDot, stateOf, activityOf, warmOf, dotOf, keepAliveOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, quickActionsOf, profileRows, outputStatus, outputFailure };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -103,6 +103,7 @@ assert.equal(reasons({ desired: 'stopped' })['act-pause'], 'Pause is unavailable
 assert.equal(reasons({ desired: 'not_accepting' })['act-pause'], 'Pause is unavailable: it is already paused.');
 assert.equal(reasons({ desired: 'stopped' })['act-stop'], 'Stop is unavailable: it is already stopped.');
 assert.equal(reasons({ desired: 'active', health_flags: [{ code: 'out_of_quota' }] }).reactivate, '', 'a quota-held agent can be reactivated');
+assert.deepEqual(plain(m.quickActionsOf({ desired: 'active', health_flags: [{ code: 'out_of_quota' }] })), ['start', 'pause', 'stop'], 'the collapsed card offers the enabled quota restart');
 assert.equal(reasons({ desired: 'stopped', role_deleted: true }).reactivate, 'Start is unavailable: its role was deleted.');
 assert.equal(reasons({ desired: 'stopped', boundary_pending: true }).reactivate, 'Start is unavailable: it is waiting for folder or machine approval.');
 assert.equal(reasons({ desired: 'stopped', writer_blocked_by: { holder: 'alice@test' } }).reactivate, '', 'legacy writer data does not block starting');

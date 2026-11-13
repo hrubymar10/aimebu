@@ -92,4 +92,5 @@ same(tree.offers.map(offer => offer.id), ['o1']);
 // A leaf row is a view with nothing under it.
 same(leafView(room('l', 'a', { unread_count: 3 }), 'other', true), { room: room('l', 'a', { unread_count: 3 }), nest: false, chip: true, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: 3 });
 assert.equal(leafView(room('l', 'a', { unread_count: 3 }), 'l').unread, 0);
+assert.equal(leafView(room('old', 'a', { lifecycle: 'closed', unread_count: 3 }), 'other').unread, 0, 'archived history does not advertise unread activity');
 console.log('sidebar model: ok');

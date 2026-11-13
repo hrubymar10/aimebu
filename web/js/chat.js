@@ -60,7 +60,7 @@ export class Chat {
       // A history window pages forward again when its bottom is reached (only then is scrollHeight read on scroll).
       if (this.contextMode && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 80) this.loadNewer();
     });
-    this.scrollAnchor = new ScrollAnchor(this.list, '.chat-msg, .answer-row');
+    this.scrollAnchor = new ScrollAnchor(this.list, '.chat-msg');
     this.list.addEventListener('keydown', event => this.moveActionFocus(event));
     this.chip = document.querySelector('#reply-chip'); this.chipText = this.chip.querySelector('#reply-chip-jump'); this.chipText.onclick = () => { if (this.reply) this.jumpToMessage(this.reply.id); }; this.error = document.querySelector('#chat-error'); this.nodes = new Map();
     this.pendingNode = document.querySelector('#pending-attachments'); this.pendingNode.replaceChildren(); this.pendingView = mountPreactPage(this.pendingNode, props => html`<${PendingAttachments} ...${props} />`, { onError: error => console.error('pending attachments failed', error) }); this.attachmentInput = document.querySelector('#attachment-input');
@@ -149,7 +149,7 @@ export class Chat {
   }
   pageDrawn() {
     this.list.scrollTop = this.list.scrollHeight;
-    this.list.dataset.empty = String(!this.list.querySelector('article.chat-msg:not(.chat-msg-system)')); // notices alone leave it empty
+    this.list.dataset.empty = String(!this.list.querySelector('article.chat-msg'));
   }
   showNewest() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
   // How far the read mark may go (0 while a room is still loading). At the latest view the list is contiguous to the live
@@ -199,13 +199,11 @@ export class Chat {
   // A prepended (older) or paged (newer, in a history window) message leaves the scroll position alone; only a live append follows the bottom.
   listPlace() { return { atBottom: this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48, top: this.list.scrollTop }; }
   followList(place) { this.list.scrollTop = place.atBottom ? this.list.scrollHeight : place.top; this.scrollAnchor?.update(); }
-  noteRow(message) { if (this.list.dataset.empty === 'true' && message.author_kind !== 'system') this.list.dataset.empty = 'false'; }
+  noteRow(message) { if (this.list.dataset.empty === 'true') this.list.dataset.empty = 'false'; }
   listAtBottom() { return this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48; }
   listBox() { const box = this.list.getBoundingClientRect(); return { top: box.top, bottom: box.bottom }; }
   rowBoxes() {
-    // A row's answers (the controls, the history or the marker) are a row of the list under its card: the row ends where they end.
-    const tailOf = node => { const next = node.nextElementSibling; return next?.classList.contains('answer-row') ? next : node; };
-    return this.renderedRows().map(node => ({ id: node.dataset.messageId, seq: Number(node.dataset.seq), get top() { return node.getBoundingClientRect().top; }, get bottom() { return tailOf(node).getBoundingClientRect().bottom; } }));
+    return this.renderedRows().map(node => ({ id: node.dataset.messageId, seq: Number(node.dataset.seq), get top() { return node.getBoundingClientRect().top; }, get bottom() { return node.getBoundingClientRect().bottom; } }));
   }
   keepPlace(id) {
     const node = this.nodes.get(id), keepTop = node.getBoundingClientRect().top;

@@ -684,7 +684,8 @@ async function main() {
     // already in effect (it cannot be started yet); a stopped one has Start (reactivate) instead of both; a paused one has Resume (the same action) in place of its disabled Pause, and Stop. One word per action: Start for a stopped agent, Resume for a paused one, never "Reactivate".
     page = await mount();
     await show(page, 'r1', [agent('act', 'active'), agent('stopping', 'stopping', { desired: 'stopped', observed: 'in_turn' }), agent('interrupting', 'interrupting', { desired: 'active', observed: 'interrupting' }),
-      agent('stopped', 'stopped', { desired: 'stopped', observed: 'stopped' }), agent('paused', 'paused', { desired: 'not_accepting' })]);
+      agent('stopped', 'stopped', { desired: 'stopped', observed: 'stopped' }), agent('paused', 'paused', { desired: 'not_accepting' }),
+      agent('quota', 'quota', { desired: 'active', health_flags: [{ code: 'out_of_quota' }] })]);
     const quick = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#agents-list .agent-card')].map(card => [card.dataset.agentId, [...card.querySelectorAll('.agent-quick button')].map(button => [button.getAttribute('aria-label'), button.disabled, button.querySelector('svg') ? 'svg' : 'no icon']).filter(([label]) => !/privately|Open agent profile/.test(label))])));
     assert.deepEqual(quick, {
       act: [['Pause', false, 'svg'], ['Stop', false, 'svg']],
@@ -692,6 +693,7 @@ async function main() {
       interrupting: [['Stop', false, 'svg']],
       stopped: [['Start', false, 'svg'], ['Start fresh', false, 'no icon']],
       paused: [['Resume', false, 'svg'], ['Stop', false, 'svg']],
+      quota: [['Pause', false, 'svg'], ['Start', false, 'svg'], ['Stop', false, 'svg']],
     }, 'the hover buttons follow the state');
     assert.deepEqual(await page.evaluate(() => Object.fromEntries(['stopped', 'paused'].map(id => [id, document.querySelector(`[data-agent-id=${id}] .agent-reactivate`)]).map(([id, button]) => [id, [button.getAttribute('aria-label'), button.title]]))), { stopped: ['Start', 'Start: run this agent again and accept new work'], paused: ['Resume', 'Resume: accept new work again'] }, 'the profile action is named for the state too');
     // What a person reads: visible text, tooltips and accessible names. (Class names and ids such as agent-reactivate are the action's own name in the code.)

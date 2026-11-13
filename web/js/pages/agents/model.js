@@ -140,6 +140,7 @@ export function quickActionsOf(agent) {
   if (agent.desired === 'stopped' && agent.observed === 'stopped') return ['start'];
   if (agent.desired === 'stopped' || agent.observed === 'interrupting') return ['stop'];
   if (agent.desired === 'not_accepting') return ['resume', 'stop'];
+  if ((agent.health_flags || []).some(flag => flag.code === 'out_of_quota')) return ['start', 'pause', 'stop'];
   return ['pause', 'stop'];
 }
 

@@ -167,12 +167,21 @@ const inbox = new Inbox(createInboxSource(), sidebar.projects, sidebar.rooms, as
   if (item.message_id) await chat.jumpToMessage(item.message_id); // loads an older message or a thread reply too, then highlights it
 }, notifications, items => chat.updateAnswerControls(items));
 chat.setInbox(inbox);
-const agents = new AgentsPanel(createAgentSource(), agent => {
+const agents = new AgentsPanel(createAgentSource(), async agent => {
+  const generation = sessionGeneration;
   agents.setMobileOpen(false);
   setRoomsOpen(false);
   inbox.show();
+  if (!inbox.items) try { await inbox.refresh({ notify: false }); } catch { if (generation === sessionGeneration) showToast('Could not load Inbox.'); return; }
+  if (generation !== sessionGeneration) return;
   const item = inbox.items?.find(entry => entry.id === agent.recovery_inbox_id || (entry.agent_id === agent.id && entry.kind === 'recovery'));
-  if (item) document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' });
+  if (item) requestAnimationFrame(() => {
+    if (generation !== sessionGeneration || inbox.view.hidden) return;
+    const card = document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`);
+    card?.scrollIntoView({ block: 'center' });
+    card?.classList.remove('message-flash');
+    if (card) { void card.offsetWidth; card.classList.add('message-flash'); setTimeout(() => card.classList.remove('message-flash'), 1500); }
+  });
 }, cards => chat.setAgents(cards), async agent => {
   const generation = sessionGeneration;
   try {

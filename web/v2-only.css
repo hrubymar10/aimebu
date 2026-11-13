@@ -584,7 +584,7 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
    58% for the question button, as v1 does). The generic button rules (the browser-light plain button of the high-contrast themes, the grey disabled one) are not what v1
    draws for them. */
 :root:root :is(button.proposed-answer-btn, button.open-questions-open):not(:disabled) { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
-:root:root :is(button.proposed-answer-btn, button.open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--accent-dim); border-color: var(--accent); }
+:root:root :is(button.proposed-answer-btn, button.open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--bg-tertiary); border-color: var(--accent); color: var(--text-primary); }
 :root:root .answer-history button:disabled { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); opacity: .52; cursor: default; }
 :root:root .answer-history button.open-questions-open:disabled { opacity: .58; }
 

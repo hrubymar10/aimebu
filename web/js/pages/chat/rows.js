@@ -65,7 +65,7 @@ export function Plan({ message }) {
 }
 
 // The controls, the history or the "Answered" marker under a question; which one follows from the page's answer view.
-// `listed` is the slot as a row of the message list, under its message's card and aligned with it (`self`: the viewer's own); in the thread panel it is part of the entry.
+// `listed` keeps the slot under the message bubble and above its seen-by strip (`self`: the viewer's own).
 export function AnswerSlot({ message, view, host, listed = '' }) {
   const answer = view.answer;
   if (answer.kind === 'controls') return html`<${AnswerControls} key=${answer.key} className=${listed} data-inbox-id=${answer.item.id} data-rev=${String(answer.item.rev)} item=${answer.item} submit=${value => host.answer(answer.item, value)} ...${host.answerOptions(answer.parent)} />`;
@@ -146,7 +146,8 @@ export function MessageRow({ message, view, host }) {
     ${view.boundary && html`<span class="expiry-label">Older AI chatter won't reach agents automatically</span>`}
     <${MessageMeta} message=${message} view=${view} />
     <div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} />${!view.chip.hidden && html`<button type="button" class="row-btn thread-chip" title="Open the replies" aria-label=${view.chip.label}>${view.chip.text}</button>`}</div>
-  </article><${AnswerSlot} message=${message} view=${view} host=${host} listed=${/\bself\b/.test(view.articleClass || '') ? ' answer-row answer-row-self' : ' answer-row'} /><//>`}<//>`;
+    <${AnswerSlot} message=${message} view=${view} host=${host} listed=${/\bself\b/.test(view.articleClass || '') ? ' answer-row answer-row-self' : ' answer-row'} />
+  </article><//>`}<//>`;
 }
 
 export function MessageList({ entries = [], host, viewOf, restore }) {

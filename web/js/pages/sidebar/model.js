@@ -63,7 +63,7 @@ export function placeProject(projects, manual, id, targetID, after) {
 
 // The unread badge of a room row. A collapsed root also stands for the rooms nested under it, so collapsing
 // never hides new activity: its badge is its own unread count plus its children's. The open room counts as read.
-export function roomUnread(room, activeID) { return room.id === activeID ? 0 : Math.max(0, room.unread_count || 0); }
+export function roomUnread(room, activeID) { return room.id === activeID || room.lifecycle === 'closed' ? 0 : Math.max(0, room.unread_count || 0); }
 
 export function rowUnread(room, children, collapsed, activeID) {
   return roomUnread(room, activeID) + (collapsed ? children.reduce((sum, child) => sum + roomUnread(child, activeID), 0) : 0);

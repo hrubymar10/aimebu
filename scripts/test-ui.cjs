@@ -1088,7 +1088,7 @@ async function main() {
       const record = { id: item.message_id, seq: 1, no: 1, body: 'Choose', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
       chat.store.add(record);
       chat.threadEntries = [record]; chat.threadEntryIDs = new Set([record.id]); chat.threadUpdate();
-      const roomControlsOf = () => main.querySelector(':scope > .answer-controls'), threadNode = thread.querySelector('.thread-entry'); // in the room the answers are a row of the list under the card
+      const roomControlsOf = () => main.querySelector('.chat-msg > .answer-controls'), threadNode = thread.querySelector('.thread-entry');
       chat.updateAnswerControls([item]);
       const roomControls = roomControlsOf();
       const threadControls = threadNode.querySelector('.answer-controls');
@@ -1101,7 +1101,7 @@ async function main() {
       chat.updateAnswerControls([]);
       const removed = !roomControlsOf() && !threadNode.querySelector('.answer-controls');
       // The answered question keeps a quiet "Answered" (once, in the room and the thread), including after the message is drawn again.
-      const marker = node => [...node.querySelectorAll(':scope > .answer-done button')].map(button => [button.textContent, button.disabled]);
+      const marker = node => [...node.querySelectorAll('.answer-done button')].map(button => [button.textContent, button.disabled]);
       const answered = { room: marker(main), thread: marker(threadNode) };
       chat.updateAnswerControls([]);
       const stillOnce = marker(main).length;
@@ -1126,33 +1126,37 @@ async function main() {
       const base = { seq: 1, no: 1, body: 'q', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
       chat.store.add({ ...base, id: 'ask-1', proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] });
       chat.store.add({ ...base, id: 'plain', seq: 2, no: 2, body: 'hi' });
-      const read = node => ({ buttons: [...node.querySelectorAll(':scope > .answer-history button')].map(button => [button.textContent.trim(), button.disabled, button.title]), status: node.querySelector('.answer-history-status')?.textContent || '', blocks: node.querySelectorAll(':scope > .answer-history').length });
-      const bubble = main; // the answers are a row of the list under the message's card
-      const pending = read(bubble); const block = bubble.querySelector(':scope > .answer-history');
-      const card = main.querySelector('[data-message-id=ask-1]').getBoundingClientRect(), under = block.getBoundingClientRect();
-      const placed = { below: under.top >= card.bottom - 0.5, outside: under.top >= card.bottom - 0.5 && under.left >= card.left - 0.5 && Math.abs(under.left - card.left) < 2 };
+      const read = node => ({ buttons: [...node.querySelectorAll('.answer-history button')].map(button => [button.textContent.trim(), button.disabled, button.title]), status: node.querySelector('.answer-history-status')?.textContent || '', blocks: node.querySelectorAll('.answer-history').length });
+      const bubble = main;
+      const pending = read(bubble); const block = bubble.querySelector('.answer-history');
+      const card = main.querySelector('[data-message-id=ask-1]'), messageBubble = card.querySelector('.chat-msg-bubble').getBoundingClientRect(), under = block.getBoundingClientRect();
+      const placed = { below: under.top >= messageBubble.bottom - 0.5, outside: !card.querySelector('.chat-msg-bubble .answer-history') };
       chat.listUpdate();
-      const same = bubble.querySelector(':scope > .answer-history') === block;
+      const same = bubble.querySelector('.answer-history') === block;
       // A person replies to it: the next draw says Answered.
       chat.repliedTo.set('ask-1', new Set(['someone'])); chat.listUpdate();
       const answered = read(bubble);
       // It becomes open again: the live buttons replace the history.
       chat.updateAnswerControls([{ id: 'inb', message_id: 'ask-1', kind: 'question', rev: 0, proposed_answers: ['Proceed'], free_text: true, can_decide: true }]);
-      const reopened = { history: bubble.querySelectorAll(':scope > .answer-history').length, live: bubble.querySelectorAll(':scope > .answer-controls').length };
+      const reopened = { history: bubble.querySelectorAll('.answer-history').length, live: bubble.querySelectorAll('.answer-controls').length };
       const none = main.querySelector('[data-message-id=plain]');
-      // A row ends where its answers end: trimming the oldest rows must not drop one whose card is off the top while its answers are still in view.
-      const boxes = chat.rowBoxes(), tail = main.querySelector(':scope > .answer-row');
-      const rowEnd = { askEndsAtItsAnswers: Math.abs(boxes.find(box => box.id === 'ask-1').bottom - tail.getBoundingClientRect().bottom) < 1, plainEndsAtItsCard: Math.abs(boxes.find(box => box.id === 'plain').bottom - main.querySelector('[data-message-id=plain]').getBoundingClientRect().bottom) < 1 };
-      const result = { pending, placed, rowEnd, same, answered, reopened, plain: main.querySelectorAll('[data-message-id=plain] ~ .answer-row').length + none.querySelectorAll('.answer-history, .answer-done').length };
+      const boxes = chat.rowBoxes();
+      const rowEnd = { askEndsAtItsCard: Math.abs(boxes.find(box => box.id === 'ask-1').bottom - card.getBoundingClientRect().bottom) < 1, plainEndsAtItsCard: Math.abs(boxes.find(box => box.id === 'plain').bottom - none.getBoundingClientRect().bottom) < 1 };
+      const result = { pending, placed, rowEnd, same, answered, reopened, plain: none.querySelectorAll('.answer-history, .answer-done').length };
       main.remove();
       return result;
     });
     assert.deepEqual(askHistory.pending, { buttons: [['Open Questions 1', true, 'No longer pending'], ['Proceed', true, 'No longer pending'], ['Hold', true, 'No longer pending']], status: 'No longer pending', blocks: 1 }, 'an ask with nothing open shows its buttons, disabled and marked no longer pending');
     assert.equal(askHistory.same, true, 'a sync that changes nothing keeps the same block');
-    assert.deepEqual(askHistory.rowEnd, { askEndsAtItsAnswers: true, plainEndsAtItsCard: true }, 'a row with answers ends at its answers, one without at its card');
-    assert.deepEqual(askHistory.placed, { below: true, outside: true }, 'the answers sit under the message card, outside it, aligned with its left edge');
+    assert.deepEqual(askHistory.rowEnd, { askEndsAtItsCard: true, plainEndsAtItsCard: true }, 'each row ends at its own card');
+    assert.deepEqual(askHistory.placed, { below: true, outside: true }, 'the answers sit just below the bubble, before seen-by markers');
     assert.deepEqual([askHistory.answered.status, askHistory.answered.buttons.every(([, disabled, title]) => disabled && title === 'Answered'), askHistory.answered.blocks], ['', true, 1], 'a replied-to ask is its dimmed buttons, with no label of their own (their tooltip says Answered)');
     assert.deepEqual([askHistory.reopened, askHistory.plain], [{ history: 0, live: 1 }, 0], 'an open ask swaps the history for live buttons; a message without an ask gets nothing');
+    await first.evaluate(() => { window.__priorTheme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'high-contrast-dark'; const button = document.createElement('button'); button.id = 'answer-hover-check'; button.className = 'btn proposed-answer-btn'; button.textContent = 'Proceed'; button.style.cssText = 'position:fixed;top:80px;left:80px;z-index:100'; document.body.append(button); });
+    await first.hover('#answer-hover-check');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.deepEqual(await first.$eval('#answer-hover-check', el => { const style = getComputedStyle(el); return [style.color, style.backgroundColor, style.borderTopColor]; }), ['rgb(255, 255, 255)', 'rgb(10, 10, 10)', 'rgb(243, 133, 24)'], 'answer hover keeps readable light text on the dark fill with an accent border');
+    await first.evaluate(() => { document.querySelector('#answer-hover-check').remove(); document.documentElement.dataset.theme = window.__priorTheme; });
     // A reply is not an answer to an ordinary message, and a question's own author replying to it does not answer it; another person's reply to a
     // message that asked does, whatever order the reply and its parent were loaded in, and for the proposed answers and open questions too.
     const replyKinds = await first.evaluate(async () => {
@@ -1674,6 +1678,7 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     await first.waitForFunction(() => document.querySelector('#messages')?.dataset.empty === 'true');
     assert.equal(await first.$eval('#messages', el => getComputedStyle(el, '::before').content), '"No messages in this room yet."', 'an empty room says so');
+    assert.deepEqual(await first.evaluate(async () => { const { Chat } = await import('/js/chat.js'), list = document.querySelector('#messages'), notice = document.createElement('article'); notice.className = 'chat-msg chat-msg-system'; list.append(notice); Chat.prototype.pageDrawn.call({ list }); const withNotice = list.dataset.empty; notice.remove(); Chat.prototype.pageDrawn.call({ list }); return [withNotice, list.dataset.empty]; }), ['false', 'true'], 'a system message hides the empty-room hint');
     assert.deepEqual(await first.$eval('#composer .composer-aa', el => ({ icon: el.querySelectorAll('svg').length, text: el.textContent.trim() })), { icon: 1, text: '' }, 'the formatting switch is an icon, not the letters Aa');
     assert.deepEqual(await first.evaluate(() => { const info = document.querySelector('#room-info'), members = document.querySelector('#room-members'); return [info.parentElement.className, info.previousElementSibling === members]; }), ['room-heading', true], 'the room settings button sits next to the member-count pill');
     await domClick(first, '#room-info');
@@ -4826,6 +4831,8 @@ async function main() {
     });
     await domClick(agentPage, '[data-agent-id="agt_mock_reviewer"] .agent-recovery');
     assert.equal(await agentPage.$eval('#inbox-view', el => !el.hidden), true, 'recovery badge did not open inbox');
+    await agentPage.waitForFunction(() => document.querySelector('#inbox-view [data-inbox-id="mock_approval"].message-flash'));
+    assert.equal(await agentPage.$eval('#inbox-view [data-inbox-id="mock_approval"]', el => { const card = el.getBoundingClientRect(), view = document.querySelector('#inbox-view').getBoundingClientRect(); return card.top < view.bottom && card.bottom > view.top; }), true, 'the matching recovery item is scrolled into view and highlighted');
     // On desktop the room list stays beside the Inbox (only the chat column is replaced); a click on a room returns to the chat.
     assert.deepEqual(await agentPage.evaluate(() => { const side = document.querySelector('.sidebar'), view = document.querySelector('#inbox-view'), s = side.getBoundingClientRect(), v = view.getBoundingClientRect(); return { sidebarShown: !side.hidden && s.width > 100, chatHidden: document.querySelector('.chat').hidden, sideBySide: s.right <= v.left + 1 }; }), { sidebarShown: true, chatHidden: true, sideBySide: true }, 'the Inbox view replaces only the chat column');
     await domClick(agentPage, '.room-item.active .room-item-name');
