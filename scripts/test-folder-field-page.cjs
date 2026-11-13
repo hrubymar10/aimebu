@@ -93,19 +93,79 @@ async function main() {
     await page.waitForSelector('.folder-suggestions [role=option]');
     assert.deepEqual(await page.$$eval('.folder-suggestions [role=option]', items => items.map(item => item.textContent)), ['odd/']);
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
-    assert.equal((await state(page)).value, '/home/ana/odd/');
+    assert.equal((await state(page)).value, '/home/ana/odd/', 'Enter completes the highlighted suggestion');
     await page.waitForSelector('.folder-suggestions [role=option]');
-    await page.keyboard.press('/');
-    assert.equal((await state(page)).value, '/home/ana/odd/deeper/');
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('/');
+    assert.equal((await state(page)).value, '/home/ana/odd/deeper/', '/ completes the highlighted suggestion');
     await page.$eval(input, node => { node.value = '/home/ana/'; node.dispatchEvent(new Event('input', { bubbles: true })); });
     await page.waitForSelector('.folder-suggestions [role=option]');
     await page.keyboard.press('Escape');
     assert.equal(await page.$eval('.folder-suggestions', node => node.hidden), true);
+    assert.equal((await state(page)).value, '/home/ana/', 'Escape closes the list and leaves the text');
     await page.$eval(input, node => { node.value = '/home/ana/.'; node.dispatchEvent(new Event('input', { bubbles: true })); });
     await page.waitForSelector('.folder-suggestions [role=option]');
     assert.deepEqual(await page.$$eval('.folder-suggestions [role=option]', items => items.map(item => item.textContent)), ['.private/']);
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('Tab');
+    assert.equal((await state(page)).value, '/home/ana/.private/', 'Tab completes the highlighted suggestion');
+    await page.close();
+  }
+  // With nothing highlighted, / is typed, Tab moves the focus, Enter completes nothing, and Escape leaves the text alone.
+  {
+    const page = await mount();
+    const input = '#project-form [name=folder]';
+    await page.evaluate(() => { window.submitted = 0; document.querySelector('#project-form').addEventListener('submit', event => { event.preventDefault(); window.submitted++; }); });
+    const open = async value => {
+      await page.$eval(input, (node, value) => { node.focus(); node.value = value; node.dispatchEvent(new Event('input', { bubbles: true })); }, value);
+      await page.waitForSelector('.folder-suggestions [role=option]');
+    };
+    await open('/home/ana/o');
+    assert.deepEqual(await page.$$eval('.folder-suggestions [role=option]', items => items.map(item => item.textContent)), ['odd/', 'other/']);
+    assert.equal(await page.$eval('.folder-suggestions', node => node.querySelectorAll('[aria-selected=true]').length), 0, 'nothing is highlighted when the list opens');
+    await page.keyboard.press('/');
+    assert.equal((await state(page)).value, '/home/ana/o/', '/ is an ordinary character with nothing highlighted');
+    await open('/home/ana/o');
+    await page.keyboard.press('Enter');
+    assert.equal((await state(page)).value, '/home/ana/o', 'Enter completes nothing without a highlight');
+    assert.equal(await page.evaluate(() => window.submitted), 1, 'Enter is left to the form (it submits) without a highlight');
     await page.keyboard.press('Tab');
-    assert.equal((await state(page)).value, '/home/ana/.private/');
+    const moved = await page.evaluate(() => ({ value: document.querySelector('#project-form [name=folder]').value, focused: document.activeElement === document.querySelector('#project-form [name=folder]') }));
+    assert.deepEqual(moved, { value: '/home/ana/o', focused: false }, 'Tab keeps the text and moves the focus on');
+    await open('/home/ana/o');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Escape');
+    assert.deepEqual([await page.$eval('.folder-suggestions', node => node.hidden), (await state(page)).value], [true, '/home/ana/o'], 'Escape closes the list even with a highlight and keeps the text');
+    // Shift+Tab never completes, highlighted or not.
+    await open('/home/ana/o');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.down('Shift'); await page.keyboard.press('Tab'); await page.keyboard.up('Shift');
+    assert.equal((await state(page)).value, '/home/ana/o', 'Shift+Tab does not complete');
+    await page.close();
+  }
+  // The pointer highlights a suggestion, and then / and Tab complete that one; leaving the list takes the highlight back.
+  {
+    const page = await mount();
+    const input = '#project-form [name=folder]';
+    await page.$eval(input, node => { node.focus(); node.value = '/home/ana/o'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    const second = await page.$eval('.folder-suggestions [role=option]:nth-child(2)', node => { const r = node.getBoundingClientRect(); return { x: r.left + 10, y: r.top + r.height / 2 }; });
+    await page.mouse.move(second.x, second.y);
+    assert.deepEqual(await page.$$eval('.folder-suggestions [role=option]', items => items.map(item => item.getAttribute('aria-selected'))), ['false', 'true'], 'hovering highlights');
+    await page.keyboard.press('/');
+    assert.equal((await state(page)).value, '/home/ana/other/', '/ completes the hovered suggestion');
+    await page.$eval(input, node => { node.value = '/home/ana/o'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    const first = await page.$eval('.folder-suggestions [role=option]:nth-child(1)', node => { const r = node.getBoundingClientRect(); return { x: r.left + 10, y: r.top + r.height / 2 }; });
+    await page.mouse.move(first.x, first.y);
+    await page.keyboard.press('Tab');
+    assert.equal((await state(page)).value, '/home/ana/odd/', 'Tab completes the hovered suggestion');
+    await page.$eval(input, node => { node.value = '/home/ana/o'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForSelector('.folder-suggestions [role=option]');
+    const again = await page.$eval('.folder-suggestions [role=option]:nth-child(1)', node => { const r = node.getBoundingClientRect(); return { x: r.left + 10, y: r.top + r.height / 2 }; });
+    await page.mouse.move(again.x, again.y);
+    await page.mouse.move(2, 2);
+    assert.equal(await page.$eval('.folder-suggestions', node => node.querySelectorAll('[aria-selected=true]').length), 0, 'the pointer leaving the list takes its highlight back');
+    await page.keyboard.press('/');
+    assert.equal((await state(page)).value, '/home/ana/o/', '/ is typed once the hover is gone');
     await page.close();
   }
   // A long list escapes the dialog's scrolling box and is still hit-testable outside its border.

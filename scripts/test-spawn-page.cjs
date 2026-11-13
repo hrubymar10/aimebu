@@ -540,6 +540,7 @@ async function main() {
     const index = await waitRequest(page, 'GET', '/api/machines/directories?path=%2Fsrv%2F&prefix=pr&machine_id=m2');
     await answer(page, index, 200, { directories: ['project'] });
     await page.waitForSelector('#spawn-form .folder-suggestions [role=option]');
+    await page.keyboard.press('ArrowDown'); // Tab completes only a highlighted suggestion
     await page.keyboard.press('Tab');
     assert.equal(await page.$eval('#spawn-form [name=machine_folder]', input => input.value), '/srv/project/');
     await page.close();

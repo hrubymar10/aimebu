@@ -1,4 +1,5 @@
 import { request, rights } from './api.js';
+import { confirmDialog } from './dialogs.js';
 import { attachFolderField } from './folder-field.js';
 import { dmProblems, peopleProblems, problemSummary, projectProblems } from './import-problems.js';
 import { applyChoice, choiceValue, mergeGroups, newProjectAlias, parseChoice, planTree, roomChoice } from './import-tree.js';
@@ -369,7 +370,9 @@ export class ImportV1Wizard {
     }
   }
 
+  // Starting over throws away the choices of every page, so it asks first, in the app's own dialog (its focus starts on Keep editing, and Escape is Keep editing).
   async startOver() {
+    if (!await confirmDialog('Your choices on every page will be discarded.', { title: 'Start over?', confirm: 'Discard', cancel: 'Keep editing', danger: true })) return;
     this.clearDraft();
     this.report = null; this.digest = null; this.newProject = null; this.staleNote = null;
     await this.open();

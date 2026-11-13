@@ -122,7 +122,7 @@ that still answers `204`.)
 
 The wizard walks you through these choices one page at a time (Projects, People, Rooms,
 Direct messages, Memory, Macros, Roles, Summary) and keeps your place if you reload.
-Before importing, **Start over** on any page clears your choices and returns to Projects:
+Before importing, **Start over** on any page clears your choices and returns to Projects, after you confirm "Start over?" (**Discard**; **Keep editing**, or Esc, changes nothing):
 
 - where each v1 room goes. Rooms are suggested into projects (a `x` room and
   its `x-leader` room share one; the leader room is suggested into the project's

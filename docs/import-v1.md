@@ -44,7 +44,7 @@ the field offers matching directories on that machine (files are omitted;
 hidden directories appear after typing `.`). Arrow keys choose a directory,
 Enter or Tab completes it, `/` enters it, and Escape closes the list. The draft (the
 choices and the page) is kept in the browser for each backup, so a reload
-continues where you left off; a choice in it for something the backup no longer offers (for example a macro that is now left out) is dropped, with a note on the page that opens; **Start over** on any review page drops the draft and returns to Projects. The
+continues where you left off; a choice in it for something the backup no longer offers (for example a macro that is now left out) is dropped, with a note on the page that opens; **Start over** on any review page asks "Start over? Your choices on every page will be discarded." in the app's own dialog (focus on **Keep editing**, which Esc also chooses); only **Discard** drops the draft and returns to Projects. The
 Summary is the dry run in words. It opens with one line of totals ("Bringing across
 23,889 of 28,002 messages, …") and, per count of the backup (rooms, messages,
 attachments, reactions), a block that adds up to the backup's own number: what is

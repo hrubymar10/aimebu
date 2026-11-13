@@ -636,8 +636,8 @@ from v1. For a same-root cutover, stop v1 and point `AIMEBU2_CONFIG_DIR` and
 `.old-v1-bkp/` with crash recovery, then first owner sign-in opens a Review → Check
 → Import wizard. This is the only import opportunity; Skip import closes it permanently. The wizard
 offers per-room, person, project, memory, setting, and role
-choices; a dry run shows counts and access gaps before commit. Start over clears
-the review choices before import; the finished page summarizes counts and destination projects. Start with
+choices; a dry run shows counts and access gaps before commit. Start over (after a
+confirmation) clears the review choices before import; the finished page summarizes counts and destination projects. Start with
 [Migrating from aimebu v1](docs/migrating-from-v1.md); see
 [the import guide](docs/import-v1.md) for detailed mapping choices.
 

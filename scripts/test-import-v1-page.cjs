@@ -62,8 +62,35 @@ async function main() {
     // the second text field is the folder; the name stays "repo"
     await page.evaluate((selector, folder) => { const input = [...document.querySelectorAll(`${selector} .import-v1-content input[type=text]`)][1]; input.value = folder; input.dispatchEvent(new Event('input', { bubbles: true })); }, DIALOG, folder);
     await next(page, 'Step 2 of 7 · People');
+    // Start over asks first, in the app's own dialog (not window.confirm); only Discard clears the draft.
+    const hasDraft = () => page.evaluate(() => Object.keys(localStorage).some(key => key.includes('import-draft')));
+    assert.equal(await hasDraft(), true, 'the wizard has saved a draft by now');
+    const nativeDialogs = [];
+    page.on('dialog', native => { nativeDialogs.push(`${native.type()}: ${native.message()}`); native.dismiss(); });
+    const askedFor = () => page.evaluate(() => {
+      const node = document.querySelector('#app-dialog');
+      return !node?.open ? null : { title: node.querySelector('#app-dialog-title').textContent, text: node.querySelector('.app-dialog-message').textContent,
+        buttons: [...node.querySelectorAll('.dialog-actions button')].map(button => ({ text: button.textContent, danger: button.classList.contains('btn-danger'), focused: document.activeElement === button })),
+        modal: node.matches(':modal') };
+    });
     await clickButton(page, 'Start over');
+    await page.waitForSelector('#app-dialog[open]');
+    assert.deepEqual(await askedFor(), { title: 'Start over?', text: 'Your choices on every page will be discarded.', modal: true,
+      buttons: [{ text: 'Keep editing', danger: false, focused: true }, { text: 'Discard', danger: true, focused: false }] }, 'Start over asks, with Keep editing focused and Discard as the danger button');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('#app-dialog')?.open);
+    assert.equal(await heading(page), 'Step 2 of 7 · People', 'Escape is Keep editing: the wizard stays where it was');
+    assert.equal(await hasDraft(), true, 'Escape keeps the draft');
+    await clickButton(page, 'Start over');
+    await page.waitForSelector('#app-dialog[open]');
+    await page.evaluate(() => [...document.querySelectorAll('#app-dialog .dialog-actions button')].find(button => button.textContent === 'Keep editing').click());
+    await page.waitForFunction(() => !document.querySelector('#app-dialog')?.open);
+    assert.deepEqual([await heading(page), await hasDraft()], ['Step 2 of 7 · People', true], 'Keep editing keeps the page and the draft');
+    await clickButton(page, 'Start over');
+    await page.waitForSelector('#app-dialog[open]');
+    await page.evaluate(() => [...document.querySelectorAll('#app-dialog .dialog-actions button')].find(button => button.textContent === 'Discard').click());
     await stepIs(page, 'Step 1 of 7 · Projects');
+    assert.deepEqual(nativeDialogs, [], 'the confirmation is the app\'s own dialog, not a browser one');
     assert.equal(await page.$eval(`${DIALOG} [data-project-folder="repo"]`, input => input.value), '', 'starting over clears the project choice');
     assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.includes('import-draft'))), false, 'starting over clears the saved draft');
     await page.evaluate((selector, folder) => { const input = document.querySelector(`${selector} [data-project-folder="repo"]`); input.value = folder; input.dispatchEvent(new Event('input', { bubbles: true })); }, DIALOG, folder);

@@ -1,6 +1,8 @@
 // The Workspace folder field, one component for every place that has one (New project, project settings, the first-run project step, the import wizard's Projects page). The field
 // is empty until the person asks for their home folder: a house button sits at the left edge of the field (the text is inset to make room, only while it shows),
 // and a click fills the home folder (a trailing slash, the caret after it, the focus kept). The home button stays hidden when no home is known.
+// While the suggestion list is open, Enter, Tab and `/` complete a suggestion only when one is highlighted (arrow keys or the pointer over it); with none highlighted
+// they do what they always do (a `/` is typed, Tab moves the focus, Enter submits), and Escape closes the list and leaves the text as it is.
 import { request, rights } from './api.js';
 import { fillFolderStart, folderStart, watchTypedOverStart } from './workspace-folder.js';
 
@@ -26,7 +28,7 @@ export function attachFolderField(input, getHome = () => rights.hostHome, getMac
   suggestions.hidden = true;
   input.setAttribute('aria-controls', suggestions.id);
   input.after(suggestions);
-  let names = [], selected = -1, serial = 0, timer;
+  let names = [], selected = -1, serial = 0, timer, hovered = false; // hovered: the highlight is the pointer's, so it goes when the pointer leaves the list
   const positionSuggestions = () => {
     if (suggestions.hidden) return;
     const field = input.getBoundingClientRect(), edge = 8, gap = 4;
@@ -42,7 +44,7 @@ export function attachFolderField(input, getHome = () => rights.hostHome, getMac
     suggestions.hidden = true;
     document.removeEventListener('scroll', positionSuggestions, true);
     window.removeEventListener('resize', positionSuggestions);
-    input.setAttribute('aria-expanded', 'false'); suggestions.replaceChildren(); names = []; selected = -1; input.removeAttribute('aria-activedescendant');
+    input.setAttribute('aria-expanded', 'false'); suggestions.replaceChildren(); names = []; selected = -1; hovered = false; input.removeAttribute('aria-activedescendant');
   };
   const choose = index => {
     if (index < 0 || index >= names.length) return false;
@@ -54,7 +56,7 @@ export function attachFolderField(input, getHome = () => rights.hostHome, getMac
     return true;
   };
   const highlight = index => {
-    selected = index;
+    selected = index; hovered = false;
     for (const [i, option] of [...suggestions.children].entries()) option.setAttribute('aria-selected', String(i === index));
     if (index >= 0) {
       input.setAttribute('aria-activedescendant', `${suggestions.id}-${index}`);
@@ -80,6 +82,7 @@ export function attachFolderField(input, getHome = () => rights.hostHome, getMac
         option.setAttribute('aria-selected', 'false');
         option.textContent = name + '/';
         option.addEventListener('pointerdown', event => { event.preventDefault(); choose(index); });
+        option.addEventListener('pointerover', () => { if (selected !== index) { highlight(index); hovered = true; } });
         suggestions.append(option);
       }
       suggestions.hidden = names.length === 0;
@@ -91,6 +94,7 @@ export function attachFolderField(input, getHome = () => rights.hostHome, getMac
       }
     } catch { close(); }
   };
+  suggestions.addEventListener('pointerleave', () => { if (hovered) highlight(-1); });
   const schedule = () => { ++serial; clearTimeout(timer); close(); timer = setTimeout(search, 100); };
   input.addEventListener('input', schedule);
   input.addEventListener('focus', schedule);
@@ -102,8 +106,8 @@ export function attachFolderField(input, getHome = () => rights.hostHome, getMac
       event.preventDefault();
       highlight(selected < 0 ? (event.key === 'ArrowDown' ? 0 : names.length - 1) :
         (selected + (event.key === 'ArrowDown' ? 1 : -1) + names.length) % names.length);
-    } else if (event.key === 'Enter' || event.key === 'Tab' || event.key === '/') {
-      event.preventDefault(); choose(selected < 0 ? 0 : selected);
+    } else if ((event.key === 'Enter' || event.key === 'Tab' || event.key === '/') && selected >= 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault(); choose(selected);
     }
   });
   const start = () => folderStart(typeof getHome === 'function' ? getHome() : getHome);

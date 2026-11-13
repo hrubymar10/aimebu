@@ -100,6 +100,7 @@ async function main() {
       const index = await waitRequest(page, 'GET', '/api/machines/directories?path=%2Fsrv%2F&prefix=al');
       await answer(page, index, 200, { directories: ['alpha'] });
       await page.waitForSelector('#project-details-folder + .folder-suggestions [role=option]');
+      await page.keyboard.press('ArrowDown'); // Tab completes only a highlighted suggestion
       await page.keyboard.press('Tab');
       assert.equal(await page.$eval('#project-details-folder', input => input.value), '/srv/alpha/');
       await page.close();
