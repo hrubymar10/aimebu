@@ -105,7 +105,7 @@ function restoreMermaidSource(node, source, error) {
 function stripDiagramLinks(node) {
   for (const link of [...node.querySelectorAll('a')]) link.replaceWith(...link.childNodes);
 }
-function queueMermaid(node, source) {
+export function queueMermaid(node, source) {
   requestAnimationFrame(() => {
     if (!node.isConnected) return;
     mermaidQueue = mermaidQueue.catch(() => {}).then(async () => {

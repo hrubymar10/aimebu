@@ -303,6 +303,18 @@ func (s *Store) ApplyTeamFlow(ctx context.Context, projectID, userID, key string
 	}
 	var out TeamFlowApplied
 	err = s.Tx(ctx, func(tx *Tx) error {
+		var err error
+		out, err = tx.applyTeamFlow(projectID, userID, key, rev)
+		return err
+	})
+	return out, err
+}
+
+// applyTeamFlow runs inside the caller's transaction so initial setup can
+// commit the flow, defaults, settings, and agents together.
+func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64) (TeamFlowApplied, error) {
+	var out TeamFlowApplied
+	err := func() error {
 		var current string
 		var currentRev int64
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key,team_flow_rev FROM project WHERE id=? AND system=0`, projectID).Scan(&current, &currentRev); err != nil {
@@ -410,6 +422,6 @@ func (s *Store) ApplyTeamFlow(ctx context.Context, projectID, userID, key string
 		}
 		_, err := tx.AppendEvent(Event{Kind: "project_updated", ProjectID: projectID, PayloadJSON: payloadJSON(map[string]string{"project_id": projectID, "actor_id": userID})})
 		return err
-	})
+	}()
 	return out, err
 }

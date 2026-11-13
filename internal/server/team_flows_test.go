@@ -65,3 +65,21 @@ func TestTeamFlowAPISetupAndRoomKey(t *testing.T) {
 		t.Fatalf("missing grant: %d %+v", resp.StatusCode, reference)
 	}
 }
+
+func TestNewProjectOwnerCanApplyTeamFlowFromCreateResponse(t *testing.T) {
+	f := newFixture(t)
+	resp := f.request(http.MethodPost, "/api/projects", map[string]string{"name": "new flow", "folder": t.TempDir()}, true)
+	var project store.Project
+	if err := json.NewDecoder(resp.Body).Decode(&project); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated || project.Role != "owner" {
+		t.Fatalf("create project: %d %+v", resp.StatusCode, project)
+	}
+	resp = f.request(http.MethodPut, "/api/projects/"+project.ID+"/team-flow", map[string]any{"key": "custom", "rev": 0}, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("new owner applies flow: %d", resp.StatusCode)
+	}
+}

@@ -100,6 +100,14 @@ Projects, rooms, people
   source room can read that one cited message across rooms of the same
   project, without access to its room. The source must remain readable; the
   grant vanishes when the source message is deleted.
+  Initial team setup for A or B uses an idempotent request. Machine and
+  launcher choices are checked before the transaction; applying the flow,
+  saving per-project spawn defaults and settings, and creating the leader
+  (plus dispatcher for B) are one transaction. The supervisor receives spawn
+  requests after commit, and a keyed retry can redeliver them. The setup
+  does not change the project folder or global agent keep-warm settings.
+  Those initial agents use the mapped project folder; the worktree-mode choice
+  applies to later task-room spawns.
 - **scope_control_agent**(scope_kind[room|project], scope_id, agent_id,
   restore_desired, hold_desired, bulk_desired, bulk_rev) — records each
   scope's pause or stop hold, a shared pre-scope desired state, and the last

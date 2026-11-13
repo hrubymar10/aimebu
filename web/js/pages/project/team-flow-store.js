@@ -84,5 +84,16 @@ export class TeamFlowStore {
     }
   }
 
+  async completeTeamSetup(projectID, result) {
+    const state = this.state.peek();
+    if (!this.alive || !projectID || this.projectID !== projectID || !state) return;
+    const template = this.templates.peek().find(item => item.key === result.flow?.key);
+    batch(() => {
+      this.state.value = { ...state, ...result.flow, template, review_pending: false };
+      this.preview.value = null;
+    });
+    await this.onApplied?.(projectID, result.flow);
+  }
+
   destroy() { this.alive = false; this.reset(); }
 }

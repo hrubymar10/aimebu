@@ -270,9 +270,14 @@ history; see the room lifecycle routes in the API guide.
 A new project starts with its home room and a `general` task room beneath it.
 The home room shows a team-flow setup card until a project owner or operator
 chooses a flow: **A · Leader and workers**, **B · Leader and dispatcher**, or
-**C · Custom**. The cards show the rooms and roles before Apply. Existing
-projects start on C with a one-click **Keep current setup** choice; saving it
-closes the setup prompt. Project settings → Team flow previews the rooms and
+**C · Custom**. A vertical list shows each flow's description beside a room
+and role diagram; the diagram opens at full size. Choosing A or B starts a
+wizard for the leader's machine, harness, and model, a dispatcher
+for B, worker and reviewer defaults, and project settings. A summary previews
+the changes; **Create team** applies them and starts the leader (and B's
+dispatcher) together. Back keeps the unsaved choices. C ends with **Keep
+current**. Existing projects start on C; saving it closes the setup prompt.
+Project settings → Team flow uses the same list and previews the rooms and
 roles a switch would add and any agents needing action. Switching keeps all
 existing rooms, messages, and agents; incompatible room memberships are listed
 and adjusted. In B, a private routing room connects the leader with the
@@ -280,6 +285,9 @@ singleton dispatcher. The leader writes specs there; the dispatcher manages
 task rooms, workers, and reviewers. A task-room message can reference a
 routing brief by `#N`; the worker-room chat shows the one granted message
 inline, without exposing the routing conversation.
+Initial A/B setup also has a keyed team-setup API that commits the flow,
+project settings, role defaults, and the initial leader (plus dispatcher for
+B) together before requesting their supervisor spawns.
 The home room is the lead's: with the project setting **Home room: lead only**
 (on by default, in the home room's Project section) the spawn dialog there
 offers only lead roles and the server refuses others with `home_is_lead_only`;

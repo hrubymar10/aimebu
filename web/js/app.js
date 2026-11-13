@@ -255,6 +255,7 @@ agents.showRoomByID = async (projectID, roomID) => { await sidebar.refreshProjec
 const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], rooms: [...sidebar.rooms.values()], selectedProjectID: chat.room?.project_id }), notifications);
 const teamFlowHome = new TeamFlowHome({
   canEdit: id => ['owner', 'operator'].includes(sidebar.projects.get(id)?.role),
+  projectForID: id => sidebar.projects.get(id),
   onApplied: async projectID => {
     await sidebar.refreshProject(projectID);
     teamFlowHome.refreshIfProject(projectID);

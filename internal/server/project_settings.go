@@ -21,19 +21,24 @@ func (s *Server) projectRecoverySettings(w http.ResponseWriter, r *http.Request)
 		AutoResumeAfterCleanDiagnostic *bool   `json:"auto_resume_after_clean_diagnostic"`
 		WorktreeMode                   *string `json:"worktree_mode"`
 		HomeLeadOnly                   *bool   `json:"home_lead_only"`
+		MaxLiveAgents                  *int    `json:"max_live_agents"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.AutoResumeAfterCleanDiagnostic == nil && req.WorktreeMode == nil && req.HomeLeadOnly == nil {
-		apiError(w, 400, "invalid_request", "auto_resume_after_clean_diagnostic, worktree_mode or home_lead_only is required")
+	if req.AutoResumeAfterCleanDiagnostic == nil && req.WorktreeMode == nil && req.HomeLeadOnly == nil && req.MaxLiveAgents == nil {
+		apiError(w, 400, "invalid_request", "a project setting is required")
 		return
 	}
 	if req.WorktreeMode != nil && *req.WorktreeMode != "auto" && *req.WorktreeMode != "off" {
 		apiError(w, 400, "invalid_request", "worktree_mode must be auto or off")
 		return
 	}
-	settings, err := s.Store.SetProjectRecoverySettings(r.Context(), projectID, userID(r), store.ProjectSettingsUpdate{AutoResumeAfterCleanDiagnostic: req.AutoResumeAfterCleanDiagnostic, WorktreeMode: req.WorktreeMode, HomeLeadOnly: req.HomeLeadOnly})
+	if req.MaxLiveAgents != nil && (*req.MaxLiveAgents < 1 || *req.MaxLiveAgents > 100) {
+		apiError(w, 400, "invalid_request", "max_live_agents must be between 1 and 100")
+		return
+	}
+	settings, err := s.Store.SetProjectRecoverySettings(r.Context(), projectID, userID(r), store.ProjectSettingsUpdate{AutoResumeAfterCleanDiagnostic: req.AutoResumeAfterCleanDiagnostic, WorktreeMode: req.WorktreeMode, HomeLeadOnly: req.HomeLeadOnly, MaxLiveAgents: req.MaxLiveAgents})
 	if err != nil {
 		fail(w, err)
 		return

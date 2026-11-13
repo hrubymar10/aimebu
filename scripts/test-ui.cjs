@@ -1594,6 +1594,19 @@ async function main() {
     await domClick(first, '#project-form [name=folder]'); await first.keyboard.press('Enter');
     await first.waitForFunction(() => !document.querySelector('#project-dialog').open);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke' && document.querySelector('.room-item.active .room-item-name')?.textContent.includes('UI smoke'));
+    // The creator's POST response must already grant owner controls when the first home view opens.
+    await first.waitForSelector('#team-flow-home .team-flow-card');
+    assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false], 'the new project owner can choose a flow immediately');
+    assert.equal(await first.$eval('#team-flow-home', host => host.textContent.includes('Ask a project owner or operator')), false);
+    const rowLayout = await first.$eval('#team-flow-home .team-flow-card', row => {
+      const text = row.querySelector('.team-flow-card-heading').getBoundingClientRect(), picture = row.querySelector('.team-flow-diagram').getBoundingClientRect();
+      return [text.width / row.getBoundingClientRect().width, picture.width / row.getBoundingClientRect().width];
+    });
+    assert.ok(rowLayout[0] > .65 && rowLayout[0] < .75 && rowLayout[1] > .25 && rowLayout[1] < .35, `team flow row uses 70/30 columns: ${rowLayout}`);
+    await domClick(first, '#team-flow-home .team-flow-option:nth-child(3) .team-flow-card');
+    await first.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-option:nth-child(3) .team-flow-card')?.getAttribute('aria-checked') === 'true' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+    await domClick(first, '#team-flow-home .btn-primary');
+    await first.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-home-card'));
     await openSettings(first);
     await first.waitForSelector('#settings-users-tab:not([hidden]):not(.settings-tab-pending)');
     await domClick(first, '#settings-users-tab');

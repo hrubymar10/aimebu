@@ -260,6 +260,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{project}/team-flow", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowState)))
 	mux.Handle("POST /api/projects/{project}/team-flow/preview", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowPreview)))
 	mux.Handle("PUT /api/projects/{project}/team-flow", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowApply)))
+	mux.Handle("POST /api/projects/{project}/team-setup/preview", s.Auth.RequireUser(http.HandlerFunc(s.teamSetupPreview)))
+	mux.Handle("POST /api/projects/{project}/team-setup", s.Auth.RequireUser(http.HandlerFunc(s.teamSetupCreate)))
 	mux.Handle("POST /api/projects/{project}/archive", s.Auth.RequireUser(http.HandlerFunc(s.archiveProject)))
 	mux.Handle("POST /api/projects/{project}/reopen", s.Auth.RequireUser(http.HandlerFunc(s.reopenProject)))
 	mux.Handle("DELETE /api/projects/{project}", s.Auth.RequireUser(http.HandlerFunc(s.deleteProject)))
@@ -1060,6 +1062,9 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	// The creator is already an owner in membership; the immediate response
+	// must carry that role just like GET /api/projects does.
+	p.Role = "owner"
 	writeJSON(w, 201, projectView(p))
 }
 

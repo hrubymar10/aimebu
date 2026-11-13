@@ -37,11 +37,12 @@ const base = () => ({
   'GET /api/projects/p1/usage-limit': limit,
   'GET /api/projects/p1/usage?range=today': usage,
   'GET /api/projects/p1/role-spawn-defaults': roles,
-  'GET /api/machines?project_id=p1': { machines: [{ id: 'm1', name: 'Box' }] },
-  'GET /api/spawn-catalog?machine_id=m1': { tools: [{ launcher_id: 'l1', label: 'Claude', models: [{ id: 'm1', label: 'Opus' }, { id: 'm2', label: 'Sonnet' }] }] },
+  'GET /api/machines?project_id=p1': { machines: [{ id: 'm1', name: 'Box', approved: true, connected: true, project_allowed: true }] },
+  'GET /api/spawn-catalog?machine_id=m1': { tools: [{ tool: 'claude', variant: 'native', launcher_id: 'l1', label: 'Claude', available: true, models: [{ id: 'm1', label: 'Opus', default: true }, { id: 'm2', label: 'Sonnet' }] }] },
   'GET /api/team-flows': { templates: flows },
   'GET /api/projects/p1/team-flow': { key: 'custom', rev: 1, review_pending: false, template: flows[2], conflicts: [] },
   'POST /api/projects/p1/team-flow/preview': { key: 'custom', create_rooms: [], role_changes: [], conflicts: [] },
+  'POST /api/projects/p1/team-setup/preview': { can_create: true, settings: { worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10 }, created_rooms: [], conflicts: [] },
 });
 
 function installFetch(auto) {
@@ -143,7 +144,7 @@ async function main() {
       await ready(page);
       await page.waitForSelector('#project-team-flow .team-flow-card');
       await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-flow/preview']; });
-      await page.$eval('#project-team-flow .team-flow-card:nth-child(2)', node => node.click());
+      await page.$eval('#project-team-flow .team-flow-option:nth-child(2) .team-flow-card', node => node.click());
       const preview = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/preview');
       assert.deepEqual(await page.evaluate(index => window.__requests[index].body, preview), { key: 'leader-dispatcher' });
       await answer(page, preview, 200, { key: 'leader-dispatcher', create_rooms: [{ key: 'routing', title: 'routing' }], role_changes: [{ description: 'Add dispatcher role' }], conflicts: [{ agent_id: 'agt_old', reason: 'Leader in task room', suggested_action: 'Move to home' }] });
@@ -161,16 +162,60 @@ async function main() {
     {
       const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
       const page = await mount({ auto });
-      await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
+      await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeRole = ''; window.__homeFlow = new TeamFlowHome({ canEdit: () => window.__homeRole === 'owner', onApplied: () => {} }); window.__homeRole = 'owner'; window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
       await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 3);
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), !!node.querySelector('.team-flow-diagram-room')])), [['true', true], ['false', true], ['false', false]]);
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false], 'owner permission is read after the home page mounts');
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), node.querySelectorAll('.team-flow-thumbnail-room').length])), [['true', 2], ['false', 2], ['false', 0]]);
+      assert.equal(await page.$('script[src*="mermaid"]'), null, 'thumbnail does not load Mermaid at page start');
+      await page.$eval('#team-flow-home .team-flow-diagram-open', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-lightbox')?.open && !!document.querySelector('#team-flow-home .team-flow-lightbox svg'));
+      await page.$eval('#team-flow-home .team-flow-lightbox-close', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-lightbox')?.open);
+      await page.setViewport({ width: 390, height: 844 });
+      assert.equal(await page.$eval('#team-flow-home .team-flow-card', row => getComputedStyle(row).gridTemplateColumns.split(' ').length), 1, 'phone layout stacks description above diagram');
+      await page.setViewport({ width: 1280, height: 800 });
+      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
+      await page.$$eval('#team-flow-home .team-flow-actions .btn:not(.btn-primary)', nodes => nodes[0].click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
+      await page.$$eval('#team-flow-home .team-flow-actions .btn:not(.btn-primary)', nodes => nodes[0].click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Choose how your AI team works');
+      await page.$eval('#team-flow-home .team-flow-option:nth-child(2) .team-flow-card', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      assert.equal(await page.$eval('#team-flow-home .btn-primary', node => node.textContent.trim()), 'Next');
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Dispatcher');
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Project settings');
+      assert.equal(await page.$eval('#team-flow-home [aria-label="Project folder"]', node => node.readOnly), true);
+      assert.equal(await page.$eval('#team-flow-home [type=number]', node => node.min), '2', 'flow B needs room for both initial agents');
+      await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-setup/preview']; });
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      const setupPreview = await waitRequest(page, 'POST', '/api/projects/p1/team-setup/preview');
+      const draft = await page.evaluate(index => window.__requests[index].body, setupPreview);
+      assert.deepEqual([draft.flow_key, draft.flow_rev, draft.leader?.machine_id, draft.dispatcher?.machine_id, draft.settings?.max_live_agents], ['leader-dispatcher', 0, 'm1', 'm1', 10]);
+      assert.equal(await calls(page, 'PUT').then(rows => rows.some(([path]) => path.includes('/team-flow'))), false, 'wizard does not apply the flow early');
+      await answer(page, setupPreview, 200, { can_create: true, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [] });
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Summary' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      const create = await waitRequest(page, 'POST', '/api/projects/p1/team-setup');
+      assert.equal(await page.evaluate(index => !!window.__requests[index].headers['Idempotency-Key'], create), true, 'create uses an idempotency key');
+      await answer(page, create, 200, { flow: { key: 'leader-dispatcher', rev: 1, review_pending: false }, agents: [{ role: 'leader', agent_id: 'agt_1' }, { role: 'dispatcher', agent_id: 'agt_2' }], created_rooms: [{ key: 'routing' }] });
+      await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-home-card'));
       await page.close();
       const migrated = base(); migrated['GET /api/projects/p1/team-flow'] = { key: 'custom', rev: 4, review_pending: true, template: flows[2] };
       const kept = await mount({ auto: migrated });
       await kept.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
-      await kept.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-card.selected')?.textContent.includes('Custom'));
+      await kept.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-option.selected')?.textContent.includes('Custom'));
       await kept.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
-      assert.equal(await kept.$eval('#team-flow-home .btn-primary', node => node.textContent.trim()), 'Keep current setup');
+      assert.equal(await kept.$eval('#team-flow-home .btn-primary', node => node.textContent.trim()), 'Keep current');
       await kept.$eval('#team-flow-home .btn-primary', node => node.click());
       const apply = await waitRequest(kept, 'PUT', '/api/projects/p1/team-flow');
       assert.deepEqual(await kept.evaluate(index => window.__requests[index].body, apply), { key: 'custom', rev: 4 });
