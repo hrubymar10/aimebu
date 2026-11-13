@@ -128,7 +128,8 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name  string `json:"name"`
+		Force bool   `json:"force"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -154,7 +155,14 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 	}
 	// The check above is an early refusal: the switch can wait up to 45s for the account lock and the incoming
 	// refresh, and a turn may start meanwhile. Quiescence is checked again under the switcher lock.
-	active, changed, err := s.Switcher.SwitchGuarded(r.PathValue("tool"), req.Name, switcher.SwitchGuard{Quiet: s.quietGuard(r.Context(), r.PathValue("tool")), Hold: s.Store.HoldTurns})
+	switchGuard := switcher.SwitchGuard{Quiet: s.quietGuard(r.Context(), r.PathValue("tool")), Hold: s.Store.HoldTurns}
+	var active string
+	var changed bool
+	if req.Force {
+		active, changed, err = s.Switcher.SwitchForceGuarded(r.PathValue("tool"), req.Name, switchGuard)
+	} else {
+		active, changed, err = s.Switcher.SwitchGuarded(r.PathValue("tool"), req.Name, switchGuard)
+	}
 	var running agentsRunningError
 	if errors.As(err, &running) {
 		writeJSON(w, 409, map[string]any{"error": "agents_running", "message": "wait for affected agents to finish or stop them before switching", "agents": running.agents})

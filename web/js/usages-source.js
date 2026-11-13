@@ -14,7 +14,7 @@ export class HttpUsagesSource {
   enable(enabled) { return request('/api/switcher', { method: 'PUT', body: { enabled } }); }
   add(tool, name) { return request(`/api/switcher/${tool}/profiles`, { method: 'POST', body: { name } }); }
   import(tool, name) { return request(`/api/switcher/${tool}/import`, { method: 'POST', body: { name } }); }
-  use(tool, name) { return request(`/api/switcher/${tool}/use`, { method: 'POST', body: { name } }); }
+  use(tool, name, force = false) { return request(`/api/switcher/${tool}/use`, { method: 'POST', body: { name, ...(force ? { force: true } : {}) } }); }
   credentialTargets() { return request('/api/credentials/targets'); }
   remove(tool, name) { return request(`/api/switcher/${tool}/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' }); }
   rename(tool, name, newName) { return request(`/api/switcher/${tool}/profiles/${encodeURIComponent(name)}/rename`, { method: 'POST', body: { name: newName } }); }
@@ -23,7 +23,7 @@ export class HttpUsagesSource {
 export class MockUsagesSource {
   constructor() { this.renamed = {}; this.flags = { 'github-copilot': {}, mistral: {}, 'ollama-cloud': {} }; this.preferences = { percent_display: 'left', refresh_interval_sec: 120, alert_warning_remaining: 20, alert_critical_remaining: 10 }; }
   async refresh() { return this.list(); }
-  async use(tool, name) { (this.activeProfile ||= {})[tool] = name; this.used = { tool, name }; return {}; }
+  async use(tool, name, force = false) { (this.activeProfile ||= {})[tool] = name; this.used = { tool, name, force }; return {}; }
   // Token state of the stored profiles, as the server reports it: one healthy, one expiring, one expired.
   async credentialTargets() {
     const at = seconds => new Date(Date.now() + seconds * 1000).toISOString();

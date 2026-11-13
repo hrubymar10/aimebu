@@ -98,7 +98,7 @@ and reconnects the event stream from its last seen `seq`.
 | PUT | `/api/switcher` | `{enabled}` | owner enables or disables profile switching |
 | POST | `/api/switcher/{tool}/profiles` | `{name}` | owner adds an empty profile |
 | POST | `/api/switcher/{tool}/import` | `{name}` | owner adopts the current live login |
-| POST | `/api/switcher/{tool}/use` | `{name}` | owner switches profiles; 409 with `agents` if matching turns run |
+| POST | `/api/switcher/{tool}/use` | `{name, force?}` | owner switches profiles; `force:true` requires stored credentials and skips incoming refresh while keeping the normal swap and turn guard; 409 with `agents` if matching turns run |
 | DELETE | `/api/switcher/{tool}/profiles/{name}` | — | owner removes a profile; active removal clears the live login |
 | POST | `/api/switcher/{tool}/profiles/{name}/rename` | `{name}` | owner renames a profile, active or not; the live login is untouched; 404 unknown profile, 409 destination exists |
 | GET | `/api/health` | — | visible agents with `room_ids` and current health flags, plus the configured stuck threshold |

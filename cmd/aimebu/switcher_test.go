@@ -284,6 +284,34 @@ func TestSwitcherCLIUseConfirmsEmptyProfile(t *testing.T) {
 	}
 }
 
+func TestSwitcherCLIForceRequiresStoredCredentialsAndConfirmation(t *testing.T) {
+	home, call := switcherEnv(t)
+	call("", "enable")
+	writeCodexLogin(t, home, "main")
+	call("", "import", "codex", "main")
+	call("", "add", "codex", "target")
+	live := filepath.Join(home, ".codex", "auth.json")
+	if _, errs, code := call("", "use", "codex", "target", "--force", "-y"); code != 1 || !strings.Contains(errs, "requires stored credentials") {
+		t.Fatalf("empty target: code=%d err=%q", code, errs)
+	}
+	if got, err := os.ReadFile(live); err != nil || !strings.Contains(string(got), "main-refresh") {
+		t.Fatalf("empty force changed live credentials: %s %v", got, err)
+	}
+	stored := filepath.Join(home, ".aimebu2", "switcher", "profiles", "codex", "target", "auth.json")
+	if err := os.WriteFile(stored, []byte(`{"tokens":{"access_token":"target","refresh_token":"target-refresh"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, errs, code := call("", "use", "codex", "target", "--force"); code != 1 || !strings.Contains(errs, "stdin is not a terminal") {
+		t.Fatalf("force without confirmation: code=%d err=%q", code, errs)
+	}
+	if out, errs, code := call("", "use", "codex", "target", "--force", "-y"); code != 0 || !strings.Contains(out, "without refreshing") {
+		t.Fatalf("force: code=%d out=%q err=%q", code, out, errs)
+	}
+	if got, err := os.ReadFile(live); err != nil || !strings.Contains(string(got), "target-refresh") {
+		t.Fatalf("force did not install target: %s %v", got, err)
+	}
+}
+
 func TestSwitcherCLIRenameRemoveAndHints(t *testing.T) {
 	home, call := switcherEnv(t)
 	if _, errs, code := call("", "use", "codex", "x"); code != 1 || !strings.Contains(errs, "switcher is disabled; enable it with 'aimebu switcher enable'") {

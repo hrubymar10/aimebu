@@ -133,6 +133,24 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('#usages-error').textContent === 'Cannot switch now');
       await page.close();
     }
+    // A stored account needing reauthentication offers an explicit install path.
+    {
+      const page = await mount({ load: false });
+      await page.evaluate(async () => {
+        const list = window.__source.list.bind(window.__source);
+        window.__source.list = async () => ({ ...(await list()), credential_alerts: [{ kind: 'reauth_required', tool: 'codex', profile: 'backup', role: 'store', message: 'Sign in again' }] });
+        await window.__usages.load();
+      });
+      const selector = `${cardOf('codex')} .usage-profile:nth-child(2) .usage-switch-force`;
+      assert.equal(await page.$eval(selector, el => el.textContent), 'Install anyway');
+      await click(page, selector);
+      await dialog(page);
+      assert.match(await page.$eval('#app-dialog .app-dialog-message', el => el.textContent), /without refreshing/);
+      await click(page, '#app-dialog .app-dialog-ok');
+      await page.waitForFunction(() => window.__calls.some(call => call[0] === 'use'));
+      assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'use')), ['use', 'codex', 'backup', true]);
+      await page.close();
+    }
     // Two reads answered out of order: the later request's answer is the one drawn.
     {
       const page = await mount({ held: ['list'] , load: false });

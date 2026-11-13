@@ -50,6 +50,12 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 	return m.SwitchGuarded(tool, name, SwitchGuard{})
 }
 
+// SwitchForce installs stored credentials without refreshing the incoming profile.
+// It still uses the normal guarded swap and token-only fan-out.
+func (m *Manager) SwitchForce(tool, name string) (active string, switched bool, err error) {
+	return m.switchGuarded(tool, name, SwitchGuard{}, true)
+}
+
 // ErrActiveChanged: a guarded switch found a different profile active than the one the
 // caller decided from (someone switched in the meantime). Nothing was changed.
 var ErrActiveChanged = errors.New("the active profile changed before the switch could run")
@@ -75,8 +81,17 @@ type SwitchGuard struct {
 
 // SwitchGuarded is Switch with its guard conditions checked under the lock.
 func (m *Manager) SwitchGuarded(tool, name string, guard SwitchGuard) (active string, switched bool, err error) {
+	return m.switchGuarded(tool, name, guard, false)
+}
+
+// SwitchForceGuarded keeps the server's turn and warm-agent guards for a forced switch.
+func (m *Manager) SwitchForceGuarded(tool, name string, guard SwitchGuard) (active string, switched bool, err error) {
+	return m.switchGuarded(tool, name, guard, true)
+}
+
+func (m *Manager) switchGuarded(tool, name string, guard SwitchGuard, force bool) (active string, switched bool, err error) {
 	for attempts := 0; attempts < 5; attempts++ {
-		active, switched, err = m.switchGuardedOnce(tool, name, guard)
+		active, switched, err = m.switchGuardedOnce(tool, name, guard, force)
 		if guard.ExpectedActive != "" || !errors.Is(err, ErrActiveChanged) {
 			return active, switched, err
 		}
@@ -84,7 +99,7 @@ func (m *Manager) SwitchGuarded(tool, name string, guard SwitchGuard) (active st
 	return active, false, fmt.Errorf("%w: active profile kept changing", ErrMaintenanceBusy)
 }
 
-func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (active string, switched bool, err error) {
+func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force bool) (active string, switched bool, err error) {
 	if err := validateTool(tool); err != nil {
 		return "", false, err
 	}
@@ -128,7 +143,7 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (activ
 	// are never handed a dying account. Runs under the account lock held above and
 	// BEFORE the switcher flock, because the refresher commits under that flock.
 	tokenCopies := m.TokenCopiesFor(tool)
-	if tokenCopies {
+	if tokenCopies && !force {
 		if err := m.refreshIncomingIfDue(tool, name); err != nil {
 			return "", false, err
 		}
@@ -204,6 +219,11 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (activ
 	targetDir := m.profileDir(tool, name)
 	if _, statErr := os.Stat(targetDir); statErr != nil {
 		return "", false, fmt.Errorf("%w: %s/%s", ErrProfileNotFound, tool, name)
+	}
+	if force {
+		if _, statErr := os.Stat(m.profileCredPath(tool, name)); statErr != nil {
+			return "", false, fmt.Errorf("force switch requires stored credentials for %s/%s: %w", tool, name, statErr)
+		}
 	}
 
 	// Switching to the already-active profile is an explicit no-op: return before

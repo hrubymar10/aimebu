@@ -40,7 +40,7 @@ function OllamaSetup({ store, provider, configured }) {
   `;
 }
 
-export function ProviderCard({ store, provider, order, providers, state, usedDisplay, refreshSec, revision }) {
+export function ProviderCard({ store, provider, order, providers, state, alerts, usedDisplay, refreshSec, revision }) {
   const key = provider.provider_name, tool = toolOf(key);
   const switchable = isSwitchable(tool);
   const affected = (state.affected_agents || {})[tool] || [];
@@ -71,6 +71,6 @@ export function ProviderCard({ store, provider, order, providers, state, usedDis
       `}
     <//></div>
     <div class="usage-profiles">${(provider.profiles || []).map(profile => html`<${ProfileCard} key=${profileKey(key, profile)} store=${store} provider=${provider} profile=${profile} state=${state} usedDisplay=${usedDisplay} refreshSec=${refreshSec}
-      tool=${tool} switchable=${switchable} affected=${affected} eligible=${eligible} hasActive=${hasActive} />`)}</div>
+      tool=${tool} switchable=${switchable} affected=${affected} eligible=${eligible} hasActive=${hasActive} reauth=${alerts.some(alert => alert.kind === 'reauth_required' && alert.tool === tool && alert.profile === profile.profile_name && alert.role === 'store')} />`)}</div>
   </article>`;
 }

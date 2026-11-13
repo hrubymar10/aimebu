@@ -353,7 +353,7 @@ func (m *Manager) refreshIncomingIfDue(tool, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	if err := m.copyHooks.RefreshIncoming(ctx, tool, name); err != nil {
-		return fmt.Errorf("%w %s/%s: %v", ErrIncomingRefresh, tool, name, err)
+		return fmt.Errorf("%w %s/%s: %w", ErrIncomingRefresh, tool, name, err)
 	}
 	return nil
 }

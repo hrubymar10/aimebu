@@ -276,7 +276,9 @@ account details or changes anything there, and global admins can open the
 Usages view read-only (limits and profile names, nothing that names an account
 or how it signs in). See
 [usage snapshots](docs/usages.md) and
-[account switching](docs/switcher.md).
+[account switching](docs/switcher.md). An explicit
+`aimebu switcher use <tool> <profile> --force` installs stored credentials
+without an incoming refresh when an expired account needs a new login.
 Its files use the v1 switcher format under the selected v2 config root:
 development remains under `~/.aimebu2`, while cutover to `~/.aimebu` uses
 the existing profiles in place.

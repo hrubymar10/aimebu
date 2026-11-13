@@ -8,7 +8,7 @@ import { impactText, profileStatusLine, switchView } from './model.js';
 
 const time = date => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-export function ProfileCard({ store, provider, profile, state, usedDisplay, refreshSec, tool, switchable, affected, eligible, hasActive }) {
+export function ProfileCard({ store, provider, profile, state, usedDisplay, refreshSec, tool, switchable, affected, eligible, hasActive, reauth }) {
   const name = profile.profile_name;
   const configured = (state.profiles || []).some(item => item.tool === tool && item.name === name);
   const view = switchView({ switchable, enabled: state.enabled, owner: state.owner, configured, profile, hasActive, eligible });
@@ -19,6 +19,9 @@ export function ProfileCard({ store, provider, profile, state, usedDisplay, refr
   const age = staleAge(profile.last_refresh_at, refreshSec);
   const use = async () => {
     if (await confirmDialog(`${impactText(affected)}${profile.has_credentials ? '' : ' This profile needs a new login.'} Switch to ${name}?`, { title: 'Switch account', confirm: 'Switch' })) store.mutateSwitcher(() => store.source.use(tool, name));
+  };
+  const installAnyway = async () => {
+    if (await confirmDialog(`${impactText(affected)} Install ${name}'s stored credentials without refreshing? They may be expired; sign in again after switching.`, { title: 'Install expired account', confirm: 'Install anyway' })) store.mutateSwitcher(() => store.source.use(tool, name, true));
   };
   const rename = async () => {
     const next = (await promptDialog(`Rename ${name} to`, { title: 'Rename profile', label: 'New name', value: name, required: true, confirm: 'Rename' }))?.trim();
@@ -31,6 +34,7 @@ export function ProfileCard({ store, provider, profile, state, usedDisplay, refr
     <div class="usage-profile-header switcher-tile-head">
       <strong class="usage-profile-name switcher-tile-name">${name || 'local'}</strong>
       <button type="button" class="btn usage-switch switcher-switch-pill" hidden=${view.hidden} disabled=${view.disabled} title=${view.title} onClick=${use}>Switch</button>
+      ${reauth && profile.has_credentials && !view.hidden && html`<button type="button" class="btn usage-switch-force" disabled=${view.disabled} title=${view.title} onClick=${installAnyway}>Install anyway</button>`}
       <span class="usage-profile-active switcher-tile-active" hidden=${!profile.active}>${profile.active ? 'Active' : ''}</span>
       <span class="usage-profile-plan switcher-tile-plan" title=${profile.plan || ''} hidden=${!profile.plan}>${profile.plan || ''}</span>
     </div>

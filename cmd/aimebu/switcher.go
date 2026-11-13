@@ -28,6 +28,7 @@ type switcherManager interface {
 	Rename(tool, oldName, newName string) error
 	Remove(tool, name string, force bool) error
 	Switch(tool, name string) (string, bool, error)
+	SwitchForce(tool, name string) (string, bool, error)
 }
 
 func newSwitcherManager() (switcherManager, error) {
@@ -234,7 +235,16 @@ func printSwitcherStatus(out io.Writer, enabled bool, eligs []switcher.Eligibili
 // ── use ──────────────────────────────────────────────────────────────
 
 func switcherUse(in io.Reader, out io.Writer, m switcherManager, args []string) error {
-	autoYes, positional, err := parseSwitcherPositional(args, "use", 2)
+	force := false
+	filtered := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--force" {
+			force = true
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+	autoYes, positional, err := parseSwitcherPositional(filtered, "use", 2)
 	if err != nil {
 		return err
 	}
@@ -247,7 +257,10 @@ func switcherUse(in io.Reader, out io.Writer, m switcherManager, args []string) 
 	}
 	for i := range profiles {
 		p := &profiles[i]
-		if p.Tool == tool && p.Name == profile && !p.HasCreds {
+		if p.Tool == tool && p.Name == profile && !p.HasCreds && force {
+			return fmt.Errorf("force switch requires stored credentials for %s/%s", tool, profile)
+		}
+		if p.Tool == tool && p.Name == profile && !p.HasCreds && !force {
 			fmt.Fprintf(out,
 				"Profile %q is empty — switching will delete the live %s credentials and force a fresh login on next start.\n",
 				profile, tool,
@@ -259,7 +272,16 @@ func switcherUse(in io.Reader, out io.Writer, m switcherManager, args []string) 
 		}
 	}
 
-	_, switched, err := m.Switch(tool, profile)
+	var switched bool
+	if force {
+		fmt.Fprintf(out, "Force-switching to %s/%s installs its stored credentials without refreshing. They may be expired.\n", tool, profile)
+		if err := switcherConfirm(in, out, "Proceed?", autoYes); err != nil {
+			return err
+		}
+		_, switched, err = m.SwitchForce(tool, profile)
+	} else {
+		_, switched, err = m.Switch(tool, profile)
+	}
 	if err != nil {
 		return switcherErrMsg(err)
 	}
@@ -442,7 +464,7 @@ func parseSwitcherPositional(args []string, sub string, n int) (autoYes bool, po
 func switcherSubUsage(sub string) string {
 	switch sub {
 	case "use":
-		return "use <tool> <profile> [-y]"
+		return "use <tool> <profile> [--force] [-y]"
 	case "add":
 		return "add <tool> <profile>"
 	case "import":
@@ -462,7 +484,7 @@ func switcherUsage(w io.Writer) {
 Commands:
   list [--json]                    List profiles across all tools
   status [--json]                  Show active profile and eligibility per tool
-  use <tool> <profile> [-y]        Switch to a profile (captures the live login first, except on a token-only install)
+  use <tool> <profile> [--force] [-y]  Switch; --force skips incoming refresh
   add <tool> <profile>             Create an empty profile (no credentials)
   import <tool> <profile>          Adopt the current live login as a named profile
   rename <tool> <old> <new>        Rename a profile

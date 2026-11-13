@@ -27,6 +27,7 @@ aimebu switcher enable
 aimebu switcher import codex main
 aimebu switcher add codex other
 aimebu switcher use codex other
+aimebu switcher use codex other --force
 aimebu switcher rename codex other spare
 aimebu switcher list
 aimebu switcher status
@@ -48,6 +49,15 @@ skip the prompt; without a terminal on stdin the command refuses and asks for
 without a prompt. In the UI, removing an active profile asks for confirmation.
 Only the owner can change profiles through the web API; switcher status and
 account profiles are owner-only too.
+
+`switcher use <tool> <profile> --force` requires stored credentials and installs
+them without refreshing the incoming profile. It still uses the normal safe
+swap or token-only fan-out, never clears a credential because it is expired,
+and may leave the selected account needing a fresh login. The CLI asks for
+confirmation; `-y` skips the prompt. The owner can choose **Install anyway**
+on a profile with a `reauth_required` alert in Settings → Usages. The switch
+API accepts `{"name":"<profile>","force":true}`. Ordinary switches still
+refresh due incoming profiles before installing them.
 
 Errors carry hints: a disabled switcher points at `aimebu switcher enable`,
 and switching with no active profile points at `aimebu switcher import` first.
@@ -233,6 +243,10 @@ access token until it expires and re-read the file when it is rewritten.
   If another switch changes the active profile during that wait, a manual
   switch retries with the new active profile; an automatic switch refuses its
   stale decision and evaluates again.
+  An explicit forced switch skips only the incoming refresh; it still requires
+  stored credentials and runs the same locks, validation, fan-out and state
+  update. An account in `reauth_required` does not receive retry advice because
+  that state requires a new login.
 - The **server** keeps targets current. Every live-target write takes the
   switcher lock and re-reads the active profile under it, so a switch landing
   meanwhile is never overwritten. `server/credential-targets.json` lists extra

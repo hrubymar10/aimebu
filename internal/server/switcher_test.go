@@ -121,6 +121,57 @@ func TestSwitcherRoutesShowImpactAndRefuseRunningTurn(t *testing.T) {
 	}
 }
 
+func TestSwitcherUseForceRequiresStoredCredentials(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
+	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(root, ".aimebu2"))
+	f := newFixture(t)
+	m, err := switcher.New(filepath.Join(root, ".aimebu2", "switcher"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetHomeDir(root)
+	f.srv.Switcher = m
+	live := filepath.Join(root, ".codex", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte(`{"tokens":{"access_token":"main","refresh_token":"main-refresh"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Import("codex", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add("codex", "target"); err != nil {
+		t.Fatal(err)
+	}
+	request := func() *http.Response {
+		return f.request(http.MethodPost, "/api/switcher/codex/use", map[string]any{"name": "target", "force": true}, true)
+	}
+	resp := request()
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("force to empty target = %d", resp.StatusCode)
+	}
+	stored := filepath.Join(root, ".aimebu2", "switcher", "profiles", "codex", "target", "auth.json")
+	if err := os.WriteFile(stored, []byte(`{"tokens":{"access_token":"target","refresh_token":"target-refresh"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp = request()
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("force with stored credentials = %d", resp.StatusCode)
+	}
+	if got, err := os.ReadFile(live); err != nil || !strings.Contains(string(got), "target-refresh") {
+		t.Fatalf("live = %s, %v", got, err)
+	}
+}
+
 func TestSwitcherRouteReadsV1TreeInPlace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

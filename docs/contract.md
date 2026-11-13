@@ -888,6 +888,8 @@ the journal, for debugging (retention 14 d): see "Agent output" in
   A switch returns 409 with the running agents while any matching turn is
   active; the owner waits or stops those agents and retries. Remote-machine
   switching and a persistent dispatch gate are later work.
+  An explicit forced switch requires stored credentials and skips the incoming
+  token refresh; it keeps the ordinary turn guard and credential swap.
 
 ## 3d. Deployment
 
