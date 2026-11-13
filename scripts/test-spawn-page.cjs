@@ -32,6 +32,7 @@ const catalog = { tools: [
 const machines = { machines: [{ id: 'm1', name: 'Host', is_host: true, approved: true, connected: true, project_allowed: true }, { id: 'm2', name: 'Remote', approved: true, connected: true, project_allowed: true }] };
 const roles = [{ role_key: 'worker', label: 'Worker', emoji: '🔧', cap_is_lead: false }, { role_key: 'leader', label: 'Leader', emoji: '🧭', cap_is_lead: true }];
 const stable = (extra = {}) => ({ 'GET /api/projects/p1/machine-folders': { folders: [{ machine_id: 'm2', folder: '/srv/p1' }] }, 'GET /api/machines?project_id=p1': machines, 'GET /api/roles': roles,
+  'GET /api/projects/p1/team-flow': { key: 'custom', rev: 1, review_pending: false, template: { key: 'custom', join_rules: [] } },
   'GET /api/rooms/r1/agent-name': { name: 'nova' }, 'GET /api/spawn-catalog?machine_id=m1': catalog, 'GET /api/spawn-catalog?machine_id=m2': catalog, 'GET /api/projects/p1/role-spawn-defaults/worker/next': { available: false }, 'GET /api/projects/p1/role-spawn-defaults/leader/next': { available: false },
   'GET /api/rooms/r1/agents': [agent('a1', 'ada')], 'GET /api/rooms/r1/members': { humans: [] },
   'GET /api/rooms/r2/agent-name': { name: 'luna' }, 'GET /api/rooms/r2/agents': [agent('a9', 'zed', { room_id: 'r2' })], 'GET /api/rooms/r2/members': { humans: [] }, ...extra });
@@ -169,6 +170,22 @@ async function main() {
     await open(free); await ready(free);
     assert.deepEqual([(await form(free)).roles, (await form(free)).hint], [['🔧 Worker', '🧭 Leader'], false]);
     await free.close(); await page.close();
+  }
+  // Flow B offers only the roles allowed in each room, including the dispatcher in routing and general.
+  {
+    const template = { key: 'leader-dispatcher', join_rules: [{ room_kind: 'routing', allowed_roles: ['leader', 'dispatcher'] }, { room_kind: 'general', allowed_roles: ['worker', 'dispatcher'] }, { room_kind: 'task', allowed_roles: ['worker'] }] };
+    const auto = stable({ 'GET /api/rooms/routing/agent-name': { name: 'route' }, 'GET /api/roles': [...roles, { role_key: 'dispatcher', label: 'Dispatcher', emoji: '📣', cap_is_lead: false }],
+      'GET /api/projects/p1/team-flow': { key: template.key, rev: 2, review_pending: false, template },
+      'GET /api/projects/p1/role-spawn-defaults/dispatcher/next': { available: false } });
+    const routing = await mount({ current: room('routing', { team_flow_room_key: 'routing' }), auto });
+    await open(routing); await ready(routing);
+    assert.deepEqual((await form(routing)).roles, ['🧭 Leader', '📣 Dispatcher']);
+    assert.match(await routing.$eval('#spawn-flow-hint', node => node.textContent), /Leader, Dispatcher/);
+    await routing.close();
+    const general = await mount({ current: room('r2', { team_flow_room_key: 'general' }), auto });
+    await open(general); await ready(general);
+    assert.deepEqual((await form(general)).roles, ['🔧 Worker', '📣 Dispatcher']);
+    await general.close();
   }
 
   // A non-Git project hides the optional worktree while Spawn remains available.

@@ -256,6 +256,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/health", s.Auth.RequireUser(http.HandlerFunc(s.health)))
 	mux.Handle("POST /api/projects", s.Auth.RequireUser(http.HandlerFunc(s.projects)))
 	mux.Handle("PATCH /api/projects/{project}", s.Auth.RequireUser(http.HandlerFunc(s.projectUpdate)))
+	mux.Handle("GET /api/team-flows", s.Auth.RequireUser(http.HandlerFunc(s.teamFlows)))
+	mux.Handle("GET /api/projects/{project}/team-flow", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowState)))
+	mux.Handle("POST /api/projects/{project}/team-flow/preview", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowPreview)))
+	mux.Handle("PUT /api/projects/{project}/team-flow", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowApply)))
 	mux.Handle("POST /api/projects/{project}/archive", s.Auth.RequireUser(http.HandlerFunc(s.archiveProject)))
 	mux.Handle("POST /api/projects/{project}/reopen", s.Auth.RequireUser(http.HandlerFunc(s.reopenProject)))
 	mux.Handle("DELETE /api/projects/{project}", s.Auth.RequireUser(http.HandlerFunc(s.deleteProject)))
@@ -410,7 +414,18 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.serveAppPage(w, r, web)
 	})
-	return telemetry.Middleware(allowMiddleware(s.withHSTS(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(mux)))), s.Allow))
+	// The referenced-message path overlaps the older message debug path in
+	// ServeMux's pattern algebra. Dispatch this exact shape before the mux.
+	routes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if r.Method == http.MethodGet && len(parts) == 4 && parts[0] == "api" && parts[1] == "messages" && parts[2] == "referenced" {
+			r.SetPathValue("no", parts[3])
+			s.Auth.RequireUser(http.HandlerFunc(s.referencedMessage)).ServeHTTP(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	return telemetry.Middleware(allowMiddleware(s.withHSTS(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(routes)))), s.Allow))
 }
 
 // serveWebBundle answers for the bundle (the page asks for it by a name that carries the version, so it is cached for good) or its source map, packed
@@ -649,6 +664,8 @@ func fail(w http.ResponseWriter, err error) {
 		apiError(w, 404, "not_found", "not found")
 	} else if errors.Is(err, store.ErrForbidden) {
 		apiError(w, 403, "forbidden", "forbidden")
+	} else if errors.Is(err, store.ErrTeamFlowRule) {
+		apiError(w, 409, "team_flow_rule", "this team flow does not allow that role in this room")
 	} else if errors.Is(err, store.ErrScopeMismatch) {
 		apiError(w, 409, "scope_mismatch", "the requested resources belong to different projects or machines")
 	} else {

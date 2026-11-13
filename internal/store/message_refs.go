@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -75,8 +76,12 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 	var roomID, title, kind, authorKind, authorID, body, createdAt string
 	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at
 		FROM message m JOIN room r ON r.id=m.room_id
-		WHERE m.no=? AND m.no>0 AND r.project_id IN (?,`+agentDMProjectSQL+`) AND (r.kind<>'dm' OR EXISTS (SELECT 1 FROM room_member own
-			WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL))`, no, projectID, agentID).
+		WHERE m.no=? AND m.no>0 AND r.project_id IN (?,`+agentDMProjectSQL+`) AND (
+			(r.kind<>'dm' AND r.restricted=0)
+			OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL)
+			OR EXISTS (SELECT 1 FROM message_reference_grant g JOIN message source ON source.id=g.source_message_id
+				JOIN room_member own ON own.room_id=source.room_id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL
+				WHERE g.target_no=m.no AND r.kind<>'dm' AND source.room_id<>r.id AND source.room_id IN (SELECT id FROM room WHERE project_id=r.project_id)))`, no, projectID, agentID, agentID).
 		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt)
 	if err == sql.ErrNoRows {
 		return unavailable, nil
@@ -112,6 +117,36 @@ func (s *Store) AgentMessageByNo(ctx context.Context, agentID, projectID string,
 		return AgentMessage{}, err
 	}
 	return agentMessageByNo(ctx, s.db, agentID, projectID, no, 20000)
+}
+
+// ReferencedMessageForUser returns only a cited target of a source message the
+// user can read. An unavailable result deliberately does not reveal the target.
+func (s *Store) ReferencedMessageForUser(ctx context.Context, userID, sourceID string, no int64) (AgentMessage, error) {
+	out := AgentMessage{No: no}
+	var sourceRoom, targetRoom string
+	err := s.db.QueryRowContext(ctx, `SELECT source.room_id,target.room_id FROM message_reference_grant g
+		JOIN message source ON source.id=g.source_message_id
+		JOIN message target ON target.no=g.target_no
+		JOIN room sr ON sr.id=source.room_id JOIN room tr ON tr.id=target.room_id
+		WHERE g.source_message_id=? AND g.target_no=? AND sr.project_id=tr.project_id AND source.room_id<>target.room_id AND tr.kind<>'dm'`, sourceID, no).Scan(&sourceRoom, &targetRoom)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
+	if err := s.UserRoomAccess(ctx, userID, sourceRoom); err != nil {
+		if errors.Is(err, ErrForbidden) {
+			return out, nil
+		}
+		return out, err
+	}
+	var title, authorKind, authorID, body, created string
+	err = s.db.QueryRowContext(ctx, `SELECT r.title,m.author_kind,m.author_id,m.body,m.created_at FROM message m JOIN room r ON r.id=m.room_id WHERE m.no=? AND m.room_id=?`, no, targetRoom).Scan(&title, &authorKind, &authorID, &body, &created)
+	if err != nil {
+		return out, err
+	}
+	return AgentMessage{No: no, Available: true, RoomID: targetRoom, Room: title, From: authorLabel(ctx, s.db, authorKind, authorID), Body: body, CreatedAt: created}, nil
 }
 
 // referencedMessages resolves the "#N" references in what a delivery shows the agent into its context, so the agent does not have to ask:

@@ -4985,7 +4985,8 @@ async function main() {
     await agentPage.keyboard.press('Escape');
     await agentPage.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
     await agentPage.click('#room-menu-toggle');
-    await agentPage.mouse.click(40, 400);
+    await agentPage.waitForFunction(() => !document.querySelector('#room-menu').hidden);
+    await agentPage.click('#room-title');
     await agentPage.waitForFunction(() => document.querySelector('#room-menu').hidden);
     await agentPage.setViewport({ width: 320, height: 640 });
     if (supervisor.exitCode !== null) throw new Error(`supervisor exited: ${ctx.supervisorLogs()}`);

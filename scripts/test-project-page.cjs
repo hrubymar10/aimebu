@@ -13,7 +13,7 @@ const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
 <body><dialog id="room-info-dialog" open><section id="room-project"><div id="project-settings-body" class="settings-subsection project-settings-body"></div></section>
-<section id="room-scope-control" class="scope-control" aria-label="Room agent control"></section><section id="room-usage" class="usage-summary" aria-label="Room usage"></section></dialog></body></html>`;
+<section id="room-scope-control" class="scope-control" aria-label="Room agent control"></section><section id="room-usage" class="usage-summary" aria-label="Room usage"></section></dialog><div id="messages"></div></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -26,6 +26,11 @@ const server = http.createServer((req, res) => {
 const limit = { rev: 3, cost_mode: 'inherit', turn_mode: 'custom', daily_turn_cap: 50, daily_cost_cap: null, inherited_cost_cap: 5, inherited_turn_cap: null, day_start: '2026-02-03T00:00:00Z', tz: 'UTC', daily_turns: 2, daily_cost: 0.5, cost_coverage: 'known', effective_state: 'active' };
 const usage = { turns: 4, by_agent: [{ key: 'a1', label: 'leader', turns: 4 }], by_model: [] };
 const roles = [{ role_key: 'worker', inherited: true, global_agents: [{}, {}], default_agents: [], pick_mode: 'in_turn' }, { role_key: 'leader', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }];
+const flows = [
+  { key: 'leader-workers', label: 'A · Leader and workers', description: 'Leader coordinates workers.', diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'general', label: 'General', roles: ['worker'] }], edges: [{ from: 'home', to: 'general' }] } },
+  { key: 'leader-dispatcher', label: 'B · Leader and dispatcher', description: 'Dispatcher coordinates workers.', diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'routing', label: 'Routing', roles: ['leader', 'dispatcher'] }], edges: [{ from: 'home', to: 'routing' }] } },
+  { key: 'custom', label: 'C · Custom', description: 'Choose your own team.', diagram: { rooms: [], edges: [] } },
+];
 const rule = (status, body) => ({ status, body });
 const base = () => ({
   'GET /api/projects/p1/control': { desired: 'active', effective_state: 'active', rev: 7 },
@@ -34,6 +39,9 @@ const base = () => ({
   'GET /api/projects/p1/role-spawn-defaults': roles,
   'GET /api/machines?project_id=p1': { machines: [{ id: 'm1', name: 'Box' }] },
   'GET /api/spawn-catalog?machine_id=m1': { tools: [{ launcher_id: 'l1', label: 'Claude', models: [{ id: 'm1', label: 'Opus' }, { id: 'm2', label: 'Sonnet' }] }] },
+  'GET /api/team-flows': { templates: flows },
+  'GET /api/projects/p1/team-flow': { key: 'custom', rev: 1, review_pending: false, template: flows[2], conflicts: [] },
+  'POST /api/projects/p1/team-flow/preview': { key: 'custom', create_rooms: [], role_changes: [], conflicts: [] },
 });
 
 function installFetch(auto) {
@@ -75,6 +83,7 @@ async function main() {
       const settingsPage = window.__project = new ProjectSettings(source, () => ({ projects: [project, { ...project, id: 'p2' }], rooms, selectedProjectID: 'p1' }));
       settingsPage.onLifecycle = async id => { window.__hooks.push(['lifecycle', id]); };
       settingsPage.onRemoved = async id => { window.__hooks.push(['removed', id]); };
+      settingsPage.onFlowApplied = async id => { window.__hooks.push(['flow', id]); };
       window.__room = new (await import('/js/pages/project/room-panels.js')).RoomScopeControl(document.querySelector('#room-scope-control'));
       window.__roomUsage = new (await import('/js/pages/project/room-panels.js')).RoomUsage(document.querySelector('#room-usage'));
       if (load) await settingsPage.load('p1');
@@ -110,7 +119,7 @@ async function main() {
       const page = await mount();
       await ready(page);
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#project-settings-body').children].map(node => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}`)),
-        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section', 'section#project-usage', 'div', 'div', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
+        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section', 'section#project-team-flow', 'section#project-usage', 'div', 'div', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
       assert.deepEqual(await page.evaluate(() => ({ name: [document.querySelector('#project-details-name').value, document.querySelector('#project-details-name').disabled], folder: [document.querySelector('#project-details-folder').value, document.querySelector('#project-details-folder').disabled],
         save: document.querySelector('#project-details-save').disabled, status: document.querySelector('#project-details-status').textContent,
         flags: ['#project-auto-resume', '#project-worktrees', '#project-home-lead-only'].map(id => [document.querySelector(id).checked, document.querySelector(id).disabled]),
@@ -126,6 +135,66 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => ({ session: [document.querySelector('#project-session-import').hidden, document.querySelector('#project-session-import-open').disabled, document.querySelector('#project-session-import-open').title],
         rows: ['archive', 'reopen', 'delete'].map(key => [key, document.querySelector(`#project-${key}-row`).hidden, document.querySelector(`#project-${key}`).disabled]), note: document.querySelector('#project-lifecycle > p').textContent, group: document.querySelector('#project-lifecycle').hidden })),
         { session: [false, false, 'Import Claude Code sessions'], rows: [['archive', false, false], ['reopen', true, false], ['delete', true, false]], note: '', group: false });
+      await page.close();
+    }
+    // Project settings previews a switch before applying it and lists agents that need a human action.
+    {
+      const page = await mount();
+      await ready(page);
+      await page.waitForSelector('#project-team-flow .team-flow-card');
+      await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-flow/preview']; });
+      await page.$eval('#project-team-flow .team-flow-card:nth-child(2)', node => node.click());
+      const preview = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/preview');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, preview), { key: 'leader-dispatcher' });
+      await answer(page, preview, 200, { key: 'leader-dispatcher', create_rooms: [{ key: 'routing', title: 'routing' }], role_changes: [{ description: 'Add dispatcher role' }], conflicts: [{ agent_id: 'agt_old', reason: 'Leader in task room', suggested_action: 'Move to home' }] });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-preview')?.textContent.includes('Move to home'));
+      assert.match(await page.$eval('#project-team-flow .team-flow-preview', node => node.textContent), /routing.*Add dispatcher role.*agt_old/s);
+      await page.$eval('#project-team-flow .btn-primary', node => node.click());
+      const apply = await waitRequest(page, 'PUT', '/api/projects/p1/team-flow');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, apply), { key: 'leader-dispatcher', rev: 1 });
+      await answer(page, apply, 200, { key: 'leader-dispatcher', rev: 2, review_pending: false, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [] });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('Leader and dispatcher'));
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#project-team-flow .btn-primary').disabled, window.__hooks.at(-1)]), [true, ['flow', 'p1']]);
+      await page.close();
+    }
+    // The inline home setup starts with A for a new project; migrated C can be kept in one click and stays dismissed after reload.
+    {
+      const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
+      const page = await mount({ auto });
+      await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
+      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 3);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), !!node.querySelector('.team-flow-diagram-room')])), [['true', true], ['false', true], ['false', false]]);
+      await page.close();
+      const migrated = base(); migrated['GET /api/projects/p1/team-flow'] = { key: 'custom', rev: 4, review_pending: true, template: flows[2] };
+      const kept = await mount({ auto: migrated });
+      await kept.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
+      await kept.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-card.selected')?.textContent.includes('Custom'));
+      await kept.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      assert.equal(await kept.$eval('#team-flow-home .btn-primary', node => node.textContent.trim()), 'Keep current setup');
+      await kept.$eval('#team-flow-home .btn-primary', node => node.click());
+      const apply = await waitRequest(kept, 'PUT', '/api/projects/p1/team-flow');
+      assert.deepEqual(await kept.evaluate(index => window.__requests[index].body, apply), { key: 'custom', rev: 4 });
+      await answer(kept, apply, 200, { key: 'custom', rev: 5, review_pending: false, created_rooms: [], conflicts: [] });
+      await kept.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-home-card'));
+      await kept.evaluate(() => { window.__auto['GET /api/projects/p1/team-flow'] = { key: 'custom', rev: 5, review_pending: false, template: null }; window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
+      await settle(kept);
+      assert.equal(await kept.$('#team-flow-home .team-flow-home-card'), null, 'the server-backed acknowledgment keeps setup dismissed');
+      await kept.close();
+    }
+    // A worker-room reference displays exactly the granted message, as plain text and without opening the source room.
+    {
+      const auto = base();
+      auto['GET /api/messages/referenced/77?source_message_id=src1'] = { no: 77, available: true, room_id: 'routing', room: 'routing', from: 'lead', body: 'Private brief\nOnly this message.' };
+      auto['GET /api/messages/referenced/78?source_message_id=src1'] = { no: 78, available: false };
+      const page = await mount({ auto });
+      await page.evaluate(async () => {
+        const { ReferencedMessages } = await import('/js/pages/chat/rows.js');
+        const { html, render } = await import('/js/ui.js');
+        const host = document.createElement('div'); host.id = 'reference-test'; document.body.append(host);
+        render(html`<${ReferencedMessages} message=${{ id: 'src1', body: 'Read #77 and #78' }} />`, host);
+      });
+      await page.waitForSelector('#reference-test .chat-reference');
+      assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#reference-test .chat-reference').length, document.querySelector('#reference-test .chat-reference pre').textContent, document.querySelectorAll('#reference-test a').length]), [1, 'Private brief\nOnly this message.', 0]);
       await page.close();
     }
     // Who may change what: an admin edits the folder; someone who is neither sees the form read-only and the archive controls off with the reason.
@@ -215,10 +284,10 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
       await page.$eval('#app-dialog .app-dialog-cancel', el => el.click());
       await settle(page);
-      assert.equal((await calls(page, 'POST')).length, 0, 'a cancelled stop sends nothing');
+      assert.equal((await calls(page, 'POST')).filter(([path]) => path.endsWith('/control')).length, 0, 'a cancelled stop sends nothing');
       await page.$eval('#project-scope-control [data-scope-action=pause]', el => el.click());
       await page.waitForFunction(() => document.querySelector('#project-scope-control .scope-control-results').textContent.length > 0);
-      assert.deepEqual([(await calls(page, 'POST'))[0], await page.evaluate(() => [window.__requests.find(request => request.method === 'POST').headers['Idempotency-Key'].length > 8, document.querySelector('#project-scope-control').dataset.desired, document.querySelector('#project-scope-control .scope-control-results').textContent])],
+      assert.deepEqual([(await calls(page, 'POST')).find(([path]) => path.endsWith('/control')), await page.evaluate(() => [window.__requests.find(request => request.method === 'POST' && request.path.endsWith('/control')).headers['Idempotency-Key'].length > 8, document.querySelector('#project-scope-control').dataset.desired, document.querySelector('#project-scope-control .scope-control-results').textContent])],
         [['/api/projects/p1/control', { action: 'pause', rev: 7 }], [true, 'paused', 'Agent controls needing attention: busy.']]);
       await page.close();
     }
@@ -283,7 +352,7 @@ async function main() {
       await page.evaluate(() => { window.__project.load('p2'); });
       await page.$eval('#app-dialog .app-dialog-ok', el => el.click());
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => [window.__requests.filter(request => request.method === 'POST').length, window.__hooks.length]), [0, 0], 'a confirmation for p1 sends nothing once p2 is shown');
+      assert.deepEqual(await page.evaluate(() => [window.__requests.filter(request => request.method === 'POST' && request.path.endsWith('/archive')).length, window.__hooks.length]), [0, 0], 'a confirmation for p1 sends nothing once p2 is shown');
       await page.close();
       const archived = await mount({ archived: true, auto: { ...base(), 'DELETE /api/projects/p1': {}, 'DELETE /api/projects/p2': {} } });
       await ready(archived);

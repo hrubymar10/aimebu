@@ -14,6 +14,7 @@ export class ProjectSettings {
   set onLifecycle(callback) { this.store.onLifecycle = callback; }
   set onRemoved(callback) { this.store.onRemoved = callback; }
   set onRenamed(callback) { this.store.onRenamed = callback; }
+  set onFlowApplied(callback) { this.store.onFlowApplied = callback; }
 
   load(id) { return this.store.load(id); }
 

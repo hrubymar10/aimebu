@@ -324,7 +324,7 @@ func TestRoomAgentAndMemberListsRunFewStatements(t *testing.T) {
 	}
 }
 
-// TestRoomMembersResponseIsUnchanged pins the member list's JSON, byte for byte, to what it was before the list was read in three statements.
+// TestRoomMembersResponseIsUnchanged pins the member list's JSON, byte for byte, including the built-in singleton roles.
 func TestRoomMembersResponseIsUnchanged(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -344,7 +344,7 @@ func TestRoomMembersResponseIsUnchanged(t *testing.T) {
 	want := `{"humans":[{"id":"OWNER","login":"owner","role":"owner"}],"agents":[` +
 		`{"id":"DREW","slug":"drew","role_key":"worker","role_label":"Worker","role_emoji":"🛠️","singleton":false,"desired":"active","observed":"idle"},` +
 		`{"id":"TESSA","slug":"tessa","role_key":"leader","role_label":"Leader","role_emoji":"👑","singleton":true,"desired":"active","observed":"idle"}],` +
-		`"singletons":[{"role_key":"leader","label":"Leader","emoji":"👑","held_by":{"agent_id":"TESSA","slug":"tessa","in_this_room":true}}]}` + "\n"
+		`"singletons":[{"role_key":"dispatcher","label":"Dispatcher","emoji":"📨","held_by":null},{"role_key":"leader","label":"Leader","emoji":"👑","held_by":{"agent_id":"TESSA","slug":"tessa","in_this_room":true}}]}` + "\n"
 	want = strings.NewReplacer("OWNER", owner.ID, "DREW", drew.ID, "TESSA", tessa.ID).Replace(want)
 	if string(got) != want {
 		t.Fatalf("the member list changed\n got: %s\nwant: %s", got, want)

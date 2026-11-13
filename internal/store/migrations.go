@@ -1682,6 +1682,24 @@ CREATE TABLE IF NOT EXISTS inbox_item_seen (
   seen_at TEXT NOT NULL,
   PRIMARY KEY (item_id, user_id)
 );
+`}, {106, `
+-- Existing projects keep their behavior until an owner reviews the flow.
+ALTER TABLE project ADD COLUMN team_flow_key TEXT NOT NULL DEFAULT 'custom';
+ALTER TABLE project ADD COLUMN team_flow_rev INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE project ADD COLUMN team_flow_review_pending INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE room ADD COLUMN team_flow_room_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE room ADD COLUMN restricted INTEGER NOT NULL DEFAULT 0 CHECK (restricted IN (0,1));
+CREATE INDEX room_team_flow_key ON room(project_id, team_flow_room_key);
+CREATE TABLE message_reference_grant (
+  source_message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  target_no INTEGER NOT NULL,
+  PRIMARY KEY(source_message_id, target_no)
+);
+CREATE INDEX message_reference_grant_target ON message_reference_grant(target_no);
+INSERT OR IGNORE INTO role(id,key,label,body,cap_is_lead,cap_can_spawn,cap_singleton_writer,project_id,role_key,emoji,cardinality)
+VALUES ('role_dispatcher_default','dispatcher','Dispatcher',
+'Take specifications from the leader in routing. Create task rooms, spawn and brief workers and reviewers, run review, gate, and fix rounds. Report to the leader in routing only: done <what, SHA, how verified>; blocked <why>; or needs decision <question>. Do not send routine worker traffic to the home room.',
+0,1,0,NULL,'dispatcher','📨','singleton');
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

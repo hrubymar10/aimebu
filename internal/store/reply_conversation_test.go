@@ -170,6 +170,13 @@ func TestReplyMigrationDerivesConversations(t *testing.T) {
 	// The rows as they were before the change: a thread message without reply_to, and plain replies without thread_root (reply_to always
 	// names an existing message: it is a foreign key).
 	for _, statement := range [][]any{
+		{`DROP TABLE message_reference_grant`},
+		{`DROP INDEX room_team_flow_key`},
+		{`ALTER TABLE room DROP COLUMN restricted`},
+		{`ALTER TABLE room DROP COLUMN team_flow_room_key`},
+		{`ALTER TABLE project DROP COLUMN team_flow_review_pending`},
+		{`ALTER TABLE project DROP COLUMN team_flow_rev`},
+		{`ALTER TABLE project DROP COLUMN team_flow_key`},
 		{`UPDATE message SET reply_to=NULL, thread_root=? WHERE id=?`, root.ID, threadOnly.ID},
 		{`UPDATE message SET reply_to=?, thread_root=NULL WHERE id=?`, threadOnly.ID, reply.ID},
 		{`UPDATE message SET reply_to=?, thread_root=NULL WHERE id=?`, reply.ID, deep.ID},

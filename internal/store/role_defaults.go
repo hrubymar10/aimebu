@@ -150,9 +150,10 @@ type builtinRole struct {
 // agent receives are the resolved body (the parent's, a blank line, then the role's own).
 func builtinRoles() map[string]builtinRole {
 	roles := map[string]builtinRole{
-		"role_leader_default":   {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: leadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
-		"role_worker_default":   {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
-		"role_reviewer_default": {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
+		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: leadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
+		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: dispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
+		"role_worker_default":     {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
+		"role_reviewer_default":   {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
 	}
 	for _, focus := range reviewerFocus {
 		id := "role_" + focus.key + "_default"
@@ -160,6 +161,8 @@ func builtinRoles() map[string]builtinRole {
 	}
 	return roles
 }
+
+const dispatcherRoleBody = `Take specifications from the leader in routing. Create task rooms, spawn and brief workers and reviewers, run review, gate, and fix rounds. Report to the leader in routing only: done <what, SHA, how verified>; blocked <why>; or needs decision <question>. Do not send routine worker traffic to the home room.`
 
 func specialistFocus(body string) string { return "Additional focus: " + body }
 

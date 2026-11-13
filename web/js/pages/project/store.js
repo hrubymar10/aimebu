@@ -6,6 +6,7 @@ import { ClaudeSessionImport } from '../claude-import/page.js';
 import { ScopeStore } from '../../components/scope-control.js';
 import { UsageSummaryStore } from '../../components/usage-summary.js';
 import { UsageLimitStore } from './usage-limit.js';
+import { TeamFlowStore } from './team-flow-store.js';
 import { detailsChanges, detailsView, lifecycleView, stopFailedNote } from './model.js';
 
 const FLAGS = { autoResume: 'auto_resume_after_clean_diagnostic', worktrees: 'worktree_mode', homeLeadOnly: 'home_lead_only' };
@@ -33,11 +34,13 @@ export class ProjectStore {
     this.scope = new ScopeStore('project');
     this.limit = new UsageLimitStore();
     this.usage = new UsageSummaryStore(id => `/api/projects/${id}/usage`);
+    this.flow = new TeamFlowStore({ onApplied: (id, result) => this.onFlowApplied?.(id, result) });
     this.alive = true;
     this.generation = 0;
     this.onLifecycle = null;
     this.onRemoved = null;
     this.onRenamed = null;
+    this.onFlowApplied = null;
   }
 
   // After a dialog: the page is still here, and still shows the project the dialog was about.
@@ -63,7 +66,7 @@ export class ProjectStore {
       for (const flag of Object.values(this.flags)) flag.value = { checked: false, disabled: true };
     });
     this.refreshDetails(id);
-    this.scope.load(id); this.limit.load(id); this.usage.load(id);
+    this.scope.load(id); this.limit.load(id); this.usage.load(id); this.flow.load(id);
     if (!id) { this.error.value = 'Choose a project first.'; return; }
     try {
       const settings = await this.source.get(id);
@@ -153,5 +156,5 @@ export class ProjectStore {
 
   lifecycle() { const view = this.view.value; return lifecycleView(this.project.value, view.canName); }
 
-  destroy() { this.alive = false; this.generation++; this.scope.destroy(); this.limit.destroy(); this.usage.destroy(); this.importer?.destroy(); }
+  destroy() { this.alive = false; this.generation++; this.scope.destroy(); this.limit.destroy(); this.usage.destroy(); this.flow.destroy(); this.importer?.destroy(); }
 }

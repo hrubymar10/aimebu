@@ -12,6 +12,7 @@ import { InboxNotifications } from './inbox-notifications.js';
 import { AgentsPanel } from './pages/agents/page.js';
 import { createAgentSource } from './agent-source.js';
 import { SettingsPanel } from './settings.js';
+import { TeamFlowHome } from './pages/project/team-flow-home.js';
 import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './pages/topbar/page.js';
 import { createUsagesSource } from './usages-source.js';
@@ -103,7 +104,7 @@ sidebar.shownSeq = id => chat.room?.id === id ? chat.newestShownSeq() : 0;
 chat.onLatest = room => { if (sidebar.active === room.id) sidebar.markSeen(sidebar.rooms.get(room.id)); };
 // A room that was open here is closed: no chat, no knowledge, no room in the address.
 function closeOpenRoom() {
-  chat.reset(); knowledge.setRoom(null);
+  chat.reset(); teamFlowHome.reset(); knowledge.setRoom(null);
   history.replaceState(null, '', `${location.pathname}${location.search}`);
 }
 // A removed room is gone for everyone: refresh its project and, if it was open here, go to the project's home room.
@@ -251,6 +252,18 @@ agents.showRoom = room => selectRoom(room);
 // A room the server made (a continued Claude Code session's): refresh the project's list so it is there, then open it.
 agents.showRoomByID = async (projectID, roomID) => { await sidebar.refreshProject(projectID); const room = sidebar.rooms.get(roomID); if (room) await selectRoom(room); };
 const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], rooms: [...sidebar.rooms.values()], selectedProjectID: chat.room?.project_id }), notifications);
+const teamFlowHome = new TeamFlowHome({
+  canEdit: id => ['owner', 'operator'].includes(sidebar.projects.get(id)?.role),
+  onApplied: async projectID => {
+    await sidebar.refreshProject(projectID);
+    teamFlowHome.refreshIfProject(projectID);
+    if (settings.project.store.projectID.peek() === projectID) void settings.project.store.flow.load(projectID);
+  },
+});
+settings.project.onFlowApplied = async projectID => {
+  await sidebar.refreshProject(projectID);
+  teamFlowHome.refreshIfProject(projectID);
+};
 inbox.openUsages = () => settings.open('usages');
 chat.projectSettings = settings.project; // the project's settings form, shown in the home room's settings
 // Archiving or reopening a project in Settings: take its new state from the server now, as the event that follows would.
@@ -344,7 +357,7 @@ function resetWorkspace() {
   cancelStartup();
   sessionGeneration++;
   stream?.stop(); stream = null;
-  sidebar.reset(); chat.reset(); inbox.reset(); agents.reset(); knowledge.setRoom(null);
+  sidebar.reset(); chat.reset(); teamFlowHome.reset(); inbox.reset(); agents.reset(); knowledge.setRoom(null);
   health.ticket++;
   systemEvents.reset(); messageDebug.reset();
   onboarding.close(); // its card covers the viewport, so it must not outlive the session (it would sit over the sign-in page)
@@ -421,6 +434,7 @@ async function openRoom(room, messageID, { listed = false } = {}) {
     return false;
   }
   if (!current() || chat.room?.id !== room.id) return false;
+  teamFlowHome.setRoom(room);
   knowledge.setRoom(room);
   await agents.setRoom(room);
   if (!current()) return false;
@@ -534,7 +548,7 @@ async function signedIn(session) {
       if (!active()) return;
       if (event.kind === 'snapshot_required') { await resync(generation); return; }
       let payload = {}; try { payload = JSON.parse(event.payload_json); } catch {}
-      if (event.kind === 'project_created' || event.kind === 'project_updated' || event.kind === 'project_archived' || event.kind === 'project_reopened') { const projects = await request('/api/projects'); if (!active()) return; const project = projects.find(p => p.id === event.project_id); if (project) { await sidebar.addProject(project); if (!active()) return; refreshEmptyState(); const open = chat.room && sidebar.rooms.get(chat.room.id); if (open && open.project_id === event.project_id && event.kind !== 'project_created') { chat.title.textContent = open.title; chat.setRoomFacts(open); } } }
+      if (event.kind === 'project_created' || event.kind === 'project_updated' || event.kind === 'project_archived' || event.kind === 'project_reopened') { const projects = await request('/api/projects'); if (!active()) return; const project = projects.find(p => p.id === event.project_id); if (project) { await sidebar.addProject(project); if (!active()) return; refreshEmptyState(); const open = chat.room && sidebar.rooms.get(chat.room.id); if (open && open.project_id === event.project_id && event.kind !== 'project_created') { chat.title.textContent = open.title; chat.setRoomFacts(open); teamFlowHome.refreshIfProject(event.project_id); } if (event.kind === 'project_updated' && settings.project.store.projectID.peek() === event.project_id) void settings.project.store.flow.load(event.project_id); } }
       else if ((event.kind === 'room_preference_changed' || event.kind === 'room_read_changed') && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id);
       else if (event.kind === 'room_removed') await roomRemoved(event.project_id, payload.room_id);
       else if (event.kind === 'project_removed') await projectRemoved(payload.project_id);

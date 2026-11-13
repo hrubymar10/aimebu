@@ -168,6 +168,28 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if err := tx.authorizeSpawnActor(projectID, actorKind, in.ActorID, true); err != nil {
 		return AgentCard{}, err
 	}
+	var flowKey string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key FROM project WHERE id=?`, projectID).Scan(&flowKey); err != nil {
+		return AgentCard{}, err
+	}
+	if flowKey != "" && flowKey != "custom" {
+		if actorKind == "agent" {
+			if err := tx.flowActorMayTarget(projectID, in.ActorID, in.RoleKey); err != nil {
+				return AgentCard{}, err
+			}
+		}
+		var kind, key, title string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind,team_flow_room_key,title FROM room WHERE id=?`, in.RoomID).Scan(&kind, &key, &title); err != nil {
+			return AgentCard{}, err
+		}
+		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title), in.RoleKey)
+		if err != nil {
+			return AgentCard{}, err
+		}
+		if !allowed {
+			return AgentCard{}, ErrTeamFlowRule
+		}
+	}
 	var roleID string
 	var leadRole bool
 	var cardinality string
@@ -175,7 +197,7 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		WHERE role_key=? AND deleted_at IS NULL LIMIT 1`, in.RoleKey).Scan(&roleID, &leadRole, &cardinality); err != nil {
 		return AgentCard{}, err
 	}
-	if actorKind == "agent" && leadRole {
+	if actorKind == "agent" && (flowKey == "" || flowKey == "custom") && leadRole {
 		return AgentCard{}, ErrForbidden
 	}
 	if !leadRole {
@@ -385,10 +407,12 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 
 func (tx *Tx) authorizeSpawnActor(projectID, actorKind, actorID string, spawning bool) error {
 	if actorKind == "agent" {
-		var allowed bool
-		err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead=1 AND (NOT ? OR r.cap_can_spawn=1) AND a.desired='active'
-			FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.project_id=? AND a.revoked_at IS NULL`, spawning, actorID, projectID).Scan(&allowed)
-		if errors.Is(err, sql.ErrNoRows) || err == nil && !allowed {
+		var roleKey, flowKey, desired string
+		var lead, canSpawn bool
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.role_key,p.team_flow_key,a.desired,r.cap_is_lead,r.cap_can_spawn
+			FROM agent a JOIN role r ON r.id=a.role_id JOIN project p ON p.id=a.project_id
+			WHERE a.id=? AND a.project_id=? AND a.revoked_at IS NULL`, actorID, projectID).Scan(&roleKey, &flowKey, &desired, &lead, &canSpawn)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && (desired != "active" || !flowManages(flowKey, roleKey, lead, canSpawn) || spawning && !canSpawn) {
 			return ErrForbidden
 		}
 		return err
@@ -619,6 +643,11 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 	if authorize {
 		if err := tx.authorizeSpawnActor(projectID, actorKind, actorID, false); err != nil {
 			return AgentCard{}, err
+		}
+		if actorKind == "agent" && actorID != id {
+			if err := tx.flowActorMayTarget(projectID, actorID, roleKey); err != nil {
+				return AgentCard{}, err
+			}
 		}
 	}
 	if rev != oldRev {

@@ -18,6 +18,8 @@ type AgentToolIdentity struct {
 	Tool      string
 	Provider  string
 	IsLead    bool
+	CanSpawn  bool
+	CanManage bool
 	Desired   string
 }
 
@@ -66,7 +68,7 @@ func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID
 	}
 	var allowed bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room r WHERE r.id=? AND r.project_id IN (?,`+agentDMProjectSQL+`)
-		AND (r.kind<>'dm' OR EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL)))`, roomID, projectID, agentID).Scan(&allowed); err != nil {
+		AND (r.kind<>'dm' AND r.restricted=0 OR EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL)))`, roomID, projectID, agentID).Scan(&allowed); err != nil {
 		return AgentHistoryPage{}, err
 	}
 	if !allowed {
@@ -81,7 +83,7 @@ func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID
 		LEFT JOIN user u ON m.author_kind='user' AND u.id=m.author_id
 		LEFT JOIN agent a ON m.author_kind='agent' AND a.id=m.author_id
 		WHERE m.room_id=? AND m.no>0 AND m.no<? AND r.project_id IN (?,`+agentDMProjectSQL+`) AND
-		(r.kind<>'dm' OR EXISTS(SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL))
+		(r.kind<>'dm' AND r.restricted=0 OR EXISTS(SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL))
 		ORDER BY m.no DESC LIMIT ?`, roomID, beforeNo, projectID, agentID, limit+1)
 	if err != nil {
 		return AgentHistoryPage{}, err
@@ -157,6 +159,49 @@ func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (A
 	if newRoleID == oldRoleID {
 		return tx.agentCardByID(agentID)
 	}
+	var flowKey string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key FROM project WHERE id=?`, projectID).Scan(&flowKey); err != nil {
+		return AgentCard{}, err
+	}
+	if flowKey != "" && flowKey != "custom" {
+		flow, _ := teamFlowTemplate(flowKey)
+		if actorID != agentID {
+			if err := tx.flowActorMayTarget(projectID, actorID, oldRoleKey); err != nil {
+				return AgentCard{}, err
+			}
+		}
+		if err := tx.flowActorMayTarget(projectID, actorID, roleKey); err != nil {
+			return AgentCard{}, err
+		}
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.kind,r.team_flow_room_key,r.title FROM room_member m JOIN room r ON r.id=m.room_id WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL AND r.kind<>'dm'`, agentID)
+		if err != nil {
+			return AgentCard{}, err
+		}
+		for rows.Next() {
+			var kind, key, title string
+			if err := rows.Scan(&kind, &key, &title); err != nil {
+				rows.Close()
+				return AgentCard{}, err
+			}
+			selector := flowRoomKind(kind, key, title)
+			allowed := false
+			for _, rule := range flow.JoinRules {
+				if rule.RoomKind == selector && flowAllows(rule.AllowedRoles, roleKey) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				rows.Close()
+				return AgentCard{}, ErrTeamFlowRule
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return AgentCard{}, err
+		}
+	}
 	actor, err := tx.agentDisplay(actorID)
 	if err != nil {
 		return AgentCard{}, err
@@ -201,9 +246,11 @@ func (s *Store) AgentToolIdentityByKeyHash(ctx context.Context, hash string) (Ag
 		return AgentToolIdentity{}, err
 	}
 	var identity AgentToolIdentity
-	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.slug,a.project_id,a.tool,a.provider,r.cap_is_lead,a.desired
-		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.key_hash=? AND a.revoked_at IS NULL`, hash).
-		Scan(&identity.ID, &identity.Slug, &identity.ProjectID, &identity.Tool, &identity.Provider, &identity.IsLead, &identity.Desired)
+	var roleKey, flowKey string
+	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.slug,a.project_id,a.tool,a.provider,r.cap_is_lead,r.cap_can_spawn,a.desired,r.role_key,p.team_flow_key
+		FROM agent a JOIN role r ON r.id=a.role_id JOIN project p ON p.id=a.project_id WHERE a.key_hash=? AND a.revoked_at IS NULL`, hash).
+		Scan(&identity.ID, &identity.Slug, &identity.ProjectID, &identity.Tool, &identity.Provider, &identity.IsLead, &identity.CanSpawn, &identity.Desired, &roleKey, &flowKey)
+	identity.CanManage = flowManages(flowKey, roleKey, identity.IsLead, identity.CanSpawn)
 	return identity, err
 }
 
@@ -239,20 +286,22 @@ func (s *Store) RoomsForAgent(ctx context.Context, agentID, projectID string) ([
 	return out, rows.Err()
 }
 
-// CreateTaskRoomAsTool makes the lead a member before any turn can address the
+// CreateTaskRoomAsTool makes the coordinating agent a member before any turn can address the
 // new room. The parent notice and room creation share the request transaction.
 func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title string) (Room, error) {
-	var lead bool
-	var desired string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead,a.desired FROM agent a JOIN role r ON r.id=a.role_id
-		WHERE a.id=? AND a.project_id=? AND a.revoked_at IS NULL`, agentID, projectID).Scan(&lead, &desired); err != nil {
+	if err := tx.authorizeSpawnActor(projectID, "agent", agentID, false); err != nil {
 		return Room{}, err
 	}
-	if !lead || desired != "active" {
-		return Room{}, ErrForbidden
-	}
 	if parentID == "" {
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home'`, projectID).Scan(&parentID); err != nil {
+		var flowKey string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key FROM project WHERE id=?`, projectID).Scan(&flowKey); err != nil {
+			return Room{}, err
+		}
+		parentKey := "home"
+		if flow, ok := teamFlowTemplate(flowKey); ok && flow.TaskParentKey != "" {
+			parentKey = flow.TaskParentKey
+		}
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND (team_flow_room_key=? OR ?='home' AND kind='home') ORDER BY created_at LIMIT 1`, projectID, parentKey, parentKey).Scan(&parentID); err != nil {
 			return Room{}, err
 		}
 	}

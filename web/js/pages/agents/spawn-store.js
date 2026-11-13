@@ -25,6 +25,7 @@ export class SpawnStore {
     this.roles = signal([]);
     this.role = signal('');
     this.leadHint = signal(false);
+    this.flowHint = signal('');
     this.rolesReady = signal(false);
     this.name = signal('');
     this.nameError = signal('');
@@ -48,7 +49,7 @@ export class SpawnStore {
       const resume = this.resume.value, option = this.models.value.find(model => model.value === this.model.value);
       return resumeBanner({ resume, mode: this.mode.value, hasRoom: !!this.target.value, toolNote: this.toolNote.value, warning: resume ? modelChangeWarning(resume.model, option) : '', relative: relativeTime, history: this.historyNote.value });
     });
-    this.submitDisabled = computed(() => !this.rolesReady.value || (!!this.resume.value && !this.target.value) || (!this.resume.value?.resumable && !this.machine.ready) || !this.tool.value?.available || !this.models.value.length);
+    this.submitDisabled = computed(() => !this.rolesReady.value || !this.role.value || (!!this.resume.value && !this.target.value) || (!this.resume.value?.resumable && !this.machine.ready) || !this.tool.value?.available || !this.models.value.length);
   }
 
   get dialog() { return this.host.spawnDialog; }
@@ -99,6 +100,23 @@ export class SpawnStore {
     batch(() => { this.startOptions.value = choices.options; this.startRoom.value = choices.value; this.historyNote.value = historyNote(resume, rooms, this.host.projectName?.(room.project_id) || ''); });
   }
 
+  // The template supplies room access by kind. An empty rule list (Custom)
+  // leaves the role catalog as it is; the server still checks the final spawn.
+  filterRoles() {
+    const target = this.spawnRoom();
+    const roomKind = this.startRoom.peek() === NEW_ROOM ? 'task' : target?.team_flow_room_key || target?.kind;
+    const rule = this.flowTemplate?.join_rules?.find(item => item.room_kind === roomKind);
+    const eligible = rule ? this.allRoles.filter(role => rule.allowed_roles.includes(role.role_key)) : this.allRoles;
+    const roles = this.homeLeadOnly ? eligible.filter(role => role.cap_is_lead) : eligible;
+    const current = this.role.peek();
+    batch(() => {
+      this.roles.value = roles.map(role => ({ value: role.role_key, label: `${role.emoji || ''} ${role.label}`.trim() }));
+      this.role.value = roles.some(role => role.role_key === current) ? current : roles.some(role => role.role_key === 'worker') ? 'worker' : roles[0]?.role_key || '';
+      this.flowHint.value = rule ? `This team flow allows ${roles.map(role => role.label).join(', ') || 'no roles'} in this room.` : '';
+      this.rolesReady.value = true;
+    });
+  }
+
   // openSpawn({ resume }) opens the dialog to start an agent from imported v1 history: the name is the old one, the tool and model are
   // what v1 ran, and the v1 session is continued when the harness can. Without it, it is the ordinary spawn dialog.
   async open({ resume = null } = {}) {
@@ -106,6 +124,7 @@ export class SpawnStore {
     const continuing = resume?.kind === 'claude_session';
     // A catalog or a name asked for by an earlier opening is no answer to this one.
     this.catalogRequestID++; this.nameRequestID++;
+    this.allRoles = null; this.flowTemplate = null; this.homeLeadOnly = false;
     batch(() => {
       this.worktree.value = false; this.baseRef.value = '';
       // Nothing of the last opening is left to act on: the roles and the lead-only rule are read again below, and until they are, Start
@@ -113,7 +132,7 @@ export class SpawnStore {
       this.rolesReady.value = false; this.pickedModel = null; this.pickedToolKey = ''; this.toolNote.value = '';
       this.roles.value = []; this.role.value = ''; this.resume.value = resume; this.name.value = ''; this.nameError.value = ''; this.notesOverride.value = '';
       this.mode.value = resume?.kind === 'claude_session' && resume.held_by ? 'fork' : 'continue'; this.confirmed.value = false;
-      this.catalog.value = []; this.toolIndex.value = -1; this.toolsDisabled.value = null; this.models.value = []; this.model.value = ''; this.reasonText.value = 'Loading available tools…'; this.leadHint.value = false;
+      this.catalog.value = []; this.toolIndex.value = -1; this.toolsDisabled.value = null; this.models.value = []; this.model.value = ''; this.reasonText.value = 'Loading available tools…'; this.leadHint.value = false; this.flowHint.value = '';
     });
     this.renderStartRooms();
     this.roomTick.value++;
@@ -127,16 +146,15 @@ export class SpawnStore {
       const room = this.room, roomID = room.id;
       // A start from v1 history goes to a task room, so the home room's lead-only rule does not apply to it.
       const home = room.kind === 'home' && !resume;
-      const [allRoles, leadOnly] = await Promise.all([this.host.source.roles(), home ? Promise.resolve(this.host.source.homeLeadOnly?.(room.project_id)).catch(() => true) : false, this.machine.load(room.project_id, resume?.machine_id || '')]);
+      const [allRoles, leadOnly, flow] = await Promise.all([this.host.source.roles(), home ? Promise.resolve(this.host.source.homeLeadOnly?.(room.project_id)).catch(() => true) : false, this.host.source.teamFlow?.(room.project_id), this.machine.load(room.project_id, resume?.machine_id || '')]);
       if (!current() || this.room?.id !== roomID) return;
       // With Home room: lead only (the default) the home room offers the lead roles alone; the server refuses the others.
-      const roles = leadOnly ? allRoles.filter(role => role.cap_is_lead) : allRoles;
-      batch(() => {
-        this.leadHint.value = !!leadOnly;
-        this.roles.value = roles.map(role => ({ value: role.role_key, label: `${role.emoji || ''} ${role.label}`.trim() }));
-        this.role.value = resume?.role_key && roles.some(role => role.role_key === resume.role_key) ? resume.role_key : roles.some(role => role.role_key === 'worker') ? 'worker' : roles[0]?.role_key || '';
-        this.rolesReady.value = true;
-      });
+      this.allRoles = allRoles;
+      this.flowTemplate = flow?.template;
+      this.homeLeadOnly = !!leadOnly;
+      this.leadHint.value = !!leadOnly;
+      this.role.value = resume?.role_key || '';
+      this.filterRoles();
       if (!resume) await this.prefillRoleDefault();
     } catch (error) {
       if (!current()) return;
@@ -242,7 +260,7 @@ export class SpawnStore {
 
   pickRole(value) { this.role.value = value; return this.prefillRoleDefault(); }
 
-  pickStartRoom(value) { this.startRoom.value = value; this.roomTick.value++; this.syncWorktree(); }
+  pickStartRoom(value) { this.startRoom.value = value; this.roomTick.value++; this.syncWorktree(); if (this.allRoles) this.filterRoles(); }
 
   pickMode(value) { batch(() => { this.mode.value = value; this.notesOverride.value = ''; }); }
 
@@ -305,6 +323,7 @@ export class SpawnStore {
       if (stale()) return;
       // A refused name is answered under its field and the dialog stays open, with everything else as it was, so another name can be tried.
       if (error.code === 'name_in_use' || error.code === 'invalid_name') { this.nameError.value = error.message; this.host.focusName(); return; }
+      if (error.code === 'team_flow_rule') { this.host.setError(error.message); return; }
       this.host.setError(error.message); this.dialog.close();
     }
   }

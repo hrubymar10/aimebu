@@ -247,6 +247,18 @@ allowlist when necessary, including when binding to a specific interface IP.
 The API can close (archive) and reopen non-home rooms while preserving their
 history; see the room lifecycle routes in the API guide.
 A new project starts with its home room and a `general` task room beneath it.
+The home room shows a team-flow setup card until a project owner or operator
+chooses a flow: **A · Leader and workers**, **B · Leader and dispatcher**, or
+**C · Custom**. The cards show the rooms and roles before Apply. Existing
+projects start on C with a one-click **Keep current setup** choice; saving it
+closes the setup prompt. Project settings → Team flow previews the rooms and
+roles a switch would add and any agents needing action. Switching keeps all
+existing rooms, messages, and agents; incompatible room memberships are listed
+and adjusted. In B, a private routing room connects the leader with the
+singleton dispatcher. The leader writes specs there; the dispatcher manages
+task rooms, workers, and reviewers. A task-room message can reference a
+routing brief by `#N`; the worker-room chat shows the one granted message
+inline, without exposing the routing conversation.
 The home room is the lead's: with the project setting **Home room: lead only**
 (on by default, in the home room's Project section) the spawn dialog there
 offers only lead roles and the server refuses others with `home_is_lead_only`;
@@ -395,7 +407,7 @@ changes).
 Changing a role's capabilities requires an owner. Deleted roles remain on stopped agent
 history and can be recreated under the same key; those agents cannot restart
 with the deleted role.
-Fresh projects include leader, worker, reviewer, security reviewer, test
+Fresh projects include leader, dispatcher, worker, reviewer, security reviewer, test
 reviewer, and UX reviewer roles. The built-in instructions cover task-room
 handoffs, independent plans and reviews, evidence-backed verification, and
 structured human asks. Global instructions refer agents to each project's

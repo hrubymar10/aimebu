@@ -47,6 +47,15 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if roleBody, err = tx.effectiveRoleBody(roleID); err != nil {
 			return err
 		}
+		var flowKey, roleKey string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT p.team_flow_key,r.role_key FROM project p JOIN role r ON r.id=? WHERE p.id=?`, roleID, projectID).Scan(&flowKey, &roleKey); err != nil {
+			return err
+		}
+		if flow, ok := teamFlowTemplate(flowKey); ok {
+			if override, ok := flow.RoleTextOverrides[roleKey]; ok {
+				roleBody = override
+			}
+		}
 		if roleBody, err = tx.withInlinePlan(roleID, roleBody); err != nil {
 			return err
 		}

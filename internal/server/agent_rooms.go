@@ -13,7 +13,7 @@ import (
 )
 
 func activeLead(w http.ResponseWriter, caller store.AgentToolIdentity) bool {
-	if caller.IsLead && caller.Desired == "active" {
+	if (caller.IsLead || caller.CanManage) && caller.Desired == "active" {
 		return true
 	}
 	apiError(w, http.StatusForbidden, "forbidden", "active lead role required")

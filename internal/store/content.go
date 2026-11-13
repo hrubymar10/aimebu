@@ -39,8 +39,8 @@ func (tx *Tx) CreateProject(project Project) (Project, error) {
 		return Project{}, err
 	}
 	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO project
-		(id, name, folder, repo_url, created_at)
-		VALUES (?, ?, ?, ?, ?)`, project.ID, project.Name, project.Folder,
+		(id, name, folder, repo_url, created_at, team_flow_key, team_flow_review_pending)
+		VALUES (?, ?, ?, ?, ?, '', 0)`, project.ID, project.Name, project.Folder,
 		nullable(project.RepoURL), timestamp())
 	if err != nil {
 		return Project{}, err
@@ -113,6 +113,7 @@ type Room struct {
 	ParentID        string        `json:"parent_id,omitempty"`
 	Depth           int           `json:"depth"`
 	Kind            string        `json:"kind"`
+	TeamFlowRoomKey string        `json:"team_flow_room_key,omitempty"`
 	DMKey           string        `json:"dm_key,omitempty"`
 	Title           string        `json:"title"`
 	CreatedBy       string        `json:"created_by"`
@@ -216,7 +217,7 @@ func (tx *Tx) CreateRoom(room Room) (Room, error) {
 // joinLeadsToRoom makes every live lead agent of the project a member of the room (each it already belongs to is left alone).
 func (tx *Tx) joinLeadsToRoom(roomID, projectID string) error {
 	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id
-		WHERE a.project_id=? AND a.revoked_at IS NULL AND r.cap_is_lead=1
+		WHERE a.project_id=? AND a.revoked_at IS NULL
 		AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id=? AND m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL)`, projectID, roomID)
 	if err != nil {
 		return err
@@ -236,6 +237,25 @@ func (tx *Tx) joinLeadsToRoom(roomID, projectID string) error {
 		return err
 	}
 	for _, id := range leads {
+		var roleKey, kind, key, title string
+		var lead bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT ro.role_key,r.kind,r.team_flow_room_key,r.title,ro.cap_is_lead FROM agent a JOIN role ro ON ro.id=a.role_id JOIN room r ON r.id=? WHERE a.id=?`, roomID, id).Scan(&roleKey, &kind, &key, &title, &lead); err != nil {
+			return err
+		}
+		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead)
+		if err != nil {
+			return err
+		}
+		if !autoJoin {
+			continue
+		}
+		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title), roleKey)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			continue
+		}
 		if err := tx.addMemberOnly(roomID, "agent", id, true); err != nil {
 			return err
 		}
@@ -247,7 +267,7 @@ func (tx *Tx) joinLeadsToRoom(roomID, projectID string) error {
 // rooms exist). Private chats are not project rooms for this.
 func (tx *Tx) joinLeadToProjectRooms(agentID string) error {
 	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.id FROM agent a JOIN role ro ON ro.id=a.role_id JOIN room r ON r.project_id=a.project_id
-		WHERE a.id=? AND a.revoked_at IS NULL AND ro.cap_is_lead=1 AND r.kind<>'dm' AND r.lifecycle='open'
+		WHERE a.id=? AND a.revoked_at IS NULL AND r.kind<>'dm' AND r.lifecycle='open'
 		AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL)
 		ORDER BY r.created_at,r.id`, agentID)
 	if err != nil {
@@ -268,6 +288,25 @@ func (tx *Tx) joinLeadToProjectRooms(agentID string) error {
 		return err
 	}
 	for _, id := range rooms {
+		var projectID, roleKey, kind, key, title string
+		var lead bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,ro.role_key,r.kind,r.team_flow_room_key,r.title,ro.cap_is_lead FROM room r JOIN agent a ON a.id=? JOIN role ro ON ro.id=a.role_id WHERE r.id=?`, agentID, id).Scan(&projectID, &roleKey, &kind, &key, &title, &lead); err != nil {
+			return err
+		}
+		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead)
+		if err != nil {
+			return err
+		}
+		if !autoJoin {
+			continue
+		}
+		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title), roleKey)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			continue
+		}
 		if err := tx.addMemberOnly(id, "agent", agentID, true); err != nil {
 			return err
 		}
@@ -294,6 +333,28 @@ func (tx *Tx) AddMember(roomID, kind, memberID string) error {
 // is marked so that it is not woken by every unaddressed human message (see queueMessageWakes). Joining on purpose a room the lead is
 // already in by automatic join makes it an ordinary member.
 func (tx *Tx) addMemberOnly(roomID, kind, memberID string, auto bool) error {
+	if kind == "agent" {
+		var projectID, flowKey, roomKind string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,p.team_flow_key,r.kind FROM room r JOIN project p ON p.id=r.project_id WHERE r.id=?`, roomID).Scan(&projectID, &flowKey, &roomKind); err != nil {
+			return err
+		}
+		if roomKind != "dm" && flowKey != "" && flowKey != "custom" {
+			var agentProjectID, key, title, role string
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,r.team_flow_room_key,r.title,ro.role_key FROM room r JOIN agent a ON a.id=? JOIN role ro ON ro.id=a.role_id WHERE r.id=?`, memberID, roomID).Scan(&agentProjectID, &key, &title, &role); err != nil {
+				return err
+			}
+			if projectID != agentProjectID {
+				return ErrForbidden
+			}
+			allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(roomKind, key, title), role)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return ErrTeamFlowRule
+			}
+		}
+	}
 	var already, wasAuto int
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*),COALESCE(MAX(auto),0) FROM room_member WHERE room_id=? AND member_kind=? AND member_id=? AND left_at IS NULL`, roomID, kind, memberID).Scan(&already, &wasAuto); err != nil {
 		return err
@@ -475,6 +536,24 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 	// The message_assign_no trigger numbered the row (events do not take message numbers).
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT no FROM message WHERE id = ?`, message.ID).Scan(&message.No); err != nil {
 		return Message{}, err
+	}
+	if message.AuthorKind == "agent" {
+		var role, flowKey string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.role_key,p.team_flow_key FROM agent a JOIN role r ON r.id=a.role_id JOIN project p ON p.id=a.project_id WHERE a.id=?`, message.AuthorID).Scan(&role, &flowKey); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Message{}, err
+		}
+		flow, ok := teamFlowTemplate(flowKey)
+		if ok && flowAllows(flow.GrantRoles, role) {
+			for _, ref := range extractMessageRefs([]string{message.Body}, nil, 100) {
+				if _, err := tx.tx.ExecContext(tx.ctx, `INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
+					SELECT ?,target.no FROM message target JOIN room tr ON tr.id=target.room_id JOIN room sr ON sr.id=?
+					WHERE target.no=? AND target.no>0 AND tr.project_id=sr.project_id AND tr.kind<>'dm'
+					AND (tr.restricted=0 OR EXISTS(SELECT 1 FROM room_member own WHERE own.room_id=tr.id
+						AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL))`, message.ID, message.RoomID, ref, message.AuthorID); err != nil {
+					return Message{}, err
+				}
+			}
+		}
 	}
 	var projectID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM room WHERE id = ?`,

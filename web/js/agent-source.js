@@ -21,6 +21,7 @@ export class MockAgentSource {
   async roles() { return [{ id: 'role_worker', role_key: 'worker', label: 'Worker' }, { id: 'role_reviewer', role_key: 'reviewer', label: 'Reviewer' }, { id: 'role_leader', role_key: 'leader', label: 'Leader', cap_is_lead: true }]; }
   // The mock projects keep today's behaviour: every role may be spawned into the home room.
   async homeLeadOnly() { return false; }
+  async teamFlow() { return null; }
   // The mock's pool of names, like the server's: the next free one, in a fixed order so a test can tell two asks apart.
   takenNames() { return new Set([...this.agents.values()].flatMap(agent => [agent.slug, agent.name].filter(Boolean).map(name => name.toLowerCase()))); }
   async suggestName(roomID, exclude = '') {
@@ -76,6 +77,7 @@ export class HttpAgentSource {
   normalize(agent) { const activity = this.activity.get(agent.id); return { ...agent, name: agent.slug, role: agent.role_key, activity: activity?.summary || '', activity_at: activity?.at || agent.last_activity_at || '' }; }
   catalog(machineID) { return request('/api/spawn-catalog' + (machineID ? `?machine_id=${encodeURIComponent(machineID)}` : '')); }
   roles() { return request('/api/roles'); }
+  teamFlow(projectID) { return request(`/api/projects/${encodeURIComponent(projectID)}/team-flow`); }
   // Whether the project's home room takes only lead roles (Home room: lead only, on unless the project turned it off).
   async homeLeadOnly(projectID) { return (await request(`/api/projects/${encodeURIComponent(projectID)}/settings`)).home_lead_only !== false; }
   // The end of what an agent's harness wrote to stderr, for a project's owner or an admin (the server refuses anyone else).

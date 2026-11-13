@@ -46,7 +46,8 @@ tool must apply the same guard and report the missed agent and alternatives.
 Projects, rooms, people
 - **project**(id, name, folder, repo_url?, gate[open|
   paused], gate_rev, control_desired[active|paused|stopped], created_at,
-  archived_at?, system 0|1) — `archived_at` (migration 80) is NULL for a live
+  archived_at?, system 0|1, team_flow_key, team_flow_rev,
+  team_flow_review_pending) — `archived_at` (migration 80) is NULL for a live
   project; see §3.5b. `system` (migration 81) is 1 only for the one reserved
   project (`prj_agentdm`) that chats between agents hang off: it has no members,
   folder or agents, is never listed, and migration 82 makes triggers refuse
@@ -55,7 +56,8 @@ Projects, rooms, people
 - **room**(id, project_id, parent_id?, depth, kind[home|task|lobby|dm],
   dm_key? UNIQUE, lifecycle[open|closing|closed], gate[open|paused],
   gate_rev, control_desired[active|paused|stopped], lifecycle_rev, title,
-  summary?, created_by, created_at, closed_at?) — a task room's title can be
+  summary?, created_by, created_at, closed_at?, team_flow_room_key,
+  restricted 0|1) — a task room's title can be
   changed (`room_renamed`); the home room's title is its project's name and
   changes only together with it; a project is created with
   one home room and a `general` task room beneath it (also a project the v1
@@ -66,6 +68,23 @@ Projects, rooms, people
   is the only room whose agents belong to different projects, and the agent's
   own project, not the room's, decides its dispatch gate, caps, billing and
   memory
+- **team flow** (migration 106): new projects start with an empty key and must
+  choose `leader-workers`, `leader-dispatcher`, or `custom`; existing projects
+  start `custom` with review pending. Revision guards apply. The template
+  catalog carries room, spawn, join, and diagram data. Applying a flow creates
+  missing rooms, adjusts incompatible agent room memberships, and preserves
+  agents, messages, and rooms. A room marked `restricted` by a template's
+  room rule requires membership for history and uncited message reads;
+  the dispatcher flow marks `routing` restricted. The dispatcher is a
+  singleton spawn-capable role without lead capability. A flow's spawn
+  rules grant its task-room and agent-management authority; its auto-join
+  roles and task-parent key place it in routing and task rooms, never home.
+  **message_reference_grant**(source_message_id, target_no) records each
+  existing `#N` cited by a role listed in the template's `grant_roles`,
+  only when that author can read the target room directly. A member of the
+  source room can read that one cited message across rooms of the same
+  project, without access to its room. The source must remain readable; the
+  grant vanishes when the source message is deleted.
 - **scope_control_agent**(scope_kind[room|project], scope_id, agent_id,
   restore_desired, hold_desired, bulk_desired, bulk_rev) — records each
   scope's pause or stop hold, a shared pre-scope desired state, and the last

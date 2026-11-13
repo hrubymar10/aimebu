@@ -101,7 +101,7 @@ func (s *Server) agentToolRoomHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) agentToolSetRole(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
-	if !caller.IsLead || caller.Desired != "active" {
+	if (!caller.IsLead && !caller.CanManage) || caller.Desired != "active" {
 		apiError(w, 403, "forbidden", "active lead role required")
 		return
 	}
@@ -219,7 +219,7 @@ func (s *Server) agentProviderQuota(caller store.AgentToolIdentity) agentProvide
 
 func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
-	if !caller.IsLead || caller.Desired != "active" {
+	if (!caller.IsLead && !caller.CanManage) || caller.Desired != "active" {
 		apiError(w, http.StatusForbidden, "forbidden", "active lead role required")
 		return
 	}
@@ -253,7 +253,7 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) agentToolStop(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
-	if !caller.IsLead || caller.Desired != "active" {
+	if (!caller.IsLead && !caller.CanManage) || caller.Desired != "active" {
 		apiError(w, http.StatusForbidden, "forbidden", "active lead role required")
 		return
 	}

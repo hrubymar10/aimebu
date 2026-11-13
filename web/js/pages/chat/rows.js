@@ -1,4 +1,5 @@
-import { html, Component, Fragment, useCallback, useLayoutEffect, useRef } from '../../ui.js';
+import { html, Component, Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from '../../ui.js';
+import { teamFlowSource } from '../../team-flow-source.js';
 import { EXPIRED_HOURGLASS } from '../../usage-expiry.js';
 import { clearMessageActions, drawMessageActions, messageActionsProps } from '../../message-actions.js';
 import { stampTime } from '../../time.js';
@@ -58,6 +59,26 @@ export function Body({ message, view, host }) {
   return html`<div class=${view.raw ? 'chat-msg-body' : 'chat-msg-body md-rendered'} ref=${root} />`;
 }
 
+// A reference grant reveals one message, never its room's history. The card
+// contains plain text, so references inside the borrowed body do not become
+// navigation links into a restricted room.
+export function ReferencedMessages({ message }) {
+  const numbers = [...new Set([...String(message.body || '').matchAll(/(?:^|[^\w])#([1-9]\d*)\b/g)].map(match => match[1]))].slice(0, 10);
+  const [found, setFound] = useState([]);
+  useEffect(() => {
+    let current = true;
+    setFound([]);
+    if (numbers.length) Promise.all(numbers.map(no => teamFlowSource.referenced(no, message.id).catch(() => null))).then(items => {
+      if (current) setFound(items.filter(item => item?.available));
+    });
+    return () => { current = false; };
+  }, [message.id, message.body]);
+  return found.length > 0 && html`<div class="chat-references" aria-label="Referenced messages">${found.map(item => html`<aside class="chat-reference" key=${item.no}>
+    <header><strong>${`#${item.no}`}</strong><span>${item.room || ''}</span><span>${item.from || ''}</span></header>
+    <pre>${item.body || ''}</pre>
+  </aside>`)}</div>`;
+}
+
 export function Plan({ message }) {
   const root = useRef(null);
   useLayoutEffect(() => { if (root.current) fillVisualPlan(root.current, message); }, [message]);
@@ -77,7 +98,7 @@ export function AnswerSlot({ message, view, host, listed = '' }) {
 export function ThreadEntry({ message, view, host, tree }) {
   return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${[view.articleClass, 'thread-entry', view.needsAttention ? 'needs-attention' : ''].filter(Boolean).join(' ')} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} data-tree=${String(tree.shown)} style=${`--tree-levels:${tree.shown}`}>
     <${TreeGutter} tree=${tree} host=${host} message=${message} />
-    <${MessageMeta} message=${message} view=${view} /><div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div><${AnswerSlot} message=${message} view=${view} host=${host} listed="" />
+    <${MessageMeta} message=${message} view=${view} /><div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${ReferencedMessages} message=${message} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div><${AnswerSlot} message=${message} view=${view} host=${host} listed="" />
   </article>`}<//>`;
 }
 
@@ -145,7 +166,7 @@ export function MessageRow({ message, view, host }) {
   return html`<${Row} kind="main" message=${message} view=${view} host=${host}>${() => message.author_kind === 'system' ? html`<${SystemRow} message=${message} view=${view} host=${host} classes=${classes} register=${register} />` : html`<${Fragment}><article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
     ${view.boundary && html`<span class="expiry-label">Older AI chatter won't reach agents automatically</span>`}
     <${MessageMeta} message=${message} view=${view} />
-    <div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} />${!view.chip.hidden && html`<button type="button" class="row-btn thread-chip" title="Open the replies" aria-label=${view.chip.label}>${view.chip.text}</button>`}</div>
+    <div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${ReferencedMessages} message=${message} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} />${!view.chip.hidden && html`<button type="button" class="row-btn thread-chip" title="Open the replies" aria-label=${view.chip.label}>${view.chip.text}</button>`}</div>
     <${AnswerSlot} message=${message} view=${view} host=${host} listed=${/\bself\b/.test(view.articleClass || '') ? ' answer-row answer-row-self' : ' answer-row'} />
   </article><//>`}<//>`;
 }
