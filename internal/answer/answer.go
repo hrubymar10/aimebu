@@ -36,6 +36,7 @@ type Message struct {
 	ProposedAnswers []string          `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion    `json:"open_questions,omitempty"`
 	Handoff         bool              `json:"handoff,omitempty"`
+	Force           bool              `json:"force,omitempty"`
 	VisualPlan      []json.RawMessage `json:"visual_plan,omitempty"`
 	AppendixPages   []json.RawMessage `json:"appendix_pages,omitempty"`
 }
@@ -269,7 +270,7 @@ func tolerateMessageMetadata(raw []byte) ([]byte, []string) {
 	if json.Unmarshal(envelope["messages"], &messages) != nil || len(messages) > 10 {
 		return raw, nil
 	}
-	known := map[string]bool{"room": true, "body": true, "reply_to": true, "attachments": true, "ask": true, "needs_attention": true, "proposed_answers": true, "open_questions": true, "handoff": true, "visual_plan": true, "appendix_pages": true}
+	known := map[string]bool{"room": true, "body": true, "reply_to": true, "attachments": true, "ask": true, "needs_attention": true, "proposed_answers": true, "open_questions": true, "handoff": true, "force": true, "visual_plan": true, "appendix_pages": true}
 	warnings := []string{}
 	changed := false
 	for i, encoded := range messages {

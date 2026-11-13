@@ -15,8 +15,9 @@ every adapter path. Other prose outside the document remains invalid. The
 wire retains the exact raw candidate, including any fence. A normal candidate has a
 `messages` array. Each entry requires `room` and `body` and may add
 `reply_to`, `attachments`, `ask`, `needs_attention`,
-`proposed_answers`, `open_questions`, `handoff`, `visual_plan`, and
-`appendix_pages`. `needs_attention` creates a free-text human question;
+`proposed_answers`, `open_questions`, `handoff`, `visual_plan`,
+`appendix_pages`, and `force`. Set `force:true` on a message to bypass the
+missed-agent-mention guard for that message. `needs_attention` creates a free-text human question;
 `proposed_answers` adds two to four quick choices, or `open_questions` adds
 up to ten questions with two to eight options each. The two answer formats
 cannot appear together or with `ask`. `Turn.Wait()` returns exit code,
@@ -111,8 +112,10 @@ the returned room ID; `context.rooms` is only the turn-start snapshot. The
 server still verifies current membership before committing any message.
 Claude and Codex final-answer schemas also expose `needs_attention`,
 `proposed_answers`, `open_questions`, `visual_plan` blocks, and
-`appendix_pages`. A block's `data` is a JSON-encoded object string in those
-native schemas; Pi may send an object directly. The server accepts either,
+`appendix_pages`. Their strict native schemas list every object property in
+`required`; optional message fields such as `force` use a nullable type and
+the server treats `null` as unset. A block's `data` is a JSON-encoded object
+string in those native schemas; Pi may send an object directly. The server accepts either,
 stores the raw block, and warns when its shape does not match a known renderer.
 For an Inbox `ask`, the native prompts show `needs_attention:false`,
 `proposed_answers:null`, and `open_questions:null` in the same message.

@@ -272,7 +272,7 @@ func TestV1SettingsAndRoleImportPreview(t *testing.T) {
 	}
 	// The links came across, and the text an agent would get is the parent's followed by the role's own, as in v1.
 	if byKey["deep-reviewer"].Extends != "reviewer" || byKey["sec-reviewer"].Extends != "reviewer" ||
-		byKey["deep-reviewer"].ResolvedBody != reviewerRoleBody+"\n\nExtra checks" || byKey["sec-reviewer"].ResolvedBody != reviewerRoleBody+"\n\nv1 security focus" {
+		byKey["deep-reviewer"].ResolvedBody != currentReviewerRoleBody+"\n\nExtra checks" || byKey["sec-reviewer"].ResolvedBody != currentReviewerRoleBody+"\n\nv1 security focus" {
 		t.Fatalf("imported links deep=%+v sec=%+v", byKey["deep-reviewer"], byKey["sec-reviewer"])
 	}
 	importedRoles, err := s.V1ImportedRoleKeys(ctx, mapping.SourceKey)

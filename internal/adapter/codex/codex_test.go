@@ -90,6 +90,12 @@ func TestEnsureSchemaRestoresDeletedCheckoutFile(t *testing.T) {
 	}
 }
 
+func TestOutputSchemasUseStrictObjectRules(t *testing.T) {
+	for name, schema := range map[string][]byte{"normal": responseSchema, "diagnostic": diagnosticSchema} {
+		t.Run(name, func(t *testing.T) { adaptertest.AssertStrictOutputSchema(t, schema) })
+	}
+}
+
 func TestFailedLauncherCapturesRedactedStderr(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "codex")

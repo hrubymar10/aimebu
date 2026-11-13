@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/answer"
@@ -81,6 +82,7 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 		if input.Parsed != nil {
 			receipt.Warnings = input.Parsed.Warnings
 		}
+		missedMentionHeld := false
 		if turn.mode == "diagnostic" {
 			if input.ParseError != "" || input.Parsed == nil {
 				detail := input.ParseError
@@ -115,6 +117,9 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 				}
 			} else if reason == "room_closed" || reason == "not_member" {
 				receipt.Result, receipt.HeldReason, receipt.Error = "held", reason, detail
+			} else if reason == "missed_mention" && turn.mode == "normal" && !tx.noActionMode(parent.policyJSON) {
+				receipt.Result, receipt.HeldReason, receipt.Error = "held", "correction_unavailable", detail
+				missedMentionHeld = true
 			} else if turn.mode == "normal" && tx.noActionMode(parent.policyJSON) {
 				receipt.Result, receipt.Error = "correction_requested", detail
 			} else {
@@ -158,7 +163,13 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 			}
 		}
 		if receipt.Result == "held" && turn.mode != "diagnostic" {
-			if err := tx.deliveryFailedInbox(parent); err != nil {
+			var err error
+			if missedMentionHeld {
+				err = tx.missedMentionNote(parent, input, receipt.Error)
+			} else {
+				err = tx.deliveryFailedInbox(parent)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -230,6 +241,15 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 		if member != 1 {
 			return "not_member", "agent is not an active room member", nil
 		}
+		if !item.Force {
+			miss, err := tx.missedAnswerMention(item.Room, projectID, item.Body)
+			if err != nil {
+				return "", "", err
+			}
+			if miss != "" {
+				return "missed_mention", fmt.Sprintf("message %d: %s", i, miss), nil
+			}
+		}
 		if item.Ask != nil || item.NeedsAttention || len(item.ProposedAnswers) > 0 || len(item.OpenQuestions) > 0 {
 			var recipients int
 			query := `SELECT COUNT(*) FROM membership WHERE project_id=? AND role IN ('owner','operator')`
@@ -287,4 +307,65 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 		}
 	}
 	return "", "", nil
+}
+
+// missedAnswerMention only considers live prose and active agents of the
+// message's project. Human names, role keys and group tags retain their own
+// addressing rules.
+func (tx *Tx) missedAnswerMention(roomID, projectID, body string) (string, error) {
+	for _, token := range proseMentions(body) {
+		if groupTag(token) != "" {
+			continue
+		}
+		var id, slug string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id,a.slug FROM agent a JOIN project p ON p.id=a.project_id
+			WHERE a.project_id=? AND a.revoked_at IS NULL AND
+			(LOWER(a.id)=? OR LOWER(a.slug)=? OR LOWER(a.slug || '@' || p.name)=?)`,
+			projectID, token, token, token).Scan(&id, &slug)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		var member bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`, roomID, id).Scan(&member); err != nil {
+			return "", err
+		}
+		if member {
+			continue
+		}
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.title,r.id FROM room_member m JOIN room r ON r.id=m.room_id
+			WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL AND r.lifecycle='open' AND r.kind='task'
+			ORDER BY r.created_at DESC LIMIT 3`, id)
+		if err != nil {
+			return "", err
+		}
+		var rooms []string
+		for rows.Next() {
+			var title, room string
+			if err := rows.Scan(&title, &room); err != nil {
+				rows.Close()
+				return "", err
+			}
+			rooms = append(rooms, fmt.Sprintf("%s (%s)", title, room))
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return "", err
+		}
+		location := "no open task room"
+		if len(rooms) > 0 {
+			location = "task room " + strings.Join(rooms, ", ")
+		}
+		return fmt.Sprintf("@%s refers to agent %s, who is not in the target room; send the message in %s or use dm_agent, or repeat this message with force:true", token, id, location), nil
+	}
+	return "", nil
+}
+
+func (tx *Tx) missedMentionNote(turn answerTurn, input AnswerInput, detail string) error {
+	body := "Your final answer was held because " + detail + ". No candidate messages were published. Send it again to the right room or repeat with force:true. Held answer:\n" + string(input.Candidate)
+	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
+	return err
 }

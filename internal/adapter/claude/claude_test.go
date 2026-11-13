@@ -137,6 +137,10 @@ func TestClaudeSchemaDefinesStructuredInboxQuestion(t *testing.T) {
 	}
 }
 
+func TestResponseSchemaUsesStrictObjectRules(t *testing.T) {
+	adaptertest.AssertStrictOutputSchema(t, responseSchema)
+}
+
 func TestFailedLauncherCapturesRedactedStderr(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")

@@ -404,13 +404,19 @@ the 4 MiB machine WebSocket limit, instead travels as a compact
 `answer_too_large` marker with the original digest; the receipt records an
 `answer too large` error while the supervisor keeps its journaled candidate.
 The server parses the canonical answer schema, checks all room targets,
-references, attachments, and ask permissions in one transaction, and commits
+references, attachments, ask permissions, and live agent mentions in one transaction, and commits
 the entire batch with its messages, inbox items, wake notes, events, and
 receipt. Invalid format or references get one correction turn only when the
 turn's policy includes verified `no_action_mode`; otherwise the batch is
 held. A correction answer uses revision 1. The parent revision's
 `correction_requested` receipt becomes terminal `superseded` when the
 correction settles. Closed rooms and lost membership hold immediately.
+An answer mentioning an active agent of the project outside its target room
+is held as a whole unless that message sets `force:true`. The receipt names
+the missed agent and suggests an open task room or `dm_agent`. A verified
+read-only correction mode gets one correction turn. Other harnesses receive
+a targeted system note with the held candidate and can send it again to the
+right room or repeat it with `force:true`; no candidate message is published.
 Diagnostic output is stored on the turn for recovery and never posted to a
 room. Message insertion resolves room mentions, replies, roles, DM peers and
 handoffs, then queues eligible agent notes or records why an agent was not

@@ -107,7 +107,7 @@ func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
 	}
 	for id, want := range map[string]string{
 		"role_lead_default": "owner lead edit", "role_reviewer_default": "owner reviewer edit",
-		"role_worker_default":       workerRoleBody,
+		"role_worker_default":       currentWorkerRoleBody,
 		"role_sec-reviewer_default": oldBodies["role_sec-reviewer_default"],
 		"role_scoped":               "scoped edit",
 	} {
@@ -280,10 +280,10 @@ func TestLeadDirectTaskMigrationPreservesEditedRoles(t *testing.T) {
 		rev  int
 		want string
 	}{
-		"unedited":    {priorNoDirectLeadRoleBody, 0, leadRoleBody},
+		"unedited":    {priorNoDirectLeadRoleBody, 0, priorLeadDirectRoleBody},
 		"edited body": {priorNoDirectLeadRoleBody + " edit", 0, priorNoDirectLeadRoleBody + " edit"},
 		"bumped rev":  {priorNoDirectLeadRoleBody, 1, priorNoDirectLeadRoleBody},
-		"already new": {leadRoleBody, 0, leadRoleBody},
+		"already new": {priorLeadDirectRoleBody, 0, priorLeadDirectRoleBody},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, _ := testStore(t, Options{})
@@ -298,6 +298,35 @@ func TestLeadDirectTaskMigrationPreservesEditedRoles(t *testing.T) {
 				t.Errorf("body=%q err=%v", got, err)
 			}
 		})
+	}
+}
+
+func TestRoomMentionMigrationUpdatesOnlyUneditedBuiltins(t *testing.T) {
+	s, _ := testStore(t, Options{})
+	for _, item := range []struct {
+		id, body string
+		rev      int
+	}{
+		{"role_lead_default", priorLeadDirectRoleBody, 0},
+		{"role_worker_default", workerRoleBody, 0},
+		{"role_reviewer_default", reviewerRoleBody + " owner edit", 0},
+	} {
+		if _, err := s.db.Exec(`UPDATE role SET body=?,rev=? WHERE id=?`, item.body, item.rev, item.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(roleRoomMentionMigration()); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, want string }{
+		{"role_lead_default", leadRoleBody},
+		{"role_worker_default", currentWorkerRoleBody},
+		{"role_reviewer_default", reviewerRoleBody + " owner edit"},
+	} {
+		var got string
+		if err := s.db.QueryRow(`SELECT body FROM role WHERE id=?`, item.id).Scan(&got); err != nil || got != item.want {
+			t.Fatalf("%s body changed unexpectedly: %v", item.id, err)
+		}
 	}
 }
 

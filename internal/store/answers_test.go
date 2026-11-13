@@ -50,6 +50,78 @@ func applyCandidate(t *testing.T, s *Store, turn Turn, agentID string, rev int, 
 	return s.ApplyAnswer(context.Background(), input)
 }
 
+func TestMissedAgentMentionHoldsWholeAnswerAndWakesAuthor(t *testing.T) {
+	for _, noAction := range []bool{false, true} {
+		t.Run(fmt.Sprint(noAction), func(t *testing.T) {
+			s, f := answerFixture(t, noAction)
+			ctx := context.Background()
+			peer, err := s.CreateAgent(ctx, Agent{Slug: "peer", ProjectID: f.project.ID, RoleID: "role_test", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "hash", CreatedBy: "usr_test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "peer task", CreatedBy: "usr_test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AddMember(ctx, task.ID, "agent", peer.ID); err != nil {
+				t.Fatal(err)
+			}
+			raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"first"},{"room":%q,"body":"@peer please review"}]}`, f.room.ID, f.room.ID)
+			receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+			if err != nil || !strings.Contains(receipt.Error, peer.ID) || !strings.Contains(receipt.Error, task.ID) {
+				t.Fatalf("receipt=%+v err=%v", receipt, err)
+			}
+			messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if noAction {
+				if receipt.Result != "correction_requested" || len(messages) != 1 {
+					t.Fatalf("correction receipt=%+v messages=%+v", receipt, messages)
+				}
+			} else {
+				if receipt.Result != "held" || receipt.HeldReason != "correction_unavailable" || len(messages) != 2 || !strings.Contains(messages[1].Body, raw) {
+					t.Fatalf("held receipt=%+v messages=%+v", receipt, messages)
+				}
+				if _, err := s.NoteForAgentMessage(ctx, f.agent.ID, messages[1].ID); err != nil {
+					t.Fatalf("author was not woken: %v", err)
+				}
+				replay, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+				if err != nil || replay.Result != "held" {
+					t.Fatalf("replay=%+v err=%v", replay, err)
+				}
+				again, _ := s.ListMessagesAfter(ctx, f.room.ID, 0)
+				if len(again) != len(messages) {
+					t.Fatalf("replay created another note: %+v", again)
+				}
+			}
+		})
+	}
+}
+
+func TestMissedAgentMentionForceAndCode(t *testing.T) {
+	for _, item := range []struct {
+		name, body string
+		force      bool
+	}{
+		{"force", "@peer please review", true},
+		{"code", "`@peer` is an example", false},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			s, f := answerFixture(t, false)
+			_, err := s.CreateAgent(context.Background(), Agent{Slug: "peer", ProjectID: f.project.ID, RoleID: "role_test", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "hash", CreatedBy: "usr_test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":%q,"force":%t}]}`, f.room.ID, item.body, item.force)
+			receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+			if err != nil || receipt.Result != "committed" || len(receipt.MessageIDs) != 1 {
+				t.Fatalf("receipt=%+v err=%v", receipt, err)
+			}
+		})
+	}
+}
+
 func TestStructuredAnswerCommitsMessagesInboxAndReceiptAtomically(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)

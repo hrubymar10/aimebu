@@ -9,6 +9,15 @@ account switch versus new dispatch. Corrections require a verified
 `no_action_mode` capability, and diagnostics require verified read-only
 isolation. Migrations may reshape tables later.
 
+Final-answer delivery checks each live prose mention of a current project
+agent against membership in its message room. An absent agent mention holds
+the entire candidate before publication. A per-message `force:true` bypasses
+this guard; it does not make the mention reach the absent agent. Verified
+read-only harnesses get one correction turn. Other harnesses get a targeted
+system note with the held text and options to send in the agent's task room,
+use `dm_agent`, or repeat with `force:true`. A future agent toolbox room-send
+tool must apply the same guard and report the missed agent and alternatives.
+
 ## 1. Identifiers and ordering
 
 - Server ids: opaque sortable `<prefix>_<ulid>` (`prj_ room_ msg_ agt_ ses_

@@ -144,11 +144,11 @@ func TestBuiltinRolesMatchTheDatabase(t *testing.T) {
 		if r.Extends != "reviewer" || !strings.HasPrefix(r.Body, "Additional focus: ") || strings.Contains(r.Body, "ordered by severity") {
 			t.Errorf("%s should hold only its focus and extend reviewer: extends=%q body=%.60q", focus.key, r.Extends, r.Body)
 		}
-		if want := reviewerRoleBody + "\n\nAdditional focus: " + focus.body; r.ResolvedBody != want {
+		if want := currentReviewerRoleBody + "\n\nAdditional focus: " + focus.body; r.ResolvedBody != want {
 			t.Errorf("%s resolves to something other than the old flattened text", focus.key)
 		}
 	}
-	if got["reviewer"].ResolvedBody != reviewerRoleBody || got["worker"].ResolvedBody != workerRoleBody {
+	if got["reviewer"].ResolvedBody != currentReviewerRoleBody || got["worker"].ResolvedBody != currentWorkerRoleBody {
 		t.Error("a role without a parent resolves to its own body")
 	}
 }
@@ -185,7 +185,7 @@ func TestRoleExtendsMigrationKeepsEditedSpecialists(t *testing.T) {
 			continue
 		}
 		r := got[focus.key]
-		if r.Extends != "reviewer" || r.Rev != 0 || r.Body != specialistFocus(focus.body) || r.ResolvedBody != reviewerRoleBody+"\n\nAdditional focus: "+focus.body {
+		if r.Extends != "reviewer" || r.Rev != 0 || r.Body != specialistFocus(focus.body) || r.ResolvedBody != currentReviewerRoleBody+"\n\nAdditional focus: "+focus.body {
 			t.Errorf("%s: unedited specialist not converted cleanly: extends=%q rev=%d", focus.key, r.Extends, r.Rev)
 		}
 	}
@@ -218,7 +218,7 @@ func TestManageRoleExtends(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a role extending reviewer: %v", err)
 	}
-	if got := globalRoles(t, s)["qa"].ResolvedBody; got != reviewerRoleBody+"\n\nqa focus" {
+	if got := globalRoles(t, s)["qa"].ResolvedBody; got != currentReviewerRoleBody+"\n\nqa focus" {
 		t.Errorf("qa resolves to %.80q", got)
 	}
 	if _, err := s.ManageRole(ctx, "usr_owner", base("lost", "ghost", "x"), false); !errors.Is(err, ErrRoleExtends) {
@@ -273,10 +273,10 @@ func TestManageRoleExtends(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(dispatched, reviewerRoleBody+"\n\nAdditional focus: ") {
+	if !strings.HasPrefix(dispatched, currentReviewerRoleBody+"\n\nAdditional focus: ") {
 		t.Errorf("the dispatcher would send %.80q", dispatched)
 	}
-	if summed != reviewerRoleBody+"\n\nsum rules" {
+	if summed != currentReviewerRoleBody+"\n\nsum rules" {
 		t.Errorf("the role reaches the dispatcher as %.80q", summed)
 	}
 	if orphan != "sum rules" {
@@ -316,7 +316,7 @@ func TestResetRole(t *testing.T) {
 		t.Fatalf("reset: %v", err)
 	}
 	if reset.Label != def.Label || reset.Emoji != def.Emoji || reset.Body != def.Body || reset.Extends != "reviewer" || reset.Rev != edited.Rev+1 ||
-		reset.ResolvedBody != reviewerRoleBody+"\n\n"+def.Body {
+		reset.ResolvedBody != currentReviewerRoleBody+"\n\n"+def.Body {
 		t.Errorf("reset gave %+v", reset)
 	}
 	if got := globalRoles(t, s)["sec-reviewer"]; got.Body != def.Body || got.Rev != reset.Rev {

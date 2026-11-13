@@ -1652,7 +1652,7 @@ DROP TABLE reply_root;
 -- Preserve an explicit fresh start while folder or machine admission waits
 -- for the owner. Approval must not silently resume the old native session.
 ALTER TABLE boundary_pending ADD COLUMN start_fresh INTEGER NOT NULL DEFAULT 0 CHECK (start_fresh IN (0,1));
-`}, {100, roleLeadDirectTaskMigration()}}
+`}, {100, roleLeadDirectTaskMigration()}, {101, roleRoomMentionMigration()}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.

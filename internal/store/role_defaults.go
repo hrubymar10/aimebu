@@ -21,6 +21,7 @@ const priorReviewerStart = "Start code review when the implementer requests it."
 const reviewerStart = "Start code review when the lead or implementer requests it."
 
 const roleCommunication = `Your final answer delivers room messages. Put substantive decisions, evidence, blockers, and next actions in each message body. Set ask on a message to a human when a question or approval must enter the inbox; prose alone does not create an inbox item. Use handoff on a completed worker report to wake the lead. Use visual_plan for structure when it helps, and appendix_pages for long detail; neither replaces the body. Use memory_recall to check relevant history and memory_add, memory_update, or memory_remove for durable curated knowledge when enabled. Keep acknowledgements brief; use a reaction tool when the current toolbox offers one.`
+const roomMentionGuidance = `A mention only reaches members of the message's room; for a worker use their task room or dm_agent. A final-answer message with a live mention of a project agent outside that room is held unless you set force:true on that message.`
 
 const leadSpawnParagraph = `In that room, decide which agents the task needs. When the choice of roles, tools, or models is unclear, ask the human with a structured ask: {"kind":"question","text":"Which agents should take this task?","options":["short descriptions of the candidate choices"],"free_text":true}. After the answer, call spawn_agent once per agent with role_key, tool, variant, and model, and assign bounded work in the task room. `
 
@@ -56,11 +57,13 @@ Collect independent plans before consolidating one approach. Ask the human for a
 
 ` + roleCommunication
 
-var leadRoleBody = strings.Replace(strings.Replace(priorNoDirectLeadRoleBody,
+var priorLeadDirectRoleBody = strings.Replace(strings.Replace(priorNoDirectLeadRoleBody,
 	"Never edit files or implement changes yourself, not even a one-file or trivial change. Every change goes through a task room (create_room) and spawn_agent. Your own tool use is for reading, checking and verifying.",
 	"For ordinary requests, delegate implementation and independent review through a task room (create_room) and spawn_agent. When a human explicitly asks you to do a small, bounded task yourself, do it directly, including file changes. Read the project's AGENTS.md and relevant docs before editing.", 1),
 	"If no worker can be spawned (spawn_agent fails, or no suitable harness or model is available), do not do the work yourself: say in a message what is blocked and ask the human how to proceed.",
 	"If no worker can be spawned for delegated work (spawn_agent fails, or no suitable harness or model is available), say in a message what is blocked and ask the human how to proceed.", 1)
+
+var leadRoleBody = priorLeadDirectRoleBody + "\n\n" + roomMentionGuidance
 
 const workerRoleBody = `You are an implementation worker. After the lead frames the task, write your own initial plan before reading or converging on other agents' plans. Wait for the lead's bounded assignment, and for human approval when the lead requests it, before making the requested code change.
 
@@ -77,6 +80,9 @@ Lead with actionable findings ordered by severity. Give file and line references
 ` + roleSafety + `
 
 ` + roleCommunication
+
+const currentWorkerRoleBody = workerRoleBody + "\n\n" + roomMentionGuidance
+const currentReviewerRoleBody = reviewerRoleBody + "\n\n" + roomMentionGuidance
 
 var reviewerFocus = []struct {
 	key, label, emoji, body string
@@ -145,8 +151,8 @@ type builtinRole struct {
 func builtinRoles() map[string]builtinRole {
 	roles := map[string]builtinRole{
 		"role_lead_default":     {ID: "role_lead_default", Key: "lead", Label: "Lead", Emoji: "👑", Body: leadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
-		"role_worker_default":   {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: workerRoleBody, Cardinality: "multi", Writer: true},
-		"role_reviewer_default": {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: reviewerRoleBody, Cardinality: "multi"},
+		"role_worker_default":   {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
+		"role_reviewer_default": {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
 	}
 	for _, focus := range reviewerFocus {
 		id := "role_" + focus.key + "_default"
@@ -206,5 +212,19 @@ func roleLeadNoImplementMigration() string {
 // migration 79. An owner's changed body or revision keeps its own policy.
 func roleLeadDirectTaskMigration() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
-	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_lead_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(leadRoleBody), quote(priorNoDirectLeadRoleBody))
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_lead_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(priorLeadDirectRoleBody), quote(priorNoDirectLeadRoleBody))
+}
+
+// roleRoomMentionMigration changes only the exact unedited built-in bodies.
+func roleRoomMentionMigration() string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	var sql strings.Builder
+	for _, item := range []struct{ id, old, body string }{
+		{"role_lead_default", priorLeadDirectRoleBody, leadRoleBody},
+		{"role_worker_default", workerRoleBody, currentWorkerRoleBody},
+		{"role_reviewer_default", reviewerRoleBody, currentReviewerRoleBody},
+	} {
+		fmt.Fprintf(&sql, "UPDATE role SET body=%s WHERE id=%s AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(item.body), quote(item.id), quote(item.old))
+	}
+	return sql.String()
 }
