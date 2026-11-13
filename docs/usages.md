@@ -17,6 +17,10 @@ opens a global Inbox alert for the owner and global admins. The alert shows
 the provider, profile name, window, remaining percentage, and reset time
 inline. The owner alone gets an **Open Usages** action; the Usages cards and
 `GET /api/usages` is the owner's whole snapshot; a global admin reads a redacted one (the limits and the profile names, nothing that names an account or how it signs in) and sees the cards read-only, and every change stays owner-only. Inbox alerts omit email and credentials.
+The five-second background scan also notices switcher profiles added, renamed
+or removed by a separate CLI process. It drops removed profile snapshots and
+pushes a transient update so an open Settings → Usages view refetches its
+switcher list and usage cards.
 They trigger the normal Inbox sound and hidden-tab browser notification.
 
 The server records one alert per threshold for each provider, account,

@@ -47,6 +47,9 @@ live login, so the CLI asks `Proceed? [y/N]` first. Pass `-y` / `--yes` to
 skip the prompt; without a terminal on stdin the command refuses and asks for
 `-y`. `aimebu switcher remove <tool> <profile>` deletes an inactive profile
 without a prompt. In the UI, removing an active profile asks for confirmation.
+The open Settings → Usages view refetches after a web removal. The server also
+detects profile names changed by the CLI on its five-second usage scan and
+notifies open views; a removed profile disappears without reloading the page.
 Only the owner can change profiles through the web API; switcher status and
 account profiles are owner-only too.
 

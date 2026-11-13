@@ -303,6 +303,7 @@ func (r *Reader) Invalidate(provider string) {
 
 func (r *Reader) Run(ctx context.Context) {
 	r.Refresh(ctx)
+	knownProfiles, haveProfiles := r.profileNames()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	last := time.Now()
@@ -315,6 +316,24 @@ func (r *Reader) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if current, ok := r.profileNames(); ok {
+				if haveProfiles && !sameProfileNames(knownProfiles, current) {
+					for key := range knownProfiles {
+						if !current[key] {
+							tool, name, _ := strings.Cut(key, "\x00")
+							provider := tool
+							if tool == "claude" {
+								provider = providers.ProviderClaudeCode
+							}
+							r.ForgetProfile(provider, name)
+						}
+					}
+					// A newly added or removed empty profile may have no cached usage
+					// row, but Settings still needs a fresh switcher list.
+					r.NotifyChanged()
+				}
+				knownProfiles, haveProfiles = current, true
+			}
 			cfg, err := r.extra.LoadConfig()
 			if err != nil && err.Error() != lastConfigError {
 				log.Printf("usages: config read failed, using defaults: %v", err)

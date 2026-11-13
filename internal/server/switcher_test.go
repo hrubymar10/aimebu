@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/store"
@@ -169,6 +170,98 @@ func TestSwitcherUseForceRequiresStoredCredentials(t *testing.T) {
 	}
 	if got, err := os.ReadFile(live); err != nil || !strings.Contains(string(got), "target-refresh") {
 		t.Fatalf("live = %s, %v", got, err)
+	}
+}
+
+func TestCLIProfileRemovalNotifiesOpenUsagesView(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(root, "aimebu2"))
+	f := newFixture(t)
+	switcherRoot := filepath.Join(root, "aimebu2", "switcher")
+	m, err := switcher.New(switcherRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetHomeDir(root)
+	if err := m.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	expired := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":%d}}`, time.Now().Add(-time.Hour).UnixMilli())
+	live := filepath.Join(root, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte(expired), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Import("claude", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add("claude", "old"); err != nil {
+		t.Fatal(err)
+	}
+	stored := m.StoredCredPath("claude", "old")
+	if err := os.WriteFile(stored, []byte(expired), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := usages.New(filepath.Join(root, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.SetProfiles(m.UsageProfiles, m.WithLock)
+	f.srv.Usages, f.srv.Switcher = reader, m
+	reader.SetUpdateHook(f.srv.usagesChanged)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	defer func() { cancel(); <-done }()
+	go func() { reader.Run(ctx); close(done) }()
+	deadline := time.After(5 * time.Second)
+	for {
+		if _, ok := reader.StoredProfile("claude-code", "old"); ok {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("initial stored profile was not published")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	updates, unwatch := f.srv.watchUsages()
+	defer unwatch()
+	cli, err := switcher.New(switcherRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetHomeDir(root)
+	if err := cli.Remove("claude", "old", false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-updates:
+	case <-time.After(15 * time.Second):
+		t.Fatal("CLI removal did not nudge open Usages views")
+	}
+	if _, ok := reader.StoredProfile("claude-code", "old"); ok {
+		t.Fatal("removed profile stayed in the usage snapshot")
+	}
+	resp := f.request(http.MethodGet, "/api/switcher", nil, true)
+	defer resp.Body.Close()
+	var state struct {
+		Profiles []switcher.Profile `json:"profiles"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("switcher status = %d", resp.StatusCode)
+	}
+	for _, profile := range state.Profiles {
+		if profile.Tool == "claude" && profile.Name == "old" {
+			t.Fatal("removed profile stayed in Settings status")
+		}
 	}
 }
 

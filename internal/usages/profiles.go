@@ -32,6 +32,39 @@ type StoredProfile struct {
 // ProfileLister lists every switcher profile across tools.
 type ProfileLister func() ([]StoredProfile, error)
 
+// profileNames reads the switcher's current profile names without asking usage
+// endpoints. The CLI may change this set in another process while Settings is
+// open, outside the server's request handlers.
+func (r *Reader) profileNames() (map[string]bool, bool) {
+	r.mu.RLock()
+	lister := r.profiles
+	r.mu.RUnlock()
+	if lister == nil {
+		return nil, false
+	}
+	list, err := lister()
+	if err != nil {
+		return nil, false
+	}
+	names := make(map[string]bool, len(list))
+	for _, profile := range list {
+		names[profile.Tool+"\x00"+profile.Name] = true
+	}
+	return names, true
+}
+
+func sameProfileNames(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key := range a {
+		if !b[key] {
+			return false
+		}
+	}
+	return true
+}
+
 // SetProfiles enables usage snapshots for inactive switcher profiles. withLock
 // is the switcher's lock: a stored credential copy is read under it so a
 // switch, rename or removal cannot replace the file mid-read. Everything is

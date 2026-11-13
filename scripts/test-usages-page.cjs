@@ -151,6 +151,39 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'use')), ['use', 'codex', 'backup', true]);
       await page.close();
     }
+    // Settings refetches both the usage cards and switcher list after its own
+    // removal, and after the live event for a CLI removal in another process.
+    for (const external of [false, true]) {
+      const page = await mount();
+      await page.evaluate(() => {
+        let removed = false;
+        const list = window.__source.list.bind(window.__source);
+        const switcher = window.__source.switcher.bind(window.__source);
+        window.__source.list = async () => {
+          const out = await list();
+          if (removed) out.providers.find(item => item.provider_name === 'codex').profiles = out.providers.find(item => item.provider_name === 'codex').profiles.filter(item => item.profile_name !== 'backup');
+          return out;
+        };
+        window.__source.switcher = async () => {
+          const out = await switcher();
+          if (removed) out.profiles = out.profiles.filter(item => item.tool !== 'codex' || item.name !== 'backup');
+          return out;
+        };
+        window.__source.remove = async (tool, name) => { window.__calls.push(['remove', tool, name]); removed = true; };
+        window.__removeOutsidePage = () => { removed = true; window.__usages.changed(); };
+      });
+      if (external) await page.evaluate(() => window.__removeOutsidePage());
+      else {
+        await click(page, `${cardOf('codex')} .usage-profile:nth-child(2) .usage-remove`);
+        await dialog(page);
+        await click(page, '#app-dialog .app-dialog-ok');
+      }
+      await page.waitForFunction(() => ![...document.querySelectorAll('[data-provider="codex"] .usage-profile-name')].some(node => node.textContent === 'backup'));
+      assert.equal(await page.evaluate(() => window.__usages.store.switcher.value.profiles.some(item => item.tool === 'codex' && item.name === 'backup')), false);
+      if (!external) assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'remove')), ['remove', 'codex', 'backup']);
+      await page.close();
+    }
+
     // Two reads answered out of order: the later request's answer is the one drawn.
     {
       const page = await mount({ held: ['list'] , load: false });
