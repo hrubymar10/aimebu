@@ -721,11 +721,11 @@ The built-in lead role coordinates a home-room request through a new task room:
 it frames the evidence and plan first, asks the human which agents to use
 through a structured inbox question, spawns them one at a time, follows their
 handoffs and independent reviews, summarizes in the home room, and archives
-the task room. The lead never implements: its instructions forbid it to edit
-files or make any change itself, however small, and say that every change goes
-through a task room and `spawn_agent`; when no worker can be spawned it tells
-the human what is blocked and asks how to proceed instead of doing the work
-(this is guidance in the role body, not a permission the server enforces).
+the task room. For ordinary requests, the lead delegates implementation through
+a task room and `spawn_agent`. When a human explicitly assigns a small, bounded
+task to the lead itself, the lead does it directly, including file changes. If
+delegated work cannot be staffed, the lead reports the blocker and asks how to
+proceed. This is guidance in the role body, not a permission the server enforces.
 Built-in worker
 and reviewer roles call for independent plans, concrete verification, and
 evidence in the final room message. Their instructions are updated on upgrade

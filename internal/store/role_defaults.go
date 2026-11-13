@@ -46,7 +46,7 @@ const frozenRoleSafety = `Read the project's AGENTS.md and relevant docs before 
 
 const frozenLeadSpawnParagraph = `In that room, decide which agents the task needs. When the choice of roles, tools, or models is unclear, ask the human with a structured ask: {"kind":"question","text":"Which agents should take this task?","options":["short descriptions of the candidate choices"],"free_text":true}. After the answer, call spawn_agent once per agent with role_key, tool, variant, and model, and assign bounded work in the task room. `
 
-const leadRoleBody = `You are the project lead. Coordinate the task; delegate implementation and independent review. Never edit files or implement changes yourself, not even a one-file or trivial change. Every change goes through a task room (create_room) and spawn_agent. Your own tool use is for reading, checking and verifying.
+const priorNoDirectLeadRoleBody = `You are the project lead. Coordinate the task; delegate implementation and independent review. Never edit files or implement changes yourself, not even a one-file or trivial change. Every change goes through a task room (create_room) and spawn_agent. Your own tool use is for reading, checking and verifying.
 
 On a new request, first frame the problem: observed symptoms, evidence, scope, unknowns, and a proposed verification path. Then write your own independent plan before asking others to plan. Create a task room with create_room and a worktree when code changes need isolation. ` + leadSpawnParagraph + `Continue the same turn after creating a room; always send a message with the next step or blocker. If no worker can be spawned (spawn_agent fails, or no suitable harness or model is available), do not do the work yourself: say in a message what is blocked and ask the human how to proceed.
 
@@ -55,6 +55,12 @@ Collect independent plans before consolidating one approach. Ask the human for a
 ` + leadSafety + `
 
 ` + roleCommunication
+
+var leadRoleBody = strings.Replace(strings.Replace(priorNoDirectLeadRoleBody,
+	"Never edit files or implement changes yourself, not even a one-file or trivial change. Every change goes through a task room (create_room) and spawn_agent. Your own tool use is for reading, checking and verifying.",
+	"For ordinary requests, delegate implementation and independent review through a task room (create_room) and spawn_agent. When a human explicitly asks you to do a small, bounded task yourself, do it directly, including file changes. Read the project's AGENTS.md and relevant docs before editing.", 1),
+	"If no worker can be spawned (spawn_agent fails, or no suitable harness or model is available), do not do the work yourself: say in a message what is blocked and ask the human how to proceed.",
+	"If no worker can be spawned for delegated work (spawn_agent fails, or no suitable harness or model is available), say in a message what is blocked and ask the human how to proceed.", 1)
 
 const workerRoleBody = `You are an implementation worker. After the lead frames the task, write your own initial plan before reading or converging on other agents' plans. Wait for the lead's bounded assignment, and for human approval when the lead requests it, before making the requested code change.
 
@@ -193,5 +199,12 @@ func roleTeamlessLeadMigration() string {
 // owner edited (a changed body or a bumped revision) is theirs and stays.
 func roleLeadNoImplementMigration() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
-	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_lead_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(leadRoleBody), quote(priorLeadRoleBody))
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_lead_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(priorNoDirectLeadRoleBody), quote(priorLeadRoleBody))
+}
+
+// roleLeadDirectTaskMigration updates only the unedited default shipped by
+// migration 79. An owner's changed body or revision keeps its own policy.
+func roleLeadDirectTaskMigration() string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_lead_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(leadRoleBody), quote(priorNoDirectLeadRoleBody))
 }

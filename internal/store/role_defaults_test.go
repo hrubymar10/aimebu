@@ -225,23 +225,18 @@ func TestTeamlessLeadMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 	}
 }
 
-func TestLeadDefaultForbidsImplementing(t *testing.T) {
+func TestLeadDefaultAllowsExplicitSmallTasks(t *testing.T) {
 	t.Parallel()
 	for _, want := range []string{
-		"Never edit files or implement changes yourself, not even a one-file or trivial change.",
-		"Every change goes through a task room (create_room) and spawn_agent.",
-		"Your own tool use is for reading, checking and verifying.",
+		"For ordinary requests, delegate implementation and independent review through a task room (create_room) and spawn_agent.",
+		"When a human explicitly asks you to do a small, bounded task yourself, do it directly, including file changes.",
+		"Read the project's AGENTS.md and relevant docs before editing.",
 		"If no worker can be spawned",
-		"do not do the work yourself",
 		"ask the human how to proceed",
 	} {
 		if !strings.Contains(leadRoleBody, want) {
 			t.Errorf("the lead body lacks %q", want)
 		}
-	}
-	// The shared safety paragraph tells the others to read the docs before editing; the lead edits nothing, so it must not be told to.
-	if strings.Contains(leadRoleBody, "before editing") {
-		t.Error("the lead body still tells the lead to read the docs before editing")
 	}
 	for _, body := range []string{workerRoleBody, reviewerRoleBody} {
 		if !strings.Contains(body, "before editing") {
@@ -257,10 +252,10 @@ func TestLeadNoImplementMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 		rev  int
 		want string
 	}{
-		"unedited":    {priorLeadRoleBody, 0, leadRoleBody},
+		"unedited":    {priorLeadRoleBody, 0, priorNoDirectLeadRoleBody},
 		"edited body": {priorLeadRoleBody + " edit", 0, priorLeadRoleBody + " edit"},
 		"bumped rev":  {priorLeadRoleBody, 1, priorLeadRoleBody},
-		"already new": {leadRoleBody, 0, leadRoleBody},
+		"already new": {priorNoDirectLeadRoleBody, 0, priorNoDirectLeadRoleBody},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, _ := testStore(t, Options{})
@@ -268,6 +263,34 @@ func TestLeadNoImplementMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := s.db.Exec(roleLeadNoImplementMigration()); err != nil {
+				t.Fatal(err)
+			}
+			var got string
+			if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_lead_default'`).Scan(&got); err != nil || got != test.want {
+				t.Errorf("body=%q err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestLeadDirectTaskMigrationPreservesEditedRoles(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		body string
+		rev  int
+		want string
+	}{
+		"unedited":    {priorNoDirectLeadRoleBody, 0, leadRoleBody},
+		"edited body": {priorNoDirectLeadRoleBody + " edit", 0, priorNoDirectLeadRoleBody + " edit"},
+		"bumped rev":  {priorNoDirectLeadRoleBody, 1, priorNoDirectLeadRoleBody},
+		"already new": {leadRoleBody, 0, leadRoleBody},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := testStore(t, Options{})
+			if _, err := s.db.Exec(`UPDATE role SET body=?,rev=? WHERE id='role_lead_default'`, test.body, test.rev); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(roleLeadDirectTaskMigration()); err != nil {
 				t.Fatal(err)
 			}
 			var got string
@@ -321,7 +344,7 @@ func TestFrozenLeadBodyIsWhatTheEarlierMigrationsWrite(t *testing.T) {
 			if _, err := s.db.Exec(roleLeadNoImplementMigration()); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_lead_default'`).Scan(&got); err != nil || got != leadRoleBody {
+			if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_lead_default'`).Scan(&got); err != nil || got != priorNoDirectLeadRoleBody {
 				t.Errorf("after migration 79: body=%q err=%v", got, err)
 			}
 		})
