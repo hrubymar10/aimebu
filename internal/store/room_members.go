@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 )
 
 // RoomMemberHuman is one person in a room's member list. Role is the person's project role
@@ -58,13 +57,20 @@ type RoomMembers struct {
 // the agents in it with their role label and emoji, and the project's singleton roles with their
 // holders. Nothing here changes any state; callers check room access first.
 func (s *Store) RoomMembers(ctx context.Context, roomID string) (RoomMembers, error) {
+	room, err := s.RoomByID(ctx, roomID)
+	if err != nil {
+		return RoomMembers{}, err // sql.ErrNoRows for an unknown room, which the API reports as 404
+	}
+	return s.RoomMembersOf(ctx, room)
+}
+
+// RoomMembersOf is RoomMembers for a room the caller has already loaded. It reads the people, the agents, and the singleton roles with
+// their holders in three statements, however many of each there are.
+func (s *Store) RoomMembersOf(ctx context.Context, room Room) (RoomMembers, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return RoomMembers{}, err
 	}
-	var projectID, kind string
-	if err := s.db.QueryRowContext(ctx, `SELECT project_id,kind FROM room WHERE id=?`, roomID).Scan(&projectID, &kind); err != nil {
-		return RoomMembers{}, err // sql.ErrNoRows for an unknown room, which the API reports as 404
-	}
+	roomID, projectID, kind := room.ID, room.ProjectID, room.Kind
 	out := RoomMembers{Humans: []RoomMemberHuman{}, Agents: []RoomMemberAgent{}, Singletons: []RoomSingleton{}}
 
 	rows, err := s.db.QueryContext(ctx, `SELECT u.id,u.login,COALESCE(pm.role,'') FROM room_member m JOIN user u ON u.id=m.member_id
@@ -112,38 +118,29 @@ func (s *Store) RoomMembers(ctx context.Context, roomID string) (RoomMembers, er
 		return out, nil // a private chat has no roles to show
 	}
 
-	rows, err = s.db.QueryContext(ctx, `SELECT r.role_key,r.label,r.emoji FROM role r
+	// The holder is the same "occupied" rule spawn applies: the first live agent of that role in the project.
+	rows, err = s.db.QueryContext(ctx, `SELECT r.role_key,r.label,r.emoji,h.id,h.slug,
+		EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=? AND m.member_kind='agent' AND m.member_id=h.id AND m.left_at IS NULL)
+		FROM role r LEFT JOIN agent h ON h.id=(SELECT a.id FROM agent a JOIN role ar ON ar.id=a.role_id
+			WHERE a.project_id=? AND ar.role_key=r.role_key AND a.revoked_at IS NULL AND (a.desired!='stopped' OR a.observed!='stopped')
+			ORDER BY a.created_at,a.id LIMIT 1)
 		WHERE r.cardinality='singleton' AND r.deleted_at IS NULL
-		ORDER BY r.label,r.role_key`)
+		ORDER BY r.label,r.role_key`, roomID, projectID)
 	if err != nil {
 		return RoomMembers{}, err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var singleton RoomSingleton
-		if err := rows.Scan(&singleton.RoleKey, &singleton.Label, &singleton.Emoji); err != nil {
-			rows.Close()
+		var holderID, holderSlug sql.NullString
+		var inRoom bool
+		if err := rows.Scan(&singleton.RoleKey, &singleton.Label, &singleton.Emoji, &holderID, &holderSlug, &inRoom); err != nil {
 			return RoomMembers{}, err
+		}
+		if holderID.Valid {
+			singleton.HeldBy = &RoomSingletonHolder{AgentID: holderID.String, Slug: holderSlug.String, InThisRoom: inRoom}
 		}
 		out.Singletons = append(out.Singletons, singleton)
 	}
-	if err := rows.Close(); err != nil {
-		return RoomMembers{}, err
-	}
-	for i := range out.Singletons {
-		var holder RoomSingletonHolder
-		// The same "occupied" rule spawn applies: a live agent of that role in the project.
-		err := s.db.QueryRowContext(ctx, `SELECT a.id,a.slug,EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=? AND m.member_kind='agent'
-			AND m.member_id=a.id AND m.left_at IS NULL)
-			FROM agent a JOIN role r ON r.id=a.role_id
-			WHERE a.project_id=? AND r.role_key=? AND a.revoked_at IS NULL AND (a.desired!='stopped' OR a.observed!='stopped')
-			ORDER BY a.created_at,a.id LIMIT 1`, roomID, projectID, out.Singletons[i].RoleKey).Scan(&holder.AgentID, &holder.Slug, &holder.InThisRoom)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return RoomMembers{}, err
-		}
-		out.Singletons[i].HeldBy = &holder
-	}
-	return out, nil
+	return out, rows.Err()
 }

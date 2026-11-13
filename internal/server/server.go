@@ -1313,7 +1313,7 @@ func (s *Server) roomMembers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	members, err := s.Store.RoomMembers(r.Context(), room.ID)
+	members, err := s.Store.RoomMembersOf(r.Context(), room)
 	if err != nil {
 		fail(w, err)
 		return

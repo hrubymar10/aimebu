@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/getsentry/sentry-go"
 	"modernc.org/sqlite"
@@ -388,6 +389,36 @@ func TestSQLSpansRecordQueryAndRowsNeverValues(t *testing.T) {
 	}
 	if len(spans) < 4 || selectRows != 2 {
 		t.Fatalf("want >=4 db spans and 2 rows on the select, got %d spans, rows=%d", len(spans), selectRows)
+	}
+	// The description of a db span is its statement (placeholders, no values), not the generic operation name.
+	descriptions := map[string]bool{}
+	for _, span := range spans {
+		descriptions[span.Description] = true
+	}
+	for _, want := range []string{"INSERT INTO t(a) VALUES (?)", "SELECT a FROM t WHERE a <> ?", "SELECT count(*) FROM t WHERE a = ?"} {
+		if !descriptions[want] {
+			t.Errorf("no db span described as %q; descriptions: %v", want, descriptions)
+		}
+	}
+	if descriptions["db.query"] {
+		t.Errorf("a db span still carries the generic description: %v", descriptions)
+	}
+}
+
+func TestNormalizeSQL(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"SELECT a\n\t FROM t\n WHERE b = ?", "SELECT a FROM t WHERE b = ?"},
+		{"  SELECT 1  ", "SELECT ?"},
+		{"SELECT a FROM t WHERE b = 'it''s secret' AND c = 42 AND d = 3.5 AND e = ?", "SELECT a FROM t WHERE b = ? AND c = ? AND d = ? AND e = ?"},
+		{"SELECT x2, t1.y FROM t1 WHERE k = ?", "SELECT x2, t1.y FROM t1 WHERE k = ?"},
+	} {
+		if got := NormalizeSQL(tc.in); got != tc.want {
+			t.Errorf("NormalizeSQL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	long := NormalizeSQL("SELECT " + strings.Repeat("é", 2000))
+	if len(long) > maxSQLDescription+len("…") || !strings.HasSuffix(long, "…") || !utf8.ValidString(long) {
+		t.Errorf("a long statement is cut to %d bytes, valid=%v", len(long), utf8.ValidString(long))
 	}
 }
 

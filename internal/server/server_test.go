@@ -46,11 +46,17 @@ func TestNewUsesProductionPasswordPolicy(t *testing.T) {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureWith(t, store.Options{}, nil)
+}
+
+// newFixtureWith is newFixture with store options and, when wrap is not nil, a wrapper around the server's handler.
+func newFixtureWith(t *testing.T, opts store.Options, wrap func(http.Handler) http.Handler) *fixture {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "api.sqlite")
 	if err := os.WriteFile(path, blankTestDB, 0600); err != nil {
 		t.Fatal(err)
 	}
-	db, err := store.Open(context.Background(), path, store.Options{})
+	db, err := store.Open(context.Background(), path, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +72,11 @@ func newFixture(t *testing.T) *fixture {
 	s.Auth.Policy = a.Policy
 	s.PollInterval = 5 * time.Millisecond
 	s.WriteTimeout = 100 * time.Millisecond
-	h := httptest.NewServer(s.Handler())
+	handler := s.Handler()
+	if wrap != nil {
+		handler = wrap(handler)
+	}
+	h := httptest.NewServer(handler)
 	t.Cleanup(h.Close)
 	// A test that started the token-copy goroutines cancels their context when it returns (its defer runs before cleanups); this joins them, so
 	// none is still writing into the test's directories when those are removed. It returns at once when they were never started.

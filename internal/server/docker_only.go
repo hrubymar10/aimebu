@@ -41,31 +41,39 @@ type keepAliveConfig struct {
 	StopAfterHrs  int            `json:"stop_after_hours"`
 }
 
+// keepAliveSettingKeys are the global settings keepAliveConfig reads.
+var keepAliveSettingKeys = []string{keepAliveOnKey, keepAliveClaudeKey, keepAliveCodexKey, keepAliveStopKey}
+
 func (s *Server) keepAliveConfig(ctx context.Context) (keepAliveConfig, error) {
-	config := keepAliveConfig{Enabled: true, ClaudeMinutes: defaultKeepAliveClaude, CodexMinutes: defaultKeepAliveCodex, StopAfterHrs: defaultKeepAliveStopHrs}
-	read := func(key string, into *int) error {
+	values := map[string]string{}
+	for _, key := range keepAliveSettingKeys {
 		value, ok, err := s.Store.GlobalSettingValue(ctx, key)
-		if err != nil || !ok {
-			return err
+		if err != nil {
+			return keepAliveConfigFrom(nil), err
 		}
-		if n, convErr := strconv.Atoi(value); convErr == nil && n >= 0 {
-			*into = n
+		if ok {
+			values[key] = value
 		}
-		return nil
 	}
-	if value, ok, err := s.Store.GlobalSettingValue(ctx, keepAliveOnKey); err != nil {
-		return config, err
-	} else if ok {
+	return keepAliveConfigFrom(values), nil
+}
+
+// keepAliveConfigFrom is the keep-alive setting as the saved values (a key that is not saved is absent) give it.
+func keepAliveConfigFrom(values map[string]string) keepAliveConfig {
+	config := keepAliveConfig{Enabled: true, ClaudeMinutes: defaultKeepAliveClaude, CodexMinutes: defaultKeepAliveCodex, StopAfterHrs: defaultKeepAliveStopHrs}
+	if value, ok := values[keepAliveOnKey]; ok {
 		config.Enabled = value != "0"
 	}
 	for key, into := range map[string]*int{keepAliveClaudeKey: &config.ClaudeMinutes, keepAliveCodexKey: &config.CodexMinutes, keepAliveStopKey: &config.StopAfterHrs} {
-		if err := read(key, into); err != nil {
-			return config, err
+		if value, ok := values[key]; ok {
+			if n, convErr := strconv.Atoi(value); convErr == nil && n >= 0 {
+				*into = n
+			}
 		}
 	}
 	config.ClaudeMinutes = min(config.ClaudeMinutes, maxKeepAliveClaudeMinutes) // a larger value stored before the cap would never read the cache
 	config.Minutes = map[string]int{"claude": config.ClaudeMinutes, "codex": config.CodexMinutes}
-	return config, nil
+	return config
 }
 
 // settingsFor is what a delivery of an agent of this tool carries: its interval (0 when keep-alive is off, or the tool is not one that is kept) and

@@ -598,16 +598,32 @@ type agentHold struct {
 // host machine's account, so only agents on the host machine wait for it (a remote machine has its own login), and a running turn is never
 // touched, so only an agent that is not in a turn shows it.
 func (s *Server) agentHolds(ctx context.Context, cards []store.AgentCard) map[string]*agentHold {
+	on, err := s.dockerOnly(ctx)
+	return s.holdsFor(ctx, cards, err == nil && on,
+		func(card store.AgentCard) bool {
+			refused, err := s.refusedAgent(ctx, card.MachineID, card.Tool, card.Variant, card.LauncherID)
+			return err == nil && refused
+		},
+		func(card store.AgentCard) bool {
+			machine, err := s.Store.MachineByID(ctx, card.MachineID)
+			return err == nil && machine.IsHost
+		})
+}
+
+// holdsFor is agentHolds once the setting and the two per-card judgements (is its native launcher refused, is its machine the host) are
+// known: the room's agent list reads them for all its cards in one statement, so it passes them in. The judgements are asked at most once per
+// card for a refusal and once per machine for the host.
+func (s *Server) holdsFor(ctx context.Context, cards []store.AgentCard, dockerOn bool, refusedNative, onHost func(store.AgentCard) bool) map[string]*agentHold {
 	holds := map[string]*agentHold{}
 	hostByMachine := map[string]bool{}
 	byTool := map[string]*agentHold{}
 	// "Only run agents in docker": an agent on a native launcher gets no turns, whatever it is doing, and says why.
-	if on, err := s.dockerOnly(ctx); err == nil && on {
+	if dockerOn {
 		for _, card := range cards {
 			if card.Desired == "stopped" {
 				continue
 			}
-			if refused, err := s.refusedAgent(ctx, card.MachineID, card.Tool, card.Variant, card.LauncherID); err == nil && refused {
+			if refusedNative(card) {
 				holds[card.ID] = &agentHold{Code: "docker_only", Text: "native launcher refused", Detail: errDockerOnly.Error() + ". Queued messages wait."}
 			}
 		}
@@ -621,9 +637,7 @@ func (s *Server) agentHolds(ctx context.Context, cards []store.AgentCard) map[st
 		}
 		host, known := hostByMachine[card.MachineID]
 		if !known {
-			if machine, err := s.Store.MachineByID(ctx, card.MachineID); err == nil {
-				host = machine.IsHost
-			}
+			host = onHost(card)
 			hostByMachine[card.MachineID] = host
 		}
 		if !host {
@@ -678,32 +692,47 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		cards, err := s.Store.AgentCardsForRoom(r.Context(), room.ID)
+		// Two statements read every agent of the room (cards, usage, health, grants) and one the settings they depend on, so the cost of
+		// the list does not grow with the number of agents.
+		list, err := s.Store.AgentRoomStates(r.Context(), room.ID, room.ProjectID, userID(r), time.Now(), stuckAfter())
 		if err != nil {
 			fail(w, err)
 			return
 		}
+		settings, err := s.Store.GlobalSettingValues(r.Context(), append([]string{agentsDockerOnlyKey}, keepAliveSettingKeys...)...)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		cards := make([]store.AgentCard, len(list.Agents))
+		byID := make(map[string]store.AgentRoomState, len(list.Agents))
+		for i, state := range list.Agents {
+			cards[i] = state.Card
+			byID[state.Card.ID] = state
+		}
 		// A viewer is shown what the agents are doing, not where on the machine's disk they work: the absolute paths on a card are blanked.
-		if role, roleErr := s.Store.UserProjectRole(r.Context(), userID(r), room.ProjectID); roleErr == nil && role == "viewer" {
+		if list.ViewerRole == "viewer" {
 			for i := range cards {
 				cards[i] = cardWithoutPaths(cards[i])
 			}
 		}
 		withUsage := make([]agentCardWithUsage, 0, len(cards))
-		holds := s.agentHolds(r.Context(), cards)
-		keepConfig, _ := s.keepAliveConfig(r.Context())
+		holds := s.holdsFor(r.Context(), cards, settings[agentsDockerOnlyKey] == "1",
+			func(card store.AgentCard) bool {
+				state := byID[card.ID]
+				return card.Tool != "fake" && (card.LauncherID == "" && card.Variant != "docker" || card.LauncherID != "" && state.LauncherKnown && !state.LauncherContainerized)
+			},
+			func(card store.AgentCard) bool { return byID[card.ID].MachineIsHost })
+		keepConfig := keepAliveConfigFrom(settings)
 		for _, card := range cards {
-			usage, err := s.Store.AgentUsage(r.Context(), card.ID)
-			if err != nil {
-				fail(w, err)
-				return
+			state := byID[card.ID]
+			flags := state.Flags
+			if card.Desired != "stopped" {
+				if _, err := s.machineForID(card.MachineID); err != nil {
+					flags = append(flags, store.HealthFlag{Code: "machine_offline"})
+				}
 			}
-			flags, err := s.agentHealth(r.Context(), card)
-			if err != nil {
-				fail(w, err)
-				return
-			}
-			withUsage = append(withUsage, agentCardWithUsage{card, usage, flags, holds[card.ID], s.agentWarmState(card), s.agentKeepAliveState(card, usage, keepConfig)})
+			withUsage = append(withUsage, agentCardWithUsage{card, state.Usage, flags, holds[card.ID], s.agentWarmState(card), s.agentKeepAliveState(card, state.Usage, keepConfig)})
 		}
 		writeJSON(w, 200, withUsage)
 		return

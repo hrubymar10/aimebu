@@ -30,6 +30,8 @@ type txContextKey struct{}
 
 type Options struct {
 	MaxRoomDepth int
+	// DriverName is the database/sql driver to open the databases with; empty is SQLDriverName. A test passes a counting copy of the driver.
+	DriverName string
 }
 
 type Store struct {
@@ -118,7 +120,11 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 		}
 		path = abs
 	}
-	db, err := sql.Open(SQLDriverName, sqliteDSN(path))
+	driverName := opts.DriverName
+	if driverName == "" {
+		driverName = SQLDriverName
+	}
+	db, err := sql.Open(driverName, sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +136,7 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	readDB, err := sql.Open(SQLDriverName, readOnlyDSN(path))
+	readDB, err := sql.Open(driverName, readOnlyDSN(path))
 	if err != nil {
 		_ = db.Close()
 		return nil, err

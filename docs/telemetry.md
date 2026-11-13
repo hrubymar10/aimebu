@@ -56,7 +56,8 @@ transport inside a test binary.
   and then raised again, so the process behaves exactly as it would without telemetry.
 - Panics at the entry points of the subcommands (server, supervisor, CLI).
 - Traces: one transaction per HTTP request (method, route, status, duration), with one span per SQLite statement made while serving it:
-  the SQL text **with its `?` placeholders**, the duration and the number of rows. Never an argument value. The files of the app (the ~240 scripts, styles and icons one page load fetches) are not
+  the SQL text **with its `?` placeholders**, the duration and the number of rows. Never an argument value. The span's description is that statement
+  normalized (white space collapsed, any literal written into the text replaced by `?`, cut at 1000 characters), so one query can be told from another in Sentry. The files of the app (the ~240 scripts, styles and icons one page load fetches) are not
   traced either: only the API and the pages the app is opened by (`/`, `/index.html`, `/setup`) are, because each file used to be a transaction named
   `GET /` and together they were most of the server's transactions (a panic or a 5xx in a file is still reported). Event streams and
   WebSocket connections are not traced (their span would last as long as the connection). At most 50 statements of one request get a span

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 	"sync/atomic"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -56,8 +58,35 @@ func start(ctx context.Context, query string) (context.Context, trace.Span) {
 		budget.dropped.Add(1)
 		return ctx, nil
 	}
-	ctx, span := t.tracer.Start(ctx, "db.query", trace.WithAttributes(attribute.String(OpKey, "db.query"), attribute.String("db.system", "sqlite"), attribute.String("db.statement", query)))
+	// The span's name is what Sentry shows as its description: the statement itself, so a slow or repeated query can be told from the others.
+	ctx, span := t.tracer.Start(ctx, NormalizeSQL(query), trace.WithAttributes(attribute.String(OpKey, "db.query"), attribute.String("db.system", "sqlite"), attribute.String("db.statement", query)))
 	return ctx, span
+}
+
+// maxSQLDescription caps a span description; a longer statement is cut with an ellipsis.
+const maxSQLDescription = 1000
+
+var (
+	sqlStringLiteral = regexp.MustCompile(`'(?:[^']|'')*'`)
+	sqlNumberLiteral = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	sqlSpace         = regexp.MustCompile(`\s+`)
+)
+
+// NormalizeSQL is a statement as a span description: white space collapsed to single spaces, and any literal written into the text (a quoted
+// string, a number) replaced by ? so a value is never part of it. Values bound as arguments are never in the text to begin with: it keeps its
+// placeholders. A statement longer than maxSQLDescription is cut.
+func NormalizeSQL(query string) string {
+	text := sqlStringLiteral.ReplaceAllString(query, "?")
+	text = sqlNumberLiteral.ReplaceAllString(text, "?")
+	text = strings.TrimSpace(sqlSpace.ReplaceAllString(text, " "))
+	if len(text) > maxSQLDescription {
+		cut := maxSQLDescription
+		for cut > 0 && text[cut]&0xC0 == 0x80 { // not in the middle of a character
+			cut--
+		}
+		text = text[:cut] + "…"
+	}
+	return text
 }
 
 func finish(span trace.Span, rows int64, err error) {
