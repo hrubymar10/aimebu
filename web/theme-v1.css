@@ -201,6 +201,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-live-chip { display: inline-block; margin: 0 0 7px; padding: 1px 7px; border: 1px solid var(--accent); border-radius: 20px; color: var(--accent); font: 10px var(--font-mono); }
 .agent-live-chip[hidden] { display: none; }
 .spawn-tool-reason, .spawn-version { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
+.model-picker { display: grid; gap: 4px; }
+.model-picker-count { color: var(--text-muted); font-size: 11px; }
 .spawn-tool-reason:not(:empty) { color: var(--orange); }
 #agents-list { padding: 6px 8px; }
 .agents-empty { color: var(--text-muted); }

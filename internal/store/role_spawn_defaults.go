@@ -64,7 +64,7 @@ func (tx *Tx) validateSpawnDefaults(items []SpawnDefaultChoice, mode string) err
 			return fmt.Errorf("%w: launcher and listed model required", ErrInvalidSpawnDefaults)
 		}
 		var listed int
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM harness_model WHERE launcher_id=? AND slug=?`, item.LauncherID, item.Model).Scan(&listed); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM harness_model WHERE launcher_id=? AND slug=? AND available=1`, item.LauncherID, item.Model).Scan(&listed); err != nil {
 			return err
 		}
 		if listed == 0 {

@@ -114,10 +114,18 @@ async function main() {
     assert.deepEqual(state.tools, [['Codex', false], ['Claude Code', false], ['Pi — not installed; check Settings → Harnesses', true]]);
     assert.deepEqual([state.tool, state.model, state.version, state.name, state.submit, state.machine], ['Codex', 'gpt-6-sol', 'CLI version 0.9', 'nova', false, 'm1']);
     assert.deepEqual(state.models, [['gpt-6-sol', 'GPT-6 Sol', ''], ['gpt-6-mini', 'GPT-6 Mini', '']]);
+    await page.$eval('#spawn-model-filter', node => { node.value = 'mini'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForFunction(() => document.querySelector('#spawn-form .model-picker-count').textContent === '1 matching model');
+    assert.deepEqual((await form(page)).models.map(model => model[0]), ['gpt-6-sol', 'gpt-6-mini'], 'the selected model stays visible until another is picked');
+    await select(page, 'model', 'gpt-6-mini');
+    assert.equal((await form(page)).model, 'gpt-6-mini');
+    await page.$eval('#spawn-model-filter', node => { node.value = 'missing'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForFunction(() => document.querySelector('#spawn-form .model-picker-count').textContent === 'No matching models');
+    assert.equal((await form(page)).model, 'gpt-6-mini', 'a filter with no matches does not replace the chosen model');
     assert.equal(await page.$eval('#spawn-form .spawn-worktree-option', node => node.hidden), false, 'a task room offers a worktree');
     await select(page, 'tool', '1');
     const claude = await form(page);
-    assert.deepEqual([claude.tool, claude.model, claude.version], ['Claude Code', 'sonnet', '']); assert.equal(claude.models[1][2], 'Everyday');
+    assert.deepEqual([claude.tool, claude.model, claude.version], ['Claude Code', 'sonnet', '']); assert.equal(claude.models[0][2], 'Everyday');
     await page.$eval('#spawn-form button[type=submit]', node => node.click());
     const spawn = await waitRequest(page, 'POST', '/api/rooms/r1/agents');
     assert.deepEqual(await body(page, spawn), { role_key: 'worker', tool: 'claude', variant: 'native', model: 'sonnet', name: 'nova', launcher_id: 'l2', machine_id: 'm1' });
@@ -432,6 +440,9 @@ async function main() {
     await settle(page);
     const same = await sw();
     assert.deepEqual([same.tool, same.model, same.version, same.submit, same.reason], ['Codex', 'gpt-6-sol', 'CLI version 0.9', true, 'Choose a different model or tool.']);
+    await page.$eval('#switch-model-filter', node => { node.value = 'mini'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForFunction(() => document.querySelector('#switch-form .model-picker-count').textContent === '1 matching model');
+    assert.deepEqual((await sw()).models, ['gpt-6-sol', 'gpt-6-mini']);
     await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
     assert.deepEqual([(await sw()).submit, (await sw()).reason], [false, '']);
     await page.$eval('#switch-form button[type=submit]', node => node.click());
@@ -451,6 +462,22 @@ async function main() {
     assert.equal((await sw()).open, false, 'a change of room closes the dialog');
     await answer(page, held, 200, catalog); await settle(page);
     assert.deepEqual([(await sw()).tool, (await sw()).submit], ['', true], 'the late catalog fills nothing');
+    await page.close();
+  }
+
+  // A detected model removed from the harness remains visible in its agent's Switch picker,
+  // but cannot be picked again or used for a new spawn.
+  {
+    const missing = agent('a1', 'ada', { model: 'retired', launcher_id: 'l1' });
+    const page = await mount({ withCard: true, auto: stable({ 'GET /api/rooms/r1/agents': [missing] }) });
+    await page.waitForSelector('[data-agent-id=a1]');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    await page.$eval('[data-agent-id=a1] .agent-switch', node => node.click());
+    await page.waitForFunction(() => [...document.querySelector('#switch-form').elements.model.options].some(option => option.value === 'retired'));
+    assert.deepEqual(await page.$eval('#switch-form', form => {
+      const option = [...form.elements.model.options].find(row => row.value === 'retired');
+      return [option.textContent, option.disabled, form.elements.model.value, form.querySelector('button[type=submit]').disabled, form.querySelector('#switch-tool-reason').textContent];
+    }), ['retired (unavailable)', true, 'retired', true, 'This model is unavailable; choose another.']);
     await page.close();
   }
 

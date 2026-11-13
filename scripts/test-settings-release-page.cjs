@@ -7,7 +7,7 @@ const { scratch, OWNER } = require('./scratch-server.cjs');
 const SECTIONS = ['general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'telemetry', 'machines', 'harnesses'];
 
 async function main() {
-  const server = await scratch();
+  const server = await scratch({ env: { AIMEBU2_EMBEDDED_SUPERVISOR: '1' } });
   try {
     const page = await server.open({ width: 1280, height: 900, context: await server.context() });
     await page.goto(server.origin);
@@ -42,6 +42,30 @@ async function main() {
       assert.equal(await inSections(), 0, `round ${round}: closing Settings takes every section out of the page`);
       assert.equal(await nodes(), base, `round ${round}: the page is back to ${base} nodes`);
     }
+    // Closing Settings while a Harnesses form is dirty asks before discarding it.
+    await open('harnesses');
+    await page.waitForSelector('#harness-add:not([disabled])');
+    await page.click('#harness-add');
+    await page.waitForSelector('#harness-add-form [name=command]');
+    await page.type('#harness-add-form [name=command]', 'example-tool');
+    await settle();
+    await page.click('#settings-close');
+    await page.waitForSelector('#app-dialog[open]');
+    assert.deepEqual(await page.$eval('#app-dialog', dialog => [dialog.querySelector('h2').textContent, dialog.querySelector('.app-dialog-ok').textContent, dialog.querySelector('.app-dialog-cancel').textContent]), ['Discard unsaved changes?', 'Discard', 'Keep editing']);
+    await page.click('#app-dialog .app-dialog-cancel');
+    assert.equal(await page.$eval('#settings-dialog', dialog => dialog.open), true, 'Keep editing leaves Settings open');
+    assert.equal(await page.$eval('#harness-add-form [name=command]', input => input.value), 'example-tool');
+    await page.$eval('#settings-dialog', dialog => dialog.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await page.waitForSelector('#app-dialog[open]');
+    await page.click('#app-dialog .app-dialog-cancel');
+    assert.equal(await page.$eval('#settings-dialog', dialog => dialog.open), true, 'backdrop close also guards the form');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#app-dialog[open]');
+    await page.click('#app-dialog .app-dialog-ok');
+    await page.waitForFunction(() => !document.querySelector('#settings-dialog').open);
+    await open('harnesses');
+    assert.equal(await page.$('#harness-add-form'), null, 'Discard clears the unsaved form');
+    await close();
     // The selected section is drawn again by the next open, with its content.
     await open('general');
     assert.ok(await page.$('#settings-general *'), 'General is drawn again on the next open');

@@ -418,20 +418,33 @@ func detectModelsWith(ctx context.Context, family, command string, launcherArgs 
 		models, err = parse(out.Bytes())
 	}
 	if custom {
-		// A custom provider's models are what its endpoint serves: ask it (with its own key, if set here) and add what it lists.
+		// Config-listed models remain usable when an endpoint cannot answer. The
+		// private command may omit them, so include them explicitly.
+		have := map[string]bool{}
+		for _, model := range models {
+			have[model.Slug] = true
+		}
+		for _, provider := range extras.providers {
+			for _, model := range provider.Models {
+				slug := provider.ID + "/" + model.ID
+				if !modelID.MatchString(slug) || have[slug] {
+					continue
+				}
+				models = append(models, protocol.ModelCandidate{Slug: slug, Label: model.Name})
+				have[slug] = true
+			}
+		}
+		// Also ask each endpoint with its own key, if set here.
 		listed, problems := providerEndpointModels(ctx, extras.providers, extras.refs)
 		extras.problems = problems
-		if len(listed) > 0 {
+		if len(models) > 0 || len(listed) > 0 {
 			if err != nil {
-				models, err = nil, nil
-			}
-			have := map[string]bool{}
-			for _, model := range models {
-				have[model.Slug] = true
+				err = nil
 			}
 			for _, model := range listed {
 				if !have[model.Slug] {
 					models = append(models, model)
+					have[model.Slug] = true
 				}
 			}
 		}

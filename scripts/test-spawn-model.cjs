@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'spawn-model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, startRoomLabel, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, startRoomLabel, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason, sortModelOptions };', context);
 const { modelFamily, modelVersion, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
 const plain = value => JSON.parse(JSON.stringify(value)); // plain objects: a vm context has its own Object
 const { switchRows, switchStart, switchModel, switchUnchanged, switchReason } = context.api;
@@ -212,6 +212,11 @@ assert.equal(switchModel(own[1], { tool: 'codex', variant: 'native', model: 'gon
 assert.equal(switchModel(own[0], { tool: 'codex', variant: 'native', model: 'gpt-6-sol' }), 'sonnet', 'another tool opens on its default');
 assert.equal(switchModel({ tool: 'x', models: [{ id: 'a' }, { id: 'b' }] }, {}), 'a', 'with no default, the first');
 assert.equal(switchModel(null, {}), '');
+assert.deepEqual(plain(context.api.sortModelOptions([
+  { value: 'z10', label: 'Z 10' }, { value: 'z2', label: 'z 2' }, { value: 'a', label: 'Alpha', default: true },
+])).map(model => model.value), ['a', 'z2', 'z10']);
+assert.equal(switchModel({ tool: 'codex', variant: 'native', launcher_id: 'l1', models: [{ id: 'new', default: true }] },
+  { tool: 'codex', variant: 'native', launcher_id: 'l1', machine_id: 'm1', model: 'gone' }, 'm1'), 'gone', 'an unavailable current model stays configured');
 const agent = { tool: 'codex', variant: 'native', model: 'gpt-6-sol', machine_id: 'm1' };
 assert.deepEqual([switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-mini', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent, machineID: 'm2' }), switchUnchanged({ tool: own[0], model: 'gpt-6-sol', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent: { ...agent, machine_id: '' }, machineID: 'm2' })], [true, false, false, false, true]);
 assert.equal(switchReason({ needsUpdate: true, tool: null }), 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.');

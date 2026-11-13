@@ -1,7 +1,7 @@
 // Import-free: scripts/test-harness-model.cjs runs this module in a vm.
 
 // The server refuses a list longer than this, so a longer detected list is cut to it rather than failing the save.
-export const MODELS_MAX = 64;
+export const MODELS_MAX = 1000;
 export const FAMILIES = [['claude', 'Claude Code'], ['codex', 'Codex'], ['pi', 'Pi'], ['opencode', 'OpenCode'], ['vibe', 'Mistral Vibe']];
 export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 export const familyName = family => FAMILIES.find(([key]) => key === family)?.[1] || family;
@@ -56,7 +56,7 @@ export function addModel(models, tool, slug, label = '', note = '') {
   if (!MODEL_ID.test(slug)) throw new Error(`"${slug}" is not a valid model id.`);
   if (tool === 'opencode' && !slug.includes('/')) throw new Error('An OpenCode model id is provider/model.');
   if (models.some(model => model.slug === slug)) return models;
-  return [...models, { slug, label: label.trim() || slug, note: note.trim(), default: models.length === 0 }];
+  return [...models, { slug, label: label.trim() || slug, note: note.trim(), default: models.length === 0, source: 'manual' }];
 }
 
 export function removeModel(models, slug) {
@@ -69,6 +69,9 @@ export const setDefaultModel = (models, slug) => models.map(model => ({ ...model
 export const updateModel = (models, slug, change) => models.map(model => model.slug === slug ? { ...model, ...change } : model);
 export const modelsError = models => models.length && models.filter(model => model.default).length !== 1 ? 'Choose exactly one default model.' : '';
 
+const modelCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+export const sortModels = models => [...models].sort((a, b) => Number(!!b.default) - Number(!!a.default) || modelCollator.compare(a.label || a.slug, b.label || b.slug) || modelCollator.compare(a.slug, b.slug));
+
 export function addFoundModels(models, tool, picked) {
   let next = models, added = 0;
   for (const model of picked) {
@@ -76,7 +79,7 @@ export function addFoundModels(models, tool, picked) {
     try {
       const grown = addModel(next, tool, model.slug, model.label, model.note);
       if (grown !== next) {
-        next = grown;
+        next = grown.map(item => item.slug === model.slug ? { ...item, source: 'detected' } : item);
         added++;
       }
     } catch { /* refused by the list */ }
@@ -99,18 +102,21 @@ export function detectionFailure(problem, containerized) {
 
 export function initialModels(candidates) {
   const all = (candidates || []).filter(candidate => !candidate.already_listed);
-  const models = all.slice(0, MODELS_MAX).map((candidate, index) => ({ slug: candidate.slug, label: candidate.label || candidate.slug, note: candidate.note || '', default: index === 0 }));
+  const models = all.slice(0, MODELS_MAX).map((candidate, index) => ({ slug: candidate.slug, label: candidate.label || candidate.slug, note: candidate.note || '', default: index === 0, source: 'detected' }));
   return { models, cut: all.length - models.length };
 }
 
 export function detectNotes(filled) {
   const notes = [];
   const empty = filled.filter(done => !done.saved).length;
-  const cut = filled.find(done => done.cut > 0);
   const reason = filled.find(done => !done.saved && done.reason)?.reason;
   if (empty) notes.push(`${empty === 1 ? 'A harness has' : `${empty} harnesses have`} no models yet.${reason ? ` ${reason}` : ''} Open Models to retry Auto-detect, in a folder you choose if the harness needs one, or add a model by hand.`);
-  if (cut) notes.push(`A harness offered more models than a list can hold, so only the first ${cut.kept} were added.`);
   return notes.join(' ');
+}
+
+export function detectInfo(filled) {
+  const cut = filled.find(done => done.cut > 0);
+  return cut ? `A harness offered more than ${MODELS_MAX} models. The first ${cut.kept} were added; open Models to choose others.` : '';
 }
 
 export const machineSummary = machine => machine?.approved === false ? 'Approval pending' :

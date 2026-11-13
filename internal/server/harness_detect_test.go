@@ -12,10 +12,36 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
 	"github.com/hrubymar10/aimebu/internal/testenv"
 )
+
+func TestSyncHarnessModelsKeepsManualAndReassignsDefault(t *testing.T) {
+	t.Parallel()
+	listed := []store.HarnessModel{
+		{Slug: "old", Label: "Old", Default: true, Source: "detected"},
+		{Slug: "manual", Label: "Manual", Source: "manual"},
+		{Slug: "still", Label: "Custom label", Source: "detected"},
+	}
+	candidates := []detectedModel{
+		{ModelCandidate: protocol.ModelCandidate{Slug: "still", Label: "Harness label"}},
+		{ModelCandidate: protocol.ModelCandidate{Slug: "new", Label: "New"}},
+	}
+	got, added, removed, skipped := syncHarnessModels(listed, candidates, nil)
+	if added != 1 || removed != 1 || skipped != 0 || len(got) != 3 || got[0].Slug != "manual" || !got[0].Default || got[1].Label != "Custom label" || got[2].Source != "detected" {
+		t.Fatalf("sync: %+v, added=%d removed=%d skipped=%d", got, added, removed, skipped)
+	}
+	kept, _, removed, _ := syncHarnessModels(
+		[]store.HarnessModel{{Slug: "corp/old", Label: "Old", Source: "detected", Default: true}},
+		[]detectedModel{{ModelCandidate: protocol.ModelCandidate{Slug: "other/new", Label: "New"}}},
+		map[string]string{"corp": "endpoint unavailable"},
+	)
+	if removed != 0 || len(kept) != 2 || kept[0].Slug != "corp/old" {
+		t.Fatalf("failed endpoint must not erase previously detected models: %+v, removed=%d", kept, removed)
+	}
+}
 
 func TestParseAnthropicModelsKeepsCurrentOnes(t *testing.T) {
 	t.Parallel()
@@ -199,6 +225,27 @@ func TestOwnerDetectsAndAddsAHarnessAndItsModels(t *testing.T) {
 		if candidate := item.(map[string]any); candidate["already_listed"] != (candidate["slug"] == "ollama-cloud/qwen3:32b") {
 			t.Fatalf("already_listed after saving: %v", candidate)
 		}
+	}
+	// One sync request adds a newly offered model without touching the manual one.
+	status, synced := post(base+"/"+harnessID+"/models/sync", map[string]any{})
+	if status != 200 || synced["added"] != float64(1) || synced["removed"] != float64(0) {
+		t.Fatalf("sync: %d %v", status, synced)
+	}
+	available, err := f.db.HarnessModels(t.Context(), harnessID)
+	if err != nil || len(available) != 2 || available[0].Source != "manual" || available[1].Source != "detected" {
+		t.Fatalf("saved sync models: %+v %v", available, err)
+	}
+	// When the harness stops offering one detected model, the next sync removes it.
+	if err := testenv.WriteExecutable(piPath, []byte("#!/bin/sh\ncase \"$1\" in\n --version) echo 'pi 0.9.3' ;;\n --offline) printf 'provider model context max-out thinking images\\nollama-cloud qwen3:32b 128K 16K yes no\\n' ;;\nesac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	status, synced = post(base+"/"+harnessID+"/models/sync", map[string]any{})
+	if status != 200 || synced["added"] != float64(0) || synced["removed"] != float64(1) {
+		t.Fatalf("second sync: %d %v", status, synced)
+	}
+	available, err = f.db.HarnessModels(t.Context(), harnessID)
+	if err != nil || len(available) != 1 || available[0].Slug != "ollama-cloud/qwen3:32b" {
+		t.Fatalf("manual model survives sync: %+v %v", available, err)
 	}
 	// Claude's list comes from the SDK source; offline it is the built-in snapshot, for the Docker wrapper too.
 	for _, name := range []string{"native", "harness-docker"} {

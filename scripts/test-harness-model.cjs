@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 
 assert.ok(!/^import /m.test(source), 'model.js stays import-free so it can run here');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelCount, modelCount, PROVIDERS_MAX, emptyProvider, editableProvider, addProvider, removeProvider, updateProvider, providersError, providersBody, providerInUse, removeWithModelsLabel, inUseMessage, keyState, suggestionState, addSuggestions, MODELS_MAX, familyName, harnessLabel, addFoundModels, detectionFailure, lines, pairs, harnessFromLauncher, harnessStatus, harnessTitle, persistedDefinition, formFromHarness, launcherBody, enabledBody, createBody, addModel, removeModel, setDefaultModel, updateModel, modelsError, initialModels, detectNotes, machineSummary, FAMILIES, tabTitle, staleModelsMessage, chosenHarness, tabKeyTarget, defaultLabel };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelCount, modelCount, PROVIDERS_MAX, emptyProvider, editableProvider, addProvider, removeProvider, updateProvider, providersError, providersBody, providerInUse, removeWithModelsLabel, inUseMessage, keyState, suggestionState, addSuggestions, MODELS_MAX, familyName, harnessLabel, addFoundModels, detectionFailure, lines, pairs, harnessFromLauncher, harnessStatus, harnessTitle, persistedDefinition, formFromHarness, launcherBody, enabledBody, createBody, addModel, removeModel, setDefaultModel, updateModel, modelsError, initialModels, detectNotes, detectInfo, sortModels, machineSummary, FAMILIES, tabTitle, staleModelsMessage, chosenHarness, tabKeyTarget, defaultLabel };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -37,28 +37,32 @@ assert.equal(m.createBody({ tool: 'pi', containerized: false }).supports_toolbox
 
 // The model list: exact ids, the first is the default, duplicates are ignored, OpenCode ids are provider/model.
 let models = m.addModel([], 'codex', ' gpt-a ', '', ' note ');
-assert.deepEqual(plain(models), [{ slug: 'gpt-a', label: 'gpt-a', note: 'note', default: true }]);
+assert.deepEqual(plain(models), [{ slug: 'gpt-a', label: 'gpt-a', note: 'note', default: true, source: 'manual' }]);
 models = m.addModel(models, 'codex', 'gpt-b', 'B');
 assert.equal(m.addModel(models, 'codex', 'gpt-b'), models, 'a listed slug leaves the list as it is');
 assert.throws(() => m.addModel(models, 'codex', 'bad id'), /"bad id" is not a valid model id/);
 assert.throws(() => m.addModel([], 'opencode', 'model'), /provider\/model/);
 assert.equal(m.addModel([], 'opencode', 'p/model').length, 1);
 assert.deepEqual(plain(m.setDefaultModel(models, 'gpt-b')).map(model => model.default), [false, true]);
-assert.deepEqual(plain(m.removeModel(models, 'gpt-a')), [{ slug: 'gpt-b', label: 'B', note: '', default: true }], 'removing the default makes the first one left the default');
+assert.deepEqual(plain(m.removeModel(models, 'gpt-a')), [{ slug: 'gpt-b', label: 'B', note: '', default: true, source: 'manual' }], 'removing the default makes the first one left the default');
 assert.deepEqual(plain(m.removeModel(m.setDefaultModel(models, 'gpt-b'), 'gpt-a')).map(model => model.default), [true]);
 assert.equal(m.updateModel(models, 'gpt-b', { note: 'n' })[1].note, 'n');
 assert.equal(models[1].note, '', 'updates return a new list and leave the old one alone');
 assert.equal(m.modelsError([]), '', 'an empty list is allowed');
 assert.equal(m.modelsError(m.setDefaultModel(models, 'none')), 'Choose exactly one default model.');
 assert.equal(m.modelsError(models), '');
-
+assert.deepEqual(plain(m.sortModels([
+  { slug: 'z-10', label: 'Z 10' }, { slug: 'z-2', label: 'z 2' }, { slug: 'a', label: 'A', default: true },
+])).map(model => model.slug), ['a', 'z-2', 'z-10'], 'default first, then natural case-insensitive order');
 // Auto-fill after adding from auto-detect: at most MODELS_MAX, already listed ones skipped, the first is the default.
-const candidates = Array.from({ length: 66 }, (_, index) => ({ slug: `pi-${index}`, label: index === 1 ? '' : `Pi ${index}`, already_listed: index === 0 }));
+const candidates = Array.from({ length: m.MODELS_MAX + 2 }, (_, index) => ({ slug: `pi-${index}`, label: index === 1 ? '' : `Pi ${index}`, already_listed: index === 0 }));
 const filled = m.initialModels(candidates);
 assert.deepEqual([filled.models.length, filled.cut, filled.models[0].slug, filled.models[0].default, filled.models[1].default, filled.models[0].label], [m.MODELS_MAX, 1, 'pi-1', true, false, 'pi-1']);
 assert.deepEqual(plain(m.initialModels(undefined)), { models: [], cut: 0 });
 assert.equal(m.detectNotes([{ saved: true, cut: 0 }]), '');
-assert.equal(m.detectNotes([{ saved: true, cut: 2, kept: 64 }, { saved: false, cut: 0, reason: 'It failed.' }]), 'A harness has no models yet. It failed. Open Models to retry Auto-detect, in a folder you choose if the harness needs one, or add a model by hand. A harness offered more models than a list can hold, so only the first 64 were added.');
+assert.equal(m.detectNotes([{ saved: true, cut: 2, kept: m.MODELS_MAX }, { saved: false, cut: 0, reason: 'It failed.' }]), 'A harness has no models yet. It failed. Open Models to retry Auto-detect, in a folder you choose if the harness needs one, or add a model by hand.');
+assert.equal(m.detectInfo([{ saved: true, cut: 0 }]), '');
+assert.equal(m.detectInfo([{ saved: true, cut: 2, kept: m.MODELS_MAX }]), `A harness offered more than ${m.MODELS_MAX} models. The first ${m.MODELS_MAX} were added; open Models to choose others.`);
 assert.ok(m.detectNotes([{ saved: false }, { saved: false }]).startsWith('2 harnesses have no models yet. Open Models'));
 
 assert.equal(m.machineSummary({ approved: false }), 'Approval pending');

@@ -136,41 +136,146 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 	if !s.ownerMachine(w, r) {
 		return
 	}
+	result := s.detectHarnessModels(w, r, false)
+	if result == nil {
+		return
+	}
+	writeJSON(w, 200, result.response())
+}
+
+// machineHarnessModelsSync detects and saves in one owner action. The revision
+// read before detection prevents a slow supervisor answer from overwriting an
+// edit made while it was running.
+func (s *Server) machineHarnessModelsSync(w http.ResponseWriter, r *http.Request) {
+	if !s.ownerMachine(w, r) {
+		return
+	}
+	result := s.detectHarnessModels(w, r, true)
+	if result == nil {
+		return
+	}
+	models, added, removed, skipped := syncHarnessModels(result.listed, result.candidates, result.endpointProblems)
+	launcherID, machineID := r.PathValue("launcher"), r.PathValue("id")
+	err := s.Store.ReplaceHarnessModelsIfRev(r.Context(), userID(r), machineID, launcherID, models, store.HarnessModelsRev(result.listed))
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrStaleHarnessModels):
+			apiError(w, 409, "stale_models", "someone changed this harness's models during detection; reload and try again")
+		case errors.Is(err, store.ErrInvalidHarnessModels):
+			apiError(w, 400, "invalid_models", strings.TrimPrefix(err.Error(), store.ErrInvalidHarnessModels.Error()+": "))
+		default:
+			fail(w, err)
+		}
+		return
+	}
+	response := map[string]any{"models": models, "models_rev": store.HarnessModelsRev(models), "added": added, "removed": removed, "skipped": skipped}
+	if len(result.endpointProblems) > 0 {
+		response["endpoint_problems"] = result.endpointProblems
+	}
+	if len(result.providerWarnings) > 0 {
+		response["provider_warnings"] = result.providerWarnings
+	}
+	writeJSON(w, 200, response)
+}
+
+func syncHarnessModels(listed []store.HarnessModel, candidates []detectedModel, endpointProblems map[string]string) ([]store.HarnessModel, int, int, int) {
+	offered := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		offered[candidate.Slug] = true
+	}
+	next := make([]store.HarnessModel, 0, len(listed))
+	seen := make(map[string]bool, len(listed))
+	removed := 0
+	for _, model := range listed {
+		providerID, _, hasProvider := strings.Cut(model.Slug, "/")
+		if model.Source == "detected" && !offered[model.Slug] && (!hasProvider || endpointProblems[providerID] == "") {
+			removed++
+			continue
+		}
+		next = append(next, model)
+		seen[model.Slug] = true
+	}
+	added, skipped := 0, 0
+	for _, candidate := range candidates {
+		if candidate.Unreachable != "" || seen[candidate.Slug] {
+			continue
+		}
+		if len(next) >= store.HarnessModelsMax {
+			skipped++
+			continue
+		}
+		next = append(next, store.HarnessModel{Slug: candidate.Slug, Label: candidate.Label, Note: candidate.Note, Source: "detected"})
+		seen[candidate.Slug] = true
+		added++
+	}
+	hasDefault := false
+	for _, model := range next {
+		hasDefault = hasDefault || model.Default
+	}
+	if len(next) > 0 && !hasDefault {
+		next[0].Default = true
+	}
+	return next, added, removed, skipped
+}
+
+type modelDetection struct {
+	listed           []store.HarnessModel
+	candidates       []detectedModel
+	source           string
+	endpointProblems map[string]string
+	providerWarnings []string
+}
+
+func (result *modelDetection) response() map[string]any {
+	response := map[string]any{"candidates": result.candidates, "source": result.source}
+	if len(result.endpointProblems) > 0 {
+		response["endpoint_problems"] = result.endpointProblems
+	}
+	if len(result.providerWarnings) > 0 {
+		response["provider_warnings"] = result.providerWarnings
+	}
+	return response
+}
+
+// detectHarnessModels reports a failed listing through w and returns nil, so
+// both preview and one-click sync use exactly the same detection rules.
+func (s *Server) detectHarnessModels(w http.ResponseWriter, r *http.Request, syncModels bool) *modelDetection {
 	machineID, launcherID := r.PathValue("id"), r.PathValue("launcher")
 	harness, err := s.Store.LauncherByID(r.Context(), machineID, launcherID)
 	if err != nil {
 		s.launcherMutationError(w, err)
-		return
+		return nil
 	}
 	var body struct {
 		Dir string `json:"dir"`
 	}
 	if r.ContentLength != 0 && !readJSON(w, r, &body) {
-		return
+		return nil
 	}
 	if body.Dir != "" && (!filepath.IsAbs(body.Dir) || strings.ContainsRune(body.Dir, '\x00')) {
 		apiError(w, 400, "invalid_dir", "The folder to run the command in must be an absolute path on that machine.")
-		return
+		return nil
 	}
 	listed, err := s.Store.HarnessModels(r.Context(), launcherID)
 	if err != nil {
 		fail(w, err)
-		return
+		return nil
 	}
 	var found []protocol.ModelCandidate
 	source := ""
 	var endpointProblems map[string]string
+	var providerWarnings []string
 	switch {
 	case harness.Tool == "claude":
 		found, source = s.claudeModelCandidates(r.Context())
 	default:
 		conn, ok := s.detectConn(w, machineID)
 		if !ok {
-			return
+			return nil
 		}
 		if body.Dir != "" && !conn.supportsDetectDir {
 			apiError(w, 503, "machine_unavailable", "the machine needs an updated supervisor to run auto-detect in a chosen folder")
-			return
+			return nil
 		}
 		conn.harnessMu.Lock()
 		resolved := ""
@@ -182,24 +287,31 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 		conn.harnessMu.Unlock()
 		if resolved == "" {
 			apiError(w, 409, "launcher_unavailable", "The harness was not found on the machine. "+detectFailedHint)
-			return
+			return nil
 		}
 		request := protocol.DetectRequest{Kind: "models", Family: harness.Tool, Command: resolved, Args: harness.Args, Dir: body.Dir, Containerized: harness.Containerized, LauncherID: launcherID}
 		if harness.Tool == "opencode" {
 			// The listing runs in the private config an agent turn gets, with the harness's custom providers defined and each one's endpoint asked.
 			if request.Providers, err = s.Store.HarnessCustomProviders(r.Context(), launcherID); err != nil {
 				fail(w, err)
-				return
+				return nil
+			}
+			if syncModels && conn.supportsProviders {
+				request.Providers, providerWarnings, err = s.discoverOpenCodeProviders(r, conn, harness, request.Providers)
+				if err != nil {
+					fail(w, err)
+					return nil
+				}
 			}
 		}
 		answer, err := s.requestDetect(r.Context(), conn, request, detectModelsWait)
 		if err != nil {
 			apiError(w, 502, "detect_failed", "Couldn't detect the models: "+err.Error()+". "+detectFailedHint)
-			return
+			return nil
 		}
 		if answer.Code == "invalid_dir" {
 			apiError(w, 400, "invalid_dir", answer.Message)
-			return
+			return nil
 		}
 		var asked protocol.ProviderModelsAnswer
 		if len(answer.Details) > 0 && json.Unmarshal(answer.Details, &asked) == nil {
@@ -210,11 +322,14 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 				"error": "detect_failed", "message": "Couldn't detect the models: " + strings.TrimRight(answer.Message, ". ") + ". " + detectFailedHint,
 				"detect_dir": answer.DetectDir,
 			}
+			if len(providerWarnings) > 0 {
+				failure["message"] = failure["message"].(string) + " " + strings.Join(providerWarnings, " ")
+			}
 			if len(endpointProblems) > 0 {
 				failure["endpoint_problems"] = endpointProblems
 			}
 			writeJSON(w, 502, failure)
-			return
+			return nil
 		}
 		found, source = answer.ModelCandidates, "harness"
 	}
@@ -234,17 +349,16 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 	}
 	if len(candidates) == 0 {
 		failure := map[string]any{"error": "detect_failed", "message": "Couldn't detect the models: nothing usable was listed. " + detectFailedHint}
+		if len(providerWarnings) > 0 {
+			failure["message"] = failure["message"].(string) + " " + strings.Join(providerWarnings, " ")
+		}
 		if len(endpointProblems) > 0 {
 			failure["endpoint_problems"] = endpointProblems
 		}
 		writeJSON(w, 502, failure)
-		return
+		return nil
 	}
-	response := map[string]any{"candidates": candidates, "source": source}
-	if len(endpointProblems) > 0 {
-		response["endpoint_problems"] = endpointProblems
-	}
-	writeJSON(w, 200, response)
+	return &modelDetection{listed: listed, candidates: candidates, source: source, endpointProblems: endpointProblems, providerWarnings: providerWarnings}
 }
 
 // cleanModelCandidate drops what the model list would refuse (a bad id) and trims what it limits (label and note length).

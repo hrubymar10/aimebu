@@ -2,6 +2,7 @@ import { html, useState, useEffect, useRef } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
 import { toolRows } from '../../spawn-model.js';
 import { MachineFields } from './machine-fields.js';
+import { ModelPicker } from './model-picker.js';
 
 // The reason line under the tool: plain words, or words with Settings → Harnesses as a button that opens it.
 function Reason({ id, className, text, store, host }) {
@@ -58,6 +59,6 @@ export function SpawnForm({ store, host }) {
       <p id="spawn-home-hint" class="spawn-tool-reason" hidden=${!store.leadHint.value}>The home room is for the lead. Spawn workers into a task room such as general.</p>
       <label>Tool<select name="tool" required value=${store.toolIndex.value < 0 ? '' : String(store.toolIndex.value)} onChange=${event => store.pickTool(event.currentTarget.value)}>${tools.map((row, index) => html`<option key=${row.value} value=${row.value} disabled=${row.disabled || !!disabled?.[index]}>${row.label}</option>`)}</select></label>
       <${Reason} id="spawn-tool-reason" className="spawn-tool-reason" text=${store.reasonText.value} store=${store} host=${host} /><p id="spawn-version" class="spawn-version">${store.version.value}</p>
-      <label>Model<select name="model" required value=${store.model.value} onChange=${event => store.pickModel(event.currentTarget.value)}>${store.models.value.map(model => html`<option key=${model.value} value=${model.value} ...${model.note ? { title: model.note } : {}}>${model.label}</option>`)}</select></label></div>
+      <${ModelPicker} key=${store.toolIndex.value} prefix="spawn" models=${store.models.value} value=${store.model.value} onChange=${value => store.pickModel(value)} /></div>
     <div class="dialog-actions"><button type="button" id="spawn-cancel" class="btn" onClick=${() => host.spawnDialog.close()}>Cancel</button><button type="submit" class="btn btn-primary" disabled=${store.submitDisabled.value}>Spawn</button></div></form>`;
 }

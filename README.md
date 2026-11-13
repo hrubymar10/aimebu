@@ -378,7 +378,7 @@ unknown values appear as “—”. Compaction posts a room notice with the repo
 before and after token counts. The spawn dialog's Name field starts with a free name from the server's pool (its dice button asks for another; an empty field lets the server pick), and a refused name is answered under the field. The dialog reads tool availability,
 detected CLI versions, and model choices from the server catalog (the owner edits
 the models of each harness in Settings → Harnesses; exactly one is the harness's default,
-which is preselected and which an agent falls back to when its model is removed); unavailable
+which is preselected; a manually removed model falls back to it, while an agent keeps a detected model that disappears from the harness); unavailable
 tools show the reason and cannot be selected. Settings → Roles edits the
 global role names, emoji, instructions, cardinality, capabilities, and ordered
 default harness/model choices. Each role picks defaults in turn (with a durable
@@ -726,6 +726,7 @@ host. The same page lists pending, approved, and revoked machines; the owner
 approves a paired machine there or revokes an existing one. Each approved machine also has a stop icon that stops every agent running on it (after a confirmation); owner and admins use it, within the agents they may manage. The supervisor
 sends executable detection and versions for its configured harnesses.
 Settings → Harnesses (owner only) has a machine picker and that machine's harnesses.
+Closing Settings with unsaved form edits asks whether to Discard them or Keep editing.
 The harnesses are a list with the chosen one's detail beside it (above it on a phone): its summary
 and Enabled switch, then its models, each with a labelled switch per role. Ticking a role on a model makes it one of that role's default
 agents; it saves at once, as the role's own change, and a model not yet saved cannot be ticked.
@@ -743,7 +744,7 @@ switch that saves on its own, Models and an Edit icon); Edit opens the label, ex
 environment, container and path settings, and Models opens its model list: slug (the exact id, never
 an alias), label, a note with the full text on hover, and one default. Each row has a visible radio
 and star; only the selected row has a filled star and says "Default". Trash icons remove harnesses or models, a refresh
-icon starts model detection, and a select-all icon ticks available detected candidates. Auto-detect models asks Pi (`pi --offline
+icon reloads and saves the models the harness currently offers in one click. Reload models asks Pi (`pi --offline
 --list-models`), OpenCode (`opencode models`) and Codex (`codex debug models --bundled`, the models
 it lists) on the machine itself, native or containerized alike (for Mistral Vibe, which has no listing
 command, it reads the `[[models]]` of the machine's Vibe config by alias and adds Vibe's built-in default): the harness's own arguments come
@@ -760,11 +761,9 @@ login and timeout failures retain their own messages. Native failures use a shor
 message; both keep the harness's full error under collapsed Details. The same guidance appears when
 auto-filling models after adding a harness. For Claude, native or containerized, the server reads the model constants of the
 `anthropic-sdk-go` source on GitHub (only when the owner clicks, 5 s, cached by ETag, with a built-in
-list when it cannot be reached). The candidate panel shows how many models were found and has
-Select all for models not already listed; selections update its count. At most 64 models can be
-added to one harness. Empty lists or login prompts from Pi, OpenCode, or Codex report that the
-harness has no models and suggest running `/login` in it. Nothing detected is saved until it is
-ticked and Save models is pressed. An OpenCode harness can also have custom providers (an
+list when it cannot be reached). Reload models removes detected models the harness no longer offers, keeps models added by hand and labels edited locally, and adds newly offered models. It shows the numbers added and removed. An agent already using a removed detected model retains it as an unavailable choice until switched; new agents cannot choose it. Models are shown in natural, case-insensitive order with the default first. At most 1000 models can be
+added to one harness. Spawn and switch let you filter models by typing. Empty lists or login prompts from Pi, OpenCode, or Codex report that the
+harness has no models and suggest running `/login` in it. A successful reload saves immediately; manually added or edited models still need Save models. An OpenCode harness can also have custom providers (an
 OpenAI-compatible endpoint: an id, a name, an `https://` base URL, or `http://` for this machine,
 `host.docker.internal` or a private network address, and optional token limits): the provider stores
 only the NAME of the environment variable its key is read from, never the key. The turn's private
@@ -776,9 +775,8 @@ environment references: the refused names (`PATH`, `HOME`, `LD_*`, `XDG_*`, `OPE
 disturbing the harness itself, not from naming another variable of the supervisor's environment, so only someone trusted with a machine's
 harness settings should be allowed to add providers. Its models are listed like any other, as `<provider id>/<model>`, and a turn is
 refused up front, naming the variable, when it is not set on that machine. A machine whose supervisor
-predates providers holds such turns with a note in the room. In Settings → Harnesses an OpenCode harness has a Providers section above its models: rows with the id, name, endpoint URL, key variable name and the optional context and output token limits (both or neither), added with the plus icon and removed with the trash icon; Save providers sends the whole list with the revision it started from (a list someone changed meanwhile is reloaded and the draft dropped, with a note), and removing a provider whose models are still listed offers "Remove … with its N models" (naming every provider that would lose models, as the removal deletes them all). Each provider's key status (set or not set on that machine, never the value; "machine offline" or "supervisor update needed" when it cannot be known) is shown on its row, and the import icon lists the providers of the person's own OpenCode config (URL and model ids; a key is never copied; one whose key is written into the config says to set a variable and enter its name; ticked ones join the unsaved list, nothing is saved by the import) and Auto-detect models names the providers whose endpoint could not be asked.
-Auto-detect of an
-OpenCode harness's models runs in the same private config as a turn and asks each custom provider's own endpoint for its models, and
+predates providers holds such turns with a note in the room. On initial harness detection and Reload models, the supervisor reads the machine's OpenCode config (on the host for Docker), adds valid OpenAI-compatible providers with `{env:NAME}` or no key, and saves their config-listed models plus models from each provider's `GET <baseURL>/models`. Endpoint failure keeps the config-listed models. A literal key in the config is never copied; that provider is skipped with a warning because agent turns use a private config. In Settings → Harnesses the Advanced providers section is collapsed by default. It lets the owner edit provider rows, key variable names and token limits; Save providers checks the list revision, and removing a provider whose models are still listed offers to remove those models too. Key status shows whether a variable is set on the machine, never its value. The import icon remains available for manual overrides.
+OpenCode model discovery runs in the same private config as a turn and asks each custom provider's own endpoint for its models, and
 `aimebu doctor --machine` warns about key variables that are not set. Disabled or
 unavailable harnesses stay visible with a reason; they cannot be selected for
 spawn. Each change is shown in Activity. The supervisor validates definitions,

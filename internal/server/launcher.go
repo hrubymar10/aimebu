@@ -372,7 +372,7 @@ func (s *Server) machineHarnessModels(w http.ResponseWriter, r *http.Request) {
 		Models      []store.HarnessModel `json:"models"`
 		ExpectedRev string               `json:"expected_rev"`
 	}
-	if !readJSON(w, r, &body) {
+	if !readJSONLimit(w, r, &body, 2<<20) {
 		return
 	}
 	if body.Models == nil {

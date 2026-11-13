@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,14 +29,18 @@ func TestValidateHarnessModels(t *testing.T) {
 		"duplicate slug":    {"claude", []HarnessModel{{Slug: "a", Label: "A", Default: true}, {Slug: "a", Label: "A2"}}},
 		"bad slug":          {"claude", []HarnessModel{{Slug: "bad id", Label: "A", Default: true}}},
 		"no label":          {"claude", []HarnessModel{{Slug: "a", Default: true}}},
+		"invalid source":    {"claude", []HarnessModel{{Slug: "a", Label: "A", Default: true, Source: "untrusted"}}},
 		"label too long":    {"claude", []HarnessModel{{Slug: "a", Label: strings.Repeat("界", 81), Default: true}}},
 		"note too long":     {"claude", []HarnessModel{{Slug: "a", Label: "A", Note: strings.Repeat("n", 281), Default: true}}},
 		"opencode no slash": {"opencode", []HarnessModel{{Slug: "gemma", Label: "G", Default: true}}},
-		"too many":          {"pi", manyModels(65)},
+		"too many":          {"pi", manyModels(1001)},
 	} {
 		if err := ValidateHarnessModels(c.family, c.models); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
+	}
+	if err := ValidateHarnessModels("pi", manyModels(1000)); err != nil {
+		t.Errorf("1000 models should fit: %v", err)
 	}
 	if err := ValidateHarnessModels("opencode", []HarnessModel{{Slug: "ollama-cloud/gemma4:31b", Label: "Gemma", Default: true}}); err != nil {
 		t.Errorf("provider/model: %v", err)
@@ -49,9 +54,54 @@ func TestValidateHarnessModels(t *testing.T) {
 func manyModels(n int) []HarnessModel {
 	models := make([]HarnessModel, n)
 	for i := range models {
-		models[i] = HarnessModel{Slug: "m" + strings.Repeat("x", i%5) + string(rune('a'+i%26)) + string(rune('a'+i/26)), Label: "m", Default: i == 0}
+		models[i] = HarnessModel{Slug: fmt.Sprintf("m%d", i), Label: "m", Default: i == 0}
 	}
 	return models
+}
+
+func TestDetectedModelRemovedFromListStaysWithAgent(t *testing.T) {
+	t.Parallel()
+	s, _, _, agent, _ := wakeFixture(t)
+	ctx := t.Context()
+	harness, err := s.SaveLauncher(ctx, "owner", Launcher{MachineID: agent.MachineID, Tool: "codex", Name: "native", Label: "Codex", Command: "codex", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := []HarnessModel{{Slug: "manual", Label: "Manual", Default: true}, {Slug: "gone", Label: "Gone", Source: "detected"}}
+	if err := s.ReplaceHarnessModels(ctx, "owner", agent.MachineID, harness.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET launcher_id=?,model=? WHERE id=?`, harness.ID, "gone", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceHarnessModels(ctx, "owner", agent.MachineID, harness.ID, first[:1]); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.HarnessModels(ctx, harness.ID)
+	if err != nil || len(listed) != 1 || listed[0].Slug != "manual" {
+		t.Fatalf("available models: %+v %v", listed, err)
+	}
+	var source string
+	var available bool
+	if err := s.db.QueryRow(`SELECT source,available FROM harness_model WHERE launcher_id=? AND slug='gone'`, harness.ID).Scan(&source, &available); err != nil || source != "detected" || available {
+		t.Fatalf("retained unavailable model: %q %t %v", source, available, err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		got, err := tx.settleAgentModel(agent.ID, harness.ID, "gone")
+		if err == nil && got != "gone" {
+			t.Errorf("agent model changed to %q", got)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceHarnessModels(ctx, "owner", agent.MachineID, harness.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	listed, err = s.HarnessModels(ctx, harness.ID)
+	if err != nil || len(listed) != 2 || listed[1].Slug != "gone" {
+		t.Fatalf("returned model should be offered again: %+v %v", listed, err)
+	}
 }
 
 func TestReplaceHarnessModelsAndTheDefaultFallback(t *testing.T) {

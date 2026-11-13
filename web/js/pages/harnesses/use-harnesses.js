@@ -3,7 +3,7 @@ import { request } from '../../api.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { launcherReady } from '../../harness-offer.js';
 import { RoleDefaults, ROLE_DEFAULTS_CHANGED } from '../../role-defaults.js';
-import { harnessFromLauncher, createBody, initialModels, detectNotes, detectionFailure, machineSummary, chosenHarness, staleModelsMessage, staleProvidersMessage, defaultLabel } from './model.js';
+import { harnessFromLauncher, createBody, detectNotes, detectInfo, detectionFailure, machineSummary, chosenHarness, staleModelsMessage, staleProvidersMessage, defaultLabel } from './model.js';
 
 export const anyReady = rows => rows.some(row => launcherReady(row.enabled, row.models));
 
@@ -19,6 +19,7 @@ const createState = () => ({
   machines: signal([]),
   machineID: signal(''),
   summary: signal(''),
+  info: signal(''),
   error: signal(''),
   errorDetail: signal(''),
   toolbarHidden: signal(false),
@@ -59,6 +60,7 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     state.rows.value = null;
     state.activity.value = null;
     state.drafts.value = new Map();
+    state.info.value = '';
     shownRef.current = '';
   });
 
@@ -145,16 +147,13 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     try {
       let found;
       try {
-        found = await request(`${base}/detect`, { method: 'POST', body: {} });
+        found = await request(`${base}/sync`, { method: 'POST', body: {} });
       } catch (problem) {
         const failure = detectionFailure(problem, containerized);
         if (current(token)) setModelFailure(harnessID, failure);
         return { saved: false, cut: 0, reason: failure.summary, detail: failure.detail };
       }
-      const { models, cut } = initialModels(found.candidates);
-      if (!models.length) return { saved: false, cut: 0 };
-      await request(base, { method: 'PUT', body: { models } });
-      return { saved: true, cut, kept: models.length };
+      return { saved: true, cut: found.skipped || 0, kept: (found.models || []).length, warnings: found.provider_warnings || [] };
     } catch (problem) {
       return { saved: false, cut: 0, reason: problem.message || '' };
     }
@@ -185,7 +184,10 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     const filled = await Promise.all(created.map(item => fillModels(id, item?.config?.id || item?.id, token, !!item?.config?.containerized)));
     if (!current(token)) return;
     closePanel();
-    if (await load(id) && current(token)) setError(detectNotes(filled), filled.find(done => !done.saved && done.detail)?.detail || '');
+    if (await load(id) && current(token)) {
+      setError(detectNotes(filled), filled.find(done => !done.saved && done.detail)?.detail || '');
+      state.info.value = [detectInfo(filled), ...filled.flatMap(done => done.warnings || [])].filter(Boolean).join(' ');
+    }
   };
   const addByHand = async (id, fields) => {
     const token = view.current;

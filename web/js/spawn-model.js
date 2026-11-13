@@ -256,11 +256,15 @@ export function switchStart(catalog, agent) {
 }
 
 // The model a tool opens on: the harness's default, or the agent's own when it stays on that tool and the tool lists it.
-export function switchModel(tool, agent) {
+export function switchModel(tool, agent, machineID) {
   const models = (tool?.models || []).map(model => model.id);
   if (tool?.tool === agent?.tool && tool?.variant === agent?.variant && models.includes(agent.model)) return agent.model;
+  if (machineID && tool?.launcher_id && machineID === agent?.machine_id && tool.launcher_id === agent?.launcher_id && agent?.model) return agent.model;
   return (tool?.models || []).find(model => model.default)?.id || models[0] || '';
 }
+
+const modelCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+export const sortModelOptions = models => [...models].sort((a, b) => Number(!!b.default) - Number(!!a.default) || modelCollator.compare(a.label || a.value, b.label || b.value) || modelCollator.compare(a.value, b.value));
 
 // Whether the pick is the agent as it already is, which is not a switch.
 export const switchUnchanged = ({ tool, model, agent, machineID }) => tool?.tool === agent?.tool && tool?.variant === agent?.variant && model === agent?.model && (!agent?.machine_id || machineID === agent.machine_id);

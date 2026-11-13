@@ -371,17 +371,23 @@ Machines and workspace
   are removed in the same transaction (the refusal lists every such provider, `in_use`). Changes are logged as `providers` in
   `machine_launcher_activity`. Migration 91.
 - **harness_model**(launcher_id → machine_launcher ON DELETE CASCADE, slug,
-  label, note, is_default, position) — PRIMARY KEY (launcher_id, slug); a
+  label, note, is_default, position, source, available) — PRIMARY KEY (launcher_id, slug); a
   partial unique index allows one default per harness. The slug is the exact model
   id the harness is started with (never an alias). A non-empty list has exactly one
-  default, which is what an agent whose model was removed starts with: the agent's
-  `model` is updated on its next dispatch or spawn. Spawn and switch accept only a
-  listed model (an omitted model with a harness means its default). The old global
+  default. `source` is `manual` for old rows and hand-added models, or
+  `detected` for models found by a harness listing. The one-click reload detects and saves, removing missing detected
+  models while retaining manual ones. A detected model still used by an
+  agent remains as `available=0`: it stays in that agent's configuration and
+  is hidden from the harness list and new spawn choices. A manually removed
+  model still falls back to the default on next dispatch, updating the agent's
+  `model`. Spawn and switch accept only available models (an omitted model
+  with a harness means its default). The old global
   `spawn_model` table is gone. Migration 69 copies the old per-tool list into every
   kept harness (its first entry the default) and adds, after them at position 1000
   and up and never as the default, each model an existing agent or pending switch
   uses that the list lacked, so that no live agent changes model; a harness that
-  would only have those gets its first as the default. A tool whose launchers would
+  would only have those gets its first as the default. Migration 104 adds
+  provenance and availability, treating all existing rows as manual. A tool whose launchers would
   all be deleted (disabled, unused, seeded) keeps one disabled launcher (the host's
   native one, else its first by name) when its list differs from the seeded one in an id, a label or its length,
   so an edited list survives; a list that is dropped is written in full to the log.
@@ -1024,7 +1030,8 @@ it never silently reruns a turn with uncertain effects.
   environment references); only whether, and a name the harness uses itself is not answered.
   `provider_import` answers the custom providers the person's own OpenCode config defines
   (`{source, suggestions:[{provider, inline_key?}], skipped?}`), never a key: a `{env:NAME}` key becomes
-  the name, a key written as text is only flagged. `models` for an OpenCode harness carries `providers`
+  the name, a key written as text is only flagged and is skipped by automatic
+  provider discovery. `models` for an OpenCode harness carries `providers`
   (with their models): the listing runs in the same private config as a turn and each provider's own
   endpoint is asked for its models; the answer's `details` carry `endpoint_problems`.
 - S→M `session_scan{v,req_id,launcher_id?,scan_folders?[1..4] | scan_session_id?}`; M→S

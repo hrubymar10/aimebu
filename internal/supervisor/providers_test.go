@@ -336,7 +336,8 @@ func TestOpencodeListingUsesThePrivateConfigAndAsksEndpoints(t *testing.T) {
 	}
 	provider := adapter.CustomProvider{ID: "corp-llm", Name: "Corp", NPM: adapter.CustomProviderNPM, BaseURL: server.URL + "/v1", KeyEnv: "CORP_LLM_KEY",
 		Models: []adapter.CustomProviderModel{{ID: "fast", Name: "Fast"}}}
-	broken := adapter.CustomProvider{ID: "broken-llm", Name: "B", NPM: adapter.CustomProviderNPM, BaseURL: server.URL + "/nothing", KeyEnv: "CORP_LLM_KEY"}
+	broken := adapter.CustomProvider{ID: "broken-llm", Name: "B", NPM: adapter.CustomProviderNPM, BaseURL: server.URL + "/nothing", KeyEnv: "CORP_LLM_KEY",
+		Models: []adapter.CustomProviderModel{{ID: "fallback", Name: "Fallback"}}}
 	extras := &detectExtras{providers: []adapter.CustomProvider{provider, broken}}
 	dir := t.TempDir()
 	models, err := detectModelsWith(t.Context(), "opencode", command, nil, dir, false, extras)
@@ -347,7 +348,7 @@ func TestOpencodeListingUsesThePrivateConfigAndAsksEndpoints(t *testing.T) {
 	for _, model := range models {
 		slugs = append(slugs, model.Slug)
 	}
-	if strings.Join(slugs, ",") != "ollama-cloud/gemma4:31b,corp-llm/fast,corp-llm/big" {
+	if strings.Join(slugs, ",") != "ollama-cloud/gemma4:31b,corp-llm/fast,broken-llm/fallback,corp-llm/big" {
 		t.Fatalf("models: %v", slugs)
 	}
 	if !strings.Contains(extras.problems["broken-llm"], "HTTP 403") || len(extras.problems) != 1 {

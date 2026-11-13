@@ -28,12 +28,18 @@ const launchers = { mch_a: [launcher('mch_a', 'a1'), launcher('mch_a', 'a2')], m
 // fetch is held: each request waits for __answer(index, status, body) unless an `auto` rule answers it.
 function installFetch(auto) {
   window.__requests = []; window.__auto = auto;
-  window.fetch = (input, options = {}) => new Promise(resolve => {
-    const request = { path: String(input), method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : undefined, answered: false };
+  window.fetch = (input, options = {}) => new Promise((resolve, reject) => {
+    const request = { path: String(input), method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : undefined, answered: false, held: false };
     request.answer = (status, body) => { request.answered = true; resolve(new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })); };
     window.__requests.push(request);
     const rule = window.__auto[`${request.method} ${request.path}`];
     if (rule) request.answer(200, typeof rule === 'function' ? rule(request) : rule);
+    setTimeout(() => {
+      if (request.answered || request.held) return;
+      const message = `Unexpected fetch ${request.method} ${request.path}`;
+      console.error(message);
+      reject(new Error(message));
+    }, 3000);
   });
   window.__answer = (index, status, body) => window.__requests[index].answer(status, body);
 }
@@ -62,7 +68,11 @@ async function main() {
   };
   const pending = async (page, method, requestPath) => {
     await page.waitForFunction((method, requestPath) => window.__requests.some(request => !request.answered && request.method === method && request.path === requestPath), {}, method, requestPath);
-    return page.evaluate((method, requestPath) => window.__requests.findIndex(request => !request.answered && request.method === method && request.path === requestPath), method, requestPath);
+    return page.evaluate((method, requestPath) => {
+      const index = window.__requests.findIndex(request => !request.answered && request.method === method && request.path === requestPath);
+      window.__requests[index].held = true;
+      return index;
+    }, method, requestPath);
   };
   const answer = (page, index, status, body) => page.evaluate((index, status, body) => window.__answer(index, status, body), index, status, body);
   const hold = (page, rule) => page.evaluate(rule => { delete window.__auto[rule]; }, rule);
@@ -230,7 +240,7 @@ async function main() {
     // two answers can never arrive out of order; a failure, then an Enter retry, then success shows the retry's candidates.
     {
       const page = await mount();
-      const detectPath = '/api/machines/mch_a/launchers/a1/models/detect';
+      const detectPath = '/api/machines/mch_a/launchers/a1/models/sync';
       const detects = () => page.evaluate(path => window.__requests.filter(request => request.path === path).length, detectPath);
       const panel = `${card('a1')} .harness-models`;
       await page.$eval(`${panel} .harness-model-detect`, el => el.click());
@@ -250,8 +260,8 @@ async function main() {
       await settle(page);
       assert.equal(await detects(), 2, 'repeated Enter and Retry during a detection send one request');
       assert.deepEqual(await page.evaluate(index => window.__requests[index].body, second), { dir: '/work/one' });
-      await answer(page, second, 200, { source: 'harness', candidates: [{ slug: 'from-retry', label: 'From retry', note: '' }] });
-      await page.waitForSelector(`${panel} .harness-model-candidates [data-slug="from-retry"]`);
+      await answer(page, second, 200, { models: [{ slug: 'from-retry', label: 'From retry', note: '', default: true, source: 'detected' }], models_rev: 'r2', added: 1, removed: 0, skipped: 0 });
+      await page.waitForFunction(sel => document.querySelector(`${sel} .settings-desc[role=status]`)?.textContent.includes('+1 new'), {}, panel);
       assert.deepEqual(await page.$eval(panel, el => [el.querySelector('.error').textContent, el.querySelector('.harness-detect-retry').hidden, el.querySelector('.harness-model-detect').disabled]), ['', true, false], 'the retry\'s answer replaces the failure and frees the button');
       await page.close();
     }
@@ -346,10 +356,34 @@ async function main() {
       assert.deepEqual(await page.$eval(card('a1'), el => [el.querySelector('.machine-harness-edit').title, !!el.querySelector('.machine-harness-edit .icon-mask-edit'), el.querySelector('.machine-harness-remove').getAttribute('aria-label'), !!el.querySelector('.machine-harness-remove .icon-mask-trash')]), ['Edit Codex', true, 'Remove Codex', true], 'card actions are labelled icons');
       assert.deepEqual(await page.$$eval(`${card('a1')} .harness-model-row`, rows => rows.map(row => [row.querySelector('.harness-model-star use').getAttribute('href'), row.querySelector('.harness-model-default-text').textContent, row.querySelector('.harness-model-default').title, row.querySelector('.harness-model-remove').getAttribute('aria-label'), !!row.querySelector('.icon-mask-trash')])), [['/icons/star.svg#star', 'Default', 'Default model', 'Remove one', true], ['/icons/star.svg#star', '', 'Make default', 'Remove two', true]], 'model rows: star default and trash');
       assert.equal(await page.$eval(`${card('a1')} .harness-model-row [name=note]`, el => el.title), 'full note', 'the full note is a tooltip');
-      assert.deepEqual(await page.$eval(`${card('a1')} .harness-model-detect`, el => [el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Auto-detect models', true, ''], 'model detection is an icon');
+      assert.deepEqual(await page.$eval(`${card('a1')} .harness-model-detect`, el => [el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Reload models from harness', true, ''], 'model detection is an icon');
       await page.close();
     }
     // The page hands its chosen machine to the next one: a fresh page asked to open on machine B shows B's harnesses.
+    // Sync removes vanished detected models, keeps manual entries and edits, and saves provenance.
+    {
+      const modelled = launcher('mch_a', 'a1');
+      modelled.models = [
+        { slug: 'manual', label: 'Manual', note: '', default: true, source: 'manual' },
+        { slug: 'old', label: 'Old', note: '', default: false, source: 'detected' },
+        { slug: 'still', label: 'Custom label', note: '', default: false, source: 'detected' },
+      ];
+      modelled.models_rev = 'r1';
+      const page = await mount({
+        'GET /api/machines/mch_a/launchers': { launchers: [modelled, launchers.mch_a[1]], activity: [] },
+        'POST /api/machines/mch_a/launchers/a1/models/sync': { models: [
+          modelled.models[0], modelled.models[2], { slug: 'new', label: 'New', note: '', default: false, source: 'detected' },
+        ], models_rev: 'r2', added: 1, removed: 1, skipped: 0 },
+      });
+      await hold(page, 'GET /api/machines/mch_a/launchers');
+      await page.$eval(`${card('a1')} .harness-model-detect`, el => el.click());
+      await answer(page, await pending(page, 'GET', '/api/machines/mch_a/launchers'), 200, { launchers: [{ ...modelled, models: [modelled.models[0], modelled.models[2], { slug: 'new', label: 'New', note: '', default: false, source: 'detected' }], models_rev: 'r2' }, launchers.mch_a[1]], activity: [] });
+      await page.waitForFunction(selector => document.querySelector(`${selector} .harness-model-row[data-slug=new]`), {}, card('a1'));
+      assert.deepEqual(await page.$$eval(`${card('a1')} .harness-model-row`, rows => rows.map(row => row.dataset.slug)), ['manual', 'still', 'new'], 'the default stays first, then labels sort naturally');
+      assert.match(await page.$eval(`${card('a1')} .harness-models .settings-desc[role=status]`, el => el.textContent), /\+1 new, −1 removed/);
+      assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT' && request.path.endsWith('/models')).length), 0, 'reload saved in one request');
+      await page.close();
+    }
     {
       const page = await mount();
       await chooseMachine(page, 'mch_b');
@@ -363,14 +397,13 @@ async function main() {
     // Unfinished input counts as unsaved while it is there, and is gone with the page.
     const detectAuto = {
       'POST /api/machines/mch_a/launchers/detect': { candidates: [{ family: 'pi', label: 'Pi', command: '/usr/bin/pi', containerized: false }] },
-      'POST /api/machines/mch_a/launchers/a1/models/detect': { source: 'harness', candidates: [{ slug: 'found-model', label: 'Found', note: '' }] },
+      'POST /api/machines/mch_a/launchers/a1/models/sync': { models: [{ slug: 'found-model', label: 'Found', note: '', default: true, source: 'detected' }], models_rev: 'r2', added: 1, removed: 0, skipped: 0 },
     };
     const drafts = [
       { name: 'an Edit form', setup: async page => { await page.$eval(`${card('a1')} .machine-harness-edit`, el => el.click()); await type(page, `${card('a1')} [name=label]`, 'draft'); }, kept: page => page.$eval(`${card('a1')} [name=label]`, el => el.value === 'draft') },
       { name: 'the Add harness form', setup: async page => { await page.$eval('#harness-add', el => el.click()); await page.waitForSelector('#harness-add-form'); await type(page, '#harness-add-form [name=command]', '/opt/unsaved-tool'); }, kept: page => page.$eval('#harness-add-form [name=command]', el => el.value === '/opt/unsaved-tool') },
       { name: 'a model id not added yet', setup: async page => { await type(page, `${card('a1')} .harness-model-add [name=slug]`, 'typed-model'); }, kept: page => page.$eval(`${card('a1')} .harness-model-add [name=slug]`, el => el.value === 'typed-model') },
       { name: 'ticked harnesses from auto-detect', setup: async page => { await page.$eval('#harness-detect', el => el.click()); await page.waitForSelector('#harness-detect-panel input[type=checkbox]'); await page.$eval('#harness-detect-panel input[type=checkbox]', el => el.click()); }, kept: page => page.$eval('#harness-detect-panel input[type=checkbox]', el => el.checked) },
-      { name: 'ticked models from auto-detect', setup: async page => { await page.$eval(`${card('a1')} .harness-models .harness-model-detect`, el => el.click()); await page.waitForSelector(`${card('a1')} .harness-model-candidates input[type=checkbox]`); await page.$eval(`${card('a1')} .harness-model-candidates input[type=checkbox]`, el => el.click()); }, kept: page => page.$eval(`${card('a1')} .harness-model-candidates input[type=checkbox]`, el => el.checked) },
     ];
     for (const draft of drafts) {
       const page = await mount(detectAuto);
@@ -539,8 +572,7 @@ async function main() {
         'GET /api/machines/mch_a/launchers': { launchers: [ready], activity: [] },
         'POST /api/machines/mch_a/launchers/detect': { candidates: [{ family: 'pi', label: 'Pi', command: '/usr/bin/pi', containerized: false }] },
         'POST /api/machines/mch_a/launchers': { config: created.config },
-        'POST /api/machines/mch_a/launchers/a3/models/detect': { candidates: [{ slug: 'found', label: 'Found', note: '' }] },
-        'PUT /api/machines/mch_a/launchers/a3/models': {},
+        'POST /api/machines/mch_a/launchers/a3/models/sync': { models: [{ slug: 'found', label: 'Found', note: '', default: true, source: 'detected' }], models_rev: 'r2', added: 1, removed: 0, skipped: 0 },
       });
       await page.evaluate(async () => {
         (await import('/js/api.js')).setSession({ csrf_token: 'token', id: 'usr_me', owner: true, admin: true });
@@ -716,9 +748,9 @@ async function main() {
       {
         const page = await mount(setup());
         await page.waitForSelector(`${card('oc1')} .harness-model-detect`);
-        await hold(page, 'POST /api/machines/mch_a/launchers/oc1/models/detect');
+        await hold(page, 'POST /api/machines/mch_a/launchers/oc1/models/sync');
         await page.$eval(`${card('oc1')} .harness-model-detect`, el => el.click());
-        await answer(page, await pending(page, 'POST', '/api/machines/mch_a/launchers/oc1/models/detect'), 502, { error: 'detect_failed', message: "Couldn't detect the models: nothing usable was listed.", endpoint_problems: { local: 'the endpoint answered HTTP 500' } });
+        await answer(page, await pending(page, 'POST', '/api/machines/mch_a/launchers/oc1/models/sync'), 502, { error: 'detect_failed', message: "Couldn't detect the models: nothing usable was listed.", endpoint_problems: { local: 'the endpoint answered HTTP 500' } });
         await page.waitForSelector(`${card('oc1')} .harness-endpoint-problems`);
         assert.match(await page.$eval(`${card('oc1')} .harness-endpoint-problems`, el => el.textContent), /local: its endpoint could not be asked \(the endpoint answered HTTP 500\)/);
         await page.close();
@@ -734,7 +766,7 @@ async function main() {
       }
       // Detecting models names the providers whose endpoint could not be asked.
       {
-        const page = await mount(setup(undefined, { 'POST /api/machines/mch_a/launchers/oc1/models/detect': { candidates: [{ slug: 'acme/big', label: 'Big', already_listed: true }], source: 'harness', endpoint_problems: { local: 'connection refused' } } }));
+        const page = await mount(setup(undefined, { 'POST /api/machines/mch_a/launchers/oc1/models/sync': { candidates: [{ slug: 'acme/big', label: 'Big', already_listed: true }], source: 'harness', endpoint_problems: { local: 'connection refused' } } }));
         await page.waitForSelector(`${card('oc1')} .harness-model-detect`);
         await page.$eval(`${card('oc1')} .harness-model-detect`, el => el.click());
         await page.waitForSelector(`${card('oc1')} .harness-endpoint-problems`);

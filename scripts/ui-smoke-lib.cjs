@@ -48,7 +48,26 @@ const appReadyFolded = page => page.waitForSelector('#app-view:not([hidden]):not
 const appReady = async page => {
   await appReadyFolded(page);
   await page.waitForFunction(() => !document.querySelector('#onboarding-view').hidden || document.querySelector('#projects .room-group'), { timeout: 8000 }).catch(() => {}); // the list is drawn after the page is shown; a page with no project has none
-  if (await page.$('#onboarding-view:not([hidden])')) { await page.click('#onboarding-view .onboarding-skip'); await page.waitForSelector('#onboarding-view', { hidden: true }); }
+  // Later sign-ins may offer Harnesses without the Project step. Use its Skip
+  // action so the choice is recorded and the offer does not cover later tabs.
+  for (let stepCount = 0; stepCount < 3 && await page.$('#onboarding-view:not([hidden])'); stepCount++) {
+    await page.waitForSelector('#onboarding-view section:not([hidden])');
+    const { step, phase } = await page.$eval('#onboarding-view section:not([hidden])', section => ({ step: section.dataset.step, phase: section.dataset.phase }));
+    if (step === 'project') await page.click('#onboarding-view .onboarding-skip');
+    else if (step === 'how') await page.click('#onboarding-done');
+    else if (phase === 'result') await page.click('#onboarding-result-continue');
+    else {
+      await page.click('#onboarding-harnesses-skip');
+      await page.waitForSelector('#app-dialog[open]');
+      await page.click('#app-dialog .app-dialog-ok');
+    }
+    await page.waitForFunction((previous, previousPhase) => {
+      const root = document.querySelector('#onboarding-view');
+      const section = root.querySelector('section:not([hidden])');
+      return root.hidden || section?.dataset.step !== previous || section?.dataset.phase !== previousPhase;
+    }, {}, step, phase);
+  }
+  await page.waitForSelector('#onboarding-view', { hidden: true });
   await page.evaluate(() => { for (const toggle of document.querySelectorAll('.room-group.collapsed > .room-item > .room-collapse')) toggle.click(); });
 };
 // waitForFunction that names what the page looked like when it timed out: a 30 s timeout alone cannot tell a slow

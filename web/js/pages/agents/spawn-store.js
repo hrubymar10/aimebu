@@ -1,7 +1,7 @@
 import { batch, computed, signal } from '../../ui.js';
 import { request, rights } from '../../api.js';
 import { ClaudeSessionPicker } from '../../claude-sessions.js';
-import { chooseModel, hintParts, historyNote, modelChangeWarning, NEW_ROOM, REOPEN_PREFIX, resumeBanner, resumeToolChoice, sessionEntryState, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption } from '../../spawn-model.js';
+import { chooseModel, hintParts, historyNote, modelChangeWarning, NEW_ROOM, REOPEN_PREFIX, resumeBanner, resumeToolChoice, sessionEntryState, sortModelOptions, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption } from '../../spawn-model.js';
 import { relativeTime } from '../../time.js';
 import { MachineStore } from './machine-store.js';
 
@@ -214,7 +214,7 @@ export class SpawnStore {
   // The model list follows the tool; the person's own pick for this tool, else the model the start names, else the harness's default stays.
   rebuildModels() {
     const tool = this.tool.peek();
-    const models = (tool?.models || []).map(model => ({ value: typeof model === 'string' ? model : model.id, label: typeof model === 'string' ? model : model.label || model.id, note: model.note || '' }));
+    const models = sortModelOptions((tool?.models || []).map(model => ({ value: typeof model === 'string' ? model : model.id, label: typeof model === 'string' ? model : model.label || model.id, note: model.note || '', default: !!model.default })));
     const preferred = (tool?.models || []).find(model => model.default);
     const chosen = chooseModel(models, { picked: this.pickedModel, toolKey: toolKey(tool), named: this.resume.peek()?.model, preferred: preferred?.id });
     batch(() => {

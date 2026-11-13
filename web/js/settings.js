@@ -1,4 +1,5 @@
 import { rights, refreshRights } from './api.js';
+import { confirmDialog } from './dialogs.js';
 import { GeneralSettings } from './pages/general/page.js';
 import { NotificationSettings } from './pages/notifications/page.js';
 import { UsagesSettings } from './pages/usages/page.js';
@@ -42,19 +43,21 @@ export class SettingsPanel {
     this.shell = new SettingsShell(this.dialog, {
       general: this.generalSection, usages: this.usagesSection, notifications: this.notificationsSection, roles: this.rolesSection, users: this.usersSettings.section,
       prompts: this.promptSettings.section, macros: this.macroSettings.section, telemetry: this.telemetrySettings.section, machines: this.machinesSection, harnesses: this.harnessSettings.section,
-    }, { users: this.usersSettings.store.tab, onSelect: section => this.selectSection(section), onClose: () => this.dialog.close() });
+    }, { users: this.usersSettings.store.tab, onSelect: section => this.selectSection(section), onClose: () => this.requestClose() });
     // Each section's page is drawn when the section is selected and taken out of the page when the dialog closes (a page holding unsaved edits keeps
     // them): the sections are about a thousand nodes together, which stay in the page for nothing otherwise.
     this.pages = { general: this.general.page, usages: this.usages.page, notifications: this.notificationSettings.page, roles: this.roleSettings.page, users: this.usersSettings.page,
       prompts: this.promptSettings.page, macros: this.macroSettings.page, telemetry: this.telemetrySettings.page, machines: this.machinesSettings.page, harnesses: this.harnessSettings.page };
     this.dialog.addEventListener('close', () => this.release());
+    this.dialog.addEventListener('cancel', event => { event.preventDefault(); void this.requestClose(); });
+    this.dialog.addEventListener('click', event => { if (event.target === this.dialog) void this.requestClose(); });
     this.release();
     document.querySelector('#settings-toggle').onclick = () => this.open();
     // v1's global shortcuts: Cmd/Ctrl+, opens Settings, and Cmd/Ctrl+W closes it while it is open.
     document.addEventListener('keydown', event => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.isComposing) return;
       if (event.key === ',' && this.userID) { event.preventDefault(); this.open(); }
-      else if (event.key.toLowerCase() === 'w' && this.dialog.open) { event.preventDefault(); this.dialog.close(); }
+      else if (event.key.toLowerCase() === 'w' && this.dialog.open) { event.preventDefault(); void this.requestClose(); }
     });
   }
   // What the account may do instance-wide. The owner and the admins (who are trusted like the owner) edit the roles, prompts and macros and see the machines and
@@ -100,6 +103,20 @@ export class SettingsPanel {
     }
   }
   usagesChanged() { return this.usages.changed(); }
+  async requestClose() {
+    if (!this.dialog.open || this.closePending) return;
+    if (Object.values(this.pages).some(page => page.hasUnsavedChanges())) {
+      this.closePending = true;
+      try {
+        const discard = await confirmDialog('Discard unsaved changes?', { title: 'Discard unsaved changes?', confirm: 'Discard', cancel: 'Keep editing', danger: true });
+        if (!discard || !this.dialog.open) return;
+        this.discarding = true;
+      } finally {
+        this.closePending = false;
+      }
+    }
+    this.dialog.close();
+  }
   // The session ended: every page is cleared, edits not yet saved included (release() keeps those for the person who made them; the next person must not
   // find them).
   resetSession() {
@@ -111,9 +128,10 @@ export class SettingsPanel {
   }
   release() {
     for (const [section, page] of Object.entries(this.pages)) {
-      if (page.hasUnsavedChanges()) continue;
+      if (!this.discarding && page.hasUnsavedChanges()) continue;
       if (section === 'harnesses') this.harnessSettings.clear(); else page.clear();
     }
+    this.discarding = false;
   }
   selectSection(section) {
     this.shell.store.select(section);

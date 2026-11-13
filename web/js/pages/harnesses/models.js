@@ -7,7 +7,7 @@ import { positionOf, canAddDefault } from '../../role-defaults-logic.js';
 import { DetectionDetails } from './detection-details.js';
 import { RoleSwitch } from './role-switch.js';
 import { useIdPrefix } from './id-prefix.js';
-import { addModel, addFoundModels, removeModel, setDefaultModel, updateModel, modelsError, detectionFailure } from './model.js';
+import { addModel, sortModels, removeModel, setDefaultModel, updateModel, modelsError, detectionFailure } from './model.js';
 
 const modelsURL = (machineID, harnessID) => `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}/models`;
 
@@ -23,7 +23,6 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
   const [failureDetail, setFailureDetail] = useState('');
   const [failureProblems, setFailureProblems] = useState({});
   const [status, setStatus] = useState('');
-  const [found, setFound] = useState(null);
   const [retryShown, setRetryShown] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [entry, setEntry] = useState({ slug: '', label: '', note: '' });
@@ -65,6 +64,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
   const detectBusy = useRef(false), detectRun = useRef(0);
   const detect = async folder => {
     if (detectBusy.current) return;
+    if (dirty) { setError('Save or discard unsaved model edits before reloading.'); return; }
     detectBusy.current = true;
     const run = ++detectRun.current;
     const latest = () => alive() && run === detectRun.current;
@@ -73,11 +73,15 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
     setFailureProblems({});
     setDetecting(true);
     try {
-      const result = await request(`${modelsURL(machineID, harness.id)}/detect`, { method: 'POST', body: folder ? { dir: folder } : {} });
+      const result = await request(`${modelsURL(machineID, harness.id)}/sync`, { method: 'POST', body: folder ? { dir: folder } : {} });
       if (!latest()) return;
       onFailure(harness.id, '');
       setRetryShown(false);
-      setFound(result);
+      const refreshed = await onSaved(harness.id);
+      if (!latest()) return;
+      if (!refreshed) onSnapshot(harness.id, { models: result.models, models_rev: result.models_rev });
+      setStatus(`+${result.added} new, −${result.removed} removed${result.skipped ? `; ${result.skipped} skipped at the model limit` : ''}.${(result.provider_warnings || []).length ? ` ${result.provider_warnings.join(' ')}` : ''}`);
+      setFailureProblems(result.endpoint_problems || {});
     } catch (problem) {
       if (latest()) failed(problem);
     } finally {
@@ -95,12 +99,6 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
       return;
     }
     detect(folder);
-  };
-  const addFound = picked => {
-    const result = addFoundModels(models, harness.tool, picked);
-    if (result.added) edit(() => result.models);
-    setStatus(result.status);
-    setFound(null);
   };
   const save = async () => {
     setError('');
@@ -161,7 +159,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
       <h4>Models of ${harness.label || harness.name}</h4>
       <div class="harness-model-rows">
         ${!models.length && html`<p class="settings-intro">No models yet: this harness cannot start an agent until one is added.</p>`}
-        ${models.map(model => html`
+        ${sortModels(models).map(model => html`
           <div class="harness-model-row harness-detail-row" data-slug=${model.slug} key=${model.slug}>
             <div class="harness-detail-top">
               <label class=${`harness-model-default${model.default ? ' is-default' : ''}`} title=${model.default ? 'Default model' : 'Make default'}>
@@ -249,7 +247,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
       <div class="machine-harness-actions">
         <${IconButton}
           name="refresh"
-          label=${detecting ? 'Detecting models…' : 'Auto-detect models'}
+          label=${detecting ? 'Reloading models…' : 'Reload models from harness'}
           className="harness-model-detect"
           disabled=${detecting}
           onClick=${() => detect('')}
@@ -269,21 +267,10 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
           onInput=${event => setDir(event.currentTarget.value)}
           onKeyDown=${onDirKey}
         /></label>
-        <${IconButton} name="refresh" label="Retry auto-detect in this folder" className="harness-detect-retry-button" disabled=${detecting} onClick=${retry} />
+        <${IconButton} name="refresh" label="Retry reload in this folder" className="harness-detect-retry-button" disabled=${detecting} onClick=${retry} />
       </div>
       <${DetectionDetails} detail=${failureDetail} />
       <${EndpointProblems} problems=${failureProblems} />
-      <div class="harness-detect-models">
-        ${found && html`
-          <${ModelCandidates}
-            found=${found}
-            onAdd=${addFound}
-            onClose=${() => setFound(null)}
-            onDirty=${onDirty}
-            dirtyKey=${`model-candidates:${harness.id}`}
-          />
-        `}
-      </div>
       <p class="settings-desc" role="status">${status}</p>
     </div>
   `;
@@ -293,62 +280,4 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
 function EndpointProblems({ problems }) {
   const entries = Object.entries(problems || {});
   return entries.length > 0 && html`<ul class="harness-endpoint-problems" role="status">${entries.map(([id, reason]) => html`<li data-provider=${id} key=${id}>${`${id}: its endpoint could not be asked (${reason})`}</li>`)}</ul>`;
-}
-
-function ModelCandidates({ found, onAdd, onClose, onDirty, dirtyKey }) {
-  const candidates = found.candidates || [];
-  // A model its harness cannot reach (a container and a provider on the machine's loopback) is shown with why, and cannot be ticked.
-  const available = candidates.filter(candidate => !candidate.already_listed && !candidate.unreachable);
-  const [picked, setPicked] = useState(() => new Set());
-  useDirty(onDirty, dirtyKey, picked.size > 0);
-  const toggle = slug => setPicked(current => {
-    const next = new Set(current);
-    if (next.has(slug)) next.delete(slug);
-    else next.add(slug);
-    return next;
-  });
-  const selected = available.filter(candidate => picked.has(candidate.slug)).length;
-  const all = available.length > 0 && selected === available.length;
-  const selectAll = () => setPicked(available.some(candidate => !picked.has(candidate.slug)) ? new Set(available.map(candidate => candidate.slug)) : new Set());
-  const submit = event => {
-    event.preventDefault();
-    onAdd(candidates.filter(candidate => picked.has(candidate.slug)));
-  };
-  return html`
-    <form class="machine-harness-form harness-model-candidates" onSubmit=${submit}>
-      <div class="harness-candidate-header">
-        <strong>${candidates.length} found${found.source === 'snapshot' ? ' (built-in list: the published source could not be reached)' : ''} — tick the ones to add</strong>
-        <div class="harness-candidate-controls">
-          <span class="harness-candidate-count">${selected}/${available.length} selected</span>
-          <${IconButton}
-            name="select-all"
-            label=${all ? 'Clear selection' : 'Select all available models'}
-            className="harness-candidate-select-all"
-            aria-pressed=${all ? 'true' : selected ? 'mixed' : 'false'}
-            disabled=${!available.length}
-            onClick=${selectAll}
-          />
-        </div>
-      </div>
-      <${EndpointProblems} problems=${found.endpoint_problems} />
-      <div class="harness-candidate-list">
-        ${candidates.map(candidate => html`
-          <label class="machine-harness-enabled harness-detect-row" data-slug=${candidate.slug} key=${candidate.slug}>
-            <input
-              type="checkbox"
-              disabled=${!!candidate.already_listed || !!candidate.unreachable}
-              checked=${picked.has(candidate.slug)}
-              aria-label=${`Add ${candidate.slug}`}
-              onChange=${() => toggle(candidate.slug)}
-            />
-            <span>${`${candidate.label} · ${candidate.slug}${candidate.note ? ` · ${candidate.note}` : ''}${candidate.already_listed ? ' · already listed' : ''}${candidate.unreachable ? ` · not offered: ${candidate.unreachable}` : ''}`}</span>
-          </label>
-        `)}
-      </div>
-      <div class="machine-harness-actions">
-        <button type="submit" class="btn btn-primary">Add selected</button>
-        <button type="button" class="btn" onClick=${onClose}>Close</button>
-      </div>
-    </form>
-  `;
 }

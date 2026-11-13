@@ -13,12 +13,19 @@ import (
 )
 
 const (
-	harnessModelsMax     = 64
+	HarnessModelsMax     = 1000
 	harnessModelLabelMax = 80
 	harnessModelNoteMax  = 280
 )
 
 var harnessModelSlugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
+
+func modelSource(source string) string {
+	if source == "detected" {
+		return source
+	}
+	return "manual"
+}
 
 // HarnessModelFamilies are the harness families whose models the owner edits. The fake test adapter has no harness.
 var HarnessModelFamilies = []string{"claude", "codex", "pi", "opencode", "vibe"}
@@ -27,13 +34,14 @@ var HarnessModelFamilies = []string{"claude", "codex", "pi", "opencode", "vibe"}
 var ErrInvalidHarnessModels = errors.New("invalid_harness_models")
 
 // HarnessModel is one model a harness offers to spawn. The slug is the exact id the harness is started with, never an alias; the
-// note is free text for the owner (a context size, a price class). Exactly one model of a non-empty list is the default, which is
-// what an agent whose model was deleted falls back to.
+// note is free text for the owner (a context size, a price class). Source tracks whether sync may remove the model. Exactly one
+// available model of a non-empty list is the default; a manually removed model falls back to it on an agent's next turn.
 type HarnessModel struct {
 	Slug    string `json:"slug"`
 	Label   string `json:"label"`
 	Note    string `json:"note"`
 	Default bool   `json:"default"`
+	Source  string `json:"source,omitempty"`
 }
 
 // ErrStaleHarnessModels is a replace that was based on a list which has changed since.
@@ -45,7 +53,7 @@ var ErrStaleHarnessModels = errors.New("stale_harness_models")
 func HarnessModelsRev(models []HarnessModel) string {
 	digest := sha256.New()
 	for _, model := range models {
-		fmt.Fprintf(digest, "%d:%s|%d:%s|%d:%s|%t\n", len(model.Slug), model.Slug, len(model.Label), model.Label, len(model.Note), model.Note, model.Default)
+		fmt.Fprintf(digest, "%d:%s|%d:%s|%d:%s|%t|%s\n", len(model.Slug), model.Slug, len(model.Label), model.Label, len(model.Note), model.Note, model.Default, modelSource(model.Source))
 	}
 	return hex.EncodeToString(digest.Sum(nil))[:16]
 }
@@ -60,12 +68,15 @@ func ValidateHarnessModels(family string, models []HarnessModel) error {
 	if !known {
 		return fmt.Errorf("unknown harness family %q", family)
 	}
-	if len(models) > harnessModelsMax {
-		return fmt.Errorf("at most %d models are allowed per harness", harnessModelsMax)
+	if len(models) > HarnessModelsMax {
+		return fmt.Errorf("at most %d models are allowed per harness", HarnessModelsMax)
 	}
 	seen := map[string]bool{}
 	defaults := 0
 	for _, model := range models {
+		if model.Source != "" && model.Source != "manual" && model.Source != "detected" {
+			return fmt.Errorf("invalid source for model %q", model.Slug)
+		}
 		if family == "opencode" && !strings.Contains(model.Slug, "/") {
 			return fmt.Errorf("OpenCode model %q must be provider/model", model.Slug)
 		}
@@ -97,7 +108,7 @@ func ValidHarnessModelSlug(slug string) bool { return harnessModelSlugPattern.Ma
 
 // HarnessModels returns a harness's models in the owner's order.
 func (s *Store) HarnessModels(ctx context.Context, launcherID string) ([]HarnessModel, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT slug,label,note,is_default FROM harness_model WHERE launcher_id=? ORDER BY position`, launcherID)
+	rows, err := s.db.QueryContext(ctx, `SELECT slug,label,note,is_default,source FROM harness_model WHERE launcher_id=? AND available=1 ORDER BY position`, launcherID)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +116,7 @@ func (s *Store) HarnessModels(ctx context.Context, launcherID string) ([]Harness
 	models := []HarnessModel{}
 	for rows.Next() {
 		var model HarnessModel
-		if err := rows.Scan(&model.Slug, &model.Label, &model.Note, &model.Default); err != nil {
+		if err := rows.Scan(&model.Slug, &model.Label, &model.Note, &model.Default, &model.Source); err != nil {
 			return nil, err
 		}
 		models = append(models, model)
@@ -115,8 +126,8 @@ func (s *Store) HarnessModels(ctx context.Context, launcherID string) ([]Harness
 
 // MachineHarnessModels returns the models of every harness of a machine, by launcher id.
 func (s *Store) MachineHarnessModels(ctx context.Context, machineID string) (map[string][]HarnessModel, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.launcher_id,m.slug,m.label,m.note,m.is_default FROM harness_model m JOIN machine_launcher l ON l.id=m.launcher_id
-		WHERE l.machine_id=? ORDER BY m.launcher_id,m.position`, machineID)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.launcher_id,m.slug,m.label,m.note,m.is_default,m.source FROM harness_model m JOIN machine_launcher l ON l.id=m.launcher_id
+		WHERE l.machine_id=? AND m.available=1 ORDER BY m.launcher_id,m.position`, machineID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +136,7 @@ func (s *Store) MachineHarnessModels(ctx context.Context, machineID string) (map
 	for rows.Next() {
 		var id string
 		var model HarnessModel
-		if err := rows.Scan(&id, &model.Slug, &model.Label, &model.Note, &model.Default); err != nil {
+		if err := rows.Scan(&id, &model.Slug, &model.Label, &model.Note, &model.Default, &model.Source); err != nil {
 			return nil, err
 		}
 		models[id] = append(models[id], model)
@@ -163,11 +174,50 @@ func (s *Store) ReplaceHarnessModelsIfRev(ctx context.Context, actor, machineID,
 		if err != nil {
 			return err
 		}
+		// An agent keeps its configured model when detection stops offering it.
+		// Keep such a row hidden from the harness list and new spawns.
+		incoming := make(map[string]bool, len(models))
+		for _, model := range models {
+			incoming[model.Slug] = true
+		}
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug,label,note,source FROM harness_model WHERE launcher_id=? AND (source='detected' OR available=0)`, launcherID)
+		if err != nil {
+			return err
+		}
+		tombstones := []HarnessModel{}
+		for rows.Next() {
+			var model HarnessModel
+			if err := rows.Scan(&model.Slug, &model.Label, &model.Note, &model.Source); err != nil {
+				rows.Close()
+				return err
+			}
+			if incoming[model.Slug] {
+				continue
+			}
+			var used bool
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent WHERE launcher_id=? AND model=?)`, launcherID, model.Slug).Scan(&used); err != nil {
+				rows.Close()
+				return err
+			}
+			if used {
+				tombstones = append(tombstones, model)
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`DELETE FROM harness_model WHERE launcher_id=?`, launcherID); err != nil {
 			return err
 		}
 		for i, model := range models {
-			if _, err := tx.Exec(`INSERT INTO harness_model(launcher_id,slug,label,note,is_default,position) VALUES (?,?,?,?,?,?)`, launcherID, model.Slug, model.Label, model.Note, model.Default, i); err != nil {
+			if _, err := tx.Exec(`INSERT INTO harness_model(launcher_id,slug,label,note,is_default,position,source) VALUES (?,?,?,?,?,?,?)`, launcherID, model.Slug, model.Label, model.Note, model.Default, i, modelSource(model.Source)); err != nil {
+				return err
+			}
+		}
+		for i, model := range tombstones {
+			if _, err := tx.Exec(`INSERT INTO harness_model(launcher_id,slug,label,note,is_default,position,source,available) VALUES (?,?,?,?,0,?,?,0)`, launcherID, model.Slug, model.Label, model.Note, len(models)+i, modelSource(model.Source)); err != nil {
 				return err
 			}
 		}
@@ -186,7 +236,7 @@ func (s *Store) ReplaceHarnessModelsIfRev(ctx context.Context, actor, machineID,
 }
 
 func (tx *Tx) harnessModelList(launcherID string) ([]HarnessModel, error) {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug,label,note,is_default FROM harness_model WHERE launcher_id=? ORDER BY position`, launcherID)
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug,label,note,is_default,source FROM harness_model WHERE launcher_id=? AND available=1 ORDER BY position`, launcherID)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +244,7 @@ func (tx *Tx) harnessModelList(launcherID string) ([]HarnessModel, error) {
 	models := []HarnessModel{}
 	for rows.Next() {
 		var model HarnessModel
-		if err := rows.Scan(&model.Slug, &model.Label, &model.Note, &model.Default); err != nil {
+		if err := rows.Scan(&model.Slug, &model.Label, &model.Note, &model.Default, &model.Source); err != nil {
 			return nil, err
 		}
 		models = append(models, model)
@@ -203,7 +253,7 @@ func (tx *Tx) harnessModelList(launcherID string) ([]HarnessModel, error) {
 }
 
 func (tx *Tx) harnessModelSlugs(launcherID string) (string, error) {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug FROM harness_model WHERE launcher_id=? ORDER BY position`, launcherID)
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug FROM harness_model WHERE launcher_id=? AND available=1 ORDER BY position`, launcherID)
 	if err != nil {
 		return "", err
 	}

@@ -220,6 +220,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/machines/{id}/launchers/{launcher}/providers/import", s.Auth.RequireUser(http.HandlerFunc(s.machineProviderImport)))
 	mux.Handle("POST /api/machines/{id}/launchers/detect", s.Auth.RequireUser(http.HandlerFunc(s.machineHarnessDetect)))
 	mux.Handle("POST /api/machines/{id}/launchers/{launcher}/models/detect", s.Auth.RequireUser(http.HandlerFunc(s.machineHarnessModelsDetect)))
+	mux.Handle("POST /api/machines/{id}/launchers/{launcher}/models/sync", s.Auth.RequireUser(http.HandlerFunc(s.machineHarnessModelsSync)))
 	mux.Handle("POST /api/machine-pairings", s.Auth.RequireUser(http.HandlerFunc(s.machinePairing)))
 	mux.HandleFunc("POST /api/machine-pairings/redeem", s.hostChecked(s.redeemMachinePairing))
 	mux.HandleFunc("GET /api/machines/{id}/pair-status", s.machinePairStatus)

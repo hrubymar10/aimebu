@@ -390,8 +390,16 @@ its project, and their related rows before placing the result at the agent's
 private `OPENCODE_DB`. The source database and its account rows stay untouched.
 
 The owner lists the models of an OpenCode harness in
-Settings → Harnesses (Auto-detect models runs `opencode models`); ids must be
-`provider/model`.
+Settings → Harnesses (Reload models runs `opencode models` and saves the result);
+ids must be `provider/model`. During that action the supervisor reads the
+machine's OpenCode config and imports usable OpenAI-compatible providers with
+environment-referenced or absent keys. The models named in that config and
+models returned by each provider's `GET <baseURL>/models` join the launcher
+list. An endpoint failure leaves config-listed models available. A provider
+with a literal key is skipped with a warning because agent turns use a private
+config and cannot read that key. The same sync runs when a harness is first
+added by auto-detection, including the Docker variant whose config is read on
+the host.
 The adapter's capabilities are pinned to the verified release, 1.19.0 on
 Linux.
 

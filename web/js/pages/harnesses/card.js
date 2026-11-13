@@ -186,6 +186,8 @@ export function HarnessCard({ readOnly = false, machineID, harness, selected, fo
       </form>
       <fieldset class="machine-harness-readonly" disabled=${readOnly} title=${readOnly ? OWNER_ONLY : undefined}>
       ${harness.tool === 'opencode' && html`
+        <details class="harness-provider-advanced">
+          <summary>Advanced providers</summary>
         <${ProvidersPanel}
           machineID=${machineID}
           harness=${harness}
@@ -196,6 +198,7 @@ export function HarnessCard({ readOnly = false, machineID, harness, selected, fo
           onSnapshot=${onSnapshot}
           onDirty=${onDirty}
         />
+        </details>
       `}
       <${ModelsPanel}
         machineID=${machineID}

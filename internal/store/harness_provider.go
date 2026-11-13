@@ -334,7 +334,7 @@ func (tx *Tx) harnessProviderList(launcherID string) ([]HarnessProvider, error) 
 }
 
 func (tx *Tx) harnessModelSlugsWithPrefix(launcherID, prefix string) ([]string, error) {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug FROM harness_model WHERE launcher_id=? AND substr(slug,1,?)=? ORDER BY position`, launcherID, len(prefix), prefix)
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug FROM harness_model WHERE launcher_id=? AND available=1 AND substr(slug,1,?)=? ORDER BY position`, launcherID, len(prefix), prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +352,7 @@ func (tx *Tx) harnessModelSlugsWithPrefix(launcherID, prefix string) ([]string, 
 
 // repairHarnessModelDefault gives a non-empty model list that lost its default (the default model was removed) a new one: the first model.
 func (tx *Tx) repairHarnessModelDefault(launcherID string) error {
-	_, err := tx.Exec(`UPDATE harness_model SET is_default=1 WHERE launcher_id=? AND slug=(SELECT slug FROM harness_model WHERE launcher_id=? ORDER BY position LIMIT 1)
+	_, err := tx.Exec(`UPDATE harness_model SET is_default=1 WHERE launcher_id=? AND slug=(SELECT slug FROM harness_model WHERE launcher_id=? AND available=1 ORDER BY position LIMIT 1)
 		AND NOT EXISTS (SELECT 1 FROM harness_model WHERE launcher_id=? AND is_default=1)`, launcherID, launcherID, launcherID)
 	return err
 }
@@ -377,7 +377,7 @@ func (tx *Tx) providersForTurn(launcherID, tool, model string) ([]adapter.Custom
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug,label FROM harness_model WHERE launcher_id=? AND substr(slug,1,?)=? ORDER BY position`, launcherID, len(prefix)+1, prefix+"/")
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug,label FROM harness_model WHERE launcher_id=? AND available=1 AND substr(slug,1,?)=? ORDER BY position`, launcherID, len(prefix)+1, prefix+"/")
 	if err != nil {
 		return nil, err
 	}

@@ -94,7 +94,7 @@ function enqueue(options) {
   return next;
 }
 
-export const confirmDialog = (message, { title = 'Please confirm', confirm = 'OK', danger = false } = {}) => enqueue({ title, message, confirm, danger });
+export const confirmDialog = (message, { title = 'Please confirm', confirm = 'OK', cancel = 'Cancel', danger = false } = {}) => enqueue({ title, message, confirm, cancel, danger });
 export const noticeDialog = (message, { title = 'Notice' } = {}) => enqueue({ title, message, notice: true }).then(() => undefined);
 export const promptDialog = (message, { title = 'Enter a value', label = message, value = '', placeholder = '', confirm = 'OK', required = false, validate, inputMode } = {}) =>
   enqueue({ title, message: '', confirm, fields: [{ name: 'value', label, value, placeholder, required, validate, inputMode }] }).then(result => (result ? result.value : null));

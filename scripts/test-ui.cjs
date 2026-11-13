@@ -284,9 +284,9 @@ async function main() {
       assert.deepEqual(await first.$$eval('#harnesses-list .harness-model-row', rows => rows.map(row => [row.dataset.slug, row.querySelector('input[type=radio]').checked])), [['gpt-ui-test', true], ['gpt-ui-two', false]], 'the first model is the default');
       assert.deepEqual(await first.$$eval('#harnesses-list .harness-model-row', rows => rows.map(row => { const star = row.querySelector('.harness-model-star'); return [star.querySelector('use').getAttribute('href'), getComputedStyle(star).fill === 'none', row.querySelector('.harness-model-default-text').textContent, row.querySelector('.harness-model-default').title]; })), [['/icons/star.svg#star', false, 'Default', 'Default model'], ['/icons/star.svg#star', true, '', 'Make default']], 'the supplied star fills only on the active default');
       assert.deepEqual(await first.$eval('#harnesses-list .harness-model-row[data-slug="gpt-ui-test"]', row => [row.querySelector('[name=note]').title, row.querySelector('.harness-model-remove').title, row.querySelector('.harness-model-remove').getAttribute('aria-label'), !!row.querySelector('.icon-mask-trash')]), ['added by the smoke', 'Remove gpt-ui-test', 'Remove gpt-ui-test', true], 'the full note and trash action have tooltips');
-      assert.deepEqual(await first.$eval('#harnesses-list .harness-model-detect', button => [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-refresh'), button.textContent.trim()]), ['Auto-detect models', 'Auto-detect models', true, ''], 'model detection is an accessible icon action');
+      assert.deepEqual(await first.$eval('#harnesses-list .harness-model-detect', button => [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-refresh'), button.textContent.trim()]), ['Reload models from harness', 'Reload models from harness', true, ''], 'model detection is an accessible icon action');
       await first.$eval('#harnesses-list .harness-model-row[data-slug="gpt-ui-two"] input[type=radio]', el => el.click());
-      assert.deepEqual(await first.$$eval('#harnesses-list .harness-model-row', rows => rows.map(row => [row.querySelector('input[type=radio]').checked, row.querySelector('.harness-model-default-text').textContent])), [[false, ''], [true, 'Default']], 'changing the default moves the visible marker');
+      assert.deepEqual(await first.$$eval('#harnesses-list .harness-model-row', rows => rows.map(row => [row.querySelector('input[type=radio]').checked, row.querySelector('.harness-model-default-text').textContent])), [[true, 'Default'], [false, '']], 'changing the default moves the visible marker and puts it first');
       await domClick(first, '#harnesses-list .harness-models .btn-primary');
       // The save is asynchronous: wait until the server has the two models, not just until the box shows them.
       await first.waitForFunction(async () => ((await (await fetch('/api/spawn-catalog')).json()).tools.find(tool => tool.tool === 'codex')?.models || []).length === 2);
@@ -318,6 +318,7 @@ async function main() {
         const panel = `#harness-card-${openID} .harness-providers`;
         await first.waitForSelector(panel);
         assert.equal(await first.$(`#harnesses-list .machine-harness[data-tool=codex] .harness-providers`), null, 'only an OpenCode harness has the providers section');
+        await domClick(first, `#harness-card-${openID} .harness-provider-advanced > summary`);
         await domClick(first, `${panel} .harness-provider-add`);
         await first.locator(`${panel} [name=id]`).fill('uiprov'); await first.locator(`${panel} [name=name]`).fill('UI provider');
         await first.locator(`${panel} [name=base_url]`).fill('https://uiprov.example/v1'); await first.locator(`${panel} [name=key_env]`).fill('UIPROV_API_KEY');
@@ -3827,18 +3828,29 @@ async function main() {
             window.__harnessRows.push({ config, available: true, unavailable_reason: '' });
             return json({ config, observed: window.__harnessRows.at(-1) });
           }
-          if (path === '/api/machines/mch_mock/launchers/mln_auto/models/detect') return json({ source: 'harness', candidates: Array.from({ length: 66 }, (_, index) => ({ slug: `pi-${index}`, label: `Pi ${index}`, note: '', already_listed: false })) });
+          if (path === '/api/machines/mch_mock/launchers/mln_auto/models/sync') {
+            window.__autoModels = Array.from({ length: 66 }, (_, index) => ({ slug: `pi-${index}`, label: `Pi ${index}`, note: '', default: index === 0, source: 'detected' }));
+            window.__harnessRows.find(row => row.config.id === 'mln_auto').models = window.__autoModels;
+            return json({ models: window.__autoModels, models_rev: 'r1', added: 66, removed: 0, skipped: 0 });
+          }
           // The Docker one cannot answer from the default folder; asked in a chosen folder, it lists one model.
-          if (path === '/api/machines/mch_mock/launchers/mln_auto_docker/models/detect') {
+          if (path === '/api/machines/mch_mock/launchers/mln_auto_docker/models/detect' || path === '/api/machines/mch_mock/launchers/mln_auto_docker/models/sync') {
             const body = JSON.parse(options.body || '{}'); (window.__dockerDetect ||= []).push(body);
             if (!body.dir) return new Response(JSON.stringify({ error: 'detect_failed', detect_dir: '/home/test/.aimebu2/detect', message: window.__dockerFailure || "Couldn't detect the models: the harness could not list its models (exit status 1): the folder does not exist or is not visible in the harness container. Add the model ID manually." }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+            if (path.endsWith('/sync')) {
+              const models = [
+                { slug: 'ollama-cloud/gemma4:31b', label: 'gemma4:31b', note: '', default: true, source: 'detected' },
+                { slug: 'ollama-cloud/gemma4:7b', label: 'gemma4:7b', note: '', default: false, source: 'detected' },
+              ];
+              window.__harnessRows.find(row => row.config.id === 'mln_auto_docker').models = models;
+              return json({ models, models_rev: 'r2', added: 2, removed: 0, skipped: 0 });
+            }
             return json({ source: 'harness', candidates: [
               { slug: 'ollama-cloud/gemma4:31b', label: 'gemma4:31b', note: '', already_listed: false },
               { slug: 'ollama-cloud/gemma4:7b', label: 'gemma4:7b', note: '', already_listed: false },
               { slug: 'ollama-cloud/previous', label: 'previous', note: '', already_listed: true },
             ] });
           }
-          if (path === '/api/machines/mch_mock/launchers/mln_auto/models' && options.method === 'PUT') { window.__autoModels = JSON.parse(options.body).models; return json({ models: window.__autoModels }); }
           if (path.startsWith('/api/machines/mch_mock/launchers/') && options.method === 'PUT') {
             const id = path.split('/').pop();
             const body = JSON.parse(options.body);
@@ -3864,9 +3876,8 @@ async function main() {
       await settingsPage.$$eval('#harness-detect-panel input[type=checkbox]', boxes => boxes.forEach(el => el.click()));
       await domClick(settingsPage, '#harness-detect-panel button[type=submit]');
       await settingsPage.waitForFunction(() => window.__autoModels);
-      // 66 were offered, a list holds 64: the first 64 are saved, the first is the only default, and the page says it cut the list.
-      assert.deepEqual(await settingsPage.evaluate(() => ({ count: window.__autoModels.length, first: window.__autoModels[0].slug, last: window.__autoModels.at(-1).slug, defaults: window.__autoModels.filter(model => model.default).map(model => model.slug) })), { count: 64, first: 'pi-0', last: 'pi-63', defaults: ['pi-0'] }, 'detected models are capped at 64 with the first as the default');
-      await settingsPage.waitForFunction(() => document.querySelector('#settings-harnesses > .error')?.textContent.includes('only the first 64'));
+      // All 66 detected models fit the larger list, with one default.
+      assert.deepEqual(await settingsPage.evaluate(() => ({ count: window.__autoModels.length, first: window.__autoModels[0].slug, last: window.__autoModels.at(-1).slug, defaults: window.__autoModels.filter(model => model.default).map(model => model.slug) })), { count: 66, first: 'pi-0', last: 'pi-65', defaults: ['pi-0'] }, 'all detected models fit with the first as the default');
       // The Docker one could not list its models: the page says why, and its models show that reason with a folder to retry in.
       assert.ok((await settingsPage.$eval('#settings-harnesses > .error', el => el.textContent)).includes('A harness has no models yet. Detection blocked — please mount /home/test/.aimebu2/detect to your harness Docker'), 'the auto-fill failure gives only the private folder as the mount action');
       assert.deepEqual(await settingsPage.$eval('#settings-harnesses > .harness-detect-details', el => [el.open, el.hidden, el.querySelector('p').textContent.includes('not visible')]), [false, false, true], 'the auto-fill stderr stays behind collapsed Details');
@@ -3884,17 +3895,14 @@ async function main() {
       await settingsPage.waitForFunction(() => document.querySelector('#harness-models-mln_auto_docker .error')?.textContent.includes('the harness did not answer in time'));
       assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent)).includes('the harness did not answer in time'), 'timeouts keep their real cause without a mount hint');
       await settingsPage.evaluate(() => { delete window.__dockerFailure; });
-      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-retry-button', el => [el.title, el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Retry auto-detect in this folder', 'Retry auto-detect in this folder', true, ''], 'Retry is an icon button with a tooltip and an accessible name');
+      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-retry-button', el => [el.title, el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Retry reload in this folder', 'Retry reload in this folder', true, ''], 'Retry is an icon button with a tooltip and an accessible name');
       await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-retry-button');
       assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent)).includes('absolute folder path'), 'a retry needs an absolute folder');
       await settingsPage.locator('#harness-models-mln_auto_docker [name=detect-dir]').fill('/work/project');
       await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-retry-button');
-      await settingsPage.waitForSelector('#harness-models-mln_auto_docker .harness-model-candidates [data-slug="ollama-cloud/gemma4:31b"]');
-      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-candidate-controls', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('button').title, el.querySelector('button').getAttribute('aria-label'), el.querySelector('button').getAttribute('aria-pressed'), !!el.querySelector('.icon-mask-select-all')]), ['0/2 selected', 'Select all available models', 'Select all available models', 'false', true], 'the select-all icon counts only available candidates and has a tooltip');
-      await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-candidate-select-all');
-      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-model-candidates', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('.harness-candidate-select-all').getAttribute('aria-pressed'), [...el.querySelectorAll('.harness-detect-row input')].map(check => [check.checked, check.disabled])]), ['2/2 selected', 'true', [[true, false], [true, false], [false, true]]], 'select all ticks only available models and updates the count');
-      await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-row input');
-      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-candidate-controls', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('button').getAttribute('aria-pressed')]), ['1/2 selected', 'mixed'], 'individual untick updates the header count and mixed state');
+      await settingsPage.waitForFunction(() => document.querySelector('#harness-models-mln_auto_docker .harness-model-row[data-slug="ollama-cloud/gemma4:31b"]'));
+      assert.deepEqual(await settingsPage.$$eval('#harness-models-mln_auto_docker .harness-model-row', rows => rows.map(row => row.dataset.slug)), ['ollama-cloud/gemma4:31b', 'ollama-cloud/gemma4:7b'], 'one reload saves all available models');
+      assert.match(await settingsPage.$eval('#harness-models-mln_auto_docker .settings-desc[role=status]', el => el.textContent), /\+2 new, −0 removed/);
       assert.deepEqual(await settingsPage.evaluate(() => window.__dockerDetect), [{}, {}, {}, { dir: '/work/project' }], 'the retry sends the chosen folder; the default attempts sent none');
       assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker', panel => [panel.querySelector('.harness-detect-retry').hidden, panel.querySelector('.error').textContent]), [true, ''], 'a successful retry clears the failure');
       await settingsPage.evaluate(() => { window.__harnessRows = window.__harnessRows.filter(row => row.config.id !== 'mln_auto' && row.config.id !== 'mln_auto_docker'); });
@@ -8173,6 +8181,7 @@ with con:
     const perfStart = Date.now();
     await perfPage.locator('#login-form button').click();
     await perfPage.waitForFunction(() => document.querySelector('#messages')?.textContent.includes('Perf message 19999'), { timeout: 20000 });
+    await appReady(perfPage);
     const perfOpenMs = Date.now() - perfStart;
     assert(perfOpenMs < 15000, `20k-message room took ${perfOpenMs}ms to open`);
     await perfPage.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
@@ -8228,7 +8237,7 @@ with con:
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.deepEqual(await perfPage.evaluate(id => window.__readPosts.filter(url => url.includes(id)), perfRoomID), [], 'the room was marked read while its newest messages were hidden');
     await perfPage.click('.back-to-latest:not(.thread-latest):not(.thread-new)');
-    await waitDump(perfPage, 'return to latest', id => window.__readPosts.some(url => url.includes(id)) && document.querySelector('#messages article.chat-msg:last-of-type')?.dataset.messageId === 'msg_perf_late_2', () => ({ reads: window.__readPosts, last: document.querySelector('#messages article.chat-msg:last-of-type')?.dataset.messageId }), perfRoomID);
+    await waitDump(perfPage, 'return to latest', id => window.__readPosts.some(url => url.includes(id)) && document.querySelector('#messages article.chat-msg:last-of-type')?.dataset.messageId === 'msg_perf_late_2', () => ({ reads: window.__readPosts, last: document.querySelector('#messages article.chat-msg:last-of-type')?.dataset.messageId, onboarding: document.querySelector('#onboarding-view')?.hidden }), perfRoomID);
     assert.equal(await perfPage.$eval('.back-to-latest:not(.thread-latest):not(.thread-new)', el => el.hidden && el.getAttribute('aria-label') === 'Back to latest'), true, 'Back to latest kept its count after returning');
     // A trimmed window pages forward when its bottom is reached, trimming its oldest rows, and is the latest view again at the end.
     const perfRows = () => perfPage.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.chat-msg')]; return { count: rows.length, first: rows[0]?.dataset.messageId, last: rows.at(-1)?.dataset.messageId, lastSeq: Number(rows.at(-1)?.dataset.seq), latestHidden: document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, hasOlder: document.querySelector('#messages').dataset.hasOlder }; });

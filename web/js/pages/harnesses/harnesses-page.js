@@ -75,6 +75,7 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
         <//>
       <//>
       <p class="settings-intro" role="status">${state.summary.value}</p>
+      <p class="settings-intro" role="status" hidden=${!state.info.value}>${state.info.value}</p>
       <p class="error" role="alert">${state.error.value}</p>
       <${DetectionDetails} detail=${state.errorDetail.value} />
       <p class="settings-intro" id=${`${idPrefix}harness-readonly`} role="note" hidden=${!readOnly}>${OWNER_ONLY} You can look at the harnesses here; the controls are off.</p>

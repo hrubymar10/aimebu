@@ -1669,6 +1669,12 @@ INSERT INTO checkout_new(id,project_id,machine_id,canonical_path,writer_agent_id
   SELECT id,project_id,machine_id,canonical_path,writer_agent_id,writer_state FROM checkout;
 DROP TABLE checkout;
 ALTER TABLE checkout_new RENAME TO checkout;
+`}, {104, `
+-- Existing model lists have no reliable provenance, so preserve them as manual.
+-- New detected models can be removed on sync; an agent still using one keeps
+-- an unavailable row so its configured model survives its next turn.
+ALTER TABLE harness_model ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','detected'));
+ALTER TABLE harness_model ADD COLUMN available INTEGER NOT NULL DEFAULT 1 CHECK (available IN (0,1));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

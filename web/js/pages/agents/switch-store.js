@@ -2,7 +2,7 @@ import { batch, computed, signal } from '../../ui.js';
 import { rights } from '../../api.js';
 import { agentLabel } from '../../sender-identity.js';
 import { harnessName } from '../../harness-version.js';
-import { hintParts, switchModel, switchReason, switchStart, switchUnchanged } from '../../spawn-model.js';
+import { hintParts, sortModelOptions, switchModel, switchReason, switchStart, switchUnchanged } from '../../spawn-model.js';
 import { MachineStore } from './machine-store.js';
 
 // The Switch dialog: one opening, for one agent, at a time. Each opening, catalog read and call carries a number and says nothing once a newer
@@ -22,11 +22,18 @@ export class SwitchStore {
     this.opening = 0; this.catalogRequestID = 0;
     this.alive = true;
     this.tool = computed(() => this.toolIndex.value < 0 ? null : this.catalog.value[this.toolIndex.value] || null);
-    this.models = computed(() => (this.tool.value?.models || []).map(model => ({ value: model.id, label: model.label || model.id, note: model.note || '' })));
+    this.models = computed(() => {
+      const tool = this.tool.value, agent = this.agent();
+      const models = (tool?.models || []).map(model => ({ value: model.id, label: model.label || model.id, note: model.note || '', default: !!model.default }));
+      if (agent?.model && tool?.launcher_id && tool.launcher_id === agent.launcher_id && this.machine.id.value === agent.machine_id && !models.some(model => model.value === agent.model)) {
+        models.push({ value: agent.model, label: `${agent.model} (unavailable)`, note: 'No longer offered by this harness', unavailable: true });
+      }
+      return sortModelOptions(models);
+    });
     this.unchanged = computed(() => !!this.tool.value && switchUnchanged({ tool: this.tool.value, model: this.model.value, agent: this.agent(), machineID: this.machine.id.value }));
     this.version = computed(() => this.tool.value?.cli_version ? `CLI version ${this.tool.value.cli_version}` : '');
-    this.reason = computed(() => this.override.value || switchReason({ needsUpdate: this.needsUpdate, tool: this.tool.value, modelCount: this.models.value.length, unchanged: this.unchanged.value }));
-    this.submitDisabled = computed(() => this.sending.value || !this.tool.value?.available || !this.models.value.length || this.unchanged.value || !this.machine.ready);
+    this.reason = computed(() => this.override.value || (this.models.value.find(model => model.value === this.model.value)?.unavailable ? 'This model is unavailable; choose another.' : switchReason({ needsUpdate: this.needsUpdate, tool: this.tool.value, modelCount: this.models.value.length, unchanged: this.unchanged.value })));
+    this.submitDisabled = computed(() => this.sending.value || !this.tool.value?.available || !this.models.value.length || this.models.value.find(model => model.value === this.model.value)?.unavailable || this.unchanged.value || !this.machine.ready);
   }
 
   get dialog() { return this.host.switchDialog; }
@@ -69,14 +76,14 @@ export class SwitchStore {
 
   pickTool(value) {
     const index = value === '' ? -1 : Number(value);
-    batch(() => { this.toolIndex.value = index; this.model.value = switchModel(this.catalog.peek()[index], this.agent()); });
+    batch(() => { this.toolIndex.value = index; this.model.value = switchModel(this.catalog.peek()[index], this.agent(), this.machine.id.peek()); });
   }
 
   pickModel(value) { this.model.value = value; }
 
   async submit() {
     const id = this.agentID, selected = this.tool.peek(), model = this.model.peek();
-    if (!id || !selected?.available || !model) return;
+    if (!id || !selected?.available || !model || this.models.peek().find(item => item.value === model)?.unavailable) return;
     const opening = this.opening, generation = this.host.generation, stale = () => !this.alive || !this.dialog.open || opening !== this.opening || generation !== this.host.generation;
     batch(() => { this.sending.value = true; this.error.value = ''; });
     try {
