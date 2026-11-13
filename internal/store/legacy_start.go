@@ -180,9 +180,6 @@ func (s *Store) LegacyStart(ctx context.Context, projectID, agentID string) (Leg
 	})
 	if len(counts) > 0 {
 		out.RoleKey = counts[0].key
-		if out.RoleKey == "leader" {
-			out.RoleKey = "lead" // v1's leader role is named lead in v2.
-		}
 	}
 	return out, nil
 }

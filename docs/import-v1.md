@@ -366,8 +366,8 @@ An imported sender's profile (the dialog its name opens in the chat) offers
 automatic. The button opens the Spawn dialog for the old name (the
 v1 slug, if it is free in the project and fits the agent-name rule; otherwise
 the start is refused; the dialog has no Name field because the agent keeps it), the tool and model v1 ran, and the role v1 gave the
-agent most often, if v2 has it (otherwise worker). v1's `leader` maps to v2's
-`lead`. The dialog has a **Start in**
+agent most often, if v2 has it (otherwise worker). v1's `leader`
+keeps the same role key in v2. The dialog has a **Start in**
 picker listing the project's open task rooms, each named by where it sits (`project › room`, with the rooms it is nested under in between): the room that holds most of the
 agent's imported messages (`history_room` in the profile's start info) when that is an open task
 room, otherwise `general`. The dialog says where the history is in every case. When it is an

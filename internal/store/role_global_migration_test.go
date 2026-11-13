@@ -124,7 +124,7 @@ func TestMigrationSixtyFourMakesRolesGlobal(t *testing.T) {
 	for _, r := range roles {
 		live[r.Key]++
 	}
-	if live["analyst"] != 1 || live["reviewer"] != 1 || live["lead"] != 1 {
+	if live["analyst"] != 1 || live["reviewer"] != 1 || live["leader"] != 1 {
 		t.Errorf("live roles by key: %v", live)
 	}
 }

@@ -25,7 +25,7 @@ func TestFakeLeadCoordinatesTaskFromHomeToArchive(t *testing.T) {
 	f := newFixture(t)
 	f.seed()
 	ctx := t.Context()
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	allRooms, err := f.db.RoomsForProject(ctx, f.project.ID)
 	if err != nil {
 		t.Fatal(err)

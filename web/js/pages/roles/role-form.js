@@ -50,7 +50,7 @@ export function RoleForm({ hidden, roles, role, form, options, busy, resolved, o
           <option value="multi">Many holders</option><option value="singleton">One holder</option>
         </select>
       <//>
-      <${Toggle} label="Lead" desc="Holders are the target of handoffs and of scheduled tasks that name no agent." id="role-lead" name=${CAPS[0]} form=${form} set=${set} />
+      <${Toggle} label="Leader" desc="Holders are the target of handoffs and of scheduled tasks that name no agent." id="role-lead" name=${CAPS[0]} form=${form} set=${set} />
       <${Toggle} label="Can spawn" desc="Holders may start more agents, within the project's spawn limits." id="role-spawn" name=${CAPS[1]} form=${form} set=${set} />
     <//>
     <${SpawnDefaults} items=${form.default_agents} mode=${form.pick_mode} options=${options} onChange=${onDefaults} />

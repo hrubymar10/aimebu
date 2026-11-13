@@ -23,7 +23,7 @@ const server = http.createServer((req, res) => {
 });
 
 const role = (key, extra = {}) => ({ id: `role_${key}`, rev: 1, role_key: key, label: key[0].toUpperCase() + key.slice(1), emoji: '', body: `${key} instructions`, extends: '', cardinality: 'multi', builtin: false, default_agents: [], pick_mode: 'in_turn', ...extra });
-const ROLES = [role('lead', { builtin: true, cardinality: 'singleton', cap_is_lead: true, emoji: '👑' }), role('reviewer', { builtin: true }), role('sec', { extends: 'reviewer', body: 'Additional focus.', resolved_body: 'reviewer instructions\n\nAdditional focus.', builtin: true }), role('worker', { builtin: true, rev: 4, default_agents: [{ launcher_id: 'l1', model: 'a' }] }), role('analyst')];
+const ROLES = [role('leader', { builtin: true, cardinality: 'singleton', cap_is_lead: true, emoji: '👑' }), role('reviewer', { builtin: true }), role('sec', { extends: 'reviewer', body: 'Additional focus.', resolved_body: 'reviewer instructions\n\nAdditional focus.', builtin: true }), role('worker', { builtin: true, rev: 4, default_agents: [{ launcher_id: 'l1', model: 'a' }] }), role('analyst')];
 const READ = 'GET /api/roles';
 const AUTO = {
   [READ]: ROLES, 'GET /api/machines': { machines: [{ id: 'm1', name: 'Host' }] },
@@ -86,8 +86,8 @@ async function main() {
     {
       const page = await mount();
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#roles-cards .role-card')].map(card => [card.dataset.roleKey, [...card.querySelectorAll('.role-chip')].map(chip => chip.textContent).join('|'), card.querySelector('.role-card-edit').getAttribute('aria-label')])),
-        [['lead', 'one holder|lead|built in', 'Edit Lead'], ['reviewer', 'many holders|built in', 'Edit Reviewer'], ['sec', 'many holders|extends Reviewer|built in', 'Edit Sec'], ['worker', 'many holders|built in', 'Edit Worker'], ['analyst', 'many holders', 'Edit Analyst']]);
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#roles-list').closest('.settings-row').hidden, [...document.querySelectorAll('#roles-list option')].map(option => option.textContent).join('|')]), [true, 'New role|Lead (lead)|Reviewer (reviewer)|Sec (sec)|Worker (worker)|Analyst (analyst)']);
+        [['leader', 'one holder|leader|built in', 'Edit Leader'], ['reviewer', 'many holders|built in', 'Edit Reviewer'], ['sec', 'many holders|extends Reviewer|built in', 'Edit Sec'], ['worker', 'many holders|built in', 'Edit Worker'], ['analyst', 'many holders', 'Edit Analyst']]);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#roles-list').closest('.settings-row').hidden, [...document.querySelectorAll('#roles-list option')].map(option => option.textContent).join('|')]), [true, 'New role|Leader (leader)|Reviewer (reviewer)|Sec (sec)|Worker (worker)|Analyst (analyst)']);
       assert.equal((await shown(page)).open, false, 'the editor stays closed until a role is opened');
       await click(page, '#role-new');
       assert.deepEqual(await shown(page).then(({ open, heading, key, keyReadOnly, selected, focus }) => ({ open, heading, key, keyReadOnly, selected, focus })), { open: true, heading: 'New role', key: '', keyReadOnly: false, selected: [], focus: 'role_key' }, 'New role opens a blank form on its key');
@@ -98,7 +98,7 @@ async function main() {
         return { heading: document.querySelector('#role-editor-title').textContent, key: form.elements.role_key.value, readOnly: form.elements.role_key.readOnly, extends: form.elements.extends.value, parents: [...form.elements.extends.options].map(option => option.value).join('|'),
           resolved: document.querySelector('#role-resolved').value, resolvedRow: document.querySelector('#role-resolved-row').hidden, reset: document.querySelector('#role-reset').disabled, remove: document.querySelector('#role-delete').disabled,
           button: document.querySelector('#roles-cards [data-role-key=sec] .role-card-edit').getAttribute('aria-label') };
-      }), { heading: 'Editing Sec', key: 'sec', readOnly: true, extends: 'reviewer', parents: '|lead|reviewer|worker|analyst'.replace('|lead|reviewer|worker|analyst', '|analyst|lead|reviewer|worker'), resolved: 'reviewer instructions\n\nAdditional focus.', resolvedRow: false, reset: false, remove: true, button: 'Close Sec without saving' });
+      }), { heading: 'Editing Sec', key: 'sec', readOnly: true, extends: 'reviewer', parents: '|leader|reviewer|worker|analyst'.replace('|leader|reviewer|worker|analyst', '|analyst|leader|reviewer|worker'), resolved: 'reviewer instructions\n\nAdditional focus.', resolvedRow: false, reset: false, remove: true, button: 'Close Sec without saving' });
       await click(page, '#roles-cards [data-role-key=analyst] .role-card-edit');
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#role-resolved-row').hidden, document.querySelector('#role-reset').disabled, document.querySelector('#role-delete').disabled]), [true, true, false], 'a role of one\'s own can be deleted, not reset');
       await page.close();
@@ -237,7 +237,7 @@ async function main() {
     // Default agents: add, order, pick order (only with several), remove, and a choice that is no longer offered.
     {
       const page = await mount();
-      await click(page, '#roles-cards [data-role-key=lead] .role-card-edit');
+      await click(page, '#roles-cards [data-role-key=leader] .role-card-edit');
       const rows = () => page.$$eval('#role-editor .spawn-default-row select', selects => selects.map(select => select.value));
       assert.deepEqual([await rows(), await page.$('#role-editor select[aria-label="Default agent selection mode"]')], [[], null]);
       await click(page, '#role-editor [aria-label="Add default agent"]');

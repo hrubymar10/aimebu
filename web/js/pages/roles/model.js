@@ -42,7 +42,7 @@ export function chipsOf(role, roles) {
     const parent = (roles || []).find(item => item.role_key === role.extends);
     chips.push([`extends ${parent ? parent.label : role.extends}`, `Adds to the instructions of ${role.extends}`]);
   }
-  if (role.cap_is_lead) chips.push(['lead']);
+  if (role.cap_is_lead) chips.push(['leader']);
   if (role.cap_can_spawn) chips.push(['can spawn']);
   if (role.builtin) chips.push(['built in']);
   return chips;

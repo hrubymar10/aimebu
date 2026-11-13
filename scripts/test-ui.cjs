@@ -5055,7 +5055,7 @@ async function main() {
     assert.deepEqual(await first.evaluate(() => ({ ticked: document.querySelector('#spawn-form [name=worktree]').checked, hidden: document.querySelector('.spawn-worktree-option').hidden, base: document.querySelector('#spawn-form [name=base_ref]').value })), { ticked: false, hidden: true, base: '' }, 'the worktree box must start clear, and be hidden outside task rooms');
     // Home room: lead only is on for a new project, so the home room offers the lead roles alone, with the reason.
     assert.deepEqual(await first.evaluate(() => ({ roles: [...document.querySelectorAll('#spawn-form [name=role] option')].map(option => option.value), hint: !document.querySelector('#spawn-home-hint').hidden })),
-      { roles: ['lead'], hint: true }, 'the home room spawn dialog offers only lead roles while the project keeps it for the lead');
+      { roles: ['leader'], hint: true }, 'the home room spawn dialog offers only lead roles while the project keeps it for the lead');
     // Start stays off until the roles are read. The tool catalog arrives on its own and used to enable Start while the role list of the
     // last opening (here the lead alone) was still in the form, so a stale role could be started. The roles are held back here to see it.
     {
@@ -5072,7 +5072,7 @@ async function main() {
     }
     await domClick(first, '#spawn-form .dialog-actions button:last-child');
     await first.waitForFunction(() => window.__spawnBodies.length === 2 && !document.querySelector('#spawn-dialog').open);
-    assert.deepEqual(await first.evaluate(() => [Object.hasOwn(window.__spawnBodies[1], 'worktree'), Object.hasOwn(window.__spawnBodies[1], 'base_ref'), window.__spawnBodies[1].role_key || window.__spawnBodies[1].role]), [false, false, 'lead'], 'a spawn from a room that is not a task room must not carry a worktree');
+    assert.deepEqual(await first.evaluate(() => [Object.hasOwn(window.__spawnBodies[1], 'worktree'), Object.hasOwn(window.__spawnBodies[1], 'base_ref'), window.__spawnBodies[1].role_key || window.__spawnBodies[1].role]), [false, false, 'leader'], 'a spawn from a room that is not a task room must not carry a worktree');
     // Turned off (from the home room's Project section), the home room offers every role again; turned back on, only the lead.
     await domClick(first, '#room-info');
     await first.waitForFunction(() => !!document.querySelector('#room-project #project-home-lead-only') && !document.querySelector('#project-home-lead-only').disabled);
@@ -7313,7 +7313,7 @@ async function main() {
           wide: document.querySelector('#room-info-dialog').classList.contains('room-info-home'), archive: document.querySelector('#room-lifecycle').hidden,
         };
       });
-      assert.deepEqual(home, { schedules: true, lead: 'Current room lead', project: true, form: true, settingsEmpty: true, name: 'UI smoke', notes: 'Project memory', notesButton: 'Open project memory', notesShown: true,
+      assert.deepEqual(home, { schedules: true, lead: 'Current room leader', project: true, form: true, settingsEmpty: true, name: 'UI smoke', notes: 'Project memory', notesButton: 'Open project memory', notesShown: true,
         worktree: 'The home room works in the project folder. Task rooms can have their own Git worktree.', worktreeButtons: 0, wide: true, archive: true }, 'the home room settings carry every room section plus the project');
       // A home-room schedule is created like a task room's.
       await first.locator('#room-schedules [name=body]').fill('UI home note');

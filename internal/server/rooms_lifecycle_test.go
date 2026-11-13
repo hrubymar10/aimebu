@@ -179,7 +179,7 @@ func TestMessageListDoesNotFlagHandoffsOrInboxAnswers(t *testing.T) {
 	f := newFixture(t)
 	f.seed()
 	agent, _ := f.createToolAgent(t, "role_worker_default")
-	lead, _ := f.createToolAgentNamed(t, "role_lead_default", "theleadagent")
+	lead, _ := f.createToolAgentNamed(t, "role_leader_default", "theleadagent")
 	post := func(m store.Message) store.Message {
 		m.RoomID = f.room.ID
 		out, err := f.db.InsertMessage(t.Context(), m)

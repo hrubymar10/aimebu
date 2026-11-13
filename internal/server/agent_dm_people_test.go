@@ -27,7 +27,7 @@ func TestPeopleJoinAndWriteInAChatBetweenAgents(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, _ := f.createToolAgent(t, "role_lead_default")
+	lead, _ := f.createToolAgent(t, "role_leader_default")
 	p2, peer := f.otherProjectAgent(t)
 	var chat store.Room
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) (err error) {

@@ -106,7 +106,7 @@ func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	for id, want := range map[string]string{
-		"role_lead_default": "owner lead edit", "role_reviewer_default": "owner reviewer edit",
+		"role_leader_default": "owner lead edit", "role_reviewer_default": "owner reviewer edit",
 		"role_worker_default":       currentWorkerRoleBody,
 		"role_sec-reviewer_default": oldBodies["role_sec-reviewer_default"],
 		"role_scoped":               "scoped edit",
@@ -143,7 +143,7 @@ func TestRoleDefaultsFreshAndUpgradeMatch(t *testing.T) {
 		}
 	}
 	for key, needle := range map[string]string{
-		"lead": "frame the problem", "worker": "parent SHA", "reviewer": "ordered by severity",
+		"leader": "frame the problem", "worker": "parent SHA", "reviewer": "ordered by severity",
 		"sec-reviewer": "authorization boundaries", "test-reviewer": "regression coverage", "ux-reviewer": "accessibility",
 	} {
 		if !strings.Contains(want[key], needle) {
@@ -202,7 +202,8 @@ func TestRoleDefaultsMigrationPreservesEdits(t *testing.T) {
 
 func TestTeamlessLeadMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 	t.Parallel()
-	s, _ := testStore(t, Options{})
+	s := &Store{db: leaderRoleDatabaseBefore(t)}
+	defer s.db.Close()
 	if strings.Contains(priorLeadRoleBody, "list_teams") || strings.Contains(leadRoleBody, "list_teams") {
 		t.Fatal("the default lead body still sends the lead through saved teams")
 	}
@@ -258,7 +259,8 @@ func TestLeadNoImplementMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 		"already new": {priorNoDirectLeadRoleBody, 0, priorNoDirectLeadRoleBody},
 	} {
 		t.Run(name, func(t *testing.T) {
-			s, _ := testStore(t, Options{})
+			s := &Store{db: leaderRoleDatabaseBefore(t)}
+			defer s.db.Close()
 			if _, err := s.db.Exec(`UPDATE role SET body=?,rev=? WHERE id='role_lead_default'`, test.body, test.rev); err != nil {
 				t.Fatal(err)
 			}
@@ -286,7 +288,8 @@ func TestLeadDirectTaskMigrationPreservesEditedRoles(t *testing.T) {
 		"already new": {priorLeadDirectRoleBody, 0, priorLeadDirectRoleBody},
 	} {
 		t.Run(name, func(t *testing.T) {
-			s, _ := testStore(t, Options{})
+			s := &Store{db: leaderRoleDatabaseBefore(t)}
+			defer s.db.Close()
 			if _, err := s.db.Exec(`UPDATE role SET body=?,rev=? WHERE id='role_lead_default'`, test.body, test.rev); err != nil {
 				t.Fatal(err)
 			}
@@ -302,7 +305,8 @@ func TestLeadDirectTaskMigrationPreservesEditedRoles(t *testing.T) {
 }
 
 func TestRoomMentionMigrationUpdatesOnlyUneditedBuiltins(t *testing.T) {
-	s, _ := testStore(t, Options{})
+	s := &Store{db: leaderRoleDatabaseBefore(t)}
+	defer s.db.Close()
 	for _, item := range []struct {
 		id, body string
 		rev      int
@@ -359,7 +363,8 @@ func TestFrozenLeadBodyIsWhatTheEarlierMigrationsWrite(t *testing.T) {
 		"migration 62": {strings.Replace(priorLeadRoleBody, frozenLeadSpawnParagraph, priorLeadSpawnParagraph, 1), roleTeamlessLeadMigration()},
 	} {
 		t.Run(name, func(t *testing.T) {
-			s, _ := testStore(t, Options{})
+			s := &Store{db: leaderRoleDatabaseBefore(t)}
+			defer s.db.Close()
 			if _, err := s.db.Exec(`UPDATE role SET body=?,rev=0 WHERE id='role_lead_default'`, test.before); err != nil {
 				t.Fatal(err)
 			}

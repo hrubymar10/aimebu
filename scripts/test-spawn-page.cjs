@@ -30,9 +30,9 @@ const catalog = { tools: [
   { tool: 'claude', variant: 'native', label: 'Claude Code', launcher_id: 'l2', available: true, models: [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet', default: true, note: 'Everyday' }] },
   { tool: 'pi', variant: 'native', label: 'Pi', launcher_id: 'l3', available: false, unavailable_reason: 'not installed', models: [] }] };
 const machines = { machines: [{ id: 'm1', name: 'Host', is_host: true, approved: true, connected: true, project_allowed: true }, { id: 'm2', name: 'Remote', approved: true, connected: true, project_allowed: true }] };
-const roles = [{ role_key: 'worker', label: 'Worker', emoji: '🔧', cap_is_lead: false }, { role_key: 'lead', label: 'Lead', emoji: '🧭', cap_is_lead: true }];
+const roles = [{ role_key: 'worker', label: 'Worker', emoji: '🔧', cap_is_lead: false }, { role_key: 'leader', label: 'Leader', emoji: '🧭', cap_is_lead: true }];
 const stable = (extra = {}) => ({ 'GET /api/projects/p1/machine-folders': { folders: [{ machine_id: 'm2', folder: '/srv/p1' }] }, 'GET /api/machines?project_id=p1': machines, 'GET /api/roles': roles,
-  'GET /api/rooms/r1/agent-name': { name: 'nova' }, 'GET /api/spawn-catalog?machine_id=m1': catalog, 'GET /api/spawn-catalog?machine_id=m2': catalog, 'GET /api/projects/p1/role-spawn-defaults/worker/next': { available: false }, 'GET /api/projects/p1/role-spawn-defaults/lead/next': { available: false },
+  'GET /api/rooms/r1/agent-name': { name: 'nova' }, 'GET /api/spawn-catalog?machine_id=m1': catalog, 'GET /api/spawn-catalog?machine_id=m2': catalog, 'GET /api/projects/p1/role-spawn-defaults/worker/next': { available: false }, 'GET /api/projects/p1/role-spawn-defaults/leader/next': { available: false },
   'GET /api/rooms/r1/agents': [agent('a1', 'ada')], 'GET /api/rooms/r1/members': { humans: [] },
   'GET /api/rooms/r2/agent-name': { name: 'luna' }, 'GET /api/rooms/r2/agents': [agent('a9', 'zed', { room_id: 'r2' })], 'GET /api/rooms/r2/members': { humans: [] }, ...extra });
 
@@ -110,7 +110,7 @@ async function main() {
     await answer(page, name, 200, { name: 'nova' });
     await ready(page);
     const state = await form(page);
-    assert.deepEqual(state.roles, ['🔧 Worker', '🧭 Lead']); assert.equal(state.role, 'worker');
+    assert.deepEqual(state.roles, ['🔧 Worker', '🧭 Leader']); assert.equal(state.role, 'worker');
     assert.deepEqual(state.tools, [['Codex', false], ['Claude Code', false], ['Pi — not installed; check Settings → Harnesses', true]]);
     assert.deepEqual([state.tool, state.model, state.version, state.name, state.submit, state.machine], ['Codex', 'gpt-6-sol', 'CLI version 0.9', 'nova', false, 'm1']);
     assert.deepEqual(state.models, [['gpt-6-sol', 'GPT-6 Sol', ''], ['gpt-6-mini', 'GPT-6 Mini', '']]);
@@ -155,11 +155,11 @@ async function main() {
     const page = await mount({ current: room('r1', { kind: 'home' }), auto: stable({ 'GET /api/projects/p1/settings': { home_lead_only: true } }) });
     await open(page); await ready(page);
     const lead = await form(page);
-    assert.deepEqual([lead.roles, lead.hint], [['🧭 Lead'], true]);
+    assert.deepEqual([lead.roles, lead.hint], [['🧭 Leader'], true]);
     await page.evaluate(() => document.querySelector('#spawn-dialog').close());
     const free = await mount({ current: room('r1', { kind: 'home' }), auto: stable({ 'GET /api/projects/p1/settings': { home_lead_only: false } }) });
     await open(free); await ready(free);
-    assert.deepEqual([(await form(free)).roles, (await form(free)).hint], [['🔧 Worker', '🧭 Lead'], false]);
+    assert.deepEqual([(await form(free)).roles, (await form(free)).hint], [['🔧 Worker', '🧭 Leader'], false]);
     await free.close(); await page.close();
   }
 
@@ -188,7 +188,7 @@ async function main() {
     await answer(page, rolesSecond, 200, roles);
     await answer(page, rolesFirst, 200, [{ role_key: 'old', label: 'Old role', cap_is_lead: false }]);
     await ready(page);
-    assert.deepEqual((await form(page)).roles, ['🔧 Worker', '🧭 Lead'], 'the first opening answered late and filled nothing');
+    assert.deepEqual((await form(page)).roles, ['🔧 Worker', '🧭 Leader'], 'the first opening answered late and filled nothing');
     await page.close();
   }
   // The machines of an earlier opening, answered after the dialog was closed and opened again, do not replace the list of the new one.
@@ -327,7 +327,7 @@ async function main() {
   // person confirms that v1 is not using the session.
   {
     const page = await mount();
-    const resume = { slug: 'old-bot', legacy_id: 'old-bot', role_key: 'lead', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: true, outside_folder: true, reason: '' };
+    const resume = { slug: 'old-bot', legacy_id: 'old-bot', role_key: 'leader', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: true, outside_folder: true, reason: '' };
     await open(page, { resume }); await ready(page);
     const state = await form(page);
     assert.deepEqual([state.title, state.nameHidden, state.tool, state.model], ['Start old-bot as a v2 agent', true, 'Codex', 'gpt-6-sol']);
@@ -342,7 +342,7 @@ async function main() {
     await page.$eval('#spawn-resume-confirm', node => node.click());
     await page.$eval('#spawn-form button[type=submit]', node => node.click());
     const spawn = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
-    assert.deepEqual(await body(page, spawn), { role_key: 'lead', tool: 'codex', variant: 'native', model: 'gpt-6-sol', launcher_id: 'l1', machine_id: 'm1', resume_legacy: 'old-bot', resume_mode: 'continue', confirm_v1_idle: true });
+    assert.deepEqual(await body(page, spawn), { role_key: 'leader', tool: 'codex', variant: 'native', model: 'gpt-6-sol', launcher_id: 'l1', machine_id: 'm1', resume_legacy: 'old-bot', resume_mode: 'continue', confirm_v1_idle: true });
     await answer(page, spawn, 200, agent('a2', 'old-bot')); await settle(page);
     assert.deepEqual(await calls(page), [['showRoom', 'r2']], 'the person is taken to the room it started in');
     // A copy needs no confirmation.
@@ -664,7 +664,7 @@ async function main() {
   {
     const two = { machines: [...machines.machines, { id: 'm3', name: 'Third', approved: true, connected: true, project_allowed: true }] };
     const page = await mount({ auto: stable({ 'GET /api/machines?project_id=p1': two, 'GET /api/projects/p1/machine-folders': { folders: [{ machine_id: 'm2', folder: '/srv/p1' }, { machine_id: 'm3', folder: '/srv/p3' }] },
-      'GET /api/spawn-catalog?machine_id=m3': catalog, 'GET /api/projects/p1/role-spawn-defaults/lead/next': undefined, 'PUT /api/projects/p1/machine-folders/m2': undefined, 'PUT /api/projects/p1/machine-folders/m3': undefined }) });
+      'GET /api/spawn-catalog?machine_id=m3': catalog, 'GET /api/projects/p1/role-spawn-defaults/leader/next': undefined, 'PUT /api/projects/p1/machine-folders/m2': undefined, 'PUT /api/projects/p1/machine-folders/m3': undefined }) });
     await open(page); await ready(page);
     await select(page, 'machine', 'm2');
     await page.waitForFunction(() => !document.querySelector('#spawn-form button[type=submit]').disabled);
@@ -673,8 +673,8 @@ async function main() {
     const first = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m2');
     const disabled = () => page.$eval('#spawn-save-folder', node => node.disabled), status = () => page.$eval('#spawn-folder-status', node => node.textContent);
     assert.equal(await disabled(), true);
-    await select(page, 'role', 'lead');
-    const preview = await waitRequest(page, 'GET', '/api/projects/p1/role-spawn-defaults/lead/next');
+    await select(page, 'role', 'leader');
+    const preview = await waitRequest(page, 'GET', '/api/projects/p1/role-spawn-defaults/leader/next');
     await answer(page, preview, 200, { available: true, machine_id: 'm3', launcher_id: 'l1', model: 'gpt-6-mini' });
     await page.waitForFunction(() => document.querySelector('#spawn-form [name=machine]').value === 'm3' && !document.querySelector('#spawn-form button[type=submit]').disabled);
     assert.equal(await disabled(), false, 'the role default made another machine the one on show, and its Save is available');

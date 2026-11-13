@@ -242,7 +242,7 @@ func TestAgentToolRoomsAreKeyAuthenticatedAndProjectScoped(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	agent, key := f.createToolAgent(t, "role_lead_default")
+	agent, key := f.createToolAgent(t, "role_leader_default")
 	privateDM, err := f.db.CreateRoom(t.Context(), store.Room{ProjectID: f.project.ID, Kind: "dm", DMKey: "private-test", Title: "Private DM", CreatedBy: "owner"})
 	if err != nil {
 		t.Fatal(err)
@@ -383,7 +383,7 @@ func TestAgentInventoryHistoryAndRoleAssignment(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, leadKey := f.createToolAgentNamed(t, "role_lead_default", "leadtools")
+	lead, leadKey := f.createToolAgentNamed(t, "role_leader_default", "leadtools")
 	worker, workerKey := f.createToolAgentNamed(t, "role_worker_default", "workertools")
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
 		_, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id='chk_tools'`, worker.ID)
@@ -533,7 +533,7 @@ func TestAgentRoleSafetyBranches(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, _ := f.createToolAgentNamed(t, "role_lead_default", "rolelead")
+	lead, _ := f.createToolAgentNamed(t, "role_leader_default", "rolelead")
 	worker, _ := f.createToolAgentNamed(t, "role_worker_default", "roleworker")
 	other, _ := f.createToolAgentNamed(t, "role_reviewer_default", "roleother")
 	change := func(id, role string, rev int64) (store.AgentCard, error) {
@@ -639,7 +639,7 @@ func TestAgentToolUsageLeftIncludesProviderSnapshot(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	agent, key := f.createToolAgent(t, "role_lead_default")
+	agent, key := f.createToolAgent(t, "role_leader_default")
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
 		_, err := tx.Exec(`UPDATE agent SET tool='codex',provider='openai' WHERE id=?`, agent.ID)
 		return err
@@ -725,8 +725,8 @@ func TestLeadToolCannotEscalateOrActAfterStop(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, key := f.createToolAgent(t, "role_lead_default")
-	other, _ := f.createToolAgentNamed(t, "role_lead_default", "otherlead")
+	lead, key := f.createToolAgent(t, "role_leader_default")
+	other, _ := f.createToolAgentNamed(t, "role_leader_default", "otherlead")
 	journal, err := supervisor.OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -741,7 +741,7 @@ func TestLeadToolCannotEscalateOrActAfterStop(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- client.RunOnce(ctx) }()
 	waitFor(t, func() bool { _, err := f.srv.machineForID(f.machineID); return err == nil })
-	spawnBody := map[string]string{"room_id": f.room.ID, "role_key": "lead", "tool": "fake", "variant": "test", "model": "test"}
+	spawnBody := map[string]string{"room_id": f.room.ID, "role_key": "leader", "tool": "fake", "variant": "test", "model": "test"}
 	resp := f.toolPost(t, "/api/agent/agents", key, "escalate", spawnBody)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("spawn lead status=%d", resp.StatusCode)
@@ -786,7 +786,7 @@ func TestNotAcceptingLeadCannotAct(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
 		_, err := tx.Exec(`UPDATE agent SET desired='not_accepting' WHERE id=?`, lead.ID)
 		return err
@@ -811,7 +811,7 @@ func TestLeadToolSpawnStopAndUsageHeadroom(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	journal, err := supervisor.OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -905,10 +905,10 @@ func TestLeadToolSpawnStopAndUsageHeadroom(t *testing.T) {
 		if message.AuthorKind != "system" {
 			continue
 		}
-		if message.Body == lead.Slug+" (lead) spawned "+spawned.Slug+" (reviewer)" {
+		if message.Body == lead.Slug+" (leader) spawned "+spawned.Slug+" (reviewer)" {
 			spawnNotices++
 		}
-		if message.Body == lead.Slug+" (lead) stopped "+spawned.Slug+" (reviewer)" {
+		if message.Body == lead.Slug+" (leader) stopped "+spawned.Slug+" (reviewer)" {
 			stopNotices++
 		}
 	}

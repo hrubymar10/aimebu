@@ -62,7 +62,7 @@ func TestDMAgentToolOpensAChatIdempotently(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	_, workerKey := f.createToolAgentNamed(t, "role_worker_default", "worker")
 	_, peer := f.otherProjectAgent(t)
 	f.ownerTurn(t, lead)

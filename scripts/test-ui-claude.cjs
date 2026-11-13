@@ -147,7 +147,7 @@ async function main() {
           { id: 'aaaaaaaa-0000-4000-8000-000000000003', title: 'Outside', cwd: '/q', modified_at: '2026-10-24T08:00:00Z', size: 100, outside_folder: true },
         ];
         const source = {
-          roles: async () => [{ role_key: 'worker', label: 'Worker' }, { role_key: 'reviewer', label: 'Reviewer' }, { role_key: 'lead', label: 'Lead', cap_is_lead: true }],
+          roles: async () => [{ role_key: 'worker', label: 'Worker' }, { role_key: 'reviewer', label: 'Reviewer' }, { role_key: 'leader', label: 'Leader', cap_is_lead: true }],
           catalog: async () => ({ tools: [{ tool: 'claude', variant: 'docker', launcher_id: 'l_docker', containerized: true, available: true, label: 'Claude Code (Docker)', models: [{ id: 'haiku' }] },
             { tool: 'claude', variant: 'native', launcher_id: 'l_native', containerized: false, available: true, label: 'Claude Code', models: [{ id: 'opus', label: 'Opus' }, { id: 'haiku', label: 'Haiku', default: true }] }] }),
           claudeSessions: async (project, options) => { calls.push(['list', project, options.launcherID]); return { sessions, unreadable: 2, truncated: false }; },

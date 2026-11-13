@@ -1652,7 +1652,8 @@ DROP TABLE reply_root;
 -- Preserve an explicit fresh start while folder or machine admission waits
 -- for the owner. Approval must not silently resume the old native session.
 ALTER TABLE boundary_pending ADD COLUMN start_fresh INTEGER NOT NULL DEFAULT 0 CHECK (start_fresh IN (0,1));
-`}, {100, roleLeadDirectTaskMigration()}, {101, roleRoomMentionMigration()}}
+`}, {100, roleLeadDirectTaskMigration()}, {101, roleRoomMentionMigration()}, {102, `-- Role key and ID rename is applied by migrateLeaderRole.
+UPDATE role SET rev=rev WHERE 0;`}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.
@@ -1765,6 +1766,10 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if err == nil && m.version == 64 {
 			err = logProjectRoles(ctx, tx)
 		}
+		var leaderFacts []string
+		if err == nil && m.version == 102 {
+			leaderFacts, err = migrateLeaderRole(ctx, tx)
+		}
 		if err == nil {
 			_, err = tx.ExecContext(ctx, m.sql)
 		}
@@ -1801,8 +1806,83 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 				log.Printf("migration 69: %s", line)
 			}
 		}
+		if m.version == 102 {
+			for _, line := range leaderFacts {
+				log.Printf("migration 102: %s", line)
+			}
+		}
 	}
 	return nil
+}
+
+// migrateLeaderRole keeps the custom role's identity and assignments if an
+// imported v1 `leader` already occupies the new global key. Foreign keys are
+// deferred only for this transaction while the built-in ID and its references
+// move together.
+func migrateLeaderRole(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys=ON`); err != nil {
+		return nil, err
+	}
+	var facts []string
+	var customID string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM role WHERE project_id IS NULL AND role_key='leader' AND deleted_at IS NULL`).Scan(&customID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if customID != "" && customID != "role_lead_default" {
+		key := "leader-v1"
+		for n := 2; ; n++ {
+			var occupied bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM role WHERE key=? OR role_key=?)`, key, key).Scan(&occupied); err != nil {
+				return nil, err
+			}
+			if !occupied {
+				break
+			}
+			key = fmt.Sprintf("leader-v1-%d", n)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE role SET key=?,role_key=?,label=label || ' (v1)',rev=rev+1 WHERE id=?`, key, key, customID); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE role SET extends=? WHERE extends='leader' AND project_id IS NULL`, key); err != nil {
+			return nil, err
+		}
+		facts = append(facts, fmt.Sprintf("custom global leader role %s moved to %s; its agents and body are preserved", customID, key))
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT project_id,id FROM role WHERE project_id IS NOT NULL AND role_key='leader' AND deleted_at IS NULL ORDER BY project_id,id`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var projectID, roleID string
+		if err := rows.Scan(&projectID, &roleID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		facts = append(facts, fmt.Sprintf("project %s has custom leader role %s; project role and assignments left unchanged", projectID, roleID))
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE role SET id='role_leader_default',key='leader',role_key='leader',
+		label=CASE WHEN label='Lead' THEN 'Leader' ELSE label END,rev=rev+1 WHERE id='role_lead_default'`); err != nil {
+		return nil, err
+	}
+	for _, table := range []string{"agent", "project_role_spawn_default", "role_spawn_cursor", "role_spawn_warning"} {
+		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET role_id='role_leader_default' WHERE role_id='role_lead_default'`); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE role SET extends='leader' WHERE extends='lead' AND project_id IS NULL`); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE role SET extends='leader' WHERE extends='lead' AND project_id IS NOT NULL
+		AND NOT EXISTS (SELECT 1 FROM role other WHERE other.project_id=role.project_id AND other.role_key='leader' AND other.deleted_at IS NULL)`); err != nil {
+		return nil, err
+	}
+	return facts, nil
 }
 
 // keepHistoryUnnumbered, as a context value, lets a test run migration 71 over messages (they stay unnumbered): the tests of the old

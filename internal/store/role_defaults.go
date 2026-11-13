@@ -150,7 +150,7 @@ type builtinRole struct {
 // agent receives are the resolved body (the parent's, a blank line, then the role's own).
 func builtinRoles() map[string]builtinRole {
 	roles := map[string]builtinRole{
-		"role_lead_default":     {ID: "role_lead_default", Key: "lead", Label: "Lead", Emoji: "👑", Body: leadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
+		"role_leader_default":   {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: leadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
 		"role_worker_default":   {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
 		"role_reviewer_default": {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
 	}

@@ -211,6 +211,12 @@ Content
   from delivery `note` and `turn_note`
 
 Roles, agents
+- The built-in coordinating role has ID `role_leader_default`, key `leader`,
+  and label `Leader`. Migration 102 renames the former `lead` role and its
+  agent and spawn references. A global custom `leader` role is first moved
+  to the next available `leader-v1` key (or numbered variant), with its body
+  and agents retained. Project-scoped `leader` rows remain unchanged and are
+  logged. There is no `lead` alias for the built-in role.
 - **role**(id, key UNIQUE (legacy internal key), project_id? (always NULL since migration 64), role_key,
   label, emoji, body (editable instructions), extends (role_key of a parent
   role, '' for none), cardinality[multi|singleton],

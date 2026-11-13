@@ -24,8 +24,8 @@ const server = http.createServer((req, res) => {
 });
 
 const limit = { rev: 3, cost_mode: 'inherit', turn_mode: 'custom', daily_turn_cap: 50, daily_cost_cap: null, inherited_cost_cap: 5, inherited_turn_cap: null, day_start: '2026-02-03T00:00:00Z', tz: 'UTC', daily_turns: 2, daily_cost: 0.5, cost_coverage: 'known', effective_state: 'active' };
-const usage = { turns: 4, by_agent: [{ key: 'a1', label: 'lead', turns: 4 }], by_model: [] };
-const roles = [{ role_key: 'worker', inherited: true, global_agents: [{}, {}], default_agents: [], pick_mode: 'in_turn' }, { role_key: 'lead', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }];
+const usage = { turns: 4, by_agent: [{ key: 'a1', label: 'leader', turns: 4 }], by_model: [] };
+const roles = [{ role_key: 'worker', inherited: true, global_agents: [{}, {}], default_agents: [], pick_mode: 'in_turn' }, { role_key: 'leader', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }];
 const rule = (status, body) => ({ status, body });
 const base = () => ({
   'GET /api/projects/p1/control': { desired: 'active', effective_state: 'active', rev: 7 },
@@ -119,9 +119,9 @@ async function main() {
         turn: [document.querySelector('#project-turn-mode').value, document.querySelector('#project-turn-cap').value, document.querySelector('#project-turn-cap').hidden, document.querySelector('#project-turn-mode option').textContent],
         described: document.querySelector('#project-cost-mode').getAttribute('aria-describedby'), summary: document.querySelector('.usage-limit-summary').textContent.replace(/^.+?\(UTC\)/, 'DAY (UTC)'),
         rows: [...document.querySelectorAll('.usage-popover-rows dt')].length > 0, groups: [...document.querySelectorAll('.usage-summary-groups li')].map(li => li.textContent.split(' ')[0]) })),
-        { cost: ['inherit', 'Inherit (default: $5.00)', true], turn: ['custom', '50', false, 'Inherit (default: no limit)'], described: 'project-cost-mode-desc', summary: 'DAY (UTC), all rooms: 2 turns / 50 cap; $0.50 reported cost / no cap. Dispatch: active.', rows: true, groups: ['lead'] });
+        { cost: ['inherit', 'Inherit (default: $5.00)', true], turn: ['custom', '50', false, 'Inherit (default: no limit)'], described: 'project-cost-mode-desc', summary: 'DAY (UTC), all rooms: 2 turns / 50 cap; $0.50 reported cost / no cap. Dispatch: active.', rows: true, groups: ['leader'] });
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.project-role-default')].map(card => [card.querySelector('h4').textContent, card.querySelector('select').value, card.querySelector('select').options[0].textContent, card.querySelector(':scope > div[hidden]') !== null, card.querySelectorAll('.spawn-default-row').length])),
-        [['worker', 'inherit', 'Inherit global (2 agents)', true, 0], ['lead', 'custom', 'Inherit global (0 agents)', false, 1]]);
+        [['worker', 'inherit', 'Inherit global (2 agents)', true, 0], ['leader', 'custom', 'Inherit global (0 agents)', false, 1]]);
       assert.deepEqual(await page.evaluate(() => ({ session: [document.querySelector('#project-session-import').hidden, document.querySelector('#project-session-import-open').disabled, document.querySelector('#project-session-import-open').title],
         rows: ['archive', 'reopen', 'delete'].map(key => [key, document.querySelector(`#project-${key}-row`).hidden, document.querySelector(`#project-${key}`).disabled]), note: document.querySelector('#project-lifecycle > p').textContent, group: document.querySelector('#project-lifecycle').hidden })),
         { session: [false, false, 'Import Claude Code sessions'], rows: [['archive', false, false], ['reopen', true, false], ['delete', true, false]], note: '', group: false });
@@ -235,7 +235,7 @@ async function main() {
     }
     // Default agents per role: choosing Custom shows the picker, saving sends the list, and a failed save says why.
     {
-      const page = await mount({ auto: { ...base(), 'PUT /api/projects/p1/role-spawn-defaults/worker': { inherited: false }, 'PUT /api/projects/p1/role-spawn-defaults/lead': rule(403, { message: 'Not yours' }) } });
+      const page = await mount({ auto: { ...base(), 'PUT /api/projects/p1/role-spawn-defaults/worker': { inherited: false }, 'PUT /api/projects/p1/role-spawn-defaults/leader': rule(403, { message: 'Not yours' }) } });
       await ready(page);
       const card = key => `.project-role-default:nth-child(${key})`;
       await page.select(`${card(1)} select`, 'custom');

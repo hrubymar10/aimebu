@@ -46,7 +46,7 @@ async function main() {
       };
       const list = Array.from({ length: sessions }, (_, index) => ({ id: `aaaaaaaa-0000-4000-8000-00000000000${index + 1}`, title: `Session ${index + 1}`, cwd: '/p', modified_at: '2026-10-24T10:00:00Z', size: 100 }));
       const source = {
-        roles: wrap('roles', async () => [{ role_key: 'worker', label: 'Worker' }, { role_key: 'reviewer', label: 'Reviewer' }, { role_key: 'lead', label: 'Lead', cap_is_lead: true }]),
+        roles: wrap('roles', async () => [{ role_key: 'worker', label: 'Worker' }, { role_key: 'reviewer', label: 'Reviewer' }, { role_key: 'leader', label: 'Leader', cap_is_lead: true }]),
         catalog: wrap('catalog', async machine => ({ tools: [{ tool: 'claude', variant: 'native', launcher_id: `l_${machine}`, containerized: false, available: true, label: 'Claude Code', models: [{ id: 'opus', label: 'Opus' }, { id: 'haiku', label: 'Haiku', default: true }] }] })),
         claudeSessions: wrap('sessions', async () => ({ sessions: list })),
         spawn: wrap('spawn', async (room, params) => ({ slug: `copy-${params.resume_session.slice(-1)}` })),

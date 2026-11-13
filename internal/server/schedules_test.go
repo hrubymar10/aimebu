@@ -72,7 +72,7 @@ func TestLeadToolScheduleIsScopedAndIdempotent(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	path := "/api/agent/rooms/" + f.room.ID + "/schedules"
 	body := map[string]any{"target_lead": true, "body": "check status", "kind": "interval", "timezone": "UTC", "interval_seconds": 300}
 	first := f.toolPost(t, path, key, "schedule-key", body)
@@ -126,7 +126,7 @@ func TestHomeRoomSchedulesAndPrivateChatRefusal(t *testing.T) {
 	if home.ID == "" {
 		t.Fatalf("no home room in %+v", rooms)
 	}
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	if err := f.db.AddMember(t.Context(), home.ID, "agent", lead.ID); err != nil {
 		t.Fatal(err)
 	}

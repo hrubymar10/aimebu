@@ -335,6 +335,12 @@ global records, and active records reach agents in every memory-enabled
 project. Imported v1 records are ordinary and active on arrival. Profiles follow v1's trusted workspace model
 and are visible across projects.
 
+The built-in coordinating role is `leader` (ID `role_leader_default`, label
+`Leader`); `lead` is not an alias. Migration 102 moves built-in assignments
+and role references to the new ID. If a global custom `leader` exists, it
+is renamed to an available `leader-v1` key (or numbered variant), preserving
+its body and agents; project-scoped collisions are logged and left intact.
+
 Roles are global only and defined by the instance owner or an admin; changing a role's capabilities needs the same authority.
 Migration 64 retired project roles: a live project role became global when no global role had its key (the first by id when several
 projects defined it) but without its lead, can-spawn or writer capabilities, which the owner sets again in Settings → Roles; any other was dropped with a log line and its agents moved to the global role of that key, and a deleted one stays
@@ -758,7 +764,7 @@ file count to the API response and a room notice; uncommitted content stays
 in the base checkout.
 The lead must currently be `active` to spawn or stop. An agent lead cannot
 spawn another lead or stop a different lead; it may stop itself. Notices use
-agent slugs and roles, for example `tessa (lead) stopped drew (worker)`.
+agent slugs and roles, for example `tessa (leader) stopped drew (worker)`.
 Provider quota uses the active profile snapshot for the caller's tool. A
 cached or failed-refresh snapshot with windows is marked `stale`; missing
 windows return `unknown`. It does not return credential or token material.

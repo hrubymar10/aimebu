@@ -87,7 +87,7 @@ func TestHomeRoomLeadOnlySpawn(t *testing.T) {
 	if status, _, raw := f.spawnRequest(t, "home-worker", "worker"); status != 409 || raw["error"] != "home_is_lead_only" {
 		t.Fatalf("worker into the home room: %d %+v", status, raw)
 	}
-	if status, card, raw := f.spawnRequest(t, "home-lead", "lead"); status != 201 || card.ID == "" {
+	if status, card, raw := f.spawnRequest(t, "home-lead", "leader"); status != 201 || card.ID == "" {
 		t.Fatalf("lead into the home room: %d %+v", status, raw)
 	}
 	resp = f.request(http.MethodPut, settingsPath, map[string]any{"home_lead_only": false}, true)

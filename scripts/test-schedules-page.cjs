@@ -98,7 +98,7 @@ async function main() {
     await load(page, roomOf('r1'));
     let v = await view(page);
     assert.deepEqual([v.hidden, v.list, v.rows, v.submit], [false, 'No schedules', 0, false]);
-    assert.deepEqual(v.targets, [['lead', 'Current room lead'], ['a1', 'ada (worker)']]);
+    assert.deepEqual(v.targets, [['lead', 'Current room leader'], ['a1', 'ada (worker)']]);
     assert.equal(v.zone.length > 0, true, 'the time zone starts as the browser\'s');
     assert.deepEqual(v.fields, { once: 1, interval: 0, civil: 0, weekly: 0 });
     for (const [kind, want] of [['interval', { once: 0, interval: 1, civil: 0, weekly: 0 }], ['daily', { once: 0, interval: 0, civil: 1, weekly: 0 }], ['weekly', { once: 0, interval: 0, civil: 1, weekly: 1 }], ['once', { once: 1, interval: 0, civil: 0, weekly: 0 }]]) {

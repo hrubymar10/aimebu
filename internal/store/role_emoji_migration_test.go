@@ -47,7 +47,7 @@ func TestMigrationEightyNineChangesAnUntouchedLeadCompass(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if got := roleEmoji(t, db, "role_lead_default"); got != "👑" {
+	if got := roleEmoji(t, db, "role_leader_default"); got != "👑" {
 		t.Fatalf("the shipped lead has %q after the migration, want the crown", got)
 	}
 	if got := roleEmoji(t, db, "role_worker_default"); got != "🧭" {
@@ -65,7 +65,7 @@ func TestMigrationEightyNineKeepsAnEmojiTheOwnerChose(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if got := roleEmoji(t, db, "role_lead_default"); got != "🎯" {
+	if got := roleEmoji(t, db, "role_leader_default"); got != "🎯" {
 		t.Fatalf("an emoji the owner chose changed to %q", got)
 	}
 }
@@ -73,7 +73,7 @@ func TestMigrationEightyNineKeepsAnEmojiTheOwnerChose(t *testing.T) {
 // The shipped lead role (what "reset to default" restores) is the crown too.
 func TestBuiltinLeadRoleHasACrown(t *testing.T) {
 	t.Parallel()
-	if got := builtinRoles()["role_lead_default"].Emoji; got != "👑" {
+	if got := builtinRoles()["role_leader_default"].Emoji; got != "👑" {
 		t.Fatalf("builtin lead emoji %q", got)
 	}
 }

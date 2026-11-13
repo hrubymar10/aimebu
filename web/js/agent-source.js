@@ -18,7 +18,7 @@ export class MockAgentSource {
     { tool: 'claude', variant: 'native', label: 'Claude Code', cli_version: '', models: [{ id: 'haiku', label: 'Haiku' }], available: false, unavailable_reason: 'not offered by a connected machine' },
     { tool: 'codex', variant: 'native', label: 'Codex', cli_version: 'mock-1', models: [{ id: 'gpt-6-luna', label: 'GPT-6 Luna' }], available: true },
   ] }; }
-  async roles() { return [{ id: 'role_worker', role_key: 'worker', label: 'Worker' }, { id: 'role_reviewer', role_key: 'reviewer', label: 'Reviewer' }, { id: 'role_lead', role_key: 'lead', label: 'Lead', cap_is_lead: true }]; }
+  async roles() { return [{ id: 'role_worker', role_key: 'worker', label: 'Worker' }, { id: 'role_reviewer', role_key: 'reviewer', label: 'Reviewer' }, { id: 'role_leader', role_key: 'leader', label: 'Leader', cap_is_lead: true }]; }
   // The mock projects keep today's behaviour: every role may be spawned into the home room.
   async homeLeadOnly() { return false; }
   // The mock's pool of names, like the server's: the next free one, in a fixed order so a test can tell two asks apart.

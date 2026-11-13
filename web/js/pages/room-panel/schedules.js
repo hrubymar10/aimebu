@@ -94,7 +94,7 @@ export function RoomSchedules({ store }) {
     <div class="schedule-list">${items === null ? null : items.length ? items.map(item => html`<${ScheduleRow} key=${item.id} store=${store} item=${item} />`) : 'No schedules'}</div>
     <form class="schedule-form" key=${store.formKey.value} onSubmit=${event => { event.preventDefault(); store.create(event.currentTarget); }}>
       <label>Note<textarea name="body" maxlength="2000" required></textarea></label>
-      <label>Target<select name="target" required><option value="lead">Current room lead</option>${store.targets.value.map(agent => html`<option key=${agent.id} value=${agent.id}>${agent.slug} (${agent.role_key})</option>`)}</select></label>
+      <label>Target<select name="target" required><option value="lead">Current room leader</option>${store.targets.value.map(agent => html`<option key=${agent.id} value=${agent.id}>${agent.slug} (${agent.role_key})</option>`)}</select></label>
       <label>Repeat<select name="kind" value=${kind} onChange=${event => { store.kind.value = event.currentTarget.value; }}><option value="once">Once</option><option value="interval">Interval</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
       <label>Time zone<input name="timezone" required placeholder="Europe/Prague" defaultValue=${zone()} /></label>
       <label class="schedule-once" hidden=${kind !== 'once'}>At<input name="at" type="datetime-local" /></label>

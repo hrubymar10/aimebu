@@ -14,7 +14,7 @@ func TestMessagesCarryTheUsageOfTheTurnThatWroteThem(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	agent, _ := f.createToolAgent(t, "role_lead_default")
+	agent, _ := f.createToolAgent(t, "role_leader_default")
 	ctx := t.Context()
 	var written []store.Message
 	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
@@ -95,7 +95,7 @@ func TestUsageTotalsRoutes(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	agent, _ := f.createToolAgent(t, "role_lead_default")
+	agent, _ := f.createToolAgent(t, "role_leader_default")
 	ctx := t.Context()
 	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
 		_, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_totals',?,0,'fresh_with_history','now')`, agent.ID)

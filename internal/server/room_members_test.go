@@ -25,7 +25,7 @@ func TestRoomMembersListsPeopleAgentsAndSingletons(t *testing.T) {
 	f := newFixture(t)
 	f.seed()
 	f.createToolAgentNamed(t, "role_worker_default", "drew")
-	lead, _ := f.createToolAgentNamed(t, "role_lead_default", "tessa")
+	lead, _ := f.createToolAgentNamed(t, "role_leader_default", "tessa")
 
 	response := f.request("GET", "/api/rooms/"+f.room.ID+"/members", nil, false)
 	if response.StatusCode != 200 {
@@ -36,12 +36,12 @@ func TestRoomMembersListsPeopleAgentsAndSingletons(t *testing.T) {
 		t.Fatalf("humans = %+v", got.Humans)
 	}
 	if len(got.Agents) != 2 || got.Agents[0].Slug != "drew" || got.Agents[0].RoleLabel != "Worker" || got.Agents[0].Singleton ||
-		got.Agents[1].Slug != "tessa" || got.Agents[1].RoleLabel != "Lead" || !got.Agents[1].Singleton || got.Agents[1].RoleEmoji == "" {
+		got.Agents[1].Slug != "tessa" || got.Agents[1].RoleLabel != "Leader" || !got.Agents[1].Singleton || got.Agents[1].RoleEmoji == "" {
 		t.Fatalf("agents = %+v", got.Agents)
 	}
 	var held *store.RoomSingletonHolder
 	for _, singleton := range got.Singletons {
-		if singleton.RoleKey == "lead" {
+		if singleton.RoleKey == "leader" {
 			held = singleton.HeldBy
 		}
 	}
@@ -91,7 +91,7 @@ func TestRoomMembersFollowsRoomAccess(t *testing.T) {
 func TestRoomMembersOfAPrivateChatAreForItsPeersAndNeverLeakThroughSingletons(t *testing.T) {
 	f := newFixture(t)
 	f.seed()
-	lead, _ := f.createToolAgentNamed(t, "role_lead_default", "tessa")
+	lead, _ := f.createToolAgentNamed(t, "role_leader_default", "tessa")
 	peerCookie, peerCSRF := registerSecondUser(t, f, "peer")
 	bystanderCookie, bystanderCSRF := registerSecondUser(t, f, "bystander")
 	for _, login := range []string{"peer", "bystander"} {
@@ -157,7 +157,7 @@ func TestRoomMembersOfAPrivateChatAreForItsPeersAndNeverLeakThroughSingletons(t 
 	}
 	var held *store.RoomSingletonHolder
 	for _, singleton := range members.Singletons {
-		if singleton.RoleKey == "lead" {
+		if singleton.RoleKey == "leader" {
 			held = singleton.HeldBy
 		}
 	}

@@ -210,7 +210,7 @@ func TestLauncherPreflightRejectsSpawnBeforeAgentCreation(t *testing.T) {
 		}
 		return response
 	}
-	resp = spawn("launcher-id-wins", "lead", "docker")
+	resp = spawn("launcher-id-wins", "leader", "docker")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("spawn by launcher ID: %d", resp.StatusCode)

@@ -156,7 +156,7 @@ func TestLeadSpawnMatchesDefaultByVariantWithoutLauncherID(t *testing.T) {
 	f.srv.machineMu.Lock()
 	f.srv.machines[f.machineID] = machine
 	f.srv.machineMu.Unlock()
-	_, key := f.createToolAgent(t, "role_lead_default")
+	_, key := f.createToolAgent(t, "role_leader_default")
 	response := f.toolPost(t, "/api/agent/agents", key, "role-default-variant", map[string]string{
 		"room_id": f.room.ID, "role_key": "reviewer", "tool": "codex", "variant": "native", "model": "gpt-6-sol",
 	})
@@ -402,7 +402,7 @@ func TestLeadSpawnDeviationRequiresReason(t *testing.T) {
 	if err != nil || !available || selection.Choice.LauncherID != codex.ID {
 		t.Fatalf("configured default: %+v %t %v", selection, available, err)
 	}
-	_, key := f.createToolAgent(t, "role_lead_default")
+	_, key := f.createToolAgent(t, "role_leader_default")
 	manual := map[string]string{"room_id": f.room.ID, "role_key": "reviewer", "tool": "fake", "variant": "test", "model": "test"}
 	resp := f.toolPost(t, "/api/agent/agents", key, "deviation-no-reason", manual)
 	resp.Body.Close()

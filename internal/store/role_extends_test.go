@@ -344,7 +344,7 @@ func TestResetRole(t *testing.T) {
 		t.Errorf("a reset that would make reviewer and sec-reviewer extend each other: %v", err)
 	}
 	// Capabilities and cardinality come back too (here the lead, edited to a multi role with no capabilities).
-	lead := globalRoles(t, s)["lead"]
+	lead := globalRoles(t, s)["leader"]
 	lead.Cardinality, lead.Lead, lead.CanSpawn = "multi", false, false
 	lead, err = s.ManageRole(ctx, "usr_owner", lead, false)
 	if err != nil {

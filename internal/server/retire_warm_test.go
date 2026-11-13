@@ -460,7 +460,7 @@ func TestKeepAliveCardCostComesFromTheServer(t *testing.T) {
 	f := newFixture(t)
 	f.seed()
 	machine := connectHost(t, f, true)
-	agent, _ := f.createToolAgent(t, "role_lead_default")
+	agent, _ := f.createToolAgent(t, "role_leader_default")
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
 		if _, err := tx.Exec(`UPDATE agent SET home_room_id=? WHERE id=?`, f.room.ID, agent.ID); err != nil {
 			return err

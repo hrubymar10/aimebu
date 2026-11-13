@@ -14,7 +14,7 @@ func TestDMHumanToolLetsAWorkerMessageAPersonOfItsProject(t *testing.T) {
 	f := newFixture(t)
 	f.seed()
 	_, workerKey := f.createToolAgentNamed(t, "role_worker_default", "worker")
-	lead, leadKey := f.createToolAgent(t, "role_lead_default")
+	lead, leadKey := f.createToolAgent(t, "role_leader_default")
 	f.member(t, "viewer", "viewer")
 	f.member(t, "operator", "operator")
 	// A person who has an account but no part in the project.
@@ -168,7 +168,7 @@ func TestDMHumanNewChatCapIgnoresChatsWithAgents(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	f.member(t, "viewer", "viewer")
 	// Chats the lead opened with agents of its own project, many more than the cap allows for chats with people.
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {

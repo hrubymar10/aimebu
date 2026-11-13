@@ -324,7 +324,7 @@ func TestMigrationTwentySevenUpgradesExistingTwentySixDatabase(t *testing.T) {
 	if err := db.QueryRow(`SELECT body,visual_plan_json,appendix_pages_json FROM message WHERE id='msg_existing'`).Scan(&body, &visualPlan, &appendix); err != nil || body != "before migration" || visualPlan.Valid || appendix.Valid {
 		t.Fatalf("existing message body=%q visual=%v appendix=%v err=%v", body, visualPlan, appendix, err)
 	}
-	for _, roleID := range []string{"role_lead_default", "role_worker_default", "role_reviewer_default"} {
+	for _, roleID := range []string{"role_leader_default", "role_worker_default", "role_reviewer_default"} {
 		var roleBody string
 		if err := db.QueryRow(`SELECT body FROM role WHERE id=?`, roleID).Scan(&roleBody); err != nil || !strings.Contains(roleBody, "substantive decisions") {
 			t.Fatalf("role %s body lacks delivery guidance: %q err=%v", roleID, roleBody, err)

@@ -12,7 +12,7 @@ func TestLeadRoomToolsCreateListAndClose(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	_, workerKey := f.createToolAgentNamed(t, "role_worker_default", "worker")
 	var homeID string
 	allRooms, err := f.db.RoomsForProject(t.Context(), f.project.ID)
@@ -134,7 +134,7 @@ func TestLeadCreateSubroomRequiresParentMembership(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	other, err := f.db.CreateRoom(t.Context(), store.Room{ProjectID: f.project.ID, Kind: "task", Title: "Other", CreatedBy: "owner"})
 	if err != nil {
 		t.Fatal(err)

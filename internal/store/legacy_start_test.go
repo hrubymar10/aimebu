@@ -77,7 +77,7 @@ func TestStartFromLegacyContinuesTheSessionKeepsTheNameAndLinksBothWays(t *testi
 	s, _, room := legacyStartFixture(t)
 	ctx := context.Background()
 	info, err := s.LegacyStart(ctx, room.ProjectID, "sage@old")
-	if err != nil || info.Tool != "claude" || info.RoleKey != "lead" || info.Slug != "sage" || info.StartedID != "" {
+	if err != nil || info.Tool != "claude" || info.RoleKey != "leader" || info.Slug != "sage" || info.StartedID != "" {
 		t.Fatalf("before: %+v %v", info, err)
 	}
 	card, err := startFromLegacy(t, s, room, SpawnInput{Path: "/tmp/wake/sub", Slug: "sage", ResumeLegacyID: "sage@old", ResumeHandle: info.SessionID})

@@ -123,7 +123,7 @@ func TestLeadJoinsEveryProjectRoom(t *testing.T) {
 	}
 	f.role(t, "role_w", f.project.ID, "worker", "Worker", "w", "multi")
 	// A lead spawned into the home room joins the rooms that already exist (f.other).
-	lead := f.agent(t, "tessa", "role_lead_default", &f.home)
+	lead := f.agent(t, "tessa", "role_leader_default", &f.home)
 	if !member(f.home, lead) || !member(f.other, lead) {
 		t.Fatal("a lead spawned after the rooms exist did not join them all")
 	}
@@ -152,7 +152,7 @@ func TestLeadJoinsEveryProjectRoom(t *testing.T) {
 	if _, err := f.s.db.Exec(`UPDATE room SET lifecycle='closed' WHERE id=?`, child.ID); err != nil {
 		t.Fatal(err)
 	}
-	later := f.agent(t, "tom", "role_lead_default", nil)
+	later := f.agent(t, "tom", "role_leader_default", nil)
 	if err := f.s.AddMember(ctx, f.home.ID, "agent", later.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestReopenedRoomGetsTheLead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lead := f.agent(t, "tessa", "role_lead_default", &f.home)
+	lead := f.agent(t, "tessa", "role_leader_default", &f.home)
 	count := func() (n, auto int) {
 		if err := f.s.db.QueryRow(`SELECT COUNT(*),COALESCE(MAX(auto),0) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, child.ID, lead.ID).Scan(&n, &auto); err != nil {
 			t.Fatal(err)
@@ -199,7 +199,7 @@ func TestReopenedRoomGetsTheLead(t *testing.T) {
 func TestLeadBackfillMigration(t *testing.T) {
 	t.Parallel()
 	f := newMembersFixture(t)
-	lead := f.agent(t, "tessa", "role_lead_default", &f.home)
+	lead := f.agent(t, "tessa", "role_leader_default", &f.home)
 	f.role(t, "role_w", f.project.ID, "worker", "Worker", "w", "multi")
 	worker := f.agent(t, "wanda", "role_w", &f.home)
 	if _, err := f.s.db.Exec(`DELETE FROM room_member WHERE room_id=? AND member_id=?`, f.other.ID, lead.ID); err != nil {
@@ -291,7 +291,7 @@ func TestLeadAutoJoinIsQuietAndNotWokenByUnaddressedMessages(t *testing.T) {
 	f := newMembersFixture(t)
 	ctx := context.Background()
 	f.role(t, "role_w", f.project.ID, "worker", "Worker", "w", "multi")
-	lead := f.agent(t, "tessa", "role_lead_default", &f.home) // explicit in home; automatic in f.other
+	lead := f.agent(t, "tessa", "role_leader_default", &f.home) // explicit in home; automatic in f.other
 	worker := f.agent(t, "wanda", "role_w", &f.other)
 	if _, err := f.s.db.Exec(`UPDATE room_view_preference SET hidden=1`); err != nil {
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestLeadAutoJoinIsQuietAndNotWokenByUnaddressedMessages(t *testing.T) {
 	}
 	// Addressed to the lead, it is woken, by name or by role.
 	say(f.other, "@tessa please look")
-	say(f.other, "@lead status?")
+	say(f.other, "@leader status?")
 	if got := notes(lead, f.other); got != 2 {
 		t.Fatalf("addressed messages woke the lead %d times, want 2", got)
 	}

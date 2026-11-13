@@ -393,7 +393,7 @@ changes).
 Changing a role's capabilities requires an owner. Deleted roles remain on stopped agent
 history and can be recreated under the same key; those agents cannot restart
 with the deleted role.
-Fresh projects include lead, worker, reviewer, security reviewer, test
+Fresh projects include leader, worker, reviewer, security reviewer, test
 reviewer, and UX reviewer roles. The built-in instructions cover task-room
 handoffs, independent plans and reviews, evidence-backed verification, and
 structured human asks. Global instructions refer agents to each project's

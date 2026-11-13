@@ -113,13 +113,13 @@ func TestRoomMembersListsPeopleAndAgentsWithRoles(t *testing.T) {
 	f := newMembersFixture(t)
 	// The default global roles: lead (singleton) and worker (multi).
 	var leadEmoji, workerEmoji string
-	if err := f.s.db.QueryRow(`SELECT emoji FROM role WHERE id='role_lead_default'`).Scan(&leadEmoji); err != nil {
+	if err := f.s.db.QueryRow(`SELECT emoji FROM role WHERE id='role_leader_default'`).Scan(&leadEmoji); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.db.QueryRow(`SELECT emoji FROM role WHERE id='role_worker_default'`).Scan(&workerEmoji); err != nil {
 		t.Fatal(err)
 	}
-	lead := f.agent(t, "tessa", "role_lead_default", &f.home)
+	lead := f.agent(t, "tessa", "role_leader_default", &f.home)
 	worker := f.agent(t, "drew", "role_worker_default", &f.home)
 	f.agent(t, "elsewhere", "role_worker_default", &f.other)
 
@@ -132,7 +132,7 @@ func TestRoomMembersListsPeopleAndAgentsWithRoles(t *testing.T) {
 		t.Fatalf("agents = %+v", got.Agents)
 	}
 	a0, a1 := got.Agents[0], got.Agents[1]
-	if a0.ID != lead.ID || a0.Slug != "tessa" || a0.RoleKey != "lead" || a0.RoleLabel != "Lead" || a0.RoleEmoji != leadEmoji || !a0.Singleton {
+	if a0.ID != lead.ID || a0.Slug != "tessa" || a0.RoleKey != "leader" || a0.RoleLabel != "Leader" || a0.RoleEmoji != leadEmoji || !a0.Singleton {
 		t.Fatalf("lead member = %+v", a0)
 	}
 	if a1.ID != worker.ID || a1.RoleLabel != "Worker" || a1.RoleEmoji != workerEmoji || a1.Singleton {
@@ -156,7 +156,7 @@ func TestRoomMembersSingletonHolders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f.agent(t, "tessa", "role_lead_default", &f.home)    // holds the built-in lead, in this room
+	f.agent(t, "tessa", "role_leader_default", &f.home)  // holds the built-in lead, in this room
 	f.agent(t, "ravi", "role_plan", &f.other)            // holds planner, in another room
 	stopped := f.agent(t, "sam", "role_review", &f.home) // a stopped agent does not hold the role
 	revoked := f.agent(t, "rex", "role_review", &f.home) // neither does a revoked one
@@ -174,11 +174,11 @@ func TestRoomMembersSingletonHolders(t *testing.T) {
 		byKey[singleton.RoleKey] = singleton
 		order = append(order, singleton.Label)
 	}
-	if want := []string{"Courier", "Gatekeeper", "Lead", "Planner", "Scribe"}; !reflect.DeepEqual(order, want) {
+	if want := []string{"Courier", "Gatekeeper", "Leader", "Planner", "Scribe"}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("singleton roles = %v, want %v (%+v)", order, want, got.Singletons)
 	}
-	if h := byKey["lead"].HeldBy; h == nil || h.Slug != "tessa" || !h.InThisRoom || byKey["lead"].Emoji != "👑" {
-		t.Fatalf("lead = %+v", byKey["lead"])
+	if h := byKey["leader"].HeldBy; h == nil || h.Slug != "tessa" || !h.InThisRoom || byKey["leader"].Emoji != "👑" {
+		t.Fatalf("lead = %+v", byKey["leader"])
 	}
 	if h := byKey["planner"].HeldBy; h == nil || h.Slug != "ravi" || h.InThisRoom {
 		t.Fatalf("a holder in another room must be reported without naming the room: %+v", byKey["planner"])
@@ -200,7 +200,7 @@ func TestRoomMembersSingletonHolders(t *testing.T) {
 func TestRoomMembersPrivateChatShowsOnlyItsPeople(t *testing.T) {
 	t.Parallel()
 	f := newMembersFixture(t)
-	f.agent(t, "tessa", "role_lead_default", &f.home)
+	f.agent(t, "tessa", "role_leader_default", &f.home)
 	dm, err := f.s.OpenUserDM(context.Background(), f.project.ID, f.alice, f.bob)
 	if err != nil {
 		t.Fatal(err)

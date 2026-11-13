@@ -18,7 +18,7 @@ func TestKeepAliveScopeRefusesTheToolbox(t *testing.T) {
 	f := newFixture(t)
 	f.seed()
 	machine := connectHost(t, f, true)
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	_, otherKey := f.createToolAgentNamed(t, "role_worker_default", "other")
 	var homeID string
 	rooms, err := f.db.RoomsForProject(t.Context(), f.project.ID)
@@ -150,7 +150,7 @@ func TestKeepAliveScopeStays403ThroughAQuarantineByRenewal(t *testing.T) {
 	f := newFixture(t)
 	f.seed()
 	machine := connectHost(t, f, true)
-	lead, key := f.createToolAgent(t, "role_lead_default")
+	lead, key := f.createToolAgent(t, "role_leader_default")
 	runsHere := func(string) bool { return true }
 	status := func(string) int {
 		response := f.toolRequest(t, "/api/agent/rooms", key)

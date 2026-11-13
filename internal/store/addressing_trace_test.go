@@ -18,6 +18,17 @@ func traceMembers() []roomRecipient {
 	}
 }
 
+func TestBuiltinLeaderMentionHasNoLeadAlias(t *testing.T) {
+	t.Parallel()
+	members := []roomRecipient{{id: "agt_leader", slug: "tessa", kind: "agent", role: "leader"}}
+	if got := resolveMentionTargets("@leader please review", "usr_owner", members, "prj_1", "demo"); !reflect.DeepEqual(got, map[string]string{"agt_leader": "role"}) {
+		t.Fatalf("@leader addressed %v", got)
+	}
+	if got := resolveMentionTargets("@lead please review", "usr_owner", members, "prj_1", "demo"); len(got) != 0 {
+		t.Fatalf("@lead unexpectedly addressed %v", got)
+	}
+}
+
 func traceFor(t *testing.T, body string) (map[string]string, map[string]MentionTrace) {
 	t.Helper()
 	var trace []MentionTrace
