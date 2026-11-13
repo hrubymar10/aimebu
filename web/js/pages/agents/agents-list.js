@@ -123,6 +123,11 @@ export class AgentCard extends Component {
       <div class="agent-health">${(agent.health_flags || []).map((flag, index) => html`<span key=${`${flag.code}${index}`} class=${`health-flag health-${flag.code}`} title=${healthLabel(flag)}>${healthLabel(flag)}</span>`)}</div>
       <p class="agent-activity" title=${[activity.last && `Last agent event: ${new Date(activity.last).toLocaleString()}`, activity.seen && `Supervisor seen: ${new Date(activity.seen).toLocaleString()}`].filter(Boolean).join(' · ') || 'No activity time recorded'}>${activity.text}</p>
       <p class="agent-switch-status" hidden=${sw.hidden} onClick=${sw.inbox ? () => document.querySelector('#inbox-toggle')?.click() : null}>${sw.text}</p>
+      ${expanded && agent.switch?.state === 'draining' && html`<div class="agent-switch-actions" aria-label="Switch controls">
+        ${agent.switch.can_retry && html`<button type="button" class="btn" onClick=${() => api.switchAction(agent.id, 'retry-handoff')}>Retry handoff</button>`}
+        ${agent.switch.can_continue && html`<button type="button" class="btn" onClick=${() => api.switchAction(agent.id, 'continue')}>Continue without handoff</button>`}
+        ${agent.switch.can_cancel && html`<button type="button" class="btn" onClick=${() => api.switchAction(agent.id, 'cancel')}>Cancel switch</button>`}
+      </div>`}
       <small class="agent-boundary-grants" hidden=${grants.hidden}>${grants.text}</small>
       <div class="agent-context" title=${context.title} aria-label=${`Memory: ${context.title}`}><span>Memory</span><span class="agent-context-track" hidden=${!context.known}><span class="agent-context-fill" style=${`width:${context.width}`}></span></span><span class="agent-context-value">${context.value}</span></div>
       <${LiveChip} store=${api.store} live=${live} said=${state.name} />

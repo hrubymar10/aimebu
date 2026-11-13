@@ -24,7 +24,7 @@ export class AgentsPanel {
     this.cardListeners = new Set();
     this.store = new AgentsStore({ source, onError: message => { this.error.textContent = message; }, onChange: agents => this.onChange?.(agents), onCards: () => this.notifyCards(), onSync: () => this.syncSpawnControl() });
     this.api = { store: this.store, source, onPrivate: agent => this.onPrivate?.(agent), onRecovery: agent => this.onRecovery(agent), onPrivateHuman: human => this.onPrivateHuman?.(human),
-      openSwitch: id => this.switch.open(id), canReadOutput: () => this.canReadOutput() };
+      openSwitch: id => this.switch.open(id), switchAction: (id, action) => this.switchAction(id, action), canReadOutput: () => this.canReadOutput() };
     this.spawnDialog = document.querySelector('#spawn-dialog');
     this.spawn = new SpawnStore(this);
     this.switchDialog = document.querySelector('#switch-dialog');
@@ -57,6 +57,7 @@ export class AgentsPanel {
     this.listPage = mountPreactPage(this.list, () => html`<${AgentsList} store=${this.store} api=${this.api} />`);
     this.humansPage = mountPreactPage(this.humans, () => html`<${HumansList} store=${this.store} api=${this.api} />`);
     this.unsubscribe = this.source.subscribe(event => this.sourceChanged(event));
+    this.switchPoll = setInterval(() => { void this.pollSwitches(); }, 4000);
     // A touch tablet has room for one side panel next to the chat: the members panel starts closed, and opening one panel closes the
     // other. Those changes are not remembered; the desktop preference is.
     if (TABLET.matches) this.setDesktopOpen(false, false);
@@ -86,6 +87,7 @@ export class AgentsPanel {
     this.setRoomFacts(room);
     if (this.drawerRoomID !== room.id) { this.setMobileOpen(false); this.drawerRoomID = room.id; }
     await this.refresh();
+    void this.pollSwitches();
   }
   waitForCard(id, roomID, timeout = 2000) {
     if (this.room?.id === roomID && this.cards.has(id)) return Promise.resolve(true);
@@ -128,6 +130,24 @@ export class AgentsPanel {
     document.dispatchEvent(new CustomEvent('aimebu:open-settings', { detail: { section: 'harnesses', machineID } }));
   }
   refresh() { return this.store.refresh(); }
+  async pollSwitches() {
+    if (this.switchPollBusy || !this.room) return;
+    if (this.projectRole?.(this.room.project_id) === 'viewer') return;
+    this.switchPollBusy = true;
+    const generation = this.generation;
+    try {
+      for (const agent of this.cards.values()) {
+        if (generation !== this.generation) return;
+        if (!agent.switch || agent.switch.state === 'started' || agent.switch.state === 'failed') continue;
+        try { await this.source.switchProgress(agent.id); }
+        catch { /* A transient progress read leaves the card's last known state visible. */ }
+      }
+    } finally { this.switchPollBusy = false; }
+  }
+  async switchAction(id, action) {
+    try { await this.source.switchAction(id, action); await this.refresh(); }
+    catch (error) { this.error.textContent = error.message; }
+  }
   // The event stream carries every agent event of every room and project (a turn queued, started, finished, a ping), and a refresh reads the room's agents and
   // members. So an event only counts when it is about this room or one of its agents, and the reads it asks for are coalesced: one runs at once, and any number
   // of events during it or within the next RESYNC_MS ask for exactly one more. (Each event used to start its own pair of reads.)
@@ -154,6 +174,6 @@ export class AgentsPanel {
 
   destroy() {
     clearTimeout(this.refreshTimer); this.refreshAgain = false;
-    this.stopPanel(); document.removeEventListener('keydown', this.onKey); this.unsubscribe?.(); this.store.destroy(); this.spawn.destroy(); this.switch.destroy(); this.listPage.destroy(); this.humansPage.destroy(); this.spawnPage.destroy(); this.switchPage.destroy();
+    this.stopPanel(); document.removeEventListener('keydown', this.onKey); this.unsubscribe?.(); clearInterval(this.switchPoll); this.store.destroy(); this.spawn.destroy(); this.switch.destroy(); this.listPage.destroy(); this.humansPage.destroy(); this.spawnPage.destroy(); this.switchPage.destroy();
   }
 }

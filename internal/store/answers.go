@@ -82,6 +82,14 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 		if input.Parsed != nil {
 			receipt.Warnings = input.Parsed.Warnings
 		}
+		if handled, err := tx.applySwitchHandoffAnswer(turn, input, &receipt); err != nil {
+			return err
+		} else if handled {
+			if err := tx.settleAnswerTurn(turn); err != nil {
+				return err
+			}
+			return tx.insertAnswerReceipt(receipt, input.Candidate)
+		}
 		missedMentionHeld := false
 		if turn.mode == "diagnostic" {
 			if input.ParseError != "" || input.Parsed == nil {

@@ -1719,7 +1719,27 @@ CREATE TABLE IF NOT EXISTS project_handbook_revision (
   updated_by TEXT NOT NULL,
   PRIMARY KEY(project_id,rev)
 );
-` + roleHandbookMigration()}}
+` + roleHandbookMigration()}, {108, `
+CREATE TABLE IF NOT EXISTS switch_handoff (
+  agent_id TEXT PRIMARY KEY REFERENCES agent(id) ON DELETE CASCADE,
+  room_id TEXT NOT NULL REFERENCES room(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '',
+  body_json TEXT NOT NULL DEFAULT '',
+  requested_at TEXT NOT NULL,
+  overall_deadline TEXT NOT NULL,
+  started_at TEXT,
+  handoff_deadline TEXT,
+  turn_id TEXT,
+  successor_generation INTEGER NOT NULL DEFAULT 0,
+  prior_desired TEXT NOT NULL DEFAULT 'active',
+  error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS switch_handoff_turn (
+  turn_id TEXT PRIMARY KEY REFERENCES turn(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES agent(id) ON DELETE CASCADE
+);
+`}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.

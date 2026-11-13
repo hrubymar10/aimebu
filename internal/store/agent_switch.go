@@ -6,17 +6,34 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"github.com/goccy/go-json"
 )
 
 // AgentSwitch is the target and progress of a durable, in-place adapter change.
 type AgentSwitch struct {
-	State     string `json:"state"`
-	Tool      string `json:"tool"`
-	Variant   string `json:"variant"`
-	Model     string `json:"model"`
-	MachineID string `json:"machine_id,omitempty"`
-	Error     string `json:"error,omitempty"`
+	State           string          `json:"state"`
+	Tool            string          `json:"tool"`
+	Variant         string          `json:"variant"`
+	Model           string          `json:"model"`
+	MachineID       string          `json:"machine_id,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	HandoffStatus   string          `json:"handoff_status,omitempty"`
+	HandoffSource   string          `json:"handoff_source,omitempty"`
+	Handoff         json.RawMessage `json:"handoff,omitempty"`
+	HandoffDeadline string          `json:"handoff_deadline,omitempty"`
+	OverallDeadline string          `json:"overall_deadline,omitempty"`
+	CanCancel       bool            `json:"can_cancel"`
+	CanRetry        bool            `json:"can_retry"`
+	CanContinue     bool            `json:"can_continue"`
+}
+
+func (item *AgentSwitch) setContinuityActions(turnOpen bool) {
+	item.CanCancel = item.State == "draining" && (item.HandoffStatus == "waiting" || item.HandoffStatus == "pending" || item.HandoffStatus == "handing_off" || item.HandoffStatus == "ready" || item.HandoffStatus == "automatic")
+	item.CanContinue = item.CanCancel
+	item.CanRetry = item.State == "draining" && item.HandoffStatus == "automatic" && !turnOpen
 }
 
 var errSwitchTargetUnavailable = errors.New("target machine is no longer approved")
@@ -26,9 +43,36 @@ func (s *Store) agentSwitch(ctx context.Context, id string) (*AgentSwitch, error
 	err := s.readDB.QueryRowContext(ctx, `SELECT state,tool,variant,model,COALESCE(machine_id,''),error FROM agent_switch WHERE agent_id=?`, id).
 		Scan(&item.State, &item.Tool, &item.Variant, &item.Model, &item.MachineID, &item.Error)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		var status string
+		if err := s.readDB.QueryRowContext(ctx, `SELECT status FROM switch_handoff WHERE agent_id=?`, id).Scan(&status); errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		} else if err != nil {
+			return nil, err
+		} else if status != "started" {
+			return nil, nil
+		}
+		if err := s.readDB.QueryRowContext(ctx, `SELECT tool,variant,model,machine_id FROM agent WHERE id=?`, id).Scan(&item.Tool, &item.Variant, &item.Model, &item.MachineID); err != nil {
+			return nil, err
+		}
+		item.State = "started"
+	} else if err != nil {
+		return nil, err
 	}
-	return &item, err
+	var body, deadline, overall sql.NullString
+	var turnOpen bool
+	err = s.readDB.QueryRowContext(ctx, `SELECT status,source,body_json,handoff_deadline,overall_deadline,
+		CASE WHEN turn_id IS NULL THEN 0 ELSE EXISTS(SELECT 1 FROM turn WHERE id=switch_handoff.turn_id AND (exec IN ('pending','running') OR settle='pending')) END
+		FROM switch_handoff WHERE agent_id=?`, id).
+		Scan(&item.HandoffStatus, &item.HandoffSource, &body, &deadline, &overall, &turnOpen)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if body.Valid && body.String != "" {
+		item.Handoff = json.RawMessage(body.String)
+	}
+	item.HandoffDeadline, item.OverallDeadline = deadline.String, overall.String
+	item.setContinuityActions(turnOpen)
+	return &item, nil
 }
 
 func (tx *Tx) BeginAgentSwitch(id, actorID, roomID, tool, variant, model, provider string, rev int64) (AgentCard, error) {
@@ -148,6 +192,73 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 				Scan(&projectID, &desired, &observed, &generation, &currentTool, &blocked); err != nil {
 				return err
 			}
+			handoffStatus, handoffRoom, overallDeadline, handoffTurn, err := tx.switchHandoffStatus(item.id)
+			if err != nil {
+				return err
+			}
+			if item.state == "draining" && handoffStatus != "" {
+				now := time.Now().UTC().Format(timestampLayout)
+				switch handoffStatus {
+				case "waiting":
+					if now >= overallDeadline || desired != "active" || observed == "stopped" || observed == "lost" {
+						if err := tx.switchAutomaticHandoff(item.id, handoffRoom, "Outgoing session unavailable or overall handoff deadline reached."); err != nil {
+							return err
+						}
+						handoffStatus = "automatic"
+					} else {
+						var open int
+						if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE agent_id=? AND (exec IN ('pending','running') OR settle='pending')`, item.id).Scan(&open); err != nil {
+							return err
+						}
+						if open == 0 && observed == "idle" && !blocked {
+							if err := tx.beginSwitchHandoffTurn(item.id, handoffRoom, generation); err != nil {
+								return err
+							}
+						}
+						continue
+					}
+				case "pending", "handing_off":
+					var deadline sql.NullString
+					if err := tx.tx.QueryRowContext(tx.ctx, `SELECT handoff_deadline FROM switch_handoff WHERE agent_id=?`, item.id).Scan(&deadline); err != nil {
+						return err
+					}
+					if now >= overallDeadline || handoffStatus == "handing_off" && deadline.Valid && now >= deadline.String {
+						if handoffTurn != "" {
+							if _, err := tx.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=? AND exec='pending'`, timestamp(), handoffTurn); err != nil {
+								return err
+							}
+						}
+						if err := tx.switchAutomaticHandoff(item.id, handoffRoom, "Outgoing handoff turn timed out."); err != nil {
+							return err
+						}
+						handoffStatus = "automatic"
+					} else {
+						continue
+					}
+				case "ready", "automatic":
+				case "cancelled", "started":
+					continue
+				default:
+					return ErrInvalidTransition
+				}
+				if handoffStatus == "ready" || handoffStatus == "automatic" {
+					if desired != "not_accepting" {
+						if _, err := tx.Exec(`UPDATE agent SET desired='not_accepting',desired_rev=desired_rev+1 WHERE id=?`, item.id); err != nil {
+							return err
+						}
+						if _, err := tx.AppendEvent(Event{Kind: "agent_control_requested", ProjectID: projectID, AgentID: item.id,
+							PayloadJSON: payloadJSON(map[string]string{"desired": "not_accepting", "actor_kind": "system", "actor_id": "agent_switch"})}); err != nil {
+							return err
+						}
+						card, err := tx.agentCardByID(item.id)
+						if err != nil {
+							return err
+						}
+						controls = append(controls, card)
+						continue
+					}
+				}
+			}
 			if item.state == "draining" && desired != "stopped" {
 				machineID, path := item.machineID, item.checkoutPath
 				if machineID == "" || path == "" {
@@ -221,6 +332,9 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 							PayloadJSON: payloadJSON(map[string]string{"desired": "not_accepting", "actor_kind": "system", "actor_id": "agent_switch"})}); err != nil {
 							return err
 						}
+					}
+					if _, err := tx.Exec(`UPDATE switch_handoff SET status='started' WHERE agent_id=? AND status IN ('ready','automatic')`, item.id); err != nil {
+						return err
 					}
 					if _, err := tx.Exec(`DELETE FROM agent_switch WHERE agent_id=?`, item.id); err != nil {
 						return err
@@ -303,6 +417,9 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 			if _, err := tx.Exec(`UPDATE agent SET tool=?,variant=?,launcher_id=?,model=?,provider=?,desired='active',desired_rev=desired_rev+1,generation=generation+1,observed='idle' WHERE id=?`, item.tool, item.variant, nullableString(item.launcherID), item.model, item.provider, item.id); err != nil {
 				return err
 			}
+			if _, err := tx.Exec(`UPDATE switch_handoff SET successor_generation=? WHERE agent_id=?`, generation+1, item.id); err != nil {
+				return err
+			}
 			if err := tx.clearProviderLimit(item.id); err != nil {
 				return err
 			}
@@ -337,6 +454,25 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 // The handoff is room-local: content from other joined rooms must never be
 // copied into this room. The addressed system message creates a queued note.
 func (tx *Tx) insertSwitchHandoff(agentID, roomID, oldTool, newTool string, moved bool) error {
+	var source, raw string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT source,body_json FROM switch_handoff WHERE agent_id=? AND status IN ('ready','automatic')`, agentID).Scan(&source, &raw)
+	if err == nil {
+		var handoff SwitchHandoffBody
+		if err := json.Unmarshal([]byte(raw), &handoff); err != nil {
+			return err
+		}
+		body := "@" + agentID + " Switch handoff (" + source + "). The " + oldTool + " session ended; this " + newTool + " session starts fresh.\n" +
+			"Current task: " + handoff.CurrentTask + "\nStatus: " + handoff.Status + "\nWork state: " + handoff.WorkState +
+			"\nNext steps: " + handoff.NextSteps + "\nOpen questions: " + handoff.OpenQuestions + "\nCautions: " + handoff.Cautions
+		if moved {
+			body += "\nMachine changed; verify files in the target checkout."
+		}
+		_, err = tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{agentID}})
+		return err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT author_id,body FROM message WHERE room_id=? ORDER BY seq DESC LIMIT 8`, roomID)
 	if err != nil {
 		return err

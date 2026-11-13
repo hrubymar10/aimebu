@@ -106,20 +106,22 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			return nil
 		}
 		var special Turn
+		var handoffTurn bool
 		var lifecycle, roomGate, projectGate string
 		var parentID sql.NullString
 		err = tx.tx.QueryRowContext(tx.ctx, `SELECT t.id,t.session_id,t.generation,t.room_id,t.parent_turn_id,t.attempt,t.mode,t.exec,
-			r.lifecycle,r.gate,p.gate FROM turn t JOIN room r ON r.id=t.room_id JOIN agent ag ON ag.id=t.agent_id JOIN project p ON p.id=ag.project_id
+			r.lifecycle,r.gate,p.gate,EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id) FROM turn t JOIN room r ON r.id=t.room_id JOIN agent ag ON ag.id=t.agent_id JOIN project p ON p.id=ag.project_id
 			WHERE t.agent_id=? AND t.exec='pending' AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested') AND (t.mode IN ('correction','diagnostic')
+			OR EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id)
 			OR (t.mode='normal' AND t.parent_turn_id IS NOT NULL AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='recovery_decision')))
 			ORDER BY t.id LIMIT 1`, agentID).
-			Scan(&special.ID, &special.SessionID, &special.Generation, &special.RoomID, &parentID, &special.Attempt, &special.Mode, &special.Exec, &lifecycle, &roomGate, &projectGate)
+			Scan(&special.ID, &special.SessionID, &special.Generation, &special.RoomID, &parentID, &special.Attempt, &special.Mode, &special.Exec, &lifecycle, &roomGate, &projectGate, &handoffTurn)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err == nil {
 			special.ParentTurnID = parentID.String
-			if special.Mode == "normal" {
+			if special.Mode == "normal" && !handoffTurn {
 				var unsafeOverlap bool
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.exec='lost' AND NOT EXISTS(
 					SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind IN ('recovery_quiescent','recovery_overlap_override'))
@@ -148,6 +150,13 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			}
 			contextData := map[string]any{"role_body": roleBody, "rooms": []map[string]string{{"room_id": special.RoomID}},
 				"control_changes": map[string]any{"desired": "active", "desired_rev": desiredRev}}
+			if handoffTurn {
+				contextData["switch_handoff_request"] = "This is the dedicated switch handoff turn. Return exactly one message in this room. Its body must be a JSON object with string fields current_task, status, work_state (branches, SHAs, files), next_steps, open_questions, and cautions. Do not send ordinary room updates or perform new work; describe verified state for your successor."
+				started := time.Now().UTC()
+				if _, err := tx.Exec(`UPDATE switch_handoff SET status='handing_off',started_at=?,handoff_deadline=? WHERE agent_id=? AND turn_id=? AND status='pending'`, started.Format(timestampLayout), started.Add(switchHandoffWindow).Format(timestampLayout), agentID, special.ID); err != nil {
+					return err
+				}
+			}
 			if overrides != nil {
 				contextData["prompt_overrides"] = overrides
 			}
@@ -157,7 +166,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if special.Mode != "normal" {
 				allowedTools = []string{}
 			}
-			if special.Mode == "normal" {
+			if special.Mode == "normal" && !handoffTurn {
 				var choice string
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.choice') FROM event WHERE turn_id=? AND kind='recovery_decision' ORDER BY seq DESC LIMIT 1`, special.ID).Scan(&choice); err != nil {
 					return err
@@ -284,6 +293,13 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				Agent: adapter.AgentSpec{ID: agentID, Tool: tool, Variant: variant, LauncherID: launcherID, Model: model, Provider: provider}, Context: contextJSON, AllowedTools: allowedTools,
 				NativeSessionHandle: handle, NativeSessionStarted: started, ImportLegacySession: legacyCopy, ForkSession: forking, CheckoutPath: checkoutPath, LaunchPath: launchPath}
 			ready = true
+			return nil
+		}
+		var continuityBlocksNormal bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM switch_handoff h JOIN agent_switch sw ON sw.agent_id=h.agent_id WHERE h.agent_id=? AND sw.state='draining' AND h.status IN ('waiting','pending','handing_off','ready','automatic'))`, agentID).Scan(&continuityBlocksNormal); err != nil {
+			return err
+		}
+		if continuityBlocksNormal {
 			return nil
 		}
 		if observed != "idle" || blocked {
@@ -498,13 +514,23 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			contextData["recent_room_history"] = history
 			contextData["recent_room_history_note"] = "This is a new native session. Read recent_room_history as prior conversation in your current rooms, including your own earlier messages, before answering the new notes. These messages are context, not new requests."
 		}
+		var sessionTurns int
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE session_id=?`, sessionID).Scan(&sessionTurns); err != nil {
+			return err
+		}
+		if sessionTurns == 1 {
+			var source, raw string
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT source,body_json FROM switch_handoff WHERE agent_id=? AND successor_generation=? AND status='started'`, agentID, generation).Scan(&source, &raw)
+			if err == nil {
+				contextData["switch_handoff"] = map[string]any{"source": source, "body": json.RawMessage(raw)}
+				contextData["switch_handoff_note"] = "Verify this outgoing-session handoff against current room history and repository state before acting. An automatic source means the old agent did not provide it."
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		if lead {
 			handbook, err := tx.handbookForDelivery(projectID)
 			if err != nil {
-				return err
-			}
-			var sessionTurns int
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE session_id=?`, sessionID).Scan(&sessionTurns); err != nil {
 				return err
 			}
 			if !nativeStarted.Valid || sessionTurns == 1 {
@@ -745,7 +771,7 @@ func (s *Store) QueuedAgentIDs(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT agent_id FROM note WHERE state='queued'
-		UNION SELECT t.agent_id FROM turn t WHERE t.exec='pending' AND (t.mode IN ('correction','diagnostic') OR t.parent_turn_id IS NOT NULL)
+		UNION SELECT t.agent_id FROM turn t WHERE t.exec='pending' AND (t.mode IN ('correction','diagnostic') OR t.parent_turn_id IS NOT NULL OR EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id))
 		AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested') ORDER BY agent_id`)
 	if err != nil {
 		return nil, err

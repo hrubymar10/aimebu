@@ -1642,7 +1642,7 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 	var first store.AgentCard
 	_, reused, err := s.Store.WithRequestKey(r.Context(), requestKey, func(tx *store.Tx) (string, error) {
-		card, err := tx.BeginAgentSwitchToLauncher(id, userID(r), req.RoomID, req.Tool, req.Variant, req.Model, provider, targetID, path, launcherID, req.Rev)
+		card, err := tx.BeginAgentSwitchWithContinuity(id, userID(r), req.RoomID, req.Tool, req.Variant, req.Model, provider, targetID, path, launcherID, req.Rev)
 		if err != nil {
 			return "", err
 		}

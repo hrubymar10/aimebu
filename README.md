@@ -70,6 +70,16 @@ one-line explanation; choosing one opens its Inbox item, or else the agent's
 room and profile. If the room or agent disappears while navigating, a brief
 notice explains why the profile could not open.
 
+Switching an agent to another model or harness now asks the outgoing session
+for a structured handoff after its current turn finishes. The successor gets
+that handoff, bounded recent room history, and the project handbook when it
+is a lead. If the outgoing session cannot answer within three minutes of its
+handoff turn, or the whole wait reaches 15 minutes, the server records an
+automatic room-history summary. The agent card shows the source and offers
+Cancel, Retry handoff, or Continue without handoff when those actions are
+available. Identity, role, and room membership stay with the agent; the new
+harness starts a fresh native session.
+
 A project handbook keeps the lead's durable working state across restarts and
 lead switches. Its five Markdown sections are Current state, Open backlog,
 Conventions, Gotchas, and Timeline. A lead maintains it through the agent
@@ -398,8 +408,13 @@ Agent cards show harness icons, a state pill, and a live working timer when an
 agent is in a turn. Expand a card for activity, the memory gauge, and its
 last-seen tooltip; secondary actions appear on hover, focus, or touch. Agent
 cards offer a tool/model switch that keeps
-the agent identity and room, finishes any running turn, and starts a new
-generation with recent room context. A memory gauge shows reported context
+the agent identity, role, and rooms. Before confirmation, a preview shows
+the handoff and context the new session will receive. The old agent finishes
+its current turn and prepares a handoff; the new session receives it with
+recent room history, plus the project handbook for a leader. If handoff is
+unavailable, an automatic summary is used. The card shows handoff, switch,
+and start progress, with controls to retry handoff, continue without it, or
+cancel before the new session starts. A memory gauge shows reported context
 use against the reported window, with input/output tokens and recorded cost
 (labelled when it includes a price-list estimate)
 in its tooltip;

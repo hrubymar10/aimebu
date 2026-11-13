@@ -722,16 +722,23 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   known native handle bumps `generation`. Start fresh explicitly drops that
   handle and supplies recent room history on the first turn.
 - **Switch model/tool** (owner/operator): an active or not-accepting agent
-  enters `not_accepting` with a new desired revision. After its open work
-  settles and no recovery block remains, the old session ends and a fresh
-  session starts on the same agent ID with the selected adapter and a new
-  generation. A room-local addressed handoff note supplies recent context;
-  queued notes and room membership survive. A pre-existing
-  `not_accepting` state is restored after the new spawn confirms. A failed
-  switch can retry the same target, and a successful Stop or Reactivate
-  clears its failure gate. The switch cannot start from a
-  stopped or recovery-blocked agent or a closing/closed room. Stop cancels
-  a pending switch.
+  enters a durable handoff wait. An in-progress turn finishes without
+  interruption; no new ordinary turn starts. A dedicated normal-adapter turn
+  with a switch-handoff marker then asks the outgoing agent for structured
+  task, work-state, next-step, question, and caution fields. Its answer is
+  captured by the server, not published as an agent message. The handoff turn
+  has three minutes from dispatch; the entire wait has a 15-minute cap.
+  If it cannot answer, the server marks the source automatic and builds a
+  bounded summary from the selected room only. The old execution must be
+  quiescent before generation changes. Continue without handoff is available
+  while waiting; Cancel before the new session starts restores the old
+  desired state. A room-local system message records the handoff or fallback.
+  The fresh successor session receives that handoff and up to 40 recent joined
+  room messages; a lead also gets the project handbook. The same agent ID,
+  role, room memberships, and queued notes survive, and the generation rises
+  by one. A pre-existing `not_accepting` state is restored after spawn.
+  A failed switch can retry the same target. The switch cannot start from a
+  stopped or recovery-blocked agent or a closing/closed room.
 
 ### 3.5 room
 lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.

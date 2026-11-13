@@ -150,9 +150,27 @@ func TestAgentSwitchEndpointIdempotencyAndCatalog(t *testing.T) {
 		t.Fatalf("unavailable mutated agent %+v %v", unchanged, err)
 	}
 	machine.capabilities = append(machine.capabilities, protocol.CapabilityReport{Tool: "claude", Environment: adapter.Environment{Variant: "native"}})
+	previewResp := f.request(http.MethodPost, "/api/agents/"+card.ID+"/switch/preview", map[string]any{"room_id": f.room.ID, "tool": "claude", "variant": "native", "model": "haiku", "rev": card.DesiredRev}, true)
+	var preview map[string]any
+	if err := json.NewDecoder(previewResp.Body).Decode(&preview); err != nil {
+		t.Fatal(err)
+	}
+	previewResp.Body.Close()
+	if previewResp.StatusCode != 200 || preview["handoff_status"] != "available" || preview["history_window"] != float64(40) || preview["handbook_included"] != false {
+		t.Fatalf("preview %d %+v", previewResp.StatusCode, preview)
+	}
 	status, pending, raw := switchPost("switch-1", "haiku", card.DesiredRev)
-	if status != 202 || pending.ID != card.ID || pending.Switch == nil || pending.Switch.State != "draining" || pending.Desired != "not_accepting" {
+	if status != 202 || pending.ID != card.ID || pending.Switch == nil || pending.Switch.State != "draining" || pending.Switch.HandoffStatus != "waiting" || pending.Desired != "active" {
 		t.Fatalf("request %d %+v %+v", status, pending, raw)
+	}
+	progressResp := f.request(http.MethodGet, "/api/agents/"+card.ID+"/switch", nil, false)
+	var progress map[string]any
+	if err := json.NewDecoder(progressResp.Body).Decode(&progress); err != nil {
+		t.Fatal(err)
+	}
+	progressResp.Body.Close()
+	if progressResp.StatusCode != 200 || progress["desired_rev"] != float64(pending.DesiredRev) || progress["switch"] == nil {
+		t.Fatalf("progress %d %+v", progressResp.StatusCode, progress)
 	}
 	if checkout, err := f.db.AgentCheckoutPath(t.Context(), card.ID); err != nil || checkout != originalCheckout {
 		t.Fatalf("same-machine switch moved checkout to %q from %q: %v", checkout, originalCheckout, err)
@@ -166,6 +184,20 @@ func TestAgentSwitchEndpointIdempotencyAndCatalog(t *testing.T) {
 	}
 	if status, _, raw := switchPost("switch-2", "haiku", card.DesiredRev); status != 409 || raw["error"] != "stale_rev" {
 		t.Fatalf("stale rev %d %+v", status, raw)
+	}
+	continueBody, _ := json.Marshal(map[string]any{"rev": pending.DesiredRev})
+	continueReq, _ := http.NewRequest(http.MethodPost, f.http.URL+"/api/agents/"+card.ID+"/switch/continue", bytes.NewReader(continueBody))
+	continueReq.Header.Set("Content-Type", "application/json")
+	continueReq.Header.Set("X-CSRF-Token", f.csrf)
+	continueReq.Header.Set("Idempotency-Key", "continue-1")
+	continueReq.AddCookie(f.cookie)
+	continueResp, err := http.DefaultClient.Do(continueReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	continueResp.Body.Close()
+	if continueResp.StatusCode != 200 {
+		t.Fatalf("continue status=%d", continueResp.StatusCode)
 	}
 	controls, err := f.db.AdvanceAgentSwitches(context.Background())
 	if err != nil || len(controls) != 1 || controls[0].Generation != 1 {

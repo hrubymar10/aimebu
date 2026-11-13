@@ -35,6 +35,7 @@ const stable = (extra = {}) => ({ 'GET /api/projects/p1/machine-folders': { fold
   'GET /api/projects/p1/team-flow': { key: 'custom', rev: 1, review_pending: false, template: { key: 'custom', join_rules: [] } },
   'GET /api/rooms/r1/agent-name': { name: 'nova' }, 'GET /api/spawn-catalog?machine_id=m1': catalog, 'GET /api/spawn-catalog?machine_id=m2': catalog, 'GET /api/projects/p1/role-spawn-defaults/worker/next': { available: false }, 'GET /api/projects/p1/role-spawn-defaults/leader/next': { available: false },
   'GET /api/rooms/r1/agents': [agent('a1', 'ada')], 'GET /api/rooms/r1/members': { humans: [] },
+  'POST /api/agents/a1/switch/preview': { room_id: 'r1', handoff_status: 'available', history_window: 40, handbook_included: false, can_cancel: true, can_retry: true, can_continue: true, target: { tool: 'codex', model: 'gpt-6-mini' } },
   'GET /api/rooms/r2/agent-name': { name: 'luna' }, 'GET /api/rooms/r2/agents': [agent('a9', 'zed', { room_id: 'r2' })], 'GET /api/rooms/r2/members': { humans: [] }, ...extra });
 
 // fetch is held unless a rule answers it: a rule is a body, or { status, body }.
@@ -97,6 +98,7 @@ async function main() {
   // "Continue a session…" is the item of the ⋯ menu in the title row: open the menu, then press the item.
   const continueSession = async page => { await page.$eval('#spawn-sessions-menu', node => node.click()); await page.waitForSelector('#spawn-sessions', { visible: true }); await page.$eval('#spawn-sessions', node => node.click()); };
   const select = (page, name, value) => page.evaluate((name, value) => { const el = document.querySelector('#spawn-form').elements[name]; el.value = value; el.dispatchEvent(new Event('change')); }, name, value);
+  const previewSwitch = async page => { await page.$eval('#switch-form button[type=submit]', node => node.click()); await page.waitForSelector('#switch-form .switch-preview'); };
 
   // The dialog opens on a free name, the roles, the first machine's tools with their versions and the default model, and Start stays off until
   // those have arrived; Start sends what the dialog shows and the dialog closes and the list is read again.
@@ -462,6 +464,14 @@ async function main() {
     assert.deepEqual((await sw()).models, ['gpt-6-sol', 'gpt-6-mini']);
     await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
     assert.deepEqual([(await sw()).submit, (await sw()).reason], [false, '']);
+    await previewSwitch(page);
+    assert.match(await page.$eval('.switch-preview', node => node.textContent), /last 40 room messages/i);
+    const previewRequest = await page.evaluate(() => window.__requests.findIndex(request => request.path === '/api/agents/a1/switch/preview'));
+    assert.deepEqual(await body(page, previewRequest), { room_id: 'r1', tool: 'codex', variant: 'native', launcher_id: 'l1', model: 'gpt-6-mini', machine_id: 'm1', rev: 7 });
+    await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-sol'; el.dispatchEvent(new Event('change')); });
+    assert.equal(await page.$('.switch-preview'), null, 'changing the target retires its preview');
+    await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
+    await previewSwitch(page);
     await page.$eval('#switch-form button[type=submit]', node => node.click());
     const refused = await waitRequest(page, 'POST', '/api/agents/a1/switch');
     assert.deepEqual([(await sw()).submit, (await sw()).cancel], [true, true], 'the buttons are off while it is sent');
@@ -479,6 +489,36 @@ async function main() {
     assert.equal((await sw()).open, false, 'a change of room closes the dialog');
     await answer(page, held, 200, catalog); await settle(page);
     assert.deepEqual([(await sw()).tool, (await sw()).submit], ['', true], 'the late catalog fills nothing');
+    await page.close();
+  }
+
+  // The expanded card shows the live handoff phase and sends revision-checked recovery actions.
+  {
+    const switching = agent('a1', 'ada', { desired_rev: 7, switch: { state: 'draining', handoff_status: 'pending', tool: 'claude', model: 'sonnet', can_cancel: true, can_retry: false, can_continue: true } });
+    const page = await mount({ withCard: true, auto: stable({ 'GET /api/rooms/r1/agents': [switching], 'GET /api/agents/a1/switch': { switch: switching.switch, desired_rev: 7 } }) });
+    await page.waitForSelector('[data-agent-id=a1]');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    assert.match(await page.$eval('[data-agent-id=a1] .agent-switch-status', node => node.textContent), /Handing off/);
+    await page.waitForSelector('.agent-switch-actions');
+    assert.deepEqual(await page.$$eval('.agent-switch-actions button', nodes => nodes.map(node => node.textContent)), ['Continue without handoff', 'Cancel switch']);
+    await page.$eval('.agent-switch-actions button', node => node.click());
+    const action = await waitRequest(page, 'POST', '/api/agents/a1/switch/continue');
+    assert.deepEqual(await body(page, action), { rev: 7 });
+    await answer(page, action, 200, agent('a1', 'ada', { desired_rev: 8, switch: { state: 'starting', handoff_status: 'automatic', tool: 'claude', model: 'sonnet' } }));
+    await page.waitForFunction(() => document.querySelector('[data-agent-id=a1] .agent-switch-status').textContent.includes('Starting new session'));
+    await page.close();
+  }
+  {
+    const switching = agent('a1', 'ada', { desired_rev: 7, switch: { state: 'draining', handoff_status: 'automatic', tool: 'claude', model: 'sonnet', can_cancel: true, can_retry: true, can_continue: true } });
+    const page = await mount({ withCard: true, auto: stable({ 'GET /api/rooms/r1/agents': [switching], 'GET /api/agents/a1/switch': { switch: switching.switch, desired_rev: 7 } }) });
+    await page.waitForSelector('[data-agent-id=a1]');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    assert.deepEqual(await page.$$eval('.agent-switch-actions button', nodes => nodes.map(node => node.textContent)), ['Retry handoff', 'Continue without handoff', 'Cancel switch']);
+    await page.$eval('.agent-switch-actions button', node => node.click());
+    const action = await waitRequest(page, 'POST', '/api/agents/a1/switch/retry-handoff');
+    assert.deepEqual(await body(page, action), { rev: 7 });
+    await answer(page, action, 200, agent('a1', 'ada', { desired_rev: 8, switch: { state: 'draining', handoff_status: 'pending', tool: 'claude', model: 'sonnet', can_cancel: true, can_retry: false, can_continue: true } }));
+    await page.waitForFunction(() => document.querySelector('[data-agent-id=a1] .agent-switch-status').textContent.includes('Handing off'));
     await page.close();
   }
 
@@ -530,6 +570,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('#switch-form').elements.model.options.length);
     await settle(page);
     await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
+    await previewSwitch(page);
     await page.$eval('#switch-form button[type=submit]', node => node.click());
     const held = await waitRequest(page, 'POST', '/api/agents/a1/switch');
     await page.evaluate(room => { window.__shown = window.__panel.setRoom(room); }, room('r2'));
@@ -797,6 +838,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('#switch-form').elements.model.options.length);
     await settle(page);
     await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
+    await previewSwitch(page);
     await page.$eval('#switch-form button[type=submit]', node => node.click());
     const held = await waitRequest(page, 'POST', '/api/agents/a1/switch');
     await page.evaluate(() => document.querySelector('#switch-dialog').close());
@@ -983,6 +1025,7 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('#switch-form').elements.model.options.length);
       await settle(page);
       await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
+      await previewSwitch(page);
       await page.$eval('#switch-form button[type=submit]', node => node.click());
       held = await waitRequest(page, 'POST', '/api/agents/a1/switch');
       const total = await page.evaluate(() => window.__requests.length);

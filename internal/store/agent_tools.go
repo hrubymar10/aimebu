@@ -426,12 +426,35 @@ func (tx *Tx) agentCardByID(id string) (AgentCard, error) {
 			&card.Observed, &card.Generation, &card.RecoveryBlock, &card.RoomID, &card.BoundaryPending)
 	if err == nil {
 		var item AgentSwitch
-		switchErr := tx.tx.QueryRowContext(tx.ctx, `SELECT state,tool,variant,model,error FROM agent_switch WHERE agent_id=?`, id).
-			Scan(&item.State, &item.Tool, &item.Variant, &item.Model, &item.Error)
+		switchErr := tx.tx.QueryRowContext(tx.ctx, `SELECT state,tool,variant,model,COALESCE(machine_id,''),error FROM agent_switch WHERE agent_id=?`, id).
+			Scan(&item.State, &item.Tool, &item.Variant, &item.Model, &item.MachineID, &item.Error)
 		if switchErr == nil {
 			card.Switch = &item
 		} else if !errors.Is(switchErr, sql.ErrNoRows) {
 			return AgentCard{}, switchErr
+		}
+		var status, source, raw, deadline, overall string
+		var turnOpen bool
+		handoffErr := tx.tx.QueryRowContext(tx.ctx, `SELECT status,source,body_json,COALESCE(handoff_deadline,''),overall_deadline,
+			CASE WHEN turn_id IS NULL THEN 0 ELSE EXISTS(SELECT 1 FROM turn WHERE id=switch_handoff.turn_id AND (exec IN ('pending','running') OR settle='pending')) END
+			FROM switch_handoff WHERE agent_id=?`, id).
+			Scan(&status, &source, &raw, &deadline, &overall, &turnOpen)
+		if handoffErr == nil {
+			if card.Switch == nil && status == "started" {
+				card.Switch = &AgentSwitch{State: "started", Tool: card.Tool, Variant: card.Variant, Model: card.Model, MachineID: card.MachineID}
+			}
+			if card.Switch != nil {
+				card.Switch.HandoffStatus = status
+				card.Switch.HandoffSource = source
+				card.Switch.HandoffDeadline = deadline
+				card.Switch.OverallDeadline = overall
+				if raw != "" {
+					card.Switch.Handoff = json.RawMessage(raw)
+				}
+				card.Switch.setContinuityActions(turnOpen)
+			}
+		} else if !errors.Is(handoffErr, sql.ErrNoRows) {
+			return AgentCard{}, handoffErr
 		}
 		card.BoundaryGrants, err = tx.boundaryGrants(id)
 	}

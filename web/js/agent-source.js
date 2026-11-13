@@ -2,7 +2,7 @@ import { request } from './api.js';
 import { uuid } from './uuid.js';
 
 export class MockAgentSource {
-  constructor(seed = false) { this.seed = seed; this.available = seed; this.agents = new Map(); this.listeners = new Set(); this.seeded = false; }
+  constructor(seed = false) { this.seed = seed; this.available = seed; this.agents = new Map(); this.listeners = new Set(); this.seeded = false; this.switchTimers = new Map(); }
   async list(roomID) {
     if (this.seed && !this.seeded) {
       this.seeded = true;
@@ -41,17 +41,21 @@ export class MockAgentSource {
   }
   async switch(id, params) {
     const agent = this.agents.get(id); if (!agent) throw new Error('Agent not found');
-    agent.switch = { state: agent.observed === 'in_turn' ? 'draining' : 'starting', ...params };
+    agent.switch = { state: agent.observed === 'in_turn' ? 'draining' : 'starting', handoff_status: agent.observed === 'in_turn' ? 'waiting' : 'ready', ...params };
     agent.desired_rev = (agent.desired_rev || 0) + 1;
     this.notify();
-    setTimeout(() => {
+    this.switchTimers.set(id, setTimeout(() => {
+      this.switchTimers.delete(id);
       Object.assign(agent, { tool: params.tool, variant: params.variant, model: params.model, generation: (agent.generation || 0) + 1, observed: 'idle' });
       agent.latest_usage = agent.latest_usage?.cost_so_far == null ? undefined : { cost_so_far: agent.latest_usage.cost_so_far };
       delete agent.switch;
       this.notify();
-    }, 1000);
+    }, 1000));
     return { ...agent };
   }
+  async switchPreview(id, params) { return { room_id: params.room_id, handoff_status: 'available', history_window: 40, handbook_included: this.agents.get(id)?.role_key === 'leader', can_cancel: true, can_retry: true, can_continue: true, target: params }; }
+  async switchProgress(id) { const agent = this.agents.get(id); return { switch: agent?.switch || null, desired_rev: agent?.desired_rev || 0 }; }
+  async switchAction(id, action) { const agent = this.agents.get(id); if (!agent) throw new Error('Agent not found'); if (action === 'cancel') { clearTimeout(this.switchTimers.get(id)); this.switchTimers.delete(id); delete agent.switch; } else if (agent.switch) agent.switch.handoff_status = action === 'retry-handoff' ? 'pending' : 'automatic'; this.notify(); return { ...agent }; }
   async remove(id) {
     if (!this.agents.has(id)) throw new Error('Agent not found');
     this.agents.delete(id); this.notify();
@@ -132,6 +136,26 @@ export class HttpAgentSource {
       method: 'POST', headers: { 'Idempotency-Key': uuid() },
       body: { room_id: params.room_id, tool: params.tool, variant: params.variant, ...(params.launcher_id ? { launcher_id: params.launcher_id } : {}), model: params.model, machine_id: params.machine_id, rev: current.desired_rev },
     });
+    this.agents.set(card.id, card); await this.changed(); return this.normalize(card);
+  }
+  async switchPreview(id, params) {
+    const current = this.agents.get(id);
+    if (!current) throw new Error('Agent not found');
+    return request(`/api/agents/${encodeURIComponent(id)}/switch/preview`, { method: 'POST', body: { ...params, rev: current.desired_rev } });
+  }
+  async switchProgress(id) {
+    const progress = await request(`/api/agents/${encodeURIComponent(id)}/switch`);
+    const current = this.agents.get(id);
+    if (current && progress.desired_rev >= current.desired_rev && JSON.stringify(current.switch || null) !== JSON.stringify(progress.switch || null)) {
+      this.agents.set(id, { ...current, switch: progress.switch, desired_rev: progress.desired_rev });
+      await this.changed();
+    }
+    return progress;
+  }
+  async switchAction(id, action) {
+    const current = this.agents.get(id);
+    if (!current) throw new Error('Agent not found');
+    const card = await request(`/api/agents/${encodeURIComponent(id)}/switch/${action}`, { method: 'POST', headers: { 'Idempotency-Key': uuid() }, body: { rev: current.desired_rev } });
     this.agents.set(card.id, card); await this.changed(); return this.normalize(card);
   }
   // The server answers for the whole removal (the agent leaves its rooms, its worktree goes); the room's list is read again afterwards.

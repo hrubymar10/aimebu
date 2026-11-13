@@ -76,6 +76,8 @@ assert.equal(m.activityOf({ woken_by: 'reply' }, state({})).text, 'Woken by repl
 assert.deepEqual(plain(m.switchStatusOf({ boundary_pending: true }, String)), { hidden: false, text: 'Folder or machine approval needed · Open Inbox', inbox: true });
 assert.deepEqual(plain(m.switchStatusOf({ switch: { state: 'failed', tool: 'claude', model: 'opus', error: 'no room' } }, String)), { hidden: false, text: 'Switch failed: claude · opus — no room', inbox: false });
 assert.deepEqual(plain(m.switchStatusOf({ switch: { state: 'draining', tool: 'claude', model: 'opus' } }, tool => tool.toUpperCase())), { hidden: false, text: 'Finishing current turn: CLAUDE · opus', inbox: false });
+assert.deepEqual(plain(m.switchStatusOf({ switch: { state: 'draining', handoff_status: 'pending', tool: 'claude', model: 'opus' } }, String)), { hidden: false, text: 'Handing off: claude · opus', inbox: false });
+assert.deepEqual(plain(m.switchStatusOf({ switch: { state: 'starting', handoff_status: 'automatic', tool: 'claude', model: 'opus' } }, String)), { hidden: false, text: 'Starting new session: claude · opus', inbox: false });
 assert.equal(m.switchStatusOf({}, String).hidden, true);
 assert.deepEqual(plain(m.grantsOf({ boundary_grants: [{ machine_id: 'm1', path: '/a' }, { machine_id: 'm2', path: '/b' }] })), { hidden: false, text: 'Approved: m1 · /a · Approved: m2 · /b' });
 assert.equal(m.grantsOf({}).hidden, true);
@@ -112,6 +114,7 @@ assert.equal(reasons({ desired: 'active' }, { lifecycle: 'archived' }).switch, '
 assert.equal(reasons({ desired: 'active', recovery_block: true }).switch, 'Switch is unavailable: resolve the recovery item first.');
 assert.equal(reasons({ desired: 'active', switch: { state: 'draining' } }).switch, 'Switch is unavailable: a switch is already in progress.');
 assert.equal(reasons({ desired: 'active', switch: { state: 'failed' } }).switch, '');
+assert.equal(reasons({ desired: 'active', switch: { state: 'started' } }).switch, '', 'a completed switch does not block the next one');
 assert.deepEqual(reasons({ desired: 'active' }, { down: 'Agent controls are unavailable' }).message, '');
 assert.equal(reasons({ desired: 'active' }, { down: 'Agent controls are unavailable' })['act-stop'], 'Stop is unavailable: Agent controls are unavailable.');
 const [message, pause] = plain(m.actionsOf({ desired: 'active' }));

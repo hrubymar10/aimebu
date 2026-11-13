@@ -109,7 +109,8 @@ export function activityOf(agent, state) {
 
 export function switchStatusOf(agent, harness) {
   const handoff = agent.switch;
-  const phase = { draining: 'Finishing current turn', stopping: 'Stopping old session', starting: 'Starting new session', failed: 'Switch failed' }[handoff?.state];
+  const status = handoff?.handoff_status;
+  const phase = handoff?.state === 'failed' ? 'Switch failed' : handoff?.state === 'started' ? 'New session started' : handoff?.state === 'starting' ? 'Starting new session' : handoff?.state === 'stopping' ? 'Stopping old session' : status === 'waiting' ? 'Waiting for current turn' : status === 'pending' || status === 'handing_off' ? 'Handing off' : status === 'ready' ? 'Handoff ready · switching' : status === 'automatic' ? 'Automatic summary · switching' : handoff?.state === 'draining' ? 'Finishing current turn' : '';
   if (agent.boundary_pending) return { hidden: false, text: 'Folder or machine approval needed · Open Inbox', inbox: true };
   if (phase) return { hidden: false, text: `${phase}: ${harness(handoff.tool)} · ${handoff.model}${handoff.state === 'failed' && handoff.error ? ` — ${handoff.error}` : ''}`, inbox: false };
   return { hidden: true, text: '', inbox: false };
@@ -155,7 +156,7 @@ export function actionsOf(agent, { down = '', lifecycle = 'open' } = {}) {
     message: ['Send this agent a private message', ''],
     'act-pause': ['Pause: finish the current turn, then accept no new work', down || (agent.desired === 'not_accepting' ? 'it is already paused' : agent.desired === 'stopped' ? 'it is stopped; start it first' : '')],
     'act-stop': ['Stop: interrupt the current turn and accept no new work', down || (agent.desired === 'stopped' ? 'it is already stopped' : '')],
-    switch: ['Switch: change this agent\'s tool, model or machine', down || (lifecycle && lifecycle !== 'open' ? 'reopen the room first' : agent.recovery_block ? 'resolve the recovery item first' : agent.desired === 'stopped' ? 'start it first' : agent.boundary_pending ? 'it is waiting for folder or machine approval' : handoff && handoff.state !== 'failed' ? 'a switch is already in progress' : '')],
+    switch: ['Switch: change this agent\'s tool, model or machine', down || (lifecycle && lifecycle !== 'open' ? 'reopen the room first' : agent.recovery_block ? 'resolve the recovery item first' : agent.desired === 'stopped' ? 'start it first' : agent.boundary_pending ? 'it is waiting for folder or machine approval' : handoff && handoff.state !== 'failed' && handoff.state !== 'started' ? 'a switch is already in progress' : '')],
     reactivate: [`${again}: ${agent.desired === 'not_accepting' ? 'accept new work again' : 'run this agent again and accept new work'}`, down || (agent.boundary_pending ? 'it is waiting for folder or machine approval' : agent.role_deleted ? 'its role was deleted' : agent.desired === 'active' && !quotaFlag ? 'it is already active' : '')],
     'start-fresh': ['Start a new session with recent room history', down || (agent.desired === 'stopped' && agent.observed === 'stopped' ? '' : 'stop this agent first')],
     remove: ['Remove: take this agent out for good; its messages stay, and it cannot be started again', down || (agent.desired === 'stopped' && agent.observed === 'stopped' ? '' : 'stop it first')],

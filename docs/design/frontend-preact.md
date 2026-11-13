@@ -346,8 +346,10 @@ the cards keyed by agent id, `model.js` for the plain rules; the toolbar, the pa
 `index.html` and the adapter is their only writer). The store keeps the record it holds for an agent whose data is unchanged, so a refresh
 renders only the cards that changed and the clock re-renders only the age and the live chip. The Spawn dialog is a page of its own in the same
 folder (`SpawnStore` over a `MachineStore` for the machine and its folder; `spawn-model.js` holds the pure rules for the tool and model lists, the
-v1 banner, the worktree box and the request) and so is the Switch dialog (`SwitchStore`, sharing `MachineStore`). Every opening, catalog read,
-name read, call and folder save carries a number and says nothing once a newer one started, the dialog was closed or the panel is gone.
+v1 banner, the worktree box and the request) and so is the Switch dialog (`SwitchStore`, sharing `MachineStore`). Switch first previews the
+handoff, room history and handbook, then confirms the same target. The agent card polls switch progress and reads its action flags while handoff
+is active, showing only the recovery controls the server permits. Every opening, catalog read, preview, call and folder save carries a number
+and says nothing once a newer one started, the dialog was closed or the panel is gone.
 The room dialog's member list is a page of its own (`web/js/pages/members/`: a `MembersStore` whose loads take a ticket, with `model.js` for the state words); and so is the read-only profile of a sender that is no longer a live member (`web/js/pages/sender-profile/`: `openSenderProfile` keeps its call and mounts a page in a dialog of its own, over a store whose profile read dies with the dialog).
 
 #### Stop-rule checkpoint after step 4

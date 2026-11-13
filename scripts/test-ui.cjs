@@ -4724,6 +4724,8 @@ async function main() {
     await agentPage.select('#switch-form [name=tool]', '0');
     await agentPage.select('#switch-form [name=model]', 'test');
     await agentPage.click('#switch-form button[type=submit]');
+    await agentPage.waitForSelector('#switch-form .switch-preview');
+    await agentPage.click('#switch-form button[type=submit]');
     await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_worker"] .agent-switch-status')?.textContent === 'Starting new session: fake · test');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-switch', el => el.disabled), true, 'switch should be disabled during handoff');
     await agentPage.waitForFunction(() => !document.querySelector('#switch-dialog').open && document.querySelector('[data-agent-id="agt_mock_worker"] .agent-meta')?.textContent === 'fake · test');
@@ -4733,6 +4735,8 @@ async function main() {
     await agentPage.waitForFunction(() => document.querySelector('#switch-form [name=model]')?.value === 'test');
     assert.equal(await agentPage.$eval('#switch-form button[type=submit]', el => el.disabled), true, 'unchanged model should not submit');
     await agentPage.select('#switch-form [name=model]', 'fake-reviewer');
+    await domClick(agentPage, '#switch-form button[type=submit]');
+    await agentPage.waitForSelector('#switch-form .switch-preview');
     await domClick(agentPage, '#switch-form button[type=submit]');
     await agentPage.waitForFunction(() => !document.querySelector('#switch-dialog').open && document.querySelector('[data-agent-id="agt_mock_worker"] .agent-meta')?.textContent === 'fake · fake-reviewer');
     await agentPage.evaluate(() => document.querySelector('#agent-profile-close').click()); // Spawn is part of the members list, not of a profile
