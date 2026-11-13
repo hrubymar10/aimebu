@@ -51,7 +51,7 @@ transport inside a test binary.
 
 **Server (Go)**
 
-- Panics and 5xx answers in the HTTP handlers (each linked to its request's trace): the error text, the stack (function names, file paths with your home directory
+- Panics and 5xx answers in the HTTP handlers (each linked to its request's trace): the underlying error for a handled internal failure (also written to the server log), or a generic status report when no error is available; the stack (function names, file paths with your home directory
   shown as `~`), the request **method and route pattern** (for example `GET /api/projects/{id}`), the status code. A panic is reported
   and then raised again, so the process behaves exactly as it would without telemetry.
 - Panics at the entry points of the subcommands (server, supervisor, CLI).

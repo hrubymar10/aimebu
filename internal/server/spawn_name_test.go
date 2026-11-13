@@ -87,6 +87,64 @@ func TestSpawnWithAChosenNameUsesIt(t *testing.T) {
 	}
 }
 
+func TestSpawnSharesPhysicalFolderAcrossProjects(t *testing.T) {
+	for _, gitRepo := range []bool{false, true} {
+		name := "plain folder"
+		if gitRepo {
+			name = "git repository"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := namedSpawnFixture(t)
+			if gitRepo {
+				initRepo(t, f.project.Folder)
+			}
+			// Both projects deliberately use the folder checkout, with separate
+			// logical checkout records for the same physical path.
+			resp := f.request(http.MethodPut, "/api/projects/"+f.project.ID+"/settings", map[string]string{"worktree_mode": "off"}, true)
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("first project settings: %d", resp.StatusCode)
+			}
+			status, first := f.spawnNamed(t, "first", nil)
+			if status != 201 {
+				t.Fatalf("first spawn: %d %+v", status, first)
+			}
+			resp = f.request(http.MethodPost, "/api/projects", map[string]string{"name": "other", "folder": f.project.Folder}, true)
+			var other store.Project
+			if err := json.NewDecoder(resp.Body).Decode(&other); err != nil || resp.StatusCode != 201 {
+				t.Fatalf("second project: %d %v", resp.StatusCode, err)
+			}
+			resp.Body.Close()
+			resp = f.request(http.MethodPut, "/api/projects/"+other.ID+"/settings", map[string]string{"worktree_mode": "off"}, true)
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("second project settings: %d", resp.StatusCode)
+			}
+			resp = f.request(http.MethodPost, "/api/projects/"+other.ID+"/rooms", map[string]string{"title": "task"}, true)
+			if err := json.NewDecoder(resp.Body).Decode(&f.room); err != nil || resp.StatusCode != 201 {
+				t.Fatalf("second room: %d %v", resp.StatusCode, err)
+			}
+			resp.Body.Close()
+			status, body := f.spawnNamed(t, "second", map[string]any{"name": "second"})
+			if status != 201 {
+				t.Fatalf("shared folder: %d %+v", status, body)
+			}
+			for _, id := range []string{first["id"].(string), body["id"].(string)} {
+				path, err := f.db.AgentCheckoutPath(t.Context(), id)
+				if err != nil || path != f.project.Folder {
+					t.Fatalf("agent %s checkout %q: %v", id, path, err)
+				}
+			}
+			if gitRepo {
+				status, body = f.spawnNamed(t, "worktree", map[string]any{"name": "third", "worktree": true})
+				if status != 201 {
+					t.Fatalf("separate worktree: %d %+v", status, body)
+				}
+			}
+		})
+	}
+}
+
 func TestSpawnRefusesInvalidNames(t *testing.T) {
 	f := namedSpawnFixture(t)
 	for i, name := range []string{"ab", "Capital", "has space", "-lead", "trail-", "nine_teen_chars_long_x", "ünïcode", "here", "all", "channel", "everyone", "humans", "ais"} {

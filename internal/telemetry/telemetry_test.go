@@ -291,6 +291,28 @@ func TestMiddleware5xxAndTransaction(t *testing.T) {
 	}
 }
 
+func TestHandlerErrorReplacesGeneric5xxReport(t *testing.T) {
+	_, transport := startTest(t)
+	handler := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.(interface{ CaptureHTTPError(error) }).CaptureHTTPError(errors.New("database failed"))
+		http.Error(w, "internal server error", 500)
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/fail", nil))
+	Current().Flush(time.Second)
+	var errorsSeen, generic int
+	for _, event := range transport.sent() {
+		if len(event.Exception) > 0 && strings.Contains(event.Exception[0].Value, "database failed") {
+			errorsSeen++
+		}
+		if strings.HasPrefix(event.Message, "HTTP 500") {
+			generic++
+		}
+	}
+	if errorsSeen != 1 || generic != 0 {
+		t.Fatalf("underlying errors=%d generic reports=%d", errorsSeen, generic)
+	}
+}
+
 func TestMiddlewareKeepsFlusherAndHijacker(t *testing.T) {
 	startTest(t)
 	handler := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

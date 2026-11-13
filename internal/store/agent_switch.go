@@ -384,8 +384,8 @@ func (tx *Tx) moveSwitchCheckout(agentID, projectID, machineID, path string) err
 	if !approved || revoked {
 		return errSwitchTargetUnavailable
 	}
-	var targetID, targetProject string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,project_id FROM checkout WHERE machine_id=? AND canonical_path=?`, machineID, path).Scan(&targetID, &targetProject)
+	var targetID string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM checkout WHERE project_id=? AND machine_id=? AND canonical_path=?`, projectID, machineID, path).Scan(&targetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		targetID, err = newID("chk")
 		if err != nil {
@@ -394,12 +394,8 @@ func (tx *Tx) moveSwitchCheckout(agentID, projectID, machineID, path string) err
 		if _, err = tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES (?,?,?,?)`, targetID, projectID, machineID, path); err != nil {
 			return err
 		}
-		targetProject = projectID
 	} else if err != nil {
 		return err
-	}
-	if targetProject != projectID {
-		return ErrScopeMismatch
 	}
 	// A spelling of the old checkout's folder (agent.launch_path) means nothing in another checkout, which may be on another machine.
 	_, err = tx.Exec(`UPDATE agent SET machine_id=?,checkout_id=?,key_hash='',launch_path=CASE WHEN checkout_id=? THEN launch_path ELSE '' END WHERE id=?`, machineID, targetID, targetID, agentID)

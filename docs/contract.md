@@ -386,9 +386,10 @@ Machines and workspace
   native one, else its first by name) when its list differs from the seeded one in an id, a label or its length,
   so an edited list survives; a list that is dropped is written in full to the log.
 - **checkout**(id, project_id, machine_id, canonical_path, writer_agent_id?,
-  writer_state[none|reserved|releasing]) — UNIQUE (machine_id,
+  writer_state[none|reserved|releasing]) — UNIQUE (project_id, machine_id,
   canonical_path); container mounts map to the host canonical path so
-  aliases resolve to the same checkout
+  aliases within a project resolve to the same checkout. Different projects
+  may use the same physical folder and retain separate checkout records.
 
 Execution
 - **note**(id, agent_id, message_id, room_id, state (§3.1), wake_reason,
@@ -790,7 +791,8 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
 Agents in the same room may use the same checkout. Role cardinality still
 limits singleton roles. The legacy writer-reservation columns remain in the
 schema for compatibility but do not gate spawn, reactivation, role changes,
-switches, or dispatch.
+switches, or dispatch. Checkout identity includes the project, so projects
+that use one physical folder do not share a checkout record.
 
 ### 3.7 inbox item
 `open → resolved | withdrawn`, compare-and-set on (state=open, rev):
@@ -1478,8 +1480,8 @@ verification).
 `forbidden`, `depth_exceeded`, `already_resolved`, `already_withdrawn`,
 `agent_not_active`, `invalid_transition`, `invalid_request`, `not_found`,
 `invalid_csrf`, `invalid_credentials`, `rate_limited`, `project_archived`,
-`docker_only`. docs/api.md lists the codes of each route. Each documented as
-retryable or not.
+`docker_only`, `scope_mismatch`, `checkout_scope_mismatch`. docs/api.md lists
+the codes of each route. Each documented as retryable or not.
 
 ## 10. Idle-profile warmup
 

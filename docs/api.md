@@ -46,6 +46,9 @@ use `not_found`, and authorization uses `forbidden`. Domain-specific errors
 use codes such as those in [the contract](contract.md#9-error-codes), which lists
 the main ones; routes also return others, named in the rows below where they
 apply to one route.
+Resources that belong to different projects or machines return
+`409 scope_mismatch`; a spawn whose selected checkout has the wrong scope
+returns `409 checkout_scope_mismatch`.
 
 The embedded web UI is served at `/` with an SPA fallback for extensionless
 non-API paths. It uses the endpoints below, keeps the CSRF token in memory,

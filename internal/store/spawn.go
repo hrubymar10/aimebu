@@ -219,19 +219,13 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		return AgentCard{}, ErrSpawnLimit
 	}
 	var checkoutID string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM checkout WHERE machine_id=? AND canonical_path=?`, in.MachineID, in.Path).Scan(&checkoutID)
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM checkout WHERE project_id=? AND machine_id=? AND canonical_path=?`, projectID, in.MachineID, in.Path).Scan(&checkoutID)
 	if errors.Is(err, sql.ErrNoRows) {
 		checkoutID, err = newID("chk")
 		if err != nil {
 			return AgentCard{}, err
 		}
 		_, err = tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES (?,?,?,?)`, checkoutID, projectID, in.MachineID, in.Path)
-	} else if err == nil {
-		var checkoutProject string
-		err = tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM checkout WHERE id=?`, checkoutID).Scan(&checkoutProject)
-		if err == nil && checkoutProject != projectID {
-			return AgentCard{}, ErrScopeMismatch
-		}
 	}
 	if err != nil {
 		return AgentCard{}, err

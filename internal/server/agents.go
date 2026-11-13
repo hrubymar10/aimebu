@@ -1313,6 +1313,8 @@ func spawnError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "role_default_changed", "another agent used this role default first; retry the spawn")
 	case errors.Is(err, store.ErrConflict):
 		apiError(w, 409, "idempotency_conflict", "key reused with different request")
+	case errors.Is(err, store.ErrScopeMismatch):
+		apiError(w, 409, "checkout_scope_mismatch", "the selected checkout does not belong to this project and machine")
 	case errors.Is(err, store.ErrStaleRev):
 		apiError(w, 409, "stale_rev", "agent desired revision changed")
 	case errors.Is(err, sql.ErrNoRows):

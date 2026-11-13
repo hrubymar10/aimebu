@@ -1653,7 +1653,23 @@ DROP TABLE reply_root;
 -- for the owner. Approval must not silently resume the old native session.
 ALTER TABLE boundary_pending ADD COLUMN start_fresh INTEGER NOT NULL DEFAULT 0 CHECK (start_fresh IN (0,1));
 `}, {100, roleLeadDirectTaskMigration()}, {101, roleRoomMentionMigration()}, {102, `-- Role key and ID rename is applied by migrateLeaderRole.
-UPDATE role SET rev=rev WHERE 0;`}}
+UPDATE role SET rev=rev WHERE 0;`}, {103, `
+-- A physical folder can serve multiple projects. Each project owns its own
+-- checkout row and writer slot, while existing checkout IDs remain stable.
+CREATE TABLE checkout_new (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES project(id),
+  machine_id TEXT NOT NULL REFERENCES machine(id),
+  canonical_path TEXT NOT NULL,
+  writer_agent_id TEXT REFERENCES agent(id),
+  writer_state TEXT NOT NULL DEFAULT 'none' CHECK (writer_state IN ('none','reserved','releasing')),
+  UNIQUE (project_id, machine_id, canonical_path)
+);
+INSERT INTO checkout_new(id,project_id,machine_id,canonical_path,writer_agent_id,writer_state)
+  SELECT id,project_id,machine_id,canonical_path,writer_agent_id,writer_state FROM checkout;
+DROP TABLE checkout;
+ALTER TABLE checkout_new RENAME TO checkout;
+`}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.
@@ -1738,6 +1754,12 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		}
 		if limit > 0 && m.version > limit {
 			break
+		}
+		if m.version == 103 {
+			if err := migrateCheckoutPerProject(ctx, db, m); err != nil {
+				return fmt.Errorf("migration %d: %w", m.version, err)
+			}
+			continue
 		}
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -1883,6 +1905,68 @@ func migrateLeaderRole(ctx context.Context, tx *sql.Tx) ([]string, error) {
 		return nil, err
 	}
 	return facts, nil
+}
+
+// SQLite cannot drop the old UNIQUE autoindex in place. Rebuilding checkout
+// requires foreign keys off before the transaction starts because agents
+// reference it; reject new foreign-key violations before committing and
+// restore the connection's prior setting even when the migration fails.
+func migrateCheckoutPerProject(ctx context.Context, db *sql.DB, m migration) (resultErr error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	var foreignKeys int
+	if err := conn.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		return err
+	}
+	if foreignKeys != 0 {
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
+		defer func() {
+			if _, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys=ON`); err != nil && resultErr == nil {
+				resultErr = fmt.Errorf("restore foreign keys: %w", err)
+			}
+		}()
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	before, err := countForeignKeyViolations(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, m.sql); err != nil {
+		return err
+	}
+	after, err := countForeignKeyViolations(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if after > before {
+		return fmt.Errorf("checkout rebuild added %d foreign key violations", after-before)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_version(version, applied_at) VALUES (?, ?)`, m.version, timestamp()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func countForeignKeyViolations(ctx context.Context, tx *sql.Tx) (int, error) {
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		count++
+	}
+	return count, rows.Err()
 }
 
 // keepHistoryUnnumbered, as a context value, lets a test run migration 71 over messages (they stay unnumbered): the tests of the old

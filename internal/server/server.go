@@ -642,7 +642,15 @@ func fail(w http.ResponseWriter, err error) {
 		apiError(w, 404, "not_found", "not found")
 	} else if errors.Is(err, store.ErrForbidden) {
 		apiError(w, 403, "forbidden", "forbidden")
+	} else if errors.Is(err, store.ErrScopeMismatch) {
+		apiError(w, 409, "scope_mismatch", "the requested resources belong to different projects or machines")
 	} else {
+		log.Printf("http 500: %v", err)
+		if reporter, ok := w.(interface{ CaptureHTTPError(error) }); ok {
+			reporter.CaptureHTTPError(err)
+		} else {
+			telemetry.Current().CaptureError(context.Background(), err)
+		}
 		apiError(w, 500, "internal_error", "internal server error")
 	}
 }

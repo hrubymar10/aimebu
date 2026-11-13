@@ -19,7 +19,20 @@ var errHandlerAbort = http.ErrAbortHandler
 // exposes the wrapped writer to http.ResponseController.
 type statusWriter struct {
 	http.ResponseWriter
-	status int
+	status        int
+	ctx           context.Context
+	telemetry     *Telemetry
+	errorReported bool
+}
+
+// CaptureHTTPError keeps a handler's underlying error on the request trace.
+// The middleware then skips its generic status-only report for that response.
+func (w *statusWriter) CaptureHTTPError(err error) {
+	if w.telemetry == nil || err == nil {
+		return
+	}
+	w.telemetry.CaptureError(w.ctx, err)
+	w.errorReported = true
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -72,7 +85,7 @@ func Middleware(h http.Handler) http.Handler {
 			h.ServeHTTP(w, r)
 			return
 		}
-		writer := &statusWriter{ResponseWriter: w}
+		writer := &statusWriter{ResponseWriter: w, telemetry: t}
 		ctx := r.Context()
 		var span trace.Span
 		streaming := r.Header.Get("Upgrade") != "" || strings.Contains(r.Header.Get("Accept"), "text/event-stream")
@@ -88,6 +101,7 @@ func Middleware(h http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, spanBudgetKey{}, budget)
 		}
 		request := r.WithContext(ctx)
+		writer.ctx = ctx
 		defer func() {
 			value := recover()
 			route := request.Pattern
@@ -113,7 +127,7 @@ func Middleware(h http.Handler) http.Handler {
 				t.CapturePanic(ctx, value)
 				panic(value)
 			}
-			if status >= 500 {
+			if status >= 500 && !writer.errorReported {
 				scope := scopeFor(ctx)
 				scope.SetTag("http.route", route)
 				scope.SetTag("http.status_code", fmt.Sprint(status))

@@ -117,20 +117,16 @@ func (tx *Tx) pointAgentAtCheckout(agentID, machineID, path string) (string, err
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,checkout_id FROM agent WHERE id=?`, agentID).Scan(&projectID, &oldCheckout); err != nil {
 		return "", err
 	}
-	var checkoutID, checkoutProject string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,project_id FROM checkout WHERE machine_id=? AND canonical_path=?`, machineID, path).Scan(&checkoutID, &checkoutProject)
+	var checkoutID string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM checkout WHERE project_id=? AND machine_id=? AND canonical_path=?`, projectID, machineID, path).Scan(&checkoutID)
 	if errors.Is(err, sql.ErrNoRows) {
 		if checkoutID, err = newID("chk"); err != nil {
 			return "", err
 		}
 		_, err = tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES (?,?,?,?)`, checkoutID, projectID, machineID, path)
-		checkoutProject = projectID
 	}
 	if err != nil {
 		return "", err
-	}
-	if checkoutProject != projectID {
-		return "", ErrScopeMismatch
 	}
 	if checkoutID != oldCheckout {
 		if _, err := tx.Exec(`UPDATE agent SET checkout_id=?,launch_path='' WHERE id=?`, checkoutID, agentID); err != nil {

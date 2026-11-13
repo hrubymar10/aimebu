@@ -38,6 +38,9 @@ worktree option separates task-room files when chosen; it is not required to
 start another worker. If the project folder is not a Git repository, agents
 work in that folder without a worktree.
 
+Multiple projects may use the same folder on one machine. Each has its own
+checkout record there, and agents in either project can start in that folder.
+
 Existing agent-specific worktrees are still listed in Health and can be removed
 there or with `DELETE /api/agents/{agent}/worktree`. A clean, merged worktree
 is removed; uncommitted or unmerged work is preserved unless the person uses
