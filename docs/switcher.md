@@ -113,7 +113,7 @@ regular snapshot is written into `main`'s stored copy on the next switch
 |---|---|
 | `aimebu switcher list [--json]` | profiles across both tools, with active marker, whether credentials are stored, and login email |
 | `aimebu switcher status [--json]` | active profile and eligibility per tool |
-| `aimebu switcher use <tool> <profile>` | switch |
+| `aimebu switcher use <tool> <profile> [--force]` | switch; `--force` skips the incoming refresh |
 | `aimebu switcher add <tool> <profile>` | create an **empty** profile |
 | `aimebu switcher import <tool> <profile>` | adopt the **current live login** as a profile |
 | `aimebu switcher rename <tool> <old> <new>` | rename |
@@ -426,6 +426,14 @@ access token until it expires and re-read the file when it is rewritten.
   profile still linked, codex running); login pending and incoming
   refresh carry a `Retry-After` header; a migration request while the feature is off is 400.
   The web UI shows the server's message as-is.
+- `aimebu switcher use claude bkp --force` installs `bkp`'s stored credentials
+  and selects it without refreshing first. In the token-only model the live
+  targets receive the stored access token through the normal fan-out; the
+  stored refresh token stays in the profile store. No credential is cleared.
+  An expired account may then require `claude login`. The CLI handles this
+  mode locally under the usual locks, even when the server is running. It asks
+  for confirmation; `-y` skips the prompt. Ordinary switches still check the
+  incoming refresh.
 - **`import`** adopts a login that has just been made (the live file holds a
   full credential the reconciler has not filed yet) under the name you choose,
   without creating the link described above. It saves a rescue copy and a

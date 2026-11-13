@@ -64,6 +64,7 @@ func (r switcherRoutes) handleSwitch(w http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Tool    string `json:"tool"`
 		Profile string `json:"profile"`
+		Force   bool   `json:"force"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeSwitcherErr(w, http.StatusBadRequest, errors.New("invalid JSON: "+err.Error()))
@@ -74,7 +75,14 @@ func (r switcherRoutes) handleSwitch(w http.ResponseWriter, req *http.Request) {
 	// switch in the per-profile cache.
 	outgoing, _ := r.sm.Active(body.Tool)
 
-	active, switched, err := r.sm.Switch(body.Tool, body.Profile)
+	var active string
+	var switched bool
+	var err error
+	if body.Force {
+		active, switched, err = r.sm.SwitchForce(body.Tool, body.Profile)
+	} else {
+		active, switched, err = r.sm.Switch(body.Tool, body.Profile)
+	}
 	if err != nil {
 		writeSwitcherErr(w, switcherHTTPStatus(err), err)
 		return
@@ -205,7 +213,7 @@ const retryAfterSeconds = "60"
 func retryable(err error) bool {
 	return errors.Is(err, switcher.ErrMaintenanceBusy) ||
 		errors.Is(err, switcher.ErrLoginPending) ||
-		errors.Is(err, switcher.ErrIncomingRefresh)
+		(errors.Is(err, switcher.ErrIncomingRefresh) && !errors.Is(err, usages.ErrAccountNeedsLogin))
 }
 
 func writeSwitcherErr(w http.ResponseWriter, status int, err error) {
@@ -217,7 +225,7 @@ func writeSwitcherErr(w http.ResponseWriter, status int, err error) {
 	if retryable(err) {
 		// The caller can simply try again; say how soon, in the header and the text.
 		w.Header().Set("Retry-After", retryAfterSeconds)
-		if errors.Is(err, switcher.ErrIncomingRefresh) {
+		if errors.Is(err, switcher.ErrIncomingRefresh) && !errors.Is(err, usages.ErrAccountNeedsLogin) {
 			msg += "; the server keeps retrying the refresh, try again in a few minutes"
 		}
 	}

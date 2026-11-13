@@ -459,7 +459,7 @@ POST   /api/usages/copilot/login/start Start GitHub device flow; returns flow_id
 POST   /api/usages/copilot/login/poll  Poll GitHub device flow by flow_id; never returns tokens
 POST   /api/usages/copilot/login/logout Clear local Copilot token and disable the provider
 POST   /api/usages/switcher/settings   Enable or disable the switcher
-POST   /api/usages/switcher/switch     Switch the active profile for a tool
+POST   /api/usages/switcher/switch     Switch the active profile for a tool (optional force=true skips incoming refresh)
 POST   /api/usages/switcher/profiles   Create an empty profile, or import the current live login
 DELETE /api/usages/switcher/profiles   Delete a profile; 409 unless force is set when it is active
 DELETE /all                            Clear runtime agent state (agents, sessions); add ?include_settings=true to also wipe rooms, messages, memory, macros, fleets, prompts, roles, sounds, and settings

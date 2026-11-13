@@ -31,6 +31,19 @@ type cliSwitcher struct {
 }
 
 func (c cliSwitcher) Switch(tool, name string) (string, bool, error) {
+	return c.switchProfile(tool, name, false)
+}
+
+func (c cliSwitcher) SwitchForce(tool, name string) (string, bool, error) {
+	return c.switchProfile(tool, name, true)
+}
+
+func (c cliSwitcher) switchProfile(tool, name string, force bool) (string, bool, error) {
+	// Forced switches need no refresher. The CLI can use its wired fan-out and
+	// locks locally even when the running server has not yet been upgraded.
+	if force {
+		return c.Manager.SwitchForce(tool, name)
+	}
 	if c.TokenCopiesFor(tool) {
 		if active, switched, handled, err := switchViaServer(tool, name); handled {
 			return active, switched, err

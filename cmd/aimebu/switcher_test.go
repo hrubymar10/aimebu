@@ -73,6 +73,9 @@ func (f *switcherFake) Switch(tool, name string) (string, bool, error) {
 	}
 	return f.switchResult, switched, f.switchErr
 }
+func (f *switcherFake) SwitchForce(tool, name string) (string, bool, error) {
+	return f.Switch(tool, name)
+}
 
 // ── list ─────────────────────────────────────────────────────────────
 
@@ -213,6 +216,20 @@ func TestSwitcherUseHappy(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `Switched claude to profile "work"`) {
 		t.Errorf("unexpected output: %q", buf.String())
+	}
+}
+
+func TestSwitcherUseForceRequiresConfirmation(t *testing.T) {
+	fake := &switcherFake{profiles: []switcher.Profile{{Tool: "claude", Name: "bkp", HasCreds: true}}, switchResult: "bkp"}
+	if err := switcherUse(bytes.NewReader(nil), &bytes.Buffer{}, fake, []string{"claude", "bkp", "--force"}); err == nil {
+		t.Fatal("expected confirmation refusal without a terminal")
+	}
+	var out bytes.Buffer
+	if err := switcherUse(bytes.NewReader(nil), &out, fake, []string{"claude", "bkp", "--force", "-y"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "without refreshing") {
+		t.Fatalf("missing force warning: %s", out.String())
 	}
 }
 
@@ -737,6 +754,26 @@ func TestCLISwitchGoesThroughARunningServer(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(live); !strings.Contains(string(data), "tok-a") {
 		t.Fatal("the CLI also switched locally although the server answered")
+	}
+}
+
+func TestCLIForceSwitchRunsLocallyWithRunningServer(t *testing.T) {
+	cli, live := migratedCLIInstall(t)
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer srv.Close()
+	t.Setenv("AIMEBU_URL", srv.URL)
+	if _, _, err := cli.SwitchForce(switcher.ToolClaude, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatalf("server received %d forced switch requests", requests)
+	}
+	if data, err := os.ReadFile(live); err != nil || !strings.Contains(string(data), "tok-b") {
+		t.Fatalf("live credentials did not switch to b: %s, %v", data, err)
 	}
 }
 

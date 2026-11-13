@@ -207,6 +207,39 @@ func TestTokenCopySwitchToEmptyProfileClearsLive(t *testing.T) {
 	}
 }
 
+func TestTokenCopyForceSwitchInstallsExpiredProfile(t *testing.T) {
+	m, live, fanned := tokenCopyManager(t)
+	stored := m.profileCredPath(ToolClaude, "b")
+	expired := fullClaude("old", "ref-b", time.Now().Add(-time.Hour))
+	must(t, os.WriteFile(stored, []byte(expired), 0o600))
+	hooks := m.copyHooks
+	hooks.RefreshIncoming = func(context.Context, string, string) error {
+		t.Fatal("forced switch must skip incoming refresh")
+		return nil
+	}
+	hooks.ClearActive = func(string) error {
+		t.Fatal("forced switch must not clear live credentials")
+		return nil
+	}
+	m.SetTokenCopyHooks(hooks)
+	active, switched, err := m.SwitchForce(ToolClaude, "b")
+	if err != nil || !switched || active != "b" {
+		t.Fatalf("SwitchForce = %q, %v, %v", active, switched, err)
+	}
+	if got, _ := m.Active(ToolClaude); got != "b" {
+		t.Fatalf("active = %q", got)
+	}
+	if got := readFile(t, live); !strings.Contains(got, `"accessToken":"old"`) || strings.Contains(got, "refreshToken") {
+		t.Fatalf("live credentials did not receive the stored account: %s", got)
+	}
+	if got := readFile(t, stored); got != expired {
+		t.Fatalf("stored profile changed: %s", got)
+	}
+	if len(*fanned) != 1 {
+		t.Fatalf("fan-out calls = %v", *fanned)
+	}
+}
+
 func TestTokenCopySwitchNeedsFanOutWired(t *testing.T) {
 	m, _, _ := tokenCopyManager(t)
 	m.SetTokenCopyHooks(TokenCopyHooks{})

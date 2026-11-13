@@ -37,6 +37,16 @@ import (
 // The flock on switcher/.lock is held for the entire operation so a concurrent
 // CLI or server switch cannot interleave.
 func (m *Manager) Switch(tool, name string) (active string, switched bool, err error) {
+	return m.switchProfile(tool, name, false)
+}
+
+// SwitchForce installs the selected stored credential without refreshing it.
+// The caller accepts that an expired credential may require a new login.
+func (m *Manager) SwitchForce(tool, name string) (active string, switched bool, err error) {
+	return m.switchProfile(tool, name, true)
+}
+
+func (m *Manager) switchProfile(tool, name string, force bool) (active string, switched bool, err error) {
 	// 1. Validate the target name before any I/O. Apply the same validateProfileName
 	// guard that Add/Import/Rename/Remove all use — a check applied everywhere except
 	// one place reads as complete in review but isn't.
@@ -67,7 +77,7 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 	// are never handed a dying account. Runs under the account lock held above and
 	// BEFORE the switcher flock, because the refresher commits under that flock.
 	tokenCopies := m.TokenCopiesFor(tool)
-	if tokenCopies {
+	if tokenCopies && !force {
 		if err := m.refreshIncomingIfDue(tool, name); err != nil {
 			return "", false, err
 		}
@@ -129,6 +139,11 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 	targetDir := m.profileDir(tool, name)
 	if _, statErr := os.Stat(targetDir); statErr != nil {
 		return "", false, fmt.Errorf("%w: %s/%s", ErrProfileNotFound, tool, name)
+	}
+	if force {
+		if _, statErr := os.Stat(m.profileCredPath(tool, name)); statErr != nil {
+			return "", false, fmt.Errorf("force switch requires stored credentials for %s/%s: %w", tool, name, statErr)
+		}
 	}
 
 	// Switching to the already-active profile is an explicit no-op: return before

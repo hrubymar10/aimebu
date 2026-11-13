@@ -601,3 +601,12 @@ func TestWriteSwitcherErrRetryHints(t *testing.T) {
 		t.Fatalf("codex-running must not claim to be self-clearing: %s", rec.Body.String())
 	}
 }
+
+func TestWriteSwitcherErrReauthDoesNotSuggestRetry(t *testing.T) {
+	rec := httptest.NewRecorder()
+	err := fmt.Errorf("%w: %w (reauth_required)", switcher.ErrIncomingRefresh, usages.ErrAccountNeedsLogin)
+	writeSwitcherErr(rec, http.StatusConflict, err)
+	if rec.Header().Get("Retry-After") != "" || strings.Contains(rec.Body.String(), "server keeps retrying") {
+		t.Fatalf("terminal reauth received retry advice: %q", rec.Body.String())
+	}
+}
