@@ -6,14 +6,16 @@ import (
 
 // ReadState is one user's read position in one room.
 type ReadState struct {
-	ReadCursor  int64 `json:"read_cursor"`
-	UnreadCount int   `json:"unread_count"`
+	ReadCursor     int64 `json:"read_cursor"`
+	UnreadCount    int   `json:"unread_count"`
+	AttentionCount int   `json:"attention_count"`
 }
 
 // MarkRoomRead advances the user's read cursor to seq (the room's newest
 // message when seq is 0). The cursor never moves backwards, so a stale
-// device cannot resurrect messages another device already read. A real
-// advance emits room_read_changed so the user's other sessions refresh.
+// device cannot resurrect messages another device already read. Visible
+// attention items through the read cursor are marked seen for this person.
+// A cursor or seen-state change emits room_read_changed for other sessions.
 func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int64) (ReadState, error) {
 	if err := s.UserRoomAccess(ctx, userID, roomID); err != nil {
 		return ReadState{}, err
@@ -31,32 +33,57 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 		var current int64
 		_ = tx.tx.QueryRowContext(tx.ctx, `SELECT last_read_seq FROM room_read_cursor WHERE user_id=? AND room_id=?`, userID, roomID).Scan(&current)
 		state.ReadCursor = current
+		changed := false
 		if seq > current {
 			if _, err := tx.Exec(`INSERT INTO room_read_cursor(user_id,room_id,last_read_seq) VALUES (?,?,?)
 				ON CONFLICT(user_id,room_id) DO UPDATE SET last_read_seq=excluded.last_read_seq`, userID, roomID, seq); err != nil {
 				return err
 			}
 			state.ReadCursor = seq
+			changed = true
+		}
+		// Opening the latest page acknowledges only requests already present in that
+		// view. Items without a message are visible in the room's Inbox context.
+		marked, err := tx.Exec(`INSERT OR IGNORE INTO inbox_item_seen(item_id,user_id,seen_at)
+			SELECT i.id,?,? `+inboxFromSQL+` LEFT JOIN message msg ON msg.id=i.message_id `+inboxWhereSQL+`
+			AND i.room_id=? AND (i.message_id IS NULL OR msg.seq<=?)`,
+			userID, timestamp(), userID, userID, roomID, state.ReadCursor)
+		if err != nil {
+			return err
+		}
+		if n, err := marked.RowsAffected(); err != nil {
+			return err
+		} else if n > 0 {
+			changed = true
+		}
+		if changed {
 			if _, err := tx.AppendEvent(Event{Kind: "room_read_changed", ProjectID: projectID, RoomID: roomID,
 				PayloadJSON: payloadJSON(map[string]string{"user_id": userID})}); err != nil {
 				return err
 			}
 		}
 		// A room set to mentions only counts the messages that address this person, as the room list does.
-		return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?
 			AND (COALESCE((SELECT notify FROM room_view_preference WHERE user_id=? AND room_id=?),'default')<>'mentions'
 				OR EXISTS (SELECT 1 FROM json_each(message.targets_json) WHERE value=?))`,
-			roomID, state.ReadCursor, userID, roomID, userID).Scan(&state.UnreadCount)
+			roomID, state.ReadCursor, userID, roomID, userID).Scan(&state.UnreadCount); err != nil {
+			return err
+		}
+		return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+`
+			AND i.room_id=? AND NOT EXISTS (SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)`,
+			userID, userID, roomID, userID).Scan(&state.AttentionCount)
 	})
 	return state, err
 }
 
-// attentionByRoom counts the open inbox entries the user can see per room,
-// reusing the inbox filter so the badge always matches the inbox panel.
+// attentionByRoom counts the unseen open inbox entries the user can see per room,
+// reusing the inbox visibility filter so the badge is the unseen subset.
 func (s *Store) attentionByRoom(ctx context.Context, userID string) (map[string]int, error) {
 	// A count per room, not the whole inbox: every project's room list asks for this, and building each item (diagnostic reports,
 	// receipts, options) is wasted work when only the number is shown.
-	rows, err := s.readDB.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+` GROUP BY i.room_id`, userID, userID)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+`
+		AND NOT EXISTS (SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)
+		GROUP BY i.room_id`, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}

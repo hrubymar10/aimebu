@@ -328,7 +328,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/agents/{id}/switch", s.Auth.RequireUser(http.HandlerFunc(s.agentSwitch)))
 	mux.Handle("POST /api/inbox/{item}/answer", s.Auth.RequireUser(http.HandlerFunc(s.answerInbox)))
 	mux.Handle("POST /api/inbox/{item}/decision", s.Auth.RequireUser(http.HandlerFunc(s.decideRecovery)))
-	mux.Handle("POST /api/inbox/{item}/dismiss", s.Auth.RequireUser(http.HandlerFunc(s.dismissDeliveryFailure)))
+	mux.Handle("POST /api/inbox/{item}/dismiss", s.Auth.RequireUser(http.HandlerFunc(s.dismissInboxItem)))
 	mux.Handle("GET /api/system-events", s.Auth.RequireUser(http.HandlerFunc(s.systemEvents)))
 	mux.Handle("GET /api/message-numbers/{no}", s.Auth.RequireUser(http.HandlerFunc(s.messageByNo)))
 	mux.Handle("GET /api/messages/{message}/debug", s.Auth.RequireUser(http.HandlerFunc(s.messageDebug)))

@@ -70,4 +70,32 @@ func TestAttentionCountsMatchTheInboxEachPersonSees(t *testing.T) {
 	if owner[room.ID] == 0 || viewer[room.ID] != 0 || peer[dm.ID] == 0 {
 		t.Fatalf("expected different views: owner %v viewer %v peer %v", owner, viewer, peer)
 	}
+	state, err := s.MarkRoomRead(ctx, "usr_owner", room.ID, 0)
+	if err != nil || state.AttentionCount != 0 {
+		t.Fatalf("mark room read: %+v err=%v", state, err)
+	}
+	owner, err = s.attentionByRoom(ctx, "usr_owner")
+	if err != nil || owner[room.ID] != 0 {
+		t.Fatalf("seen bell stayed: %v err=%v", owner, err)
+	}
+	entries, err := s.InboxForUser(ctx, "usr_owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen, open := 0, 0
+	for _, entry := range entries {
+		if entry.RoomID == room.ID {
+			open++
+			if entry.Seen {
+				seen++
+			}
+		}
+	}
+	if open == 0 || seen != open {
+		t.Fatalf("room Inbox should stay open and seen: open=%d seen=%d", open, seen)
+	}
+	operator, err := s.attentionByRoom(ctx, "usr_operator")
+	if err != nil || operator[room.ID] == 0 {
+		t.Fatalf("another person's bell changed: %v err=%v", operator, err)
+	}
 }

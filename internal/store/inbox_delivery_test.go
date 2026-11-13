@@ -72,20 +72,20 @@ func TestDismissDeliveryFailure(t *testing.T) {
 		t.Fatalf("inbox=%+v err=%v", items, err)
 	}
 	item := items[0]
-	if err := s.DismissDeliveryFailure(ctx, item.ID, "usr_missing", int(item.Rev)); err != ErrForbidden {
+	if err := s.DismissInboxItem(ctx, item.ID, "usr_missing", int(item.Rev)); err != ErrForbidden {
 		t.Fatalf("unauthorized dismiss: %v", err)
 	}
-	if err := s.DismissDeliveryFailure(ctx, item.ID, "usr_answers", int(item.Rev)+1); err != ErrStaleInboxRev {
+	if err := s.DismissInboxItem(ctx, item.ID, "usr_answers", int(item.Rev)+1); err != ErrStaleInboxRev {
 		t.Fatalf("stale rev: %v", err)
 	}
-	if err := s.DismissDeliveryFailure(ctx, item.ID, "usr_answers", int(item.Rev)); err != nil {
+	if err := s.DismissInboxItem(ctx, item.ID, "usr_answers", int(item.Rev)); err != nil {
 		t.Fatal(err)
 	}
 	items, err = s.InboxForUser(ctx, "usr_answers")
 	if err != nil || len(items) != 0 {
 		t.Fatalf("dismissed inbox=%+v err=%v", items, err)
 	}
-	if err := s.DismissDeliveryFailure(ctx, item.ID, "usr_answers", int(item.Rev)+1); err != ErrAlreadyResolved {
+	if err := s.DismissInboxItem(ctx, item.ID, "usr_answers", int(item.Rev)+1); err != ErrAlreadyResolved {
 		t.Fatalf("resolved: %v", err)
 	}
 }
@@ -169,9 +169,8 @@ func TestDeliveryFailureInboxShowsCorrectionHeldReason(t *testing.T) {
 	}
 }
 
-// Dismiss is for informational delivery failures only: a question or approval cannot be
-// dismissed, because that would resolve it unanswered.
-func TestDismissCannotResolveAQuestion(t *testing.T) {
+// Dismissing a question closes it without a reply or an answer choice.
+func TestDismissClosesQuestionWithoutAnswer(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
 	ctx := context.Background()
@@ -183,12 +182,31 @@ func TestDismissCannotResolveAQuestion(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Kind != "question" {
 		t.Fatalf("question inbox = %+v err=%v", items, err)
 	}
-	if err := s.DismissDeliveryFailure(ctx, items[0].ID, "usr_answers", int(items[0].Rev)); err != ErrForbidden {
-		t.Fatalf("dismissing a question: %v, want ErrForbidden", err)
+	var questionSeq int64
+	if err := s.db.QueryRow(`SELECT seq FROM message WHERE id=?`, items[0].MessageID).Scan(&questionSeq); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := s.MarkRoomRead(ctx, "usr_answers", f.room.ID, questionSeq-1); err != nil || state.AttentionCount != 1 {
+		t.Fatalf("older page marked question seen: %+v err=%v", state, err)
+	}
+	if state, err := s.MarkRoomRead(ctx, "usr_answers", f.room.ID, questionSeq); err != nil || state.AttentionCount != 0 {
+		t.Fatalf("reading question did not clear bell: %+v err=%v", state, err)
+	}
+	items, err = s.InboxForUser(ctx, "usr_answers")
+	if err != nil || len(items) != 1 || !items[0].Seen {
+		t.Fatalf("seen question left Inbox: %+v err=%v", items, err)
+	}
+	if err := s.DismissInboxItem(ctx, items[0].ID, "usr_answers", int(items[0].Rev)); err != nil {
+		t.Fatalf("dismissing a question: %v", err)
 	}
 	after, _ := s.InboxForUser(ctx, "usr_answers")
-	if len(after) != 1 || after[0].ID != items[0].ID {
-		t.Fatalf("the question was resolved by a dismiss: %+v", after)
+	if len(after) != 0 {
+		t.Fatalf("the dismissed question stayed open: %+v", after)
+	}
+	var state string
+	var answerID *string
+	if err := s.db.QueryRow(`SELECT state,answer_message_id FROM inbox_item WHERE id=?`, items[0].ID).Scan(&state, &answerID); err != nil || state != "withdrawn" || answerID != nil {
+		t.Fatalf("dismissed question state=%q answer=%v err=%v", state, answerID, err)
 	}
 }
 
@@ -210,10 +228,10 @@ func TestDismissNeedsAnOperatorInAnOrdinaryRoom(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,'usr_viewer','viewer')`, f.project.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DismissDeliveryFailure(ctx, items[0].ID, "usr_viewer", int(items[0].Rev)); err != ErrForbidden {
+	if err := s.DismissInboxItem(ctx, items[0].ID, "usr_viewer", int(items[0].Rev)); err != ErrForbidden {
 		t.Fatalf("a viewer dismissed a delivery failure: %v", err)
 	}
-	if err := s.DismissDeliveryFailure(ctx, items[0].ID, "usr_answers", int(items[0].Rev)); err != nil {
+	if err := s.DismissInboxItem(ctx, items[0].ID, "usr_answers", int(items[0].Rev)); err != nil {
 		t.Fatalf("the owner could not dismiss it: %v", err)
 	}
 }

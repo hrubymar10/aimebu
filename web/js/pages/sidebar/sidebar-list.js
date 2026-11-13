@@ -81,7 +81,9 @@ function Row({ view, store, ctx, preview }) {
   const { room } = view, project = store.projects.get(room.project_id), [reopening, setReopening] = useState(false);
   const archivedProject = !!project?.archived_at, projectName = project?.name || '';
   const controls = room.kind === 'home' && project && view.controls ? view.controls : null, manual = ctx.sort === 'manual';
-  const affected = store.health.get(room.id) || [], quiet = roomSilenced(room), attention = room.attention_count || 0, members = room.member_count || 0;
+  const affected = store.health.get(room.id) || [], quiet = roomSilenced(room),
+    attention = room.kind === 'home' ? ctx.projectAttention.get(room.project_id) || 0 : room.attention_count || 0,
+    members = room.member_count || 0;
   const isActive = ctx.active === room.id, glyph = room.kind === 'home' ? '⌂' : room.agent_chat ? '⇄' : room.kind === 'dm' ? '@' : '#';
   const classes = ['room-item', isActive ? 'active' : '', room.kind === 'dm' ? 'dm' : '', view.unread > 0 && !isActive ? 'has-unread' : '', attention > 0 ? 'has-attention' : '', room.lifecycle === 'closed' ? 'archived' : '', room.lifecycle === 'closing' ? 'closing' : '', controls && manual ? 'project-draggable' : ''].filter(Boolean).join(' ');
   const select = () => store.onSelect(store.rooms.get(room.id) || room);
@@ -181,7 +183,11 @@ export function SidebarList({ store, projectButton }) {
   let tree = shown ? build() : null;
   // A project seen for the first time starts collapsed: fold it, then draw the tree again with it folded.
   if (tree && !store.holdFolds && store.foldNew(tree.collapsible, tree.nested, tree.holdsActive)) tree = build();
-  const ctx = { sort, active, previewAll: loadPreviewAll(), filtering: !!tree?.filtering };
+  const projectAttention = new Map();
+  for (const room of store.rooms.values()) if (room.kind !== 'dm' && room.attention_count) {
+    projectAttention.set(room.project_id, (projectAttention.get(room.project_id) || 0) + room.attention_count);
+  }
+  const ctx = { sort, active, previewAll: loadPreviewAll(), filtering: !!tree?.filtering, projectAttention };
   useLayoutEffect(() => {
     if (!tree) return;
     store.collapsible.value = tree.collapsible;

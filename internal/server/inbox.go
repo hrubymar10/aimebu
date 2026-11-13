@@ -63,7 +63,7 @@ func (s *Server) strongerUsageGuard(r *http.Request, alert usages.UsageAlert) bo
 	return err == nil && view.Held
 }
 
-func (s *Server) dismissDeliveryFailure(w http.ResponseWriter, r *http.Request) {
+func (s *Server) dismissInboxItem(w http.ResponseWriter, r *http.Request) {
 	if s.usageAlerts != nil && strings.HasPrefix(r.PathValue("item"), "usage_alert_") {
 		admin, err := s.Store.IsGlobalAdmin(r.Context(), userID(r))
 		if err != nil {
@@ -96,7 +96,7 @@ func (s *Server) dismissDeliveryFailure(w http.ResponseWriter, r *http.Request) 
 		apiError(w, 400, "invalid_request", "invalid revision")
 		return
 	}
-	err := s.Store.DismissDeliveryFailure(r.Context(), r.PathValue("item"), userID(r), req.Rev)
+	err := s.Store.DismissInboxItem(r.Context(), r.PathValue("item"), userID(r), req.Rev)
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)

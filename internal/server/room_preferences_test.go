@@ -116,7 +116,7 @@ func TestRoomReadCursorIsServerSideAndMonotonic(t *testing.T) {
 		}
 		return state
 	}
-	if state := mark(map[string]int64{"seq": 1000}); state.ReadCursor != 1000 || state.UnreadCount != 2 {
+	if state := mark(map[string]int64{"seq": 1000}); state.ReadCursor != 1000 || state.UnreadCount != 2 || state.AttentionCount != 0 {
 		t.Fatalf("partial read: %+v", state)
 	}
 	if state := mark(map[string]int64{"seq": 5}); state.ReadCursor != 1000 {
@@ -128,7 +128,7 @@ func TestRoomReadCursorIsServerSideAndMonotonic(t *testing.T) {
 	if state := mark(map[string]int64{}); state.ReadCursor != 1002 || state.UnreadCount != 0 {
 		t.Fatalf("read all: %+v", state)
 	}
-	if r := room(f.cookie); r.UnreadCount != 0 || r.AttentionCount != 1 || r.ReadCursor != 1002 {
+	if r := room(f.cookie); r.UnreadCount != 0 || r.AttentionCount != 0 || r.ReadCursor != 1002 {
 		t.Fatalf("after read: %+v", r)
 	}
 	resp := f.request(http.MethodPost, "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "mine"}, true)

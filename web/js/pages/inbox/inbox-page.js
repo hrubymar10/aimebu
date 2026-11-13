@@ -65,8 +65,8 @@ function Card({ item, store, rooms, onJump, openUsages }) {
   if (kind === 'usage_info') return wrap(html`${jump}${(item.options || []).includes('Retry now') && button('Retry now', () => store.decide(item, 'retry'), 'btn btn-primary')}`);
   if (kind === 'delivery_failed') return wrap(html`${jump}${evidence}${item.can_decide && html`<${IconButton} name="close" label="Dismiss" disabled=${pending} onClick=${() => store.dismiss(item)} />`}`);
   if (item.can_decide === false) return wrap(html`${jump}Read only`);
-  if (item.proposed_answers?.length || item.open_questions?.length) return wrap(html`${jump}<${AnswerIsland} item=${item} store=${store} pending=${pending} />`);
-  return wrap(html`${jump}<div class="inbox-choices">${(item.options || []).map(option => button(humanize(option), () => store.answer(item, option)))}</div>${item.free_text && html`<${Freeform} item=${item} store=${store} pending=${pending} />`}`);
+  if (item.proposed_answers?.length || item.open_questions?.length) return wrap(html`${jump}<${AnswerIsland} item=${item} store=${store} pending=${pending} />${button('Dismiss', () => store.dismiss(item), 'btn inbox-dismiss')}`);
+  return wrap(html`${jump}<div class="inbox-choices">${(item.options || []).map(option => button(humanize(option), () => store.answer(item, option)))}</div>${item.free_text && html`<${Freeform} item=${item} store=${store} pending=${pending} />`}${(kind === 'question' || kind === 'approval') && button('Dismiss', () => store.dismiss(item), 'btn inbox-dismiss')}`);
 }
 
 export function InboxPage({ store, onJump }) {

@@ -484,9 +484,12 @@ New replies while viewing that older context update the count and appear
 behind a new-replies control until the latest page is opened.
 Archived rooms move into a collapsible sidebar section with
 Reopen actions, name filtering, and message search with direct jump to a hit.
-Unread counts and the 🔔 on rooms with open inbox entries come from per-user
-read cursors stored on the server, so they follow you across browsers; opening a
-room marks it read. Refreshes while a history window is shown do not mark the
+Unread counts come from per-user read cursors; the 🔔 counts open Inbox items
+this person has not seen. Both states live on the server and follow you across
+browsers. Opening a room marks visible messages read and visible Inbox items
+seen. Seen items stay open in the Inbox until answered or dismissed. The
+project home room's 🔔 totals unseen open items in its rooms. Refreshes while
+a history window is shown do not mark the
 room read; returning to the latest view does. The open room is only ever marked
 read up to the newest message the chat has shown: if a window cannot load the
 messages that arrived while it was shown, it stays a window with them counted
@@ -565,6 +568,8 @@ They may add two to four `proposed_answers` for quick buttons or up to ten
 `open_questions`, each with two to eight options and an optional description.
 The inbox and room show the same pending request. In the room the buttons are a row under the message's card, outside it and aligned with it (the viewer's own messages on the right), as in v1. A proposed answer is a compact button (as in v1): a click sends it addressed to the requesting agent (`@author answer`); Shift-click puts the same text in the composer with the reply link, to change before sending. Sending that edited draft submits the answer. A free answer is typed in the composer as a reply to a plain free-text request. Other replies, including replies to Open Questions, leave the request open; answer Open Questions with the dialog, whose Shift-click also starts an editable answer draft. A free answer can also be sent from the Inbox's "Answer…" button under the chips. Each open question adds Other text. Sending resolves one inbox
 item and posts a structural reply addressed to the requesting agent. A resolved request keeps its buttons disabled under the message after room changes and reloads, with the chosen answer shown. An unanswered closed request says "No longer pending".
+The Inbox's Dismiss action closes an ordinary question or approval without
+sending an answer.
 The Open Questions dialog shows one question at a time with a numbered
 stepper (answered questions are marked), an "N/M answered" counter and a
 review step; Send is enabled only once every question is answered, and an

@@ -1675,6 +1675,13 @@ ALTER TABLE checkout_new RENAME TO checkout;
 -- an unavailable row so its configured model survives its next turn.
 ALTER TABLE harness_model ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','detected'));
 ALTER TABLE harness_model ADD COLUMN available INTEGER NOT NULL DEFAULT 1 CHECK (available IN (0,1));
+`}, {105, `
+CREATE TABLE IF NOT EXISTS inbox_item_seen (
+  item_id TEXT NOT NULL REFERENCES inbox_item(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  seen_at TEXT NOT NULL,
+  PRIMARY KEY (item_id, user_id)
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

@@ -241,7 +241,7 @@ async function main() {
   {
     const longTitle = 'Alpha workspace';
     const page = await mount({ auto: answerAll({ 'GET /api/projects': projects.map(item => item.id === 'prj_a' ? { ...item, name: longTitle } : item),
-      'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === 'rm_ah' ? { ...item, title: longTitle } : item) }) });
+      'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === 'rm_ah' ? { ...item, title: longTitle } : { ...item, attention_count: 0 }) }) });
     await page.setViewport({ width: 1200, height: 800 });
     await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click()); // a folded project shows an unread badge at the row end
     const measure = () => page.$eval('[data-room-id=rm_ah] > .room-item', row => {
@@ -690,6 +690,15 @@ async function main() {
   // Read marks: one request per room at a time, the furthest mark asked for meanwhile follows it, and the count that comes back is the room's; a
   // reset while a mark is out lets it go and sends nothing for the old room.
   {
+    const onlyBell = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === 'rm_api' ? { ...item, unread_count: 0, attention_count: 1 } : item) }) });
+    assert.equal(await onlyBell.$eval('[data-room-id=rm_api] .room-item-attention', node => node.textContent.trim()), '🔔 1');
+    assert.equal(await onlyBell.$eval('[data-room-id=rm_ah] .room-item-attention', node => node.textContent.trim()), '🔔 1', 'the home room includes child attention');
+    await onlyBell.evaluate(() => { window.__shown = { rm_api: 40 }; window.__sidebar.setActive('rm_api'); window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); });
+    const read = await waitRequest(onlyBell, 'POST', '/api/rooms/rm_api/read');
+    await answer(onlyBell, read, 200, { unread_count: 0, read_cursor: 40, attention_count: 0 }); await settle(onlyBell);
+    assert.equal(await onlyBell.$('[data-room-id=rm_api] .room-item-attention'), null, 'opening a room clears its seen bell without unread messages');
+    assert.equal(await onlyBell.$('[data-room-id=rm_ah] .room-item-attention'), null, 'the project aggregate clears too');
+    await onlyBell.close();
     let page = await mount();
     await page.evaluate(() => { window.__shown = { rm_api: 40 }; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); });
     const first = await waitRequest(page, 'POST', '/api/rooms/rm_api/read');

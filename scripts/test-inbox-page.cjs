@@ -172,8 +172,8 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-count').textContent, document.querySelector('#inbox-count').hidden, document.querySelector('#inbox-toggle').title, document.title]), ['12', false, 'Inbox, 12 waiting', '(12) aimebu']);
       const cards = await summary(page);
       const by = id => cards.find(card => card.id === id);
-      assert.deepEqual([by('q1').kind, by('q1').buttons, by('q1').extra[5]], ['Question', ['View in room', 'Option A', 'Option B', 'Send answer'], true]);
-      assert.deepEqual([by('ap1').kind, by('ap1').buttons, by('ap1').extra[6]], ['Approval', ['View in room', 'Approve', 'Revise'], true]);
+      assert.deepEqual([by('q1').kind, by('q1').buttons, by('q1').extra[5]], ['Question', ['View in room', 'Option A', 'Option B', 'Send answer', 'Dismiss'], true]);
+      assert.deepEqual([by('ap1').kind, by('ap1').buttons, by('ap1').extra[6]], ['Approval', ['View in room', 'Approve', 'Revise', 'Dismiss'], true]);
       assert.deepEqual([by('ro1').buttons, by('ro1').extra[4]], [['View in room'], true]);
       assert.deepEqual([by('rec1').kind, by('rec1').buttons, by('rec1').evidence, by('rec1').extra.slice(0, 3)], ['Recovery', ['View in room', 'Resume', 'Retry', 'Abandon'], ['Work may have partially completed.'],
         ['Resume may repeat an action if the diagnostic missed an effect. Retry repeats the task.', 'Details', 'status: clean\nchecked: Yes\nfiles: 3']]); // the diagnostic report is the first labelled text under Details
@@ -184,13 +184,23 @@ async function main() {
       assert.deepEqual([by('bnd2').buttons, by('bnd2').evidence], [[], ['Requested by lead · Machine Remote · Folder /work', 'The project owner must decide this request.']]);
       assert.deepEqual([by('ua1').kind, by('ua1').buttons], ['Usage alert', ['Open Usages', 'Dismiss usage alert']]);
       assert.deepEqual([by('ul1').kind, by('ul1').buttons], ['Usage notice', ['View in room', 'Retry now']]);
-      assert.deepEqual([by('q2').buttons], [['View in room', 'Fine']]);
+      assert.deepEqual([by('q2').buttons], [['View in room', 'Fine', 'Dismiss']]);
       assert.deepEqual(await page.evaluate(() => window.__onItems.length), 1);
       await page.close();
       const guest = await mount({ owner: false, usages: false });
       await waitList(guest);
       assert.deepEqual((await summary(guest)).find(card => card.id === 'ua1').buttons, ['Dismiss usage alert'], 'only the owner is offered the Usages page');
       await guest.close();
+    }
+    // A seen request remains answerable until Dismiss closes it without an answer.
+    {
+      const page = await mount({ list: [{ ...base, id: 'seen1', kind: 'question', seen: true, question: 'Choose?', options: ['A'], can_decide: true }] });
+      await waitList(page);
+      assert.equal(await page.$eval('[data-inbox-id=seen1] .inbox-choices button', node => node.disabled), false);
+      await page.$eval('[data-inbox-id=seen1] .inbox-dismiss', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('[data-inbox-id=seen1]'));
+      assert.deepEqual(await page.evaluate(() => window.__calls.filter(call => call[0] === 'dismiss' || call[0] === 'answer').map(call => call[0])), ['dismiss']);
+      await page.close();
     }
     // The raw record is behind a switch; "View in room" jumps; "Open Usages" opens it.
     {

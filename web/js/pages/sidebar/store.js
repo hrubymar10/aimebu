@@ -242,12 +242,13 @@ export class SidebarStore {
     if (!room || !this.alive) return;
     const seq = this.shownSeq ? this.shownSeq(room.id) : 0;
     // A room set to mentions only has nothing to count for most of what it shows, yet it is read all the same: the position moves on.
-    if (!this.unreadCount(room) && !(room.notify === 'mentions' && seq > (room.read_cursor || 0))) return;
-    if (this.shownSeq && !(seq > 0)) return;
+    if (!this.unreadCount(room) && !room.attention_count && !(room.notify === 'mentions' && seq > (room.read_cursor || 0))) return;
+    if (this.shownSeq && !(seq > 0) && !room.attention_count) return;
     this.reads.mark(room.id, seq, state => {
       if (this.rooms.get(room.id) !== room) return;
       if (Number.isInteger(state?.unread_count)) room.unread_count = state.unread_count;
       if (Number.isInteger(state?.read_cursor)) room.read_cursor = state.read_cursor;
+      if (Number.isInteger(state?.attention_count)) room.attention_count = state.attention_count;
       this.touch();
     });
   }

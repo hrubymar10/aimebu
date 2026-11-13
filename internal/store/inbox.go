@@ -36,6 +36,7 @@ type InboxEntry struct {
 	ProposedAnswers   []string              `json:"proposed_answers,omitempty"`
 	OpenQuestions     []answer.OpenQuestion `json:"open_questions,omitempty"`
 	State             string                `json:"state"`
+	Seen              bool                  `json:"seen"`
 	Rev               int64                 `json:"rev"`
 	CreatedAt         string                `json:"created_at"`
 	BoundaryPending   bool                  `json:"boundary_pending,omitempty"`
@@ -56,8 +57,8 @@ type inboxAsk struct {
 	OpenQuestions   []answer.OpenQuestion `json:"open_questions,omitempty"`
 }
 
-// inboxFromSQL and inboxWhereSQL say which open items a person sees (two ? placeholders: the user, twice). They are shared by the full
-// inbox read and by the per-room count, so the count cannot drift from what the inbox lists. The joins the full read adds between them
+// inboxFromSQL and inboxWhereSQL say which open items a person can access (two ? placeholders: the user, twice). They are shared by the full
+// inbox read and by the per-room unseen count, so the badge uses the same visibility rules. The joins the full read adds between them
 // (the message and the turn, both by primary key) neither add nor drop rows.
 const inboxFromSQL = `FROM inbox_item i JOIN room r ON r.id=i.room_id JOIN membership member ON member.project_id=i.project_id
         AND member.user_id=?`
@@ -97,12 +98,13 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 		COALESCE((SELECT b.machine_id FROM boundary_pending b WHERE b.inbox_id=i.id),''),
 		COALESCE((SELECT b.canonical_path FROM boundary_pending b WHERE b.inbox_id=i.id),''),
 		COALESCE((SELECT b.requested_by_id FROM boundary_pending b WHERE b.inbox_id=i.id),''),
-		CASE WHEN i.kind='approval' AND i.requester_kind='system' AND i.requester_id LIKE 'note:%' THEN substr(i.requester_id,6) ELSE '' END
+		CASE WHEN i.kind='approval' AND i.requester_kind='system' AND i.requester_id LIKE 'note:%' THEN substr(i.requester_id,6) ELSE '' END,
+		EXISTS(SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)
         `+inboxFromSQL+`
         LEFT JOIN message msg ON msg.id=i.message_id
 		LEFT JOIN turn t ON t.id=i.turn_id
 		`+inboxWhereSQL+`
-        ORDER BY i.created_at,i.id`, userID, userID)
+        ORDER BY i.created_at,i.id`, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +115,7 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 		var options, fallback, report, memberRole, roomKind string
 		if err := rows.Scan(&item.ID, &item.ProjectID, &item.RoomID, &item.RoomLifecycle, &item.MessageID, &item.AgentID, &item.TurnID,
 			&item.TurnExec, &item.TurnOutcome, &item.Evidence, &item.ResultText, &item.DefiniteFailure, &report, &item.HeldReason, &item.DeliveryError, &item.Kind, &options, &fallback, &item.State, &item.Rev, &item.CreatedAt, &memberRole, &roomKind,
-			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester, &item.NoteID); err != nil {
+			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester, &item.NoteID, &item.Seen); err != nil {
 			return nil, err
 		}
 		item.CanDecide = memberRole == "owner" || memberRole == "operator" && !item.BoundaryPending || roomKind == "dm" && (item.Kind == "question" || item.Kind == "delivery_failed" || item.Kind == "approval" && !item.BoundaryPending)
