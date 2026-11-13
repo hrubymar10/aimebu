@@ -587,6 +587,7 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 :root:root :is(button.proposed-answer-btn, button.open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--bg-tertiary); border-color: var(--accent); color: var(--text-primary); }
 :root:root .answer-history button:disabled { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); opacity: .52; cursor: default; }
 :root:root .answer-history button.open-questions-open:disabled { opacity: .58; }
+:root:root .answer-history button.answer-chosen:disabled { opacity: 1; border-color: var(--accent); }
 
 /* "Review in Inbox" on an agent card that needs a decision (v2 only): a small outlined control like the card's other buttons, in v1's palette (the orange of a decision
    waiting, the border colour for its outline, the accent on hover and focus), not the browser's plain button; the high-contrast themes fill it with the page colour. */

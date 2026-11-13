@@ -313,6 +313,7 @@ export class Chat {
       mention: name ? `@${name}` : '',
       compose: text => {
         this.draft.value = text; this.resizeDraft(); this.setReply(message);
+        this.composedAnswerID = message.id;
         this.draft.setSelectionRange?.(text.length, text.length);
       },
     };
@@ -599,12 +600,12 @@ export class Chat {
   answerView(message) {
     const id = message.id, item = this.answerItems?.get(id);
     if (answerEligible(item)) { return { kind: 'controls', item, parent: message, key: `c:${item.id}:${item.rev}` }; }
-    const repliedByOther = this.store.repliedByOther(message);
-    const answered = Boolean(this.answeredMessages.has(id) || repliedByOther);
+    const repliedByOther = !message.answer_state && this.store.repliedByOther(message);
+    const answered = Boolean(message.answer_state === 'resolved' || this.answeredMessages.has(id) || repliedByOther);
     // The quiet "Answered" is for a message that asked for an answer (it needed attention, or its question was answered here); an ordinary message that
     // somebody replied to is not "answered".
     const doneOk = Boolean(this.answeredMessages.has(id) || (repliedByOther && message.needs_attention)), area = answerArea(item, message, doneOk);
-    if (area === 'history') return { kind: 'history', answered, key: `h:${answered}` };
+    if (area === 'history') return { kind: 'history', answered, key: `h:${answered}:${message.answer_body || ''}` };
     if (area === 'done') return { kind: 'done', answered, key: 'd' };
     return { kind: 'none', answered, key: '' };
   }
@@ -634,11 +635,10 @@ export class Chat {
     if (out) { this.threadPin.textContent = `${this.authorName(root)} · #${root.no}: ${messageSnippet(root)}`; this.threadPin.style.top = `${this.threadList.offsetTop}px`; }
     this.threadPin.hidden = !out;
   }
-  setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
+  setReply(message) { this.composedAnswerID = null; this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
   // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
-  // that mentions at most the requester. A free-text ask takes any text; an options-only ask only the text of one of its options (so Shift-clicking
-  // an answer and sending it unedited acts like the button, while edited text is an ordinary reply).
-  answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body); }
+  // that mentions at most the requester. A structured ask accepts a draft explicitly started from its controls.
+  answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body, this.composedAnswerID === parent.id); }
   beginThread(root, focus) {
     this.threadRoot = root; this.threadTitle.textContent = 'Replies'; this.threadPanel.hidden = false; this.threadPin.hidden = true; this.threadUpdate();
     this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewButton.hidden = true; this.treeNewIDs.clear(); this.updateTreeNew();
@@ -713,11 +713,7 @@ export class Chat {
   }
   beginSend() { this.error.textContent = ''; this.notice.clear(); this.announcer.sendStarted(); }
   async sendAsAnswer(reply, attachments, body, current) {
-    // A reply to a message with a free-text question or approval open for this person is the answer to it: it goes through the inbox, which
-    // resolves the item, so the item closes and the Inbox count drops, whether the text came from Shift-clicking an answer or was typed. It
-    // stays an ordinary reply when it carries attachments (an answer is text), when the item is not one this person decides, when the ask is
-    // options only and the text is not one of the options (arbitrary text does not answer it), or when the text mentions anyone but the requester (so
-    // an @reviewer wake still works).
+    // A reply resolves a plain free-text ask, or a structured draft explicitly started from its controls.
     const open = reply && !attachments.length ? this.answerItems?.get(reply.id) : null;
     if (!(open && this.answersThroughInbox(open, reply, body))) return false;
     if (this.answering) return true;

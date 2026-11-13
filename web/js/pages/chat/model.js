@@ -62,14 +62,15 @@ export function answerArea(item, message, answered) {
   return answered ? 'done' : 'none';
 }
 
-// A reply answers `item` when this person decides it and the text mentions at most the requester; an options-only ask takes only the text of an option.
-export function answersThroughInbox(item, requester, body) {
+// Structured controls route a composer draft through the Inbox only when a control explicitly put that draft there.
+export function answersThroughInbox(item, requester, body, fromControl = false) {
   if (!answerEligible(item)) return false;
   const mentioned = [...String(body).matchAll(/(^|[^\w@`\\])@([a-z0-9][a-z0-9_-]*(?:@[a-z0-9_-]+)?)/gi)].map(match => `@${match[2].toLowerCase()}`);
   const who = String(requester || '').toLowerCase();
   if (!mentioned.every(name => name === who)) return false;
-  if (item.free_text) return true;
+  if (item.open_questions?.length || item.proposed_answers?.length) return fromControl;
   const text = String(body).trim(), plain = who && text.toLowerCase().startsWith(who) ? text.slice(who.length).trim() : text;
+  if (item.free_text) return true;
   return [...(item.proposed_answers || []), ...(item.options || [])].includes(plain);
 }
 

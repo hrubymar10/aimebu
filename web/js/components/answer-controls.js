@@ -13,7 +13,7 @@ export function AnswerControls({ item, submit, mention = '', compose = null, fre
   // The newest item and submit of the controls on the page are what an open dialog uses when it sends, and the count is drawn again when the dialog changes an answer.
   useLayoutEffect(() => {
     if (!item.open_questions?.length) return undefined;
-    const key = draftKey(item), entry = { item, submit, refresh: () => refresh(count => count + 1) };
+    const key = draftKey(item), entry = { item, submit, compose: compose && (text => compose(mention ? `${mention} ${text}` : text)), refresh: () => refresh(count => count + 1) };
     live.set(key, [...(live.get(key) || []), entry]);
     return () => { live.set(key, (live.get(key) || []).filter(other => other !== entry)); settleLive(key); };
   });
@@ -28,7 +28,7 @@ export function AnswerControls({ item, submit, mention = '', compose = null, fre
   const values = item.proposed_answers || (item.open_questions?.length ? [] : item.options || []);
   const count = item.open_questions?.length ? `${answeredCount(loadAnswers(item))}/${item.open_questions.length}` : '';
   return html`<div class=${`answer-controls${className}`} ...${rest}>
-    ${item.open_questions?.length ? html`<button type="button" class="btn open-questions-open" disabled=${off} onClick=${() => openQuestions(item)}><span>Open Questions</span>${' '}<span class="open-questions-count">${count}</span></button>` : null}
+    ${item.open_questions?.length ? html`<button type="button" class="btn open-questions-open" disabled=${off} onClick=${() => openQuestions(item, !!compose)}><span>Open Questions</span>${' '}<span class="open-questions-count">${count}</span></button>` : null}
     ${values.map(value => {
       const text = mention ? `${mention} ${value}` : value;
       return html`<button type="button" class="btn proposed-answer-btn" key=${value} disabled=${off} title=${compose ? 'Send this answer (Shift-click to edit it in the composer first)' : 'Send this answer'}
@@ -43,13 +43,16 @@ export function AnswerControls({ item, submit, mention = '', compose = null, fre
 }
 
 // What a question or proposed answers on a message look like once nothing is open for them: the same buttons and question count, all disabled, kept under the message so the
-// history reads as it did. An answered one is just the dimmed buttons (their tooltip says "Answered"); any other says "No longer pending", because nothing can answer it from here
-// (imported history, or a question that was closed unanswered).
+// history reads as it did. A resolved item marks its chosen answer; other closed items say "No longer pending".
 export function AnswerHistory({ message, answered, className = '' }) {
   const note = answered ? 'Answered' : 'No longer pending';
+  const chosen = message.answer_body || '';
+  const plain = chosen.replace(/^@[a-z0-9][a-z0-9_-]*(?:@[a-z0-9_.-]+)?\s+/i, '');
+  const choice = (message.proposed_answers || []).find(value => plain === value);
   return html`<div class=${`answer-history${className}`} data-answered=${String(answered)}>
     ${message.open_questions?.length ? html`<button type="button" class="btn" disabled title=${note}>Open Questions${' '}<span class="open-questions-count">${message.open_questions.length}</span></button>` : null}
-    ${(message.proposed_answers || []).map(value => html`<button type="button" class="btn proposed-answer-btn" key=${value} disabled title=${note}>${value}</button>`)}
+    ${(message.proposed_answers || []).map(value => html`<button type="button" class=${`btn proposed-answer-btn${choice === value ? ' answer-chosen' : ''}`} key=${value} disabled title=${choice === value ? 'Chosen answer' : note}>${choice === value ? '✓ ' : ''}${value}</button>`)}
+    ${chosen && (message.open_questions?.length || !choice) ? html`<span class="answer-history-choice">${chosen}</span>` : null}
     ${answered ? null : html`<span class="answer-history-status">${note}</span>`}
   </div>`;
 }
@@ -119,16 +122,18 @@ function settleLive(key) {
   });
 }
 
-function openQuestions(item) {
+function openQuestions(item, canCompose) {
   const key = draftKey(item);
   if (dialogs.has(key)) return;
   const host = document.createElement('div'); document.body.append(host);
   const close = () => { if (dialogs.get(key)?.host !== host) return; render(null, host); host.remove(); dialogs.delete(key); changedFor(key); };
   dialogs.set(key, { host, close });
-  render(html`<${OpenQuestions} item=${item} submit=${text => latest(key)?.submit(text) ?? false} onChange=${() => changedFor(key)} onClose=${close} />`, host);
+  render(html`<${OpenQuestions} item=${item} submit=${text => latest(key)?.submit(text) ?? false}
+    composer=${() => (live.get(key) || []).findLast(control => control.compose)?.compose}
+    canCompose=${canCompose} onChange=${() => changedFor(key)} onClose=${close} />`, host);
 }
 
-function OpenQuestions({ item, submit, onChange, onClose }) {
+function OpenQuestions({ item, submit, composer, canCompose, onChange, onClose }) {
   const questions = item.open_questions, total = questions.length;
   const answersRef = useRef(null);
   if (!answersRef.current) answersRef.current = loadAnswers(item);
@@ -152,14 +157,24 @@ function OpenQuestions({ item, submit, onChange, onClose }) {
     else bump(count => count + 1);
   };
   const count = answeredCount(answers), all = count === total, onReview = index === total;
-  const submitAll = async event => {
+  const submitAll = async (event, edit = false) => {
     event.preventDefault();
     if (pending) return;
     const missing = answers.findIndex(answer => !isAnswered(answer));
     if (missing >= 0) { go(missing); setError(`Answer question ${missing + 1} before sending.`); return; }
+    const text = questions.map((question, qIndex) => answerLine(question, qIndex, answers[qIndex])).join('\n');
+    if (edit) {
+      const compose = composer();
+      if (!compose) setError('The room composer is no longer available.');
+      else {
+        dialog.current.addEventListener('close', () => compose(text), { once: true });
+        dialog.current.close();
+      }
+      return;
+    }
     setPending(true);
     try {
-      if (await submit(questions.map((question, qIndex) => answerLine(question, qIndex, answers[qIndex])).join('\n')) === false) throw new Error('Could not send answers');
+      if (await submit(text) === false) throw new Error('Could not send answers');
       clearAnswers(item);
       dialog.current.close();
     } catch (failure) { setPending(false); setError(failure.message || 'Could not send answers'); }
@@ -192,7 +207,9 @@ function OpenQuestions({ item, submit, onChange, onClose }) {
         <button type="button" class="btn open-questions-back" disabled=${index === 0} onClick=${() => go(index - 1)}>Back</button>
         <span class="open-questions-progress">${`${count}/${total} answered`}</span>
         <button type="button" class="btn btn-primary open-questions-next" hidden=${onReview} disabled=${index === total - 1 && !all} onClick=${() => go(index + 1)}>Next</button>
-        <button type="submit" class="btn btn-primary open-questions-send" hidden=${!onReview} disabled=${!all || pending}>Send answers</button>
+        <button type="submit" class="btn btn-primary open-questions-send" hidden=${!onReview} disabled=${!all || pending}
+          title=${canCompose ? 'Send answers (Shift-click to edit them in the composer first)' : 'Send answers'}
+          onClick=${event => { if (event.shiftKey && canCompose) void submitAll(event, true); }}>Send answers</button>
       </div>
     </form>
   </dialog>`;

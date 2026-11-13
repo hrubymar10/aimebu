@@ -64,10 +64,15 @@ assert.deepEqual([[10, 10], [11, 10], [3, 10]].map(([rows, cap]) => api.overCap(
 
 const ask = { kind: 'question', proposed_answers: ['alpha', 'beta'], free_text: false };
 assert.deepEqual([{ kind: 'question' }, { kind: 'approval' }, { kind: 'note' }, { kind: 'question', boundary_pending: true }, { kind: 'question', can_decide: false }, null].map(api.answerEligible), [true, true, false, false, false, false]);
-assert.deepEqual([['@zed beta', '@zed'], ['beta', '@zed'], ['@zed gamma', '@zed'], ['@other beta', '@zed'], ['@zed beta @other', '@zed'], ['BETA', ''], ['@zed', '']].map(([body, who]) => api.answersThroughInbox(ask, who, body)), [true, true, false, false, false, false, false]);
-assert.deepEqual([['anything at all', '@zed'], ['@zed ok', '@zed'], ['@else ok', '@zed']].map(([body, who]) => api.answersThroughInbox({ ...ask, free_text: true }, who, body)), [true, true, false]);
+assert.deepEqual([['@zed beta', '@zed'], ['beta', '@zed'], ['@zed gamma', '@zed'], ['@other beta', '@zed'], ['@zed beta @other', '@zed']].map(([body, who]) => api.answersThroughInbox(ask, who, body, true)), [true, true, true, false, false]);
+assert.equal(api.answersThroughInbox(ask, '@zed', '@zed beta'), false, 'a typed option without using its control is an ordinary reply');
+assert.deepEqual([['anything at all', '@zed'], ['@zed ok', '@zed'], ['@else ok', '@zed']].map(([body, who]) => api.answersThroughInbox({ kind: 'question', free_text: true }, who, body)), [true, true, false]);
 assert.equal(api.answersThroughInbox({ ...ask, can_decide: false }, '@zed', '@zed beta'), false);
 assert.equal(api.answersThroughInbox({ kind: 'question', options: ['yes', 'no'], free_text: false }, '', 'yes'), true, 'a plain option of an approval');
+assert.equal(api.answersThroughInbox({ kind: 'question', open_questions: [{ question: 'Route?' }], free_text: true }, '@zed', '2) check the host architecture'), false, 'an ordinary reply cannot close Open Questions');
+assert.equal(api.answersThroughInbox({ kind: 'question', open_questions: [{ question: 'Route?' }], free_text: true }, '@zed', '@zed Q1) custom route', true), true, 'an edited Open Questions control draft can answer');
+assert.equal(api.answersThroughInbox({ kind: 'question', proposed_answers: ['alpha'], free_text: true }, '@zed', '@zed unrelated reply'), false, 'a proposed answer needs an exact choice');
+assert.equal(api.answersThroughInbox({ kind: 'question', proposed_answers: ['alpha'], free_text: true }, '@zed', '@zed edited', true), true, 'an edited control draft still answers');
 
 assert.deepEqual([[{ kind: 'question' }, null, false], [null, { proposed_answers: ['a'] }, true], [null, { open_questions: [{ question: 'q' }] }, false], [null, { proposed_answers: [] }, true], [null, null, false], [{ kind: 'note' }, {}, true]].map(([item, message, answered]) => api.answerArea(item, message, answered)), ['controls', 'history', 'history', 'done', 'none', 'done']);
 

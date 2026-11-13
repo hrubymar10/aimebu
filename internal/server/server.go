@@ -611,6 +611,12 @@ func messageView(m store.Message) map[string]any {
 	if m.OpenQuestionsJSON != "" {
 		view["open_questions"] = json.RawMessage(m.OpenQuestionsJSON)
 	}
+	if m.AnswerState != "" {
+		view["answer_state"] = m.AnswerState
+		if m.AnswerState == "resolved" {
+			view["answer_body"] = m.AnswerBody
+		}
+	}
 	if m.VisualPlanJSON != "" {
 		view["visual_plan"] = json.RawMessage(m.VisualPlanJSON)
 	}

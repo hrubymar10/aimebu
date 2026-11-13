@@ -169,6 +169,10 @@ func TestAttentionAnswerUsesOneInboxAndWakesRequester(t *testing.T) {
 	if err != nil || len(items) != 1 || len(items[0].ProposedAnswers) != 0 || len(items[0].OpenQuestions) != 1 || !items[0].FreeText {
 		t.Fatalf("items=%+v err=%v", items, err)
 	}
+	before, err := s.ListMessagesLatest(ctx, f.room.ID, 10)
+	if err != nil || len(before) < 1 || before[len(before)-1].AnswerState != "open" {
+		t.Fatalf("pending answer state=%+v err=%v", before, err)
+	}
 	answer, replay, err := s.AnswerInbox(ctx, items[0].ID, "usr_answers", "attention-key", "Q1) a) Small", int(items[0].Rev))
 	if err != nil || replay || answer.ReplyTo != receipt.MessageIDs[0] {
 		t.Fatalf("answer=%+v replay=%v err=%v", answer, replay, err)
@@ -176,6 +180,10 @@ func TestAttentionAnswerUsesOneInboxAndWakesRequester(t *testing.T) {
 	var state, answerID string
 	if err := s.db.QueryRow(`SELECT state,answer_message_id FROM inbox_item WHERE id=?`, items[0].ID).Scan(&state, &answerID); err != nil || state != "resolved" || answerID != answer.ID {
 		t.Fatalf("state=%q answer=%q err=%v", state, answerID, err)
+	}
+	after, err := s.ListMessagesLatest(ctx, f.room.ID, 10)
+	if err != nil || len(after) < 2 || after[len(after)-2].AnswerState != "resolved" || after[len(after)-2].AnswerBody != "Q1) a) Small" {
+		t.Fatalf("chosen answer state=%+v err=%v", after, err)
 	}
 	if _, reused, err := s.AnswerInbox(ctx, items[0].ID, "usr_answers", "attention-key", "Q1) a) Small", int(items[0].Rev)); err != nil || !reused {
 		t.Fatalf("idempotent replay=%v err=%v", reused, err)

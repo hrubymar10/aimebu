@@ -286,9 +286,7 @@ export class ChatStore {
     if (!this.messages.has(message.id)) {
       this.noteAuthor(message);
       this.messages.set(message.id, message);
-      // A person replying to a question is its answer, for the history block under that question (the next update draws it). Who replied is kept, and
-      // whether it counts is decided when the message is drawn (repliedByOther): the question's own author talking to themselves answers nothing, and that
-      // must not depend on whether the reply or its parent was loaded first.
+      // Keep reply authors for older messages that have no durable Inbox state. A newer reply does not resolve a structured Inbox request.
       if (message.reply_to && message.author_kind === 'user') {
         if (!this.repliedTo.has(message.reply_to)) this.repliedTo.set(message.reply_to, new Set());
         this.repliedTo.get(message.reply_to).add(message.author_id);
@@ -334,10 +332,33 @@ export class ChatStore {
   // A question this viewer had open that is now gone from the inbox leaves a quiet "Answered" in its place; one that is open again loses it.
   updateAnswerControls(items) {
     const next = new Map(items.map(item => [item.message_id, item]));
-    for (const [id, item] of this.answerItems) if (!next.has(id) && answerEligible(item) && (this.host.nodes.has(id) || this.threadEntryIDs.has(id))) this.answeredMessages.add(id);
+    const closed = [];
+    for (const [id, item] of this.answerItems) if (!next.has(id) && answerEligible(item) && (this.host.nodes.has(id) || this.threadEntryIDs.has(id))) {
+      this.answeredMessages.add(id);
+      closed.push(id);
+    }
     for (const [id, item] of next) if (answerEligible(item)) this.answeredMessages.delete(id);
     this.answerItems = next;
     this.host.listUpdate(); this.host.threadUpdate();
+    for (const id of closed) void this.refreshAnswerState(id);
+  }
+
+  async refreshAnswerState(id) {
+    const roomID = this.host.room?.id, generation = this.openGeneration;
+    if (!roomID) return;
+    try {
+      const page = await request(`/api/rooms/${encodeURIComponent(roomID)}/messages?around=${encodeURIComponent(id)}&limit=1`);
+      if (generation !== this.openGeneration || this.host.room?.id !== roomID) return;
+      const message = page.find(entry => entry.id === id);
+      if (!message) return;
+      const prior = this.messages.get(id);
+      if (prior?.answer_state === message.answer_state && prior?.answer_body === message.answer_body) return;
+      this.messages.set(id, message);
+      this.rows = this.rows.map(entry => entry.id === id ? message : entry);
+      this.threadEntries = this.threadEntries.map(entry => entry.id === id ? message : entry);
+      this.answeredMessages.delete(id);
+      this.host.listUpdate(); this.host.threadUpdate();
+    } catch { /* A later room load will read the durable answer state. */ }
   }
 
   // An agent that wrote in this room and is no longer a member (or came from the v1 import) still reads as @name in message bodies:

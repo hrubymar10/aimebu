@@ -695,16 +695,76 @@ async function main() {
       window.__chat.agents = new Map([['agt_zed', { slug: 'zed' }]]);
       window.__chat.setInbox({ answer: async (item, text) => { window.__answered.push([item.id, text]); return window.__answerResult ?? true; } });
       window.__chat.updateAnswerControls([{ id: 'inb_1', rev: 1, kind: 'question', message_id: 'rm_a_m120', proposed_answers: ['alpha', 'beta'], options: [], free_text: false, can_decide: true }]);
-      window.__chat.setReply(window.__chat.messages.get('rm_a_m120'));
     });
+    await page.waitForSelector('#messages [data-message-id=rm_a_m120] .proposed-answer-btn');
+    await page.$eval('#messages [data-message-id=rm_a_m120] .proposed-answer-btn', button => button.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true, cancelable: true })));
+    assert.deepEqual({ draft: await draftText(page), reply: await page.evaluate(() => window.__chat.reply?.id), sent: await page.evaluate(() => window.__answered), posts: await posts(page) },
+      { draft: '@zed alpha', reply: 'rm_a_m120', sent: [], posts: [] }, 'Shift-clicking a proposed answer composes it as a linked reply without sending');
     await typeDraft(page, '@zed beta'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
     assert.deepEqual([await page.evaluate(() => window.__answered), (await posts(page)).length, await draftText(page), await page.evaluate(() => document.querySelector('#reply-chip').hidden)], [[['inb_1', '@zed beta']], 0, '', true], 'an answer goes through the inbox, not as a message');
-    await page.evaluate(() => { window.__answerResult = false; window.__chat.setReply(window.__chat.messages.get('rm_a_m120')); });
+    await page.evaluate(() => { window.__answerResult = false; });
+    await page.$eval('#messages [data-message-id=rm_a_m120] .proposed-answer-btn', button => button.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true, cancelable: true })));
     await typeDraft(page, '@zed alpha'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
     assert.deepEqual([await noticeText(page), await draftText(page), (await posts(page)).length], ['Could not send the answer', '@zed alpha', 0], 'a refused answer keeps the text');
     await page.evaluate(() => { window.__answerResult = true; window.__chat.setReply(window.__chat.messages.get('rm_a_m120')); });
     await typeDraft(page, 'something else entirely'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
     assert.deepEqual([(await posts(page)).at(-1), (await page.evaluate(() => window.__answered)).length], [{ body: 'something else entirely', attachments: [], reply_to: 'rm_a_m120' }, 2], 'text that is not an option is an ordinary reply');
+    await page.evaluate(() => {
+      const question = window.__data.rooms.rm_a.messages.find(message => message.id === 'rm_a_m120');
+      question.answer_state = 'resolved'; question.answer_body = '@zed beta';
+      window.__chat.updateAnswerControls([]);
+    });
+    await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m120] .answer-chosen')?.textContent.includes('beta'));
+    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-chosen', button => button.disabled && button.title === 'Chosen answer'), true, 'the selected proposed answer stays visible and disabled');
+    await page.close();
+  }
+
+  // Shift-clicking the review submit composes a structural reply, ready for
+  // editing, and leaves the request open until that draft is sent.
+  {
+    const page = await mount();
+    await page.evaluate(() => {
+      window.__data.rooms.rm_a.messages[119] = { ...window.__data.rooms.rm_a.messages[119], author_kind: 'agent', author_id: 'agt_zed', author_name: 'zed', body: 'Choose a route', open_questions: [
+        { question: 'Route?', options: ['A', 'B'] }, { question: 'When?', options: ['Now', 'Later'] },
+      ] };
+      window.__answered = [];
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => {
+      window.__chat.agents = new Map([['agt_zed', { slug: 'zed' }]]);
+      window.__chat.setInbox({ answer: async (item, text) => { window.__answered.push([item.id, text]); return true; } });
+      window.__chat.updateAnswerControls([{ id: 'inb_questions', rev: 1, kind: 'question', message_id: 'rm_a_m120', open_questions: [
+        { question: 'Route?', options: ['A', 'B'] }, { question: 'When?', options: ['Now', 'Later'] },
+      ], free_text: true, can_decide: true }]);
+    });
+    await page.$eval('#messages [data-message-id=rm_a_m120] .open-questions-open', button => button.click());
+    await page.waitForSelector('#open-questions-dialog[open]');
+    await page.$eval('#open-questions-dialog [name=question-0][value="0"]', input => input.click());
+    await page.$eval('#open-questions-dialog [name=question-1][value="0"]', input => input.click());
+    await page.waitForFunction(() => !document.querySelector('#open-questions-dialog .open-questions-send').hidden);
+    const hint = await page.$eval('#open-questions-dialog .open-questions-send', button => button.title);
+    await page.$eval('#open-questions-dialog .open-questions-send', button => button.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true, cancelable: true })));
+    await page.waitForFunction(() => !document.querySelector('#open-questions-dialog')?.open && document.activeElement?.getAttribute('aria-label') === 'Message');
+    assert.deepEqual({
+      hint, draft: await draftText(page), reply: await page.evaluate(() => window.__chat.reply?.id),
+      focused: await page.evaluate(() => document.activeElement?.isContentEditable && document.activeElement.getAttribute('aria-label') === 'Message'),
+      sent: await page.evaluate(() => window.__answered), posts: await posts(page),
+    }, { hint: 'Send answers (Shift-click to edit them in the composer first)', draft: '@zed Q1) a) A\nQ2) a) Now', reply: 'rm_a_m120', focused: true, sent: [], posts: [] }, 'Shift-click puts Open Questions answers in the composer with the reply link without sending');
+    await page.evaluate(() => { window.__chat.setReply(null); window.__chat.setReply(window.__chat.messages.get('rm_a_m120')); });
+    await typeDraft(page, '2) check the host architecture'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([await page.evaluate(() => window.__answered), (await posts(page)).at(-1), await page.$eval('#messages [data-message-id=rm_a_m120] .open-questions-open', button => button.disabled)],
+      [[], { body: '2) check the host architecture', attachments: [], reply_to: 'rm_a_m120' }, false], 'an ordinary reply does not answer or disable Open Questions');
+    await openRoom(page, 'rm_b'); await opened(page); await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .open-questions-open', button => button.disabled), false, 'the unanswered request remains active after changing rooms');
+    await page.evaluate(() => {
+      const question = window.__data.rooms.rm_a.messages.find(message => message.id === 'rm_a_m120');
+      question.answer_state = 'resolved'; question.answer_body = 'Q1) a) A\nQ2) a) Now';
+      window.__chat.updateAnswerControls([]);
+    });
+    await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m120] .answer-history-choice')?.textContent.includes('Q1) a) A'));
+    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .open-questions-count', node => node.closest('button').disabled), true, 'a submitted answer disables the button');
+    await openRoom(page, 'rm_b'); await opened(page); await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-history-choice', node => node.textContent), 'Q1) a) A\nQ2) a) Now', 'the chosen answer survives a room change from message state');
     await page.close();
   }
 

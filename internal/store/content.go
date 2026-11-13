@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -394,6 +395,8 @@ type Message struct {
 	NeedsAttention      bool         `json:"needs_attention,omitempty"`
 	ProposedAnswersJSON string       `json:"-"`
 	OpenQuestionsJSON   string       `json:"-"`
+	AnswerState         string       `json:"answer_state,omitempty"`
+	AnswerBody          string       `json:"answer_body,omitempty"`
 	VisualPlanJSON      string       `json:"-"`
 	AppendixPagesJSON   string       `json:"-"`
 	SourceOutID         string       `json:"source_out_id,omitempty"`
@@ -575,6 +578,9 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if err := s.answerStateForMessages(ctx, messages); err != nil {
+		return nil, err
+	}
 	attachments, err := s.attachmentsForMessages(ctx, messages)
 	if err != nil {
 		return nil, err
@@ -583,6 +589,46 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 		messages[i].Attachments = attachments[messages[i].ID]
 	}
 	return messages, nil
+}
+
+func (s *Store) answerStateForMessages(ctx context.Context, messages []Message) error {
+	var ids []any
+	for _, message := range messages {
+		if message.ProposedAnswersJSON != "" || message.OpenQuestionsJSON != "" {
+			ids = append(ids, message.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	query := `SELECT item.message_id,item.state,COALESCE(answer.body,'') FROM inbox_item item
+		LEFT JOIN message answer ON answer.id=item.answer_message_id
+		WHERE item.kind IN ('question','approval') AND item.message_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + `)`
+	rows, err := s.readDB.QueryContext(ctx, query, ids...)
+	if err != nil {
+		return err
+	}
+	states := make(map[string][2]string)
+	for rows.Next() {
+		var id, state, body string
+		if err := rows.Scan(&id, &state, &body); err != nil {
+			rows.Close()
+			return err
+		}
+		states[id] = [2]string{state, body}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for i := range messages {
+		messages[i].AnswerState = states[messages[i].ID][0]
+		messages[i].AnswerBody = states[messages[i].ID][1]
+	}
+	return nil
 }
 
 const timestampLayout = "2006-01-02T15:04:05.000000000Z"

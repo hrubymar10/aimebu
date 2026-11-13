@@ -936,8 +936,7 @@ async function main() {
       host.remove();
       return { closed, opened, sent, room };
     }), { closed: ['Answer…', true, 'false'], opened: [false, 'true', true], sent: ['Proceed, but carefully'], room: false }, 'the inbox can give a free-text answer; the room view has no such box');
-    // A reply to a message with a free-text request open for this person is sent as the answer (so the item resolves) when it mentions no one but
-    // the requester and has no attachment; every other reply is an ordinary one that leaves the request open.
+    // A plain free-text request accepts a reply; structured controls accept only a draft started through those controls.
     await first.evaluate(async () => { (await import('preact')).options.debounceRendering = undefined; }); // the answer-control checks above draw at once; the chat fixture draws as the app does
     await installFixtureChat(first);
     assert.deepEqual(await first.evaluate(async () => {
@@ -945,10 +944,10 @@ async function main() {
       const original = window.fetch, posts = [];
       window.fetch = async (path, options = {}) => { posts.push([String(path), JSON.parse(options.body || '{}').body]); return new Response(JSON.stringify({ id: 'm9' }), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
       try {
-        const run = async (body, item, { attachments = [], answer = async () => true, reply = { id: 'm1', author_kind: 'agent', author_id: 'a1' } } = {}) => {
+        const run = async (body, item, { attachments = [], answer = async () => true, reply = { id: 'm1', author_kind: 'agent', author_id: 'a1' }, fromControl = false } = {}) => {
           const answers = [], shown = [];
           const list = document.createElement('div'); document.body.append(list); const chat = window.__fixtureChat(list);
-          Object.assign(chat, base, { reply, pendingUploads: 0, pendingAttachments: attachments, notice: { clear() {}, show(text) { shown.push(text); } }, agents: new Map([['a1', { slug: 'tess' }]]),
+          Object.assign(chat, base, { reply, composedAnswerID: fromControl ? reply.id : null, pendingUploads: 0, pendingAttachments: attachments, notice: { clear() {}, show(text) { shown.push(text); } }, agents: new Map([['a1', { slug: 'tess' }]]),
             draft: { value: body, setSelectionRange() {} }, answerItems: new Map(item ? [['m1', item]] : []), setReply(message) { this.reply = message; }, inbox: { answer: async (found, text) => { answers.push([found.id, text]); return answer(); } } });
           posts.length = 0;
           await chat.send();
@@ -965,6 +964,9 @@ async function main() {
           optionExact: await run('@tess Proceed', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
           optionExactBare: await run('Hold', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
           optionEdited: await run('@tess Proceed, but later', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
+          optionFromControl: await run('@tess Proceed, but later', { ...free, free_text: true, proposed_answers: ['Proceed', 'Hold'] }, { fromControl: true }),
+          questionsOrdinary: await run('a related comment', { ...free, open_questions: [{ question: 'Route?' }] }),
+          questionsFromControl: await run('@tess Q1) edited route', { ...free, open_questions: [{ question: 'Route?' }] }, { fromControl: true }),
           optionOtherMention: await run('@tess @reviewer Proceed', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
           attachment: await run('@tess here', free, { attachments: [{ id: 'att' }] }),
           cannotDecide: await run('@tess ok', { ...free, can_decide: false }),
@@ -986,9 +988,12 @@ async function main() {
       answeredPlain: { answered: 1, posted: 0, draft: '', shown: [] },
       othersMentioned: { answered: 0, posted: 1, draft: '', shown: [] },
       optionsOnly: { answered: 0, posted: 1, draft: '', shown: [] },
-      optionExact: { answered: 1, posted: 0, draft: '', shown: [] },
-      optionExactBare: { answered: 1, posted: 0, draft: '', shown: [] },
+      optionExact: { answered: 0, posted: 1, draft: '', shown: [] },
+      optionExactBare: { answered: 0, posted: 1, draft: '', shown: [] },
       optionEdited: { answered: 0, posted: 1, draft: '', shown: [] },
+      optionFromControl: { answered: 1, posted: 0, draft: '', shown: [] },
+      questionsOrdinary: { answered: 0, posted: 1, draft: '', shown: [] },
+      questionsFromControl: { answered: 1, posted: 0, draft: '', shown: [] },
       optionOtherMention: { answered: 0, posted: 1, draft: '', shown: [] },
       attachment: { answered: 0, posted: 1, draft: '', shown: [] },
       cannotDecide: { answered: 0, posted: 1, draft: '', shown: [] },
@@ -997,7 +1002,7 @@ async function main() {
       refused: { answered: 1, posted: 0, draft: '@tess ok', shown: ['Could not send the answer'] },
       pending: { answered: 1, posted: 0, draft: '@tess ok', shown: ['Could not send the answer'] },
       doubleSubmit: 1,
-    }, 'a reply that mentions only the requester resolves the request when it is free-text or exactly one of the options; anything else is an ordinary reply; only a confirmed answer clears the draft; no double submit');
+    }, 'a free-text reply or a draft started from structured controls resolves the request; ordinary replies leave it open');
     // A proposed answer is the v1 button: a click sends "@author answer"; Shift-click puts it in the composer with the reply link (when the
     // page can do that) and sends nothing; a refused send keeps the buttons and says why.
     const proposedAnswers = await first.evaluate(async () => {
