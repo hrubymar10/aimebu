@@ -171,7 +171,10 @@ export function treeOf(state) {
   }
   const archivedShown = [];
   for (const project of archivedProjects) {
-    const own = [...rooms.values()].filter(room => room.project_id === project.id && !room.hidden && (!filter.trim() || matchesRoom(room, filter, projects)))
+    const visible = [...rooms.values()].filter(room => room.project_id === project.id && !room.hidden);
+    const matching = visible.filter(room => matchesRoom(room, filter, projects));
+    const home = visible.find(room => room.kind === 'home');
+    const own = (filtering && matching.length && home && !matching.includes(home) ? [home, ...matching] : matching)
       .sort((a, b) => (a.kind === 'home' ? 0 : 1) - (b.kind === 'home' ? 0 : 1) || (a.title || '').localeCompare(b.title || ''));
     if (!filtering || own.length) archivedShown.push({ project, rooms: own });
   }

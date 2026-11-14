@@ -246,15 +246,31 @@ async function main() {
     await answer(page, dms, 200, chats());
     await page.evaluate(() => window.__loading); await settle(page);
     assert.deepEqual(await rows(page), [['rm_ah', '⌂ Alpha', '21', false], ['rm_gen', '# general', '3', true], ['rm_api', '# api-work', '12', true], ['rm_notes', '# notes', '1', true], ['rm_mute', '# muted-room', '5', true], ['rm_old', '# old-room', '', true],
-      ['rm_bh', '⌂ Beta', '7', false], ['rm_bg', '# beta-general', '7', true], ['rm_ch', '⌂ Gamma', '', false], ['rm_cg', '# gamma-room', '', false], ['rm_dm', '@ ada', '2', false], ['rm_chat', '⇄ ada & bert', '1', false]]);
+      ['rm_bh', '⌂ Beta', '7', false], ['rm_bg', '# beta-general', '7', true], ['rm_ch', '⌂ Gamma', '', false], ['rm_cg', '# gamma-room', '', true], ['rm_dm', '@ ada', '2', false], ['rm_chat', '⇄ ada & bert', '1', false]]);
     const tail = await page.$$eval('#projects details', nodes => nodes.map(node => [node.className, node.querySelector('summary').textContent, node.open]));
-    assert.deepEqual(tail, [['archived-rooms', 'Archived (1)', false], ['hidden-rooms', 'Hidden (1)', false], ['archived-projects', 'Archived projects (1)', false], ['archived-project', 'Gamma', false], ['agent-chat-offers', 'Agent chats you can join (1)', false]]);
+    assert.deepEqual(tail, [['archived-rooms', 'Archived (1)', false], ['hidden-rooms', 'Hidden (1)', false], ['archived-projects', 'Archived projects (1)', false], ['agent-chat-offers', 'Agent chats you can join (1)', false]]);
+    assert.equal(await page.$$eval('#projects details > summary', nodes => nodes.every(node => !!node.querySelector('svg') && getComputedStyle(node).listStyleType === 'none')), true, 'sidebar disclosures use SVG chevrons');
+    await page.$eval('.archived-projects > summary', node => node.click());
+    await page.$eval('.archived-project > .room-item .room-collapse', node => node.click());
+    await page.waitForFunction(() => !document.querySelector('.archived-project').classList.contains('collapsed'));
+    assert.deepEqual(await page.$eval('.archived-project', node => [node.classList.contains('collapsed'), node.querySelector('.room-item-icon').textContent, !!node.querySelector('.room-children [data-room-id=rm_cg]'), !!node.querySelector('.room-children .room-children')]),
+      [false, '⌂', true, false], 'archived project uses the live project row and child tree');
+    await page.evaluate(() => document.documentElement.dataset.theme = 'high-contrast-dark');
+    assert.equal(await page.$eval('.archived-project > .room-item', node => getComputedStyle(node).opacity), '1', 'archived row stays legible in high contrast');
     assert.deepEqual(await tops(page), ['room-filter', 'room-group collapsed', 'room-group collapsed', 'archived-projects', 'direct-rooms']);
     // The bells and the chip: a room with items waiting, a muted one, the project's name on a direct message when there are several projects.
     const marks = await page.evaluate(() => ({ attention: document.querySelector('[data-room-id=rm_api] .room-item-attention')?.title, muted: document.querySelector('[data-room-id=rm_mute] .room-muted')?.title.startsWith('Muted until'),
       chip: document.querySelector('[data-room-id=rm_dm] .room-project')?.textContent, none: document.querySelector('[data-room-id=rm_gen] .room-muted') === null, title: document.querySelector('[data-room-id=rm_api] .room-item-name').title,
       sidebarRooms: [...window.__sidebar.rooms.keys()].length, sidebarProjects: [...window.__sidebar.projects.keys()].join() }));
     assert.deepEqual(marks, { attention: '2 waiting for you', muted: true, chip: 'Alpha', none: true, title: 'api-work · 2 members', sidebarRooms: 13, sidebarProjects: 'prj_a,prj_b,prj_c' });
+    const bells = () => page.evaluate(() => ['rm_ah', 'rm_api', 'rm_old'].map(id => document.querySelector(`[data-room-id=${id}] > .room-item .room-item-attention`)?.textContent || ''));
+    await page.evaluate(() => { const rooms = window.__sidebar.rooms; rooms.get('rm_api').attention_count = 0; rooms.get('rm_hid').attention_count = 2; window.__sidebar.store.touch(); });
+    await page.waitForFunction(() => !document.querySelector('[data-room-id=rm_ah] > .room-item .room-item-attention'));
+    assert.deepEqual(await bells(), ['', '', ''], 'a hidden room cannot put an untraceable bell on its project');
+    await page.evaluate(() => { const rooms = window.__sidebar.rooms; rooms.get('rm_hid').attention_count = 0; rooms.get('rm_old').attention_count = 2; window.__sidebar.store.touch(); });
+    await page.waitForFunction(() => !!document.querySelector('[data-room-id=rm_old] > .room-item .room-item-attention'));
+    assert.deepEqual(await bells(), ['🔔 2', '', '🔔 2'], 'an actionable archived item marks its own room and the project');
+    await page.evaluate(() => { const rooms = window.__sidebar.rooms; rooms.get('rm_old').attention_count = 0; rooms.get('rm_api').attention_count = 2; window.__sidebar.store.touch(); });
     // Rows open their room from the name and from the row beside it.
     await page.$eval('[data-room-id=rm_gen] .room-item-name', node => node.click());
     await page.$eval('[data-room-id=rm_api] .room-item', node => node.click());
@@ -510,6 +526,9 @@ async function main() {
     await page.$eval('.room-filter-input', node => { node.value = 'gamma'; node.dispatchEvent(new Event('input')); });
     assert.equal(await page.$eval('details.archived-projects', node => node.open), true, 'the archived projects open while filtering');
     assert.equal((await rows(page)).some(row => row[0] === 'rm_cg'), true);
+    await page.$eval('.room-filter-input', node => { node.value = 'gamma-room'; node.dispatchEvent(new Event('input')); });
+    assert.deepEqual(await page.$eval('.archived-project', node => [node.dataset.roomId, node.querySelector(':scope > .room-item .room-item-name')?.textContent, !!node.querySelector('.room-children [data-room-id=rm_cg]')]),
+      ['rm_ch', 'Gamma', true], 'a task-room filter keeps the archived project name row');
     await page.$eval('.room-filter-input', node => { node.value = ''; node.dispatchEvent(new Event('input')); });
     assert.equal((await rows(page)).length > 8, true);
     assert.equal(await page.$$eval('.room-item .room-project', nodes => nodes.length > 0 && nodes.every(node => !node.classList.contains('room-project-needed'))), true, 'without a filter no chip is marked as needed');

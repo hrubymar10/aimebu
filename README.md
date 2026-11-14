@@ -590,6 +590,12 @@ are created with a row's `+` or a project's ☰ menu. A project's tree ends with
 its children (and that Archived row). A project starts collapsed the first time this browser sees it; after that the choice is remembered in this browser (a project you opened stays open), and a collapsed
 root shows its children's unread total. The collapse button in the ROOMS header folds every project at once
 (or opens them all again once everything is folded). A `Hidden (N)` row closes the tree the same way and can show a room again.
+The home row's attention bell counts the rooms represented in its tree; an
+archived room with an actionable Inbox item also has its own bell, while a
+hidden room cannot add an untraceable count to the home row.
+The Archived projects section starts collapsed. Its muted project rows open the
+same nested room tree, and all sidebar disclosures use the same chevron. A
+filter match in an archived task room keeps the project's name row above it.
 The chat header shows the room's path before its title (`project › room`, each a button to that room; a project's home room has none), and on a phone only the nearest crumb stays, truncated. A hidden room returns when a new message addresses that user or someone joins
 the room. These preferences are stored on the server and shared across that
 user's tabs.

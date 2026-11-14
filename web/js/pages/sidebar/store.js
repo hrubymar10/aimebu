@@ -340,7 +340,7 @@ export class SidebarStore {
     this.touch();
   }
 
-  setFold(key, open) { this.folds.set(key, open); }
+  setFold(key, open) { this.folds.set(key, open); this.touch(); }
 
   setFilter(text) { batch(() => { this.shown.value = true; this.filter.value = text; }); }
 

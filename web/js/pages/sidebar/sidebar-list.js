@@ -77,7 +77,7 @@ function ProjectMenu({ project, room, controls, manual, store, onAdd, disabled }
     </div>`}</span>`;
 }
 
-function Row({ view, store, ctx, preview }) {
+function Row({ view, store, ctx, preview, onToggle }) {
   const { room } = view, project = store.projects.get(room.project_id), [reopening, setReopening] = useState(false);
   const archivedProject = !!project?.archived_at, projectName = project?.name || '';
   const controls = room.kind === 'home' && project && view.controls ? view.controls : null, manual = ctx.sort === 'manual';
@@ -101,7 +101,7 @@ function Row({ view, store, ctx, preview }) {
   const reopen = async () => { setReopening(true); if (!(await store.reopen(room))) setReopening(false); };
   const drag = controls ? dragHandlers(room, store) : {};
   const row = html`<div class=${classes} onClick=${event => { if (!event.target.closest('button, input, select, a')) select(); }} ...${drag}>
-    ${view.collapsible ? html`<button type="button" class="row-btn branch room-collapse" title=${label} aria-label=${label} aria-expanded=${String(!view.folded)} onClick=${() => store.toggleCollapsed(room.id)}><${Chevron} direction=${view.folded ? 'right' : 'down'} /></button>` : view.nest && html`<span class="branch-spacer" aria-hidden="true"></span>`}
+    ${view.collapsible ? html`<button type="button" class="row-btn branch room-collapse" title=${label} aria-label=${label} aria-expanded=${String(!view.folded)} onClick=${onToggle || (() => store.toggleCollapsed(room.id))}><${Chevron} direction=${view.folded ? 'right' : 'down'} /></button>` : view.nest && html`<span class="branch-spacer" aria-hidden="true"></span>`}
     <span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">${glyph}</span></span>
     <div class="room-item-info"><div class="room-item-top">
     <button type="button" class="row-btn room-item-name" aria-current=${isActive ? 'true' : undefined} title=${`${room.title} · ${members} ${members === 1 ? 'member' : 'members'}`} onClick=${select}>${room.title}</button>
@@ -120,11 +120,11 @@ function Row({ view, store, ctx, preview }) {
   return row;
 }
 
-function Group({ view, store, ctx }) {
+function Group({ view, store, ctx, className = '', onToggle }) {
   const { room } = view;
   const preview = room.id === ctx.active || ctx.previewAll;
   const kids = [...view.children.map(child => html`<${Group} key=${child.room.id} view=${child} store=${store} ctx=${ctx} />`), ...view.tail.map(node => html`<${Tail} key=${`${node.kind}:${node.project.id}`} node=${node} store=${store} ctx=${ctx} />`)];
-  return html`<div class=${view.folded ? 'room-group collapsed' : 'room-group'} data-room-id=${room.id}><${Row} view=${view} store=${store} ctx=${ctx} preview=${preview} />${kids.length > 0 && html`<div class="room-children">${kids}</div>`}</div>`;
+  return html`<div class=${`room-group${view.folded ? ' collapsed' : ''}${className ? ` ${className}` : ''}`} data-room-id=${room.id}><${Row} view=${view} store=${store} ctx=${ctx} preview=${preview} onToggle=${onToggle} />${kids.length > 0 && html`<div class="room-children">${kids}</div>`}</div>`;
 }
 
 // A project whose rooms have not arrived: its name where its row will be, the same height as the folded row that replaces it.
@@ -133,8 +133,17 @@ function Placeholder({ project, preview }) {
   return html`<div class="room-group project-placeholder" data-project-id=${project.id} aria-busy="true"><div class="room-item"><span class="branch-spacer" aria-hidden="true"></span><span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">⌂</span></span><div class="room-item-info"><div class="room-item-top"><span class="row-btn room-item-name">${project.name || ''}</span></div>${preview && html`<div class="room-item-preview" aria-hidden="true">\u00a0</div>`}</div></div></div>`;
 }
 
-function Fold({ id, className, open, store, children, summary, ...rest }) {
-  return html`<details class=${className} open=${open} onToggle=${event => { if (event.currentTarget.open !== open) store.setFold(id, event.currentTarget.open); }} ...${rest}><summary>${summary}</summary>${children}</details>`;
+function Fold({ id, className, open, store, children, summary, heading = false, ...rest }) {
+  return html`<details class=${className} open=${open} onToggle=${event => { if (event.currentTarget.open !== open) store.setFold(id, event.currentTarget.open); }} ...${rest}><summary class=${heading ? 'sidebar-section-heading' : 'sidebar-fold-heading'}><${Chevron} direction=${open ? 'down' : 'right'} /><span>${summary}</span></summary>${children}</details>`;
+}
+
+function ArchivedProject({ project, rooms, store, ctx, filtering }) {
+  const home = rooms.find(room => room.kind === 'home') || rooms[0];
+  if (!home) return null;
+  const id = `archived-project:${project.id}`, open = filtering || !!store.folds.get(id);
+  const view = { ...leafView(home, ctx.active), nest: true, collapsible: true, folded: !open,
+    children: rooms.filter(room => room.id !== home.id).map(room => leafView(room, ctx.active)) };
+  return html`<${Group} view=${view} store=${store} ctx=${ctx} className="archived-project" onToggle=${() => store.setFold(id, !open)} />`;
 }
 
 function ArchiveSearch({ project, store }) {
@@ -184,8 +193,22 @@ export function SidebarList({ store, projectButton }) {
   let tree = shown ? build() : null;
   // A project seen for the first time starts collapsed: fold it, then draw the tree again with it folded.
   if (tree && !store.holdFolds && store.foldNew(tree.collapsible, tree.nested, tree.holdsActive)) tree = build();
+  const exposed = new Set();
+  const addTail = node => { if (node.kind === 'archived') for (const room of node.rooms) exposed.add(room.id); };
+  const addView = view => {
+    exposed.add(view.room.id);
+    for (const child of view.children) addView(child);
+    for (const node of view.tail) addTail(node);
+  };
+  for (const section of tree?.sections || []) {
+    if (section.tailOnly) addTail(section.node);
+    else if (!section.placeholder) addView(section);
+  }
+  for (const { rooms } of tree?.archived || []) for (const room of rooms) exposed.add(room.id);
   const projectAttention = new Map();
-  for (const room of store.rooms.values()) if (room.kind !== 'dm' && room.attention_count) {
+  for (const id of exposed) {
+    const room = store.rooms.get(id);
+    if (!room || room.kind === 'dm' || !room.attention_count) continue;
     projectAttention.set(room.project_id, (projectAttention.get(room.project_id) || 0) + room.attention_count);
   }
   const ctx = { sort, active, previewAll: loadPreviewAll(), filtering: !!tree?.filtering, projectAttention };
@@ -201,7 +224,7 @@ export function SidebarList({ store, projectButton }) {
   return html`<${FilterBox} store=${store} button=${projectButton} />
     ${tree.sections.map(section => section.placeholder ? html`<${Placeholder} key=${`placeholder:${section.project.id}`} project=${section.project} preview=${ctx.previewAll} />` : section.tailOnly ? html`<${Tail} key=${`${section.node.kind}:${section.node.project.id}`} node=${section.node} store=${store} ctx=${ctx} />` : html`<${Group} key=${section.room.id} view=${section} store=${store} ctx=${ctx} />`)}
     ${tree.noMatch && html`<p class="rooms-empty">${tree.noMatch}</p>`}
-    ${tree.archived.length > 0 && html`<${Fold} id="archived-projects" className="archived-projects" open=${tree.filtering ? true : !!store.folds.get('archived-projects')} store=${store} summary=${`Archived projects (${tree.archived.length})`}>${tree.archived.map(({ project, rooms }) => html`<${Fold} key=${project.id} id=${`archived-project:${project.id}`} className="archived-project" data-project-id=${project.id} open=${tree.filtering ? true : !!store.folds.get(`archived-project:${project.id}`)} store=${store} summary=${project.name}>${rooms.map(room => html`<${Group} key=${room.id} view=${leafView(room, active)} store=${store} ctx=${ctx} />`)}<//>`)}<//>`}
+    ${tree.archived.length > 0 && html`<${Fold} id="archived-projects" className="archived-projects" open=${tree.filtering ? true : !!store.folds.get('archived-projects')} store=${store} summary=${`Archived projects (${tree.archived.length})`} heading>${tree.archived.map(({ project, rooms }) => html`<${ArchivedProject} key=${project.id} project=${project} rooms=${rooms} store=${store} ctx=${ctx} filtering=${tree.filtering} />`)}<//>`}
     <div class="direct-rooms"><h3>Direct messages</h3>${tree.direct.map(room => html`<${Group} key=${room.id} view=${leafView(room, active, tree.many)} store=${store} ctx=${ctx} />`)}
       ${tree.offers.length > 0 && html`<${Fold} id="offers" className="agent-chat-offers" open=${offersOpen} store=${store} summary=${`Agent chats you can join (${tree.offers.length})`}>${tree.offers.map(offer => html`<${Offer} key=${offer.id} offer=${offer} store=${store} />`)}<//>`}</div>`;
 }
