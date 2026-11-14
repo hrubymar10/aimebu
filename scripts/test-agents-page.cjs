@@ -412,7 +412,8 @@ async function main() {
   // leaves an open dialog alone.
   {
     const page = await mount();
-    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn', role_emoji: '🔧' }), agent('a2', 'bert')]);
+    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn', role_emoji: '🔧', role_label: 'Craft lead' }), agent('a2', 'bert')]);
+    assert.equal(await page.$eval('[data-agent-id=a1] .agent-emoji', node => node.title), 'Craft lead', 'hovering the role emoji names the role');
     const state = () => page.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, closeHidden: document.querySelector('#agent-profile-close').hidden, open: document.querySelector('#agents-panel').classList.contains('profile-open'),
       expanded: [...document.querySelectorAll('[data-agent-id]')].map(card => [card.dataset.agentId, card.classList.contains('expanded'), card.querySelector('.agent-expand')?.getAttribute('aria-expanded') ?? null, card.querySelector('.agent-expand')?.getAttribute('aria-label') ?? null]),
       facts: [...document.querySelectorAll('[data-agent-id=a1] .profile-fact')].map(row => [row.querySelector('.profile-fact-label').textContent, row.querySelector('.profile-fact-value').textContent]) }));

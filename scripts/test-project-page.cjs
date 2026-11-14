@@ -11,9 +11,9 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css"><link rel="stylesheet" href="/v2-only.css">${importMap}</head>
 <body><dialog id="room-info-dialog" open><section id="room-project"><div id="project-settings-body" class="settings-subsection project-settings-body"></div></section>
-<section id="room-scope-control" class="scope-control" aria-label="Room agent control"></section><section id="room-usage" class="usage-summary" aria-label="Room usage"></section></dialog><div id="messages"></div></body></html>`;
+<section id="room-scope-control" class="scope-control" aria-label="Room agent control"></section><section id="room-usage" class="usage-summary" aria-label="Room usage"></section></dialog><section class="chat" style="display:flex;flex-direction:column;height:700px;width:100%"><header>Home</header><div id="messages" class="messages">No messages in this room yet</div><div class="send-bar">Composer</div></section></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -27,9 +27,9 @@ const limit = { rev: 3, cost_mode: 'inherit', turn_mode: 'custom', daily_turn_ca
 const usage = { turns: 4, by_agent: [{ key: 'a1', label: 'leader', turns: 4 }], by_model: [] };
 const roles = [{ role_key: 'worker', inherited: true, global_agents: [{}, {}], default_agents: [], pick_mode: 'in_turn' }, { role_key: 'leader', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }];
 const flows = [
-  { key: 'leader-workers', label: 'A · Leader and workers', description: 'Leader coordinates workers.', diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'general', label: 'General', roles: ['worker'] }], edges: [{ from: 'home', to: 'general' }] } },
-  { key: 'leader-dispatcher', label: 'B · Leader and dispatcher', description: 'Dispatcher coordinates workers.', diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'routing', label: 'Routing', roles: ['leader', 'dispatcher'] }], edges: [{ from: 'home', to: 'routing' }] } },
-  { key: 'custom', label: 'C · Custom', description: 'Choose your own team.', diagram: { rooms: [], edges: [] } },
+  { key: 'leader-workers', label: 'A · Leader and workers', description: 'Leader coordinates workers.', core_roles: ['leader'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'general', label: 'General', roles: ['worker'] }], edges: [{ from: 'home', to: 'general' }] } },
+  { key: 'leader-dispatcher', label: 'B · Leader and dispatcher', description: 'Dispatcher coordinates workers.', core_roles: ['leader', 'dispatcher'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['dispatcher'] }, { actor_role: 'dispatcher', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'routing', label: 'Routing', roles: ['leader', 'dispatcher'] }], edges: [{ from: 'home', to: 'routing' }] } },
+  { key: 'custom', label: 'C · Custom', description: 'Choose your own team.', core_roles: ['leader'], spawn_rules: [], diagram: { rooms: [], edges: [] } },
 ];
 const rule = (status, body) => ({ status, body });
 const base = () => ({
@@ -147,12 +147,14 @@ async function main() {
       await page.$eval('#project-team-flow .team-flow-option:nth-child(2) .team-flow-card', node => node.click());
       const preview = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/preview');
       assert.deepEqual(await page.evaluate(index => window.__requests[index].body, preview), { key: 'leader-dispatcher' });
-      await answer(page, preview, 200, { key: 'leader-dispatcher', create_rooms: [{ key: 'routing', title: 'routing' }], role_changes: [{ description: 'Add dispatcher role' }], conflicts: [{ agent_id: 'agt_old', reason: 'Leader in task room', suggested_action: 'Move to home' }] });
-      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-preview')?.textContent.includes('Move to home'));
-      assert.match(await page.$eval('#project-team-flow .team-flow-preview', node => node.textContent), /routing.*Add dispatcher role.*agt_old/s);
+      await answer(page, preview, 200, { key: 'leader-dispatcher', create_rooms: [{ key: 'routing', title: 'routing' }], role_changes: [{ description: 'Add dispatcher role' }], conflicts: [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }] });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-preview')?.textContent.includes('Remove ian'));
+      assert.match(await page.$eval('#project-team-flow .team-flow-preview', node => node.textContent), /routing.*Add dispatcher role.*Remove ian \(Leader\) from general when applying/s);
+      assert.equal(await page.$eval('#project-team-flow .team-flow-removal input', node => node.checked), false, 'membership removal is opt-in');
+      await page.$eval('#project-team-flow .team-flow-removal input', node => node.click());
       await page.$eval('#project-team-flow .btn-primary', node => node.click());
       const apply = await waitRequest(page, 'PUT', '/api/projects/p1/team-flow');
-      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, apply), { key: 'leader-dispatcher', rev: 1 });
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, apply), { key: 'leader-dispatcher', rev: 1, remove_memberships: [{ agent_id: 'agt_old', room_id: 'rm_general' }] });
       await answer(page, apply, 200, { key: 'leader-dispatcher', rev: 2, review_pending: false, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [] });
       await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('Leader and dispatcher'));
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#project-team-flow .btn-primary').disabled, window.__hooks.at(-1)]), [true, ['flow', 'p1']]);
@@ -164,11 +166,18 @@ async function main() {
       const page = await mount({ auto });
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeRole = ''; window.__homeFlow = new TeamFlowHome({ canEdit: () => window.__homeRole === 'owner', onApplied: () => {} }); window.__homeRole = 'owner'; window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
       await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 3);
+      assert.deepEqual(await page.evaluate(() => {
+        const host = document.querySelector('#team-flow-home'), card = host.querySelector('.team-setup-wizard');
+        return [getComputedStyle(document.querySelector('#messages')).display, getComputedStyle(document.querySelector('.send-bar')).display,
+          host.clientHeight > 600, Math.abs(card.clientWidth - host.clientWidth + 32) < 3];
+      }), ['none', 'none', true, true], 'setup uses the full chat area without the empty message or composer below it');
       assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false], 'owner permission is read after the home page mounts');
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), node.querySelectorAll('.team-flow-thumbnail-room').length])), [['true', 2], ['false', 2], ['false', 0]]);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), [...node.querySelectorAll('.team-flow-thumbnail-agent text')].map(text => text.textContent)])),
+        [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', []]], 'the topology comes from spawn rules, not the room diagram');
       assert.equal(await page.$('script[src*="mermaid"]'), null, 'thumbnail does not load Mermaid at page start');
       await page.$eval('#team-flow-home .team-flow-diagram-open', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-lightbox')?.open && !!document.querySelector('#team-flow-home .team-flow-lightbox svg'));
+      assert.deepEqual(await page.$eval('#team-flow-home .team-flow-lightbox svg', svg => [svg.textContent.includes('Leader'), svg.textContent.includes('Worker'), svg.textContent.includes('Home')]), [true, true, false], 'expanded view shows the agent topology too');
       await page.$eval('#team-flow-home .team-flow-lightbox-close', node => node.click());
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-lightbox')?.open);
       await page.setViewport({ width: 390, height: 844 });
@@ -178,6 +187,11 @@ async function main() {
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Project settings');
+      assert.equal(await page.$eval('#team-flow-home .team-setup-limit-hint', node => node.textContent), 'Leader is not counted.', 'flow A excludes only its leader');
+      await page.$$eval('#team-flow-home .team-flow-actions .btn:not(.btn-primary)', nodes => nodes[0].click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
       await page.$$eval('#team-flow-home .team-flow-actions .btn:not(.btn-primary)', nodes => nodes[0].click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
@@ -195,18 +209,22 @@ async function main() {
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Project settings');
       assert.equal(await page.$eval('#team-flow-home [aria-label="Project folder"]', node => node.readOnly), true);
-      assert.equal(await page.$eval('#team-flow-home [type=number]', node => node.min), '2', 'flow B needs room for both initial agents');
+      assert.deepEqual(await page.$eval('#team-flow-home .team-setup-settings', node => [node.querySelector('[type=number]').min, node.querySelector('[type=number]').closest('label').textContent.trim(), node.querySelector('.team-setup-limit-hint').textContent]),
+        ['1', 'Maximum workers and reviewersLeader and dispatcher are not counted.', 'Leader and dispatcher are not counted.'], 'the worker cap excludes the flow core roles');
       await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-setup/preview']; });
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       const setupPreview = await waitRequest(page, 'POST', '/api/projects/p1/team-setup/preview');
       const draft = await page.evaluate(index => window.__requests[index].body, setupPreview);
       assert.deepEqual([draft.flow_key, draft.flow_rev, draft.leader?.machine_id, draft.dispatcher?.machine_id, draft.settings?.max_live_agents], ['leader-dispatcher', 0, 'm1', 'm1', 10]);
       assert.equal(await calls(page, 'PUT').then(rows => rows.some(([path]) => path.includes('/team-flow'))), false, 'wizard does not apply the flow early');
-      await answer(page, setupPreview, 200, { can_create: true, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [] });
+      await answer(page, setupPreview, 200, { can_create: true, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }] });
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Summary' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      assert.equal(await page.$eval('#team-flow-home .team-flow-removal input', node => node.checked), false, 'setup removal starts unchecked');
+      await page.$eval('#team-flow-home .team-flow-removal input', node => node.click());
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       const create = await waitRequest(page, 'POST', '/api/projects/p1/team-setup');
       assert.equal(await page.evaluate(index => !!window.__requests[index].headers['Idempotency-Key'], create), true, 'create uses an idempotency key');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body.remove_memberships, create), [{ agent_id: 'agt_old', room_id: 'rm_general' }], 'setup removes only checked memberships');
       await answer(page, create, 200, { flow: { key: 'leader-dispatcher', rev: 1, review_pending: false }, agents: [{ role: 'leader', agent_id: 'agt_1' }, { role: 'dispatcher', agent_id: 'agt_2' }], created_rooms: [{ key: 'routing' }] });
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-home-card'));
       await page.close();

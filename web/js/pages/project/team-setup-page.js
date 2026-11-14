@@ -55,7 +55,7 @@ function TargetPicker({ label, prefix, options, value, onChange }) {
   </fieldset>`;
 }
 
-function Summary({ body, preview, options }) {
+function Summary({ body, preview, options, selectedRemovals, onToggleRemoval }) {
   const name = target => options.find(item => sameTarget(item, target));
   const describe = target => { const item = name(target); return item ? `${item.machine_name} · ${item.tool_label} · ${item.model_label}` : 'No available agent'; };
   return html`<div class="team-setup-summary">
@@ -64,9 +64,9 @@ function Summary({ body, preview, options }) {
     ${body.dispatcher && html`<p><strong>Dispatcher:</strong> ${describe(body.dispatcher)}</p>`}
     <p><strong>Worker defaults:</strong> ${body.role_defaults.worker.default_agents.length} choice(s)</p>
     <p><strong>Reviewer defaults:</strong> ${body.role_defaults.reviewer.default_agents.length} choice(s)</p>
-    <p><strong>Project:</strong> ${body.settings.worktree_mode === 'auto' ? 'Separate task worktrees' : 'Shared folder'} · Memory ${body.settings.memory_enabled ? 'on' : 'off'} · Up to ${body.settings.max_live_agents} live agents</p>
+    <p><strong>Project:</strong> ${body.settings.worktree_mode === 'auto' ? 'Separate task worktrees' : 'Shared folder'} · Memory ${body.settings.memory_enabled ? 'on' : 'off'} · Up to ${body.settings.max_live_agents} workers and reviewers</p>
     ${preview?.created_rooms?.length > 0 && html`<p><strong>Rooms to create:</strong> ${preview.created_rooms.map(room => room.title || room.key || room).join(', ')}</p>`}
-    ${preview?.conflicts?.length > 0 && html`<p class="error" role="alert">${preview.conflicts.map(item => item.reason || item).join('; ')}</p>`}
+    ${preview?.conflicts?.length > 0 && html`<div class="team-flow-change-group"><strong>Agents needing action</strong><ul>${preview.conflicts.map(item => html`<li key=${`${item.agent_id}:${item.room_id}`}><label class="team-flow-removal"><input type="checkbox" checked=${selectedRemovals.some(selected => selected.agent_id === item.agent_id && selected.room_id === item.room_id)} onChange=${event => onToggleRemoval(item, event.currentTarget.checked)} />Remove ${item.slug || item.agent_id} (${item.role_label || item.role_key || 'agent'}) from ${item.room_title || 'this room'} when applying</label></li>`)}</ul></div>`}
   </div>`;
 }
 
@@ -112,12 +112,15 @@ export function TeamSetupPage({ flow, canEditProject, projectForID }) {
   if (!state || !state.review_pending && state.key) return null;
   const migrated = state.key === 'custom' && state.review_pending;
   const steps = selected === 'leader-dispatcher' ? ['Team flow', 'Leader', 'Dispatcher', 'Workers and reviewers', 'Project settings', 'Summary'] : ['Team flow', 'Leader', 'Workers and reviewers', 'Project settings', 'Summary'];
-  const minimumAgents = selected === 'leader-dispatcher' ? 2 : 1;
+  const minimumAgents = 1;
+  const coreRoles = templates.find(item => item.key === selected)?.core_roles || [];
+  const coreNames = coreRoles.map((role, index) => index ? role : role.charAt(0).toUpperCase() + role.slice(1)).join(' and ');
+  const coreHint = coreNames ? `${coreNames} ${coreRoles.length === 1 ? 'is' : 'are'} not counted.` : '';
   const stepLabel = steps[step - 1], isLast = step === steps.length;
   const body = { flow_key: selected, flow_rev: state.rev, leader, ...(selected === 'leader-dispatcher' ? { dispatcher } : {}), role_defaults: {
     worker: { default_agents: worker?.items || [], pick_mode: worker?.mode || 'in_turn' },
     reviewer: { default_agents: reviewer?.items || [], pick_mode: reviewer?.mode || 'in_turn' },
-  }, settings };
+  }, settings, ...(flow.removals.value.length ? { remove_memberships: flow.removals.value } : {}) };
   const go = async next => {
     const projectID = flow.projectID, turn = generation.current;
     setError(''); setPreview(null); commitKey.current = '';
@@ -144,7 +147,7 @@ export function TeamSetupPage({ flow, canEditProject, projectForID }) {
     <div class="team-flow-heading"><small>Project setup${step > 1 ? ` · Step ${step} of ${steps.length}` : ''}</small><h2 id="team-flow-home-title">${step === 1 ? 'Choose how your AI team works' : stepLabel}</h2>
       ${step === 1 && html`<p>${migrated ? 'Your existing setup is kept. Choose another flow, or keep the current custom setup.' : 'Pick a starting team flow. You can change it later in Project settings.'}</p>`}</div>
     ${step === 1 && html`<${TeamFlowCards} templates=${templates} selected=${selected} onSelect=${key => flow.select(key)} disabled=${flow.applying.value || !canEdit} />
-      <${TeamFlowPreview} preview=${flow.preview.value} busy=${flow.previewing.value} />`}
+      <${TeamFlowPreview} preview=${flow.preview.value} busy=${flow.previewing.value} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => flow.toggleRemoval(item, checked)} />`}
     ${step > 1 && targetStep && html`${!choices && html`<p role="status">Loading machines and tools…</p>`}${loadError && html`<p class="error" role="alert">${loadError}</p>`}
       ${choices && !choices.options.length && html`<p class="error" role="alert">No available machine, tool, and model combination is ready for this project.</p>`}
       ${choices?.options.length > 0 && html`<${TargetPicker} label=${stepLabel} prefix=${`team-setup-${stepLabel.toLowerCase()}`} options=${choices.options} value=${stepLabel === 'Leader' ? leader : dispatcher} onChange=${stepLabel === 'Leader' ? setLeader : setDispatcher} />`}`}
@@ -153,9 +156,9 @@ export function TeamSetupPage({ flow, canEditProject, projectForID }) {
       <label>Project folder<input value=${project?.folder || ''} readonly aria-label="Project folder" /></label>
       <label><input type="checkbox" checked=${settings.worktree_mode === 'auto'} onChange=${event => { settingsTouched.current = true; setSettings({ ...settings, worktree_mode: event.currentTarget.checked ? 'auto' : 'off' }); }} /> Separate Git worktree for each task room</label>
       <label><input type="checkbox" checked=${settings.memory_enabled} onChange=${event => { settingsTouched.current = true; setSettings({ ...settings, memory_enabled: event.currentTarget.checked }); }} /> Enable project memory</label>
-      <label>Maximum live agents<input type="number" min=${minimumAgents} max="100" value=${settings.max_live_agents} onInput=${event => { settingsTouched.current = true; setSettings({ ...settings, max_live_agents: Number(event.currentTarget.value) }); }} /></label>
+      <label>Maximum workers and reviewers<input type="number" min=${minimumAgents} max="100" value=${settings.max_live_agents} onInput=${event => { settingsTouched.current = true; setSettings({ ...settings, max_live_agents: Number(event.currentTarget.value) }); }} />${coreHint && html`<small class="team-setup-limit-hint">${coreHint}</small>`}</label>
     </div>`}
-    ${stepLabel === 'Summary' && html`<${Summary} body=${body} preview=${preview} options=${choices?.options || []} />`}
+    ${stepLabel === 'Summary' && html`<${Summary} body=${body} preview=${preview} options=${choices?.options || []} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => { flow.toggleRemoval(item, checked); commitKey.current = ''; }} />`}
     <div class="team-flow-actions">
       ${step > 1 && html`<button type="button" class="btn" disabled=${busy} onClick=${() => go(step - 1)}>Back</button>`}
       ${step === 1 && selected === 'custom' && html`<button type="button" class="btn btn-primary" disabled=${!canEdit || flow.applying.value || flow.previewing.value || !flow.preview.value} onClick=${() => flow.apply()}>${flow.applying.value ? 'Saving…' : 'Keep current'}</button>`}

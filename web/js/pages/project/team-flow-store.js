@@ -13,6 +13,7 @@ export class TeamFlowStore {
     this.state = signal(null);
     this.selected = signal('');
     this.preview = signal(null);
+	this.removals = signal([]);
     this.loading = signal(false);
     this.previewing = signal(false);
     this.applying = signal(false);
@@ -28,7 +29,7 @@ export class TeamFlowStore {
     this.projectID = '';
     batch(() => {
       this.templates.value = []; this.state.value = null; this.selected.value = '';
-      this.preview.value = null; this.loading.value = false; this.previewing.value = false;
+      this.preview.value = null; this.removals.value = []; this.loading.value = false; this.previewing.value = false;
       this.applying.value = false; this.error.value = '';
     });
   }
@@ -55,7 +56,7 @@ export class TeamFlowStore {
   async select(key) {
     if (!this.alive || !this.projectID || !this.templates.peek().some(item => item.key === key)) return;
     const generation = this.generation, previewGeneration = ++this.previewGeneration, projectID = this.projectID;
-    batch(() => { this.selected.value = key; this.preview.value = null; this.previewing.value = true; this.error.value = ''; });
+    batch(() => { this.selected.value = key; this.preview.value = null; this.removals.value = []; this.previewing.value = true; this.error.value = ''; });
     try {
       const preview = await this.source.preview(projectID, key);
       if (this.alive && generation === this.generation && previewGeneration === this.previewGeneration) this.preview.value = preview;
@@ -66,17 +67,23 @@ export class TeamFlowStore {
     }
   }
 
+  toggleRemoval(conflict, checked) {
+    const matches = item => item.agent_id === conflict.agent_id && item.room_id === conflict.room_id;
+    const remaining = this.removals.peek().filter(item => !matches(item));
+    this.removals.value = checked ? [...remaining, { agent_id: conflict.agent_id, room_id: conflict.room_id }] : remaining;
+  }
+
   async apply() {
     const projectID = this.projectID, state = this.state.peek(), key = this.selected.peek(), generation = this.generation;
     if (!this.alive || !projectID || !state || !key || !this.preview.peek() || this.applying.peek() || this.previewing.peek()) return;
     this.applying.value = true; this.error.value = '';
     try {
-      const result = await this.source.apply(projectID, key, state.rev);
+      const result = await this.source.apply(projectID, key, state.rev, this.removals.peek());
       if (!this.alive || generation !== this.generation) return;
       const template = this.templates.peek().find(item => item.key === result.key);
       batch(() => {
         this.state.value = { ...state, ...result, template, review_pending: false };
-        this.preview.value = null; this.applying.value = false;
+        this.preview.value = null; this.removals.value = []; this.applying.value = false;
       });
       await this.onApplied?.(projectID, result);
     } catch (error) {

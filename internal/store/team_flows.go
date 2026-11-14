@@ -49,8 +49,17 @@ type TeamFlowTemplate struct {
 }
 type FlowConflict struct {
 	AgentID         string `json:"agent_id"`
+	Slug            string `json:"slug"`
+	RoleKey         string `json:"role_key"`
+	RoleLabel       string `json:"role_label"`
+	RoomID          string `json:"room_id"`
+	RoomTitle       string `json:"room_title"`
 	Reason          string `json:"reason"`
 	SuggestedAction string `json:"suggested_action"`
+}
+type FlowRemoval struct {
+	AgentID string `json:"agent_id"`
+	RoomID  string `json:"room_id"`
 }
 type TeamFlowState struct {
 	Key           string           `json:"key"`
@@ -80,6 +89,7 @@ type TeamFlowApplied struct {
 
 var ErrTeamFlowRule = errors.New("team flow rule forbids this action")
 var ErrTeamFlowRev = errors.New("team flow revision changed")
+var ErrTeamFlowSelection = errors.New("selected room membership is no longer a conflict")
 
 func TeamFlowTemplates() []TeamFlowTemplate {
 	base := TeamFlowTemplate{Key: "leader-workers", Label: "Leader and workers", Description: "The leader plans with you and manages workers and reviewers."}
@@ -324,16 +334,16 @@ func flowConflicts(ctx context.Context, db rowQuerier, projectID string, t TeamF
 	if t.Key == "custom" || t.Key == "" {
 		return out, nil
 	}
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT a.id,ro.role_key,r.kind,r.team_flow_room_key,r.title FROM agent a
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT a.id,a.slug,ro.role_key,ro.label,r.id,r.kind,r.team_flow_room_key,r.title FROM agent a
 		JOIN role ro ON ro.id=a.role_id JOIN room_member m ON m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL
-		JOIN room r ON r.id=m.room_id WHERE a.project_id=? AND r.kind<>'dm' AND a.revoked_at IS NULL`, projectID)
+		JOIN room r ON r.id=m.room_id WHERE a.project_id=? AND r.kind<>'dm' AND a.revoked_at IS NULL ORDER BY a.slug,r.title,r.id`, projectID)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, role, kind, key, title string
-		if err := rows.Scan(&id, &role, &kind, &key, &title); err != nil {
+		var id, slug, role, roleLabel, roomID, kind, key, title string
+		if err := rows.Scan(&id, &slug, &role, &roleLabel, &roomID, &kind, &key, &title); err != nil {
 			return out, err
 		}
 		selector := flowRoomKind(kind, key, title)
@@ -345,13 +355,13 @@ func flowConflicts(ctx context.Context, db rowQuerier, projectID string, t TeamF
 			}
 		}
 		if !allowed {
-			out = append(out, FlowConflict{AgentID: id, Reason: "role " + role + " is not allowed in " + title, SuggestedAction: "Move the agent to an allowed room"})
+			out = append(out, FlowConflict{AgentID: id, Slug: slug, RoleKey: role, RoleLabel: roleLabel, RoomID: roomID, RoomTitle: title, Reason: "role " + role + " is not allowed in " + title, SuggestedAction: "Remove from this room when applying"})
 		}
 	}
 	return out, rows.Err()
 }
 
-func (s *Store) ApplyTeamFlow(ctx context.Context, projectID, userID, key string, rev int64) (TeamFlowApplied, error) {
+func (s *Store) ApplyTeamFlow(ctx context.Context, projectID, userID, key string, rev int64, removals []FlowRemoval) (TeamFlowApplied, error) {
 	if _, ok := teamFlowTemplate(key); !ok {
 		return TeamFlowApplied{}, fmt.Errorf("unknown team flow %q", key)
 	}
@@ -365,7 +375,7 @@ func (s *Store) ApplyTeamFlow(ctx context.Context, projectID, userID, key string
 	var out TeamFlowApplied
 	err = s.Tx(ctx, func(tx *Tx) error {
 		var err error
-		out, err = tx.applyTeamFlow(projectID, userID, key, rev)
+		out, err = tx.applyTeamFlow(projectID, userID, key, rev, removals)
 		return err
 	})
 	return out, err
@@ -373,7 +383,7 @@ func (s *Store) ApplyTeamFlow(ctx context.Context, projectID, userID, key string
 
 // applyTeamFlow runs inside the caller's transaction so initial setup can
 // commit the flow, defaults, settings, and agents together.
-func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64) (TeamFlowApplied, error) {
+func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals []FlowRemoval) (TeamFlowApplied, error) {
 	var out TeamFlowApplied
 	err := func() error {
 		var current string
@@ -389,10 +399,28 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64) (TeamFlowA
 			return err
 		}
 		t, _ := teamFlowTemplate(key)
-		if conflicts, err := flowConflicts(tx.ctx, tx.tx, projectID, t); err == nil {
-			out.Conflicts = conflicts
-		} else {
+		conflicts, err := flowConflicts(tx.ctx, tx.tx, projectID, t)
+		if err != nil {
 			return err
+		}
+		available := make(map[FlowRemoval]bool, len(conflicts))
+		for _, conflict := range conflicts {
+			available[FlowRemoval{AgentID: conflict.AgentID, RoomID: conflict.RoomID}] = true
+		}
+		selected := make(map[FlowRemoval]bool, len(removals))
+		for _, removal := range removals {
+			if !available[removal] || selected[removal] {
+				return ErrTeamFlowSelection
+			}
+			selected[removal] = true
+			if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, timestamp(), removal.RoomID, removal.AgentID); err != nil {
+				return err
+			}
+		}
+		for _, conflict := range conflicts {
+			if !selected[FlowRemoval{AgentID: conflict.AgentID, RoomID: conflict.RoomID}] {
+				out.Conflicts = append(out.Conflicts, conflict)
+			}
 		}
 		for _, spec := range t.Rooms {
 			if spec.Key == "home" {
@@ -417,68 +445,35 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64) (TeamFlowA
 				return err
 			}
 			room.TeamFlowRoomKey = spec.Key
+			room.Restricted = spec.Restricted
 			out.CreatedRooms = append(out.CreatedRooms, room)
 		}
 		if key != "custom" {
-			rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id,kind,team_flow_room_key,title FROM room WHERE project_id=? AND kind<>'dm'`, projectID)
+			rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind<>'dm'`, projectID)
 			if err != nil {
 				return err
 			}
-			type roomInfo struct{ id, kind, key, title string }
-			var rooms []roomInfo
+			var rooms []string
 			for rows.Next() {
-				var info roomInfo
-				if err := rows.Scan(&info.id, &info.kind, &info.key, &info.title); err != nil {
+				var id string
+				if err := rows.Scan(&id); err != nil {
 					rows.Close()
 					return err
 				}
-				rooms = append(rooms, info)
+				rooms = append(rooms, id)
 			}
 			err = rows.Err()
 			rows.Close()
 			if err != nil {
 				return err
 			}
-			for _, room := range rooms {
-				selector := flowRoomKind(room.kind, room.key, room.title)
-				var allowedRoles []string
-				for _, rule := range t.JoinRules {
-					if rule.RoomKind == selector {
-						allowedRoles = rule.AllowedRoles
-						break
-					}
-				}
-				members, err := tx.tx.QueryContext(tx.ctx, `SELECT m.member_id,ro.role_key FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role ro ON ro.id=a.role_id WHERE m.room_id=? AND m.member_kind='agent' AND m.left_at IS NULL`, room.id)
-				if err != nil {
-					return err
-				}
-				var remove []string
-				for members.Next() {
-					var id, role string
-					if err := members.Scan(&id, &role); err != nil {
-						members.Close()
-						return err
-					}
-					if !flowAllows(allowedRoles, role) {
-						remove = append(remove, id)
-					}
-				}
-				err = members.Err()
-				members.Close()
-				if err != nil {
-					return err
-				}
-				for _, id := range remove {
-					if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, timestamp(), room.id, id); err != nil {
-						return err
-					}
-				}
-				if err := tx.joinLeadsToRoom(room.id, projectID); err != nil {
+			for _, roomID := range rooms {
+				if err := tx.joinLeadsToRoom(roomID, projectID); err != nil {
 					return err
 				}
 			}
 		}
-		_, err := tx.AppendEvent(Event{Kind: "project_updated", ProjectID: projectID, PayloadJSON: payloadJSON(map[string]string{"project_id": projectID, "actor_id": userID})})
+		_, err = tx.AppendEvent(Event{Kind: "project_updated", ProjectID: projectID, PayloadJSON: payloadJSON(map[string]string{"project_id": projectID, "actor_id": userID})})
 		return err
 	}()
 	return out, err

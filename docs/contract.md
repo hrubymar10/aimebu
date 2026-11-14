@@ -92,10 +92,14 @@ Projects, rooms, people
   choose `leader-workers`, `leader-dispatcher`, or `custom`; existing projects
   start `custom` with review pending. Revision guards apply. The template
   catalog carries room, spawn, join, diagram, and `core_roles` data. Applying a flow creates
-  missing rooms, adjusts incompatible agent room memberships, and preserves
-  agents, messages, and rooms. Applying another flow preserves any existing
-  room's `restricted` flag; only an explicit room change may clear it. The
-  flow preview lists rooms whose restriction will be preserved. A room marked
+  missing rooms and preserves agents, messages, and rooms. Conflicting agent
+  room memberships stay joined by default; the preview names each agent,
+  role, and room, and apply removes only the pairs explicitly selected by the
+  person in the same transaction. A selected pair that is no longer a
+  conflict fails without changing the flow. Applying another flow preserves
+  any existing room's `restricted` flag; only an explicit room change may
+  clear it. The flow preview lists rooms whose restriction will be preserved.
+  A room marked
   `restricted` by a template's room rule requires active room membership for
   agent reads and viewer access; project owners and operators can read it for
   oversight without room membership. Private chats still require human room

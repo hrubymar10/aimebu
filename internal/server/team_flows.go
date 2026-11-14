@@ -42,8 +42,9 @@ func (s *Server) teamFlowPreview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) teamFlowApply(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Key string `json:"key"`
-		Rev int64  `json:"rev"`
+		Key               string              `json:"key"`
+		Rev               int64               `json:"rev"`
+		RemoveMemberships []store.FlowRemoval `json:"remove_memberships,omitempty"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -52,9 +53,13 @@ func (s *Server) teamFlowApply(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "invalid_request", "unknown team flow")
 		return
 	}
-	result, err := s.Store.ApplyTeamFlow(r.Context(), r.PathValue("project"), userID(r), req.Key, req.Rev)
+	result, err := s.Store.ApplyTeamFlow(r.Context(), r.PathValue("project"), userID(r), req.Key, req.Rev, req.RemoveMemberships)
 	if errors.Is(err, store.ErrTeamFlowRev) {
 		apiError(w, 409, "stale_rev", "team flow changed; reload and try again")
+		return
+	}
+	if errors.Is(err, store.ErrTeamFlowSelection) {
+		apiError(w, 409, "stale_conflict", "selected room membership changed; preview again")
 		return
 	}
 	if err != nil {

@@ -107,6 +107,16 @@ async function main() {
   const rows = page => page.$$eval('#projects .room-group', groups => groups.map(group => { const row = group.querySelector(':scope > .room-item'); return [group.dataset.roomId, `${row.querySelector('.room-item-icon').textContent} ${row.querySelector('.room-item-name').textContent}`, row.querySelector('.room-item-unread:not([hidden])')?.textContent || '', !!group.closest('.room-children')]; }));
   const tops = page => page.$$eval('#projects > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase()));
 
+  // Owners see restricted routing rooms with a lock, while ordinary rooms have no lock.
+  {
+    const auto = answerAll();
+    auto['GET /api/projects/prj_a/rooms'] = [...rooms().prj_a, room('rm_route', 'prj_a', 'routing', { parent_id: 'rm_ah', restricted: true })];
+    const page = await mount({ auto });
+    assert.equal(await page.$eval('[data-room-id=rm_route] .room-restricted', node => node.getAttribute('aria-label')), 'Restricted room');
+    assert.equal(await page.$('[data-room-id=rm_gen] .room-restricted'), null);
+    await page.close();
+  }
+
   // Loading asks for the chats of agents and the projects at once, then every project's rooms at once. The project list draws each project as a
   // placeholder in its final place; a project's rooms replace its placeholder when its own list lands, in whatever order the lists arrive, and the
   // rest of the list does not move or lose the focus it had.

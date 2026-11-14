@@ -19,6 +19,8 @@ func teamSetupError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrTeamFlowRev), errors.Is(err, store.ErrStaleRev):
 		apiError(w, 409, "stale_rev", "team flow changed; reload and try again")
+	case errors.Is(err, store.ErrTeamFlowSelection):
+		apiError(w, 409, "stale_conflict", "selected room membership changed; preview again")
 	case errors.Is(err, store.ErrTeamSetupInvalid), errors.Is(err, store.ErrInvalidSpawnDefaults):
 		apiError(w, 400, "invalid_request", err.Error())
 	case errors.Is(err, store.ErrForbidden):

@@ -55,6 +55,15 @@ func TestTeamFlowAPISetupAndRoomKey(t *testing.T) {
 	if resp.StatusCode != 409 {
 		t.Fatalf("stale revision: %d", resp.StatusCode)
 	}
+	resp = f.request(http.MethodPut, path, map[string]any{"key": "custom", "rev": 1, "remove_memberships": []map[string]string{{"agent_id": "agt_missing", "room_id": f.room.ID}}}, true)
+	var stale map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&stale); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 409 || stale["error"] != "stale_conflict" {
+		t.Fatalf("stale selection: %d %+v", resp.StatusCode, stale)
+	}
 	resp = f.request(http.MethodGet, "/api/messages/referenced/1?source_message_id=missing", nil, false)
 	var reference store.AgentMessage
 	if err := json.NewDecoder(resp.Body).Decode(&reference); err != nil {

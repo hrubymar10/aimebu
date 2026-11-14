@@ -37,12 +37,13 @@ type TeamSetupSettings struct {
 }
 
 type TeamSetupInput struct {
-	FlowKey      string                          `json:"flow_key"`
-	FlowRev      int64                           `json:"flow_rev"`
-	Leader       TeamSetupTarget                 `json:"leader"`
-	Dispatcher   *TeamSetupTarget                `json:"dispatcher,omitempty"`
-	RoleDefaults map[string]TeamSetupRoleDefault `json:"role_defaults,omitempty"`
-	Settings     TeamSetupSettings               `json:"settings,omitempty"`
+	FlowKey           string                          `json:"flow_key"`
+	FlowRev           int64                           `json:"flow_rev"`
+	Leader            TeamSetupTarget                 `json:"leader"`
+	Dispatcher        *TeamSetupTarget                `json:"dispatcher,omitempty"`
+	RoleDefaults      map[string]TeamSetupRoleDefault `json:"role_defaults,omitempty"`
+	Settings          TeamSetupSettings               `json:"settings,omitempty"`
+	RemoveMemberships []FlowRemoval                   `json:"remove_memberships,omitempty"`
 }
 
 type TeamSetupAgent struct {
@@ -159,7 +160,7 @@ func (tx *Tx) CreateTeamSetup(projectID, actorID string, in TeamSetupInput) (Tea
 	if err := tx.validateTeamSetup(projectID, actorID, in); err != nil {
 		return out, err
 	}
-	flow, err := tx.applyTeamFlow(projectID, actorID, in.FlowKey, in.FlowRev)
+	flow, err := tx.applyTeamFlow(projectID, actorID, in.FlowKey, in.FlowRev, in.RemoveMemberships)
 	if err != nil {
 		return out, err
 	}

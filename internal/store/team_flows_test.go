@@ -42,7 +42,7 @@ func TestTeamFlowMigrationMarksExistingProjectCustom(t *testing.T) {
 func TestTeamFlowSwitchPreservesRestrictedRoom(t *testing.T) {
 	f := newMembersFixture(t)
 	ctx := context.Background()
-	routed, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0)
+	routed, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,14 +59,14 @@ func TestTeamFlowSwitchPreservesRestrictedRoom(t *testing.T) {
 	if err != nil || len(preview.PreservedRestrictedRooms) != 1 || preview.PreservedRestrictedRooms[0].RoomID != routingID {
 		t.Fatalf("preview did not disclose retained restriction: %+v %v", preview, err)
 	}
-	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "custom", routed.Rev); err != nil {
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "custom", routed.Rev, nil); err != nil {
 		t.Fatal(err)
 	}
 	var restricted bool
 	if err := f.s.db.QueryRow(`SELECT restricted FROM room WHERE id=?`, routingID).Scan(&restricted); err != nil || !restricted {
 		t.Fatalf("routing restriction after custom flow: %v %v", restricted, err)
 	}
-	workers, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-workers", routed.Rev+1)
+	workers, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-workers", routed.Rev+1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,12 @@ func TestRestrictedRoomAllowsOwnerAndOperatorOversight(t *testing.T) {
 		}
 		found := false
 		for _, room := range rooms {
-			found = found || room.ID == f.other.ID
+			if room.ID == f.other.ID {
+				found = true
+				if !room.Restricted {
+					t.Fatal("restricted room list omitted its restriction flag")
+				}
+			}
 		}
 		if !found {
 			t.Fatalf("restricted room absent for %s", user)
@@ -115,6 +120,47 @@ func TestRestrictedRoomAllowsOwnerAndOperatorOversight(t *testing.T) {
 	}
 }
 
+func TestTeamFlowRemovesOnlySelectedConflictingMemberships(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	leader := f.agent(t, "flowlead", "role_leader_default", &f.other)
+	preview, err := f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conflict FlowConflict
+	for _, item := range preview.Conflicts {
+		if item.AgentID == leader.ID && item.RoomID == f.other.ID {
+			conflict = item
+		}
+	}
+	if conflict.Slug != leader.Slug || conflict.RoleKey != "leader" || conflict.RoleLabel == "" || conflict.RoomTitle != f.other.Title {
+		t.Fatalf("preview must identify the selectable membership: %+v", conflict)
+	}
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	var stillJoined int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, f.other.ID, leader.ID).Scan(&stillJoined); err != nil || stillJoined != 1 {
+		t.Fatalf("unselected membership changed: %d %v", stillJoined, err)
+	}
+	selected := FlowRemoval{AgentID: leader.ID, RoomID: f.other.ID}
+	applied, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 1, []FlowRemoval{selected})
+	if err != nil || len(applied.Conflicts) != 0 {
+		t.Fatalf("selected removal: %+v %v", applied, err)
+	}
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, f.other.ID, leader.ID).Scan(&stillJoined); err != nil || stillJoined != 0 {
+		t.Fatalf("selected membership remains: %d %v", stillJoined, err)
+	}
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 2, []FlowRemoval{selected}); !errors.Is(err, ErrTeamFlowSelection) {
+		t.Fatalf("stale removal: %v", err)
+	}
+	state, err := f.s.TeamFlowState(ctx, f.project.ID, f.alice)
+	if err != nil || state.Rev != 2 {
+		t.Fatalf("stale selection must roll back: %+v %v", state, err)
+	}
+}
+
 func TestTeamFlowRoutingAndExactReferenceGrant(t *testing.T) {
 	f := newMembersFixture(t)
 	ctx := context.Background()
@@ -129,11 +175,11 @@ func TestTeamFlowRoutingAndExactReferenceGrant(t *testing.T) {
 	if err != nil || len(preview.CreateRooms) != 2 {
 		t.Fatalf("preview: %+v %v", preview, err)
 	}
-	applied, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0)
+	applied, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, []FlowRemoval{{AgentID: leader.ID, RoomID: f.other.ID}})
 	if err != nil || applied.Rev != 1 || len(applied.CreatedRooms) != 2 {
 		t.Fatalf("apply: %+v %v", applied, err)
 	}
-	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0); !errors.Is(err, ErrTeamFlowRev) {
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil); !errors.Is(err, ErrTeamFlowRev) {
 		t.Fatalf("stale revision: %v", err)
 	}
 	var routing Room
@@ -227,7 +273,7 @@ func TestTeamFlowSpawnAuthority(t *testing.T) {
 	f := newMembersFixture(t)
 	ctx := context.Background()
 	leader := f.agent(t, "flowlead", "role_leader_default", &f.home)
-	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0); err != nil {
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 	var routingID string
@@ -302,7 +348,7 @@ func TestTeamFlowSpawnAuthority(t *testing.T) {
 	if err := spawn(dispatcherID, routingID, "dispatcher", "flow_denied2"); !errors.Is(err, ErrTeamFlowRule) {
 		t.Fatalf("dispatcher spawned dispatcher in B: %v", err)
 	}
-	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "custom", 1); err != nil {
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "custom", 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	identity, err = f.s.AgentToolIdentityByKeyHash(ctx, keyHash)

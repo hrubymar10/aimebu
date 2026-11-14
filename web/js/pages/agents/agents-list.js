@@ -101,13 +101,14 @@ export class AgentCard extends Component {
     const sw = switchStatusOf(agent, harnessName), actions = actionsOf(agent, { down, lifecycle }), keep = keepAliveOf(agent);
     const { src, label } = harnessIcon(agent.tool || '');
     const name = agentLabel(agent) || agent.id, dm = `Message ${agent.name || agent.slug || 'agent'} privately`;
+    const roleName = agent.role_label || (agent.role || agent.role_key || 'Agent').replace(/[_-]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
     const reason = key => actions.find(action => action.name === key), quick = quickActionsOf(agent);
     const toggle = () => api.store.toggleProfile(agent.id);
     const dot = dotOf(agent, state);
     return html`<article class=${expanded ? 'agent-card agent-card-compact expanded' : 'agent-card agent-card-compact'} data-agent-id=${agent.id} data-woken-by=${agent.woken_by || ''} data-live-at=${live.at} data-live-label=${live.label}
       onClick=${event => { if (!event.target.closest('button, a, input, select, textarea, .profile-output')) toggle(); }}>
       <div class="agent-id agent-title"><span class=${`agent-online-dot ${stateDot(state.kind)} agent-dot`} data-state=${state.kind} data-dot=${dot.kind}><${DotWords} store=${api.store} agent=${agent} state=${state} /></span>
-        <img class="harness-icon agent-harness-icon" alt="" src=${src} title=${`${agent.model || 'unknown'} · ${label}`} /><span class="agent-emoji" aria-hidden="true">${agent.role_emoji || ''}</span>
+        <img class="harness-icon agent-harness-icon" alt="" src=${src} title=${`${agent.model || 'unknown'} · ${label}`} /><span class="agent-emoji" aria-hidden="true" title=${roleName}>${agent.role_emoji || ''}</span>
         <span class="agent-identity"><span class="agent-id-text agent-name" title=${name}>${name}</span></span>
         <div class="agent-state" data-since=${state.since} data-state=${state.kind} title=${state.title}><span class=${`agent-state-pill agent-state-badge agent-state-${stateBadge(state.kind)}`}><span class="agent-state-label">${state.name}</span>${' '}<${StateAge} store=${api.store} since=${state.since} hidden=${state.kind === 'stopped' || (!expanded && state.kind === 'idle')} /></span></div>
         <span class="agent-role" title=${agent.role_updated ? 'Role updated; respawn to apply the project definition.' : ''}>${`${agent.role_emoji || ''} ${agent.role || 'Agent'}${agent.role_deleted ? ' (deleted)' : ''}`.trim()}</span>

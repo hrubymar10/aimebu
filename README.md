@@ -270,21 +270,28 @@ history; see the room lifecycle routes in the API guide.
 A new project starts with its home room and a `general` task room beneath it.
 The home room shows a team-flow setup card until a project owner or operator
 chooses a flow: **A · Leader and workers**, **B · Leader and dispatcher**, or
-**C · Custom**. A vertical list shows each flow's description beside a room
-and role diagram; the diagram opens at full size. Choosing A or B starts a
+**C · Custom**. A vertical list shows each flow's description beside an agent
+topology drawn from who may spawn whom (three worker positions); the diagram
+opens at full size. Rooms to create appear in the change preview. Choosing A or B starts a
 wizard for the leader's machine, harness, and model, a dispatcher
 for B, worker and reviewer defaults, and project settings. A summary previews
 the changes; **Create team** applies them and starts the leader (and B's
 dispatcher) together. Back keeps the unsaved choices. C ends with **Keep
 current**. Existing projects start on C; saving it closes the setup prompt.
+The "Maximum workers and reviewers" setting counts task roles; the flow's
+leader and optional dispatcher are excluded, as the wizard's hint explains.
+While setup is open, the wizard fills the chat area and scrolls within it;
+the room's messages and composer return when setup closes.
 Project settings → Team flow uses the same list and previews the rooms and
 roles a switch would add and any agents needing action. Switching keeps all
 existing rooms, messages, and agents; incompatible room memberships are listed
-and adjusted. In B, a private routing room connects the leader with the
+with an optional checkbox for each removal. Unselected memberships stay joined.
+In B, a private routing room connects the leader with the
 singleton dispatcher. The leader writes specs there; the dispatcher manages
 task rooms, workers, and reviewers. A task-room message can reference a
 routing brief by `#N`; the worker-room chat shows the one granted message
 inline, without exposing the routing conversation.
+Owners and operators see restricted rooms in the sidebar with a lock icon.
 Initial A/B setup also has a keyed team-setup API that commits the flow,
 project settings, role defaults, and the initial leader (plus dispatcher for
 B) together before requesting their supervisor spawns.
@@ -412,7 +419,7 @@ project setting stays on. This does not erase saved records. Agent tools can
 list, revise, and remove records with revision checks, and link new facts to a
 source message from a joined room.
 
-Agent cards show harness icons, a state pill, and a live working timer when an
+Agent cards show harness icons, a role emoji with its name on hover, a state pill, and a live working timer when an
 agent is in a turn. Expand a card for activity, the memory gauge, and its
 last-seen tooltip; secondary actions appear on hover, focus, or touch. Agent
 cards offer a tool/model switch that keeps

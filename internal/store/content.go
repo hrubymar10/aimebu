@@ -114,6 +114,7 @@ type Room struct {
 	Depth           int           `json:"depth"`
 	Kind            string        `json:"kind"`
 	TeamFlowRoomKey string        `json:"team_flow_room_key,omitempty"`
+	Restricted      bool          `json:"restricted,omitempty"`
 	DMKey           string        `json:"dm_key,omitempty"`
 	Title           string        `json:"title"`
 	CreatedBy       string        `json:"created_by"`
