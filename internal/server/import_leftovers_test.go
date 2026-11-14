@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
@@ -41,7 +42,7 @@ func TestNoImportedMessageLeftoversInTheUIOrTheAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	view := messageView(store.Message{ID: "7", Seq: 7, RoomID: "room", AuthorKind: "agent", AuthorID: "bot@repo", AuthorHarness: "codex", AuthorModel: "gpt-6-sol", Body: "plain"})
+	view := messageView(store.Message{ID: "7", Seq: 7, RoomID: "room", AuthorKind: "agent", AuthorID: "bot@repo", AuthorHarness: "codex", AuthorModel: "gpt-6-sol", SwitchHandoffJSON: `{"agent_slug":"bot","source":"written"}`, Body: "plain"})
 	for key := range view {
 		if strings.Contains(key, "legacy") || strings.Contains(key, "imported") {
 			t.Errorf("the message view exposes %q", key)
@@ -49,5 +50,8 @@ func TestNoImportedMessageLeftoversInTheUIOrTheAPI(t *testing.T) {
 	}
 	if view["author_harness"] != "codex" || view["author_model"] != "gpt-6-sol" {
 		t.Errorf("harness and model are native message fields: %+v", view)
+	}
+	if string(view["switch_handoff"].(json.RawMessage)) != `{"agent_slug":"bot","source":"written"}` {
+		t.Errorf("switch handoff metadata missing: %+v", view)
 	}
 }

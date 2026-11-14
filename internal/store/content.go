@@ -496,6 +496,7 @@ type Message struct {
 	Attachments         []Attachment `json:"attachments,omitempty"`
 	AuthorHarness       string       `json:"author_harness,omitempty"`
 	AuthorModel         string       `json:"author_model,omitempty"`
+	SwitchHandoffJSON   string       `json:"-"`
 	// AuthorName is the login of a person author, or the slug of an agent author that was removed, read with the message so a client can show a name
 	// instead of the account or agent id; AuthorProjectID is the removed agent's project, which names it (slug@project).
 	AuthorName      string `json:"-"`
@@ -544,16 +545,24 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 		message.TargetsJSON = "[]"
 	}
 	message.CreatedAt = timestamp()
+	if message.AuthorKind == "agent" && message.AuthorHarness == "" && message.AuthorModel == "" {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT tool,model FROM agent WHERE id=?`, message.AuthorID).
+			Scan(&message.AuthorHarness, &message.AuthorModel); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Message{}, err
+		}
+	}
 	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO message
 		(id, seq, room_id, author_kind, author_id, body, reply_to,
 		 thread_root, targets_json, ask_json, source_out_id, created_at,
-		 visual_plan_json, appendix_pages_json, needs_attention, proposed_answers_json, open_questions_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 visual_plan_json, appendix_pages_json, needs_attention, proposed_answers_json, open_questions_json,
+		 author_harness, author_model, switch_handoff_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		message.ID, message.Seq, message.RoomID, message.AuthorKind, message.AuthorID,
 		message.Body, nullable(message.ReplyTo), nullable(message.ThreadRoot),
 		message.TargetsJSON, nullable(message.AskJSON), nullable(message.SourceOutID),
 		message.CreatedAt, nullable(message.VisualPlanJSON), nullable(message.AppendixPagesJSON),
-		message.NeedsAttention, nullable(message.ProposedAnswersJSON), nullable(message.OpenQuestionsJSON))
+		message.NeedsAttention, nullable(message.ProposedAnswersJSON), nullable(message.OpenQuestionsJSON),
+		message.AuthorHarness, message.AuthorModel, nullable(message.SwitchHandoffJSON))
 	if err != nil {
 		return Message{}, err
 	}
@@ -646,7 +655,7 @@ func (s *Store) ListMessagesAfter(ctx context.Context, roomID string, afterSeq i
 
 const messageSelect = `SELECT id, seq, no, room_id, author_kind, author_id,
 	body, reply_to, thread_root, targets_json, ask_json, source_out_id, created_at,
-	COALESCE(author_harness,''), COALESCE(author_model,''),
+	COALESCE(author_harness,''), COALESCE(author_model,''), COALESCE(switch_handoff_json,''),
 	COALESCE((SELECT login FROM user WHERE user.id=message.author_id AND message.author_kind='user'),
 		(SELECT COALESCE(NULLIF(removed_slug,''),slug) FROM agent WHERE agent.id=message.author_id AND message.author_kind='agent' AND agent.revoked_at IS NOT NULL),''),
 	COALESCE((SELECT project_id FROM agent WHERE agent.id=message.author_id AND message.author_kind='agent' AND agent.revoked_at IS NOT NULL),''),
@@ -670,7 +679,7 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 		if err := rows.Scan(&message.ID, &message.Seq, &message.No, &message.RoomID,
 			&message.AuthorKind, &message.AuthorID, &message.Body, &replyTo,
 			&threadRoot, &message.TargetsJSON, &askJSON, &sourceOutID,
-			&message.CreatedAt, &message.AuthorHarness, &message.AuthorModel, &message.AuthorName, &message.AuthorProjectID,
+			&message.CreatedAt, &message.AuthorHarness, &message.AuthorModel, &message.SwitchHandoffJSON, &message.AuthorName, &message.AuthorProjectID,
 			&message.VisualPlanJSON, &message.AppendixPagesJSON, &message.NeedsAttention,
 			&message.ProposedAnswersJSON, &message.OpenQuestionsJSON); err != nil {
 			return nil, err

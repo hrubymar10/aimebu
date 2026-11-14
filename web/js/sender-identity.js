@@ -37,11 +37,11 @@ export function senderKind(message, agent) {
 
 export function senderIdentity(message, agent) {
   if (message.author_kind === 'user') return { icon: '/icons/human.svg', alt: 'human', title: 'human', dot: null };
-  const tool = agent?.tool || message.author_harness || '';
+  const tool = message.author_tool || message.author_harness || '';
   const { src: icon, label: harness } = harnessIcon(tool);
   const kind = senderKind(message, agent);
-  const known = message.author_model || message.author_harness;
-  const title = agent ? `${agent.model || 'unknown'} · ${harness}` : known ? `${message.author_model || 'unknown'} · ${harness} (${kind})` : `unknown (${kind})`;
+  const known = message.author_model || tool;
+  const title = known ? `${[message.author_model, tool ? harness : ''].filter(Boolean).join(' · ')}${kind === 'live' ? '' : ` (${kind})`}` : '';
   const dot = kind === 'historical' ? { cls: 'dot-historical', title: 'Imported from v1 (no live agent)' } : livenessDot(agent);
   return { icon, alt: harness, title, dot, kind };
 }

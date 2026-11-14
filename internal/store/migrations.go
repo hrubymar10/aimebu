@@ -1766,6 +1766,33 @@ WITH RECURSIVE flow_tree(id,depth) AS (
 )
 UPDATE room SET depth=(SELECT flow_tree.depth FROM flow_tree WHERE flow_tree.id=room.id LIMIT 1)
   WHERE id IN (SELECT id FROM flow_tree);
+`}, {110, `
+-- The model and tool already have message columns from the v1 import.
+-- Backfill only when the agent is still on the generation that wrote the
+-- message; older generations have no reliable historical model record.
+-- A model_default settlement can change model without a generation bump,
+-- so messages before that activity also have no reliable model record.
+UPDATE message SET
+  author_harness=(SELECT a.tool FROM agent a WHERE a.id=message.author_id),
+  author_model=(SELECT a.model FROM agent a WHERE a.id=message.author_id)
+WHERE author_kind='agent' AND author_harness='' AND author_model=''
+  AND EXISTS (SELECT 1 FROM agent a WHERE a.id=message.author_id AND a.generation=0)
+  AND NOT EXISTS (SELECT 1 FROM machine_launcher_activity mla
+    WHERE mla.actor=message.author_id AND mla.action='model_default'
+      AND mla.created_at>message.created_at)
+  AND source_out_id IS NULL;
+UPDATE message SET
+  author_harness=(SELECT a.tool FROM agent a WHERE a.id=message.author_id),
+  author_model=(SELECT a.model FROM agent a WHERE a.id=message.author_id)
+WHERE author_kind='agent' AND author_harness='' AND author_model=''
+  AND NOT EXISTS (SELECT 1 FROM machine_launcher_activity mla
+    WHERE mla.actor=message.author_id AND mla.action='model_default'
+      AND mla.created_at>message.created_at)
+  AND EXISTS (SELECT 1 FROM outbox o JOIN turn t ON t.id=o.turn_id
+    JOIN agent a ON a.id=t.agent_id
+    WHERE o.id=message.source_out_id AND t.generation=a.generation
+      AND a.id=message.author_id);
+ALTER TABLE message ADD COLUMN switch_handoff_json TEXT;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

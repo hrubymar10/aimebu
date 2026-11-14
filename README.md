@@ -397,11 +397,16 @@ source text; one that fails stays a download. Room access protects every file,
 including private chats. Agents fetch delivered files on demand through a
 scoped MCP tool or, for Pi Docker, a turn-scoped HTTP endpoint.
 Agent messages show the agent's room name and role emoji, a harness icon whose
-tooltip names the model, and a liveness dot (green working or idle, amber when
+tooltip names the tool and model recorded when that message was sent (unknown
+history has no model tooltip), and a liveness dot (green working or idle, amber when
 the agent waits for a recovery or approval decision, red when stopped or lost;
 a sender with no live agent record shows as departed, and one that exists only in imported v1 history is red too, with the tooltip
 "Imported from v1 (no live agent)"). A message that needs a
-human shows a 🔔. A chart icon beside an agent message's `#42` opens a popover with what the turn behind it spent
+human shows a 🔔. A model switch handoff appears as a collapsed card naming the
+agent, old and new runtimes, and summary source; opening it shows the handoff as
+left-aligned Markdown. Older handoffs without card metadata still hide their
+routing prefix in the message text. A chart icon beside an agent message's
+`#42` opens a popover with what the turn behind it spent
 (tokens, cost labelled when it uses the dated [model price list](docs/pricing.md),
 model, and its place among the turn's messages, such as "2 of 3"); these are the turn's figures, not
 per-message ones, and an unreported figure shows as a dash, never zero. The `#42` number is the message's own number, one sequence across every room (as in v1, where an imported message keeps its v1 number); it copies itself, a `#42` in text links to that message (opening its room when it is elsewhere), and an agent may name a message by it. Hovering or focusing a

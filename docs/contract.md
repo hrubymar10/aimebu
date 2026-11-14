@@ -240,10 +240,17 @@ Content
   partial index message_reply_to), targets_json, ask_json?,
   needs_attention, proposed_answers_json?, open_questions_json?,
   source_out_id? UNIQUE, created_at, visual_plan_json?,
-  appendix_pages_json?, author_harness, author_model, no) — `no` is the
+  appendix_pages_json?, author_harness, author_model,
+  switch_handoff_json?, no) — `no` is the
   message number (the "#N" people read and write), assigned by a trigger from
   `message_no_counter` (migration 71); historical v1
-  messages use these native columns. They never create inbox items or
+  messages use these native columns. New agent messages snapshot their tool
+  and model when sent, so a later model switch does not relabel them. Migration
+  110 backfills only messages whose author is still on the same generation
+  and has not had a later default-model settlement; older uncertain messages
+  leave both fields empty. A switch handoff system
+  message carries `switch_handoff_json` with the agent slug, old and new tool
+  and model, and a `written` or `automatic` source. They never create inbox items or
   delivery notes.
 - **attachment**(id, project_id, room_id?, message_id?, sha256, mime, size,
   path, filename, width, height, created_by, created_at) — file bytes under the server config root,

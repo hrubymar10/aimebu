@@ -184,6 +184,7 @@ func TestReplyMigrationDerivesConversations(t *testing.T) {
 		{`UPDATE message SET reply_to=NULL, thread_root=? WHERE id IN (?,?)`, starter.ID, child.ID, childTwo.ID},
 		{`UPDATE message SET reply_to=?, thread_root=NULL WHERE id=?`, foreign.ID, crossReply.ID},
 		{`UPDATE message SET reply_to=?, thread_root=NULL WHERE id=?`, crossReply.ID, afterCross.ID},
+		{`ALTER TABLE message DROP COLUMN switch_handoff_json`},
 		{`DROP INDEX message_reply_to`},
 		{`ALTER TABLE boundary_pending DROP COLUMN start_fresh`},
 		{`ALTER TABLE harness_model DROP COLUMN available`},

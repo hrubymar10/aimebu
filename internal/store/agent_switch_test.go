@@ -31,6 +31,10 @@ func TestAgentSwitchWaitsForTurnAndHandsOffRoomLocalContext(t *testing.T) {
 	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "usr_switch", Body: "finish the feature"}); err != nil {
 		t.Fatal(err)
 	}
+	before, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: agent.ID, Body: "old model reply"})
+	if err != nil || before.AuthorHarness != agent.Tool || before.AuthorModel != agent.Model {
+		t.Fatalf("old message model %+v %v", before, err)
+	}
 	turn, err := s.RecordTurn(ctx, Turn{AgentID: agent.ID, SessionID: "ses_one", Generation: 0, RoomID: room.ID, Attempt: 1, Mode: "normal", Exec: "running"})
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +99,23 @@ func TestAgentSwitchWaitsForTurnAndHandsOffRoomLocalContext(t *testing.T) {
 	}
 	if handoff.ID == "" || !strings.Contains(handoff.Body, "finish the feature") || strings.Contains(handoff.Body, "private secret 123") {
 		t.Fatalf("handoff %+v", handoff)
+	}
+	if strings.HasPrefix(handoff.Body, "@") || !strings.Contains(handoff.SwitchHandoffJSON, `"agent_slug":"`+agent.Slug+`"`) ||
+		!strings.Contains(handoff.SwitchHandoffJSON, `"new_model":"haiku"`) || !strings.Contains(handoff.SwitchHandoffJSON, `"source":"automatic"`) {
+		t.Fatalf("structured handoff %+v", handoff)
+	}
+	after, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: agent.ID, Body: "new model reply"})
+	if err != nil || after.AuthorHarness != "claude" || after.AuthorModel != "haiku" {
+		t.Fatalf("new message model %+v %v", after, err)
+	}
+	messages, err = s.ListMessagesAfter(ctx, room.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if message.ID == before.ID && (message.AuthorModel != agent.Model || message.AuthorHarness != agent.Tool) {
+			t.Fatalf("old message changed after switch %+v", message)
+		}
 	}
 	if _, err := s.NoteForAgentMessage(ctx, agent.ID, handoff.ID); err != nil {
 		t.Fatalf("handoff did not wake new generation: %v", err)

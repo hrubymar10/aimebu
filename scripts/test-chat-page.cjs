@@ -568,6 +568,24 @@ async function main() {
     await page.close();
   }
 
+  // A model switch handoff is a compact disclosure; its detail reads as a normal message.
+  {
+    const page = await mount();
+    await page.evaluate(() => window.__data.rooms.rm_a.messages.push(
+      { id: 'rm_a_switch', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: '@agt_01RAW Switch handoff (written).\nCurrent task: **review** the patch.', created_at: '2026-01-10T12:01:00Z', switch_handoff: { agent_slug: 'gus', old_tool: 'claude', old_model: 'claude-opus-5-5', new_tool: 'claude', new_model: 'claude-sonnet-5-5', source: 'written' } },
+      { id: 'rm_a_switch_old', seq: 132, no: 132, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: '@agt_01OLD Switch handoff (written).\nCurrent task: review.', created_at: '2026-01-10T12:02:00Z' },
+      { id: 'rm_a_other', seq: 133, no: 133, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: '@agt_01OLD please read the notice.', created_at: '2026-01-10T12:03:00Z' }));
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.deepEqual(await page.$eval('[data-message-id=rm_a_switch]', row => { const card = row.querySelector('details'); return [card.open, card.querySelector('summary').textContent, row.textContent.includes('agt_01RAW'), row.textContent.includes('Current task')]; }),
+      [false, 'Switch handoff: gus · claude-opus-5-5 → claude-sonnet-5-5 (written by the agent)', false, true]);
+    await page.$eval('[data-message-id=rm_a_switch] summary', node => node.click());
+    assert.deepEqual(await page.$eval('[data-message-id=rm_a_switch]', row => [row.querySelector('details').open, row.querySelector('.switch-handoff-content strong')?.textContent, getComputedStyle(row.querySelector('.switch-handoff-content .chat-msg-body')).textAlign]),
+      [true, 'review', 'left'], 'the expanded handoff uses left-aligned Markdown');
+    assert.deepEqual(await page.evaluate(() => ['rm_a_switch_old', 'rm_a_other'].map(id => document.querySelector(`[data-message-id=${id}] .chat-msg-system-row`).textContent.includes('@agt_01OLD'))),
+      [false, true], 'legacy handoffs lose the routing prefix while ordinary system messages keep their body');
+    await page.close();
+  }
+
   // Sending: the text goes to the open room and the draft empties, the reply chip goes, the message is drawn at the bottom; a failure keeps the draft and
   // says why in the composer.
   {
@@ -1830,7 +1848,7 @@ async function main() {
       await addReplies(page, 3);
       await page.evaluate(() => {
         const messages = window.__data.rooms.rm_a.messages, last = messages.find(message => message.id === 'rm_a_t2');
-        last.author_kind = 'agent'; last.author_id = 'agt_x'; last.author_name = 'tess';
+        last.author_kind = 'agent'; last.author_id = 'agt_x'; last.author_name = 'tess'; last.author_tool = 'claude'; last.author_model = 'm';
         window.__data.agents = [{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'claude', model: 'm', role_emoji: '🛠', role: 'dev', project_id: 'prj_a' }];
       });
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
@@ -1865,8 +1883,8 @@ async function main() {
       await page.evaluate(() => window.__chat.setAgents([{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'claude', model: 'm', role_emoji: '🛠', role: 'dev', project_id: 'prj_a' }])); await settle(page);
       assert.equal(await delta(() => { window.__chat.setAgents([{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'claude', model: 'm', role_emoji: '🔧', role: 'dev', project_id: 'prj_a' }]); }), 1, 'a changed sender draws only its rows');
       assert.equal(await page.evaluate(() => document.querySelector('#thread-messages [data-message-id=rm_a_t2] .message-role').textContent), '🔧');
-      assert.equal(await delta(() => { window.__chat.setAgents([{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'codex', model: 'm', role_emoji: '🔧', role: 'dev', project_id: 'prj_a' }]); }), 1, 'a changed harness draws only its rows');
-      assert.match(await page.evaluate(() => document.querySelector('#thread-messages [data-message-id=rm_a_t2] .msg-sender-icon').getAttribute('src')), /codex/, 'with the new harness icon');
+      assert.equal(await delta(() => { window.__chat.setAgents([{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'codex', model: 'm', role_emoji: '🔧', role: 'dev', project_id: 'prj_a' }]); }), 1, 'a changed agent redraws only its rows');
+      assert.match(await page.evaluate(() => document.querySelector('#thread-messages [data-message-id=rm_a_t2] .msg-sender-icon').getAttribute('src')), /claude/, 'the old message keeps its recorded harness icon');
       // a changed record draws its row, one field at a time
       const fields = [
         ['no', { no: 4242 }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .chat-msg-id').textContent === '#4242'],

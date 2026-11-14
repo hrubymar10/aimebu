@@ -185,11 +185,11 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 			return err
 		}
 		for _, item := range items {
-			var projectID, desired, observed, currentTool string
+			var projectID, desired, observed, currentTool, currentModel string
 			var generation int
 			var blocked bool
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,desired,observed,generation,tool,recovery_block FROM agent WHERE id=?`, item.id).
-				Scan(&projectID, &desired, &observed, &generation, &currentTool, &blocked); err != nil {
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,desired,observed,generation,tool,model,recovery_block FROM agent WHERE id=?`, item.id).
+				Scan(&projectID, &desired, &observed, &generation, &currentTool, &currentModel, &blocked); err != nil {
 				return err
 			}
 			handoffStatus, handoffRoom, overallDeadline, handoffTurn, err := tx.switchHandoffStatus(item.id)
@@ -423,7 +423,7 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 			if err := tx.clearProviderLimit(item.id); err != nil {
 				return err
 			}
-			if err := tx.insertSwitchHandoff(item.id, item.roomID, currentTool, item.tool, moved); err != nil {
+			if err := tx.insertSwitchHandoff(item.id, item.roomID, currentTool, item.tool, currentModel, item.model, moved); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(`UPDATE agent_switch SET state='starting' WHERE agent_id=?`, item.id); err != nil {
@@ -453,7 +453,11 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 
 // The handoff is room-local: content from other joined rooms must never be
 // copied into this room. The addressed system message creates a queued note.
-func (tx *Tx) insertSwitchHandoff(agentID, roomID, oldTool, newTool string, moved bool) error {
+func (tx *Tx) insertSwitchHandoff(agentID, roomID, oldTool, newTool, oldModel, newModel string, moved bool) error {
+	var slug string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT slug FROM agent WHERE id=?`, agentID).Scan(&slug); err != nil {
+		return err
+	}
 	var source, raw string
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT source,body_json FROM switch_handoff WHERE agent_id=? AND status IN ('ready','automatic')`, agentID).Scan(&source, &raw)
 	if err == nil {
@@ -461,13 +465,17 @@ func (tx *Tx) insertSwitchHandoff(agentID, roomID, oldTool, newTool string, move
 		if err := json.Unmarshal([]byte(raw), &handoff); err != nil {
 			return err
 		}
-		body := "@" + agentID + " Switch handoff (" + source + "). The " + oldTool + " session ended; this " + newTool + " session starts fresh.\n" +
+		body := "Switch handoff (" + source + "). The " + oldTool + " session ended; this " + newTool + " session starts fresh.\n" +
 			"Current task: " + handoff.CurrentTask + "\nStatus: " + handoff.Status + "\nWork state: " + handoff.WorkState +
 			"\nNext steps: " + handoff.NextSteps + "\nOpen questions: " + handoff.OpenQuestions + "\nCautions: " + handoff.Cautions
 		if moved {
 			body += "\nMachine changed; verify files in the target checkout."
 		}
-		_, err = tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{agentID}})
+		meta, err := switchHandoffMetadata(slug, oldTool, newTool, oldModel, newModel, source)
+		if err != nil {
+			return err
+		}
+		_, err = tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body, SwitchHandoffJSON: meta, OnlyTargets: []string{agentID}})
 		return err
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -501,12 +509,27 @@ func (tx *Tx) insertSwitchHandoff(agentID, roomID, oldTool, newTool string, move
 	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
 		lines[i], lines[j] = lines[j], lines[i]
 	}
-	body := "@" + agentID + " Continue the work in this room after the model/tool switch. The previous " + oldTool + " session ended cleanly; this " + newTool + " session starts fresh. Recent room context:\n" + strings.Join(lines, "\n")
+	body := "Continue the work in this room after the model/tool switch. The previous " + oldTool + " session ended cleanly; this " + newTool + " session starts fresh. Recent room context:\n" + strings.Join(lines, "\n")
 	if moved {
 		body += "\nThis agent moved to another machine. Files in the target checkout may differ from the previous machine."
 	}
-	_, err = tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{agentID}})
+	meta, err := switchHandoffMetadata(slug, oldTool, newTool, oldModel, newModel, "automatic")
+	if err != nil {
+		return err
+	}
+	_, err = tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body, SwitchHandoffJSON: meta, OnlyTargets: []string{agentID}})
 	return err
+}
+
+func switchHandoffMetadata(slug, oldTool, newTool, oldModel, newModel, source string) (string, error) {
+	if source == "agent" {
+		source = "written"
+	}
+	encoded, err := json.Marshal(map[string]string{
+		"agent_slug": slug, "old_tool": oldTool, "new_tool": newTool,
+		"old_model": oldModel, "new_model": newModel, "source": source,
+	})
+	return string(encoded), err
 }
 
 func (tx *Tx) moveSwitchCheckout(agentID, projectID, machineID, path string) error {

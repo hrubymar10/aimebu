@@ -154,8 +154,22 @@ function NoticeBody({ message, view, host }) {
 }
 
 function SystemRow({ message, view, host, classes, register }) {
+  const handoff = message.switch_handoff;
+  const legacyHandoff = !handoff && /^@agt_[^\s]+\s+Switch handoff\b/.test(message.body || '');
+  if (handoff) {
+    const runtime = (tool, model) => model?.startsWith(`${tool}-`) ? model : [tool, model].filter(Boolean).join('-');
+    const from = runtime(handoff.old_tool, handoff.old_model), to = runtime(handoff.new_tool, handoff.new_model);
+    const source = handoff.source === 'automatic' ? 'automatic summary' : 'written by the agent';
+    const title = `Switch handoff: ${handoff.agent_slug || 'agent'} · ${from} → ${to} (${source})`;
+    const content = { ...message, body: String(message.body || '').replace(/^@agt_[^\s]+\s*/, '') };
+    return html`<article class=${`${classes} chat-msg-switch-handoff`} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
+      <details class="switch-handoff-card"><summary>${title}</summary><div class="switch-handoff-content"><${Body} message=${content} view=${view} host=${host} /></div></details>
+      <div class="switch-handoff-meta"><${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
+    </article>`;
+  }
+  const content = legacyHandoff ? { ...message, body: message.body.replace(/^@agt_[^\s]+\s+/, '') } : message;
   return html`<article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
-    <div class="chat-msg-system-row"><${NoticeBody} message=${message} view=${view} host=${host} />${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
+    <div class="chat-msg-system-row"><${NoticeBody} message=${content} view=${view} host=${host} />${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
     <${Plan} message=${message} />
   </article>`;
 }

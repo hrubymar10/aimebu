@@ -1226,12 +1226,12 @@ async function main() {
     const identityHeader = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
       const list = document.createElement('div'); document.body.append(list); const chat = window.__fixtureChat(list);
-      chat.agents = new Map([['live', { id: 'live', name: 'Live', tool: 'codex', model: 'gpt-6-sol', observed: 'in_turn' }], ['gone', { id: 'gone', name: 'Gone', tool: 'claude', model: 'opus', observed: 'stopped' }], ['wait', { id: 'wait', name: 'Wait', tool: 'pi', model: 'gemma', observed: 'idle', recovery_block: true }]]);
+      chat.agents = new Map([['live', { id: 'live', name: 'Live', tool: 'claude', model: 'new-model', observed: 'in_turn' }], ['gone', { id: 'gone', name: 'Gone', tool: 'claude', model: 'opus', observed: 'stopped' }], ['wait', { id: 'wait', name: 'Wait', tool: 'pi', model: 'gemma', observed: 'idle', recovery_block: true }]]);
       chat.refreshReactions = () => {};
       const base = { room_id: 'room_test', body: 'hi', created_at: '2026-10-14T00:00:00Z' };
-      chat.store.add({ ...base, id: 'i1', seq: 901, no: 901, author_kind: 'agent', author_id: 'live' });
-      chat.store.add({ ...base, id: 'i2', seq: 902, no: 902, author_kind: 'agent', author_id: 'gone' });
-      chat.store.add({ ...base, id: 'i3', seq: 903, no: 903, author_kind: 'agent', author_id: 'wait' });
+      chat.store.add({ ...base, id: 'i1', seq: 901, no: 901, author_kind: 'agent', author_id: 'live', author_tool: 'codex', author_model: 'gpt-6-sol' });
+      chat.store.add({ ...base, id: 'i2', seq: 902, no: 902, author_kind: 'agent', author_id: 'gone', author_tool: 'claude', author_model: 'opus' });
+      chat.store.add({ ...base, id: 'i3', seq: 903, no: 903, author_kind: 'agent', author_id: 'wait', author_tool: 'pi', author_model: 'gemma' });
       chat.store.add({ ...base, id: 'i4', seq: 904, no: 904, author_kind: 'agent', author_id: 'missing' });
       chat.store.add({ ...base, id: 'i5', seq: 905, no: 905, author_kind: 'user', author_id: 'someone', needs_attention: true });
       chat.store.add({ ...base, id: 'i6', seq: 906, no: 906, author_kind: 'user', author_id: 'someone' });
@@ -1287,10 +1287,10 @@ async function main() {
     assert.equal(identityHeader.openedAgent, 'live', 'the name of a live agent opens its profile in the members panel, not the read-only dialog');
     assert.deepEqual([identityHeader.profile.open, identityHeader.profile.title, identityHeader.profile.badge, identityHeader.profile.note, identityHeader.closed, identityHeader.liveOpens], [true, 'imported-bot', 'Historical (imported)', 'This sender comes from', true, false]);
     assert.ok(identityHeader.profile.facts.some(fact => /^Runtime\s*sonnet4\.6 · Codex$/.test(fact)) && identityHeader.profile.facts.some(fact => /^Messages loaded\s*1$/.test(fact)) && identityHeader.profile.facts.some(fact => /^Last heard\s*\S/.test(fact)), `the profile shows what is known: ${JSON.stringify(identityHeader.profile.facts)}`);
-    assert.deepEqual(identityHeader.live, { icon: '/icons/codex.svg', title: 'gpt-6-sol · Codex', dot: ['dot-active', 'working'], bell: false });
+    assert.deepEqual(identityHeader.live, { icon: '/icons/codex.svg', title: 'gpt-6-sol · Codex', dot: ['dot-active', 'working'], bell: false }, 'a switched agent keeps the model and tool recorded on the old message');
     assert.deepEqual(identityHeader.stopped, { icon: '/icons/claude-code.svg', title: 'opus · Claude Code', dot: ['dot-offline', 'stopped'], bell: false });
     assert.deepEqual(identityHeader.wait, { icon: '/icons/pi.svg', title: 'gemma · Pi', dot: ['dot-stale', 'needs recovery'], bell: false });
-    assert.deepEqual(identityHeader.historical, { icon: '/icons/unknown.svg', title: 'unknown (historical)', dot: ['dot-historical', 'Imported from v1 (no live agent)'], bell: false }, 'a sender known only from imported history has the departed dot, and its tooltip says why');
+    assert.deepEqual(identityHeader.historical, { icon: '/icons/unknown.svg', title: '', dot: ['dot-historical', 'Imported from v1 (no live agent)'], bell: false }, 'a message without recorded model or tool has no misleading tooltip');
     assert.deepEqual(identityHeader.departed, { icon: '/icons/claude-code.svg', title: 'opus4.8 · Claude Code (departed)', dot: ['dot-departed', 'departed'], bell: false }, 'an agent that was in a v2 room and left keeps the red departed dot');
     assert.deepEqual(identityHeader.importedKnown.dot, ['dot-historical', 'Imported from v1 (no live agent)']);
     assert.deepEqual(identityHeader.attention, { icon: '/icons/human.svg', title: 'human', dot: null, bell: true });
@@ -5985,7 +5985,7 @@ async function main() {
     }
     assert.equal(await first.$eval('article.chat-msg:last-of-type .chat-msg-from-name', el => el.textContent), realAgentName, 'agent author shows raw ID');
     assert.deepEqual(await first.$eval('article.chat-msg:last-of-type .message-role', el => [el.textContent, el.title.toLowerCase()]), ['🛠️', 'worker']);
-    assert.deepEqual(await first.$eval('article.chat-msg:last-of-type .msg-sender-presence', el => [el.querySelector('img').title.endsWith('· fake'), el.querySelector('.msg-sender-dot').className]), [true, 'msg-sender-dot dot-active'], 'agent message lacks identity icon/dot');
+    assert.deepEqual(await first.$eval('article.chat-msg:last-of-type .msg-sender-presence', el => [el.querySelector('img').title.endsWith('· fake'), el.querySelector('.msg-sender-dot').className]), [true, 'msg-sender-dot dot-active'], 'a new agent message records its model and keeps the live dot');
     assert.equal(await first.$eval('.chat-msg.self .msg-sender-icon', el => el.getAttribute('src')), '/icons/human.svg');
     if (await first.$eval(`[data-agent-id="${realAgentID}"]`, el => !el.classList.contains('expanded'))) await domClick(first, `[data-agent-id="${realAgentID}"] .agent-name`);
     await domClick(first, `[data-agent-id="${realAgentID}"] .agent-message`);

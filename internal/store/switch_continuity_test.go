@@ -95,6 +95,22 @@ func TestSwitchContinuityHandoffAndBootstrap(t *testing.T) {
 			if err != nil || switched.Switch == nil || switched.Switch.State != "started" || switched.Switch.HandoffSource != "agent" {
 				t.Fatalf("started %+v %v", switched, err)
 			}
+			messages, err := s.ListMessagesAfter(ctx, room.ID, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			foundWritten := false
+			for _, message := range messages {
+				if strings.Contains(message.Body, "Feature X") && message.AuthorKind == "system" {
+					foundWritten = strings.Contains(message.SwitchHandoffJSON, `"source":"written"`)
+					if strings.HasPrefix(message.Body, "@") {
+						t.Fatalf("raw mention in handoff: %q", message.Body)
+					}
+				}
+			}
+			if !foundWritten {
+				t.Fatal("written handoff metadata missing")
+			}
 			next, ready, err := s.PrepareDispatch(ctx, agent.ID, "")
 			if err != nil || !ready || !strings.Contains(string(next.Context), "Feature X") || !strings.Contains(string(next.Context), "recent_room_history") {
 				t.Fatalf("bootstrap %t %v %s", ready, err, next.Context)
