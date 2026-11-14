@@ -65,6 +65,16 @@ func TestDispatchContextListsRestrictedMembershipAndRoutingInstructions(t *testi
 	if err := s.AddMember(ctx, routing.ID, "agent", leader.ID); err != nil {
 		t.Fatal(err)
 	}
+	closed, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "task", Title: "closed task", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, closed.ID, "agent", leader.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE room SET lifecycle='closed' WHERE id=?`, closed.ID); err != nil {
+		t.Fatal(err)
+	}
 	for _, statement := range []string{
 		`UPDATE agent SET role_id='role_leader_default' WHERE id='` + leader.ID + `'`,
 		`UPDATE project SET team_flow_key='leader-dispatcher' WHERE id='` + project.ID + `'`,
@@ -90,6 +100,9 @@ func TestDispatchContextListsRestrictedMembershipAndRoutingInstructions(t *testi
 	}
 	found := false
 	for _, item := range contextData.Rooms {
+		if item["room_id"] == closed.ID {
+			t.Fatalf("closed room in dispatch context: %+v", contextData.Rooms)
+		}
 		if item["room_id"] == routing.ID && item["title"] == "routing" && item["kind"] == "task" {
 			found = true
 		}

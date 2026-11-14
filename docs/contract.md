@@ -99,6 +99,10 @@ Projects, rooms, people
   conflict fails without changing the flow. Applying another flow preserves
   any existing room's `restricted` flag; only an explicit room change may
   clear it. The flow preview lists rooms whose restriction will be preserved.
+  Preview, conflict checks, and apply choose the same room for each template
+  key: an existing keyed room first, then the earliest matching title by
+  creation time and ID. Conflict checks use the room key that chosen room
+  will receive, including an unkeyed `routing` room.
   A room marked
   `restricted` by a template's room rule requires active room membership for
   agent reads and viewer access; project owners and operators can read it for
@@ -1223,7 +1227,7 @@ it never silently reruns a turn with uncertain effects.
   agent_shared_notes[], task_notes[]},
   control_changes?, recovery_evidence?, correction_error?}, desired_rev,
   allowed_tools?, agent:{id, tool, variant, model, provider},
-  native_session?, native_session_started?, import_legacy_session?}` — rooms in context list every current agent room membership, including restricted rooms, with its title and kind; they are information, not grants. In the dispatcher flow, the leader's role body names the live routing room title and ID. For pi agents on gemma models `knowledge` is trimmed to a
+  native_session?, native_session_started?, import_legacy_session?}` — rooms in context list every current open agent room membership, including restricted rooms, with its title and kind; they are information, not grants. Closed rooms are omitted. In the dispatcher flow, the leader's role body names the live routing room title and ID. For pi agents on gemma models `knowledge` is trimmed to a
   shared 2048-byte budget of record bodies; later records are dropped. The
   attachment bearer is used only by Pi Docker, never journaled, and authorizes
   reads only for a delivered file in a live turn while the agent remains a
@@ -1491,7 +1495,8 @@ Adapter-listed (tool, variant, model, provider) with provider pinned; actor
 authorised (owner/operator, or an agent whose role has `cap_can_spawn`);
 `max_live_agents` counts live workers and reviewers, excluding the template's
 core roles (leader for A, leader and dispatcher for B). Custom projects
-exclude roles with lead capability. The spawn rate still counts every new
+exclude singleton roles with lead capability; multi-instance lead roles use
+worker slots. The spawn rate still counts every new
 agent; depth cap and singleton role cardinality also apply.
 
 When the role has a nonempty effective default list, a spawn that omits the harness

@@ -5,9 +5,10 @@ import { teamFlowSource } from '../../team-flow-source.js';
 // belongs to a project and selection generation, so a late preview cannot
 // overwrite the one the person is looking at now.
 export class TeamFlowStore {
-  constructor({ source = teamFlowSource, onApplied = null } = {}) {
+  constructor({ source = teamFlowSource, onApplied = null, canPreview = () => true } = {}) {
     this.source = source;
     this.onApplied = onApplied;
+    this.canPreview = canPreview;
     this.projectID = '';
     this.templates = signal([]);
     this.state = signal(null);
@@ -47,14 +48,14 @@ export class TeamFlowStore {
       const templates = catalog.templates || [];
       const selected = state.key || templates[0]?.key || '';
       batch(() => { this.templates.value = templates; this.state.value = state; this.selected.value = selected; this.loading.value = false; });
-      if (selected) await this.select(selected);
+      if (selected && this.canPreview(projectID)) await this.select(selected);
     } catch (error) {
       if (this.alive && generation === this.generation) batch(() => { this.loading.value = false; this.error.value = error.message; });
     }
   }
 
   async select(key) {
-    if (!this.alive || !this.projectID || !this.templates.peek().some(item => item.key === key)) return;
+    if (!this.alive || !this.projectID || !this.canPreview(this.projectID) || !this.templates.peek().some(item => item.key === key)) return;
     const generation = this.generation, previewGeneration = ++this.previewGeneration, projectID = this.projectID;
     batch(() => { this.selected.value = key; this.preview.value = null; this.removals.value = []; this.previewing.value = true; this.error.value = ''; });
     try {

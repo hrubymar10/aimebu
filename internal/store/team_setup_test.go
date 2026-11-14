@@ -90,3 +90,35 @@ func TestTeamFlowCoreRolesDoNotUseWorkerSlots(t *testing.T) {
 		t.Fatalf("worker cap after first spawn: %+v %v", headroom, err)
 	}
 }
+
+func TestCustomFlowMetersMultiLeadRoles(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	f.role(t, "role_multi_lead_cap", f.project.ID, "multi-lead", "Multi lead", "m", "multi")
+	f.role(t, "role_single_lead_cap", f.project.ID, "single-lead", "Single lead", "s", "singleton")
+	if _, err := f.s.db.Exec(`UPDATE role SET cap_is_lead=1 WHERE id IN ('role_multi_lead_cap','role_single_lead_cap')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE project SET team_flow_key='custom' WHERE id=?`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE settings_project SET max_live_agents=1 WHERE project_id=?`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.agent(t, "singleleadcap", "role_single_lead_cap", &f.home)
+	headroom, err := f.s.ProjectToolHeadroom(ctx, f.project.ID)
+	if err != nil || headroom.LiveAgents != 0 || headroom.LiveSlotsLeft != 1 {
+		t.Fatalf("singleton lead used a worker slot: %+v %v", headroom, err)
+	}
+	f.agent(t, "multileadcap", "role_multi_lead_cap", &f.other)
+	headroom, err = f.s.ProjectToolHeadroom(ctx, f.project.ID)
+	if err != nil || headroom.LiveAgents != 1 || headroom.LiveSlotsLeft != 0 {
+		t.Fatalf("multi lead did not use a worker slot: %+v %v", headroom, err)
+	}
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.SpawnAgent(SpawnInput{RoomID: f.other.ID, ActorKind: "user", ActorID: f.alice, MachineID: "mch_members", Path: f.project.Folder, RoleKey: "worker", Tool: "fake", Variant: "test", Model: "test", Provider: "fake", Slug: "cappedworker", KeyHash: "cappedworker"})
+		return err
+	}); !errors.Is(err, ErrSpawnLimit) {
+		t.Fatalf("multi lead did not enforce worker cap: %v", err)
+	}
+}

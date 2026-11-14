@@ -140,13 +140,13 @@ func teamFlowTemplate(key string) (TeamFlowTemplate, bool) {
 	return TeamFlowTemplate{}, false
 }
 
-func flowCoreRole(flowKey, roleKey string, lead bool) bool {
+func flowCoreRole(flowKey, roleKey string, lead bool, cardinality string) bool {
 	if flowKey == "" || flowKey == "custom" {
-		return lead
+		return lead && cardinality == "singleton"
 	}
 	flow, ok := teamFlowTemplate(flowKey)
 	if !ok {
-		return lead
+		return lead && cardinality == "singleton"
 	}
 	return flowAllows(flow.CoreRoles, roleKey)
 }
@@ -154,7 +154,7 @@ func flowCoreRole(flowKey, roleKey string, lead bool) bool {
 // meteredLiveAgents counts only roles that consume the project's worker and
 // reviewer slots. The caller supplies the flow read in the same transaction.
 func meteredLiveAgents(ctx context.Context, db rowQuerier, projectID, excludeID, flowKey string) (int, error) {
-	rows, err := db.QueryContext(ctx, `SELECT r.role_key,r.cap_is_lead FROM agent a JOIN role r ON r.id=a.role_id
+	rows, err := db.QueryContext(ctx, `SELECT r.role_key,r.cap_is_lead,r.cardinality FROM agent a JOIN role r ON r.id=a.role_id
 		WHERE a.project_id=? AND a.id<>? AND a.revoked_at IS NULL
 		AND (a.desired!='stopped' OR a.observed!='stopped')`, projectID, excludeID)
 	if err != nil {
@@ -163,12 +163,12 @@ func meteredLiveAgents(ctx context.Context, db rowQuerier, projectID, excludeID,
 	defer rows.Close()
 	count := 0
 	for rows.Next() {
-		var roleKey string
+		var roleKey, cardinality string
 		var lead bool
-		if err := rows.Scan(&roleKey, &lead); err != nil {
+		if err := rows.Scan(&roleKey, &lead, &cardinality); err != nil {
 			return 0, err
 		}
-		if !flowCoreRole(flowKey, roleKey, lead) {
+		if !flowCoreRole(flowKey, roleKey, lead, cardinality) {
 			count++
 		}
 	}
@@ -264,11 +264,12 @@ func (tx *Tx) flowJoinAllowed(projectID, roomKind, role string) (bool, error) {
 }
 
 func (s *Store) TeamFlowState(ctx context.Context, projectID, userID string) (TeamFlowState, error) {
-	if err := s.ProjectAccess(ctx, userID, projectID); err != nil {
+	role, err := s.UserProjectRole(ctx, userID, projectID)
+	if err != nil {
 		return TeamFlowState{}, err
 	}
 	var out TeamFlowState
-	err := s.db.QueryRowContext(ctx, `SELECT team_flow_key,team_flow_rev,team_flow_review_pending FROM project WHERE id=? AND system=0`, projectID).Scan(&out.Key, &out.Rev, &out.ReviewPending)
+	err = s.db.QueryRowContext(ctx, `SELECT team_flow_key,team_flow_rev,team_flow_review_pending FROM project WHERE id=? AND system=0`, projectID).Scan(&out.Key, &out.Rev, &out.ReviewPending)
 	if err != nil {
 		return out, err
 	}
@@ -279,12 +280,27 @@ func (s *Store) TeamFlowState(ctx context.Context, projectID, userID string) (Te
 	if err != nil {
 		return out, err
 	}
+	if role == "viewer" {
+		visible := out.Conflicts[:0]
+		for _, conflict := range out.Conflicts {
+			if err := s.UserRoomAccess(ctx, userID, conflict.RoomID); err == nil {
+				visible = append(visible, conflict)
+			} else if !errors.Is(err, ErrForbidden) {
+				return out, err
+			}
+		}
+		out.Conflicts = visible
+	}
 	return out, nil
 }
 
 func (s *Store) PreviewTeamFlow(ctx context.Context, projectID, userID, key string) (TeamFlowPreview, error) {
-	if err := s.ProjectAccess(ctx, userID, projectID); err != nil {
+	role, err := s.UserProjectRole(ctx, userID, projectID)
+	if err != nil {
 		return TeamFlowPreview{}, err
+	}
+	if role == "viewer" {
+		return TeamFlowPreview{}, ErrForbidden
 	}
 	t, ok := teamFlowTemplate(key)
 	if !ok {
@@ -317,22 +333,46 @@ func (s *Store) PreviewTeamFlow(ctx context.Context, projectID, userID, key stri
 		if room.Key == "home" {
 			continue
 		}
-		var count int
-		err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM room WHERE project_id=? AND (team_flow_room_key=? OR title=?) AND kind<>'dm'`, projectID, room.Key, room.Title).Scan(&count)
+		id, err := flowReuseRoomID(ctx, s.db, projectID, room)
 		if err != nil {
 			return out, err
 		}
-		if count == 0 {
+		if id == "" {
 			out.CreateRooms = append(out.CreateRooms, room)
 		}
 	}
 	return out, nil
 }
 
+// flowReuseRoomID chooses the same existing room for preview, conflicts, and
+// apply. An explicit template key wins over a coincidental title match.
+func flowReuseRoomID(ctx context.Context, db rowQuerier, projectID string, spec FlowRoom) (string, error) {
+	var id string
+	err := db.QueryRowContext(ctx, `SELECT id FROM room WHERE project_id=? AND kind<>'dm'
+		AND (team_flow_room_key=? OR title=?)
+		ORDER BY CASE WHEN team_flow_room_key=? THEN 0 ELSE 1 END,created_at,id LIMIT 1`,
+		projectID, spec.Key, spec.Title, spec.Key).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 func flowConflicts(ctx context.Context, db rowQuerier, projectID string, t TeamFlowTemplate) ([]FlowConflict, error) {
 	out := []FlowConflict{}
 	if t.Key == "custom" || t.Key == "" {
 		return out, nil
+	}
+	selectedRooms := make(map[string]string, len(t.Rooms))
+	for _, spec := range t.Rooms {
+		if spec.Key == "home" {
+			continue
+		}
+		id, err := flowReuseRoomID(ctx, db, projectID, spec)
+		if err != nil {
+			return out, err
+		}
+		selectedRooms[spec.Key] = id
 	}
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT a.id,a.slug,ro.role_key,ro.label,r.id,r.kind,r.team_flow_room_key,r.title FROM agent a
 		JOIN role ro ON ro.id=a.role_id JOIN room_member m ON m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL
@@ -347,6 +387,14 @@ func flowConflicts(ctx context.Context, db rowQuerier, projectID string, t TeamF
 			return out, err
 		}
 		selector := flowRoomKind(kind, key, title)
+		if kind != "home" {
+			for _, spec := range t.Rooms {
+				if spec.Key != "home" && roomID == selectedRooms[spec.Key] {
+					selector = spec.Key
+					break
+				}
+			}
+		}
 		allowed := false
 		for _, rule := range t.JoinRules {
 			if rule.RoomKind == selector {
@@ -426,16 +474,15 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 			if spec.Key == "home" {
 				continue
 			}
-			var id string
-			err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind<>'dm' AND (team_flow_room_key=? OR title=?) LIMIT 1`, projectID, spec.Key, spec.Title).Scan(&id)
-			if err == nil {
+			id, err := flowReuseRoomID(tx.ctx, tx.tx, projectID, spec)
+			if err != nil {
+				return err
+			}
+			if id != "" {
 				if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET team_flow_room_key=?,restricted=restricted OR ? WHERE id=?`, spec.Key, spec.Restricted, id); err != nil {
 					return err
 				}
 				continue
-			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				return err
 			}
 			room, err := tx.CreateRoom(Room{ProjectID: projectID, Kind: spec.Kind, Title: spec.Title, CreatedBy: userID})
 			if err != nil {

@@ -79,6 +79,34 @@ func TestTeamFlowSwitchPreservesRestrictedRoom(t *testing.T) {
 	}
 }
 
+func TestTeamFlowStateHidesRestrictedConflictsFromViewer(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	f.role(t, "role_state_worker", f.project.ID, "worker", "Worker", "w", "multi")
+	if _, err := f.s.db.Exec(`UPDATE room SET title='routing' WHERE id=?`, f.other.ID); err != nil {
+		t.Fatal(err)
+	}
+	worker := f.agent(t, "stateworker", "role_state_worker", &f.other)
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := f.s.TeamFlowState(ctx, f.project.ID, f.alice)
+	if err != nil || len(owner.Conflicts) != 1 || owner.Conflicts[0].AgentID != worker.ID {
+		t.Fatalf("owner conflict: %+v %v", owner.Conflicts, err)
+	}
+	viewer, err := f.s.TeamFlowState(ctx, f.project.ID, f.bob)
+	if err != nil || len(viewer.Conflicts) != 0 || viewer.Key != "leader-dispatcher" {
+		t.Fatalf("viewer disclosed restricted conflict: %+v %v", viewer, err)
+	}
+	if err := f.s.AddMember(ctx, f.other.ID, "user", f.bob); err != nil {
+		t.Fatal(err)
+	}
+	viewer, err = f.s.TeamFlowState(ctx, f.project.ID, f.bob)
+	if err != nil || len(viewer.Conflicts) != 1 || viewer.Conflicts[0].AgentID != worker.ID {
+		t.Fatalf("joined viewer conflict: %+v %v", viewer.Conflicts, err)
+	}
+}
+
 func TestRestrictedRoomAllowsOwnerAndOperatorOversight(t *testing.T) {
 	f := newMembersFixture(t)
 	ctx := context.Background()
@@ -158,6 +186,90 @@ func TestTeamFlowRemovesOnlySelectedConflictingMemberships(t *testing.T) {
 	state, err := f.s.TeamFlowState(ctx, f.project.ID, f.alice)
 	if err != nil || state.Rev != 2 {
 		t.Fatalf("stale selection must roll back: %+v %v", state, err)
+	}
+}
+
+func TestTeamFlowDetectsConflictInRoomReusedAsRouting(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	f.role(t, "role_routing_worker", f.project.ID, "worker", "Worker", "w", "multi")
+	if _, err := f.s.db.Exec(`UPDATE room SET title='routing' WHERE id=?`, f.other.ID); err != nil {
+		t.Fatal(err)
+	}
+	worker := f.agent(t, "routingworker", "role_routing_worker", &f.other)
+	preview, err := f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := FlowRemoval{AgentID: worker.ID, RoomID: f.other.ID}
+	if len(preview.Conflicts) != 1 || preview.Conflicts[0].AgentID != selected.AgentID || preview.Conflicts[0].RoomID != selected.RoomID {
+		t.Fatalf("reused routing room conflict: %+v", preview.Conflicts)
+	}
+	applied, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, []FlowRemoval{selected})
+	if err != nil || len(applied.Conflicts) != 0 {
+		t.Fatalf("selected removal: %+v %v", applied, err)
+	}
+	var key string
+	var restricted bool
+	if err := f.s.db.QueryRow(`SELECT team_flow_room_key,restricted FROM room WHERE id=?`, f.other.ID).Scan(&key, &restricted); err != nil || key != "routing" || !restricted {
+		t.Fatalf("reused room: %q %v %v", key, restricted, err)
+	}
+	var joined int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_id=? AND left_at IS NULL`, f.other.ID, worker.ID).Scan(&joined); err != nil || joined != 0 {
+		t.Fatalf("worker retained restricted routing membership: %d %v", joined, err)
+	}
+}
+
+func TestTeamFlowDuplicateRoutingTitlesUseOneRoom(t *testing.T) {
+	for _, keyedSecond := range []bool{false, true} {
+		name := "oldest title"
+		if keyedSecond {
+			name = "keyed room"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newMembersFixture(t)
+			ctx := context.Background()
+			f.role(t, "role_duplicate_worker", f.project.ID, "worker", "Worker", "w", "multi")
+			if _, err := f.s.db.Exec(`UPDATE room SET title='routing',created_at='2000-01-01T00:00:00Z' WHERE id=?`, f.other.ID); err != nil {
+				t.Fatal(err)
+			}
+			second, err := f.s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "routing", CreatedBy: f.alice})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.s.db.Exec(`UPDATE room SET created_at='2001-01-01T00:00:00Z' WHERE id=?`, second.ID); err != nil {
+				t.Fatal(err)
+			}
+			firstWorker := f.agent(t, "firstworker", "role_duplicate_worker", &f.other)
+			secondWorker := f.agent(t, "secondworker", "role_duplicate_worker", &second)
+			chosenRoom, chosenWorker := f.other.ID, firstWorker.ID
+			otherRoom, otherWorker := second.ID, secondWorker.ID
+			if keyedSecond {
+				if _, err := f.s.db.Exec(`UPDATE room SET team_flow_room_key='routing' WHERE id=?`, second.ID); err != nil {
+					t.Fatal(err)
+				}
+				chosenRoom, chosenWorker = second.ID, secondWorker.ID
+				otherRoom, otherWorker = f.other.ID, firstWorker.ID
+			}
+			preview, err := f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher")
+			if err != nil || len(preview.Conflicts) != 1 || preview.Conflicts[0].RoomID != chosenRoom || preview.Conflicts[0].AgentID != chosenWorker {
+				t.Fatalf("preview chose wrong routing room: %+v %v", preview.Conflicts, err)
+			}
+			selected := FlowRemoval{AgentID: chosenWorker, RoomID: chosenRoom}
+			applied, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, []FlowRemoval{selected})
+			if err != nil || len(applied.Conflicts) != 0 {
+				t.Fatalf("selected routing removal: %+v %v", applied, err)
+			}
+			var key string
+			var restricted bool
+			if err := f.s.db.QueryRow(`SELECT team_flow_room_key,restricted FROM room WHERE id=?`, chosenRoom).Scan(&key, &restricted); err != nil || key != "routing" || !restricted {
+				t.Fatalf("chosen room: %q %t %v", key, restricted, err)
+			}
+			var joined int
+			if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_id=? AND left_at IS NULL`, otherRoom, otherWorker).Scan(&joined); err != nil || joined != 1 {
+				t.Fatalf("unselected worker membership: %d %v", joined, err)
+			}
+		})
 	}
 }
 

@@ -614,11 +614,11 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 	return delivery, ready, err
 }
 
-// agentRoomSnapshot names every current room membership, including restricted
+// agentRoomSnapshot names every open room membership, including restricted
 // rooms. The snapshot is information for the agent and grants no new access.
 func (tx *Tx) agentRoomSnapshot(agentID string) ([]map[string]string, error) {
 	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.id,r.title,r.kind FROM room_member m JOIN room r ON r.id=m.room_id
-		WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL
+		WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL AND r.lifecycle='open'
 		ORDER BY r.created_at,r.id`, agentID)
 	if err != nil {
 		return nil, err

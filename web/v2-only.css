@@ -665,7 +665,7 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 #team-flow-home:not([hidden]) { flex: 0 0 auto; min-height: 0; overflow: auto; margin-right: var(--col, 0px); padding: 12px 16px; }
 #team-flow-home:not([hidden]):has(.team-setup-wizard) { flex: 1 1 auto; }
 #team-flow-home:not([hidden]):not(:has(.team-flow-home-card)) { display: none; }
-.chat:has(#team-flow-home .team-setup-wizard) > .messages, .chat:has(#team-flow-home .team-setup-wizard) > .send-bar { display: none; }
+.chat:has(#team-flow-home .team-setup-wizard) > .messages { display: none; }
 .team-flow-home-card, .team-flow-settings { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); padding: 18px; }
 .team-flow-home-card { width: 100%; min-height: 100%; }
 .team-flow-heading small { color: var(--accent-text); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }

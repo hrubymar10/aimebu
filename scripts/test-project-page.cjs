@@ -147,9 +147,9 @@ async function main() {
       await page.$eval('#project-team-flow .team-flow-option:nth-child(2) .team-flow-card', node => node.click());
       const preview = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/preview');
       assert.deepEqual(await page.evaluate(index => window.__requests[index].body, preview), { key: 'leader-dispatcher' });
-      await answer(page, preview, 200, { key: 'leader-dispatcher', create_rooms: [{ key: 'routing', title: 'routing' }], role_changes: [{ description: 'Add dispatcher role' }], conflicts: [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }] });
+      await answer(page, preview, 200, { key: 'leader-dispatcher', create_rooms: [{ key: 'routing', title: 'routing' }], preserved_restricted_rooms: [{ room_id: 'rm_private', title: 'private' }], role_changes: [{ description: 'Add dispatcher role' }], conflicts: [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }] });
       await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-preview')?.textContent.includes('Remove ian'));
-      assert.match(await page.$eval('#project-team-flow .team-flow-preview', node => node.textContent), /routing.*Add dispatcher role.*Remove ian \(Leader\) from general when applying/s);
+      assert.match(await page.$eval('#project-team-flow .team-flow-preview', node => node.textContent), /routing.*Stays restricted.*private.*Add dispatcher role.*Remove ian \(Leader\) from general when applying/s);
       assert.equal(await page.$eval('#project-team-flow .team-flow-removal input', node => node.checked), false, 'membership removal is opt-in');
       await page.$eval('#project-team-flow .team-flow-removal input', node => node.click());
       await page.$eval('#project-team-flow .btn-primary', node => node.click());
@@ -158,6 +158,27 @@ async function main() {
       await answer(page, apply, 200, { key: 'leader-dispatcher', rev: 2, review_pending: false, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [] });
       await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('Leader and dispatcher'));
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#project-team-flow .btn-primary').disabled, window.__hooks.at(-1)]), [true, ['flow', 'p1']]);
+      await page.close();
+    }
+    // Preserved restrictions are visible even when nothing changes; selected removals can be applied to the current flow.
+    {
+      const auto = base();
+      auto['POST /api/projects/p1/team-flow/preview'] = { key: 'custom', create_rooms: [], preserved_restricted_rooms: [{ room_id: 'rm_private', title: 'private' }], role_changes: [], conflicts: [] };
+      const page = await mount({ auto });
+      await ready(page);
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-preview')?.textContent.includes('Stays restricted'));
+      assert.deepEqual(await page.$eval('#project-team-flow .team-flow-preview', node => [node.textContent.includes('private'), node.textContent.includes('No rooms or roles need changing.')]), [true, false]);
+      assert.deepEqual(await page.$eval('#project-team-flow .btn-primary', node => [node.disabled, node.textContent.trim()]), [true, 'Current flow']);
+      await page.evaluate(() => { window.__auto['POST /api/projects/p1/team-flow/preview'].conflicts = [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }]; });
+      await page.$eval('#project-team-flow .team-flow-option:nth-child(3) .team-flow-card', node => node.click());
+      await page.waitForSelector('#project-team-flow .team-flow-removal input');
+      await page.$eval('#project-team-flow .team-flow-removal input', node => node.click());
+      assert.deepEqual(await page.$eval('#project-team-flow .btn-primary', node => [node.disabled, node.textContent.trim()]), [false, 'Apply team flow']);
+      await page.$eval('#project-team-flow .btn-primary', node => node.click());
+      const apply = await waitRequest(page, 'PUT', '/api/projects/p1/team-flow');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, apply), { key: 'custom', rev: 1, remove_memberships: [{ agent_id: 'agt_old', room_id: 'rm_general' }] });
+      await answer(page, apply, 200, { key: 'custom', rev: 2, review_pending: false, created_rooms: [], conflicts: [] });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .btn-primary')?.disabled);
       await page.close();
     }
     // The inline home setup starts with A for a new project; migrated C can be kept in one click and stays dismissed after reload.
@@ -170,7 +191,7 @@ async function main() {
         const host = document.querySelector('#team-flow-home'), card = host.querySelector('.team-setup-wizard');
         return [getComputedStyle(document.querySelector('#messages')).display, getComputedStyle(document.querySelector('.send-bar')).display,
           host.clientHeight > 600, Math.abs(card.clientWidth - host.clientWidth + 32) < 3];
-      }), ['none', 'none', true, true], 'setup uses the full chat area without the empty message or composer below it');
+      }), ['none', 'block', true, true], 'setup fills the message area while the composer stays visible');
       assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false], 'owner permission is read after the home page mounts');
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), [...node.querySelectorAll('.team-flow-thumbnail-agent text')].map(text => text.textContent)])),
         [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', []]], 'the topology comes from spawn rules, not the room diagram');
@@ -268,6 +289,9 @@ async function main() {
       await admin.close();
       const viewer = await mount({ role: 'viewer' });
       await ready(viewer);
+      await viewer.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('Custom'));
+      await settle(viewer);
+      assert.deepEqual(await viewer.evaluate(() => [window.__requests.filter(request => request.path.endsWith('/team-flow/preview')).length, document.querySelector('#project-team-flow .team-flow-preview'), document.querySelector('#project-team-flow .error').textContent.trim(), document.querySelector('#project-team-flow .team-flow-card').disabled]), [0, null, '', true], 'viewer sees the current flow without requesting a restricted preview');
       assert.deepEqual(await viewer.evaluate(() => [document.querySelector('#project-details-name').disabled, document.querySelector('#project-details-folder').disabled, document.querySelector('#project-details-save').disabled, document.querySelector('#project-details-status').textContent,
         document.querySelector('#project-archive').disabled, document.querySelector('#project-lifecycle > p').textContent]), [true, true, true, 'Only the project owner can change these.', true, 'Only the project owner or an admin can archive, reopen or delete a project.']);
       await viewer.close();

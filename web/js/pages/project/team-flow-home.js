@@ -7,7 +7,7 @@ export class TeamFlowHome {
   constructor({ canEdit, onApplied, projectForID = () => null }) {
     this.canEdit = canEdit;
     this.projectForID = projectForID;
-    this.flow = new TeamFlowStore({ onApplied });
+    this.flow = new TeamFlowStore({ onApplied, canPreview: canEdit });
     this.host = document.createElement('div');
     this.host.id = 'team-flow-home';
     this.host.hidden = true;

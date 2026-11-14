@@ -280,12 +280,15 @@ dispatcher) together. Back keeps the unsaved choices. C ends with **Keep
 current**. Existing projects start on C; saving it closes the setup prompt.
 The "Maximum workers and reviewers" setting counts task roles; the flow's
 leader and optional dispatcher are excluded, as the wizard's hint explains.
-While setup is open, the wizard fills the chat area and scrolls within it;
-the room's messages and composer return when setup closes.
+While setup is open, the wizard fills the message area and scrolls within it;
+the composer stays available, and the room's messages return when setup closes.
 Project settings → Team flow uses the same list and previews the rooms and
-roles a switch would add and any agents needing action. Switching keeps all
+roles a switch would add, rooms that stay restricted, and any agents needing
+action. Switching keeps all
 existing rooms, messages, and agents; incompatible room memberships are listed
-with an optional checkbox for each removal. Unselected memberships stay joined.
+with an optional checkbox for each removal. Unselected memberships stay joined;
+selected removals can be applied even when the flow choice is unchanged.
+Viewers see the current flow read-only, without the switch preview.
 In B, a private routing room connects the leader with the
 singleton dispatcher. The leader writes specs there; the dispatcher manages
 task rooms, workers, and reviewers. A task-room message can reference a

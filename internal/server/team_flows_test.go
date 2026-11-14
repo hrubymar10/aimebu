@@ -1,12 +1,31 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
+
+func TestTeamFlowPreviewRequiresOperator(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	cookie, csrf := registerSecondUser(t, f, "flow-viewer")
+	viewer, err := f.db.UserByLogin(context.Background(), "flow-viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,?)`, f.project.ID, viewer.ID, "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.requestAs(t, cookie, csrf, http.MethodPost, "/api/projects/"+f.project.ID+"/team-flow/preview", map[string]string{"key": "leader-dispatcher"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("viewer preview: %d", resp.StatusCode)
+	}
+}
 
 func TestTeamFlowAPISetupAndRoomKey(t *testing.T) {
 	f := newFixture(t)

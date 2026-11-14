@@ -230,7 +230,7 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if err != nil {
 		return AgentCard{}, err
 	}
-	if !flowCoreRole(flowKey, in.RoleKey, leadRole) && live >= maxLive {
+	if !flowCoreRole(flowKey, in.RoleKey, leadRole, cardinality) && live >= maxLive {
 		return AgentCard{}, ErrSpawnLimit
 	}
 	var recent int
@@ -438,6 +438,7 @@ func (tx *Tx) takenSlugs(projectID string) (map[string]bool, error) {
 
 type rowQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func takenSlugs(ctx context.Context, q rowQuerier, projectID string) (map[string]bool, error) {
@@ -769,7 +770,7 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 		if err != nil {
 			return AgentCard{}, err
 		}
-		if !flowCoreRole(flowKey, roleKey, leadRole) && live >= maxLive {
+		if !flowCoreRole(flowKey, roleKey, leadRole, roleCardinality) && live >= maxLive {
 			return AgentCard{}, ErrSpawnLimit
 		}
 		generation++

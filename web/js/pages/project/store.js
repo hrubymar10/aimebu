@@ -34,7 +34,7 @@ export class ProjectStore {
     this.scope = new ScopeStore('project');
     this.limit = new UsageLimitStore();
     this.usage = new UsageSummaryStore(id => `/api/projects/${id}/usage`);
-    this.flow = new TeamFlowStore({ onApplied: (id, result) => this.onFlowApplied?.(id, result) });
+    this.flow = new TeamFlowStore({ onApplied: (id, result) => this.onFlowApplied?.(id, result), canPreview: () => ['owner', 'operator'].includes(this.project.peek()?.role) });
     this.alive = true;
     this.generation = 0;
     this.onLifecycle = null;

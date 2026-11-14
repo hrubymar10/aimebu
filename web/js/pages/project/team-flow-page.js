@@ -102,10 +102,12 @@ const conflictText = item => `${conflictName(item)} in ${item.room_title || 'a r
 export function TeamFlowPreview({ preview, busy, selectedRemovals = [], onToggleRemoval }) {
   if (busy) return html`<p class="team-flow-preview" role="status">Checking changes…</p>`;
   if (!preview) return null;
-  const rooms = preview.create_rooms || [], roles = preview.role_changes || [], conflicts = preview.conflicts || [];
+  const rooms = preview.create_rooms || [], restricted = preview.preserved_restricted_rooms || [];
+  const roles = preview.role_changes || [], conflicts = preview.conflicts || [];
   return html`<div class="team-flow-preview" aria-label="Team flow change preview">
-    ${!rooms.length && !roles.length && !conflicts.length && html`<p>No rooms or roles need changing.</p>`}
+    ${!rooms.length && !restricted.length && !roles.length && !conflicts.length && html`<p>No rooms or roles need changing.</p>`}
     <${ChangeList} title="Rooms to create" items=${rooms} render=${item => item.title || item.key} />
+    <${ChangeList} title="Stays restricted" items=${restricted} render=${item => item.title || item.room_id} />
     <${ChangeList} title="Role changes" items=${roles} render=${item => item.description || item.action || item.role_key || JSON.stringify(item)} />
     <${ChangeList} title="Agents needing action" items=${conflicts} render=${item => onToggleRemoval && item.room_id ? html`<label class="team-flow-removal"><input type="checkbox" checked=${selectedRemovals.some(selected => selected.agent_id === item.agent_id && selected.room_id === item.room_id)} onChange=${event => onToggleRemoval(item, event.currentTarget.checked)} />Remove ${conflictName(item)} from ${item.room_title} when applying</label>` : conflictText(item)} />
     <p class="team-flow-preserve">Existing rooms, messages, and agents are kept unless you select a membership to remove.</p>
@@ -114,6 +116,7 @@ export function TeamFlowPreview({ preview, busy, selectedRemovals = [], onToggle
 
 export function TeamFlowSettings({ flow, canEdit }) {
   const state = flow.state.value, templates = flow.templates.value, selected = flow.selected.value;
+  const currentWithoutChanges = state?.key === selected && !state?.review_pending && flow.removals.value.length === 0;
   return html`<section id="project-team-flow" class="settings-subsection" aria-labelledby="project-team-flow-title"><h3 id="project-team-flow-title">Team flow</h3>
     <div class="settings-card team-flow-settings">
       <p class="settings-desc">Choose who coordinates work. Switching keeps rooms, messages, and agents.</p>
@@ -122,8 +125,8 @@ export function TeamFlowSettings({ flow, canEdit }) {
       <${TeamFlowCards} templates=${templates} selected=${selected} onSelect=${key => flow.select(key)} disabled=${flow.applying.value || !canEdit} />
       <${TeamFlowPreview} preview=${flow.preview.value} busy=${flow.previewing.value} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => flow.toggleRemoval(item, checked)} />
       ${!flow.preview.value && state?.conflicts?.length > 0 && html`<div class="team-flow-preview"><${ChangeList} title="Agents needing action" items=${state.conflicts} render=${conflictText} /></div>`}
-      <button type="button" class="btn btn-primary" disabled=${!canEdit || !state || !selected || !flow.preview.value || flow.applying.value || flow.previewing.value || state.key === selected && !state.review_pending}
-        onClick=${() => flow.apply()}>${flow.applying.value ? 'Applying…' : state?.key === selected && !state?.review_pending ? 'Current flow' : 'Apply team flow'}</button>
+      <button type="button" class="btn btn-primary" disabled=${!canEdit || !state || !selected || !flow.preview.value || flow.applying.value || flow.previewing.value || currentWithoutChanges}
+        onClick=${() => flow.apply()}>${flow.applying.value ? 'Applying…' : currentWithoutChanges ? 'Current flow' : 'Apply team flow'}</button>
       <p class="error" role="alert">${flow.error.value}</p>
     </div>
   </section>`;
