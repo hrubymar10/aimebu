@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // AgentRoomState is an agent's card with everything the room's agent list shows beside it: its usage, its health flags (without the
@@ -40,6 +42,8 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 		COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.outcome='unknown' ORDER BY t.id DESC LIMIT 1) AND e.kind='turn_process_exit' LIMIT 1),''),
 		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),
 		sw.agent_id IS NOT NULL,COALESCE(sw.state,''),COALESCE(sw.tool,''),COALESCE(sw.variant,''),COALESCE(sw.model,''),COALESCE(sw.machine_id,''),COALESCE(sw.error,''),
+		sh.agent_id IS NOT NULL,COALESCE(sh.status,''),COALESCE(sh.source,''),COALESCE(sh.body_json,''),COALESCE(sh.handoff_deadline,''),COALESCE(sh.overall_deadline,''),
+		CASE WHEN sh.turn_id IS NULL THEN 0 ELSE EXISTS(SELECT 1 FROM turn WHERE id=sh.turn_id AND (exec IN ('pending','running') OR settle='pending')) END,
 		CASE WHEN a.observed='in_turn' THEN COALESCE((SELECT CASE WHEN n.wake_reason='reply' AND wm.author_kind='agent' THEN 'reply' ELSE '' END
 			FROM turn t JOIN turn_note tn ON tn.turn_id=t.id JOIN note n ON n.id=tn.note_id JOIN message wm ON wm.id=n.message_id
 			WHERE t.agent_id=a.id AND t.exec IN ('pending','running') ORDER BY t.rowid DESC, n.created_at ASC, n.rowid ASC LIMIT 1),'') ELSE '' END,
@@ -57,6 +61,7 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 		LEFT JOIN machine ON machine.id=a.machine_id
 		LEFT JOIN machine_launcher l ON l.machine_id=a.machine_id AND l.id=a.launcher_id
 		LEFT JOIN agent_switch sw ON sw.agent_id=a.id
+		LEFT JOIN switch_handoff sh ON sh.agent_id=a.id
 		LEFT JOIN usage_record u ON u.rowid=(SELECT u2.rowid FROM usage_record u2 JOIN turn ut ON ut.id=u2.turn_id
 			WHERE u2.agent_id=a.id AND u2.partial=0 AND ut.generation=a.generation ORDER BY u2.created_at DESC,u2.rowid DESC LIMIT 1)
 		LEFT JOIN turn rt ON rt.id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.exec='running' ORDER BY t.started_at DESC LIMIT 1)
@@ -72,15 +77,17 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 		var st AgentRoomState
 		c := &st.Card
 		c.RoomID = roomID
-		var hasSwitch, hasUsage, hasRunning, hasLimit, held, recovery bool
+		var hasSwitch, hasHandoff, turnOpen, hasUsage, hasRunning, hasLimit, held, recovery bool
 		var sw AgentSwitch
+		var handoffStatus, handoffSource, handoffBody, handoffDeadline, overallDeadline string
 		var input, output, used, window sql.NullInt64
 		var cost sql.NullFloat64
 		var estimated bool
 		var started, lastEvent, detected string
 		var reset sql.NullString
 		if err := rows.Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.LastActivityAt, &c.MachineLastSeen, &c.LastExitEvidence, &c.BoundaryPending,
-			&hasSwitch, &sw.State, &sw.Tool, &sw.Variant, &sw.Model, &sw.MachineID, &sw.Error, &c.WokenBy,
+			&hasSwitch, &sw.State, &sw.Tool, &sw.Variant, &sw.Model, &sw.MachineID, &sw.Error,
+			&hasHandoff, &handoffStatus, &handoffSource, &handoffBody, &handoffDeadline, &overallDeadline, &turnOpen, &c.WokenBy,
 			&hasUsage, &input, &output, &used, &window, &cost, &estimated,
 			&hasRunning, &started, &lastEvent, &hasLimit, &reset, &detected, &held, &recovery,
 			&st.MachineIsHost, &st.LauncherKnown, &st.LauncherContainerized, &out.ViewerRole); err != nil {
@@ -88,6 +95,21 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 		}
 		if hasSwitch {
 			c.Switch = &sw
+		}
+		if hasHandoff {
+			if c.Switch == nil && handoffStatus == "started" {
+				c.Switch = &AgentSwitch{State: "started", Tool: c.Tool, Variant: c.Variant, Model: c.Model, MachineID: c.MachineID}
+			}
+			if c.Switch != nil {
+				c.Switch.HandoffStatus = handoffStatus
+				c.Switch.HandoffSource = handoffSource
+				c.Switch.HandoffDeadline = handoffDeadline
+				c.Switch.OverallDeadline = overallDeadline
+				if handoffBody != "" {
+					c.Switch.Handoff = json.RawMessage(handoffBody)
+				}
+				c.Switch.setContinuityActions(turnOpen)
+			}
 		}
 		if hasUsage || cost.Valid {
 			usage := &AgentUsage{}

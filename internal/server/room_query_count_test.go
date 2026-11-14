@@ -171,8 +171,8 @@ func roomRouteStatements(statements []string) []string {
 // maxRoomListQueries is how many statements the room's agent and member lists may run, whatever the number of agents and people.
 const maxRoomListQueries = 3
 
-// seedRoomAgents adds n agents to the fixture's room and gives the first six a varied history: usage, a running turn, a provider limit, open
-// inbox items, a switch, boundary grants. It returns the agents' ids.
+// seedRoomAgents adds n agents to the fixture's room and gives them varied history: usage, a running turn, a provider limit, open
+// inbox items, switches, and boundary grants. It returns the agents' ids.
 func seedRoomAgents(t *testing.T, f *fixture, n int) []string {
 	t.Helper()
 	ids := make([]string, 0, n)
@@ -232,6 +232,28 @@ func seedRoomAgents(t *testing.T, f *fixture, n int) []string {
 				return fmt.Errorf("%s: %w", statement.query, err)
 			}
 		}
+		if n >= 7 {
+			// A draining switch with an active handoff turn can be cancelled or continued, but not retried yet.
+			for _, statement := range []struct {
+				query string
+				args  []any
+			}{
+				{`INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_switch',?,0,'fresh_with_history',?)`, []any{ids[6], old}},
+				{`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec,started_at) VALUES ('trn_switch',?,'ses_switch',0,?,1,'normal','running',?)`, []any{ids[6], f.room.ID, old}},
+				{`INSERT INTO agent_switch(agent_id,room_id,tool,variant,model,provider,state,requested_at) VALUES (?,?,'fake','test','other','fake','draining',?)`, []any{ids[6], f.room.ID, old}},
+				{`INSERT INTO switch_handoff(agent_id,room_id,status,source,body_json,requested_at,overall_deadline,handoff_deadline,turn_id) VALUES (?,?,'automatic','automatic',?,?,?,?,'trn_switch')`, []any{ids[6], f.room.ID, `{"summary":"auto summary"}`, old, future, future}},
+			} {
+				if _, err := tx.Exec(statement.query, statement.args...); err != nil {
+					return fmt.Errorf("%s: %w", statement.query, err)
+				}
+			}
+		}
+		if n >= 8 {
+			// Once started, the switch row is gone but its completed handoff remains visible.
+			if _, err := tx.Exec(`INSERT INTO switch_handoff(agent_id,room_id,status,source,body_json,requested_at,overall_deadline) VALUES (?,?,'started','automatic',?,?,?)`, ids[7], f.room.ID, `{"summary":"started summary"}`, old, future); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -277,7 +299,7 @@ func TestRoomAgentListEqualsPerAgentReads(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	seedRoomAgents(t, f, 7)
+	seedRoomAgents(t, f, 8)
 	owner, err := f.db.UserByLogin(t.Context(), "owner")
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +316,11 @@ func TestRoomAgentListEqualsPerAgentReads(t *testing.T) {
 	}
 	// The history seeded above shows up, so the equality is not between two empty answers.
 	for _, needle := range []string{`"context_used":30`, `"cost_so_far":0.75`, `"cost_so_far":1.5`, `"code":"stuck"`, `"code":"out_of_quota"`, `"code":"held_answer"`, `"code":"recovery_waiting"`,
-		`"code":"machine_offline"`, `"state":"failed"`, `"path":"/tmp/alpha"`} {
+		`"code":"machine_offline"`, `"state":"failed"`, `"path":"/tmp/alpha"`,
+		`"state":"draining"`, `"handoff_status":"automatic"`, `"handoff_source":"automatic"`,
+		`"handoff":{"summary":"auto summary"}`, `"handoff_deadline":"2999-01-01T00:00:00.000000000Z"`,
+		`"can_cancel":true`, `"can_retry":false`, `"can_continue":true`,
+		`"state":"started"`, `"handoff":{"summary":"started summary"}`} {
 		if !strings.Contains(string(got), needle) {
 			t.Errorf("the list lacks %s: %s", needle, got)
 		}
