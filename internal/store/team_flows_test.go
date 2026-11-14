@@ -156,8 +156,15 @@ func TestTeamFlowRoutingAndExactReferenceGrant(t *testing.T) {
 		t.Fatalf("dispatcher joined home: %v", err)
 	}
 	var inTask int
-	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, f.other.ID, dispatcher.ID).Scan(&inTask); err != nil || inTask != 1 {
-		t.Fatalf("dispatcher task autojoin: %d %v", inTask, err)
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, f.other.ID, dispatcher.ID).Scan(&inTask); err != nil || inTask != 0 {
+		t.Fatalf("dispatcher joined an existing task by default: %d %v", inTask, err)
+	}
+	var generalMembers int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member m JOIN room r ON r.id=m.room_id WHERE r.project_id=? AND r.team_flow_room_key='general' AND m.member_kind='agent' AND m.left_at IS NULL`, f.project.ID).Scan(&generalMembers); err != nil || generalMembers != 0 {
+		t.Fatalf("general room has default agents: %d %v", generalMembers, err)
+	}
+	if err := f.s.AddMember(ctx, f.other.ID, "agent", dispatcher.ID); err != nil {
+		t.Fatal(err)
 	}
 	secret, err := f.s.InsertMessage(ctx, Message{RoomID: routing.ID, AuthorKind: "agent", AuthorID: dispatcher.ID, Body: "exact brief"})
 	if err != nil {

@@ -97,12 +97,12 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	routed.Diagram.Edges = []FlowEdge{{"home", "routing"}, {"routing", "general"}}
 	routed.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"routing", []string{"leader", "dispatcher"}}, {"general", []string{"dispatcher", "worker", "reviewer"}}, {"task", []string{"dispatcher", "worker", "reviewer"}}}
 	routed.SpawnRules = []FlowSpawnRule{{"leader", []string{"dispatcher"}}, {"dispatcher", []string{"worker", "reviewer"}}}
-	routed.AutoJoinRoles = []string{"leader", "dispatcher"}
+	routed.AutoJoinRoles = []string{"leader"}
 	routed.TaskParentKey = "general"
 	routed.GrantRoles = []string{"leader", "dispatcher"}
 	routed.RoleTextOverrides = map[string]string{
-		"leader":     "You are the project leader. Talk with the human and write specifications with goal, acceptance criteria, constraints, base, and priority. Hand each specification to the dispatcher in routing. Do not spawn or manage workers and reviewers. Decide questions escalated by the dispatcher; report the outcome to the human in the home room.\n\n" + leadSafety + "\n\n" + roleCommunication,
-		"dispatcher": dispatcherRoleBody + "\n\n" + roleSafety + "\n\n" + roleCommunication,
+		"leader":     "You are the project leader. Talk with the human and write specifications with goal, acceptance criteria, constraints, base, priority, and the team: how many workers and whether a reviewer is needed. Hand each specification to the dispatcher in routing. Do not spawn or manage workers and reviewers. Decide questions escalated by the dispatcher; report the outcome to the human in the home room.\n\n" + leadSafety + "\n\n" + roleCommunication,
+		"dispatcher": dispatcherRoleBody + " Spawn only the workers and reviewers called for by the specification or the leader. Add a reviewer only when the specification or leader asks for one; if the specification does not say, ask the leader in routing before spawning a reviewer.\n\n" + roleSafety + "\n\n" + roleCommunication,
 	}
 	custom := TeamFlowTemplate{Key: "custom", Label: "Custom", Description: "Keep the current rooms and role permissions."}
 	custom.Rooms = []FlowRoom{}

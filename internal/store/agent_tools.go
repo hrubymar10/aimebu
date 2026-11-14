@@ -305,15 +305,30 @@ func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title string) (
 			return Room{}, err
 		}
 	}
-	var parentProject, parentKind, parentLifecycle string
+	var parentProject, parentKind, parentLifecycle, parentKey string
 	var joined bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,kind,lifecycle,EXISTS(SELECT 1 FROM room_member
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,kind,lifecycle,team_flow_room_key,EXISTS(SELECT 1 FROM room_member
 		WHERE room_id=room.id AND member_kind='agent' AND member_id=? AND left_at IS NULL)
-		FROM room WHERE id=?`, agentID, parentID).Scan(&parentProject, &parentKind, &parentLifecycle, &joined); err != nil {
+		FROM room WHERE id=?`, agentID, parentID).Scan(&parentProject, &parentKind, &parentLifecycle, &parentKey, &joined); err != nil {
 		return Room{}, err
 	}
-	if parentProject != projectID || parentKind == "dm" || !joined {
+	if parentProject != projectID || parentKind == "dm" {
 		return Room{}, ErrForbidden
+	}
+	if !joined {
+		// In the dispatcher flow, general is a structural parent for new
+		// tasks, but the dispatcher starts only in routing. Creating a task
+		// beneath general does not add the dispatcher to that room.
+		var mayCreate bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent a JOIN role ro ON ro.id=a.role_id
+			JOIN project p ON p.id=a.project_id WHERE a.id=? AND a.project_id=?
+			AND p.team_flow_key='leader-dispatcher' AND ro.role_key='dispatcher' AND ?='general')`,
+			agentID, projectID, parentKey).Scan(&mayCreate); err != nil {
+			return Room{}, err
+		}
+		if !mayCreate {
+			return Room{}, ErrForbidden
+		}
 	}
 	if parentLifecycle != "open" {
 		return Room{}, ErrInvalidTransition

@@ -103,7 +103,14 @@ Projects, rooms, people
   the dispatcher flow marks `routing` restricted. The dispatcher is a
   singleton spawn-capable role without lead capability. A flow's spawn
   rules grant its task-room and agent-management authority; its auto-join
-  roles and task-parent key place it in routing and task rooms, never home.
+  roles and task-parent key place it in routing at setup; it joins task rooms
+  it creates or explicitly joins, never general by default or home. It may
+  create task rooms under general without joining general.
+  In this flow, the leader's specification states worker count and whether
+  review is needed. The dispatcher spawns only the requested team and asks
+  the leader in routing if review is unspecified. Workers and reviewers
+  report to whoever briefed them, ordinarily the dispatcher, without
+  mentioning the leader from a task room where the leader is not a member.
   **message_reference_grant**(source_message_id, target_no) records each
   existing `#N` cited by a role listed in the template's `grant_roles`,
   only when that author can read the target room directly. A member of the
@@ -1212,7 +1219,7 @@ it never silently reruns a turn with uncertain effects.
   agent_shared_notes[], task_notes[]},
   control_changes?, recovery_evidence?, correction_error?}, desired_rev,
   allowed_tools?, agent:{id, tool, variant, model, provider},
-  native_session?, native_session_started?, import_legacy_session?}` — rooms in context are information, not grants. For pi agents on gemma models `knowledge` is trimmed to a
+  native_session?, native_session_started?, import_legacy_session?}` — rooms in context list every current agent room membership, including restricted rooms, with its title and kind; they are information, not grants. In the dispatcher flow, the leader's role body names the live routing room title and ID. For pi agents on gemma models `knowledge` is trimmed to a
   shared 2048-byte budget of record bodies; later records are dropped. The
   attachment bearer is used only by Pi Docker, never journaled, and authorizes
   reads only for a delivered file in a live turn while the agent remains a

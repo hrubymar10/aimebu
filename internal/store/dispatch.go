@@ -56,6 +56,19 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				roleBody = override
 			}
 		}
+		if flowKey == "leader-dispatcher" && roleKey == "leader" {
+			var routingID, routingTitle string
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,title FROM room WHERE project_id=? AND team_flow_room_key='routing' AND lifecycle='open' ORDER BY created_at LIMIT 1`, projectID).Scan(&routingID, &routingTitle)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err == nil {
+				roleBody += fmt.Sprintf("\n\nHand specifications over in %s (%s).", routingTitle, routingID)
+			}
+		}
+		if flowKey == "leader-dispatcher" && (roleKey == "worker" || roleKey == "reviewer" || strings.HasSuffix(roleKey, "-reviewer")) {
+			roleBody += "\n\nIn a task room, report to the agent who briefed you (normally the dispatcher). Do not @mention the leader there; the leader is not a member of task rooms in this flow."
+		}
 		if roleBody, err = tx.withInlinePlan(roleID, roleBody); err != nil {
 			return err
 		}
@@ -148,7 +161,11 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if other > 0 {
 				return nil
 			}
-			contextData := map[string]any{"role_body": roleBody, "rooms": []map[string]string{{"room_id": special.RoomID}},
+			contextRooms, err := tx.agentRoomSnapshot(agentID)
+			if err != nil {
+				return err
+			}
+			contextData := map[string]any{"role_body": roleBody, "rooms": contextRooms,
 				"control_changes": map[string]any{"desired": "active", "desired_rev": desiredRev}}
 			if handoffTurn {
 				contextData["switch_handoff_request"] = "This is the dedicated switch handoff turn. Return exactly one message in this room. Its body must be a JSON object with string fields current_task, status, work_state (branches, SHAs, files), next_steps, open_questions, and cautions. Do not send ordinary room updates or perform new work; describe verified state for your successor."
@@ -498,7 +515,11 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if err != nil {
 			return err
 		}
-		contextData := map[string]any{"role_body": roleBody, "rooms": []map[string]string{{"room_id": roomID}},
+		contextRooms, err := tx.agentRoomSnapshot(agentID)
+		if err != nil {
+			return err
+		}
+		contextData := map[string]any{"role_body": roleBody, "rooms": contextRooms,
 			"control_changes": map[string]any{"desired": "active", "desired_rev": desiredRev}, "knowledge": knowledge,
 			"team_roster": roster, "you_are": self}
 		var startMode string
@@ -591,6 +612,27 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		return nil
 	})
 	return delivery, ready, err
+}
+
+// agentRoomSnapshot names every current room membership, including restricted
+// rooms. The snapshot is information for the agent and grants no new access.
+func (tx *Tx) agentRoomSnapshot(agentID string) ([]map[string]string, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.id,r.title,r.kind FROM room_member m JOIN room r ON r.id=m.room_id
+		WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL
+		ORDER BY r.created_at,r.id`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	rooms := []map[string]string{}
+	for rows.Next() {
+		var id, title, kind string
+		if err := rows.Scan(&id, &title, &kind); err != nil {
+			return nil, err
+		}
+		rooms = append(rooms, map[string]string{"room_id": id, "title": title, "kind": kind})
+	}
+	return rooms, rows.Err()
 }
 
 func (tx *Tx) importLegacySession(agentID, sessionID string) (bool, error) {

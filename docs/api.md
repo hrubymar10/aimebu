@@ -739,7 +739,7 @@ disabled or is not in the agent's project is 403 alike, so a login cannot be pro
 409 `project_archived`; 429 `human_dm_cap` (20 messages from one agent into one chat
 per hour) and 429 `human_dm_fanout_cap` (10 new chats per agent per hour). Agent to
 agent stays `dm_agent`, lead only.
-`create_room` records the agent in `created_by` and joins eligible lead roles atomically (a project's leader is in every open room in Custom and Leader and workers; in Leader and dispatcher, the leader is confined to home and routing, while the dispatcher joins routing and task rooms; private chats are not included), and
+`create_room` records the agent in `created_by` and joins eligible lead roles atomically (a project's leader is in every open room in Custom and Leader and workers; in Leader and dispatcher, the leader is confined to home and routing, while the dispatcher starts in routing and joins task rooms it creates or explicitly joins; general has no agent by default; private chats are not included), and
 posts one system notice in the parent room. `close_room` uses the same
 `lifecycle_rev`, child-room check, cascade option, grace period and control
 delivery as human archive. Repeated request keys replay the original result
