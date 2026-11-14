@@ -123,12 +123,15 @@ export class RoomPanelStore {
 
   async removeWorktree() {
     const room = this.room.peek(), call = this.begin('worktree');
-    if (room?.lifecycle === 'open') {
+    const ready = this.worktree.peek().view?.removeLabel === 'Remove worktree';
+    if (room?.lifecycle === 'open' && !ready) {
       try { await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: {} }); if (!this.current(call, room.id)) return; await this.loadWorktree(); }
       catch (error) { if (this.current(call, room.id)) this.setWorktreeStatus(error.message); }
       return;
     }
-    if (!room || !await confirmDialog('Remove this archived room worktree? Clean merged worktrees are removed; a dirty or unmerged worktree will be preserved.', { title: 'Remove worktree', confirm: 'Remove', danger: true })) return;
+    const prompt = room?.lifecycle === 'open' ? 'Archive this room and remove its worktree? Agents homed here stop. Clean merged worktrees are removed; a dirty or unmerged worktree will be preserved.'
+      : 'Remove this archived room worktree? Clean merged worktrees are removed; a dirty or unmerged worktree will be preserved.';
+    if (!room || !await confirmDialog(prompt, { title: 'Remove worktree', confirm: 'Remove', danger: true })) return;
     if (!this.current(call, room.id)) return;
     try {
       let result = await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: { force: false } });
@@ -185,9 +188,9 @@ export class RoomPanelStore {
 
   async remove() {
     const room = this.room.peek();
-    if (!room || room.kind === 'home' || room.kind === 'dm' || room.lifecycle !== 'closed') return;
+    if (!room || room.kind === 'home' || room.kind === 'dm' || room.lifecycle === 'closing') return;
     const call = this.begin('remove');
-    if (!await confirmDialog(`Remove ${room.title} for good? Its messages, reactions, notes, attachments and its usage and cost records are deleted and cannot be restored.`, { title: 'Remove room', confirm: 'Remove for good', danger: true })) return;
+    if (!await confirmDialog(`Delete ${room.title} for good? Agents homed here stop. Its messages, reactions, notes, attachments and its usage and cost records are deleted and cannot be restored.`, { title: 'Delete room', confirm: 'Delete for good', danger: true })) return;
     if (!this.current(call, room.id)) return;
     this.setBusy({ remove: true }); this.infoError.value = '';
     try {

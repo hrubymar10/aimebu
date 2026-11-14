@@ -48,7 +48,7 @@ assert.deepEqual(plain(m.detailsChanges({ name: 'A', folder: '/b' }, loaded, { c
 assert.deepEqual(plain(m.detailsChanges({ name: 'A', folder: '/a' }, loaded, { canName: true, canFolder: true })), {});
 
 assert.deepEqual(plain(m.lifecycleView(null, true)), { show: false, archive: false, reopen: false, remove: false, importer: false, note: '' });
-assert.deepEqual(plain(m.lifecycleView({}, true)), { show: true, archive: true, reopen: false, remove: false, importer: true, note: '' });
+assert.deepEqual(plain(m.lifecycleView({}, true)), { show: true, archive: true, reopen: false, remove: true, importer: true, note: '' });
 assert.equal(m.lifecycleView({}, false).note, 'Only the project owner or an admin can archive, reopen or delete a project.');
 const archived = plain(m.lifecycleView({ archived_at: '2026-02-03T04:05:06Z' }, true));
 assert.deepEqual([archived.archive, archived.reopen, archived.remove, archived.importer], [false, true, true, false], 'an archived project can be reopened or deleted, not imported into');

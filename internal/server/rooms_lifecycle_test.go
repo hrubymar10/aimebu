@@ -67,9 +67,6 @@ func TestOnlyTheProjectOwnerRemovesAnArchivedTaskRoom(t *testing.T) {
 	f.seed()
 	path := "/api/rooms/" + f.room.ID
 	status := func(resp *http.Response) int { resp.Body.Close(); return resp.StatusCode }
-	if got := status(f.request(http.MethodDelete, path, nil, true)); got != 409 {
-		t.Fatalf("an open room must be archived first: %d", got)
-	}
 	// An operator may archive but not remove.
 	cookie, csrf := registerSecondUser(t, f, "operator")
 	operator, err := f.db.UserByLogin(t.Context(), "operator")
@@ -115,6 +112,22 @@ func TestOnlyTheProjectOwnerRemovesAnArchivedTaskRoom(t *testing.T) {
 	}
 	if got := status(f.request(http.MethodGet, path, nil, false)); got != 404 {
 		t.Fatalf("the removed room is still readable: %d", got)
+	}
+}
+
+func TestOwnerDeletesOpenTaskRoomDirectly(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	path := "/api/rooms/" + f.room.ID
+	resp := f.request(http.MethodDelete, path, nil, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete open task room: %d", resp.StatusCode)
+	}
+	resp = f.request(http.MethodGet, path, nil, false)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("deleted room still exists: %d", resp.StatusCode)
 	}
 }
 

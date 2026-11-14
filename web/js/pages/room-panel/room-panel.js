@@ -26,7 +26,7 @@ export function RoomActions({ store }) {
   const remove = room ? removeControl(room, store.host.role(room.project_id)) : { hidden: true, disabled: true, title: '' };
   return html`<${IconButton} id="room-lifecycle" name=${life.glyph} label=${life.label} hidden=${life.hidden} disabled=${life.disabled || busy.lifecycle} onClick=${() => store.changeLifecycle()} />
     <${IconButton} id="room-leave" name="left" label="Leave chat" hidden=${!room || !canLeave(room)} disabled=${busy.leave} onClick=${() => store.leave()} />
-    <${IconButton} id="room-remove" name="trash" label="Remove room" danger title=${remove.title} hidden=${remove.hidden} disabled=${remove.disabled || busy.remove} onClick=${() => store.remove()} />`;
+    <${IconButton} id="room-remove" name="trash" label="Delete room" danger title=${remove.title} hidden=${remove.hidden} disabled=${remove.disabled || busy.remove} onClick=${() => store.remove()} />`;
 }
 
 export const InfoError = ({ store }) => store.infoError.value;

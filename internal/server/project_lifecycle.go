@@ -103,8 +103,9 @@ func (s *Server) reopenProject(w http.ResponseWriter, r *http.Request) {
 	s.projectState(w, r, id)
 }
 
-// DELETE /api/projects/{project} {name}: the project's owner or an admin deletes an archived project and everything in it. The body names
-// the project, as the person typed it to confirm.
+// DELETE /api/projects/{project} {name}: the project's owner or an admin archives
+// a live project, then deletes it when its agents and worktrees permit removal.
+// The body names the project, as the person typed it to confirm.
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("project")
 	if allowed, _ := s.projectOwnerOrAdmin(w, r, id); !allowed {
@@ -115,6 +116,23 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if !readJSON(w, r, &req) {
 		return
+	}
+	project, err := s.Store.ProjectByID(r.Context(), id)
+	if err != nil {
+		s.projectLifecycleError(w, err)
+		return
+	}
+	if req.Name != project.Name {
+		s.projectLifecycleError(w, store.ErrProjectNameMismatch)
+		return
+	}
+	if project.ArchivedAt == "" {
+		controls, _, err := s.Store.ArchiveProject(r.Context(), id, userID(r))
+		if err != nil {
+			s.projectLifecycleError(w, err)
+			return
+		}
+		s.sendRoomControls(r.Context(), controls)
 	}
 	if err := s.Store.DeleteProject(r.Context(), id, req.Name, userID(r)); err != nil {
 		s.projectLifecycleError(w, err)

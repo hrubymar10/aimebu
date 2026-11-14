@@ -795,8 +795,9 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
 - Closing a room never removes its worktree, and neither does anything else
   automatically (the daily cleanup, [cleanup](cleanup.md), only lists it in
   Health with its state; automatic removal of merged worktrees is planned
-  after 2.0.0). After the room is closed and its home agents have stopped, the
-  owner may remove the worktree from the room's settings: a clean worktree
+  after 2.0.0). The owner may request worktree removal from a live room; the
+  request starts its normal archive and proceeds when closure finishes
+  immediately. A clean worktree
   whose branch is merged into its recorded base ref is removed and its branch
   remains. Dirty, ignored (except aimebu's own `.aimebu/` adapter files), or
   unmerged content is preserved with a room notice. Transient failures retain
@@ -854,8 +855,10 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
   own control and daily limits say (`open` only when `control_desired=active`
   and no usage limit has paused it today, else `paused`). Agents stay stopped
   and schedules stay off. Event `project_reopened`.
-- Delete (owner or admin; only an archived project; the body must carry the
-  project's exact name, else 400): refused with 409 `project_busy` unless every
+- Delete (owner or admin; the body must carry the project's exact name, else
+  400 before any archive): archives a live project first, then removes it in
+  the same request when possible. A busy project remains archived for a later
+  retry. Deletion is refused with 409 `project_busy` unless every
   agent that is not revoked is confirmed stopped (`desired` and `observed` both
   `stopped`) or sits on a revoked machine, which can never come back (an agent
   on an approved machine that is merely offline may still be running its turn,

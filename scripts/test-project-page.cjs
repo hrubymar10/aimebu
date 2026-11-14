@@ -135,7 +135,7 @@ async function main() {
         [['worker', 'inherit', 'Inherit global (2 agents)', true, 0], ['leader', 'custom', 'Inherit global (0 agents)', false, 1]]);
       assert.deepEqual(await page.evaluate(() => ({ session: [document.querySelector('#project-session-import').hidden, document.querySelector('#project-session-import-open').disabled, document.querySelector('#project-session-import-open').title],
         rows: ['archive', 'reopen', 'delete'].map(key => [key, document.querySelector(`#project-${key}-row`).hidden, document.querySelector(`#project-${key}`).disabled]), note: document.querySelector('#project-lifecycle > p').textContent, group: document.querySelector('#project-lifecycle').hidden })),
-        { session: [false, false, 'Import Claude Code sessions'], rows: [['archive', false, false], ['reopen', true, false], ['delete', true, false]], note: '', group: false });
+        { session: [false, false, 'Import Claude Code sessions'], rows: [['archive', false, false], ['reopen', true, false], ['delete', false, false]], note: '', group: false });
       await page.close();
     }
     // Project settings previews a switch before applying it and lists agents that need a human action.
@@ -407,6 +407,25 @@ async function main() {
     }
     // Archive and delete: each asks first; archive reads the project again and lists agents that could not be stopped; delete needs the name typed.
     {
+      const live = await mount({ auto: { ...base(), 'DELETE /api/projects/p1': {} } });
+      await ready(live);
+      assert.equal(await live.$eval('#project-delete', el => el.hidden || el.disabled), false, 'a live project offers Delete directly');
+      await live.$eval('#project-delete', el => el.click());
+      await live.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      assert.match(await live.$eval('#app-dialog', el => el.textContent), /stops the project's agents.*cannot be undone/s);
+      await live.$eval('#app-dialog input', el => { el.value = 'Alpha'; });
+      await live.$eval('#app-dialog .app-dialog-ok', el => el.click());
+      await live.waitForFunction(() => window.__hooks.some(hook => hook[0] === 'removed'));
+      assert.deepEqual((await calls(live, 'DELETE'))[0], ['/api/projects/p1', { name: 'Alpha' }]);
+      await live.close();
+      const busy = await mount({ auto: { ...base(), 'DELETE /api/projects/p1': rule(409, { message: 'An agent is still stopping.' }) } });
+      await ready(busy);
+      await busy.$eval('#project-delete', el => el.click());
+      await busy.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      await busy.$eval('#app-dialog input', el => { el.value = 'Alpha'; });
+      await busy.$eval('#app-dialog .app-dialog-ok', el => el.click());
+      await busy.waitForFunction(() => document.querySelector('#project-settings-error').textContent.includes('An agent is still stopping.') && window.__hooks.some(hook => hook[0] === 'lifecycle'));
+      await busy.close();
       const page = await mount({ auto: { ...base(), 'POST /api/projects/p1/archive': { stop_failed: [{ error: 'unknown execution' }] }, 'DELETE /api/projects/p1': {} }, archived: false });
       await ready(page);
       await page.$eval('#project-archive', el => el.click());

@@ -137,11 +137,15 @@ export class ProjectStore {
   async remove() {
     const project = this.currentProject(); if (!project) return;
     const answer = await formDialog({ title: 'Delete project', danger: true, confirm: 'Delete project',
-      message: `This permanently deletes “${project.name}”: every room, message, reaction, attachment, agent, usage record, memory, schedule, task note, Inbox item and member. It cannot be undone. Files in the project folder and worktrees on disk are not touched.`,
+      message: `This stops the project's agents and permanently deletes “${project.name}”: every room, message, reaction, attachment, agent, usage record, memory, schedule, task note, Inbox item and member. It cannot be undone. Files in the project folder are not touched.`,
       fields: [{ name: 'name', label: `Type “${project.name}” to confirm`, required: true, requiredMessage: 'Type the project name to confirm.', validate: value => value === project.name ? '' : 'That is not the project name.' }] });
     if (!answer || !this.shows(project.id)) return;
     const done = await this.lifecycleCall('delete', project.id, '', { method: 'DELETE', body: { name: answer.name } });
     if (done && this.alive) await this.onRemoved?.(project.id);
+    else if (!done && !project.archived_at && this.shows(project.id)) {
+      // A pending stop may leave the project archived even though deletion returned 409.
+      try { await this.onLifecycle?.(project.id); } catch { /* keep the deletion error visible */ }
+    }
   }
 
   // Importing the Claude Code sessions a machine already has: one agent and one room per session, each on a copy of its session.

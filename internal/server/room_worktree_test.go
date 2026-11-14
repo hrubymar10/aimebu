@@ -261,6 +261,39 @@ func TestRoomWorktreeAPICloseAndReopen(t *testing.T) {
 	}
 }
 
+func TestRemoveOpenRoomWorktreeArchivesRoomFirst(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	root := f.project.Folder
+	gitTest(t, root, "init", "-q")
+	gitTest(t, root, "config", "user.name", "Test")
+	gitTest(t, root, "config", "user.email", "test@example.invalid")
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("base\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, root, "add", "tracked.txt")
+	gitTest(t, root, "commit", "-qm", "base")
+	path := "/api/rooms/" + f.room.ID + "/worktree"
+	resp := f.request(http.MethodPost, path, map[string]any{"enabled": true}, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create worktree: %d", resp.StatusCode)
+	}
+	resp = f.request(http.MethodDelete, path, map[string]any{}, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete open-room worktree: %d", resp.StatusCode)
+	}
+	room, err := f.db.RoomByID(t.Context(), f.room.ID)
+	if err != nil || room.Lifecycle != "closed" {
+		t.Fatalf("room after worktree removal: %+v %v", room, err)
+	}
+	item, found, err := f.db.RoomWorktree(t.Context(), f.room.ID, f.machineID)
+	if err != nil || !found || item.State != "removed" {
+		t.Fatalf("worktree after removal: %+v found=%v err=%v", item, found, err)
+	}
+}
+
 // A viewer is told where a room's worktree is under the project, not the absolute path on the machine's disk; the people who work there see it.
 func TestViewerDoesNotSeeTheWorktreesAbsolutePath(t *testing.T) {
 	t.Parallel()

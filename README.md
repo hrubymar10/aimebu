@@ -516,8 +516,9 @@ line saying that the home room works in the project folder while task rooms can
 have their own Git worktree. Project folder inputs offer matching directories
 as a path is typed, using the machine that holds the folder. Room settings (one control size throughout; Kind and Room ID show only while the message debug
 inspector is on) offers
-Archive/Reopen for non-home rooms and, for an archived task room, a destructive
-Remove room (project owner only; the room and its messages are deleted for good,
+Archive/Reopen for non-home rooms and, for a task room, a destructive
+Delete room (project owner only; open rooms are archived and their agents stopped
+before the room and its messages are deleted for good,
 see `DELETE /api/rooms/{room}`; a room removed elsewhere leaves every other open page's list, and
 opening one a page still lists shows "<room> no longer exists." and goes to the project's home room, the
 same as when the person lost access to it), and shows room information (Room settings also
@@ -934,7 +935,7 @@ unobserved effect.
 A project can be archived and deleted from its home room's settings → Project (its owner or an admin; icons with a confirmation).
 Archiving makes the project and all its rooms read-only (changes are refused with `project_archived`), stops its agents,
 switches its schedules off and moves it to "Archived projects" in the room list, where its rooms stay readable; reopening
-lifts that and leaves the agents stopped. Only an archived project can be deleted, by typing its name: that removes every
+lifts that and leaves the agents stopped. Deleting a project by typing its name archives a live one first, then removes every
 room, message, attachment, agent, memory and setting in it (a running agent or live worktree refuses), while the files in the
 project folder and any worktrees on disk are left alone.
 Room settings and Project settings also show bulk agent controls. Pause holds

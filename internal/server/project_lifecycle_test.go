@@ -1,6 +1,8 @@
 package server
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -12,6 +14,28 @@ import (
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
+
+func TestOwnerDeletesLiveProjectDirectly(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	path := "/api/projects/" + f.project.ID
+	wrong := f.request(http.MethodDelete, path, map[string]string{"name": "wrong"}, true)
+	wrong.Body.Close()
+	if wrong.StatusCode != http.StatusBadRequest {
+		t.Fatalf("wrong name before archive: %d", wrong.StatusCode)
+	}
+	if project, err := f.db.ProjectByID(t.Context(), f.project.ID); err != nil || project.ArchivedAt != "" {
+		t.Fatalf("wrong name archived project: %+v %v", project, err)
+	}
+	resp := f.request(http.MethodDelete, path, map[string]string{"name": f.project.Name}, true)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("direct project delete: %d", resp.StatusCode)
+	}
+	if _, err := f.db.ProjectByID(t.Context(), f.project.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted project remains: %v", err)
+	}
+}
 
 func TestProjectArchiveReopenAndDelete(t *testing.T) {
 	t.Parallel()
@@ -122,11 +146,14 @@ func TestProjectArchiveReopenAndDelete(t *testing.T) {
 
 	archive := func(path string) *http.Response { return f.request("POST", "/api/projects/"+doomed.ID+path, nil, true) }
 
-	// A live project cannot be deleted; only its owner or an admin may archive, and a viewer is refused.
+	// Direct delete archives the live project, but a pending agent stop keeps it for retry.
 	resp = f.request("DELETE", "/api/projects/"+doomed.ID, map[string]string{"name": doomed.Name}, true)
 	resp.Body.Close()
 	if resp.StatusCode != 409 {
 		t.Fatalf("delete of a live project: %d", resp.StatusCode)
+	}
+	if kept, err := f.db.ProjectByID(t.Context(), doomed.ID); err != nil || kept.ArchivedAt == "" {
+		t.Fatalf("busy direct delete should retain the archived project: %+v %v", kept, err)
 	}
 	for name, who := range map[string][2]any{"viewer": {viewerCookie, viewerCSRF}, "outsider": {outsiderCookie, outsiderCSRF}} {
 		resp := f.requestAs(t, who[0].(*http.Cookie), who[1].(string), "POST", "/api/projects/"+doomed.ID+"/archive", nil)

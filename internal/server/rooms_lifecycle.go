@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
@@ -109,7 +110,37 @@ func (s *Server) sendRoomControls(ctx context.Context, controls []store.AgentCar
 	}
 }
 
-// DELETE /api/rooms/{room}: the project owner removes an archived task room for good.
+// archiveRoomForDeletion starts the ordinary close and advances it once. A
+// running turn may keep the room closing; the caller then gets the same
+// not-closed conflict as an explicit archive followed by delete.
+func (s *Server) archiveRoomForDeletion(ctx context.Context, room store.Room, actor string) (store.Room, error) {
+	if room.Lifecycle == "open" {
+		closed, controls, err := s.Store.BeginRoomClose(ctx, room.ID, actor, room.LifecycleRev, false)
+		if err != nil {
+			return room, err
+		}
+		room = closed
+		s.sendRoomControls(ctx, controls)
+	}
+	if room.Lifecycle == "closing" {
+		controls, _, err := s.Store.AdvanceRoomClosures(ctx, 30*time.Second)
+		if err != nil {
+			return room, err
+		}
+		s.sendRoomControls(ctx, controls)
+		room, err = s.Store.RoomByID(ctx, room.ID)
+		if err != nil {
+			return room, err
+		}
+	}
+	if room.Lifecycle != "closed" {
+		return room, store.ErrRoomNotClosed
+	}
+	return room, nil
+}
+
+// DELETE /api/rooms/{room}: the project owner archives a live task room and
+// removes it when its close can finish immediately.
 func (s *Server) removeRoom(w http.ResponseWriter, r *http.Request) {
 	room, err := s.Store.RoomByID(r.Context(), r.PathValue("room"))
 	if err != nil {
@@ -128,20 +159,39 @@ func (s *Server) removeRoom(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 403, "forbidden", "project owner required")
 		return
 	}
+	if room.Kind == "home" {
+		roomRemoveError(w, store.ErrHomeRoom)
+		return
+	}
+	if room.Kind == "dm" {
+		roomRemoveError(w, store.ErrRoomNotRemovable)
+		return
+	}
+	room, err = s.archiveRoomForDeletion(r.Context(), room, userID(r))
+	if err != nil {
+		roomRemoveError(w, err)
+		return
+	}
 	if err := s.Store.RemoveRoom(r.Context(), room.ID); err != nil {
-		switch {
-		case errors.Is(err, store.ErrHomeRoom):
-			apiError(w, 409, "home_room", "project home room cannot be removed")
-		case errors.Is(err, store.ErrRoomNotClosed):
-			apiError(w, 409, "room_not_closed", "archive the room before removing it")
-		case errors.Is(err, store.ErrOpenChildren):
-			apiError(w, 409, "has_children", "remove the child rooms first")
-		case errors.Is(err, store.ErrRoomNotRemovable):
-			apiError(w, 409, "room_not_removable", "private chats and rooms with a live worktree cannot be removed")
-		default:
-			fail(w, err)
-		}
+		roomRemoveError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func roomRemoveError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrHomeRoom):
+		apiError(w, 409, "home_room", "project home room cannot be removed")
+	case errors.Is(err, store.ErrRoomNotClosed):
+		apiError(w, 409, "room_not_closed", "room archive is still in progress; retry when it closes")
+	case errors.Is(err, store.ErrOpenChildren):
+		apiError(w, 409, "has_children", "remove the child rooms first")
+	case errors.Is(err, store.ErrRoomNotRemovable):
+		apiError(w, 409, "room_not_removable", "private chats and rooms with a live worktree cannot be removed")
+	case errors.Is(err, store.ErrStaleRev), errors.Is(err, store.ErrInvalidTransition):
+		roomLifecycleError(w, err)
+	default:
+		fail(w, err)
+	}
 }

@@ -1254,6 +1254,18 @@ async function main() {
     ['remove room', { lifecycle: 'closed' }, async page => { await page.evaluate(() => { window.__panel = window.__chat.removeRoom(); }); await dialogOk(page); }, 'DELETE', '^/api/rooms/rm_a$', null],
     ['export', {}, page => page.evaluate(() => { window.__panel = window.__chat.exportRoom('json'); }), 'GET', '/rooms/rm_a/export', null],
   ];
+  {
+    const page = await panelRoom();
+    await page.evaluate(() => window.__chat.loadWorktree());
+    await page.waitForFunction(() => !window.__chat.worktreeSection.querySelector('button.btn-danger')?.hidden);
+    assert.equal(await page.evaluate(() => window.__chat.worktreeSection.querySelector('button.btn-danger').textContent), 'Remove worktree', 'a live room offers worktree removal');
+    await page.evaluate(() => { window.__panel = window.__chat.removeWorktree(); });
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    assert.match(await page.$eval('#app-dialog', node => node.textContent), /Archive this room and remove its worktree.*Agents homed here stop/s);
+    await dialogOk(page);
+    await page.waitForFunction(() => window.__requests.some(request => request.method === 'DELETE' && request.path === '/api/rooms/rm_a/worktree'));
+    await page.close();
+  }
   for (const [name, extra, start, method, re] of cases) {
     for (const how of ['open', 'reset', 'reset-same', 'revisit']) {
       for (const outcome of ['ok', 'fail']) {
@@ -1523,7 +1535,7 @@ async function main() {
     let page = await show({});
     let state = await dialog(page);
     assert.deepEqual([state.open, state.rename, state.facts, state.debug], [true, [true, 'rm_a'], ['Kind', 'task', 'Status', 'open', 'Members', '2', 'Room ID', 'rm_a'], 4], 'an owner renames the task room in its own field');
-    assert.deepEqual([state.lifecycle, state.leave.shown, state.remove, state.hide], [{ shown: true, disabled: false, label: 'Archive room', title: 'Archive room' }, false, { shown: true, disabled: true, label: 'Remove room', title: 'Archive the room before removing it' }, true]);
+    assert.deepEqual([state.lifecycle, state.leave.shown, state.remove, state.hide], [{ shown: true, disabled: false, label: 'Archive room', title: 'Archive room' }, false, { shown: true, disabled: false, label: 'Delete room', title: 'Delete this room and its messages for good' }, true]);
     assert.deepEqual([state.notes, state.worktree.shown, state.memory.shown], [{ shown: true, text: 'Task notes Notes the agents keep for this task. They stay with this room. Open task notes' }, true, true]);
     await page.$eval('#room-info-close', node => node.click());
     assert.equal((await dialog(page)).open, false, 'Close closes the dialog');
@@ -1531,7 +1543,14 @@ async function main() {
     assert.deepEqual((await dialog(page)).lifecycle, { shown: true, disabled: true, label: 'Closing…', title: 'Closing…' }, 'a room that is closing cannot be archived again');
     await page.evaluate(() => window.__chat.setRoomFacts({ ...window.__chat.room, lifecycle: 'closed' })); await settle(page);
     state = await dialog(page);
-    assert.deepEqual([state.lifecycle, state.remove], [{ shown: true, disabled: false, label: 'Reopen room', title: 'Reopen room' }, { shown: true, disabled: false, label: 'Remove room', title: 'Remove this room and its messages for good' }], 'the open dialog follows the room\'s lifecycle');
+    assert.deepEqual([state.lifecycle, state.remove], [{ shown: true, disabled: false, label: 'Reopen room', title: 'Reopen room' }, { shown: true, disabled: false, label: 'Delete room', title: 'Delete this room and its messages for good' }], 'the open dialog follows the room\'s lifecycle');
+    await page.close();
+    page = await show({});
+    await page.$eval('#room-remove', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    assert.match(await page.$eval('#app-dialog', node => node.textContent), /Agents homed here stop.*cannot be restored/s, 'deleting an open room explains the permanent stop');
+    await page.$eval('#app-dialog .app-dialog-ok', node => node.click());
+    await page.waitForFunction(() => window.__requests.some(request => request.method === 'DELETE' && request.path === '/api/rooms/rm_a'));
     await page.close();
     page = await show({}, 'viewer');
     state = await dialog(page);

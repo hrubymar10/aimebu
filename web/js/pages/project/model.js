@@ -61,7 +61,7 @@ export function detailsChanges(drafts, loaded, view) {
 
 export function lifecycleView(project, allowed) {
   const archived = !!project?.archived_at;
-  return { show: !!project, archive: !!project && !archived, reopen: !!project && archived, remove: !!project && archived, importer: !!project && !archived,
+  return { show: !!project, archive: !!project && !archived, reopen: !!project && archived, remove: !!project, importer: !!project && !archived,
     note: !project ? '' : !allowed ? 'Only the project owner or an admin can archive, reopen or delete a project.' : archived ? `Archived ${new Date(project.archived_at).toLocaleString()}. It is read-only.` : '' };
 }
 

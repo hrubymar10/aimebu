@@ -315,16 +315,19 @@ func (s *Server) roomWorktree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if room.Lifecycle != "closed" {
-		if item.Path != "" {
-			apiError(w, 409, "room_open", "archive the room before removing its worktree")
+		if item.Path == "" {
+			if err := s.Store.CancelRoomWorktree(r.Context(), room.ID); err != nil {
+				worktreeError(w, err)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"enabled": false})
 			return
 		}
-		if err := s.Store.CancelRoomWorktree(r.Context(), room.ID); err != nil {
-			worktreeError(w, err)
+		room, err = s.archiveRoomForDeletion(r.Context(), room, userID(r))
+		if err != nil {
+			roomRemoveError(w, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"enabled": false})
-		return
 	}
 	if item.Path == "" {
 		apiError(w, 404, "not_found", "worktree was not created on this machine")

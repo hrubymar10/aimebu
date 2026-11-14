@@ -38,10 +38,9 @@ export function lifecycleControl(room) {
   return { hidden: room.kind === 'home', disabled: room.lifecycle === 'closing', glyph: closed ? 'reopen' : 'archive', label: closed ? 'Reopen room' : room.lifecycle === 'closing' ? 'Closing…' : 'Archive room' };
 }
 
-// Removing is for archived task rooms only: never a home room or a private chat, and not while the room is open.
+// Deleting is for task rooms only: never a home room or a private chat.
 export function removeControl(room, role) {
-  const disabled = room.lifecycle !== 'closed';
-  return { hidden: room.kind === 'home' || room.kind === 'dm' || role !== 'owner', disabled, title: disabled ? 'Archive the room before removing it' : 'Remove this room and its messages for good' };
+  return { hidden: room.kind === 'home' || room.kind === 'dm' || role !== 'owner', disabled: room.lifecycle === 'closing', title: 'Delete this room and its messages for good' };
 }
 
 export const canLeave = room => !!room.agent_chat;
@@ -52,8 +51,8 @@ export function worktreeView(item, room) {
     status: item.enabled === false ? 'Using the project folder.' : `${state}: ${item.path || item.relative_path}${item.reason ? ` · ${item.reason}` : ''}${item.dirty_base_count ? ` · The base has ${item.dirty_base_count} uncommitted changes, which are not in the worktree.` : ''}`,
     createHidden: room.lifecycle !== 'open' || (item.enabled !== false && state !== 'failed'),
     createLabel: state === 'failed' ? 'Retry worktree' : 'Create worktree',
-    removeHidden: item.enabled === false || (room.lifecycle !== 'closed' && !!item.path),
-    removeLabel: room.lifecycle === 'closed' ? 'Remove worktree' : 'Cancel worktree',
+    removeHidden: item.enabled === false,
+    removeLabel: (item.path || room.lifecycle === 'closed') ? 'Remove worktree' : 'Cancel worktree',
   };
 }
 

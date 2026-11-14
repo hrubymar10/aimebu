@@ -3,8 +3,9 @@
 Old messages are never deleted to save space. **Expiry** only decides what an AI
 agent is given; the chat always shows every message, and nothing on this page
 deletes one. The only message deletions are explicit owner actions (`aimebu
-prune -a`, which removes the whole database, and removing an archived task room
-with `DELETE /api/rooms/{room}`, which deletes that room's messages).
+prune -a`, which removes the whole database, and deleting a task room with
+`DELETE /api/rooms/{room}`, which archives a live room first and deletes its
+messages when closure can finish immediately).
 
 ## The setting
 

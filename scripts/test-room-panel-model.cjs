@@ -33,12 +33,12 @@ assert.deepEqual([{ kind: 'task' }, { kind: 'task', lifecycle: 'closing' }, { ki
   { hidden: false, disabled: false, glyph: 'archive', label: 'Archive room' }, { hidden: false, disabled: true, glyph: 'archive', label: 'Closing…' },
   { hidden: false, disabled: false, glyph: 'reopen', label: 'Reopen room' }, { hidden: true, disabled: false, glyph: 'archive', label: 'Archive room' }]);
 assert.deepEqual([['task', 'owner', 'open'], ['task', 'owner', 'closed'], ['task', 'operator', 'closed'], ['home', 'owner', 'closed'], ['dm', 'owner', 'closed']].map(([kind, role, lifecycle]) => plain(removeControl({ kind, lifecycle }, role))), [
-  { hidden: false, disabled: true, title: 'Archive the room before removing it' }, { hidden: false, disabled: false, title: 'Remove this room and its messages for good' },
-  { hidden: true, disabled: false, title: 'Remove this room and its messages for good' }, { hidden: true, disabled: false, title: 'Remove this room and its messages for good' }, { hidden: true, disabled: false, title: 'Remove this room and its messages for good' }]);
+  { hidden: false, disabled: false, title: 'Delete this room and its messages for good' }, { hidden: false, disabled: false, title: 'Delete this room and its messages for good' },
+  { hidden: true, disabled: false, title: 'Delete this room and its messages for good' }, { hidden: true, disabled: false, title: 'Delete this room and its messages for good' }, { hidden: true, disabled: false, title: 'Delete this room and its messages for good' }]);
 assert.deepEqual([canLeave({ agent_chat: true }), canLeave({}), canLeave({ agent_chat: false })], [true, false, false]);
 
 const ready = { enabled: true, state: 'ready', path: '/w/x', relative_path: 'x' };
-assert.deepEqual(plain(worktreeView(ready, { lifecycle: 'open' })), { status: 'ready: /w/x', createHidden: true, createLabel: 'Create worktree', removeHidden: true, removeLabel: 'Cancel worktree' });
+assert.deepEqual(plain(worktreeView(ready, { lifecycle: 'open' })), { status: 'ready: /w/x', createHidden: true, createLabel: 'Create worktree', removeHidden: false, removeLabel: 'Remove worktree' });
 assert.deepEqual(plain(worktreeView({ enabled: true, state: 'failed', reason: 'git said no', relative_path: 'x', dirty_base_count: 2 }, { lifecycle: 'open' })), {
   status: 'failed: x · git said no · The base has 2 uncommitted changes, which are not in the worktree.', createHidden: false, createLabel: 'Retry worktree', removeHidden: false, removeLabel: 'Cancel worktree' });
 assert.deepEqual(plain(worktreeView({ enabled: false }, { lifecycle: 'open' })), { status: 'Using the project folder.', createHidden: false, createLabel: 'Create worktree', removeHidden: true, removeLabel: 'Cancel worktree' });
