@@ -181,6 +181,25 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('#project-team-flow .btn-primary')?.disabled);
       await page.close();
     }
+    // A failed flow read leaves the composer usable and offers a retry; a successful retry restores the pending setup state.
+    {
+      const auto = base(); auto['GET /api/team-flows'] = rule(503, { error: 'temporarily unavailable' });
+      auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
+      const page = await mount({ auto });
+      await page.evaluate(async () => {
+        const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js');
+        window.__setupChanges = [];
+        window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {}, onSetupChange: pending => window.__setupChanges.push(pending) });
+        window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' });
+      });
+      await page.waitForSelector('#team-flow-home .error');
+      assert.equal(await page.evaluate(() => window.__setupChanges.at(-1)), false, 'a failed load does not lock the composer');
+      assert.equal(await page.$eval('#team-flow-home button', button => button.textContent), 'Retry');
+      await page.evaluate(templates => { window.__auto['GET /api/team-flows'] = { templates }; }, flows);
+      await page.$eval('#team-flow-home button', button => button.click());
+      await page.waitForFunction(() => window.__setupChanges.at(-1) === true && !!document.querySelector('#team-flow-home .team-setup-wizard'));
+      await page.close();
+    }
     // The inline home setup starts with A for a new project; migrated C can be kept in one click and stays dismissed after reload.
     {
       const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
@@ -195,6 +214,13 @@ async function main() {
       assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false], 'owner permission is read after the home page mounts');
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), [...node.querySelectorAll('.team-flow-thumbnail-agent text')].map(text => text.textContent)])),
         [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', []]], 'the topology comes from spawn rules, not the room diagram');
+      const fitted = () => page.$$eval('#team-flow-home .team-flow-option:nth-child(-n+2)', options => options.map(option => {
+        const frame = option.querySelector('.team-flow-thumbnail').getBoundingClientRect();
+        const worker = option.querySelector('.team-flow-thumbnail-agent:last-child rect').getBoundingClientRect();
+        const expand = option.querySelector('.team-flow-diagram-open span').getBoundingClientRect();
+        return worker.left >= frame.left && worker.right <= frame.right && worker.top >= frame.top && worker.bottom <= expand.top - 2;
+      }));
+      assert.deepEqual(await fitted(), [true, true], 'desktop thumbnails fit above the expand control');
       assert.equal(await page.$('script[src*="mermaid"]'), null, 'thumbnail does not load Mermaid at page start');
       await page.$eval('#team-flow-home .team-flow-diagram-open', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-lightbox')?.open && !!document.querySelector('#team-flow-home .team-flow-lightbox svg'));
@@ -203,6 +229,7 @@ async function main() {
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-lightbox')?.open);
       await page.setViewport({ width: 390, height: 844 });
       assert.equal(await page.$eval('#team-flow-home .team-flow-card', row => getComputedStyle(row).gridTemplateColumns.split(' ').length), 1, 'phone layout stacks description above diagram');
+      assert.deepEqual(await fitted(), [true, true], 'phone thumbnails fit above the expand control');
       await page.setViewport({ width: 1280, height: 800 });
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
       await page.$eval('#team-flow-home .btn-primary', node => node.click());

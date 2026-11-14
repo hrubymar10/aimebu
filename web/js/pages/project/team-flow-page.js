@@ -64,7 +64,7 @@ function DiagramPreview({ template }) {
     </g>`;
   };
   return html`<div class="team-flow-diagram team-flow-thumbnail" aria-label="Agent topology diagram preview">
-    <svg viewBox=${`0 0 ${width} ${height}`} role="img" aria-label=${`${path.slice(0, -1).map(roleLabel).join(' to ')} to three workers`}>
+    <svg viewBox=${`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label=${`${path.slice(0, -1).map(roleLabel).join(' to ')} to three workers`}>
       ${edges.map(arrow)}
       ${nodes.map(box => html`<g key=${box.key} class="team-flow-thumbnail-agent">
         <title>${box.label}</title>

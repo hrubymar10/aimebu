@@ -256,6 +256,7 @@ const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...
 const teamFlowHome = new TeamFlowHome({
   canEdit: id => ['owner', 'operator'].includes(sidebar.projects.get(id)?.role),
   projectForID: id => sidebar.projects.get(id),
+  onSetupChange: pending => chat.setSetupPending(pending),
   onApplied: async projectID => {
     await sidebar.refreshProject(projectID);
     teamFlowHome.refreshIfProject(projectID);
@@ -430,6 +431,7 @@ async function openRoom(room, messageID, { listed = false } = {}) {
   agents.setRoomFacts(room);
   history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(room.id)}`);
   try { localStorage.setItem('aimebu2.lastRoom', room.id); } catch { /* private mode: nothing to remember */ }
+  teamFlowHome.setRoom(room);
   try { await chat.open(room); } catch (error) {
     // The room was removed (or taken away) after the list was read, in another tab or by another person: say so and go to the project's home
     // room. A 403 is the same: the person no longer reaches it.
@@ -439,7 +441,6 @@ async function openRoom(room, messageID, { listed = false } = {}) {
     return false;
   }
   if (!current() || chat.room?.id !== room.id) return false;
-  teamFlowHome.setRoom(room);
   knowledge.setRoom(room);
   await agents.setRoom(room);
   if (!current()) return false;

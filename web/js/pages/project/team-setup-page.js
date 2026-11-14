@@ -70,7 +70,7 @@ function Summary({ body, preview, options, selectedRemovals, onToggleRemoval }) 
   </div>`;
 }
 
-export function TeamSetupPage({ flow, canEditProject, projectForID }) {
+export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
   const state = flow.state.value, templates = flow.templates.value, selected = flow.selected.value;
   const canEdit = canEditProject(flow.projectID), project = projectForID(flow.projectID);
   const [step, setStep] = useState(1), [choices, setChoices] = useState(null), [loadError, setLoadError] = useState('');
@@ -108,7 +108,7 @@ export function TeamSetupPage({ flow, canEditProject, projectForID }) {
     return () => { generation.current++; };
   }, [flow.projectID]);
   if (!state && flow.loading.value) return html`<section class="team-flow-home-card" role="status">Loading team flows…</section>`;
-  if (!state && flow.error.value) return html`<section class="team-flow-home-card"><p class="error" role="alert">Could not load team flows: ${flow.error.value}</p><button type="button" class="btn" onClick=${() => flow.load(flow.projectID)}>Retry</button></section>`;
+  if (!state && flow.error.value) return html`<section class="team-flow-home-card"><p class="error" role="alert">Could not load team flows: ${flow.error.value}</p><button type="button" class="btn" onClick=${onRetry}>Retry</button></section>`;
   if (!state || !state.review_pending && state.key) return null;
   const migrated = state.key === 'custom' && state.review_pending;
   const steps = selected === 'leader-dispatcher' ? ['Team flow', 'Leader', 'Dispatcher', 'Workers and reviewers', 'Project settings', 'Summary'] : ['Team flow', 'Leader', 'Workers and reviewers', 'Project settings', 'Summary'];

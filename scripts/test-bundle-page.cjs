@@ -39,6 +39,8 @@ async function main() {
       const text = await response.text(); return { status: response.status, body: text ? JSON.parse(text) : null };
     }, url, method, payload);
     const project = (await call('/api/projects', 'POST', { name: 'Bundle', folder })).body;
+    const flow = (await call(`/api/projects/${project.id}/team-flow`, 'GET')).body;
+    assert.equal((await call(`/api/projects/${project.id}/team-flow`, 'PUT', { key: 'custom', rev: flow.rev })).status, 200);
     const home = (await call(`/api/projects/${project.id}/rooms`, 'GET')).body.find(room => room.kind === 'home');
     assert.equal((await call(`/api/rooms/${home.id}/messages`, 'POST', { body: 'a message from the bundle' })).status, 201);
     assert.equal((await call('/api/me/preferences', 'PUT', { preferences: { harness_setup_skipped: '1' } })).status, 200);

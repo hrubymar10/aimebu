@@ -27,6 +27,8 @@ async function main() {
       const text = await response.text(); return { status: response.status, body: text ? JSON.parse(text) : null };
     }, url, method, payload);
     const project = (await call('/api/projects', 'POST', { name: 'Emoji', folder })).body;
+    const flow = (await call(`/api/projects/${project.id}/team-flow`, 'GET')).body;
+    assert.equal((await call(`/api/projects/${project.id}/team-flow`, 'PUT', { key: 'custom', rev: flow.rev })).status, 200);
     const home = (await call(`/api/projects/${project.id}/rooms`, 'GET')).body.find(room => room.kind === 'home');
     assert.equal((await call(`/api/rooms/${home.id}/messages`, 'POST', { body: 'a message to react to' })).status, 201);
     // A server with no harness offers the first-run harness card as a modal over the app: that is skipped, as the person's own stored choice.

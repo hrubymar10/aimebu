@@ -177,7 +177,15 @@ export class Chat {
     this.lightbox.close();
     this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
+    this.setupPending = false; this.form.inert = false; this.draft.placeholder = 'Message'; this.formatting.setPlaceholder('Message');
     this.draft.disabled = true; this.emojiButton.disabled = true; this.attachmentInput.disabled = true; this.form.querySelector('button[type=submit]').disabled = true;
+  }
+  setSetupPending(pending) {
+    this.setupPending = !!pending;
+    this.form.inert = this.setupPending;
+    const placeholder = this.setupPending ? 'Finish the project setup to start chatting' : 'Message';
+    this.draft.placeholder = placeholder; this.formatting.setPlaceholder(placeholder);
+    if (this.room) this.setRoomFacts(this.room);
   }
   destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); this.threadView.destroy(); this.listView.destroy(); this.pendingView.destroy(); }
   // With no room open the chat shows an empty-state card instead of the composer and room controls; the app decides what the card says.
@@ -344,7 +352,7 @@ export class Chat {
     // A chat between agents has no project of its own: the server says whether this person may write in it (a role in one of the agents' projects).
     const agentChat = !!room.agent_chat;
     const viewer = agentChat ? room.can_write === false : this.projectRole?.(room.project_id) === 'viewer';
-    const writable = open && (!viewer || (room.kind === 'dm' && !agentChat));
+    const writable = open && !this.setupPending && (!viewer || (room.kind === 'dm' && !agentChat));
     this.draft.disabled = !writable; this.emojiButton.disabled = !writable;
     this.form.querySelector('button[type=submit]').disabled = !writable || this.pendingUploads > 0;
     this.attachmentInput.disabled = !writable;
@@ -423,11 +431,11 @@ export class Chat {
   addFiles(files) { return this.store.addFiles(files); }
   renderThreadPending() {
     this.threadPendingView.update({ attachments: this.store.threadPending, uploads: this.store.threadUploads, onRemove: attachment => this.store.removeThreadAttachment(attachment) });
-    this.threadForm.querySelector('button[type=submit], button:not([type])').disabled = this.store.threadUploads > 0 || this.room?.lifecycle !== 'open';
+    this.threadForm.querySelector('button[type=submit], button:not([type])').disabled = this.setupPending || this.store.threadUploads > 0 || this.room?.lifecycle !== 'open';
   }
   renderPending() {
     this.pendingView.update({ attachments: this.pendingAttachments, uploads: this.pendingUploads, onRemove: attachment => this.store.removeAttachment(attachment) });
-    this.form.querySelector('button[type=submit]').disabled = this.pendingUploads > 0 || this.room?.lifecycle !== 'open';
+    this.form.querySelector('button[type=submit]').disabled = this.setupPending || this.pendingUploads > 0 || this.room?.lifecycle !== 'open';
   }
   // Whether message bodies show as raw Markdown is a personal preference kept on the server (see preferences.js); the browser copy lets the
   // page paint it at once. It is read again after sign-in, when the server's value is known.

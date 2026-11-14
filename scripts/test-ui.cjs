@@ -1598,6 +1598,8 @@ async function main() {
     await first.waitForSelector('#team-flow-home .team-flow-card');
     assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false], 'the new project owner can choose a flow immediately');
     assert.equal(await first.$eval('#team-flow-home', host => host.textContent.includes('Ask a project owner or operator')), false);
+    assert.deepEqual(await first.$eval('#composer', form => [form.querySelector('textarea').disabled, form.querySelector('button[type=submit]').disabled, form.querySelector('textarea').placeholder, form.inert]),
+      [true, true, 'Finish the project setup to start chatting', true], 'setup keeps the composer visible and disabled');
     const rowLayout = await first.$eval('#team-flow-home .team-flow-card', row => {
       const text = row.querySelector('.team-flow-card-heading').getBoundingClientRect(), picture = row.querySelector('.team-flow-diagram').getBoundingClientRect();
       return [text.width / row.getBoundingClientRect().width, picture.width / row.getBoundingClientRect().width];
@@ -1607,6 +1609,8 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-option:nth-child(3) .team-flow-card')?.getAttribute('aria-checked') === 'true' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
     await domClick(first, '#team-flow-home .btn-primary');
     await first.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-home-card'));
+    assert.deepEqual(await first.$eval('#composer', form => [form.querySelector('textarea').disabled, form.querySelector('button[type=submit]').disabled, form.querySelector('textarea').placeholder, form.inert]),
+      [false, false, 'Message', false], 'choosing a flow enables the composer without a reload');
     await openSettings(first);
     await first.waitForSelector('#settings-users-tab:not([hidden]):not(.settings-tab-pending)');
     await domClick(first, '#settings-users-tab');

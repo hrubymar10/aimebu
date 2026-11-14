@@ -281,7 +281,9 @@ current**. Existing projects start on C; saving it closes the setup prompt.
 The "Maximum workers and reviewers" setting counts task roles; the flow's
 leader and optional dispatcher are excluded, as the wizard's hint explains.
 While setup is open, the wizard fills the message area and scrolls within it;
-the composer stays available, and the room's messages return when setup closes.
+the composer remains visible but disabled with a setup hint. Choosing a flow
+enables it without a reload, and the room's messages return when setup closes.
+If the flow list fails to load, the composer remains usable and the card offers Retry.
 Project settings → Team flow uses the same list and previews the rooms and
 roles a switch would add, rooms that stay restricted, and any agents needing
 action. Switching keeps all

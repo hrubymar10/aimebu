@@ -171,6 +171,7 @@ export class ComposerFormatting {
   loadMarkdown(text) {
     if (this.editor) { this.setNative(text); this.editor.setMarkdown(text); } else this.textarea.value = text;
   }
+  setPlaceholder(text) { this.editor?.setPlaceholder(text); }
   async startEditor() {
     if (this.editor || this.starting) return;
     this.starting = true;

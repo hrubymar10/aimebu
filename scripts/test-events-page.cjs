@@ -190,6 +190,8 @@ async function main() {
         const text = await response.text(); return { status: response.status, body: text ? JSON.parse(text) : null };
       }, url, method, payload);
       const project = (await call('/api/projects', 'POST', { name: 'Drafts', folder })).body;
+      const flow = (await call(`/api/projects/${project.id}/team-flow`, 'GET')).body;
+      assert.equal((await call(`/api/projects/${project.id}/team-flow`, 'PUT', { key: 'custom', rev: flow.rev })).status, 200);
       await app.reload(); await app.waitForSelector('#app-view:not([hidden])'); // the first project made, the app shows its rooms instead of the onboarding
       const home = (await call(`/api/projects/${project.id}/rooms`, 'GET')).body.find(room => room.kind === 'home');
       await app.waitForSelector(`[data-room-id="${home.id}"] .room-item-name`);

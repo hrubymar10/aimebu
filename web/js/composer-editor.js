@@ -195,9 +195,10 @@ export class ComposerEditor {
     return true;
   }
   placeholderPlugin(PM, text) {
+    this.placeholder = text;
     return new PM.Plugin({
       view: view => {
-        const sync = () => { const empty = view.state.doc.childCount === 1 && view.state.doc.firstChild.content.size === 0 && view.state.doc.firstChild.type.name === 'paragraph'; view.dom.classList.toggle('composer-empty', empty); view.dom.dataset.placeholder = text; };
+        const sync = () => { const empty = view.state.doc.childCount === 1 && view.state.doc.firstChild.content.size === 0 && view.state.doc.firstChild.type.name === 'paragraph'; view.dom.classList.toggle('composer-empty', empty); view.dom.dataset.placeholder = this.placeholder; };
         sync();
         return { update: sync };
       },
@@ -234,6 +235,7 @@ export class ComposerEditor {
     this.setDoc(doc.childCount ? doc : this.schema.nodes.doc.create(null, [this.schema.nodes.paragraph.create()]));
   }
   focus() { this.view.focus(); }
+  setPlaceholder(text) { this.placeholder = text; this.view.dom.dataset.placeholder = text; }
   destroy() { this.view.destroy(); }
   isActive(name) {
     const { state } = this.view, { from, $from, to, empty } = state.selection;
