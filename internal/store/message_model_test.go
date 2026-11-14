@@ -8,6 +8,11 @@ import (
 func TestMigration110BackfillsOnlyKnownMessageGeneration(t *testing.T) {
 	s, _, room, agent, leader := wakeFixture(t)
 	ctx := context.Background()
+	// CreateAgent begins at generation 1. Recreate the pre-turn generation 0
+	// case that migration 110 can backfill without a source outbox entry.
+	if _, err := s.db.Exec(`UPDATE agent SET generation=0 WHERE id IN (?,?)`, agent.ID, leader.ID); err != nil {
+		t.Fatal(err)
+	}
 	old, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: agent.ID, Body: "old"})
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +31,7 @@ func TestMigration110BackfillsOnlyKnownMessageGeneration(t *testing.T) {
 	for _, statement := range []string{
 		`UPDATE message SET author_harness='',author_model='' WHERE id IN ('` + old.ID + `','` + current.ID + `','` + known.ID + `')`,
 		`ALTER TABLE message DROP COLUMN switch_handoff_json`,
-		`DELETE FROM schema_version WHERE version=110`,
+		`DELETE FROM schema_version WHERE version>=110`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)

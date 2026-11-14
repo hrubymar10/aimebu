@@ -800,6 +800,7 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	if err != nil {
 		return err
 	}
+	delivery.CodexWarmEnabled = s.codexWarmOn.Load()
 	keep, err := s.keepAliveConfig(ctx)
 	if err != nil {
 		return err

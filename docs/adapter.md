@@ -192,12 +192,12 @@ Set `AIMEBU2_LIVE_CC=1` to opt into the separately gated live canary.
 
 ### Warm mode (adapter side)
 
-The Claude adapter also implements `adapter.WarmAdapter`: it can keep one `claude -p
+The Claude and Codex adapters implement `adapter.WarmAdapter`. Claude: it can keep one `claude -p
 --input-format stream-json --output-format stream-json` process up between turns, so a
 turn that follows another soon after is written to the live process instead of starting
 a process and resuming the session. The supervisor decides when a process starts and
-ends; the adapter feeds the turns. (Nothing uses it until the supervisor's warm mode is
-switched on; it is off by default.)
+ends; the adapter feeds the turns. The warm window defaults to five minutes;
+Codex additionally requires the owner to enable `codex_warm_enabled`.
 
 - `WarmFingerprint(spec)` hashes everything a warm process is started with (command,
   arguments, environment with the agent key only as a hash, directory) and leaves out which
@@ -214,6 +214,36 @@ switched on; it is off by default.)
   existing delta logic applies); an interrupt and a malformed input line each make the CLI
   exit 1, which is why any abnormal event means the process is gone; one idle process is
   about 240 MB resident.
+
+Codex warm mode uses `codex app-server` over newline JSON-RPC. It initializes
+against the private `CODEX_HOME`, resumes the journaled thread or starts one,
+and sends the same turn text and output schema through `turn/start`. A completed
+turn with a final answer keeps the process; an error, missing answer, crash, or
+handshake/resume failure ends it and the supervisor falls back to `codex exec`.
+The adapter declines app-server approval requests and never asks it to refresh
+credentials. Docker app-server has no `--ignore-user-config` flag: the adapter
+disables host MCP servers the cold Docker path would omit, and falls back cold
+when a server name or config cannot be overridden safely. Only `model`,
+`mcp_servers` and the inert `projects` (trust), `notice`, `tui`, `history` and
+`file_opener` keys may appear in the host config for a warm Docker turn; any
+other setting, including provider, profile, reasoning and instruction
+overrides, forces a cold turn with a logged reason naming the key, so it
+cannot change its endpoint or behavior. The generated
+private config bytes (or Docker host config bytes) are part of the warm
+fingerprint, so a change retires the old process before reuse. A token-only auth callback can receive a newer access token only
+from the same account's live `auth.json`; otherwise it gets an error. Fake
+app-server tests cover the protocol; live Codex compatibility still needs the
+gated canary.
+For the first turn of a resumed thread, token usage is the change in thread
+totals from the first update's pre-turn baseline, so multiple model requests
+in that turn are counted without charging prior history.
+Codex warm mode requires a token-only `auth.json` (no refresh token) or an
+API key without refresh credentials. A full Codex login runs cold and logs
+"Codex warm needs token-only credentials" once per credential stamp and
+reason; the same check runs before reuse.
+The supervisor stamps the native adapter's linked auth file (following its
+symlink), or the Docker launcher's shared host auth file, before reusing a
+process; a change to that file starts a new process.
 
 ## Codex native adapter
 

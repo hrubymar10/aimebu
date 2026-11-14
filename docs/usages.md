@@ -134,7 +134,13 @@ the real CLI in a throwaway container.
   unrelated key kept (MCP logins included) and the profile is re-linked.
   For running Codex sessions, the per-tool reason gives only their count and says
   retries are automatic; process details stay in the server log. The manual
-  `migrate-copies` refusal still includes those details.
+  `migrate-copies` refusal still includes those details. Before the automatic
+Codex migration scans for running processes, the server asks the host
+supervisor to retire idle Codex app-server processes. If their end cannot be
+confirmed, migration waits and retries.
+  Codex warm mode needs a token-only target with no refresh token, or an API
+  key with no refresh credentials. A full Codex login runs cold even when the
+  owner enables warm mode; token-copy migration makes it eligible.
 - The POST answers at once with every tool `pending`; the worker then answers per
   tool, and the UI re-reads until nothing is pending. `token_auto_refresh_state`
   in the settings maps `claude` and `codex` to `{status, reason?}`:

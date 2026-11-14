@@ -68,6 +68,8 @@ assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'sleeping' } }, nowMs).
 assert.equal(m.warmOf({ observed: 'in_turn', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs), null);
 assert.equal(m.warmOf({ observed: 'idle' }, nowMs), null);
 assert.equal(m.activityOf({ observed: 'idle', warm: { state: 'sleeping' } }, state({ observed: 'idle' })).text, 'Sleeping', 'the card shows it where an idle agent has nothing else to say');
+assert.equal(m.warmOf({ observed: 'idle', tool: 'codex', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs).text, 'Warm · sleeps in 5 min', 'Codex follows the same reported warm state');
+assert.equal(m.warmOf({ observed: 'idle', tool: 'codex', warm: { state: 'sleeping' } }, nowMs).text, 'Sleeping');
 
 assert.equal(m.activityOf({ woken_by: 'reply', activity: 'tool inspect' }, state({})).text, 'Woken by reply · tool inspect');
 assert.equal(m.activityOf({}, state({ observed: 'in_turn' })).text, 'Working…');
@@ -167,6 +169,9 @@ assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: tr
   assert.equal(dot({ ...idle }).kind, 'cold', 'warm mode off or not applicable: cold, the next answer starts the agent');
   assert.equal(dot({ ...idle, warm: undefined }).kind, 'cold', 'a missing first supervisor report leaves the dot green and cold');
   assert.equal(dot({ ...idle, tool: 'codex' }).kind, 'cold');
+  assert.equal(dot({ ...idle, tool: 'codex', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }).kind, 'warm');
+  assert.equal(dot({ ...idle, tool: 'codex', warm: { state: 'sleeping' } }).kind, 'cold');
+  assert.equal(dot({ ...idle, tool: 'codex', warm: { state: 'na' } }).kind, 'na', 'Codex remains n/a while the experiment is off');
   assert.equal(dot({ ...idle, warm: { state: 'unknown' } }).kind, 'unknown', 'a warm state that is not known is orange, not cold');
   assert.match(dot({ ...idle, warm: { state: 'unknown' } }).title, /^State unknown/);
   assert.equal(dot({ desired: 'active', observed: 'in_turn', tool: 'claude' }).kind, 'working', 'a working agent is online');

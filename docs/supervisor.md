@@ -572,7 +572,10 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
 `agent_settings` frame (`warm_idle_seconds`) only when the owner has saved one (a saved 0 is sent and means
 off); with none saved the field is absent and the supervisor works to its own (`AIMEBU2_WARM_IDLE`, a Go
 duration, 0 is off, unset or unreadable is 5 minutes). A supervisor applies a window before the turn, and
-turning it off ends every idle process at once. It says the window it works to in its `warm_state` report
+turning it off ends every idle process at once. Codex app-server warm mode
+also needs the owner's `codex_warm_enabled` opt-in (off by default); turning that
+off retires idle Codex processes while cold Codex turns and keep-alive pings
+continue. It says the window it works to in its `warm_state` report
 (`idle_seconds`), and a card's warm or sleeping follows that and nothing else: a live idle process is "warm"; no
 process is "sleeping" only when the supervisor says it works to a window above 0; before its first report the card stays cold, while a report
 without `idle_seconds` is unknown (the card's `warm.state` is `unknown`) and the card says neither warm nor sleeping. So a supervisor started with
@@ -594,22 +597,34 @@ while it works again is reported by that turn's exit, not twice. The web treats 
 replaces (an agent's activity, the refresh of its card) and refreshes a card on `warm_process_ended`, so
 the warm or sleeping state follows the process without polling.
 
-*What the owner sees.* Every agent's card has one status dot, and for an idle Claude agent it says whether the process is warm: green without a ring is online and cold (the
+*What the owner sees.* Every agent's card has one status dot, and for an idle Claude agent, or an opted-in Codex agent, it says whether the process is warm: green without a ring is online and cold (the
 next answer starts the agent), green with a ring that pulses (as v1's presence dot did; a ring only under reduced motion) is online and warm, red is offline, and orange is a state
 that is not plain online or offline: a paused or waiting agent (its tooltip says which), or a Claude agent whose warm state is `unknown`. The dot's tooltip says it in words
 ("Online · warm, the next answer skips the start (≈4 min left)", "Online · cold…", "Offline", "State unknown"), and the same sentence is there for a screen reader. A working
-agent is green (its process is alive; whether it was warm is not told). An idle agent on a harness without a warm process (currently every harness except Claude) shows a neutral dot and “Warm n/a”, with a tooltip explaining that the harness does not keep its process warm. The members panel's people have the same 8px dot. It reads the card's `warm` field, refreshed when a
+agent is green (its process is alive; whether it was warm is not told). An idle agent on a harness without a warm process (every harness except Claude and opted-in Codex) shows a neutral dot and “Warm n/a”, with a tooltip explaining that the harness does not keep its process warm. The members panel's people have the same 8px dot. It reads the card's `warm` field, refreshed when a
 process starts or ends, with no polling of its own (the minutes follow the panel's clock).
 
 A supervisor that keeps processes warm sends the server a `warm_state` frame (at
 connect, and whenever the picture changes: a process goes idle, is taken for a turn, ends): the agents with a
 live process (idle until when, or working), the counts started and reused since it started, the memory of
-the warm processes it runs itself, and what every running container uses. An idle Claude agent's card says
+the warm processes it runs itself, and what every running container uses. An idle Claude or opted-in Codex agent's card says
 "Warm · sleeps in N min" or "Sleeping" (`warm` on the card: `state` warm or sleeping, `sleeps_at`; absent when
 the window is off or does not apply to the agent), and the machine's card in Settings → Machines says how many
 agents are warm and what the processes use (`warm` on the machine row). The memory is **not per agent**: the
 harness container is shared by all agents and Docker reports no finer, so it is labelled container memory,
 all containers.
+
+A Codex warm process is stamped with the host `auth.json` size, modification
+time, and content hash. A different stamp retires it before another turn. Docker
+Codex needs `codex_home_shared` and `stop_on_signal` from harness-docker; an
+older launcher stays cold. A stamp changed during a turn is accepted only when
+the file still names the same account. Codex app-server may request external
+auth tokens on a 401; aimebu does not refresh a token there. It rereads the
+live token-only target and responds only with a newer access token for the
+process's original account, otherwise the turn fails and the process ends.
+Warm Codex first requires token-only credentials without a refresh token, or
+an API key without refresh credentials. Full credentials run cold, so a warm
+process never keeps a refresh token while it is idle or in a turn.
 
 *Account switch.* A warm process holds the login it started with. The guarantee: **a switch of account (by
 hand, or the automatic one) and the removal of the active profile go on only when every idle warm process of the
@@ -668,7 +683,8 @@ With a window (5 minutes unless set otherwise, see above) a supervisor keeps an 
 harness process up for that window after a turn, so the next message goes straight into the
 live process instead of starting a new one and resuming the session (on dev that start was
 4 to 5 of the 6.5 to 7.5 seconds a short reply took). Only an adapter that implements
-`adapter.WarmAdapter` takes part: today the Claude Code adapter. When the window ends the
+`adapter.WarmAdapter` takes part: the Claude Code adapter and, when enabled,
+the Codex adapter. When the window ends the
 agent sleeps: the process is ended and the next turn runs cold, as before. A correction, a
 diagnostic and a fork always run cold, and ending a live process comes first, so two
 processes are never on one session.

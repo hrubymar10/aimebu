@@ -36,7 +36,8 @@ import (
 )
 
 type Server struct {
-	Store *store.Store
+	Store       *store.Store
+	codexWarmOn atomic.Bool
 	// NoWebBundle serves the page from its modules instead of the bundle (a test sets it; AIMEBU2_WEB_BUNDLE=off does the same for a whole process).
 	NoWebBundle bool
 	// legacyAttr caches which Claude Code session a v1 sender's work is in (see resolveLegacyStart), so opening a profile and then starting the
@@ -135,6 +136,11 @@ func New(db *store.Store) *Server {
 	s := &Server{Store: db, Auth: auth.NewService(db), PollInterval: 50 * time.Millisecond, WriteTimeout: 5 * time.Second, QueueSize: 32, MachinePingInterval: 15 * time.Second, SessionCheckInterval: 30 * time.Second,
 		Allow: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}, machines: make(map[string]*machineConn), spawnKeys: make(map[string]string), CopilotFlow: providers.NewCopilotFlow()}
 	s.Auth.UserHook = s.noteTelemetryUser
+	if db != nil {
+		if value, _, err := db.GlobalSettingValue(context.Background(), codexWarmEnabledKey); err == nil {
+			s.codexWarmOn.Store(value == "1")
+		}
+	}
 	return s
 }
 

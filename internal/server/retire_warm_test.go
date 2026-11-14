@@ -149,7 +149,11 @@ func TestAgentCardWarmState(t *testing.T) {
 	other := card
 	other.Tool = "codex"
 	if got := f.srv.agentWarmState(other); got == nil || got.State != "na" {
-		t.Fatalf("a harness without warm mode says n/a: %+v", got)
+		t.Fatalf("Codex warm mode starts disabled: %+v", got)
+	}
+	f.srv.codexWarmOn.Store(true)
+	if got := f.srv.agentWarmState(other); got == nil || got.State != "warm" {
+		t.Fatalf("enabled Codex uses the supervisor's warm report: %+v", got)
 	}
 	stopped := card
 	stopped.Desired = "stopped"

@@ -210,6 +210,8 @@ type Frame struct {
 	// off). It is sent only when the owner has saved one: without it the supervisor uses its own (AIMEBU2_WARM_IDLE, else five minutes). A supervisor
 	// that does not know the field ignores it.
 	WarmIdleSeconds *int `json:"warm_idle_seconds,omitempty"`
+	// CodexWarmEnabled is the owner's explicit opt-in for Codex app-server warm mode.
+	CodexWarmEnabled bool `json:"codex_warm_enabled,omitempty"`
 	// KeepAliveSettings, on a delivery: see Delivery.KeepAliveSettings.
 	KeepAliveSettings    *KeepAliveSettings `json:"keep_alive,omitempty"`
 	CheckoutPath         string             `json:"checkout_path,omitempty"`
@@ -371,14 +373,14 @@ type CapabilityReport struct {
 
 func DeliverFrame(d Delivery) Frame {
 	agent := d.Agent
-	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ImportLegacySession: d.ImportLegacySession, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers, DockerOnly: d.DockerOnly, WarmIdleSeconds: d.WarmIdleSeconds, KeepAliveSettings: d.KeepAliveSettings}
+	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ImportLegacySession: d.ImportLegacySession, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers, DockerOnly: d.DockerOnly, WarmIdleSeconds: d.WarmIdleSeconds, CodexWarmEnabled: d.CodexWarmEnabled, KeepAliveSettings: d.KeepAliveSettings}
 }
 func (f Frame) Delivery() Delivery {
 	agent := adapter.AgentSpec{}
 	if f.Agent != nil {
 		agent = *f.Agent
 	}
-	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ImportLegacySession: f.ImportLegacySession, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers, DockerOnly: f.DockerOnly, WarmIdleSeconds: f.WarmIdleSeconds, KeepAliveSettings: f.KeepAliveSettings}
+	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ImportLegacySession: f.ImportLegacySession, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers, DockerOnly: f.DockerOnly, WarmIdleSeconds: f.WarmIdleSeconds, CodexWarmEnabled: f.CodexWarmEnabled, KeepAliveSettings: f.KeepAliveSettings}
 }
 
 type HelloAgent struct {
@@ -427,7 +429,8 @@ type Delivery struct {
 	// DockerOnly: see Frame.DockerOnly.
 	DockerOnly bool `json:"docker_only,omitempty"`
 	// WarmIdleSeconds: see Frame.WarmIdleSeconds.
-	WarmIdleSeconds *int `json:"warm_idle_seconds,omitempty"`
+	WarmIdleSeconds  *int `json:"warm_idle_seconds,omitempty"`
+	CodexWarmEnabled bool `json:"codex_warm_enabled,omitempty"`
 	// KeepAliveSettings is the instance's cache keep-alive setting for this agent's tool; nil means the server has none, and the supervisor does not ping.
 	KeepAliveSettings *KeepAliveSettings `json:"keep_alive,omitempty"`
 }

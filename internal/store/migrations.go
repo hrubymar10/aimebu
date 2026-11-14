@@ -1793,6 +1793,12 @@ WHERE author_kind='agent' AND author_harness='' AND author_model=''
     WHERE o.id=message.source_out_id AND t.generation=a.generation
       AND a.id=message.author_id);
 ALTER TABLE message ADD COLUMN switch_handoff_json TEXT;
+`}, {111, `
+-- Codex app-server warm mode is opt-in. Existing installations retain the
+-- cold exec path until the owner enables this setting.
+INSERT INTO global_setting(key,value,updated_at)
+  VALUES ('codex_warm_enabled','0',strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  ON CONFLICT(key) DO NOTHING;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

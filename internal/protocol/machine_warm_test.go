@@ -26,6 +26,22 @@ func TestDeliveryCarriesTheWarmWindow(t *testing.T) {
 	}
 }
 
+func TestDeliveryCarriesCodexWarmOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		raw, err := json.Marshal(DeliverFrame(Delivery{AgentID: "agt", TurnID: "turn", CodexWarmEnabled: enabled}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var frame Frame
+		if err := json.Unmarshal(raw, &frame); err != nil {
+			t.Fatal(err)
+		}
+		if frame.Delivery().CodexWarmEnabled != enabled {
+			t.Fatalf("opt-in %t lost in %s", enabled, raw)
+		}
+	}
+}
+
 // The keep-alive setting travels with a delivery, and a report has its own field name (it must not share the setting's).
 func TestDeliveryCarriesTheKeepAliveSettingAndReportsHaveTheirOwnName(t *testing.T) {
 	for name, in := range map[string]*KeepAliveSettings{"absent": nil, "off": {}, "claude": {IntervalSeconds: 3000, StopAfterSeconds: 86400}} {

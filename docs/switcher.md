@@ -232,7 +232,11 @@ access token until it expires and re-read the file when it is rewritten.
   the success output always states what was checked. Codex
   caches `auth.json`, refreshes shortly before expiry with the refresh token it
   cached and writes a full credential back, which would spend the token the
-  server is refreshing. The refresher leaves codex profiles alone for 10
+  server is refreshing. Warm Codex requires token-only credentials (or an API
+  key without refresh credentials); a full login stays on cold exec. An idle
+  Codex app-server is a running Codex process for
+  this check. The server's automatic migration first asks its supervisor to
+  retire those warm processes; the manual command still refuses them. The refresher leaves codex profiles alone for 10
   minutes after the migration. Restarting running claude sessions is optional
   (claude re-reads the file before it refreshes and finds no refresh token).
 - A **switch** no longer captures, restores or links anything. It refreshes

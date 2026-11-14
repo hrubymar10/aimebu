@@ -79,7 +79,9 @@ type Client struct {
 	stopping       bool
 	turns          sync.WaitGroup
 	// Warm keeps an agent's harness process up for an idle window after a turn (see warm.go); the zero value is off.
-	Warm WarmConfig
+	Warm             WarmConfig
+	codexWarmEnabled bool
+	warmWarnings     map[string]string // last warm refusal per agent, guarded by mu
 	// FreeMemory reports free and total memory for the warm memory guard; nil reads the system's (tests set it).
 	FreeMemory func() (free, total int64, err error)
 	// FreeDockerMemory reports the containers' use and the Docker host's total for the guard; nil asks docker (tests set it).
@@ -654,7 +656,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			c.applyKeepAlivePaused(frame.PausedTools, frame.PausedAgents)
 		case protocol.AgentSettingsFrame:
 			// Ending idle processes can take their grace: not on the loop that reads frames.
-			go c.applyAgentSettings(frame.WarmIdleSeconds, frame.KeepAliveByTool)
+			go c.applyAgentSettings(frame.WarmIdleSeconds, frame.CodexWarmEnabled, frame.KeepAliveByTool)
 		case protocol.KeepAliveScopeAckFrame, protocol.WarmClaimAckFrame:
 			c.keepAliveScopeAcked(frame.ReqID) // both are answers to a request waiting by its id
 		case protocol.TelemetryConfig:
@@ -909,7 +911,11 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		}
 		spec.AgentServerURL = row.AgentServerURL
 		containerized = row.Containerized
-		sharesHome = !row.Containerized || slices.Contains(row.Features, "claude_home_shared")
+		feature := "claude_home_shared"
+		if delivery.Agent.Tool == "codex" {
+			feature = "codex_home_shared"
+		}
+		sharesHome = !row.Containerized || slices.Contains(row.Features, feature)
 		launcherConfirmsEnd = slices.Contains(row.Features, containerEndFeature)
 	}
 	if delivery.DockerOnly && !containerized && delivery.Agent.Tool != "fake" {
@@ -1052,12 +1058,14 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		return err
 	}
 	cred := credentials{}
-	cred.stamp, cred.ok = warmCredentials(spec, sharesHome)
+	codexAuth := c.warmCodexAuthPath(spec)
+	cred.stamp, cred.ok = warmCredentials(spec, sharesHome, codexAuth)
 	cred.containerOK = !containerized || launcherConfirmsEnd
-	cred.account = warmAccount(spec)
+	cred.account = warmAccount(spec, codexAuth)
 	cred.now = func() (string, string, bool) {
-		stamp, ok := warmCredentials(spec, sharesHome)
-		return stamp, warmAccount(spec), ok
+		path := c.warmCodexAuthPath(spec)
+		stamp, ok := warmCredentials(spec, sharesHome, path)
+		return stamp, warmAccount(spec, path), ok
 	}
 	// The harness's stderr is kept in the agent's output log for as long as the turn runs. A log that cannot be opened is reported and the
 	// turn runs without one: it is a debugging aid, never a reason not to work.
@@ -1071,6 +1079,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		}
 	}
 	c.applyWarmIdle(delivery.WarmIdleSeconds)
+	c.setCodexWarmEnabled(delivery.CodexWarmEnabled)
 	c.keepAliveRemember(spec, delivery.KeepAliveSettings, cred, sharesHome)
 	var sinkWriter io.Writer
 	if sink != nil {

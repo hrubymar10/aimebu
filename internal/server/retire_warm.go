@@ -335,7 +335,7 @@ func (s *Server) sendAgentSettings(ctx context.Context, c *machineConn) {
 	if err != nil {
 		return
 	}
-	frame := protocol.Frame{V: protocol.Version, Type: protocol.AgentSettingsFrame, WarmIdleSeconds: warm, KeepAliveByTool: map[string]protocol.KeepAliveSettings{}}
+	frame := protocol.Frame{V: protocol.Version, Type: protocol.AgentSettingsFrame, WarmIdleSeconds: warm, CodexWarmEnabled: s.codexWarmOn.Load(), KeepAliveByTool: map[string]protocol.KeepAliveSettings{}}
 	for _, tool := range []string{"claude", "codex"} {
 		frame.KeepAliveByTool[tool] = *keep.settingsFor(tool)
 	}
@@ -343,7 +343,7 @@ func (s *Server) sendAgentSettings(ctx context.Context, c *machineConn) {
 	if warm != nil {
 		saved = *warm
 	}
-	key := fmt.Sprintf("%d|%v", saved, frame.KeepAliveByTool)
+	key := fmt.Sprintf("%d|%t|%v", saved, frame.CodexWarmEnabled, frame.KeepAliveByTool)
 	c.settingsMu.Lock()
 	defer c.settingsMu.Unlock()
 	if c.settingsSent && key == c.settingsLast {

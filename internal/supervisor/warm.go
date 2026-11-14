@@ -19,6 +19,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
@@ -400,6 +401,50 @@ func (c *Client) RetireWarmTool(tool, reason string) bool {
 	return pingsEnded && !failed.Load()
 }
 
+// setCodexWarmEnabled applies the owner's opt-in. Turning it off retires
+// Codex app-server processes without holding back ordinary cold keep-alive
+// pings, which are controlled by a separate setting.
+func (c *Client) setCodexWarmEnabled(enabled bool) {
+	c.mu.Lock()
+	wasEnabled := c.codexWarmEnabled
+	c.codexWarmEnabled = enabled
+	pool := c.warmPool
+	c.mu.Unlock()
+	if enabled || !wasEnabled || pool == nil {
+		return
+	}
+	for _, slot := range pool.existing() {
+		slot.mu.Lock()
+		if slot.busy != nil && slot.busy.tool == "codex" {
+			slot.busy.retire = true
+		}
+		if slot.idle != nil && slot.idle.tool == "codex" {
+			_ = c.retireSlot(slot, "Codex warm mode was turned off", false, warmCloseGrace)
+		} else if slot.stuck != nil && slot.stuck.tool == "codex" {
+			_ = c.clearStuck(slot)
+		}
+		slot.mu.Unlock()
+	}
+}
+
+func (c *Client) reportWarmRefusal(spec adapter.TurnSpec, cred credentials, action string, err error) {
+	if errors.Is(err, adapter.ErrNoWarm) && err.Error() == adapter.ErrNoWarm.Error() {
+		return // ordinary cold-only turns have no refusal reason to report
+	}
+	key := strings.Join([]string{action, err.Error(), cred.stamp, spec.Agent.Model, spec.Agent.LauncherID}, "\x00")
+	c.mu.Lock()
+	if c.warmWarnings == nil {
+		c.warmWarnings = make(map[string]string)
+	}
+	if c.warmWarnings[spec.Agent.ID] == key {
+		c.mu.Unlock()
+		return
+	}
+	c.warmWarnings[spec.Agent.ID] = key
+	c.mu.Unlock()
+	c.report(fmt.Errorf("agent %s: %s: %w; the turn runs cold", spec.Agent.ID, action, err))
+}
+
 func (c *Client) retireAll(reason string, grace time.Duration) bool {
 	c.mu.Lock()
 	pool := c.warmPool
@@ -468,25 +513,46 @@ func (t *warmTurn) Kill() error { return t.entry.session.Kill() }
 // it the turn's own Cancel would be all a supervisor could do, which a container's wrapper does not confirm. It says whether the end is confirmed.
 func (t *warmTurn) Terminate(grace time.Duration) bool { return t.entry.session.Close(grace) == nil }
 
-// warmCredentials says which login a Claude process for the turn would use, as the process itself would find it: the credentials file in the
-// config directory the launcher gives it (CLAUDE_CONFIG_DIR through the owner's variable references, else the home's .claude), by its size,
+// warmCredentials identifies the on-disk login a Claude or Codex process
+// would use. For Claude this is the credentials file in the config directory
+// the launcher gives it (CLAUDE_CONFIG_DIR through the owner's variable references, else the home's .claude), by its size,
 // modification time and a hash of its content (a profile restored to the same size and time still differs). A login that changed on disk (an account switch, a token refresh) is another stamp, so the process started under the old
 // one is not reused: each refresh makes the next turn cold. ok is false when it cannot be told reliably, and the turn then runs cold: no file
 // (a login kept in the keychain, or none), or a Docker launcher that does not share the host's Claude home, whose login is then not the file's.
-func warmCredentials(spec adapter.TurnSpec, sharesHome bool) (stamp string, ok bool) {
-	if spec.Agent.Tool != "claude" {
+func warmCredentials(spec adapter.TurnSpec, sharesHome bool, codexFile ...string) (stamp string, ok bool) {
+	if spec.Agent.Tool != "claude" && spec.Agent.Tool != "codex" {
 		return "", true
 	}
 	if !sharesHome {
 		return "", false
 	}
-	dir, _, ok := claudeLoginDir(spec)
-	if !ok {
-		return "", false
+	var file, stampPath string
+	if spec.Agent.Tool == "codex" {
+		file = codexAuthPath(spec)
+		if len(codexFile) > 0 && codexFile[0] != "" {
+			file = codexFile[0]
+		}
+		stampPath = file
+	} else {
+		dir, _, known := claudeLoginDir(spec)
+		if !known {
+			return "", false
+		}
+		file = filepath.Join(dir, ".credentials.json")
+		stampPath = dir
 	}
-	file := filepath.Join(dir, ".credentials.json")
 	info, err := os.Stat(file)
 	if err != nil {
+		if spec.Agent.Tool == "codex" && errors.Is(err, os.ErrNotExist) {
+			key := adapter.EnvValue("OPENAI_API_KEY", spec.LauncherEnvRefs)
+			if key == "" {
+				key = os.Getenv("OPENAI_API_KEY")
+			}
+			if key != "" {
+				sum := sha256.Sum256([]byte(key))
+				return fmt.Sprintf("codex-api-key:%x", sum[:8]), true
+			}
+		}
 		return "", false
 	}
 	content, err := os.ReadFile(file)
@@ -494,7 +560,34 @@ func warmCredentials(spec adapter.TurnSpec, sharesHome bool) (stamp string, ok b
 		return "", false
 	}
 	sum := sha256.Sum256(content)
-	return fmt.Sprintf("%s:%d:%d:%x", dir, info.Size(), info.ModTime().UnixNano(), sum[:8]), true
+	return fmt.Sprintf("%s:%d:%d:%x", stampPath, info.Size(), info.ModTime().UnixNano(), sum[:8]), true
+}
+
+func codexAuthPath(spec adapter.TurnSpec) string {
+	dir := adapter.EnvValue("CODEX_HOME", spec.LauncherEnvRefs)
+	if dir == "" {
+		dir = os.Getenv("CODEX_HOME")
+	}
+	if dir == "" {
+		home := adapter.EnvValue("HOME", spec.LauncherEnvRefs)
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
+		dir = filepath.Join(home, ".codex")
+	}
+	return filepath.Join(dir, "auth.json")
+}
+
+func (c *Client) warmCodexAuthPath(spec adapter.TurnSpec) string {
+	if spec.Agent.Tool != "codex" {
+		return ""
+	}
+	if source, ok := c.Adapter.(interface{ WarmAuthPath(adapter.TurnSpec) string }); ok {
+		if path := source.WarmAuthPath(spec); path != "" {
+			return path
+		}
+	}
+	return codexAuthPath(spec)
 }
 
 // claudeLoginDir is the configuration directory a Claude process of the turn would use (CLAUDE_CONFIG_DIR through the launcher's variable
@@ -517,7 +610,18 @@ func claudeLoginDir(spec adapter.TurnSpec) (dir, accountHome string, ok bool) {
 // case): the credentials file holds tokens only, and a renewed token is another stamp of the same account. The file beside the credentials is the one
 // a process started with CLAUDE_CONFIG_DIR uses; without that variable it is the one in the home's root; the newest that names an account wins, as
 // a /login rewrites the one its process uses. "" when no file names one.
-func warmAccount(spec adapter.TurnSpec) string {
+func warmAccount(spec adapter.TurnSpec, codexFile ...string) string {
+	if spec.Agent.Tool == "codex" {
+		path := codexAuthPath(spec)
+		if len(codexFile) > 0 && codexFile[0] != "" {
+			path = codexFile[0]
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return ""
+		}
+		return credtarget.CodexAccount(data)
+	}
 	if spec.Agent.Tool != "claude" {
 		return ""
 	}
@@ -577,6 +681,15 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		}
 	}
 	cfg := c.warmCfg()
+	c.mu.Lock()
+	codexWarm := c.codexWarmEnabled
+	c.mu.Unlock()
+	if spec.Agent.Tool == "codex" && !codexWarm {
+		if !c.retireWarm(spec.Agent.ID, "Codex warm mode is off") {
+			return nil, errWarmUnconfirmed
+		}
+		return c.Adapter.Start(ctx, spec)
+	}
 	warm, ok := c.Adapter.(adapter.WarmAdapter)
 	if cfg.Idle <= 0 || !ok {
 		if !c.retireWarm(spec.Agent.ID, "warm mode is off") {
@@ -586,6 +699,7 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 	}
 	fp, err := warm.WarmFingerprint(spec)
 	if err != nil {
+		c.reportWarmRefusal(spec, cred, "warm unavailable", err)
 		// A turn that cannot run warm (a correction, a diagnostic, a fork, a spec that does not build) may be on the session of a live process:
 		// that one ends first, so two processes are never working on one session.
 		if !c.retireWarm(spec.Agent.ID, "a turn that runs cold") {
@@ -639,9 +753,7 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		started.StderrSink = stderr
 		session, err := warm.StartWarm(pool.ctx, started)
 		if err != nil {
-			if err != adapter.ErrNoWarm {
-				c.report(fmt.Errorf("agent %s: starting a warm process: %w; the turn runs cold", spec.Agent.ID, err))
-			}
+			c.reportWarmRefusal(spec, cred, "starting a warm process", err)
 			return c.Adapter.Start(ctx, spec)
 		}
 		entry = &warmEntry{agentID: spec.Agent.ID, tool: spec.Agent.Tool, session: session, fp: fp, login: cred.stamp, account: cred.account, loginNow: cred.now, started: now, stderr: stderr, containerized: spec.LauncherContainerized || spec.Agent.Variant == "docker"}
@@ -772,7 +884,7 @@ func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) (kept b
 // ended cleanly, the process is alive and not past its lifetime. The caller holds the slot's lock.
 func (c *Client) warmKeepable(pool *warmPool, entry *warmEntry, exit adapter.ExitInfo) bool {
 	c.mu.Lock()
-	active := c.desired[entry.agentID].Desired == "active" && !c.stopping
+	active := c.desired[entry.agentID].Desired == "active" && !c.stopping && (entry.tool != "codex" || c.codexWarmEnabled)
 	c.mu.Unlock()
 	cfg := c.warmCfg()
 	return cfg.Idle > 0 && active && !entry.retire && exit.TerminalEvent && exit.ExitCode == 0 && !exit.CancelIntent &&

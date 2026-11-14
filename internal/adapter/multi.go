@@ -91,6 +91,15 @@ func (m *Multi) WarmFingerprint(spec TurnSpec) (string, error) {
 	return "", ErrNoWarm
 }
 
+// WarmAuthPath forwards to the adapter that runs the spec, so a caller holding a Multi (every production supervisor) stamps
+// the account file that adapter actually uses; "" (no such adapter, or one that does not say) makes the caller fall back.
+func (m *Multi) WarmAuthPath(spec TurnSpec) string {
+	if source, ok := m.implementationFor(spec).(interface{ WarmAuthPath(TurnSpec) string }); ok {
+		return source.WarmAuthPath(spec)
+	}
+	return ""
+}
+
 func (m *Multi) StartWarm(ctx context.Context, spec TurnSpec) (WarmSession, error) {
 	if warm, ok := m.implementationFor(spec).(WarmAdapter); ok {
 		return warm.StartWarm(ctx, spec)

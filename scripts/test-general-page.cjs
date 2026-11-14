@@ -153,6 +153,26 @@ async function main() {
       assert.deepEqual(await admin.evaluate(() => [document.querySelector('#agent-warm-idle').disabled, document.querySelector('#agent-warm-idle').title]), [true, 'Only the owner can change this.']);
       await admin.close();
     }
+    // Codex warm mode is an owner-only opt-in. It is off when the server omits the new field and saves one boolean without changing the window.
+    {
+      const page = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: true, codex_warm_enabled: false } } });
+      await page.evaluate(() => window.__general.open());
+      await page.waitForFunction(() => !!document.querySelector('#agent-codex-warm'));
+      assert.deepEqual(await page.$eval('#agent-codex-warm', input => [input.checked, input.disabled]), [false, false], 'Codex warm starts off and the owner can opt in');
+      await page.click('#agent-codex-warm');
+      await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/agent-isolation' && !request.answered));
+      const put = await page.evaluate(() => window.__requests.findIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { codex_warm_enabled: true });
+      await page.evaluate(index => window.__answer(index, 200, { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: true, codex_warm_enabled: true }), put);
+      await page.waitForFunction(() => document.querySelector('#agent-codex-warm').checked && !document.querySelector('#agent-codex-warm').disabled);
+      assert.equal(await page.$eval('#agent-codex-warm-error', node => node.textContent), '');
+      await page.close();
+      const admin = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: false, codex_warm_enabled: true } } });
+      await admin.evaluate(() => window.__general.open());
+      await admin.waitForFunction(() => !!document.querySelector('#agent-codex-warm'));
+      assert.deepEqual(await admin.$eval('#agent-codex-warm', input => [input.checked, input.disabled, input.title]), [true, true, 'Only the owner can change this.']);
+      await admin.close();
+    }
     // The prompt cache keep-alive: on by default; the owner changes one field at a time (one PUT with only that field in keep_alive), a bad value is not
     // sent, and anyone else sees it all disabled with the reason.
     {
@@ -192,7 +212,7 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general > div')].map(div => `${div.id}:${div.querySelector('h3').textContent}`)),
         ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'agent-isolation:Agents', 'prompt-cache:Prompt cache', 'settings-backup:Settings backup']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general .settings-row')].filter(row => !row.hidden).map(row => (row.querySelector('input, select, button')).id)),
-        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-docker-only', 'agent-warm-idle', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
+        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
       await page.close();
     }
     // The chat switches show what this person has and change the page at once: the bell and the debug button follow them.

@@ -305,6 +305,28 @@ func TestWarmIdleSettingIsOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestCodexWarmModeRequiresOwnerOptIn(t *testing.T) {
+	t.Parallel()
+	w := newAdminWorld(t)
+	if code, body := w.json(t, w.viewer, "GET", "/api/agent-isolation", nil); code != 200 || body["codex_warm_enabled"] != false {
+		t.Fatalf("default Codex warm setting: %d %+v", code, body)
+	}
+	if value, _, err := w.f.srv.Store.GlobalSettingValue(t.Context(), codexWarmEnabledKey); err != nil || value != "0" {
+		t.Fatalf("migration did not keep Codex cold by default: %q %v", value, err)
+	}
+	for _, who := range []adminActor{w.admin, w.pOwner, w.oper, w.viewer} {
+		if code := w.call(t, who, "PUT", "/api/agent-isolation", map[string]bool{"codex_warm_enabled": true}); code != 403 {
+			t.Fatalf("%s enabled Codex warm mode: %d", who.name, code)
+		}
+	}
+	if code, body := w.json(t, w.owner, "PUT", "/api/agent-isolation", map[string]bool{"codex_warm_enabled": true}); code != 200 || body["codex_warm_enabled"] != true {
+		t.Fatalf("owner opt-in: %d %+v", code, body)
+	}
+	if value, _, err := w.f.srv.Store.GlobalSettingValue(t.Context(), codexWarmEnabledKey); err != nil || value != "1" {
+		t.Fatalf("saved opt-in: %q %v", value, err)
+	}
+}
+
 // The warm window is the owner's saved value when there is one, else five minutes; a saved 0 is off (not "unset"), and what a delivery and an
 // agent_settings frame carry is only the saved value, so a supervisor's own default applies when the owner saved none.
 func TestWarmIdleDefaultSavedZeroAndWhatIsSent(t *testing.T) {

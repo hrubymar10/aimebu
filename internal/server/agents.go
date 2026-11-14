@@ -548,12 +548,12 @@ type agentWarm struct {
 	SleepsAt string `json:"sleeps_at,omitempty"`
 }
 
-// agentWarmState works out what a card says about warm mode. Only Claude has a WarmAdapter today; for it, use what the machine last reported.
+// agentWarmState uses the supervisor's report for tools whose warm mode is on.
 func (s *Server) agentWarmState(card store.AgentCard) *agentWarm {
 	if card.Desired != "active" {
 		return nil
 	}
-	if card.Tool != "claude" {
+	if card.Tool != "claude" && (card.Tool != "codex" || !s.codexWarmOn.Load()) {
 		return &agentWarm{State: "na"}
 	}
 	machine, err := s.machineForID(card.MachineID)

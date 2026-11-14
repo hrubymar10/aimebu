@@ -255,16 +255,28 @@ func (s *Server) tokenCopyController(mgr *switcher.Manager, rec *credtarget.Reco
 			case on:
 				if !available() {
 					state = usages.TokenAutoRefreshToolState{Status: "waiting", Reason: "harness-docker-ctrl is unavailable"}
-				} else if result, err := mgr.MigrateToTokenCopies(switcher.MigrateOptions{Tools: []string{tool}, RunningCodex: s.tokenSettingRunningCodex}); err != nil {
-					migrationErr = err
-					state = usages.TokenAutoRefreshToolState{Status: "waiting", Reason: tokenCopyMigrationReason(err)}
-				} else if mgr.TokenCopiesFor(tool) {
-					state.Status = "migrated"
-				} else if len(result.Tools) > 0 {
-					if strings.Contains(result.Tools[0].Status, "no active profile") {
-						state.Status = "n/a"
-					} else {
-						state = usages.TokenAutoRefreshToolState{Status: "waiting", Reason: result.Tools[0].Status}
+				} else {
+					result, err := func() (switcher.MigrateResult, error) {
+						if tool == switcher.ToolCodex {
+							release, err := s.retireHostWarm(ctx, tool)
+							if err != nil {
+								return switcher.MigrateResult{}, err
+							}
+							defer release()
+						}
+						return mgr.MigrateToTokenCopies(switcher.MigrateOptions{Tools: []string{tool}, RunningCodex: s.tokenSettingRunningCodex})
+					}()
+					if err != nil {
+						migrationErr = err
+						state = usages.TokenAutoRefreshToolState{Status: "waiting", Reason: tokenCopyMigrationReason(err)}
+					} else if mgr.TokenCopiesFor(tool) {
+						state.Status = "migrated"
+					} else if len(result.Tools) > 0 {
+						if strings.Contains(result.Tools[0].Status, "no active profile") {
+							state.Status = "n/a"
+						} else {
+							state = usages.TokenAutoRefreshToolState{Status: "waiting", Reason: result.Tools[0].Status}
+						}
 					}
 				}
 			default:

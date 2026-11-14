@@ -17,6 +17,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/adapter/codex"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
@@ -38,7 +39,7 @@ type warmFake struct {
 	// onRun runs when a turn is handed to a session.
 	onRun func()
 	// startErr, when set, is what StartWarm answers; runErr what Run answers.
-	startErr, runErr error
+	startErr, runErr, fingerprintErr error
 	// containerized marks the sessions as running through a Docker launcher (set on the spec by the test).
 	// runHold makes a turn handed to a session run until the session is closed or killed, and its own Cancel confirm nothing (as a container's wrapper).
 	runHold bool
@@ -69,6 +70,9 @@ func (f *warmFake) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tu
 // KeepAliveTool says the fake can run keep-alive turns for Claude.
 func (f *warmFake) KeepAliveTool() string { return "claude" }
 func (f *warmFake) WarmFingerprint(spec adapter.TurnSpec) (string, error) {
+	if f.fingerprintErr != nil {
+		return "", f.fingerprintErr
+	}
 	if spec.Mode != adapter.ModeNormal || spec.ForkSession {
 		return "", adapter.ErrNoWarm
 	}
@@ -911,8 +915,153 @@ func TestWarmCredentials(t *testing.T) {
 	if _, ok := warmCredentials(spec, false); ok {
 		t.Fatal("a launcher that does not share the host's Claude home cannot be told by the host's file")
 	}
-	if stamp, ok := warmCredentials(adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex"}}, false); !ok || stamp != "" {
-		t.Fatal("only Claude's login is looked at")
+	if _, ok := warmCredentials(adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex"}}, false); ok {
+		t.Fatal("an unshared Codex home cannot establish a login stamp")
+	}
+	codexDir := t.TempDir()
+	t.Setenv("WARM_TEST_CODEX_DIR", codexDir)
+	codex := adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex"}, LauncherEnvRefs: map[string]string{"CODEX_HOME": "WARM_TEST_CODEX_DIR"}}
+	if _, ok := warmCredentials(codex, true); ok {
+		t.Fatal("Codex auth file is absent")
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"tokens":{"account_id":"acct_one","access_token":"one"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stamp, ok := warmCredentials(codex, true)
+	if !ok || !strings.Contains(stamp, codexDir) || warmAccount(codex) != "acct:acct_one" {
+		t.Fatalf("Codex login stamp/account %q %v %q", stamp, ok, warmAccount(codex))
+	}
+}
+
+func TestNativeCodexWarmStampsTheLinkedAuthFile(t *testing.T) {
+	otherHome := t.TempDir()
+	t.Setenv("WARM_TEST_OTHER_HOME", otherHome)
+	actual := filepath.Join(t.TempDir(), "auth.json")
+	link := filepath.Join(t.TempDir(), "auth.json")
+	write := func(account string) {
+		t.Helper()
+		if err := os.WriteFile(actual, []byte(`{"tokens":{"account_id":"`+account+`","access_token":"token"}}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("first")
+	if err := os.Symlink(actual, link); err != nil {
+		t.Fatal(err)
+	}
+	spec := adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex"}, LauncherEnvRefs: map[string]string{"HOME": "WARM_TEST_OTHER_HOME"}}
+	// Production builds the client over a Multi, not the Codex adapter itself, so the lookup must pass through it.
+	native := codex.New(t.TempDir())
+	native.AuthPath = link
+	c := &Client{Adapter: adapter.NewMulti(native, codex.NewDocker())}
+	path := c.warmCodexAuthPath(spec)
+	if path != actual {
+		t.Fatalf("native auth path = %q, want linked target %q", path, actual)
+	}
+	first, ok := warmCredentials(spec, true, path)
+	if !ok || !strings.Contains(first, actual) || warmAccount(spec, path) != "acct:first" {
+		t.Fatalf("native stamp/account = %q %t %q", first, ok, warmAccount(spec, path))
+	}
+	write("second")
+	second, ok := warmCredentials(spec, true, c.warmCodexAuthPath(spec))
+	if !ok || second == first || warmAccount(spec, path) != "acct:second" {
+		t.Fatalf("changed linked login went unnoticed: %q %q %t", first, second, ok)
+	}
+}
+
+func TestMultiWarmAuthPathFollowsTheImplementation(t *testing.T) {
+	hostHome := t.TempDir()
+	t.Setenv("CODEX_HOME", hostHome)
+	link := filepath.Join(t.TempDir(), "auth.json")
+	native := codex.New(t.TempDir())
+	native.AuthPath = link
+	c := &Client{Adapter: adapter.NewMulti(native, codex.NewDocker())}
+	dockerSpec := adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex", LauncherID: "l1"}, LauncherContainerized: true}
+	if got, want := c.warmCodexAuthPath(dockerSpec), filepath.Join(hostHome, "auth.json"); got != want {
+		t.Fatalf("Docker launcher auth path = %q, want the shared host file %q", got, want)
+	}
+	// A tool whose adapter has no WarmAuthPath answers "" and the supervisor falls back to the launcher's own file.
+	if got := adapter.NewMulti(native).WarmAuthPath(adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "claude"}}); got != "" {
+		t.Fatalf("an adapter without the method answered %q, want empty", got)
+	}
+}
+
+func TestCodexWarmNeedsOptInAndRetiresWhenDisabled(t *testing.T) {
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	codex := func(spec *adapter.TurnSpec) { spec.Agent.Tool, spec.Agent.Model = "codex", "gpt-6-sol" }
+	h.run("agt_a", codex)
+	if h.f.cold != 1 || h.f.started != 0 || h.idle("agt_a") {
+		t.Fatalf("default-off Codex: cold=%d warm=%d", h.f.cold, h.f.started)
+	}
+	h.c.setCodexWarmEnabled(true)
+	h.run("agt_a", codex)
+	if h.f.started != 1 || !h.idle("agt_a") {
+		t.Fatalf("opted-in Codex: cold=%d warm=%d", h.f.cold, h.f.started)
+	}
+	h.c.setCodexWarmEnabled(false)
+	if h.idle("agt_a") || h.f.sessions[0].Alive() {
+		t.Fatal("disabled Codex kept an idle app-server")
+	}
+}
+
+func TestRepeatedCodexWarmOffDoesNotWaitForAnotherSlot(t *testing.T) {
+	h := newWarmHarness(t)
+	slot := h.c.pool().slot("agt_other")
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	done := make(chan struct{})
+	go func() { h.c.setCodexWarmEnabled(false); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("an unchanged off setting waited for an unrelated warm slot")
+	}
+}
+
+func TestWrappedWarmRefusalLogsOncePerCredentialStamp(t *testing.T) {
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.c.setCodexWarmEnabled(true)
+	h.f.fingerprintErr = fmt.Errorf("%w: token-only credentials required", adapter.ErrNoWarm)
+	codexTurn := func(spec *adapter.TurnSpec) { spec.Agent.Tool = "codex" }
+	h.run("agt_a", codexTurn)
+	h.run("agt_a", codexTurn)
+	warnings := func() int {
+		count := 0
+		for _, err := range h.errs {
+			if strings.Contains(err.Error(), "token-only credentials required") {
+				count++
+			}
+		}
+		return count
+	}
+	if warnings() != 1 {
+		t.Fatalf("repeated refusal logs: %v", h.errs)
+	}
+	h.cred.stamp = "login-2"
+	h.run("agt_a", codexTurn)
+	if warnings() != 2 {
+		t.Fatalf("changed credentials did not log a new refusal: %v", h.errs)
+	}
+}
+
+func TestCodexWarmStampsAnEnvironmentAPIKeyWithoutAuthFile(t *testing.T) {
+	path := t.TempDir()
+	t.Setenv("WARM_TEST_CODEX_DIR", path)
+	t.Setenv("WARM_TEST_CODEX_KEY", "test-key-one")
+	spec := adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex"}, LauncherEnvRefs: map[string]string{
+		"CODEX_HOME": "WARM_TEST_CODEX_DIR", "OPENAI_API_KEY": "WARM_TEST_CODEX_KEY"}}
+	first, ok := warmCredentials(spec, true)
+	if !ok || !strings.HasPrefix(first, "codex-api-key:") {
+		t.Fatalf("API key did not create a warm stamp: %q %t", first, ok)
+	}
+	t.Setenv("WARM_TEST_CODEX_KEY", "test-key-two")
+	second, ok := warmCredentials(spec, true)
+	if !ok || second == first {
+		t.Fatalf("key rotation did not change the stamp: %q %q %t", first, second, ok)
+	}
+	if _, ok := warmCredentials(spec, false); ok {
+		t.Fatal("an unshared Docker Codex home did not force cold mode")
 	}
 }
 
@@ -1040,8 +1189,8 @@ func TestWarmAccountOfTheLogin(t *testing.T) {
 		if got := warmAccount(claude(map[string]string{"HOME": "HOME_VAR"})); got != "" {
 			t.Fatalf("account = %q", got)
 		}
-		if got := warmAccount(adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex"}}); got != "" {
-			t.Fatalf("only Claude has an account here: %q", got)
+		if got := warmAccount(adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex"}, LauncherEnvRefs: map[string]string{"CODEX_HOME": "HOME_VAR"}}); got != "" {
+			t.Fatalf("no Codex auth file here: %q", got)
 		}
 	})
 }
@@ -1301,6 +1450,7 @@ func TestWarmWindowComesWithTheDelivery(t *testing.T) {
 // An account switch retires the idle warm processes of one tool only, and answers false while one cannot be confirmed gone.
 func TestWarmRetireByTool(t *testing.T) {
 	h := newWarmHarness(t)
+	h.c.setCodexWarmEnabled(true)
 	h.spawn("agt_claude")
 	h.spawn("agt_codex")
 	h.run("agt_claude", nil)

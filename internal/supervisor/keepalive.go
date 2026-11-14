@@ -532,7 +532,7 @@ func (c *Client) runKeepAlive(ctx context.Context, spec adapter.TurnSpec, cred c
 	}
 	result.scoped = true
 	spec.TurnID = gen
-	cred.stamp, cred.ok = warmCredentials(spec, shares)
+	cred.stamp, cred.ok = warmCredentials(spec, shares, c.warmCodexAuthPath(spec))
 	// The process is started under a context that a cancel does not end (a kill of the wrapper of a container process confirms nothing): the
 	// watcher below ends it the right way.
 	turn, err := c.startTurn(context.WithoutCancel(ctx), spec, nil, cred)
@@ -661,8 +661,9 @@ func (c *Client) sendKeepAliveReport(report protocol.KeepAliveReport) {
 // (a ping that runs is ended); the others keep their entry with the new settings and their timer is armed again from their last real turn, so a
 // shorter interval takes effect at once and a longer one is not cut short by the old timer. It ends processes, so it must not run on the loop that
 // reads frames.
-func (c *Client) applyAgentSettings(warmIdle *int, byTool map[string]protocol.KeepAliveSettings) {
+func (c *Client) applyAgentSettings(warmIdle *int, codexWarmEnabled bool, byTool map[string]protocol.KeepAliveSettings) {
 	c.applyWarmIdle(warmIdle)
+	c.setCodexWarmEnabled(codexWarmEnabled)
 	if byTool == nil {
 		return
 	}

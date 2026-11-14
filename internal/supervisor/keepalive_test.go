@@ -1028,20 +1028,20 @@ func TestAgentSettingsReachIdleAgents(t *testing.T) {
 	old := h.pingTimer(t)
 	// a different interval is counted from the last real turn: the old timer is stopped and a new one is armed for the new interval
 	zero := 300
-	h.c.applyAgentSettings(&zero, map[string]protocol.KeepAliveSettings{"codex": {IntervalSeconds: 0}}) // another tool: nothing changes
+	h.c.applyAgentSettings(&zero, false, map[string]protocol.KeepAliveSettings{"codex": {IntervalSeconds: 0}}) // another tool: nothing changes
 	h.c.kaMu.Lock()
 	_, kept := h.c.ka["agt_a"]
 	h.c.kaMu.Unlock()
 	if !kept {
 		t.Fatal("a setting for another tool forgot the agent")
 	}
-	h.c.applyAgentSettings(&zero, map[string]protocol.KeepAliveSettings{"claude": {IntervalSeconds: 600, StopAfterSeconds: 86400}})
+	h.c.applyAgentSettings(&zero, false, map[string]protocol.KeepAliveSettings{"claude": {IntervalSeconds: 600, StopAfterSeconds: 86400}})
 	h.kaStopped(t, old)
 	if got := h.lastTimer(); got.d != 600*time.Second {
 		t.Fatalf("the new interval is armed at once: %v", got.d)
 	}
 	// keep-alive off for the tool: forgotten
-	h.c.applyAgentSettings(nil, map[string]protocol.KeepAliveSettings{"claude": {IntervalSeconds: 0}})
+	h.c.applyAgentSettings(nil, false, map[string]protocol.KeepAliveSettings{"claude": {IntervalSeconds: 0}})
 	h.c.kaMu.Lock()
 	_, kept = h.c.ka["agt_a"]
 	h.c.kaMu.Unlock()
@@ -1050,7 +1050,7 @@ func TestAgentSettingsReachIdleAgents(t *testing.T) {
 	}
 	// the warm window turned off ends the idle process
 	off := 0
-	h.c.applyAgentSettings(&off, nil)
+	h.c.applyAgentSettings(&off, false, nil)
 	if h.idle("agt_a") {
 		t.Fatal("a warm window turned off must end idle processes at once")
 	}

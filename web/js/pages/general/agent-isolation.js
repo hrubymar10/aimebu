@@ -4,7 +4,8 @@ import { useAlive } from '../../hooks/use-alive.js';
 import { agentIsolation } from '../../agent-isolation.js';
 
 const READ_ONLY = 'Only the owner or an admin can change this.';
-const WARM_DESC = 'After a turn, an agent\'s harness stays running for this many minutes, so a message that arrives in the window skips the start (a few seconds) and the agent answers faster. After the window it goes back to sleep and the next turn starts it again. Each warm agent holds memory (roughly 0.3 GB for Claude Code), and when the machine runs low the longest-idle one is put to sleep first. 5 minutes unless you set another; 0 turns it off. Only Claude Code agents are kept warm so far.';
+const WARM_DESC = 'After a turn, an agent\'s harness stays running for this many minutes, so a message that arrives in the window skips the start (a few seconds) and the agent answers faster. After the window it goes back to sleep and the next turn starts it again. Each warm agent holds memory (roughly 0.3 GB for Claude Code), and when the machine runs low the longest-idle one is put to sleep first. 5 minutes unless you set another; 0 turns it off. Claude Code uses this window, and Codex uses it when its experimental setting is enabled.';
+const CODEX_WARM_DESC = 'Keep a Codex process ready between turns during the warm window. Experimental and off by default. Requires token-only credentials or an API key; full credentials run cold. 0 warm minutes turns it off for every agent.';
 const WARM_OWNER_ONLY = 'Only the owner can change this.';
 const DESC = 'Agents on a native launcher run as the person who runs the supervisor, with that person’s files within reach, including other agents’ working folders. With this on, a native launcher is refused: no new agent is started on one, and an agent already on one gets no turns until it is moved to a Docker launcher. Off by default.';
 
@@ -16,6 +17,8 @@ export function AgentIsolation() {
   const [error, setError] = useState('');
   const [warmError, setWarmError] = useState('');
   const [warmSaving, setWarmSaving] = useState(false);
+  const [codexError, setCodexError] = useState('');
+  const [codexSaving, setCodexSaving] = useState(false);
   const [warmDraft, setWarmDraft] = useState(null);
   const writing = useRef(false);
   useLayoutEffect(() => agentIsolation.onChange(() => changed(count => count + 1)), []);
@@ -37,6 +40,13 @@ export function AgentIsolation() {
     setWarmSaving(true);
     try { await agentIsolation.saveWarm(minutes); if (alive()) setWarmDraft(null); } catch (failure) { if (alive()) setWarmError(failure.message || 'Could not save'); } finally { writing.current = false; if (alive()) { setWarmSaving(false); changed(count => count + 1); } }
   };
+  const saveCodexWarm = async checked => {
+    if (writing.current) return;
+    writing.current = true;
+    setCodexError('');
+    setCodexSaving(true);
+    try { await agentIsolation.saveCodexWarm(checked); } catch (failure) { if (alive()) setCodexError(failure.message || 'Could not save'); } finally { writing.current = false; if (alive()) { setCodexSaving(false); changed(count => count + 1); } }
+  };
   return html`
     <h3>Agents</h3>
     <${SettingsGroup} label="Agents">
@@ -48,10 +58,15 @@ export function AgentIsolation() {
           title=${agentIsolation.canEditWarm ? undefined : WARM_OWNER_ONLY}
           onInput=${event => setWarmDraft(event.currentTarget.value)} onBlur=${saveWarm} onKeyDown=${event => { if (event.key === 'Enter') { event.preventDefault(); saveWarm(); } }} />
       <//>
+      <${SettingsRow} label="Codex warm (experimental)" desc=${CODEX_WARM_DESC} id="agent-codex-warm" className="settings-row-toggle">
+        <input type="checkbox" checked=${agentIsolation.codexWarmEnabled} disabled=${!agentIsolation.canEditWarm || codexSaving}
+          title=${agentIsolation.canEditWarm ? undefined : WARM_OWNER_ONLY} onChange=${event => saveCodexWarm(event.currentTarget.checked)} />
+      <//>
     <//>
     <p class="settings-intro" role="status">${canEdit ? '' : READ_ONLY}</p>
     <p id="agent-docker-only-error" class="error" role="alert">${error}</p>
     <p class="settings-intro" role="note" hidden=${agentIsolation.canEditWarm}>${WARM_OWNER_ONLY}</p>
     <p id="agent-warm-idle-error" class="error" role="alert">${warmError}</p>
+    <p id="agent-codex-warm-error" class="error" role="alert">${codexError}</p>
   `;
 }

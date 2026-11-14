@@ -363,7 +363,13 @@ func (a *Adapter) prepareRuntime(spec adapter.TurnSpec, own userMCP) (string, er
 		// The person's own MCP servers, next to aimebu's entry, which is the only one under that name (see user_mcp.go).
 		config = append(config, []byte("\n# the person's own MCP servers, copied from their Codex config\n"+own.tables)...)
 	}
-	if err := writePrivate(filepath.Join(dir, "config.toml"), config); err != nil {
+	configPath := filepath.Join(dir, "config.toml")
+	if existing, err := os.ReadFile(configPath); err == nil && string(existing) == string(config) {
+		return dir, nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := writePrivate(configPath, config); err != nil {
 		return "", err
 	}
 	return dir, nil

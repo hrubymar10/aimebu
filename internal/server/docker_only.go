@@ -19,6 +19,7 @@ const agentsDockerOnlyKey = "agents_docker_only"
 // agentsWarmIdleKey holds how many seconds an agent's harness process is kept up after a turn (see supervisor/warm.go); absent is the default
 // (defaultWarmIdleSeconds), a saved 0 is off.
 const agentsWarmIdleKey = "agents_warm_idle_seconds"
+const codexWarmEnabledKey = "codex_warm_enabled"
 
 // The cache keep-alive settings (see supervisor/keepalive.go). On by default: a ping every fifty minutes keeps Claude Code's one-hour prompt cache
 // (about four for Codex, whose cache lifetime is not stated), until a day has passed without real work.
@@ -179,9 +180,10 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			DockerOnly      *bool `json:"docker_only"`
-			WarmIdleMinutes *int  `json:"warm_idle_minutes"`
-			KeepAlive       *struct {
+			DockerOnly       *bool `json:"docker_only"`
+			WarmIdleMinutes  *int  `json:"warm_idle_minutes"`
+			CodexWarmEnabled *bool `json:"codex_warm_enabled"`
+			KeepAlive        *struct {
 				Enabled       *bool `json:"enabled"`
 				ClaudeMinutes *int  `json:"claude_minutes"`
 				CodexMinutes  *int  `json:"codex_minutes"`
@@ -191,8 +193,8 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		if !readJSON(w, r, &body) {
 			return
 		}
-		if body.DockerOnly == nil && body.WarmIdleMinutes == nil && body.KeepAlive == nil {
-			apiError(w, 400, "invalid_request", "docker_only, warm_idle_minutes or keep_alive is required")
+		if body.DockerOnly == nil && body.WarmIdleMinutes == nil && body.CodexWarmEnabled == nil && body.KeepAlive == nil {
+			apiError(w, 400, "invalid_request", "docker_only, warm_idle_minutes, codex_warm_enabled or keep_alive is required")
 			return
 		}
 		if body.KeepAlive != nil {
@@ -207,7 +209,7 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if body.WarmIdleMinutes != nil || body.KeepAlive != nil {
+		if body.WarmIdleMinutes != nil || body.CodexWarmEnabled != nil || body.KeepAlive != nil {
 			isOwner, err := s.Store.IsGlobalOwner(r.Context(), userID(r))
 			if err != nil {
 				fail(w, err)
@@ -261,6 +263,17 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if body.CodexWarmEnabled != nil {
+			value := "0"
+			if *body.CodexWarmEnabled {
+				value = "1"
+			}
+			if err := s.Store.SetGlobalSettingValue(r.Context(), codexWarmEnabledKey, value); err != nil {
+				fail(w, err)
+				return
+			}
+			s.codexWarmOn.Store(*body.CodexWarmEnabled)
+		}
 	}
 	if r.Method == http.MethodPut {
 		s.pushAgentSettings(r.Context()) // an idle agent gets no delivery: a setting turned off reaches it now
@@ -295,5 +308,5 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"docker_only": on, "can_edit": canEdit, "warm_idle_minutes": warm / 60, "warm_idle_saved": warmSaved, "can_edit_warm": canEditWarm, "keep_alive": keep})
+	writeJSON(w, 200, map[string]any{"docker_only": on, "can_edit": canEdit, "warm_idle_minutes": warm / 60, "warm_idle_saved": warmSaved, "can_edit_warm": canEditWarm, "codex_warm_enabled": s.codexWarmOn.Load(), "keep_alive": keep})
 }
