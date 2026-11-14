@@ -109,7 +109,7 @@ async function main() {
     assert.equal((await state(page)).value, '/home/ana/.private/', 'Tab completes the highlighted suggestion');
     await page.close();
   }
-  // With nothing highlighted, / is typed, Tab moves the focus, Enter completes nothing, and Escape leaves the text alone.
+  // With nothing highlighted, / after a partial name is typed, Tab completes the first suggestion, Enter completes nothing, and Escape leaves the text alone.
   {
     const page = await mount();
     const input = '#project-form [name=folder]';
@@ -129,7 +129,13 @@ async function main() {
     assert.equal(await page.evaluate(() => window.submitted), 1, 'Enter is left to the form (it submits) without a highlight');
     await page.keyboard.press('Tab');
     const moved = await page.evaluate(() => ({ value: document.querySelector('#project-form [name=folder]').value, focused: document.activeElement === document.querySelector('#project-form [name=folder]') }));
-    assert.deepEqual(moved, { value: '/home/ana/o', focused: false }, 'Tab keeps the text and moves the focus on');
+    assert.deepEqual(moved, { value: '/home/ana/odd/', focused: true }, 'Tab completes the first suggestion and keeps focus');
+    await open('/home/ana/ot');
+    await page.keyboard.press('Tab');
+    assert.deepEqual([(await state(page)).value, (await state(page)).focused], ['/home/ana/other/', true], 'Tab completes the only matching directory');
+    await page.waitForFunction(() => document.querySelector('.folder-suggestions').hidden);
+    await page.keyboard.press('Tab');
+    assert.deepEqual([(await state(page)).value, (await state(page)).focused], ['/home/ana/other/', false], 'a second Tab moves focus when there is no next suggestion');
     await open('/home/ana/o');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Escape');

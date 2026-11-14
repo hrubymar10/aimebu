@@ -47,7 +47,32 @@ func TestDockerPreflightRejectsUnmountedCheckout(t *testing.T) {
 func TestDockerPreflightPassesForALauncherThatLeavesAHelperBehind(t *testing.T) {
 	root := t.TempDir()
 	launcher := filepath.Join(root, "pi-docker")
-	if err := testenv.WriteExecutable(launcher, []byte("#!/bin/sh\necho 'pi 1.0'\nsleep 4 &\nexit 0\n"), 0700); err != nil {
+	ready, release, done := filepath.Join(root, "helper-ready"), filepath.Join(root, "helper-release"), filepath.Join(root, "helper-done")
+	t.Setenv("PREFLIGHT_HELPER_READY", ready)
+	t.Setenv("PREFLIGHT_HELPER_RELEASE", release)
+	t.Setenv("PREFLIGHT_HELPER_DONE", done)
+	t.Cleanup(func() {
+		if _, err := os.Stat(ready); os.IsNotExist(err) {
+			return
+		}
+		if err := os.WriteFile(release, []byte("done"), 0600); err != nil {
+			t.Error(err)
+			return
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, err := os.Stat(done); err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("the launcher's helper did not exit after release")
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+	script := "#!/bin/sh\n( : > \"$PREFLIGHT_HELPER_READY\"; while [ ! -e \"$PREFLIGHT_HELPER_RELEASE\" ]; do sleep 0.1; done; : > \"$PREFLIGHT_HELPER_DONE\" ) &\nwhile [ ! -e \"$PREFLIGHT_HELPER_READY\" ]; do sleep 0.01; done\necho 'pi 1.0'\nexit 0\n"
+	if err := testenv.WriteExecutable(launcher, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -55,12 +80,11 @@ func TestDockerPreflightPassesForALauncherThatLeavesAHelperBehind(t *testing.T) 
 	if err := os.Mkdir(checkout, 0700); err != nil {
 		t.Fatal(err)
 	}
-	started := time.Now()
 	if err := DockerPreflight("pi", checkout); err != nil {
 		t.Fatalf("a launcher that exited 0 failed its preflight: %v", err)
 	}
-	if elapsed := time.Since(started); elapsed > 3*time.Second {
-		t.Fatalf("the preflight took %v: it waited for the launcher's helper", elapsed)
+	if _, err := os.Stat(ready); err != nil {
+		t.Fatalf("the helper was not running when preflight returned: %v", err)
 	}
 }
 

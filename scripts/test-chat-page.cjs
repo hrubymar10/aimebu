@@ -715,6 +715,13 @@ async function main() {
       window.__chat.updateAnswerControls([{ id: 'inb_1', rev: 1, kind: 'question', message_id: 'rm_a_m120', proposed_answers: ['alpha', 'beta'], options: [], free_text: false, can_decide: true }]);
     });
     await page.waitForSelector('#messages [data-message-id=rm_a_m120] .proposed-answer-btn');
+    const answerPosition = await page.$eval('#messages [data-message-id=rm_a_m120]', row => {
+      const bubble = row.querySelector('.chat-msg-bubble').getBoundingClientRect();
+      const answer = row.querySelector('.proposed-answer-btn').getBoundingClientRect();
+      return { gap: answer.top - bubble.bottom, offset: answer.left - bubble.left };
+    });
+    assert.ok(answerPosition.gap >= 0 && answerPosition.gap <= 12 && Math.abs(answerPosition.offset) <= 2,
+      `proposed answers sit immediately under the message: ${JSON.stringify(answerPosition)}`);
     await page.$eval('#messages [data-message-id=rm_a_m120] .proposed-answer-btn', button => button.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true, cancelable: true })));
     assert.deepEqual({ draft: await draftText(page), reply: await page.evaluate(() => window.__chat.reply?.id), sent: await page.evaluate(() => window.__answered), posts: await posts(page) },
       { draft: '@zed alpha', reply: 'rm_a_m120', sent: [], posts: [] }, 'Shift-clicking a proposed answer composes it as a linked reply without sending');

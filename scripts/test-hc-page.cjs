@@ -102,6 +102,23 @@ async function main() {
       assert.equal(hovered, plain.accent, `the accent outline on hover in ${theme}`);
       assert.deepEqual([plain.off[0], plain.off[1]], [plain.tertiary, '0.5'], `a disabled one is the same button dimmed in ${theme}`);
       await page.evaluate(() => { document.getElementById('hc-probe')?.remove(); document.getElementById('hc-probe-off')?.remove(); });
+      await page.evaluate(() => {
+        for (const [id, cls, top] of [['hc-bubble', 'chat-msg-bubble', 10], ['hc-card', 'agent-card', 80], ['hc-room', 'room-item', 150]]) {
+          const node = document.createElement('div'); node.id = id; node.className = cls;
+          node.style.cssText = `position:fixed;top:${top}px;left:10px;width:120px;height:40px;z-index:99999`;
+          document.body.append(node);
+        }
+      });
+      const hoverPalette = await page.evaluate(() => { const node = document.createElement('i'); node.style.color = 'var(--border-hover)'; document.body.append(node); const border = getComputedStyle(node).color; node.style.color = 'var(--accent)'; const accent = getComputedStyle(node).color; node.style.backgroundColor = 'var(--bg-hover)'; const background = getComputedStyle(node).backgroundColor; node.remove(); return { border, accent, background }; });
+      await page.hover('#hc-bubble'); await wait(400);
+      assert.equal(await page.$eval('#hc-bubble', node => getComputedStyle(node).borderTopColor), hoverPalette.border, `message hover keeps v1's border in ${theme}`);
+      await page.hover('#hc-card'); await wait(400);
+      assert.equal(await page.$eval('#hc-card', node => getComputedStyle(node).borderTopColor), hoverPalette.border, `agent card hover keeps v1's border in ${theme}`);
+      await page.hover('#hc-room'); await wait(400);
+      const roomHover = await page.$eval('#hc-room', node => { const style = getComputedStyle(node); return { background: style.backgroundColor, outline: style.outlineColor, outlineStyle: style.outlineStyle }; });
+      if (theme === 'high-contrast-dark') assert.deepEqual([roomHover.outline, roomHover.outlineStyle], [hoverPalette.accent, 'dotted'], 'the room hover has the high-contrast accent outline');
+      else assert.equal(roomHover.background, hoverPalette.background, 'the room hover uses v1’s background');
+      await page.evaluate(() => { for (const id of ['hc-bubble', 'hc-card', 'hc-room']) document.getElementById(id)?.remove(); });
       assert.equal(more.header, more.tertiary, `the room header's icon buttons have v1's tertiary fill in ${theme}`);
       assert.equal(more.cell, 'rgba(0, 0, 0, 0)', `an emoji cell is not outlined at rest in ${theme}`);
     }

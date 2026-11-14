@@ -1,7 +1,9 @@
 package codex
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,32 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/testenv"
 )
+
+func TestSkippedDockerMCPWarningRepeatsOnlyAfterConfigChanges(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	path := filepath.Join(root, "config.toml")
+	config := "[mcp_servers.aimebu]\nurl = \"http://localhost:9997/mcp\"\n"
+	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	userDockerOverrides()
+	userDockerOverrides()
+	if got := strings.Count(output.String(), "not carried to the container"); got != 1 {
+		t.Fatalf("same config warned %d times, want once: %s", got, output.String())
+	}
+	if err := os.WriteFile(path, []byte(config+"# changed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	userDockerOverrides()
+	if got := strings.Count(output.String(), "not carried to the container"); got != 2 {
+		t.Fatalf("changed config warned %d times, want twice: %s", got, output.String())
+	}
+}
 
 const userConfig = `model = "gpt-6"
 approval_policy = "never"

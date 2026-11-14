@@ -1,8 +1,8 @@
 // The Workspace folder field, one component for every place that has one (New project, project settings, the first-run project step, the import wizard's Projects page). The field
 // is empty until the person asks for their home folder: a house button sits at the left edge of the field (the text is inset to make room, only while it shows),
 // and a click fills the home folder (a trailing slash, the caret after it, the focus kept). The home button stays hidden when no home is known.
-// While the suggestion list is open, Enter, Tab and `/` complete a suggestion only when one is highlighted (arrow keys or the pointer over it); with none highlighted
-// they do what they always do (a `/` is typed, Tab moves the focus, Enter submits), and Escape closes the list and leaves the text as it is.
+// While the suggestion list is open, Tab accepts the highlighted or first suggestion. Enter accepts a highlighted suggestion.
+// `/` accepts a highlighted suggestion or an exact directory name, then continues at the next level. Escape closes the list.
 import { request, rights } from './api.js';
 import { fillFolderStart, folderStart, watchTypedOverStart } from './workspace-folder.js';
 
@@ -49,7 +49,9 @@ export function attachFolderField(input, getHome = () => rights.hostHome, getMac
   const choose = index => {
     if (index < 0 || index >= names.length) return false;
     const slash = input.value.lastIndexOf('/');
-    input.value = input.value.slice(0, slash + 1) + names[index] + '/';
+    const completed = input.value.slice(0, slash + 1) + names[index] + '/';
+    if (completed === input.value) return false;
+    input.value = completed;
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.setSelectionRange(input.value.length, input.value.length);
     input.focus();
@@ -106,8 +108,10 @@ export function attachFolderField(input, getHome = () => rights.hostHome, getMac
       event.preventDefault();
       highlight(selected < 0 ? (event.key === 'ArrowDown' ? 0 : names.length - 1) :
         (selected + (event.key === 'ArrowDown' ? 1 : -1) + names.length) % names.length);
-    } else if ((event.key === 'Enter' || event.key === 'Tab' || event.key === '/') && selected >= 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault(); choose(selected);
+    } else if ((event.key === 'Enter' || event.key === 'Tab' || event.key === '/') && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const exact = names.indexOf(input.value.slice(input.value.lastIndexOf('/') + 1));
+      const index = selected >= 0 ? selected : event.key === 'Tab' ? 0 : event.key === '/' ? exact : -1;
+      if (index >= 0 && choose(index)) event.preventDefault();
     }
   });
   const start = () => folderStart(typeof getHome === 'function' ? getHome() : getHome);

@@ -282,7 +282,7 @@ the rest of the person's config (model, profile, approvals) still does not apply
 The same rules hold for every harness that carries a person's own servers (Codex,
 OpenCode, Pi and Vibe: normal turns only, a read-only turn gets none). A Docker turn
 carries the person's remote (HTTP or SSE) servers only, because a command on the host is
-not in the container (each one left out is logged once per supervisor process with that reason): Codex passes each as
+not in the container (each one left out is logged once per supervisor process and config version with that reason): Codex passes each as
 a `-c mcp_servers.<name>=…` override and keeps `--ignore-user-config`, with aimebu's own two entries
 last. The Codex path fails closed: a server is carried only when its parsed table holds nothing but a
 `url`, `enabled = true` and the two timeouts. Any other key (a header or tools table in any

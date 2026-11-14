@@ -526,7 +526,9 @@ limits, recovery and worktrees; there is no separate Settings → Project page),
 its Schedules, a Project memory entry where task rooms have Task notes, and one
 line saying that the home room works in the project folder while task rooms can
 have their own Git worktree. Project folder inputs offer matching directories
-as a path is typed, using the machine that holds the folder. Room settings (one control size throughout; Kind and Room ID show only while the message debug
+as a path is typed, using the machine that holds the folder. Tab completes the
+highlighted or first suggestion and keeps focus in the field; `/` after a
+complete directory name accepts it and continues to the next level. Room settings (one control size throughout; Kind and Room ID show only while the message debug
 inspector is on) offers
 Archive/Reopen for non-home rooms and, for a task room, a destructive
 Delete room (project owner only; open rooms are archived and their agents stopped

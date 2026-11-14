@@ -110,9 +110,22 @@ async function main() {
       const index = await waitRequest(page, 'GET', '/api/machines/directories?path=%2Fsrv%2F&prefix=al');
       await answer(page, index, 200, { directories: ['alpha'] });
       await page.waitForSelector('#project-details-folder + .folder-suggestions [role=option]');
-      await page.keyboard.press('ArrowDown'); // Tab completes only a highlighted suggestion
       await page.keyboard.press('Tab');
       assert.equal(await page.$eval('#project-details-folder', input => input.value), '/srv/alpha/');
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'project-details-folder', 'Tab keeps focus in the folder field');
+      await page.$eval('#project-details-folder', input => { input.value = '/srv/alpha'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+      const exact = await waitRequest(page, 'GET', '/api/machines/directories?path=%2Fsrv%2F&prefix=alpha');
+      await answer(page, exact, 200, { directories: ['alpha'] });
+      await page.waitForSelector('#project-details-folder + .folder-suggestions [role=option]');
+      await page.keyboard.press('/');
+      assert.equal(await page.$eval('#project-details-folder', input => input.value), '/srv/alpha/', 'slash completes an exact directory name once');
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'project-details-folder');
+      await page.$eval('#project-details-folder', input => { input.value = '/srv/al'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+      const partial = await waitRequest(page, 'GET', '/api/machines/directories?path=%2Fsrv%2F&prefix=al');
+      await answer(page, partial, 200, { directories: ['alpha'] });
+      await page.waitForSelector('#project-details-folder + .folder-suggestions [role=option]');
+      await page.keyboard.press('/');
+      assert.equal(await page.$eval('#project-details-folder', input => input.value), '/srv/al/', 'slash remains a typed separator for a partial name');
       await page.close();
     }
     // What the form is made of, in order, with the rows named and described; the values from the server's answers.
