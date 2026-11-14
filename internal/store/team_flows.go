@@ -59,10 +59,15 @@ type TeamFlowState struct {
 	Conflicts     []FlowConflict   `json:"conflicts"`
 }
 type TeamFlowPreview struct {
-	Key         string         `json:"key"`
-	CreateRooms []FlowRoom     `json:"create_rooms"`
-	RoleChanges []any          `json:"role_changes"`
-	Conflicts   []FlowConflict `json:"conflicts"`
+	Key                      string                     `json:"key"`
+	CreateRooms              []FlowRoom                 `json:"create_rooms"`
+	PreservedRestrictedRooms []FlowPreservedRestriction `json:"preserved_restricted_rooms"`
+	RoleChanges              []any                      `json:"role_changes"`
+	Conflicts                []FlowConflict             `json:"conflicts"`
+}
+type FlowPreservedRestriction struct {
+	RoomID string `json:"room_id"`
+	Title  string `json:"title"`
 }
 type TeamFlowApplied struct {
 	Key           string         `json:"key"`
@@ -236,12 +241,29 @@ func (s *Store) PreviewTeamFlow(ctx context.Context, projectID, userID, key stri
 	if !ok {
 		return TeamFlowPreview{}, fmt.Errorf("unknown team flow %q", key)
 	}
-	out := TeamFlowPreview{Key: key, CreateRooms: []FlowRoom{}, RoleChanges: []any{}, Conflicts: []FlowConflict{}}
+	out := TeamFlowPreview{Key: key, CreateRooms: []FlowRoom{}, PreservedRestrictedRooms: []FlowPreservedRestriction{}, RoleChanges: []any{}, Conflicts: []FlowConflict{}}
 	conflicts, err := flowConflicts(ctx, s.db, projectID, t)
 	if err != nil {
 		return out, err
 	}
 	out.Conflicts = conflicts
+	rows, err := s.db.QueryContext(ctx, `SELECT id,title FROM room WHERE project_id=? AND restricted=1 ORDER BY created_at,id`, projectID)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var room FlowPreservedRestriction
+		if err := rows.Scan(&room.RoomID, &room.Title); err != nil {
+			rows.Close()
+			return out, err
+		}
+		out.PreservedRestrictedRooms = append(out.PreservedRestrictedRooms, room)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
 	for _, room := range t.Rooms {
 		if room.Key == "home" {
 			continue
@@ -333,9 +355,6 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64) (TeamFlowA
 		} else {
 			return err
 		}
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET restricted=0 WHERE project_id=?`, projectID); err != nil {
-			return err
-		}
 		for _, spec := range t.Rooms {
 			if spec.Key == "home" {
 				continue
@@ -343,7 +362,7 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64) (TeamFlowA
 			var id string
 			err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind<>'dm' AND (team_flow_room_key=? OR title=?) LIMIT 1`, projectID, spec.Key, spec.Title).Scan(&id)
 			if err == nil {
-				if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET team_flow_room_key=?,restricted=? WHERE id=?`, spec.Key, spec.Restricted, id); err != nil {
+				if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET team_flow_room_key=?,restricted=restricted OR ? WHERE id=?`, spec.Key, spec.Restricted, id); err != nil {
 					return err
 				}
 				continue

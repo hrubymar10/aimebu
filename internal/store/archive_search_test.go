@@ -85,3 +85,31 @@ func TestArchiveSearchSnippetIsRuneSafe(t *testing.T) {
 		t.Fatalf("snippet %q", snippet)
 	}
 }
+
+func TestArchiveSearchRespectsRestrictedRoomAccess(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	if _, err := f.s.InsertMessage(ctx, Message{RoomID: f.other.ID, AuthorKind: "system", AuthorID: "system", Body: "private routing needle"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE room SET lifecycle='closed',restricted=1 WHERE id=?`, f.other.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []string{f.alice, f.carol} {
+		hits, err := f.s.ArchiveSearch(ctx, f.project.ID, user, "routing needle", 50)
+		if err != nil || len(hits) != 1 || hits[0].RoomID != f.other.ID {
+			t.Fatalf("oversight archive for %s: %+v %v", user, hits, err)
+		}
+	}
+	hits, err := f.s.ArchiveSearch(ctx, f.project.ID, f.bob, "routing needle", 50)
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("viewer searched restricted archive: %+v %v", hits, err)
+	}
+	if err := f.s.AddMember(ctx, f.other.ID, "user", f.bob); err != nil {
+		t.Fatal(err)
+	}
+	hits, err = f.s.ArchiveSearch(ctx, f.project.ID, f.bob, "routing needle", 50)
+	if err != nil || len(hits) != 1 || hits[0].RoomID != f.other.ID {
+		t.Fatalf("room member archive: %+v %v", hits, err)
+	}
+}

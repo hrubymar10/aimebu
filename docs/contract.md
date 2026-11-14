@@ -93,8 +93,13 @@ Projects, rooms, people
   start `custom` with review pending. Revision guards apply. The template
   catalog carries room, spawn, join, and diagram data. Applying a flow creates
   missing rooms, adjusts incompatible agent room memberships, and preserves
-  agents, messages, and rooms. A room marked `restricted` by a template's
-  room rule requires membership for history and uncited message reads;
+  agents, messages, and rooms. Applying another flow preserves any existing
+  room's `restricted` flag; only an explicit room change may clear it. The
+  flow preview lists rooms whose restriction will be preserved. A room marked
+  `restricted` by a template's room rule requires active room membership for
+  agent reads and viewer access; project owners and operators can read it for
+  oversight without room membership. Private chats still require human room
+  membership. For agents, restricted history and uncited message reads require membership;
   the dispatcher flow marks `routing` restricted. The dispatcher is a
   singleton spawn-capable role without lead capability. A flow's spawn
   rules grant its task-room and agent-management authority; its auto-join

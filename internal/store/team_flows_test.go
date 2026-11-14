@@ -39,6 +39,82 @@ func TestTeamFlowMigrationMarksExistingProjectCustom(t *testing.T) {
 	}
 }
 
+func TestTeamFlowSwitchPreservesRestrictedRoom(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	routed, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routingID string
+	for _, room := range routed.CreatedRooms {
+		if room.TeamFlowRoomKey == "routing" {
+			routingID = room.ID
+		}
+	}
+	if routingID == "" {
+		t.Fatal("routing room missing")
+	}
+	preview, err := f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "custom")
+	if err != nil || len(preview.PreservedRestrictedRooms) != 1 || preview.PreservedRestrictedRooms[0].RoomID != routingID {
+		t.Fatalf("preview did not disclose retained restriction: %+v %v", preview, err)
+	}
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "custom", routed.Rev); err != nil {
+		t.Fatal(err)
+	}
+	var restricted bool
+	if err := f.s.db.QueryRow(`SELECT restricted FROM room WHERE id=?`, routingID).Scan(&restricted); err != nil || !restricted {
+		t.Fatalf("routing restriction after custom flow: %v %v", restricted, err)
+	}
+	workers, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-workers", routed.Rev+1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.db.QueryRow(`SELECT restricted FROM room WHERE id=?`, routingID).Scan(&restricted); err != nil || !restricted {
+		t.Fatalf("routing restriction after worker flow: %v %v", restricted, err)
+	}
+	preview, err = f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "leader-workers")
+	if err != nil || len(preview.PreservedRestrictedRooms) != 1 || preview.PreservedRestrictedRooms[0].RoomID != routingID || workers.Rev != 3 {
+		t.Fatalf("retained restriction preview: %+v %v", preview, err)
+	}
+}
+
+func TestRestrictedRoomAllowsOwnerAndOperatorOversight(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	if _, err := f.s.db.Exec(`UPDATE room SET restricted=1 WHERE id=?`, f.other.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []string{f.alice, f.carol} {
+		if err := f.s.UserRoomAccess(ctx, user, f.other.ID); err != nil {
+			t.Fatalf("oversight access for %s: %v", user, err)
+		}
+		rooms, err := f.s.RoomsForUserProject(ctx, f.project.ID, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, room := range rooms {
+			found = found || room.ID == f.other.ID
+		}
+		if !found {
+			t.Fatalf("restricted room absent for %s", user)
+		}
+	}
+	if err := f.s.UserRoomAccess(ctx, f.bob, f.other.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer opened restricted room: %v", err)
+	}
+	rooms, err := f.s.RoomsForUserProject(ctx, f.project.ID, f.bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, room := range rooms {
+		if room.ID == f.other.ID {
+			t.Fatal("viewer listed restricted room")
+		}
+	}
+}
+
 func TestTeamFlowRoutingAndExactReferenceGrant(t *testing.T) {
 	f := newMembersFixture(t)
 	ctx := context.Background()

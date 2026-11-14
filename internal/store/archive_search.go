@@ -33,8 +33,13 @@ func (s *Store) ArchiveSearch(ctx context.Context, projectID, userID, query stri
 		  AND (r.kind!='dm' OR EXISTS (
 			SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user'
 			AND own.member_id=? AND own.left_at IS NULL))
+		  AND (r.restricted=0 OR EXISTS (
+			SELECT 1 FROM membership oversight WHERE oversight.project_id=r.project_id
+			AND oversight.user_id=? AND oversight.role IN ('owner','operator')) OR EXISTS (
+			SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user'
+			AND own.member_id=? AND own.left_at IS NULL))
 		  AND m.body LIKE ? ESCAPE '\'
-		ORDER BY m.created_at DESC,m.seq DESC LIMIT ?`, projectID, userID, likePattern(query), limit)
+		ORDER BY m.created_at DESC,m.seq DESC LIMIT ?`, projectID, userID, userID, userID, likePattern(query), limit)
 	if err != nil {
 		return nil, err
 	}

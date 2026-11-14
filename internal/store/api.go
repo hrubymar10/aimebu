@@ -209,10 +209,12 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		FROM room r LEFT JOIN room_view_preference v ON v.room_id=r.id AND v.user_id=?
 		LEFT JOIN room_read_cursor c ON c.room_id=r.id AND c.user_id=?
 		WHERE r.project_id=? AND (?='' OR r.id=?) AND (
-			(r.kind!='dm' AND r.restricted=0)
+			(r.kind!='dm' AND (r.restricted=0 OR EXISTS (
+				SELECT 1 FROM membership oversight WHERE oversight.project_id=r.project_id
+				AND oversight.user_id=? AND oversight.role IN ('owner','operator'))))
 			OR EXISTS (
 			SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user'
-			AND own.member_id=? AND own.left_at IS NULL)) ORDER BY r.depth,r.created_at,r.id`, userID, userID, userID, projectID, roomID, roomID, userID)
+			AND own.member_id=? AND own.left_at IS NULL)) ORDER BY r.depth,r.created_at,r.id`, userID, userID, userID, projectID, roomID, roomID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
