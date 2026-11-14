@@ -44,6 +44,11 @@ assert.equal(Array.from(tree.collapsible).join(), 'home');
 tree = treeOf(state([home, room('child', 'a', { parent_id: 'home', unread_count: 2 })], { collapsed: new Set(['home']) }));
 assert.equal(tree.sections[0].folded, true);
 assert.equal(tree.sections[0].unread, 2);
+tree = treeOf(state([home, room('routing', 'a', { unread_count: 4 }), room('missing-parent', 'a', { parent_id: 'gone', unread_count: 1 })], { collapsed: new Set(['home']), active: 'routing' }));
+same(names(tree.sections), ['home'], 'rooms without a live parent use the project home row');
+same(names(tree.sections[0].children), ['missing-parent', 'routing']);
+assert.equal(tree.sections[0].unread, 1, 'the folded home counts orphaned children but not the active room');
+assert.deepEqual([...tree.holdsActive], ['home'], 'the fallback home holds the active room');
 tree = treeOf(state([home, room('child', 'a', { parent_id: 'home', unread_count: 2 })], { active: 'child' }));
 assert.equal(tree.sections[0].unread, 0);
 // The roots on screen, and the one that holds the open room (itself or a child), for the default fold; nothing is a root while a filter is on.
@@ -54,9 +59,10 @@ assert.deepEqual([...treeOf(state([home, room('child', 'a', { parent_id: 'home' 
 assert.deepEqual([...treeOf(state([home, room('child', 'a', { parent_id: 'home' }), room('old', 'a', { parent_id: 'child', lifecycle: 'closed' })], { active: 'old' })).holdsActive], ['home'], 'an archived room holds its project');
 assert.deepEqual([...treeOf(state([home, room('child', 'a', { parent_id: 'home' })], { filter: 'child' })).nested], [], 'a filter marks no root as seen');
 
-// A closed parent frees its child to the top; a closed room goes to the archived tail of its project (narrowed by the archive search).
+// A closed parent sends its child to the project home; a closed room goes to the archived tail of its project (narrowed by the archive search).
 tree = treeOf(state([home, room('old', 'a', { lifecycle: 'closed', title: 'Retro' }), room('older', 'a', { lifecycle: 'closed', title: 'Alpha plan' }), room('hid', 'a', { hidden: true }), room('orphan', 'a', { parent_id: 'old' })], { archiveFilter: new Map([['a', ' retro ']]) }));
-same(names(tree.sections), ['home', 'orphan']);
+same(names(tree.sections), ['home']);
+same(names(tree.sections[0].children), ['orphan']);
 const tail = tree.sections[0].tail;
 same(tail.map(node => node.kind), ['archived', 'hidden']);
 assert.equal(tail[0].count, 2);

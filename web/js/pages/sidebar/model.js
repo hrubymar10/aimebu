@@ -130,16 +130,22 @@ export function treeOf(state) {
   const shown = all.filter(room => !room.hidden && room.lifecycle !== 'closed' && matchesRoom(room, filter, projects));
   const direct = shown.filter(room => room.kind === 'dm').sort(activityOrder);
   const ordinary = shown.filter(room => room.kind !== 'dm');
-  const liveParent = room => { const parent = room.parent_id && rooms.get(room.parent_id); return !!parent && parent.lifecycle !== 'closed' && !parent.hidden; };
+  const homes = new Map();
+  for (const room of all) if (room.kind === 'home' && room.lifecycle !== 'closed' && !room.hidden && !homes.has(room.project_id)) homes.set(room.project_id, room.id);
+  const displayParentID = room => {
+    const parent = room.parent_id && rooms.get(room.parent_id);
+    if (parent && parent.project_id === room.project_id && parent.lifecycle !== 'closed' && !parent.hidden) return parent.id;
+    return room.kind !== 'home' && room.kind !== 'dm' ? homes.get(room.project_id) || '' : '';
+  };
   const tails = new Map(live.map(project => [project.id, filtering ? [] : tailOf(project, all, archiveFilter)]));
   const collapsible = new Set(), nested = new Set(), holdsActive = new Set(), tailed = new Set();
   // The open room and everything above it, however deep and whether or not the rooms in between are shown (archived or hidden ones count too).
   const holders = new Set();
   const focus = active || (provisional ? expected : '');
-  for (let room = focus && rooms.get(focus), guard = 0; room && guard < 64; room = room.parent_id && rooms.get(room.parent_id), guard++) holders.add(room.id);
+  for (let room = focus && rooms.get(focus), guard = 0; room && guard < 64; room = rooms.get(displayParentID(room)), guard++) holders.add(room.id);
   if (focus) holders.add(focus);
   const view = (room, opts) => {
-    const children = opts.nest && room.lifecycle !== 'closed' ? orderRooms([...rooms.values()].filter(other => other.parent_id === room.id && other.lifecycle !== 'closed' && !other.hidden && other.kind !== 'dm' && matchesRoom(other, filter, projects)), sort) : [];
+    const children = opts.nest && room.lifecycle !== 'closed' ? orderRooms([...rooms.values()].filter(other => displayParentID(other) === room.id && other.lifecycle !== 'closed' && !other.hidden && other.kind !== 'dm' && matchesRoom(other, filter, projects)), sort) : [];
     const tail = opts.tail || [];
     const kids = children.length + tail.length;
     if (opts.nest) nested.add(room.id);
@@ -158,7 +164,7 @@ export function treeOf(state) {
   const ordered = orderProjects(live, all, sort, manual);
   for (const [index, project] of ordered.entries()) {
     if (pending.has(project.id) && !filtering) { sections.push({ placeholder: true, project }); continue; }
-    const roots = orderRooms(ordinary.filter(room => room.project_id === project.id && (filtering || !liveParent(room))), sort);
+    const roots = orderRooms(ordinary.filter(room => room.project_id === project.id && (filtering || !displayParentID(room))), sort);
     for (const room of roots) sections.push(place(room, !filtering, room.kind === 'home' && !filtering ? { controls: { first: index === 0, last: index === ordered.length - 1 } } : {}));
     // A project with no visible home room still gets its archived and hidden rows, after its rooms.
     if (!tailed.has(project.id)) sections.push(...tails.get(project.id).map(node => ({ tailOnly: true, node })));

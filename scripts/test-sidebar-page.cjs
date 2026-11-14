@@ -117,6 +117,21 @@ async function main() {
     await page.close();
   }
 
+  // A parentless task room stays inside its project's collapsed home row instead of becoming a standalone root.
+  {
+    const auto = answerAll();
+    auto['GET /api/projects/prj_b/rooms'] = [...rooms().prj_b, room('rm_route', 'prj_b', 'routing', { unread_count: 4, restricted: true })];
+    const page = await mount({ auto });
+    assert.deepEqual(await page.evaluate(() => {
+      const root = document.querySelector('[data-room-id=rm_bh]');
+      const route = document.querySelector('[data-room-id=rm_route]');
+      return { roots: [...document.querySelectorAll('#projects > .room-group')].map(node => node.dataset.roomId), collapsed: root.classList.contains('collapsed'), nested: root.querySelector('.room-children [data-room-id=rm_route]') === route, visible: !!route.getClientRects().length, unread: root.querySelector(':scope > .room-item .room-item-unread')?.textContent };
+    }), { roots: ['rm_ah', 'rm_bh'], collapsed: true, nested: true, visible: false, unread: '11' });
+    await page.$eval('[data-room-id=rm_bh] .room-collapse', node => node.click());
+    assert.equal(await page.$eval('[data-room-id=rm_route]', node => !!node.getClientRects().length), true, 'expanding the project reveals routing');
+    await page.close();
+  }
+
   // Loading asks for the chats of agents and the projects at once, then every project's rooms at once. The project list draws each project as a
   // placeholder in its final place; a project's rooms replace its placeholder when its own list lands, in whatever order the lists arrive, and the
   // rest of the list does not move or lose the focus it had.

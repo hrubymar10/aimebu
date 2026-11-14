@@ -51,6 +51,33 @@ func TestTeamSetupCommitsOrRollsBackTogether(t *testing.T) {
 	if result.Flow.Rev != 1 || len(result.Agents) != 2 || result.Agents[0].Role != "leader" || result.Agents[1].Role != "dispatcher" {
 		t.Fatalf("committed team: %+v", result)
 	}
+	if len(result.CreatedRooms) != 2 {
+		t.Fatalf("created flow rooms: %+v", result.CreatedRooms)
+	}
+	for _, room := range result.CreatedRooms {
+		if room.ParentID != f.home.ID || room.Depth != f.home.Depth+1 {
+			t.Fatalf("%s hierarchy: parent=%q depth=%d; want parent=%q depth=%d", room.TeamFlowRoomKey, room.ParentID, room.Depth, f.home.ID, f.home.Depth+1)
+		}
+	}
+	rooms := map[string]string{"home": f.home.ID, "task": f.other.ID}
+	for _, room := range result.CreatedRooms {
+		rooms[room.TeamFlowRoomKey] = room.ID
+	}
+	member := func(roomID, agentID string) bool {
+		t.Helper()
+		var count int
+		if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, roomID, agentID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count != 0
+	}
+	leader, dispatcher := result.Agents[0].AgentID, result.Agents[1].AgentID
+	if !member(rooms["home"], leader) || !member(rooms["routing"], leader) || !member(rooms["general"], leader) || member(rooms["task"], leader) {
+		t.Fatal("leader should join home, routing, and general, but not task rooms")
+	}
+	if !member(rooms["routing"], dispatcher) || !member(rooms["general"], dispatcher) || member(rooms["home"], dispatcher) || member(rooms["task"], dispatcher) {
+		t.Fatal("dispatcher should join routing and general, but not home or task rooms")
+	}
 	if err := f.s.ValidateTeamSetup(ctx, f.project.ID, f.alice, input); !errors.Is(err, ErrTeamFlowRev) {
 		t.Fatalf("stale revision after commit: %v", err)
 	}
@@ -88,6 +115,34 @@ func TestTeamFlowCoreRolesDoNotUseWorkerSlots(t *testing.T) {
 	headroom, err = f.s.ProjectToolHeadroom(ctx, f.project.ID)
 	if err != nil || headroom.LiveAgents != 1 || headroom.LiveSlotsLeft != 0 {
 		t.Fatalf("worker cap after first spawn: %+v %v", headroom, err)
+	}
+}
+
+func TestTeamSetupLeaderJoinsGeneralInWorkerFlow(t *testing.T) {
+	f := newMembersFixture(t)
+	input := TeamSetupInput{
+		FlowKey: "leader-workers", FlowRev: 0,
+		Leader: TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"},
+	}
+	var result TeamSetupResult
+	if err := f.s.Tx(context.Background(), func(tx *Tx) error {
+		var err error
+		result, err = tx.CreateTeamSetup(f.project.ID, f.alice, input)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Agents) != 1 || len(result.CreatedRooms) != 1 || result.CreatedRooms[0].TeamFlowRoomKey != "general" {
+		t.Fatalf("setup result: %+v", result)
+	}
+	for _, roomID := range []string{f.home.ID, result.CreatedRooms[0].ID} {
+		var count int
+		if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, roomID, result.Agents[0].AgentID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("leader missing from room %s", roomID)
+		}
 	}
 }
 

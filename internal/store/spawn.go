@@ -158,7 +158,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if err := tx.refuseArchived(projectID); err != nil {
 		return AgentCard{}, err
 	}
-	if lifecycle != "open" || depth > tx.maxDepth {
+	limit, err := tx.roomDepthLimit(in.RoomID)
+	if err != nil {
+		return AgentCard{}, err
+	}
+	if lifecycle != "open" || depth > limit {
 		return AgentCard{}, ErrInvalidTransition
 	}
 	actorKind := in.ActorKind

@@ -102,20 +102,22 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	base.CoreRoles = []string{"leader"}
 	base.TaskParentKey = "home"
 	base.GrantRoles = []string{"leader"}
-	base.RoleTextOverrides = map[string]string{}
+	base.RoleTextOverrides = map[string]string{
+		"leader": leadRoleBody + "\n\nGeneral is the shared room for project announcements and coordination. Keep task work in task rooms.",
+	}
 	routed := TeamFlowTemplate{Key: "leader-dispatcher", Label: "Leader and dispatcher", Description: "The leader writes specs; the dispatcher runs workers and reviews."}
 	routed.Rooms = []FlowRoom{{Key: "home", Title: "Home", Kind: "home"}, {Key: "routing", Title: "routing", Kind: "task", Restricted: true}, {Key: "general", Title: "general", Kind: "task"}}
-	routed.Diagram.Rooms = []FlowDiagramRoom{{"home", "Home", []string{"leader"}}, {"routing", "Routing", []string{"leader", "dispatcher"}}, {"general", "General and tasks", []string{"dispatcher", "worker", "reviewer"}}}
+	routed.Diagram.Rooms = []FlowDiagramRoom{{"home", "Home", []string{"leader"}}, {"routing", "Routing", []string{"leader", "dispatcher"}}, {"general", "General and tasks", []string{"leader", "dispatcher", "worker", "reviewer"}}}
 	routed.Diagram.Edges = []FlowEdge{{"home", "routing"}, {"routing", "general"}}
-	routed.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"routing", []string{"leader", "dispatcher"}}, {"general", []string{"dispatcher", "worker", "reviewer"}}, {"task", []string{"dispatcher", "worker", "reviewer"}}}
+	routed.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"routing", []string{"leader", "dispatcher"}}, {"general", []string{"leader", "dispatcher", "worker", "reviewer"}}, {"task", []string{"dispatcher", "worker", "reviewer"}}}
 	routed.SpawnRules = []FlowSpawnRule{{"leader", []string{"dispatcher"}}, {"dispatcher", []string{"worker", "reviewer"}}}
-	routed.AutoJoinRoles = []string{"leader"}
+	routed.AutoJoinRoles = []string{"leader", "dispatcher"}
 	routed.CoreRoles = []string{"leader", "dispatcher"}
 	routed.TaskParentKey = "general"
 	routed.GrantRoles = []string{"leader", "dispatcher"}
 	routed.RoleTextOverrides = map[string]string{
-		"leader":     "You are the project leader. Talk with the human and write specifications with goal, acceptance criteria, constraints, base, priority, and the team: how many workers and whether a reviewer is needed. Hand each specification to the dispatcher in routing. Do not spawn or manage workers and reviewers. Decide questions escalated by the dispatcher; report the outcome to the human in the home room.\n\n" + leadSafety + "\n\n" + roleCommunication,
-		"dispatcher": dispatcherRoleBody + " Spawn only the workers and reviewers called for by the specification or the leader. Add a reviewer only when the specification or leader asks for one; if the specification does not say, ask the leader in routing before spawning a reviewer.\n\n" + roleSafety + "\n\n" + roleCommunication,
+		"leader":     "You are the project leader. Talk with the human and write specifications with goal, acceptance criteria, constraints, base, priority, and the team: how many workers and whether a reviewer is needed. Hand each specification to the dispatcher in routing. Do not spawn or manage workers and reviewers. Decide questions escalated by the dispatcher; report the outcome to the human in the home room. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + leadSafety + "\n\n" + roleCommunication,
+		"dispatcher": dispatcherRoleBody + " Spawn only the workers and reviewers called for by the specification or the leader. Add a reviewer only when the specification or leader asks for one; if the specification does not say, ask the leader in routing before spawning a reviewer. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + roleSafety + "\n\n" + roleCommunication,
 	}
 	custom := TeamFlowTemplate{Key: "custom", Label: "Custom", Description: "Keep the current rooms and role permissions."}
 	custom.Rooms = []FlowRoom{}
@@ -201,13 +203,16 @@ func flowManages(key, role string, lead, spawn bool) bool {
 	return ok && spawn && flowActorRole(t, role)
 }
 
-func (tx *Tx) flowAutoJoin(projectID, role string, lead bool) (bool, error) {
+func (tx *Tx) flowAutoJoin(projectID, role string, lead bool, roomKind, roomKey string) (bool, error) {
 	var key string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key FROM project WHERE id=?`, projectID).Scan(&key); err != nil {
 		return false, err
 	}
 	if key == "" || key == "custom" {
 		return lead, nil
+	}
+	if key == "leader-dispatcher" && role == "dispatcher" {
+		return roomKind == "routing" || roomKey == "general", nil
 	}
 	t, ok := teamFlowTemplate(key)
 	return ok && flowAllows(t.AutoJoinRoles, role), nil
@@ -484,7 +489,11 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 				}
 				continue
 			}
-			room, err := tx.CreateRoom(Room{ProjectID: projectID, Kind: spec.Kind, Title: spec.Title, CreatedBy: userID})
+			var homeID string
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home' ORDER BY created_at,id LIMIT 1`, projectID).Scan(&homeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			room, err := tx.CreateRoom(Room{ProjectID: projectID, ParentID: homeID, Kind: spec.Kind, Title: spec.Title, CreatedBy: userID})
 			if err != nil {
 				return err
 			}

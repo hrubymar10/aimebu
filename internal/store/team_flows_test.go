@@ -39,6 +39,94 @@ func TestTeamFlowMigrationMarksExistingProjectCustom(t *testing.T) {
 	}
 }
 
+func TestFlowRoomHierarchyMigration(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "flow-hierarchy.sqlite")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := migrateUpTo(ctx, db, 108); err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range []string{"has_home", "no_home"} {
+		if _, err := db.Exec(`INSERT INTO project(id,name,folder,created_at) VALUES (?,?,?,?)`, project, project, "/tmp/"+project, timestamp()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, room := range []struct {
+		id, project, parent, kind, key string
+		depth                          int
+	}{
+		{"home", "has_home", "", "home", "", 0},
+		{"routing", "has_home", "", "task", "routing", 0},
+		{"general", "has_home", "", "task", "general", 0},
+		{"general_task", "has_home", "general", "task", "", 1},
+		{"nested_task", "has_home", "general_task", "task", "", 2},
+		{"deep_task", "has_home", "nested_task", "task", "", 3},
+		{"ordinary", "has_home", "", "task", "", 0},
+		{"already_child", "has_home", "home", "task", "routing", 1},
+		{"orphan", "no_home", "", "task", "routing", 0},
+	} {
+		if _, err := db.Exec(`INSERT INTO room(id,project_id,parent_id,depth,kind,title,created_by,created_at,team_flow_room_key)
+			VALUES (?,?,NULLIF(?,''),?,?,?,?,?,?)`, room.id, room.project, room.parent, room.depth, room.kind, room.id, "owner", timestamp(), room.key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrateUpTo(ctx, db, 109); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		id, parent string
+		depth      int
+	}{
+		{"routing", "home", 1}, {"general", "home", 1},
+		{"general_task", "general", 2}, {"nested_task", "general_task", 3},
+		{"deep_task", "nested_task", 4},
+		{"ordinary", "", 0}, {"already_child", "home", 1}, {"orphan", "", 0},
+	} {
+		var parent sql.NullString
+		var depth int
+		if err := db.QueryRow(`SELECT parent_id,depth FROM room WHERE id=?`, want.id).Scan(&parent, &depth); err != nil {
+			t.Fatal(err)
+		}
+		if parent.String != want.parent || depth != want.depth {
+			t.Fatalf("%s hierarchy: parent=%q depth=%d; want parent=%q depth=%d", want.id, parent.String, depth, want.parent, want.depth)
+		}
+	}
+}
+
+func TestHomeDepthBudgetAllowsSpawnAtFourthStoredLevel(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := t.Context()
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-workers", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	var generalID string
+	if err := f.s.db.QueryRow(`SELECT id FROM room WHERE project_id=? AND team_flow_room_key='general'`, f.project.ID).Scan(&generalID); err != nil {
+		t.Fatal(err)
+	}
+	parent := generalID
+	for depth := 2; depth <= defaultMaxDepth+1; depth++ {
+		room, err := f.s.CreateRoom(ctx, Room{ProjectID: f.project.ID, ParentID: parent, Kind: "task", Title: fmt.Sprintf("level-%d", depth), CreatedBy: f.alice})
+		if err != nil || room.Depth != depth {
+			t.Fatalf("depth %d: room=%+v err=%v", depth, room, err)
+		}
+		parent = room.ID
+	}
+	if _, err := f.s.CreateRoom(ctx, Room{ProjectID: f.project.ID, ParentID: parent, Kind: "task", Title: "too deep", CreatedBy: f.alice}); !errors.Is(err, ErrDepthExceeded) {
+		t.Fatalf("room below the budget: %v", err)
+	}
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.SpawnAgent(SpawnInput{RoomID: parent, ActorKind: "user", ActorID: f.alice,
+			MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: "worker",
+			Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: "depth_worker"})
+		return err
+	}); err != nil {
+		t.Fatalf("spawn in deepest allowed room: %v", err)
+	}
+}
+
 func TestTeamFlowSwitchPreservesRestrictedRoom(t *testing.T) {
 	f := newMembersFixture(t)
 	ctx := context.Background()
@@ -54,6 +142,14 @@ func TestTeamFlowSwitchPreservesRestrictedRoom(t *testing.T) {
 	}
 	if routingID == "" {
 		t.Fatal("routing room missing")
+	}
+	var parentID string
+	var depth int
+	if err := f.s.db.QueryRow(`SELECT parent_id,depth FROM room WHERE id=?`, routingID).Scan(&parentID, &depth); err != nil {
+		t.Fatal(err)
+	}
+	if parentID != f.home.ID || depth != f.home.Depth+1 {
+		t.Fatalf("routing hierarchy: parent=%q depth=%d; want parent=%q depth=%d", parentID, depth, f.home.ID, f.home.Depth+1)
 	}
 	preview, err := f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "custom")
 	if err != nil || len(preview.PreservedRestrictedRooms) != 1 || preview.PreservedRestrictedRooms[0].RoomID != routingID {
@@ -76,6 +172,60 @@ func TestTeamFlowSwitchPreservesRestrictedRoom(t *testing.T) {
 	preview, err = f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "leader-workers")
 	if err != nil || len(preview.PreservedRestrictedRooms) != 1 || preview.PreservedRestrictedRooms[0].RoomID != routingID || workers.Rev != 3 {
 		t.Fatalf("retained restriction preview: %+v %v", preview, err)
+	}
+}
+
+func TestTeamFlowWithoutHomeCreatesRootRooms(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := t.Context()
+	// Legacy and imported projects can lack a usable home room.
+	if _, err := f.s.db.Exec(`UPDATE room SET kind='task' WHERE id=?`, f.home.ID); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied.CreatedRooms) == 0 {
+		t.Fatal("flow did not create its missing rooms")
+	}
+	for _, room := range applied.CreatedRooms {
+		if room.ParentID != "" || room.Depth != 0 {
+			t.Fatalf("home-less flow room is not a root: %+v", room)
+		}
+	}
+}
+
+func TestDispatcherFlowKeepsLeaderInGeneralAndJoinsDispatcher(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	if _, err := f.s.db.Exec(`UPDATE room SET title='general' WHERE id=?`, f.other.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.role(t, "role_flow_leader", f.project.ID, "leader", "Leader", "l", "singleton")
+	f.role(t, "role_flow_dispatcher", f.project.ID, "dispatcher", "Dispatcher", "d", "singleton")
+	leader := f.agent(t, "flowleader", "role_flow_leader", &f.other)
+	task, err := f.s.CreateRoom(ctx, Room{ProjectID: f.project.ID, ParentID: f.other.ID, Kind: "task", Title: "task", CreatedBy: f.alice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := f.agent(t, "flowdispatcher", "role_flow_dispatcher", &task)
+	preview, err := f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher")
+	if err != nil || len(preview.Conflicts) != 0 {
+		t.Fatalf("leader in general was flagged as a conflict: %+v %v", preview.Conflicts, err)
+	}
+	applied, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil)
+	if err != nil || len(applied.Conflicts) != 0 {
+		t.Fatalf("apply conflicts: %+v %v", applied.Conflicts, err)
+	}
+	for _, id := range []string{leader.ID, dispatcher.ID} {
+		var count int
+		if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, f.other.ID, id).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("%s missing from general after flow switch", id)
+		}
 	}
 }
 
@@ -318,8 +468,15 @@ func TestTeamFlowRoutingAndExactReferenceGrant(t *testing.T) {
 		t.Fatalf("dispatcher joined an existing task by default: %d %v", inTask, err)
 	}
 	var generalMembers int
-	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member m JOIN room r ON r.id=m.room_id WHERE r.project_id=? AND r.team_flow_room_key='general' AND m.member_kind='agent' AND m.left_at IS NULL`, f.project.ID).Scan(&generalMembers); err != nil || generalMembers != 0 {
-		t.Fatalf("general room has default agents: %d %v", generalMembers, err)
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member m JOIN room r ON r.id=m.room_id WHERE r.project_id=? AND r.team_flow_room_key='general' AND m.member_kind='agent' AND m.left_at IS NULL`, f.project.ID).Scan(&generalMembers); err != nil || generalMembers != 2 {
+		t.Fatalf("leader and dispatcher should share general: %d %v", generalMembers, err)
+	}
+	duplicate, err := f.s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: GeneralRoomTitle, CreatedBy: f.alice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, duplicate.ID, dispatcher.ID).Scan(&inTask); err != nil || inTask != 0 {
+		t.Fatalf("dispatcher auto-joined an unkeyed general-titled room: %d %v", inTask, err)
 	}
 	if err := f.s.AddMember(ctx, f.other.ID, "agent", dispatcher.ID); err != nil {
 		t.Fatal(err)

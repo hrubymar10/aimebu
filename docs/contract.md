@@ -87,7 +87,10 @@ Projects, rooms, people
   room under the reserved project, keyed `agents:<id>:<id>` (one per pair); it
   is the only room whose agents belong to different projects, and the agent's
   own project, not the room's, decides its dispatch gate, caps, billing and
-  memory
+  memory. Stored `depth` is the physical nesting level (home is 0); the
+  configured room-depth budget counts levels below home, with the schema's
+  absolute depth cap of 5 still applying. Root task trees use the configured
+  budget without an extra level.
 - **team flow** (migration 106): new projects start with an empty key and must
   choose `leader-workers`, `leader-dispatcher`, or `custom`; existing projects
   start `custom` with review pending. Revision guards apply. The template
@@ -103,6 +106,11 @@ Projects, rooms, people
   key: an existing keyed room first, then the earliest matching title by
   creation time and ID. Conflict checks use the room key that chosen room
   will receive, including an unkeyed `routing` room.
+  Newly created flow rooms are children of the project's home room when one
+  exists, and root rooms for legacy projects without one. Migration
+  109 reparents existing root-level, keyed flow rooms beneath that home room
+  and recomputes depths throughout their subtrees; unkeyed root rooms and
+  projects without a home room are left as they are.
   A room marked
   `restricted` by a template's room rule requires active room membership for
   agent reads and viewer access; project owners and operators can read it for
@@ -110,10 +118,12 @@ Projects, rooms, people
   membership. For agents, restricted history and uncited message reads require membership;
   the dispatcher flow marks `routing` restricted. The dispatcher is a
   singleton spawn-capable role without lead capability. A flow's spawn
-  rules grant its task-room and agent-management authority; its auto-join
-  roles and task-parent key place it in routing at setup; it joins task rooms
-  it creates or explicitly joins, never general by default or home. It may
-  create task rooms under general without joining general.
+  rules grant its task-room and agent-management authority. Team setup puts
+  the dispatcher in routing and the keyed `general`, the project-wide room shared with
+  the leader for announcements and coordination. It joins task rooms it
+  creates or explicitly joins, never home. In flows A and B the leader belongs
+  to `general`; in the dispatcher flow, specs still go through routing and
+  task work stays in task rooms.
   In this flow, the leader's specification states worker count and whether
   review is needed. The dispatcher spawns only the requested team and asks
   the leader in routing if review is unspecified. Workers and reviewers

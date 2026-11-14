@@ -294,6 +294,13 @@ singleton dispatcher. The leader writes specs there; the dispatcher manages
 task rooms, workers, and reviewers. A task-room message can reference a
 routing brief by `#N`; the worker-room chat shows the one granted message
 inline, without exposing the routing conversation.
+In A and B, `general` is the project-wide room for announcements and
+coordination: the leader belongs to it in both flows, and the dispatcher also
+belongs to it in B. Specifications still pass through routing, while task work
+stays in task rooms.
+Flow-created `routing` and `general` rooms sit beneath the project's home
+room in the sidebar. Existing flow rooms at the project root are moved beneath
+the home room when the database upgrades.
 Owners and operators see restricted rooms in the sidebar with a lock icon.
 Initial A/B setup also has a keyed team-setup API that commits the flow,
 project settings, role defaults, and the initial leader (plus dispatcher for
@@ -560,8 +567,13 @@ pinned. The sort button in the ROOMS header orders projects, and the rooms insid
 activity, or manually (drag a project by its ☰ handle; the whole row opens the project's home room; in the manual sort the rooms keep
 the order the server lists them); the choice and the manual order are personal preferences that follow the person across devices. The room list is
 one list across projects, with no section labels (on opening, each project is drawn as its name in its final place the moment the project list arrives, and its rooms replace it when its own list lands, in whatever order they come; the order by latest activity waits for every list, since it depends on the rooms): each project's home
-room (`⌂ name`) is the parent row and its task rooms nest under it, one level. Open room rows show `#name`, their member count and an unread badge; archived rooms keep their history without an unread badge. Rows also show a project chip
-when there are several projects (left off a home room that only repeats the project name); the
+room (`⌂ name`) is the parent row and its task rooms nest under it, one level.
+If an open task room has no live parent link, the room list places it under
+that project's home row when one exists, including while the project is
+collapsed. Open room rows show `#name`, their member count and an unread badge;
+archived rooms keep their history without an unread badge. Rows also show a
+project chip when there are several projects (left off a home room that only
+repeats the project name); the
 row's `+` shows on hover or keyboard focus, and always on touch screens; a project's home row has a ☰ button next to it (same visibility; no arrows), whose menu holds New room (as the `+` does) and, in the manual sort, Move up and Move down (and, in that sort, the button is also the drag handle). The last message is
 previewed only under the open room, and one Direct messages section covers every project and
 always comes last. The box on top only filters the list as you type (Enter does nothing); rooms

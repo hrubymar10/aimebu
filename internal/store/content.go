@@ -165,6 +165,7 @@ func (s *Store) CreateRoom(ctx context.Context, room Room) (Room, error) {
 const GeneralRoomTitle = "general"
 
 func (tx *Tx) CreateRoom(room Room) (Room, error) {
+	limit := tx.maxDepth
 	if room.ParentID != "" {
 		var parentProject, parentLifecycle, parentKind string
 		if err := tx.tx.QueryRowContext(tx.ctx,
@@ -179,10 +180,15 @@ func (tx *Tx) CreateRoom(room Room) (Room, error) {
 			return Room{}, ErrInvalidTransition
 		}
 		room.Depth++
+		var err error
+		limit, err = tx.roomDepthLimit(room.ParentID)
+		if err != nil {
+			return Room{}, err
+		}
 	} else {
 		room.Depth = 0
 	}
-	if room.Depth > tx.maxDepth || room.Depth > hardMaxDepth {
+	if room.Depth > limit {
 		return Room{}, ErrDepthExceeded
 	}
 	var err error
@@ -215,6 +221,27 @@ func (tx *Tx) CreateRoom(room Room) (Room, error) {
 	return room, nil
 }
 
+// roomDepthLimit counts nesting below a home room. The stored depth remains
+// the physical depth, so a home descendant gets one additional level within
+// the absolute schema cap.
+func (tx *Tx) roomDepthLimit(roomID string) (int, error) {
+	var rootKind string
+	err := tx.tx.QueryRowContext(tx.ctx, `WITH RECURSIVE ancestors(id,parent_id,kind,hops) AS (
+		SELECT id,parent_id,kind,0 FROM room WHERE id=?
+		UNION ALL
+		SELECT parent.id,parent.parent_id,parent.kind,child.hops+1 FROM room parent
+		JOIN ancestors child ON parent.id=child.parent_id WHERE child.hops<=?
+	)
+	SELECT kind FROM ancestors WHERE parent_id IS NULL LIMIT 1`, roomID, hardMaxDepth).Scan(&rootKind)
+	if err != nil {
+		return 0, err
+	}
+	if rootKind == "home" && tx.maxDepth < hardMaxDepth {
+		return tx.maxDepth + 1, nil
+	}
+	return tx.maxDepth, nil
+}
+
 // joinLeadsToRoom makes every live lead agent of the project a member of the room (each it already belongs to is left alone).
 func (tx *Tx) joinLeadsToRoom(roomID, projectID string) error {
 	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id
@@ -243,7 +270,7 @@ func (tx *Tx) joinLeadsToRoom(roomID, projectID string) error {
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT ro.role_key,r.kind,r.team_flow_room_key,r.title,ro.cap_is_lead FROM agent a JOIN role ro ON ro.id=a.role_id JOIN room r ON r.id=? WHERE a.id=?`, roomID, id).Scan(&roleKey, &kind, &key, &title, &lead); err != nil {
 			return err
 		}
-		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead)
+		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead, flowRoomKind(kind, key, title), key)
 		if err != nil {
 			return err
 		}
@@ -294,7 +321,7 @@ func (tx *Tx) joinLeadToProjectRooms(agentID string) error {
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,ro.role_key,r.kind,r.team_flow_room_key,r.title,ro.cap_is_lead FROM room r JOIN agent a ON a.id=? JOIN role ro ON ro.id=a.role_id WHERE r.id=?`, agentID, id).Scan(&projectID, &roleKey, &kind, &key, &title, &lead); err != nil {
 			return err
 		}
-		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead)
+		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead, flowRoomKind(kind, key, title), key)
 		if err != nil {
 			return err
 		}

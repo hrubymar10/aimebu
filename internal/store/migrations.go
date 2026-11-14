@@ -1739,6 +1739,33 @@ CREATE TABLE IF NOT EXISTS switch_handoff_turn (
   turn_id TEXT PRIMARY KEY REFERENCES turn(id) ON DELETE CASCADE,
   agent_id TEXT NOT NULL REFERENCES agent(id) ON DELETE CASCADE
 );
+`}, {109, `
+-- Attach root-level flow rooms to their project's home room. Unkeyed rooms
+-- and projects without a home room retain their existing hierarchy.
+UPDATE room AS flow SET
+  parent_id = (SELECT home.id FROM room AS home
+    WHERE home.project_id=flow.project_id AND home.kind='home'
+    ORDER BY home.created_at,home.id LIMIT 1),
+  depth = (SELECT home.depth+1 FROM room AS home
+    WHERE home.project_id=flow.project_id AND home.kind='home'
+    ORDER BY home.created_at,home.id LIMIT 1)
+WHERE flow.team_flow_room_key<>'' AND flow.parent_id IS NULL
+  AND flow.kind<>'home'
+  AND EXISTS (SELECT 1 FROM room AS home
+    WHERE home.project_id=flow.project_id AND home.kind='home');
+-- A reparented general room may already have task descendants. Recompute
+-- every depth below keyed rooms attached to home, including those that were
+-- already children of home, so the stored depth matches the new hierarchy.
+WITH RECURSIVE flow_tree(id,depth) AS (
+  SELECT flow.id,home.depth+1 FROM room AS flow
+    JOIN room AS home ON home.id=flow.parent_id
+    WHERE flow.team_flow_room_key<>'' AND home.kind='home'
+  UNION ALL
+  SELECT child.id,flow_tree.depth+1 FROM room AS child
+    JOIN flow_tree ON child.parent_id=flow_tree.id
+)
+UPDATE room SET depth=(SELECT flow_tree.depth FROM flow_tree WHERE flow_tree.id=room.id LIMIT 1)
+  WHERE id IN (SELECT id FROM flow_tree);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
