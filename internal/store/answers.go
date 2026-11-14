@@ -114,7 +114,7 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 					return err
 				}
 			}
-			reason, detail, err := tx.validateAnswer(parent, input)
+			reason, detail, err := tx.validateAnswer(parent, input, &receipt.Warnings)
 			if err != nil {
 				return err
 			}
@@ -205,7 +205,7 @@ func (tx *Tx) noActionMode(raw string) bool {
 	return json.Unmarshal([]byte(raw), &policy) == nil && policy.Capabilities.NoActionMode
 }
 
-func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail string, dbErr error) {
+func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, warnings *[]string) (reason, detail string, dbErr error) {
 	if input.ParseError != "" || input.Parsed == nil {
 		return "invalid_answer", input.ParseError, nil
 	}
@@ -250,9 +250,12 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 			return "not_member", "agent is not an active room member", nil
 		}
 		if !item.Force {
-			miss, err := tx.missedAnswerMention(item.Room, projectID, item.Body)
+			miss, warning, err := tx.missedAnswerMention(item.Room, projectID, turn.agentID, item.Body)
 			if err != nil {
 				return "", "", err
+			}
+			if warning != "" {
+				*warnings = append(*warnings, fmt.Sprintf("message %d: %s", i, warning))
 			}
 			if miss != "" {
 				return "missed_mention", fmt.Sprintf("message %d: %s", i, miss), nil
@@ -320,7 +323,10 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 // missedAnswerMention only considers live prose and active agents of the
 // message's project. Human names, role keys and group tags retain their own
 // addressing rules.
-func (tx *Tx) missedAnswerMention(roomID, projectID, body string) (string, error) {
+func (tx *Tx) missedAnswerMention(roomID, projectID, authorID, body string) (miss, warning string, dbErr error) {
+	type absentMention struct{ token, id string }
+	var absent []absentMention
+	addressed := false
 	for _, token := range proseMentions(body) {
 		if groupTag(token) != "" {
 			continue
@@ -334,46 +340,65 @@ func (tx *Tx) missedAnswerMention(roomID, projectID, body string) (string, error
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		var member bool
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`, roomID, id).Scan(&member); err != nil {
-			return "", err
+			return "", "", err
 		}
 		if member {
+			addressed = true
 			continue
 		}
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.title,r.id FROM room_member m JOIN room r ON r.id=m.room_id
-			WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL AND r.lifecycle='open' AND r.kind='task'
-			ORDER BY r.created_at DESC LIMIT 3`, id)
-		if err != nil {
-			return "", err
-		}
-		var rooms []string
-		for rows.Next() {
-			var title, room string
-			if err := rows.Scan(&title, &room); err != nil {
-				rows.Close()
-				return "", err
-			}
-			rooms = append(rooms, fmt.Sprintf("%s (%s)", title, room))
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return "", err
-		}
-		location := "no open task room"
-		if len(rooms) > 0 {
-			location = "task room " + strings.Join(rooms, ", ")
-		}
-		return fmt.Sprintf("@%s refers to agent %s, who is not in the target room; send the message in %s or use dm_agent, or repeat this message with force:true", token, id, location), nil
+		absent = append(absent, absentMention{token, id})
 	}
-	return "", nil
+	if len(absent) == 0 {
+		return "", "", nil
+	}
+	if addressed {
+		return "", fmt.Sprintf("@%s is outside the target room and was not notified", absent[0].token), nil
+	}
+	missing := absent[0]
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.title,r.id FROM room_member m JOIN room r ON r.id=m.room_id
+			WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL AND r.project_id=?
+			AND r.lifecycle='open' AND r.kind='task' AND (r.restricted=0 OR EXISTS (
+				SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent'
+				AND own.member_id=? AND own.left_at IS NULL))
+			ORDER BY r.created_at DESC LIMIT 3`, missing.id, projectID, authorID)
+	if err != nil {
+		return "", "", err
+	}
+	var rooms []string
+	for rows.Next() {
+		var title, room string
+		if err := rows.Scan(&title, &room); err != nil {
+			rows.Close()
+			return "", "", err
+		}
+		rooms = append(rooms, fmt.Sprintf("%s (%s)", title, room))
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return "", "", err
+	}
+	location := "no open task room"
+	if len(rooms) > 0 {
+		location = "task room " + strings.Join(rooms, ", ")
+	}
+	return fmt.Sprintf("@%s refers to agent %s, who is not in the target room; send the message in %s or use dm_agent, or repeat this message with force:true", missing.token, missing.id, location), "", nil
 }
 
 func (tx *Tx) missedMentionNote(turn answerTurn, input AnswerInput, detail string) error {
-	body := "Your final answer was held because " + detail + ". No candidate messages were published. Send it again to the right room or repeat with force:true. Held answer:\n" + string(input.Candidate)
+	var index int
+	if _, err := fmt.Sscanf(detail, "message %d:", &index); err != nil {
+		return err
+	}
+	var outboxID string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM outbox WHERE turn_id=? AND answer_rev=? AND idx=?`, turn.id, input.AnswerRev, index).Scan(&outboxID); err != nil {
+		return err
+	}
+	body := "Your final answer was held because message " + outboxID + " mentions an agent outside its room and addresses no room member; send it to a shared room or retry with force:true."
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
 	return err
 }

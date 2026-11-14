@@ -10,12 +10,17 @@ account switch versus new dispatch. Corrections require a verified
 isolation. Migrations may reshape tables later.
 
 Final-answer delivery checks each live prose mention of a current project
-agent against membership in its message room. An absent agent mention holds
-the entire candidate before publication. A per-message `force:true` bypasses
-this guard; it does not make the mention reach the absent agent. Verified
-read-only harnesses get one correction turn. Other harnesses get a targeted
-system note with the held text and options to send in the agent's task room,
-use `dm_agent`, or repeat with `force:true`. A future agent toolbox room-send
+agent against membership in its message room. A message with at least one
+present addressee commits; absent agent mentions then produce a receipt
+warning and notify nobody outside the room. A message whose agent mentions
+are all absent holds the entire candidate before publication. A per-message
+`force:true` bypasses this guard; it does not make the mention reach the
+absent agent. Verified read-only harnesses get one correction turn. Other
+harnesses get a targeted one-sentence system note naming the held outbox
+message ID, without quoting candidate content; the receipt offers an
+accessible task room, `dm_agent`, or `force:true`.
+Restricted room names are omitted from the hint unless the author can read
+them. A future agent toolbox room-send
 tool must apply the same guard and report the missed agent and alternatives.
 
 ## Project handbook
