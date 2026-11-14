@@ -226,13 +226,14 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT max_live_agents,spawn_rate_per_min FROM settings_project WHERE project_id=?`, projectID).Scan(&maxLive, &rate); err != nil {
 		return AgentCard{}, err
 	}
-	var live, recent int
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM agent WHERE project_id=? AND (desired!='stopped' OR observed!='stopped') AND revoked_at IS NULL`, projectID).Scan(&live); err != nil {
+	live, err := meteredLiveAgents(tx.ctx, tx.tx, projectID, "", flowKey)
+	if err != nil {
 		return AgentCard{}, err
 	}
-	if live >= maxLive {
+	if !flowCoreRole(flowKey, in.RoleKey, leadRole) && live >= maxLive {
 		return AgentCard{}, ErrSpawnLimit
 	}
+	var recent int
 	cutoff := time.Now().UTC().Add(-time.Minute).Format("2006-01-02T15:04:05.000000000Z")
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM event WHERE project_id=? AND kind='agent_created' AND created_at>=?`, projectID, cutoff).Scan(&recent); err != nil {
 		return AgentCard{}, err
@@ -241,7 +242,7 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		return AgentCard{}, ErrSpawnLimit
 	}
 	var checkoutID string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM checkout WHERE project_id=? AND machine_id=? AND canonical_path=?`, projectID, in.MachineID, in.Path).Scan(&checkoutID)
+	err = tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM checkout WHERE project_id=? AND machine_id=? AND canonical_path=?`, projectID, in.MachineID, in.Path).Scan(&checkoutID)
 	if errors.Is(err, sql.ErrNoRows) {
 		checkoutID, err = newID("chk")
 		if err != nil {
@@ -633,11 +634,11 @@ func (tx *Tx) SetAgentDesiredByAgent(id, actorID, desired string, rev int64) (Ag
 
 func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64, authorize, fresh bool) (AgentCard, error) {
 	var projectID, current, observed, checkoutID, tool, roleKey, roleCardinality string
-	var roleDeleted bool
+	var roleDeleted, leadRole bool
 	var oldRev int64
 	var generation int
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.desired,a.desired_rev,a.observed,a.generation,a.checkout_id,a.tool,r.role_key,r.cardinality,r.deleted_at IS NOT NULL
-		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, id).Scan(&projectID, &current, &oldRev, &observed, &generation, &checkoutID, &tool, &roleKey, &roleCardinality, &roleDeleted); err != nil {
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.desired,a.desired_rev,a.observed,a.generation,a.checkout_id,a.tool,r.role_key,r.cardinality,r.deleted_at IS NOT NULL,r.cap_is_lead
+		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, id).Scan(&projectID, &current, &oldRev, &observed, &generation, &checkoutID, &tool, &roleKey, &roleCardinality, &roleDeleted, &leadRole); err != nil {
 		return AgentCard{}, err
 	}
 	if authorize {
@@ -759,14 +760,16 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 				return AgentCard{}, ErrRoleOccupied
 			}
 		}
-		var maxLive, live int
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT max_live_agents FROM settings_project WHERE project_id=?`, projectID).Scan(&maxLive); err != nil {
+		var maxLive int
+		var flowKey string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT sp.max_live_agents,p.team_flow_key FROM settings_project sp JOIN project p ON p.id=sp.project_id WHERE sp.project_id=?`, projectID).Scan(&maxLive, &flowKey); err != nil {
 			return AgentCard{}, err
 		}
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM agent WHERE project_id=? AND id<>? AND (desired!='stopped' OR observed!='stopped') AND revoked_at IS NULL`, projectID, id).Scan(&live); err != nil {
+		live, err := meteredLiveAgents(tx.ctx, tx.tx, projectID, id, flowKey)
+		if err != nil {
 			return AgentCard{}, err
 		}
-		if live >= maxLive {
+		if !flowCoreRole(flowKey, roleKey, leadRole) && live >= maxLive {
 			return AgentCard{}, ErrSpawnLimit
 		}
 		generation++

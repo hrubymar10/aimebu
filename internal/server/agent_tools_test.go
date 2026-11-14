@@ -862,7 +862,7 @@ func TestLeadToolSpawnStopAndUsageHeadroom(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 200 || usage.Project.LiveAgents != 2 || usage.Project.LiveSlotsLeft != 8 || usage.Project.SpawnsInWindow != before.SpawnsInWindow+1 || usage.Provider.Status != "unknown" {
+	if resp.StatusCode != 200 || usage.Project.LiveAgents != 1 || usage.Project.LiveSlotsLeft != 9 || usage.Project.SpawnsInWindow != before.SpawnsInWindow+1 || usage.Provider.Status != "unknown" {
 		t.Fatalf("usage status=%d body=%+v", resp.StatusCode, usage)
 	}
 	resp = f.toolPost(t, "/api/agent/agents/"+spawned.ID+"/stop", key, "lead-stop-1", map[string]any{"rev": spawned.DesiredRev})

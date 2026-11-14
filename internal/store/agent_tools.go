@@ -367,14 +367,16 @@ func (s *Store) ProjectToolHeadroom(ctx context.Context, projectID string) (Proj
 		return ProjectToolHeadroom{}, err
 	}
 	var result ProjectToolHeadroom
-	if err := s.db.QueryRowContext(ctx, `SELECT max_live_agents,spawn_rate_per_min FROM settings_project WHERE project_id=?`, projectID).
-		Scan(&result.MaxLiveAgents, &result.SpawnRateLimit); err != nil {
+	var flowKey string
+	if err := s.db.QueryRowContext(ctx, `SELECT sp.max_live_agents,sp.spawn_rate_per_min,p.team_flow_key FROM settings_project sp JOIN project p ON p.id=sp.project_id WHERE sp.project_id=?`, projectID).
+		Scan(&result.MaxLiveAgents, &result.SpawnRateLimit, &flowKey); err != nil {
 		return ProjectToolHeadroom{}, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent WHERE project_id=? AND (desired!='stopped' OR observed!='stopped') AND revoked_at IS NULL`, projectID).
-		Scan(&result.LiveAgents); err != nil {
+	live, err := meteredLiveAgents(ctx, s.db, projectID, "", flowKey)
+	if err != nil {
 		return ProjectToolHeadroom{}, err
 	}
+	result.LiveAgents = live
 	cutoff := time.Now().UTC().Add(-time.Minute).Format(timestampLayout)
 	var oldest sql.NullString
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),MIN(created_at) FROM event WHERE project_id=? AND kind='agent_created' AND created_at>=?`, projectID, cutoff).

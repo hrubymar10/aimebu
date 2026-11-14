@@ -91,7 +91,7 @@ Projects, rooms, people
 - **team flow** (migration 106): new projects start with an empty key and must
   choose `leader-workers`, `leader-dispatcher`, or `custom`; existing projects
   start `custom` with review pending. Revision guards apply. The template
-  catalog carries room, spawn, join, and diagram data. Applying a flow creates
+  catalog carries room, spawn, join, diagram, and `core_roles` data. Applying a flow creates
   missing rooms, adjusts incompatible agent room memberships, and preserves
   agents, messages, and rooms. Applying another flow preserves any existing
   room's `restricted` flag; only an explicit room change may clear it. The
@@ -1485,7 +1485,10 @@ that equals an agent slug is ambiguous, as for two agents with one slug.
 
 Adapter-listed (tool, variant, model, provider) with provider pinned; actor
 authorised (owner/operator, or an agent whose role has `cap_can_spawn`);
-`max_live_agents` and spawn rate; depth cap; singleton role cardinality.
+`max_live_agents` counts live workers and reviewers, excluding the template's
+core roles (leader for A, leader and dispatcher for B). Custom projects
+exclude roles with lead capability. The spawn rate still counts every new
+agent; depth cap and singleton role cardinality also apply.
 
 When the role has a nonempty effective default list, a spawn that omits the harness
 and model uses its next available `{launcher_id,model}`. In-turn selection

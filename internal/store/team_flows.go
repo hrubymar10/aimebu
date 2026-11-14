@@ -43,6 +43,7 @@ type TeamFlowTemplate struct {
 	SpawnRules        []FlowSpawnRule   `json:"spawn_rules"`
 	RoleTextOverrides map[string]string `json:"role_text_overrides"`
 	AutoJoinRoles     []string          `json:"auto_join_roles"`
+	CoreRoles         []string          `json:"core_roles"`
 	TaskParentKey     string            `json:"task_parent_key"`
 	GrantRoles        []string          `json:"grant_roles"`
 }
@@ -88,6 +89,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	base.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"general", []string{"leader", "worker", "reviewer"}}, {"task", []string{"leader", "worker", "reviewer"}}}
 	base.SpawnRules = []FlowSpawnRule{{"leader", []string{"worker", "reviewer"}}}
 	base.AutoJoinRoles = []string{"leader"}
+	base.CoreRoles = []string{"leader"}
 	base.TaskParentKey = "home"
 	base.GrantRoles = []string{"leader"}
 	base.RoleTextOverrides = map[string]string{}
@@ -98,6 +100,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	routed.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"routing", []string{"leader", "dispatcher"}}, {"general", []string{"dispatcher", "worker", "reviewer"}}, {"task", []string{"dispatcher", "worker", "reviewer"}}}
 	routed.SpawnRules = []FlowSpawnRule{{"leader", []string{"dispatcher"}}, {"dispatcher", []string{"worker", "reviewer"}}}
 	routed.AutoJoinRoles = []string{"leader"}
+	routed.CoreRoles = []string{"leader", "dispatcher"}
 	routed.TaskParentKey = "general"
 	routed.GrantRoles = []string{"leader", "dispatcher"}
 	routed.RoleTextOverrides = map[string]string{
@@ -111,6 +114,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	custom.JoinRules = []FlowJoinRule{}
 	custom.SpawnRules = []FlowSpawnRule{}
 	custom.AutoJoinRoles = []string{"leader"}
+	custom.CoreRoles = []string{"leader"}
 	custom.TaskParentKey = "home"
 	custom.GrantRoles = []string{"leader", "dispatcher"}
 	custom.RoleTextOverrides = map[string]string{}
@@ -124,6 +128,41 @@ func teamFlowTemplate(key string) (TeamFlowTemplate, bool) {
 		}
 	}
 	return TeamFlowTemplate{}, false
+}
+
+func flowCoreRole(flowKey, roleKey string, lead bool) bool {
+	if flowKey == "" || flowKey == "custom" {
+		return lead
+	}
+	flow, ok := teamFlowTemplate(flowKey)
+	if !ok {
+		return lead
+	}
+	return flowAllows(flow.CoreRoles, roleKey)
+}
+
+// meteredLiveAgents counts only roles that consume the project's worker and
+// reviewer slots. The caller supplies the flow read in the same transaction.
+func meteredLiveAgents(ctx context.Context, db rowQuerier, projectID, excludeID, flowKey string) (int, error) {
+	rows, err := db.QueryContext(ctx, `SELECT r.role_key,r.cap_is_lead FROM agent a JOIN role r ON r.id=a.role_id
+		WHERE a.project_id=? AND a.id<>? AND a.revoked_at IS NULL
+		AND (a.desired!='stopped' OR a.observed!='stopped')`, projectID, excludeID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var roleKey string
+		var lead bool
+		if err := rows.Scan(&roleKey, &lead); err != nil {
+			return 0, err
+		}
+		if !flowCoreRole(flowKey, roleKey, lead) {
+			count++
+		}
+	}
+	return count, rows.Err()
 }
 
 func flowAllows(roles []string, role string) bool {

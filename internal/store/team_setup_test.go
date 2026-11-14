@@ -55,3 +55,38 @@ func TestTeamSetupCommitsOrRollsBackTogether(t *testing.T) {
 		t.Fatalf("stale revision after commit: %v", err)
 	}
 }
+
+func TestTeamFlowCoreRolesDoNotUseWorkerSlots(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	limit := 1
+	input := TeamSetupInput{
+		FlowKey: "leader-dispatcher", FlowRev: 0,
+		Leader:     TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"},
+		Dispatcher: &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"},
+		Settings:   TeamSetupSettings{MaxLiveAgents: &limit},
+	}
+	if err := f.s.Tx(ctx, func(tx *Tx) error { _, err := tx.CreateTeamSetup(f.project.ID, f.alice, input); return err }); err != nil {
+		t.Fatalf("core team at worker cap one: %v", err)
+	}
+	headroom, err := f.s.ProjectToolHeadroom(ctx, f.project.ID)
+	if err != nil || headroom.LiveAgents != 0 || headroom.LiveSlotsLeft != 1 {
+		t.Fatalf("core team consumed worker slot: %+v %v", headroom, err)
+	}
+	spawn := func(slug string) error {
+		return f.s.Tx(ctx, func(tx *Tx) error {
+			_, err := tx.SpawnAgent(SpawnInput{RoomID: f.other.ID, ActorKind: "user", ActorID: f.alice, MachineID: "mch_members", Path: f.project.Folder, RoleKey: "worker", Tool: "fake", Variant: "test", Model: "test", Provider: "fake", Slug: slug, KeyHash: slug})
+			return err
+		})
+	}
+	if err := spawn("firstworker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := spawn("secondworker"); !errors.Is(err, ErrSpawnLimit) {
+		t.Fatalf("second worker bypassed cap: %v", err)
+	}
+	headroom, err = f.s.ProjectToolHeadroom(ctx, f.project.ID)
+	if err != nil || headroom.LiveAgents != 1 || headroom.LiveSlotsLeft != 0 {
+		t.Fatalf("worker cap after first spawn: %+v %v", headroom, err)
+	}
+}

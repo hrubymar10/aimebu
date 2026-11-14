@@ -137,23 +137,6 @@ func (tx *Tx) validateTeamSetup(projectID, actorID string, in TeamSetupInput) er
 	if occupied != 0 {
 		return fmt.Errorf("%w: project already has a leader or dispatcher", ErrTeamSetupInvalid)
 	}
-	var live, maxLive int
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM agent WHERE project_id=? AND revoked_at IS NULL AND (desired!='stopped' OR observed!='stopped')`, projectID).Scan(&live); err != nil {
-		return err
-	}
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT max_live_agents FROM settings_project WHERE project_id=?`, projectID).Scan(&maxLive); err != nil {
-		return err
-	}
-	if in.Settings.MaxLiveAgents != nil {
-		maxLive = *in.Settings.MaxLiveAgents
-	}
-	wanted := 1
-	if in.Dispatcher != nil {
-		wanted++
-	}
-	if live+wanted > maxLive {
-		return ErrSpawnLimit
-	}
 	for role, config := range in.RoleDefaults {
 		mode := config.PickMode
 		if mode == "" {
