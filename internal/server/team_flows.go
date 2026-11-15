@@ -12,6 +12,49 @@ func (s *Server) teamFlows(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"templates": store.TeamFlowTemplates()})
 }
 
+func (s *Server) teamFlowRecommendedModels(w http.ResponseWriter, r *http.Request) {
+	rows := store.TeamFlowRecommendedModels()
+	machineID, launcherID := r.URL.Query().Get("machine_id"), r.URL.Query().Get("launcher_id")
+	if machineID != "" || launcherID != "" {
+		if machineID == "" || launcherID == "" {
+			apiError(w, 400, "invalid_request", "machine_id and launcher_id must be supplied together")
+			return
+		}
+		launcher, err := s.Store.LauncherByID(r.Context(), machineID, launcherID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		models, err := s.Store.HarnessModels(r.Context(), launcherID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		available := map[string]bool{}
+		for _, model := range models {
+			available[model.Slug] = true
+		}
+		filtered := make([]store.FlowModelRecommendationRow, 0, len(rows))
+		for _, row := range rows {
+			if row.Tool != launcher.Tool {
+				continue
+			}
+			keep := row.Models[:0:0]
+			for _, model := range row.Models {
+				if available[model.Model] {
+					keep = append(keep, model)
+				}
+			}
+			if len(keep) > 0 {
+				row.Models = keep
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
+	writeJSON(w, 200, map[string]any{"rows": rows})
+}
+
 func (s *Server) teamFlowState(w http.ResponseWriter, r *http.Request) {
 	state, err := s.Store.TeamFlowState(r.Context(), r.PathValue("project"), userID(r))
 	if err != nil {
@@ -34,7 +77,7 @@ func (s *Server) teamFlowPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	preview, err := s.Store.PreviewTeamFlow(r.Context(), r.PathValue("project"), userID(r), req.Key)
 	if err != nil {
-		fail(w, err)
+		teamFlowMigrationError(w, err)
 		return
 	}
 	writeJSON(w, 200, preview)
@@ -63,7 +106,7 @@ func (s *Server) teamFlowApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, err)
+		teamFlowMigrationError(w, err)
 		return
 	}
 	writeJSON(w, 200, result)

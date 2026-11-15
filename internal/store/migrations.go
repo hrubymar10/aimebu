@@ -1804,6 +1804,36 @@ INSERT OR IGNORE INTO role(id,key,label,body,cap_is_lead,cap_can_spawn,cap_singl
 VALUES ('role_advisor_default','advisor','Advisor',
 'You are the project advisor. Wake and answer when someone addresses you in advice, general, or home, or when a human sends you a direct message. Give a recommendation, the reasoning in a few bullets, risks and what would change the answer, and anything the leader must verify. Read the repository and documentation when needed, but never edit files, implement, or spawn agents. Do not talk to workers. The leader makes the final decision and asks for a final handoff review only when needed.',
 0,0,0,NULL,'advisor','💡','singleton');
+`}, {113, `
+CREATE TABLE IF NOT EXISTS team_flow_migration (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES project(id),
+  actor_id TEXT NOT NULL,
+  from_key TEXT NOT NULL,
+  to_key TEXT NOT NULL,
+  flow_rev INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('draining','applying','done','cancelled','failed')),
+  input_json TEXT NOT NULL,
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  applied_at TEXT,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS team_flow_migration_project ON team_flow_migration(project_id,created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS team_flow_migration_active ON team_flow_migration(project_id)
+  WHERE state IN ('draining','applying');
+CREATE TABLE IF NOT EXISTS team_flow_migration_agent (
+  migration_id TEXT NOT NULL REFERENCES team_flow_migration(id),
+  agent_id TEXT NOT NULL REFERENCES agent(id),
+  slug TEXT NOT NULL,
+  role_key TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('notice','switch','spawn','reactivate','handoff_stop')),
+  state TEXT NOT NULL CHECK(state IN ('waiting','draining','running','done','failed')),
+  error TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(migration_id,agent_id)
+);
+`}, {114, `
+ALTER TABLE team_flow_migration ADD COLUMN drain_errors INTEGER NOT NULL DEFAULT 0;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

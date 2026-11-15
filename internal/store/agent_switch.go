@@ -12,6 +12,11 @@ import (
 	"github.com/goccy/go-json"
 )
 
+// Keep drain, switch, and migration stall checks aligned for recovered lost turns.
+const openFlowTurnPredicate = `(t.exec IN ('pending','running') OR t.settle='pending' OR
+	(t.exec='lost' AND NOT EXISTS(SELECT 1 FROM event e WHERE e.kind='recovery_override'
+	AND (e.turn_id=t.id OR e.turn_id=t.parent_turn_id))))`
+
 // AgentSwitch is the target and progress of a durable, in-place adapter change.
 type AgentSwitch struct {
 	State           string          `json:"state"`
@@ -370,9 +375,7 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 				continue
 			}
 			var open int
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn t WHERE t.agent_id=? AND
-				(t.exec IN ('pending','running') OR t.settle='pending' OR (t.exec='lost' AND NOT EXISTS
-				(SELECT 1 FROM event e WHERE e.kind='recovery_override' AND (e.turn_id=t.id OR e.turn_id=t.parent_turn_id))))`, item.id).Scan(&open); err != nil {
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn t WHERE t.agent_id=? AND `+openFlowTurnPredicate, item.id).Scan(&open); err != nil {
 				return err
 			}
 			if open != 0 {

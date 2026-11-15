@@ -168,7 +168,15 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			contextData := map[string]any{"role_body": roleBody, "rooms": contextRooms,
 				"control_changes": map[string]any{"desired": "active", "desired_rev": desiredRev}}
 			if handoffTurn {
-				contextData["switch_handoff_request"] = "This is the dedicated switch handoff turn. Return exactly one message in this room. Its body must be a JSON object with string fields current_task, status, work_state (branches, SHAs, files), next_steps, open_questions, and cautions. Do not send ordinary room updates or perform new work; describe verified state for your successor."
+				request := "This is the dedicated switch handoff turn. Return exactly one message in this room. Its body must be a JSON object with string fields current_task, status, work_state (branches, SHAs, files), next_steps, open_questions, and cautions. Do not send ordinary room updates or perform new work; describe verified state for your successor."
+				var departing bool
+				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_agent ma JOIN team_flow_migration m ON m.id=ma.migration_id WHERE ma.agent_id=? AND ma.action='handoff_stop' AND m.state='draining')`, agentID).Scan(&departing); err != nil {
+					return err
+				}
+				if departing {
+					request = "This team flow is changing and your role is departing. Hand off to the leader: in-flight task rooms, workers you manage, current work and what remains. Return exactly one message in this room. Its body must be a JSON object with string fields current_task, status, work_state, next_steps, open_questions, and cautions. Do not start new work."
+				}
+				contextData["switch_handoff_request"] = request
 				started := time.Now().UTC()
 				if _, err := tx.Exec(`UPDATE switch_handoff SET status='handing_off',started_at=?,handoff_deadline=? WHERE agent_id=? AND turn_id=? AND status='pending'`, started.Format(timestampLayout), started.Add(switchHandoffWindow).Format(timestampLayout), agentID, special.ID); err != nil {
 					return err
@@ -313,7 +321,8 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			return nil
 		}
 		var continuityBlocksNormal bool
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM switch_handoff h JOIN agent_switch sw ON sw.agent_id=h.agent_id WHERE h.agent_id=? AND sw.state='draining' AND h.status IN ('waiting','pending','handing_off','ready','automatic'))`, agentID).Scan(&continuityBlocksNormal); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM switch_handoff h JOIN agent_switch sw ON sw.agent_id=h.agent_id WHERE h.agent_id=? AND sw.state='draining' AND h.status IN ('waiting','pending','handing_off','ready','automatic'))
+			OR EXISTS(SELECT 1 FROM team_flow_migration_agent ma JOIN team_flow_migration m ON m.id=ma.migration_id WHERE ma.agent_id=? AND m.state='draining')`, agentID, agentID).Scan(&continuityBlocksNormal); err != nil {
 			return err
 		}
 		if continuityBlocksNormal {

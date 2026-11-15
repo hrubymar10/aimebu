@@ -6,7 +6,7 @@ import { ScopeControl } from '../../components/scope-control.js';
 import { UsageSummary } from '../../components/usage-summary.js';
 import { UsageLimit } from './usage-limit.js';
 import { RoleDefaults } from './role-defaults.js';
-import { TeamFlowSettings } from './team-flow-page.js';
+import { TeamFlowSettings } from './team-flow-settings.js';
 
 function Toggle({ id, label, desc, risk, flag, onChange }) {
   const described = risk ? `${id}-desc ${id}-risk` : `${id}-desc`;
@@ -39,7 +39,7 @@ export function ProjectPage({ store }) {
       <h3 id="project-scope-control-title">Agents in this project</h3><div class="settings-card"><${ScopeControl} store=${store.scope} /></div></section>
     <section id="project-usage-limit" class="usage-limit settings-subsection" aria-labelledby="project-usage-limit-title"><${UsageLimit} store=${store.limit} /></section>
     <${RoleDefaults} store=${store} />
-    <${TeamFlowSettings} flow=${store.flow} canEdit=${!!store.project.value && ['owner', 'operator'].includes(store.project.value.role)} />
+    <${TeamFlowSettings} flow=${store.flow} project=${store.project.value} canEdit=${!!store.project.value && ['owner', 'operator'].includes(store.project.value.role)} />
     <section id="project-usage" class="usage-summary settings-subsection" aria-label="Project usage"><${UsageSummary} store=${store.usage} /></section>
     <div class="settings-subsection"><h3>Home room</h3><div class="settings-group" role="group" aria-label="Home room">
       <${Toggle} id="project-home-lead-only" label="Home room: lead only" desc="Only roles that lead can be spawned into the project's home room; other agents go to task rooms such as general. Agents already in the home room stay." flag=${flags.homeLeadOnly.value} onChange=${checked => store.saveFlag('homeLeadOnly', checked)} /></div></div>

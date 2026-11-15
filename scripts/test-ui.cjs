@@ -1596,8 +1596,8 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke' && document.querySelector('.room-item.active .room-item-name')?.textContent.includes('UI smoke'));
     // The creator's POST response must already grant owner controls when the first home view opens.
     await first.waitForSelector('#team-flow-home .team-flow-card');
-    assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false, false], 'the new project owner can choose a flow immediately');
-    assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card strong', nodes => nodes.map(node => node.textContent.replace(/^[A-D]/, '').trim())), ['Leader and workers', 'Leader and dispatcher', 'Leader and advisor', 'Custom'], 'the server offers the flows in order and Custom is always the last one');
+    assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false, true, false], 'the new project owner can choose a flow immediately');
+    assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card strong', nodes => nodes.map(node => node.textContent.replace(/^[A-D·]/, '').trim())), ['Leader and workers', 'Leader and dispatcher', 'Leader and advisor', 'Leader, advisor and dispatcher', 'Custom'], 'the server offers the flows in order and Custom is always the last one, after the disabled combined card');
     assert.equal(await first.$eval('#team-flow-home', host => host.textContent.includes('Ask a project owner or operator')), false);
     assert.deepEqual(await first.$eval('#composer', form => [form.querySelector('textarea').disabled, form.querySelector('button[type=submit]').disabled, form.querySelector('textarea').placeholder, form.inert]),
       [true, true, 'Finish the project setup to start chatting', true], 'setup keeps the composer visible and disabled');
@@ -1605,11 +1605,13 @@ async function main() {
       const text = row.querySelector('.team-flow-card-heading').getBoundingClientRect(), picture = row.querySelector('.team-flow-diagram').getBoundingClientRect();
       return [text.width / row.getBoundingClientRect().width, picture.width, row.getBoundingClientRect().height];
     });
-    assert.ok(rowLayout[0] > .55 && rowLayout[1] >= 149 && rowLayout[1] <= 241 && rowLayout[2] <= 110, `team flow row is compact: description beside a 150-240px diagram, at most 110px tall: ${rowLayout}`);
+    assert.ok(rowLayout[0] > .55 && rowLayout[1] >= 149 && rowLayout[1] <= 241 && rowLayout[2] <= 125, `team flow row is compact: description beside a 150-240px diagram, at most 125px tall: ${rowLayout}`);
     await domClick(first, '#team-flow-home .team-flow-option[data-flow-key="custom"] .team-flow-card');
     await first.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-option[data-flow-key="custom"] .team-flow-card')?.getAttribute('aria-checked') === 'true' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
     await domClick(first, '#team-flow-home .btn-primary');
     await first.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-home-card'));
+    // The wizard card goes away when the flow state changes; the page is told a moment later and then enables the composer.
+    await first.waitForFunction(() => !document.querySelector('#composer').inert);
     assert.deepEqual(await first.$eval('#composer', form => [form.querySelector('textarea').disabled, form.querySelector('button[type=submit]').disabled, form.querySelector('textarea').placeholder, form.inert]),
       [false, false, 'Message', false], 'choosing a flow enables the composer without a reload');
     await openSettings(first);

@@ -88,6 +88,7 @@ async function main() {
       settingsPage.onFlowApplied = async id => { window.__hooks.push(['flow', id]); };
       window.__room = new (await import('/js/pages/project/room-panels.js')).RoomScopeControl(document.querySelector('#room-scope-control'));
       window.__roomUsage = new (await import('/js/pages/project/room-panels.js')).RoomUsage(document.querySelector('#room-usage'));
+      settingsPage.store.flow.roomID = 'r1';
       if (load) await settingsPage.load('p1');
     }, { role, admin, archived, held, load, settings, rooms });
     return page;
@@ -152,11 +153,23 @@ async function main() {
         { session: [false, false, 'Import Claude Code sessions'], rows: [['archive', false, false], ['reopen', true, false], ['delete', false, false]], note: '', group: false });
       await page.close();
     }
-    // Project settings previews a switch before applying it and lists agents that need a human action.
+    // Project settings changes the flow with the same wizard as setup: the leader is kept, a new dispatcher is added, workers are kept, and the
+    // server's plan decides the statuses. Nothing starts before Apply, and the progress of the change stays on screen until it ends.
     {
-      const page = await mount();
+      const agent = (id, slug, extra = {}) => ({ agent_id: id, slug, machine_id: 'm1', tool: 'claude', variant: 'native', launcher_id: 'l1', launcher_label: 'Claude', model: 'm1', ...extra });
+      const plan = { from_key: 'custom', to_key: 'leader-dispatcher', roles: [
+        { role_key: 'leader', status: 'kept', agents: [agent('agt_l', 'ada')] }, { role_key: 'dispatcher', status: 'new', agents: [] },
+        { role_key: 'worker', status: 'kept', agents: [agent('agt_w', 'bo')] }, { role_key: 'reviewer', status: 'kept', agents: [] }] };
+      const auto = base();
+      auto['GET /api/rooms/r1/agent-name'] = { name: 'cy' };
+      auto['GET /api/team-flows/recommended-models'] = { rows: [{ role_key: 'dispatcher', flow_key: 'leader-dispatcher', tool: 'claude', models: [{ model: 'm2', why: 'cheap and quick routing' }, { model: 'not-offered-yet', why: 'the strongest model for rare advice' }] },
+        { role_key: 'worker', flow_key: 'leader-dispatcher', tool: 'claude', models: [{ model: 'm2', why: 'executes: speed and cost matter' }] }, { role_key: 'reviewer', flow_key: 'leader-dispatcher', tool: 'codex', models: [{ model: 'x1', why: 'another vendor than the worker' }] }] };
+      const page = await mount({ auto });
       await ready(page);
-      await page.waitForSelector('#project-team-flow .team-flow-card');
+      await page.waitForSelector('#project-team-flow .team-flow-current');
+      assert.deepEqual(await page.$eval('#project-team-flow', node => [node.querySelector('.team-flow-current').textContent, node.querySelectorAll('.team-flow-card').length, node.querySelector('.btn-primary').textContent.trim()]), ['Current: D · Custom', 0, 'Change team flow'], 'settings show the current flow and one button; the wizard opens on demand');
+      await page.$eval('#project-team-flow .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#project-team-flow .team-flow-card').length === 5);
       // The settings dialog gives buttons a fixed height; the expand label must still sit below every diagram node (D included), and no node may be clipped.
       for (const width of [1280, 600]) {
         await page.setViewport({ width, height: 1000 });
@@ -168,42 +181,192 @@ async function main() {
             nodes.filter(node => node.left < frame.left - .5 || node.right > frame.right + .5 || node.top < frame.top - .5 || node.bottom > frame.bottom + .5).length];
         })), [[0, 0], [0, 0], [0, 0]], `no diagram node is covered by the expand label or clipped at ${width}px`);
       }
-      await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-flow/preview']; });
-      await page.$eval('#project-team-flow .team-flow-option:nth-child(2) .team-flow-card', node => node.click());
-      const preview = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/preview');
-      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, preview), { key: 'leader-dispatcher' });
-      await answer(page, preview, 200, { key: 'leader-dispatcher', create_rooms: [{ key: 'routing', title: 'routing' }], preserved_restricted_rooms: [{ room_id: 'rm_private', title: 'private' }], role_changes: [{ description: 'Add dispatcher role' }], conflicts: [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }] });
-      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-preview')?.textContent.includes('Remove ian'));
-      assert.match(await page.$eval('#project-team-flow .team-flow-preview', node => node.textContent), /routing.*Stays restricted.*private.*Add dispatcher role.*Remove ian \(Leader\) from general when applying/s);
+      await page.evaluate(() => { window.__auto['POST /api/projects/p1/team-flow/migration/preview'] = undefined; delete window.__auto['POST /api/projects/p1/team-flow/migration/preview']; });
+      assert.equal(await page.$eval('#project-team-flow .btn-primary', node => node.disabled), true, 'the current flow cannot be "changed" to itself');
+      await page.$eval('#project-team-flow .team-flow-option[data-flow-key="leader-dispatcher"] .team-flow-card', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#project-team-flow .btn-primary:not(.team-flow-diagram-open)').disabled);
+      await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click());
+      const planRequest = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/preview');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, planRequest), { flow_key: 'leader-dispatcher', flow_rev: 1 });
+      await answer(page, planRequest, 200, plan);
+      const title = () => page.$eval('#team-flow-home-title', node => node.textContent);
+      const banner = () => page.$eval('#project-team-flow .team-wizard-banner', node => node.textContent);
+      const next = async expected => { await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click()); await page.waitForFunction(text => document.querySelector('#project-team-flow #team-flow-home-title')?.textContent === text, {}, expected); };
+      await page.waitForFunction(() => document.querySelector('#project-team-flow #team-flow-home-title')?.textContent === 'Leader');
+      assert.equal(await banner(), 'Leader is kept between D → B migration');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-kept', node => node.textContent), /ada · Box · Claude · Opus \(current\)/);
+      assert.equal(await page.$('#project-team-flow .team-setup-name'), null, 'a kept agent keeps its name');
+      await page.$eval('#project-team-flow .team-wizard-kept .btn', node => node.click());
+      await page.waitForSelector('#team-setup-leader-agt_l-model');
+      await page.select('#team-setup-leader-agt_l-model', 'm2');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-kept p', node => node.textContent), /will switch/);
+      await next('Dispatcher');
+      assert.equal(await banner(), 'Dispatcher is new in B and will be added');
+      await page.waitForFunction(() => document.querySelector('#team-setup-dispatcher-name')?.value === 'cy');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-recommended', node => node.textContent), /^💡 Recommended models.*Sonnet — cheap and quick routing$/, 'the recommendation for this role, flow and harness is shown under the picker\'s label, without the model the harness does not offer');
+      await next('Workers and reviewers');
+      assert.equal(await banner(), 'Workers are kept between D → B migration');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-kept-list', node => node.textContent), /Workers.*bo · Box · Claude · Opus/s);
+      assert.deepEqual(await page.$$eval('#project-team-flow .team-wizard-recommended', nodes => nodes.map(node => node.textContent)), ['💡 Recommended models for workersSonnet — executes: speed and cost matter'], 'workers get their row; reviewers have none for this harness, so that panel stays hidden');
+      // Opening "Change model or harness" on a worker and leaving the choice alone is not a change: it must not reach the server as one.
+      await page.$eval('#project-team-flow .team-wizard-kept-list .team-wizard-kept .btn', node => node.click());
+      await page.waitForSelector('#team-setup-worker-agt_w-model');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-kept-list .team-wizard-kept p', node => node.textContent), /\(current\)/, 'an untouched pick still says current');
+      await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click());
+      // The preview that carries the targets is where the server validates them: its refusal stays on this step, and a retry goes through.
+      const refused = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/preview');
+      await answer(page, refused, 400, { error: 'invalid_request', message: 'new dispatcher target required' });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .error[role=alert]')?.textContent.includes('new dispatcher target required'));
+      assert.equal(await page.$eval('#project-team-flow #team-flow-home-title', node => node.textContent), 'Workers and reviewers');
+      await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click());
+      const finalPlan = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/preview');
+      const planBody = await page.evaluate(index => window.__requests[index].body, finalPlan);
+      assert.deepEqual([planBody.flow_key, planBody.flow_rev, planBody.dispatcher?.name, planBody.dispatcher?.model, planBody.changes, planBody.leader], ['leader-dispatcher', 1, 'cy', 'm1', [{ agent_id: 'agt_l', target: { machine_id: 'm1', tool: 'claude', variant: 'native', launcher_id: 'l1', model: 'm2' } }], undefined], 'the preview carries the new dispatcher and only the kept leader\'s real model change (the untouched worker pick is dropped)');
+      await answer(page, finalPlan, 200, { ...plan, can_apply: true, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }] });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow #team-flow-home-title')?.textContent === 'Summary' && document.querySelector('#project-team-flow .team-wizard-notice'));
+      const summary = await page.$eval('#project-team-flow .team-setup-summary', node => node.textContent);
+      assert.match(summary, /D · Custom → B · Leader and dispatcher/);
+      assert.match(summary, /Leader.*ada: switches to the chosen model after its current turn \(Box · Claude · Sonnet\)/s);
+      assert.match(summary, /Dispatcher.*cy · Box · Claude · Opus is added/s);
+      assert.match(summary, /Worker.*bo: keeps running with the new rules \(not restarted\)/s);
+      assert.match(summary, /Rooms to create: routing/);
+      assert.match(summary, /This can take a while: each agent first finishes its current turn before the change applies; you will have to wait until then\./);
       assert.equal(await page.$eval('#project-team-flow .team-flow-removal input', node => node.checked), false, 'membership removal is opt-in');
       await page.$eval('#project-team-flow .team-flow-removal input', node => node.click());
-      await page.$eval('#project-team-flow .btn-primary', node => node.click());
-      const apply = await waitRequest(page, 'PUT', '/api/projects/p1/team-flow');
-      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, apply), { key: 'leader-dispatcher', rev: 1, remove_memberships: [{ agent_id: 'agt_old', room_id: 'rm_general' }] });
-      await answer(page, apply, 200, { key: 'leader-dispatcher', rev: 2, review_pending: false, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [] });
-      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('Leader and dispatcher'));
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#project-team-flow .btn-primary').disabled, window.__hooks.at(-1)]), [true, ['flow', 'p1']]);
+      await page.evaluate(() => { document.querySelector('#project-team-flow .team-flow-actions .btn-primary').click(); });
+      const migrate = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migrate');
+      assert.equal(await page.evaluate(index => !!window.__requests[index].headers['Idempotency-Key'], migrate), true, 'apply uses an idempotency key');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body.remove_memberships, migrate), [{ agent_id: 'agt_old', room_id: 'rm_general' }], 'only ticked memberships are removed');
+      const running = { id: 'mg1', state: 'draining', can_cancel: true, agents: [
+        { agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'switch', state: 'draining' }, { agent_id: 'agt_w', slug: 'bo', role_key: 'worker', action: 'notice', state: 'waiting' }, { agent_id: 'new', slug: 'cy', role_key: 'dispatcher', action: 'spawn', state: 'waiting' }] };
+      await answer(page, migrate, 202, { migration: running });
+      await page.waitForSelector('#project-team-flow .team-wizard-progress');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-progress', node => node.textContent), /Changing the team flow….*ada \(leader\) switches model: Finishing its current turn.*bo \(worker\) keeps running with the new rules: Waiting.*cy \(dispatcher\) is added: Waiting/s);
+      // Cancel is offered while the server allows it, and answers with the migration as it stands.
+      await page.$eval('#project-team-flow .team-wizard-progress .btn', node => node.click());
+      const cancel = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/cancel');
+      await answer(page, cancel, 200, { migration: { ...running, state: 'cancelled', can_cancel: false } });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-wizard-progress')?.textContent.includes('Cancelled. Everything stays as it was.'));
+      assert.equal(await page.$('#project-team-flow .team-wizard-progress .btn'), null, 'nothing to cancel any more');
       await page.close();
     }
-    // Preserved restrictions are visible even when nothing changes; selected removals can be applied to the current flow.
+    // The store is emptied while another project loads and the wizard can render once more before its parent removes it: it must render nothing, not throw.
     {
-      const auto = base();
-      auto['POST /api/projects/p1/team-flow/preview'] = { key: 'custom', create_rooms: [], preserved_restricted_rooms: [{ room_id: 'rm_private', title: 'private' }], role_changes: [], conflicts: [] };
+      const page = await mount();
+      await page.evaluate(async () => {
+        const { TeamWizard } = await import('/js/pages/project/team-setup-page.js');
+        const { TeamFlowStore } = await import('/js/pages/project/team-flow-store.js');
+        const { html, render } = await import('/js/ui.js');
+        const host = document.createElement('div'); host.id = 'null-state'; document.body.append(host);
+        const flow = new TeamFlowStore();
+        render(html`<${TeamWizard} flow=${flow} canEdit=${true} project=${null} />`, host);
+      });
+      await settle(page); await settle(page);
+      assert.equal(await page.$eval('#null-state', node => node.textContent), '', 'no flow state: nothing is drawn');
+      assert.deepEqual(errors.splice(0), [], 'rendering the wizard without a flow state throws nothing');
+      await page.close();
+    }
+    // A change that finishes reloads the flow and closes the wizard; a project that is already changing shows that progress on opening.
+    {
+      const running = { id: 'mg2', state: 'applying', can_cancel: false, agents: [{ agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'notice', state: 'running' }] };
+      const auto = base(); auto['GET /api/projects/p1/team-flow/migration'] = { migration: running };
       const page = await mount({ auto });
       await ready(page);
-      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-preview')?.textContent.includes('Stays restricted'));
-      assert.deepEqual(await page.$eval('#project-team-flow .team-flow-preview', node => [node.textContent.includes('private'), node.textContent.includes('No rooms or roles need changing.')]), [true, false]);
-      assert.deepEqual(await page.$eval('#project-team-flow .btn-primary', node => [node.disabled, node.textContent.trim()]), [true, 'Current flow']);
-      await page.evaluate(() => { window.__auto['POST /api/projects/p1/team-flow/preview'].conflicts = [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }]; });
-      await page.$eval('#project-team-flow .team-flow-option[data-flow-key="custom"] .team-flow-card', node => node.click());
-      await page.waitForSelector('#project-team-flow .team-flow-removal input');
-      await page.$eval('#project-team-flow .team-flow-removal input', node => node.click());
-      assert.deepEqual(await page.$eval('#project-team-flow .btn-primary', node => [node.disabled, node.textContent.trim()]), [false, 'Apply team flow']);
+      await page.waitForSelector('#project-team-flow .team-wizard-progress');
+      assert.equal(await page.$('#project-team-flow .team-wizard-progress .btn'), null, 'no cancel after the point of no return');
+      await page.evaluate(() => { window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg2', state: 'done', can_cancel: false, agents: [] } }; window.__auto['GET /api/projects/p1/team-flow'] = { key: 'leader-dispatcher', rev: 2, review_pending: false, conflicts: [] }; });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('B · Leader and dispatcher') && !document.querySelector('#project-team-flow .team-wizard-progress'), { timeout: 8000 });
+      assert.equal(await page.evaluate(() => window.__hooks.at(-1)[0]), 'flow', 'the page is told the flow changed');
+      await page.close();
+    }
+    // A drain that waits on a long turn says so and keeps Cancel; a lost or failed change is terminal and says why.
+    {
+      const since = new Date(Date.now() - 20 * 60000).toISOString();
+      const running = { id: 'mg3', state: 'draining', can_cancel: true, stalled_since: since, agents: [
+        { agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'notice', state: 'draining' }, { agent_id: 'agt_w', slug: 'bo', role_key: 'worker', action: 'notice', state: 'waiting' },
+        { agent_id: 'agt_d', slug: 'dax', role_key: 'dispatcher', action: 'reactivate', state: 'waiting' }] };
+      const auto = base(); auto['GET /api/projects/p1/team-flow/migration'] = { migration: running };
+      const page = await mount({ auto });
+      await ready(page);
+      await page.waitForSelector('#project-team-flow .team-wizard-progress');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-progress [role=alert]', node => node.textContent), /^ada has not finished its current turn for 20 minutes\. Keep waiting, or cancel to leave everything as it was\.$/);
+      assert.equal(await page.$eval('#project-team-flow .team-wizard-progress .btn', node => node.textContent.trim()), 'Cancel');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-progress ul', node => node.textContent), /dax \(dispatcher\) is started again: Waiting/, 'a stopped dispatcher or advisor brought back by a later switch is reactivated, not added');
+      await page.evaluate(() => { window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg3', state: 'failed', can_cancel: false, error: 'The dispatcher did not stop in time', agents: [] } }; });
+      await page.waitForFunction(() => document.querySelector('#project-team-flow .team-wizard-progress')?.textContent.includes('The change failed.'), { timeout: 8000 });
+      assert.match(await page.$eval('#project-team-flow .team-wizard-progress', node => node.textContent), /The dispatcher did not stop in time/);
+      assert.equal(await page.$eval('#project-team-flow .team-wizard-progress [role=alert]', node => node.classList.contains('error')), true, 'a settled change shows no stalled warning, only its error');
+      await page.close();
+    }
+    // Leaving a role: the banner says what happens to it and nothing asks for a model; the disabled combined flow cannot be chosen.
+    {
+      const agent = (id, slug) => ({ agent_id: id, slug, machine_id: 'm1', tool: 'claude', variant: 'native', launcher_id: 'l1', launcher_label: 'Claude', model: 'm1' });
+      const auto = base();
+      auto['GET /api/projects/p1/team-flow'] = { key: 'leader-dispatcher', rev: 3, review_pending: false, template: flows[1], conflicts: [] };
+      auto['POST /api/projects/p1/team-flow/migration/preview'] = { from_key: 'leader-dispatcher', to_key: 'leader-workers', can_apply: true, created_rooms: [], conflicts: [], roles: [
+        { role_key: 'leader', status: 'kept', agents: [agent('agt_l', 'ada')] }, { role_key: 'dispatcher', status: 'leaving', agents: [agent('agt_d', 'dax')] }, { role_key: 'worker', status: 'kept', agents: [] }] };
+      const page = await mount({ auto });
+      await ready(page);
+      await page.waitForSelector('#project-team-flow .btn-primary');
       await page.$eval('#project-team-flow .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#project-team-flow .team-flow-card').length === 5);
+      assert.equal(await page.$eval('#project-team-flow .team-flow-coming .team-flow-card', node => node.disabled), true);
+      await page.$eval('#project-team-flow .team-flow-coming .team-flow-card', node => node.click());
+      assert.equal(await page.$eval('#project-team-flow .team-flow-option.selected', node => node.dataset.flowKey), 'leader-dispatcher', 'the coming-later card cannot be selected');
+      await page.$eval('#project-team-flow .team-flow-option[data-flow-key="leader-workers"] .team-flow-card', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#project-team-flow .team-flow-actions .btn-primary').disabled);
+      const next = async expected => { await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click()); await page.waitForFunction(text => document.querySelector('#project-team-flow #team-flow-home-title')?.textContent === text, {}, expected); };
+      await next('Leader');
+      assert.equal(await page.$eval('#project-team-flow .team-wizard-banner', node => node.textContent), 'Leader is kept between B → A migration');
+      await next('Dispatcher');
+      assert.equal(await page.$eval('#project-team-flow .team-wizard-banner', node => node.textContent), "Dispatcher isn't used in A. It will hand off its context to the leader and will be stopped");
+      assert.deepEqual(await page.$eval('#project-team-flow', node => [node.querySelectorAll('.team-setup-target').length, node.querySelector('.team-wizard-leaving').textContent]), [0, 'dax · Box · Claude · Opus']);
+      assert.equal(await page.$('#project-team-flow .team-wizard-recommended'), null, 'the recommendations panel is hidden while the table has no row');
+      await page.close();
+    }
+    // A role the new flow needs whose agent was stopped by an earlier switch is started again under its own name: no name field, no "new agent" wording.
+    {
+      const agent = (id, slug, extra = {}) => ({ agent_id: id, slug, machine_id: 'm1', tool: 'claude', variant: 'native', launcher_id: 'l1', launcher_label: 'Claude', model: 'm1', ...extra });
+      const plan = { from_key: 'leader-workers', to_key: 'leader-dispatcher', roles: [
+        { role_key: 'leader', status: 'kept', agents: [agent('agt_l', 'ada')] }, { role_key: 'dispatcher', status: 'new', agents: [agent('agt_d', 'dax', { state: 'stopped' })] }, { role_key: 'worker', status: 'kept', agents: [] }] };
+      const auto = base();
+      auto['GET /api/projects/p1/team-flow'] = { key: 'leader-workers', rev: 5, review_pending: false, template: flows[0], conflicts: [] };
+      auto['POST /api/projects/p1/team-flow/migration/preview'] = { ...plan, can_apply: true, created_rooms: [], conflicts: [] };
+      const page = await mount({ auto });
+      await ready(page);
+      await page.waitForSelector('#project-team-flow .btn-primary');
+      await page.$eval('#project-team-flow .btn-primary', node => node.click());
+      await page.waitForSelector('#project-team-flow .team-flow-option[data-flow-key="leader-dispatcher"] .team-flow-card');
+      await page.$eval('#project-team-flow .team-flow-option[data-flow-key="leader-dispatcher"] .team-flow-card', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#project-team-flow .team-flow-actions .btn-primary').disabled);
+      const next = async expected => { await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click()); await page.waitForFunction(text => document.querySelector('#project-team-flow #team-flow-home-title')?.textContent === text, {}, expected); };
+      await next('Leader'); await next('Dispatcher');
+      assert.equal(await page.$eval('#project-team-flow .team-wizard-banner', node => node.textContent), 'Dispatcher was stopped earlier and will be started again in B');
+      assert.deepEqual(await page.$eval('#project-team-flow', node => [!!node.querySelector('.team-setup-name'), node.querySelectorAll('.team-setup-target select').length > 0, node.textContent.includes('dax keeps its name')]), [false, true, true], 'the stopped agent keeps its name; only the model is chosen');
+      await next('Workers and reviewers');
+      await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#project-team-flow #team-flow-home-title')?.textContent === 'Summary' && document.querySelector('#project-team-flow .team-wizard-notice'));
+      assert.equal(await page.evaluate(() => { const finalBody = window.__requests.filter(request => request.path.endsWith('/migration/preview')).at(-1).body; return ['name' in (finalBody.dispatcher || {}), !!finalBody.dispatcher]; }).then(String), 'false,true', 'the target is sent, a name never is, for an agent that is started again');
+      assert.match(await page.$eval('#project-team-flow .team-setup-summary', node => node.textContent), /Dispatcher.*dax · Box · Claude · Opus is started again/s);
+      await page.close();
+    }
+    // Choosing Custom from another flow keeps the existing apply: no agents change.
+    {
+      const auto = base();
+      auto['GET /api/projects/p1/team-flow'] = { key: 'leader-workers', rev: 3, review_pending: false, template: flows[0], conflicts: [] };
+      const page = await mount({ auto });
+      await ready(page);
+      await page.waitForSelector('#project-team-flow .btn-primary');
+      await page.$eval('#project-team-flow .btn-primary', node => node.click());
+      await page.waitForSelector('#project-team-flow .team-flow-option[data-flow-key="custom"] .team-flow-card');
+      await page.$eval('#project-team-flow .team-flow-option[data-flow-key="custom"] .team-flow-card', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#project-team-flow .team-flow-actions .btn-primary').disabled);
+      assert.equal(await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.textContent.trim()), 'Use Custom');
+      await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click());
       const apply = await waitRequest(page, 'PUT', '/api/projects/p1/team-flow');
-      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, apply), { key: 'custom', rev: 1, remove_memberships: [{ agent_id: 'agt_old', room_id: 'rm_general' }] });
-      await answer(page, apply, 200, { key: 'custom', rev: 2, review_pending: false, created_rooms: [], conflicts: [] });
-      await page.waitForFunction(() => document.querySelector('#project-team-flow .btn-primary')?.disabled);
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, apply), { key: 'custom', rev: 3 });
+      await answer(page, apply, 200, { key: 'custom', rev: 4, review_pending: false, created_rooms: [], conflicts: [] });
+      await page.waitForFunction(() => !document.querySelector('#project-team-flow .team-flow-card') && document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('Custom'));
       await page.close();
     }
     // A failed flow read leaves the composer usable and offers a retry; a successful retry restores the pending setup state.
@@ -230,21 +393,23 @@ async function main() {
       const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
       const page = await mount({ auto });
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeRole = ''; window.__homeFlow = new TeamFlowHome({ canEdit: () => window.__homeRole === 'owner', onApplied: () => {} }); window.__homeRole = 'owner'; window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
-      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 4);
+      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 5);
       assert.deepEqual(await page.evaluate(() => {
         const host = document.querySelector('#team-flow-home'), card = host.querySelector('.team-setup-wizard');
         return [getComputedStyle(document.querySelector('#messages')).display, getComputedStyle(document.querySelector('.send-bar')).display,
           host.clientHeight > 600, Math.abs(card.clientWidth - host.clientWidth + 32) < 3];
       }), ['none', 'block', true, true], 'setup fills the message area while the composer stays visible');
-      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false, false], 'owner permission is read after the home page mounts');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false, true, false], 'owner permission is read after the home page mounts');
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), [...node.querySelectorAll('.team-flow-thumbnail-agent text')].map(text => text.textContent)])),
-        [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Worker', 'Worker', 'Worker', 'Advisor']], ['false', []]], 'the topology comes from spawn rules, not the room diagram; core roles outside the spawn path attach to the leader');
+        [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Worker', 'Worker', 'Worker', 'Advisor']], ['false', []], ['false', []]], 'the topology comes from spawn rules, not the room diagram; core roles outside the spawn path attach to the leader');
       assert.equal(await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-thumbnail-consults title', node => node.textContent), 'consults', 'the advisor hangs off the leader with a dashed edge named consults');
       assert.equal(await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-thumbnail-consults line', node => getComputedStyle(node).strokeDasharray !== 'none'), true);
       assert.equal(await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-letter', node => node.textContent), 'C', 'letters follow the display order');
-      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-option', options => [options.map(option => option.dataset.flowKey), options.map(option => option.querySelector('.team-flow-letter').textContent)]), [['leader-workers', 'leader-dispatcher', 'leader-advisor', 'custom'], ['A', 'B', 'C', 'D']], 'Custom is always the last option');
-      // Rows stay compact so many variants fit on one screen: every card is at most 110px tall on a desktop width, and the first four fit well inside the setup area.
-      assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 110), true, 'each flow card is compact');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-option', options => [options.map(option => option.dataset.flowKey), options.map(option => option.querySelector('.team-flow-letter').textContent)]), [['leader-workers', 'leader-dispatcher', 'leader-advisor', 'coming-later', 'custom'], ['A', 'B', 'C', '·', 'D']], 'the "coming later" card sits right before Custom, which is always the last option');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-option', options => options.map(option => option.querySelector('.team-flow-recommendation')?.textContent || '')), ['Recommended for small to medium projects.', "Recommended for large projects; the dispatcher handles routing so the leader's context stays lean.", "Recommended when a fast, cheaper leader should get a stronger model's judgment on key decisions.", '', 'For setting up rooms and roles yourself.'], 'each flow says when it fits');
+      assert.deepEqual(await page.$eval('#team-flow-home .team-flow-coming .team-flow-card', card => [card.disabled, card.getAttribute('aria-disabled'), card.textContent.includes('Leader, advisor and dispatcher')]), [true, 'true', true], 'the combined flow is shown but cannot be chosen');
+      // Rows stay compact so many variants fit on one screen: every card is at most 125px tall on a desktop width, and the first four fit well inside the setup area.
+      assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 125), true, 'each flow card is compact');
       const fitted = () => page.$$eval('#team-flow-home .team-flow-option:nth-child(-n+2)', options => options.map(option => {
         const frame = option.querySelector('.team-flow-thumbnail').getBoundingClientRect();
         const worker = option.querySelector('.team-flow-thumbnail-agent:last-child rect').getBoundingClientRect();
@@ -260,7 +425,7 @@ async function main() {
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-lightbox')?.open);
       await page.setViewport({ width: 390, height: 844 });
       assert.equal(await page.$eval('#team-flow-home .team-flow-card', row => getComputedStyle(row).gridTemplateColumns.split(' ').length), 2, 'phone layout keeps the description beside a compact diagram');
-      assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 130), true, 'phone cards stay compact too');
+      assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 160), true, 'phone cards stay compact too');
       assert.deepEqual(await fitted(), [true, true], 'phone thumbnails fit above the expand control');
       await page.setViewport({ width: 1280, height: 800 });
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
@@ -332,7 +497,7 @@ async function main() {
       auto['GET /api/spawn-catalog?machine_id=m1'] = { tools: [{ tool: 'claude', variant: 'native', launcher_id: 'l1', label: 'Claude', available: true, models: [{ id: 'strong', label: 'Strong' }, { id: 'fast', label: 'Fast', default: true }] }] };
       const page = await mount({ auto });
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ id: 'r1', kind: 'home', project_id: 'p1' }); });
-      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 4);
+      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 5);
       await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-card', node => node.click());
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
       const title = () => page.$eval('#team-flow-home-title', node => node.textContent);
@@ -369,6 +534,26 @@ async function main() {
       assert.equal(await title(), 'Summary');
       await page.close();
     }
+    // Two roles outside the spawn path hang under the leader one below the other: no two boxes overlap and none is clipped.
+    {
+      const page = await mount();
+      await page.evaluate(async () => {
+        const { TeamFlowCards } = await import('/js/pages/project/team-flow-page.js');
+        const { html, render } = await import('/js/ui.js');
+        const host = document.createElement('div'); host.id = 'two-attached'; host.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#000;width:900px'; document.body.append(host);
+        const template = { key: 'x', label: 'X', description: 'Two attached roles.', core_roles: ['leader', 'advisor', 'auditor'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker'] }] };
+        render(html`<${TeamFlowCards} templates=${[template]} selected="x" onSelect=${() => {}} />`, host);
+      });
+      await page.waitForSelector('#two-attached .team-flow-thumbnail-agent');
+      assert.deepEqual(await page.$$eval('#two-attached .team-flow-thumbnail-agent text', nodes => nodes.map(node => node.textContent)), ['Leader', 'Worker', 'Worker', 'Worker', 'Advisor', 'Auditor']);
+      assert.deepEqual(await page.$eval('#two-attached', host => {
+        const frame = host.querySelector('.team-flow-thumbnail').getBoundingClientRect();
+        const boxes = [...host.querySelectorAll('.team-flow-thumbnail-agent rect')].map(node => node.getBoundingClientRect());
+        const overlaps = boxes.flatMap((a, i) => boxes.slice(i + 1).filter(b => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top)).length;
+        return [overlaps, boxes.filter(box => box.top < frame.top - .5 || box.bottom > frame.bottom + .5).length, host.querySelectorAll('.team-flow-thumbnail-consults').length];
+      }), [0, 0, 2], 'two attached roles do not overlap each other or the workers and stay inside the frame, each with its own dashed edge');
+      await page.close();
+    }
     // A worker-room reference displays exactly the granted message, as plain text and without opening the source room.
     {
       const auto = base();
@@ -395,7 +580,7 @@ async function main() {
       await ready(viewer);
       await viewer.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('Custom'));
       await settle(viewer);
-      assert.deepEqual(await viewer.evaluate(() => [window.__requests.filter(request => request.path.endsWith('/team-flow/preview')).length, document.querySelector('#project-team-flow .team-flow-preview'), document.querySelector('#project-team-flow .error').textContent.trim(), document.querySelector('#project-team-flow .team-flow-card').disabled]), [0, null, '', true], 'viewer sees the current flow without requesting a restricted preview');
+      assert.deepEqual(await viewer.evaluate(() => [window.__requests.filter(request => request.path.endsWith('/team-flow/preview')).length, document.querySelector('#project-team-flow .team-flow-preview'), document.querySelector('#project-team-flow .error').textContent.trim(), document.querySelector('#project-team-flow .team-flow-settings .btn-primary').disabled, document.querySelectorAll('#project-team-flow .team-flow-card').length]), [0, null, '', true, 0], 'viewer sees the current flow without requesting a restricted preview');
       assert.deepEqual(await viewer.evaluate(() => [document.querySelector('#project-details-name').disabled, document.querySelector('#project-details-folder').disabled, document.querySelector('#project-details-save').disabled, document.querySelector('#project-details-status').textContent,
         document.querySelector('#project-archive').disabled, document.querySelector('#project-lifecycle > p').textContent]), [true, true, true, 'Only the project owner can change these.', true, 'Only the project owner or an admin can archive, reopen or delete a project.']);
       await viewer.close();

@@ -206,6 +206,9 @@ func TestMigrationNinetySixBackfillsSeenFromEvents(t *testing.T) {
 	}
 	before := agentReceipts(t, s, room.ID)
 	// Back to version 95, as a database from before the table, then migrate again.
+	if _, err := s.db.Exec(`ALTER TABLE team_flow_migration DROP COLUMN drain_errors`); err != nil {
+		t.Fatal(err)
+	}
 	for _, statement := range []string{`ALTER TABLE message DROP COLUMN switch_handoff_json`, `DROP TABLE message_reference_grant`, `DROP INDEX room_team_flow_key`, `ALTER TABLE room DROP COLUMN restricted`, `ALTER TABLE room DROP COLUMN team_flow_room_key`, `ALTER TABLE project DROP COLUMN team_flow_review_pending`, `ALTER TABLE project DROP COLUMN team_flow_rev`, `ALTER TABLE project DROP COLUMN team_flow_key`, `DROP TABLE agent_room_seen`, `DROP INDEX message_reply_to`, `ALTER TABLE boundary_pending DROP COLUMN start_fresh`, `ALTER TABLE harness_model DROP COLUMN available`, `ALTER TABLE harness_model DROP COLUMN source`, `DELETE FROM schema_version WHERE version>=96`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)

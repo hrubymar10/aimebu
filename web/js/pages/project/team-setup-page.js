@@ -1,66 +1,19 @@
 import { html, useEffect, useRef, useState } from '../../ui.js';
 import { request } from '../../api.js';
 import { uuid } from '../../uuid.js';
-import { ModelPicker } from '../agents/model-picker.js';
-import { IconButton } from '../../components/icon-button.js';
 import { SpawnDefaults } from '../../components/spawn-defaults.js';
 import { TeamFlowCards, TeamFlowPreview } from './team-flow-page.js';
+import {
+  projectPath, cleanTarget, roleLabel, flowLetter, loadChoices, initialTarget, initialDefaults, describeTarget,
+  TargetPicker, StatusBanner, RecommendedModels, KeptAgent, MigrationSummary, MigrationProgress, isModelChange, MIGRATION_TERMINAL,
+} from './team-wizard-parts.js';
 
-const projectPath = id => `/api/projects/${encodeURIComponent(id)}`;
-const chosen = (items, old) => items.find(item => item.value === old) || items[0];
-const targetOf = (machine, tool, model) => ({ machine_id: machine.id, tool: tool.tool, variant: tool.variant, launcher_id: tool.launcher_id, model: model.id });
-const cleanTarget = item => item && ({ machine_id: item.machine_id, tool: item.tool, variant: item.variant, launcher_id: item.launcher_id, model: item.model });
-const sameTarget = (a, b) => a?.machine_id === b?.machine_id && a?.launcher_id === b?.launcher_id && a?.model === b?.model;
-
-async function loadChoices(projectID) {
-  const [machinesResult, defaults] = await Promise.all([
-    request(`/api/machines?project_id=${encodeURIComponent(projectID)}`),
-    request(`${projectPath(projectID)}/role-spawn-defaults`),
-  ]);
-  const machines = (machinesResult.machines || []).filter(machine => !machine.revoked_at && machine.approved && machine.connected && machine.project_allowed);
-  const catalogs = await Promise.all(machines.map(async machine => {
-    try { return (await request(`/api/spawn-catalog?machine_id=${encodeURIComponent(machine.id)}`)).tools || []; }
-    catch { return []; }
-  }));
-  const options = machines.flatMap((machine, index) => catalogs[index].filter(tool => tool.available && tool.launcher_id).flatMap(tool =>
-    (tool.models || []).filter(model => model.id && !model.unavailable).map(model => ({
-      ...targetOf(machine, tool, model), machine_name: machine.name, tool_label: tool.label, model_label: model.label || model.id,
-      default_model: !!model.default,
-    }))));
-  return { machines, options, defaults: Array.isArray(defaults) ? defaults : [] };
-}
-
-function initialTarget(options, defaults, role) {
-  const agent = defaults.find(item => item.role_key === role)?.default_agents?.[0];
-  return cleanTarget(options.find(item => item.launcher_id === agent?.launcher_id && item.model === agent?.model) || options.find(item => item.default_model) || options[0]);
-}
 const SECOND_ROLE = { 'leader-dispatcher': 'Dispatcher', 'leader-advisor': 'Advisor' };
-function initialDefaults(options, defaults, role) {
-  const row = defaults.find(item => item.role_key === role);
-  const available = (row?.default_agents || []).filter(item => options.some(option => option.launcher_id === item.launcher_id && option.model === item.model));
-  const first = initialTarget(options, defaults, role);
-  return { items: available.length ? available : first ? [{ launcher_id: first.launcher_id, model: first.model }] : [], mode: row?.pick_mode || 'in_turn' };
-}
-function TargetPicker({ label, prefix, options, value, onChange, name, nameBusy, nameError, onName, onDice }) {
-  const machines = [...new Map(options.map(option => [option.machine_id, { value: option.machine_id, label: option.machine_name }])).values()];
-  const machine = chosen(machines, value?.machine_id);
-  const tools = [...new Map(options.filter(option => option.machine_id === machine?.value).map(option => [option.launcher_id, { value: option.launcher_id, label: option.tool_label }])).values()];
-  const tool = chosen(tools, value?.launcher_id);
-  const models = options.filter(option => option.machine_id === machine?.value && option.launcher_id === tool?.value);
-  const change = next => { if (next) onChange({ machine_id: next.machine_id, tool: next.tool, variant: next.variant, launcher_id: next.launcher_id, model: next.model }); };
-  return html`<fieldset class="team-setup-target"><legend>${label}</legend>
-    <div class="team-setup-name"><label for=${`${prefix}-name`}>Name</label><div class="team-setup-name-row"><input id=${`${prefix}-name`} autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="21" placeholder="Automatic" aria-describedby=${`${prefix}-name-error`} value=${name || ''} onInput=${event => onName(event.currentTarget.value)} /><${IconButton} name="dice" label="Another name" id=${`${prefix}-name-dice`} disabled=${nameBusy} onClick=${onDice} /></div><p id=${`${prefix}-name-error`} class="error team-setup-name-error" role="alert">${nameError}</p></div>
-    <label>Machine<select aria-label=${`${label} machine`} value=${machine?.value || ''} onChange=${event => change(options.find(option => option.machine_id === event.currentTarget.value && option.default_model) || options.find(option => option.machine_id === event.currentTarget.value))}>
-      ${machines.map(item => html`<option key=${item.value} value=${item.value}>${item.label}</option>`)}</select></label>
-    <label>Tool<select aria-label=${`${label} tool`} value=${tool?.value || ''} onChange=${event => change(options.find(option => option.machine_id === machine?.value && option.launcher_id === event.currentTarget.value && option.default_model) || options.find(option => option.machine_id === machine?.value && option.launcher_id === event.currentTarget.value))}>
-      ${tools.map(item => html`<option key=${item.value} value=${item.value}>${item.label}</option>`)}</select></label>
-    <${ModelPicker} prefix=${prefix} models=${models.map(item => ({ value: item.model, label: item.model_label }))} value=${value?.model || ''} onChange=${model => change(models.find(item => item.model === model))} />
-  </fieldset>`;
-}
+const CORE = ['leader', 'worker', 'reviewer'];
+const TERMINAL = MIGRATION_TERMINAL;
 
 function Summary({ body, flowLabel, preview, options, selectedRemovals, onToggleRemoval }) {
-  const name = target => options.find(item => sameTarget(item, target));
-  const describe = target => { const item = name(target); return `${target?.name ? `${target.name} · ` : ''}${item ? `${item.machine_name} · ${item.tool_label} · ${item.model_label}` : 'No available agent'}`; };
+  const describe = target => `${target?.name ? `${target.name} · ` : ''}${describeTarget(options, target)}`;
   return html`<div class="team-setup-summary">
     <p><strong>Team flow:</strong> ${flowLabel}</p>
     <p><strong>Leader:</strong> ${describe(body.leader)}</p>
@@ -74,9 +27,21 @@ function Summary({ body, flowLabel, preview, options, selectedRemovals, onToggle
   </div>`;
 }
 
+// The home room shows the wizard until a flow is chosen (or a migrated project keeps its custom setup).
 export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
+  const state = flow.state.value;
+  if (!state && flow.loading.value) return html`<section class="team-flow-home-card" role="status">Loading team flows…</section>`;
+  if (!state && flow.error.value) return html`<section class="team-flow-home-card"><p class="error" role="alert">Could not load team flows: ${flow.error.value}</p><button type="button" class="btn" onClick=${onRetry}>Retry</button></section>`;
+  if (!state || !state.review_pending && state.key) return null;
+  return html`<${TeamWizard} flow=${flow} canEdit=${canEditProject(flow.projectID)} project=${projectForID(flow.projectID)} />`;
+}
+
+// One wizard for both jobs. Setup (a project with no flow yet) starts a fresh team; a switch (the project already has a flow) keeps
+// the leader, adds or hands off the other core roles, and asks the server for a plan before it changes anything.
+export function TeamWizard({ flow, canEdit, project, embedded = false, onClose = () => {} }) {
   const state = flow.state.value, templates = flow.templates.value, selected = flow.selected.value;
-  const canEdit = canEditProject(flow.projectID), project = projectForID(flow.projectID);
+  // The store is emptied while another project loads and this component may render once more before its parent removes it, so state can be null.
+  const setupMode = !state?.key;
   const [step, setStep] = useState(1), [choices, setChoices] = useState(null), [loadError, setLoadError] = useState('');
   const [leader, setLeader] = useState(null), [dispatcher, setDispatcher] = useState(null), [advisor, setAdvisor] = useState(null);
   const [worker, setWorker] = useState(null), [reviewer, setReviewer] = useState(null);
@@ -84,13 +49,22 @@ export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
   const [names, setNames] = useState({}), [nameBusy, setNameBusy] = useState({}), [nameErrors, setNameErrors] = useState({}), nameRequests = useRef({});
   const [settings, setSettings] = useState({ worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10 });
   const [preview, setPreview] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [plan, setPlan] = useState(null), [changes, setChanges] = useState({}), [recommended, setRecommended] = useState([]);
+  const [migration, setMigration] = useState(null), [cancelling, setCancelling] = useState(false);
   const commitKey = useRef(''), generation = useRef(0), settingsTouched = useRef(false);
   useEffect(() => {
     const id = flow.projectID, turn = ++generation.current;
     setStep(1); setChoices(null); setLeader(null); setDispatcher(null); setAdvisor(null); setNames({}); setNameBusy({}); setNameErrors({}); nameRequests.current = {}; setWorker(null); setReviewer(null);
     setSettings({ worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10 });
     setLoadError(''); setPreview(null); setBusy(false); setError(''); commitKey.current = ''; settingsTouched.current = false;
+    setPlan(null); setChanges({}); setMigration(null); setCancelling(false);
     if (!id) return undefined;
+    Promise.resolve(flow.source.recommendedModels?.()).then(answer => { if (turn === generation.current) setRecommended(Array.isArray(answer?.rows) ? answer.rows : []); }, () => {});
+    // A change already under way keeps its progress on screen, whoever started it.
+    if (state?.key && canEdit) Promise.resolve(flow.source.migration?.(id)).then(answer => {
+      const running = answer?.migration || answer;
+      if (turn === generation.current && running?.id && !TERMINAL.includes(running.state)) setMigration(running);
+    }, () => {});
     loadChoices(id).then(result => {
       if (turn !== generation.current) return;
       setChoices(result);
@@ -100,7 +74,8 @@ export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
       setWorker(initialDefaults(result.options, result.defaults, 'worker'));
       setReviewer(initialDefaults(result.options, result.defaults, 'reviewer'));
       const key = flow.selected.peek(), current = flow.state.peek();
-      if (key !== 'custom' && current && result.options.length) {
+      // The store may have been reset (another project opened) while the choices loaded, which leaves no flow state to preview against.
+      if (current && !current.key && key !== 'custom' && result.options.length) {
         request(`${projectPath(id)}/team-setup/preview`, { method: 'POST', body: {
           flow_key: key, flow_rev: current.rev,
           leader: initialTarget(result.options, result.defaults, 'leader'),
@@ -115,8 +90,35 @@ export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
     }, failure => { if (turn === generation.current) setLoadError(failure.message); });
     return () => { generation.current++; };
   }, [flow.projectID]);
-  // A free name from the server (the same pool as Spawn), asked for when a role's step first opens and again by the dice. Nothing is reserved,
-  // so a name taken meanwhile is refused when the team is created. A late answer for a replaced request or another project is dropped.
+  // Following a running change: ask for its progress until it ends; a finished change reloads the flow, a cancelled or failed one stays on screen.
+  useEffect(() => {
+    if (!migration?.id || TERMINAL.includes(migration.state)) return undefined;
+    const id = flow.projectID, turn = generation.current;
+    const timer = setInterval(async () => {
+      try {
+        const answer = await flow.source.migration(id), latest = answer?.migration || answer;
+        if (turn !== generation.current || !latest?.id) return;
+        setMigration(latest);
+        if (latest.state === 'done') { await flow.completeMigration(id, latest); onClose(); }
+      } catch { /* the next poll tries again */ }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [migration?.id, migration?.state]);
+  const roleEntries = plan?.roles || [];
+  const entryOf = role => roleEntries.find(item => item.role_key === role);
+  const secondRoles = roleEntries.filter(item => !CORE.includes(item.role_key));
+  const second = SECOND_ROLE[selected];
+  const steps = setupMode
+    ? (second ? ['Team flow', 'Leader', second, 'Workers and reviewers', 'Project settings', 'Summary'] : ['Team flow', 'Leader', 'Workers and reviewers', 'Project settings', 'Summary'])
+    : selected === 'custom' || !plan ? ['Team flow'] : ['Team flow', 'Leader', ...secondRoles.map(item => roleLabel(item.role_key)), 'Workers and reviewers', 'Summary'];
+  const stepLabel = steps[step - 1], isLast = step === steps.length && steps.length > 1;
+  const roleKey = { Leader: 'leader', Dispatcher: 'dispatcher', Advisor: 'advisor' }[stepLabel] || '';
+  const roleStatus = setupMode ? 'new' : entryOf(roleKey)?.status || '';
+  const needsTarget = !!roleKey && roleStatus === 'new';
+  // A stopped agent of a role the new flow needs is started again, with its own name, rather than a new one being created.
+  const reuse = roleStatus === 'new' && !setupMode ? entryOf(roleKey)?.agents?.[0] : null;
+  // A free name from the server (the same pool as Spawn), asked for when a new agent's step first opens and again by the dice. Nothing is
+  // reserved, so a name taken meanwhile is refused when the team is created. A late answer for a replaced request or another project is dropped.
   const suggestName = async (role, exclude) => {
     const id = flow.projectID, roomID = flow.roomID, turn = generation.current, ticket = nameRequests.current[role] = (nameRequests.current[role] || 0) + 1;
     if (!roomID) return;
@@ -128,77 +130,116 @@ export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
     finally { if (turn === generation.current && ticket === nameRequests.current[role]) setNameBusy(old => ({ ...old, [role]: false })); }
   };
   const typeName = (role, value) => { nameRequests.current[role] = (nameRequests.current[role] || 0) + 1; setNames(old => ({ ...old, [role]: value })); setNameErrors(old => ({ ...old, [role]: '' })); setNameBusy(old => ({ ...old, [role]: false })); };
-  const stepRole = step === 2 ? 'leader' : step === 3 ? (SECOND_ROLE[selected] || '').toLowerCase() : '';
-  useEffect(() => { if (stepRole && choices && names[stepRole] == null) void suggestName(stepRole, stepRole === 'leader' ? '' : names.leader || ''); }, [stepRole, choices]);
-  if (!state && flow.loading.value) return html`<section class="team-flow-home-card" role="status">Loading team flows…</section>`;
-  if (!state && flow.error.value) return html`<section class="team-flow-home-card"><p class="error" role="alert">Could not load team flows: ${flow.error.value}</p><button type="button" class="btn" onClick=${onRetry}>Retry</button></section>`;
-  if (!state || !state.review_pending && state.key) return null;
-  const migrated = state.key === 'custom' && state.review_pending;
-  // The letter is the card's place in the list (the same one the cards show), so a new flow never needs a mapping here.
-  const flowIndex = templates.findIndex(item => item.key === selected);
-  const flowLabel = flowIndex < 0 ? '' : `${String.fromCharCode(65 + flowIndex)} · ${templates[flowIndex].label}`;
-  const second = SECOND_ROLE[selected];
-  const steps = second ? ['Team flow', 'Leader', second, 'Workers and reviewers', 'Project settings', 'Summary'] : ['Team flow', 'Leader', 'Workers and reviewers', 'Project settings', 'Summary'];
+  useEffect(() => { if (needsTarget && !reuse && choices && names[roleKey] == null) void suggestName(roleKey, roleKey === 'leader' ? '' : names.leader || ''); }, [roleKey, needsTarget, choices]);
+  if (!state) return null;
+  const flowLabel = (key = selected) => { const index = templates.findIndex(item => item.key === key); return index < 0 ? '' : `${flowLetter(templates, key)} · ${templates[index].label}`; };
   const minimumAgents = 1;
   const coreRoles = templates.find(item => item.key === selected)?.core_roles || [];
   const coreNames = coreRoles.map((role, index) => index ? role : role.charAt(0).toUpperCase() + role.slice(1)).join(' and ');
   const coreHint = coreNames ? `${coreNames} ${coreRoles.length === 1 ? 'is' : 'are'} not counted.` : '';
-  const stepLabel = steps[step - 1], isLast = step === steps.length;
   const named = (target, role) => target && (names[role]?.trim() ? { ...target, name: names[role].trim() } : target);
-  const body = { flow_key: selected, flow_rev: state.rev, leader: named(leader, 'leader'), ...(selected === 'leader-dispatcher' ? { dispatcher: named(dispatcher, 'dispatcher') } : {}), ...(selected === 'leader-advisor' ? { advisor: named(advisor, 'advisor') } : {}), role_defaults: {
-    worker: { default_agents: worker?.items || [], pick_mode: worker?.mode || 'in_turn' },
-    reviewer: { default_agents: reviewer?.items || [], pick_mode: reviewer?.mode || 'in_turn' },
-  }, settings, ...(flow.removals.value.length ? { remove_memberships: flow.removals.value } : {}) };
-  const go = async next => {
+  const roleTargets = { leader, dispatcher, advisor };
+  const defaults = { worker: { default_agents: worker?.items || [], pick_mode: worker?.mode || 'in_turn' }, reviewer: { default_agents: reviewer?.items || [], pick_mode: reviewer?.mode || 'in_turn' } };
+  const removals = flow.removals.value.length ? { remove_memberships: flow.removals.value } : {};
+  // Only a pick that differs from what the agent runs is a change: an opened but untouched "Change model or harness" must not become a switch the server refuses after the drain.
+  const planAgents = roleEntries.flatMap(item => item.agents || []);
+  const realChanges = Object.fromEntries(Object.entries(changes).filter(([id, target]) => isModelChange(planAgents.find(agent => agent.agent_id === id), target)));
+  const newRoles = ['leader', 'dispatcher', 'advisor'].filter(role => entryOf(role)?.status === 'new');
+  const newTargets = Object.fromEntries(newRoles.map(role => [role, entryOf(role)?.agents?.length ? roleTargets[role] : named(roleTargets[role], role)]));
+  const body = setupMode
+    ? { flow_key: selected, flow_rev: state.rev, leader: named(leader, 'leader'), ...(selected === 'leader-dispatcher' ? { dispatcher: named(dispatcher, 'dispatcher') } : {}), ...(selected === 'leader-advisor' ? { advisor: named(advisor, 'advisor') } : {}), role_defaults: defaults, settings, ...removals }
+    : { flow_key: selected, flow_rev: state.rev, ...newTargets, changes: Object.entries(realChanges).map(([agent_id, target]) => ({ agent_id, target })), role_defaults: defaults, ...removals };
+  const run = async (work, fail = true) => {
     const projectID = flow.projectID, turn = generation.current;
+    setBusy(true);
+    try { const done = await work(); if (turn === generation.current && flow.projectID === projectID) return done; }
+    catch (failure) { if (fail && turn === generation.current && flow.projectID === projectID) setError(failure.message); }
+    finally { if (turn === generation.current && flow.projectID === projectID) setBusy(false); }
+    return undefined;
+  };
+  const go = async next => {
+    const projectID = flow.projectID;
     setError(''); setPreview(null); commitKey.current = '';
-    if (next === steps.length) {
-      setBusy(true);
-      try { const answer = await request(`${projectPath(projectID)}/team-setup/preview`, { method: 'POST', body }); if (turn === generation.current && flow.projectID === projectID) { setPreview(answer); setStep(next); } }
-      catch (failure) { if (turn === generation.current && flow.projectID === projectID) setError(failure.message); }
-      finally { if (turn === generation.current && flow.projectID === projectID) setBusy(false); }
+    if (!setupMode && step === 1 && next === 2) {
+      const answer = await run(() => request(`${projectPath(projectID)}/team-flow/migration/preview`, { method: 'POST', body: { flow_key: selected, flow_rev: state.rev } }));
+      if (answer) { setPlan(answer); setChanges({}); setStep(2); }
+    } else if (next === steps.length) {
+      const answer = await run(() => request(`${projectPath(projectID)}/${setupMode ? 'team-setup' : 'team-flow/migration'}/preview`, { method: 'POST', body }));
+      if (answer) { setPreview(answer); setStep(next); }
     } else setStep(next);
   };
   const create = async () => {
-    if (!preview?.can_create || busy) return;
-    const projectID = flow.projectID, turn = generation.current;
+    if (busy || (setupMode ? !preview?.can_create : !preview?.can_apply)) return;
+    const projectID = flow.projectID;
     if (!commitKey.current) commitKey.current = uuid();
-    setError(''); setBusy(true);
-    try {
-      const result = await request(`${projectPath(projectID)}/team-setup`, { method: 'POST', headers: { 'Idempotency-Key': commitKey.current }, body });
-      if (turn === generation.current && flow.projectID === projectID) await flow.completeTeamSetup(projectID, result);
-    } catch (failure) { if (turn === generation.current && flow.projectID === projectID) setError(failure.message); }
-    finally { if (turn === generation.current && flow.projectID === projectID) setBusy(false); }
+    setError('');
+    const result = await run(() => request(`${projectPath(projectID)}/${setupMode ? 'team-setup' : 'team-flow/migrate'}`, { method: 'POST', headers: { 'Idempotency-Key': commitKey.current }, body }));
+    if (!result) return;
+    if (setupMode) { await flow.completeTeamSetup(projectID, result); return; }
+    const started = result.migration || result;
+    setMigration(started);
+    if (started.state === 'done') { await flow.completeMigration(projectID, started); onClose(); }
   };
-  const targetStep = stepLabel === 'Leader' || stepLabel === 'Dispatcher' || stepLabel === 'Advisor';
-  const stepTarget = stepLabel === 'Leader' ? leader : stepLabel === 'Advisor' ? advisor : dispatcher;
-  const setStepTarget = stepLabel === 'Leader' ? setLeader : stepLabel === 'Advisor' ? setAdvisor : setDispatcher;
-  return html`<section class="team-flow-home-card team-setup-wizard" aria-labelledby="team-flow-home-title">
-    <div class="team-flow-heading"><small>Project setup${step > 1 ? ` · Step ${step} of ${steps.length}` : ''}</small><h2 id="team-flow-home-title">${step === 1 ? 'Choose how your AI team works' : stepLabel}</h2>
-      ${step === 1 && html`<p>${migrated ? 'Your existing setup is kept. Choose another flow, or keep the current custom setup.' : 'Pick a starting team flow. You can change it later in Project settings.'}</p>`}</div>
+  const cancel = async () => {
+    const projectID = flow.projectID;
+    setCancelling(true); setError('');
+    try { const answer = await flow.source.cancelMigration(projectID); setMigration(answer?.migration || answer); }
+    catch (failure) { setError(failure.message); }
+    finally { setCancelling(false); }
+  };
+  const finishCustom = async () => { await flow.apply(); if (!flow.error.peek()) onClose(); };
+  const options = choices?.options || [];
+  const optionsList = options.map(item => ({ launcher_id: item.launcher_id, model: item.model, label: `${item.machine_name} · ${item.tool_label} · ${item.model_label}` }));
+  const from = state.key, fromLetter = flowLetter(templates, from), toLetter = flowLetter(templates, selected);
+  const keptOf = role => (entryOf(role)?.status === 'kept' || role === 'worker' || role === 'reviewer') ? entryOf(role)?.agents || [] : [];
+  // The harness and machine a role's panel is about: the new agent's pick, else the kept agent as it will be (current, or the model change chosen).
+  const keptAgent = roleStatus === 'new' ? null : entryOf(roleKey)?.agents?.[0];
+  const stepTarget = roleStatus === 'new' ? roleTargets[roleKey] : keptAgent && (changes[keptAgent.agent_id] || cleanTarget(keptAgent));
+  const stepTool = stepTarget?.tool;
+  const renderKept = (agent, prefix) => html`<${KeptAgent} key=${agent.agent_id} agent=${agent} options=${options} changed=${changes[agent.agent_id]} prefix=${prefix}
+    onChange=${target => setChanges(old => ({ ...old, [agent.agent_id]: target }))} onReset=${() => setChanges(old => { const next = { ...old }; delete next[agent.agent_id]; return next; })} />`;
+  const switching = !setupMode && migration;
+  const heading = setupMode ? 'Project setup' : 'Team flow change';
+  const nextDisabled = busy || needsTarget && !roleTargets[roleKey] || stepLabel === 'Project settings' && (!Number.isInteger(settings.max_live_agents) || settings.max_live_agents < minimumAgents || settings.max_live_agents > 100);
+  const sameFlow = !setupMode && selected === from;
+  return html`<section class=${`team-flow-home-card team-setup-wizard${embedded ? ' team-setup-embedded' : ''}`} aria-labelledby="team-flow-home-title">
+    <div class="team-flow-heading"><small>${heading}${step > 1 && !switching ? ` · Step ${step} of ${steps.length}` : ''}</small><h2 id="team-flow-home-title">${switching ? 'Changing your team flow' : step === 1 ? (setupMode ? 'Choose how your AI team works' : 'Choose a team flow') : stepLabel}</h2>
+      ${step === 1 && !switching && html`<p>${state.key === 'custom' && state.review_pending ? 'Your existing setup is kept. Choose another flow, or keep the current custom setup.' : setupMode ? 'Pick a starting team flow. You can change it later in Project settings.' : 'Switching keeps the leader and your rooms and messages; other agents are kept, added, or hand off and stop.'}</p>`}</div>
+    ${switching ? html`<${MigrationProgress} migration=${migration} onCancel=${cancel} cancelling=${cancelling} />${TERMINAL.includes(migration.state) && migration.state !== 'done' && html`<div class="team-flow-actions"><button type="button" class="btn" onClick=${() => { setMigration(null); setStep(1); setPlan(null); }}>Back to the wizard</button></div>`}` : html`
     ${step === 1 && html`<${TeamFlowCards} templates=${templates} selected=${selected} onSelect=${key => flow.select(key)} disabled=${flow.applying.value || !canEdit} />
       <${TeamFlowPreview} preview=${flow.preview.value} busy=${flow.previewing.value} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => flow.toggleRemoval(item, checked)} />`}
-    ${step > 1 && targetStep && html`${!choices && html`<p role="status">Loading machines and tools…</p>`}${loadError && html`<p class="error" role="alert">${loadError}</p>`}
-      ${choices && !choices.options.length && html`<p class="error" role="alert">No available machine, tool, and model combination is ready for this project.</p>`}
-      ${stepLabel === 'Advisor' && html`<p class="team-setup-hint">Pick a stronger model than the leader's.</p>`}
-      ${choices?.options.length > 0 && html`<${TargetPicker} label=${stepLabel} prefix=${`team-setup-${stepLabel.toLowerCase()}`} options=${choices.options} value=${stepTarget} onChange=${setStepTarget}
-        name=${names[stepRole]} nameBusy=${!!nameBusy[stepRole]} nameError=${nameErrors[stepRole] || ''} onName=${value => typeName(stepRole, value)} onDice=${() => suggestName(stepRole, names[stepRole] || '')} />`}`}
-    ${stepLabel === 'Workers and reviewers' && html`${choices && html`<p>These defaults are saved for future spawns. No workers or reviewers start now.</p><div class="team-setup-defaults"><div><h3>Workers</h3><${SpawnDefaults} items=${worker?.items || []} mode=${worker?.mode || 'in_turn'} options=${choices.options.map(item => ({ launcher_id: item.launcher_id, model: item.model, label: `${item.machine_name} · ${item.tool_label} · ${item.model_label}` }))} onChange=${setWorker} /></div><div><h3>Reviewers</h3><${SpawnDefaults} items=${reviewer?.items || []} mode=${reviewer?.mode || 'in_turn'} options=${choices.options.map(item => ({ launcher_id: item.launcher_id, model: item.model, label: `${item.machine_name} · ${item.tool_label} · ${item.model_label}` }))} onChange=${setReviewer} /></div></div>`}`}
+    ${step > 1 && roleKey && html`${!setupMode && roleStatus && html`<${StatusBanner} status=${roleStatus} role=${roleKey} from=${fromLetter} to=${toLetter} reactivate=${!!reuse} />`}
+      ${!choices && html`<p role="status">Loading machines and tools…</p>`}${loadError && html`<p class="error" role="alert">${loadError}</p>`}
+      ${roleStatus === 'new' && html`${choices && !options.length && html`<p class="error" role="alert">No available machine, tool, and model combination is ready for this project.</p>`}
+        ${roleKey === 'advisor' && html`<p class="team-setup-hint">Pick a stronger model than the leader's.</p>`}
+        ${reuse && html`<p class="team-wizard-current">${reuse.slug || reuse.agent_id} keeps its name; pick the model it should run now.</p>`}
+        ${options.length > 0 && html`<${TargetPicker} label=${stepLabel} prefix=${`team-setup-${roleKey}`} options=${options} value=${roleTargets[roleKey]} withName=${!reuse} onChange=${{ leader: setLeader, dispatcher: setDispatcher, advisor: setAdvisor }[roleKey]}
+          name=${names[roleKey]} nameBusy=${!!nameBusy[roleKey]} nameError=${nameErrors[roleKey] || ''} onName=${value => typeName(roleKey, value)} onDice=${() => suggestName(roleKey, names[roleKey] || '')} />`}`}
+      ${roleStatus === 'kept' && html`<div class="team-wizard-kept-list">${(entryOf(roleKey)?.agents || []).map(agent => renderKept(agent, `team-setup-${roleKey}`))}</div>`}
+      ${roleStatus === 'leaving' && html`<ul class="team-wizard-leaving">${(entryOf(roleKey)?.agents || []).map(agent => html`<li key=${agent.agent_id}><strong>${agent.slug || agent.agent_id}</strong> · ${describeTarget(options, agent)}</li>`)}</ul>`}
+      <${RecommendedModels} rows=${recommended} role=${roleKey} flowKey=${selected} tool=${stepTool} options=${options} target=${stepTarget} />`}
+    ${stepLabel === 'Workers and reviewers' && html`${!setupMode && (keptOf('worker').length > 0 || keptOf('reviewer').length > 0) && html`<${StatusBanner} status="kept" role="workers" plural=${true} from=${fromLetter} to=${toLetter} />
+        <div class="team-wizard-kept-list">${['worker', 'reviewer'].map(role => keptOf(role).length > 0 && html`<div key=${role}><h3>${roleLabel(role)}s</h3>${keptOf(role).map(agent => renderKept(agent, `team-setup-${role}`))}</div>`)}</div>`}
+      ${choices && html`<p>${setupMode ? 'These defaults are saved for future spawns. No workers or reviewers start now.' : 'Defaults for workers and reviewers started from now on.'}</p><div class="team-setup-defaults"><div><h3>${setupMode ? 'Workers' : 'Default for new workers'}</h3><${SpawnDefaults} items=${worker?.items || []} mode=${worker?.mode || 'in_turn'} options=${optionsList} onChange=${setWorker} /></div><div><h3>${setupMode ? 'Reviewers' : 'Default for new reviewers'}</h3><${SpawnDefaults} items=${reviewer?.items || []} mode=${reviewer?.mode || 'in_turn'} options=${optionsList} onChange=${setReviewer} /></div></div>`}
+      ${[['worker', worker, 'workers'], ['reviewer', reviewer, 'reviewers']].map(([role, picked, label]) => html`<${RecommendedModels} key=${role} rows=${recommended} role=${role} flowKey=${selected} label=${label} tool=${picked?.items?.[0] && options.find(item => item.launcher_id === picked.items[0].launcher_id)?.tool} options=${options} />`)}`}
     ${stepLabel === 'Project settings' && html`<div class="team-setup-settings">
       <label>Project folder<input value=${project?.folder || ''} readonly aria-label="Project folder" /></label>
       <label><input type="checkbox" checked=${settings.worktree_mode === 'auto'} onChange=${event => { settingsTouched.current = true; setSettings({ ...settings, worktree_mode: event.currentTarget.checked ? 'auto' : 'off' }); }} /> Separate Git worktree for each task room</label>
       <label><input type="checkbox" checked=${settings.memory_enabled} onChange=${event => { settingsTouched.current = true; setSettings({ ...settings, memory_enabled: event.currentTarget.checked }); }} /> Enable project memory</label>
       <label>Maximum workers and reviewers<input type="number" min=${minimumAgents} max="100" value=${settings.max_live_agents} onInput=${event => { settingsTouched.current = true; setSettings({ ...settings, max_live_agents: Number(event.currentTarget.value) }); }} />${coreHint && html`<small class="team-setup-limit-hint">${coreHint}</small>`}</label>
     </div>`}
-    ${stepLabel === 'Summary' && html`<${Summary} body=${body} flowLabel=${flowLabel} preview=${preview} options=${choices?.options || []} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => { flow.toggleRemoval(item, checked); commitKey.current = ''; }} />`}
+    ${stepLabel === 'Summary' && (setupMode
+      ? html`<${Summary} body=${body} flowLabel=${flowLabel()} preview=${preview} options=${options} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => { flow.toggleRemoval(item, checked); commitKey.current = ''; }} />`
+      : html`<${MigrationSummary} plan=${plan} preview=${preview} options=${options} changes=${realChanges} newTargets=${newTargets} flowLabel=${flowLabel()} fromLabel=${flowLabel(from)} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => { flow.toggleRemoval(item, checked); commitKey.current = ''; }} />`)}
     <div class="team-flow-actions">
       ${step > 1 && html`<button type="button" class="btn" disabled=${busy} onClick=${() => go(step - 1)}>Back</button>`}
-      ${step === 1 && selected === 'custom' && html`<button type="button" class="btn btn-primary" disabled=${!canEdit || flow.applying.value || flow.previewing.value || !flow.preview.value} onClick=${() => flow.apply()}>${flow.applying.value ? 'Saving…' : 'Keep current'}</button>`}
-      ${step === 1 && selected !== 'custom' && html`<button type="button" class="btn btn-primary" disabled=${!canEdit || !selected || !flow.preview.value || flow.previewing.value || !choices?.options.length} onClick=${() => go(2)}>Next</button>`}
-      ${step > 1 && !isLast && html`<button type="button" class="btn btn-primary" disabled=${busy || targetStep && !stepTarget || stepLabel === 'Project settings' && (!Number.isInteger(settings.max_live_agents) || settings.max_live_agents < minimumAgents || settings.max_live_agents > 100)} onClick=${() => go(step + 1)}>Next</button>`}
-      ${isLast && html`<button type="button" class="btn btn-primary" disabled=${busy || !preview?.can_create} onClick=${create}>${busy ? 'Creating…' : 'Create team'}</button>`}
+      ${embedded && step === 1 && html`<button type="button" class="btn" onClick=${onClose}>Close</button>`}
+      ${step === 1 && selected === 'custom' && html`<button type="button" class="btn btn-primary" disabled=${!canEdit || flow.applying.value || flow.previewing.value || !flow.preview.value || sameFlow && !state.review_pending} onClick=${embedded || !setupMode ? finishCustom : () => flow.apply()}>${flow.applying.value ? 'Saving…' : setupMode || state.key === 'custom' ? 'Keep current' : 'Use Custom'}</button>`}
+      ${step === 1 && selected !== 'custom' && html`<button type="button" class="btn btn-primary" disabled=${busy || !canEdit || !selected || sameFlow || !flow.preview.value || flow.previewing.value || !choices?.options.length} onClick=${() => go(2)}>Next</button>`}
+      ${step > 1 && !isLast && html`<button type="button" class="btn btn-primary" disabled=${nextDisabled} onClick=${() => go(step + 1)}>Next</button>`}
+      ${isLast && html`<button type="button" class="btn btn-primary" disabled=${busy || !(setupMode ? preview?.can_create : preview?.can_apply)} onClick=${create}>${busy ? (setupMode ? 'Creating…' : 'Starting…') : setupMode ? 'Create team' : 'Apply team flow'}</button>`}
       ${!canEdit && html`<span>Ask a project owner or operator to choose a flow.</span>`}
-    </div>
+    </div>`}
     <p class="error" role="alert">${error || flow.error.value}</p>
   </section>`;
 }

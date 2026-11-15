@@ -50,9 +50,10 @@ function DiagramPreview({ template }) {
   if (path.length < 2) return html`<p class="team-flow-diagram team-flow-empty-diagram">Choose your own agent topology.</p>`;
   const boxWidth = 62, boxHeight = 22, gapX = 14, gapY = 5, pad = 4, attachedDrop = 8;
   const centerY = pad + boxHeight + gapY + boxHeight / 2;
-  // Attached roles (the advisor) sit under the root in the bottom row, a little lower so the dashed edge has room for its arrow.
+  // Attached roles (the advisor) sit under the root in the bottom row, a little lower so the dashed edge has room for its arrow; more than one stack
+  // downward, each edge running behind the boxes above it.
   const attached = attachedRoles(template, path);
-  const attachedY = index => pad + 2 * (boxHeight + gapY) + attachedDrop;
+  const attachedY = index => pad + 2 * (boxHeight + gapY) + attachedDrop + index * (boxHeight + gapY);
   const nodes = [
     ...path.slice(0, -1).map((role, index) => ({ key: `role${index}`, label: roleLabel(role), x: pad + index * (boxWidth + gapX), y: centerY - boxHeight / 2 })),
     ...Array.from({ length: 3 }, (_, index) => ({ key: `worker${index}`, label: 'Worker', x: pad + (path.length - 1) * (boxWidth + gapX), y: pad + index * (boxHeight + gapY) })),
@@ -62,7 +63,7 @@ function DiagramPreview({ template }) {
   const edges = [...path.slice(0, -2).map((_, index) => ({ from: `role${index}`, to: `role${index + 1}` })),
     ...Array.from({ length: 3 }, (_, index) => ({ from: `role${path.length - 2}`, to: `worker${index}` }))];
   const width = pad * 2 + path.length * boxWidth + (path.length - 1) * gapX;
-  const height = pad * 2 + 3 * boxHeight + 2 * gapY + (attached.length ? attachedDrop : 0);
+  const height = pad * 2 + 3 * boxHeight + 2 * gapY + (attached.length ? attachedDrop + (attached.length - 1) * (boxHeight + gapY) : 0);
   const consults = attached.map((_, index) => {
     const x = pad + boxWidth / 2, y1 = boxes.get('role0').y + boxHeight, y2 = attachedY(index);
     return html`<g key=${`consults${index}`} class="team-flow-thumbnail-arrow team-flow-thumbnail-consults">
@@ -94,14 +95,32 @@ function DiagramPreview({ template }) {
   </div>`;
 }
 
+// One line under each flow saying when it fits. The server may send its own `recommendation`; these are the defaults by key.
+const RECOMMENDATIONS = {
+  'leader-workers': 'Recommended for small to medium projects.',
+  'leader-dispatcher': "Recommended for large projects; the dispatcher handles routing so the leader's context stays lean.",
+  'leader-advisor': 'Recommended when a fast, cheaper leader should get a stronger model\'s judgment on key decisions.',
+  custom: 'For setting up rooms and roles yourself.',
+};
+const COMING_LATER = { key: 'coming-later', label: 'Leader, advisor and dispatcher', description: 'Coming later.' };
+
 export function TeamFlowCards({ templates, selected, onSelect, disabled = false }) {
   const [openKey, setOpenKey] = useState(''), dialog = useRef(null);
   const opened = templates.find(template => template.key === openKey);
+  // Letters follow the display order; the "coming later" card has none, and sits right before Custom (always last).
+  const lettered = templates.map((template, index) => ({ template, letter: String.fromCharCode(65 + index) }));
+  const customAt = lettered.findIndex(item => item.template.key === 'custom');
+  const cards = customAt < 0 ? lettered : [...lettered.slice(0, customAt), { template: COMING_LATER, coming: true }, ...lettered.slice(customAt)];
   useEffect(() => { if (opened && dialog.current && !dialog.current.open) dialog.current.showModal(); }, [openKey]);
   return html`<div class="team-flow-cards" role="radiogroup" aria-label="Team flow">
-    ${templates.map((template, index) => html`<div key=${template.key} data-flow-key=${template.key} class=${`team-flow-option${selected === template.key ? ' selected' : ''}`}>
+    ${cards.map(({ template, letter, coming }) => coming ? html`<div key=${template.key} data-flow-key=${template.key} class="team-flow-option team-flow-coming">
+      <button type="button" class="btn team-flow-card" role="radio" aria-checked="false" aria-disabled="true" disabled>
+        <span class="team-flow-card-heading"><strong><span class="team-flow-letter" aria-hidden="true">·</span>${template.label}</strong><span>${template.description}</span></span>
+        <p class="team-flow-diagram team-flow-empty-diagram">Not available yet.</p>
+      </button>
+    </div>` : html`<div key=${template.key} data-flow-key=${template.key} class=${`team-flow-option${selected === template.key ? ' selected' : ''}`}>
       <button type="button" class="btn team-flow-card" role="radio" aria-checked=${String(selected === template.key)} disabled=${disabled} onClick=${() => onSelect(template.key)}>
-        <span class="team-flow-card-heading"><strong><span class="team-flow-letter" aria-hidden="true">${String.fromCharCode(65 + index)}</span>${template.label}</strong><span>${template.description}</span></span>
+        <span class="team-flow-card-heading"><strong><span class="team-flow-letter" aria-hidden="true">${letter}</span>${template.label}</strong><span>${template.description}</span>${(template.recommendation || RECOMMENDATIONS[template.key]) && html`<small class="team-flow-recommendation">${template.recommendation || RECOMMENDATIONS[template.key]}</small>`}</span>
         <${DiagramPreview} template=${template} />
       </button>${diagramSource(template) && html`<button type="button" class="team-flow-diagram-open" aria-label=${`Expand ${template.label} diagram`} title="Expand diagram" onClick=${() => setOpenKey(template.key)}><span>Expand diagram ↗</span></button>`}
     </div>`)}
@@ -131,22 +150,4 @@ export function TeamFlowPreview({ preview, busy, selectedRemovals = [], onToggle
     <${ChangeList} title="Agents needing action" items=${conflicts} render=${item => onToggleRemoval && item.room_id ? html`<label class="team-flow-removal"><input type="checkbox" checked=${selectedRemovals.some(selected => selected.agent_id === item.agent_id && selected.room_id === item.room_id)} onChange=${event => onToggleRemoval(item, event.currentTarget.checked)} />Remove ${conflictName(item)} from ${item.room_title} when applying</label>` : conflictText(item)} />
     <p class="team-flow-preserve">Existing rooms, messages, and agents are kept unless you select a membership to remove.</p>
   </div>`;
-}
-
-export function TeamFlowSettings({ flow, canEdit }) {
-  const state = flow.state.value, templates = flow.templates.value, selected = flow.selected.value;
-  const currentWithoutChanges = state?.key === selected && !state?.review_pending && flow.removals.value.length === 0;
-  return html`<section id="project-team-flow" class="settings-subsection" aria-labelledby="project-team-flow-title"><h3 id="project-team-flow-title">Team flow</h3>
-    <div class="settings-card team-flow-settings">
-      <p class="settings-desc">Choose who coordinates work. Switching keeps rooms, messages, and agents.</p>
-      ${flow.loading.value && html`<p role="status">Loading team flows…</p>`}
-      ${state && html`<p class="team-flow-current">Current: <strong>${templates.find(item => item.key === state.key)?.label || 'Not chosen'}</strong>${state.review_pending ? ' · Setup needs review' : ''}</p>`}
-      <${TeamFlowCards} templates=${templates} selected=${selected} onSelect=${key => flow.select(key)} disabled=${flow.applying.value || !canEdit} />
-      <${TeamFlowPreview} preview=${flow.preview.value} busy=${flow.previewing.value} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => flow.toggleRemoval(item, checked)} />
-      ${!flow.preview.value && state?.conflicts?.length > 0 && html`<div class="team-flow-preview"><${ChangeList} title="Agents needing action" items=${state.conflicts} render=${conflictText} /></div>`}
-      <button type="button" class="btn btn-primary" disabled=${!canEdit || !state || !selected || !flow.preview.value || flow.applying.value || flow.previewing.value || currentWithoutChanges}
-        onClick=${() => flow.apply()}>${flow.applying.value ? 'Applying…' : currentWithoutChanges ? 'Current flow' : 'Apply team flow'}</button>
-      <p class="error" role="alert">${flow.error.value}</p>
-    </div>
-  </section>`;
 }

@@ -115,7 +115,7 @@ export class RoomPanel {
     // On a touch screen the dialog opens on its heading, not in the title field: focus in a text field raises the keyboard over most of the dialog.
     if (matchMedia('(pointer: coarse)').matches && /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '')) { this.infoDialog.tabIndex = -1; this.infoDialog.focus({ preventScroll: true }); }
     // The home room's settings carry the project's own settings.
-    if (!this.projectSection.hidden) this.chat.projectSettings.mount(this.projectSection, room.project_id);
+    if (!this.projectSection.hidden) this.chat.projectSettings.mount(this.projectSection, room.project_id, room.id);
     this.store.loadWorktree();
     // What is said in a chat between agents never feeds memory or recall, so there is no setting to show.
     this.memorySection.hidden = !!room.agent_chat;

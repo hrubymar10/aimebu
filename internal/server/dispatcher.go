@@ -87,6 +87,23 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 	}
 	d.Server.sendRoomControls(ctx, controls)
 	d.scheduleCleanup(ctx)
+	migrationControls, err := d.Server.Store.AdvanceTeamFlowMigrations(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, card := range migrationControls {
+		if card.Desired == "stopped" || card.Desired == "not_accepting" {
+			d.Server.sendRoomControls(ctx, []store.AgentCard{card})
+			continue
+		}
+		if machine, err := d.Server.machineForID(card.MachineID); err == nil {
+			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
+				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
+					log.Printf("team flow migration spawn %s: %v", card.ID, err)
+				}
+			}
+		}
+	}
 	switchControls, err := d.Server.Store.AdvanceAgentSwitches(ctx)
 	if err != nil {
 		return 0, err

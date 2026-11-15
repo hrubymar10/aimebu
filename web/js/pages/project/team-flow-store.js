@@ -104,5 +104,15 @@ export class TeamFlowStore {
     await this.onApplied?.(projectID, result.flow);
   }
 
+  // A finished migration changes the project's flow on the server: take the new state and tell the page, as an applied switch does.
+  async completeMigration(projectID, migration) {
+    if (!this.alive || !projectID || this.projectID !== projectID) return;
+    const state = await this.source.get(projectID);
+    if (!this.alive || this.projectID !== projectID) return;
+    const template = state.template || this.templates.peek().find(item => item.key === state.key);
+    batch(() => { this.state.value = { ...state, template, review_pending: false }; this.selected.value = state.key; this.preview.value = null; this.removals.value = []; });
+    await this.onApplied?.(projectID, state, migration);
+  }
+
   destroy() { this.alive = false; this.reset(); }
 }

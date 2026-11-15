@@ -288,13 +288,41 @@ While setup is open, the wizard fills the message area and scrolls within it;
 the composer remains visible but disabled with a setup hint. Choosing a flow
 enables it without a reload, and the room's messages return when setup closes.
 If the flow list fails to load, the composer remains usable and the card offers Retry.
-Project settings → Team flow uses the same list and previews the rooms and
-roles a switch would add, rooms that stay restricted, and any agents needing
-action. Switching keeps all
-existing rooms, messages, and agents; incompatible room memberships are listed
-with an optional checkbox for each removal. Unselected memberships stay joined;
-selected removals can be applied even when the flow choice is unchanged.
-Viewers see the current flow read-only, without the switch preview.
+Each card also says when its flow fits, and a disabled "Leader, advisor and
+dispatcher" card (coming later) sits before Custom, which is always last.
+Project settings → Team flow shows the current flow and a **Change team flow**
+button that opens the same wizard the home room uses. For a project that
+already has a flow the wizard is a migration: the leader is the only constant,
+and every other agent is kept, added, or handed off and stopped. After you pick
+a flow the server returns a plan, and each role of the new flow gets a step
+with a status banner ("Leader is kept between A → B migration", "Dispatcher is
+new in B and will be added", "Dispatcher isn't used in A. It will hand off its
+context to the leader and will be stopped", "Workers are kept between B → A
+migration"). A kept agent shows what it runs now and an owner or operator can
+switch it to another harness or model; a new agent gets the same machine, tool,
+model and name pickers as Spawn; the Workers step lists the kept workers and
+reviewers and sets the defaults for new ones. A 💡 panel lists recommended
+models for the role, flow and harness, only those the selected harness offers
+right now, and is hidden when none is left. The summary previews the agents
+that are kept, added and leaving, new rooms, restrictions and incompatible
+memberships (each removed only when ticked), and warns that every agent first
+finishes its current turn, so the change can take a while. Switching waits for
+current turns and any departing role's handoff; the progress view shows each
+agent (waiting, finishing its current turn, done), warns when a turn has
+stalled for fifteen minutes, offers **Cancel** until applying starts, and
+reopens by itself if a change is already running. A stopped dispatcher or
+advisor can be reactivated with the same identity if a later flow needs it
+again. Handoff details stay in a shared restricted room or an agent DM;
+general gets a short notice without that content.
+Already-stopped roles outside the new flow do not appear as departing roles.
+Transient drain errors retry, while an unconfirmed start or stop after twenty
+minutes fails the migration.
+Unchanged kept agents continue without a restart and receive the new flow rules
+on their next turn. Changed agents use the normal switch with handoff. A
+departing dispatcher or advisor hands off active task work to the leader and
+stops; the leader joins its task rooms. The project keeps every room, message,
+and agent record. Archived projects cannot change flow. Choosing Custom keeps
+the one-step apply; no agents change. Viewers see the current flow read-only.
 In B, a private routing room connects the leader with the
 singleton dispatcher. The leader writes specs there; the dispatcher manages
 task rooms, workers, and reviewers. A task-room message can reference a
@@ -308,9 +336,9 @@ Flow-created `routing` and `general` rooms sit beneath the project's home
 room in the sidebar. Existing flow rooms at the project root are moved beneath
 the home room when the database upgrades.
 Owners and operators see restricted rooms in the sidebar with a lock icon.
-Initial A/B/D setup also has a keyed team-setup API that commits the flow,
+Initial A/B/C setup also has a keyed team-setup API that commits the flow,
 project settings, role defaults, and the initial leader (plus dispatcher for
-B, advisor for D) together before requesting their supervisor spawns.
+B, advisor for C) together before requesting their supervisor spawns.
 The home room is the lead's: with the project setting **Home room: lead only**
 (on by default, in the home room's Project section) the spawn dialog there
 offers only lead roles and the server refuses others with `home_is_lead_only`;

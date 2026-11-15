@@ -31,10 +31,11 @@ type FlowSpawnRule struct {
 	AllowedRoles []string `json:"allowed_roles"`
 }
 type TeamFlowTemplate struct {
-	Key         string `json:"key"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
-	Diagram     struct {
+	Key            string `json:"key"`
+	Label          string `json:"label"`
+	Description    string `json:"description"`
+	Recommendation string `json:"recommendation"`
+	Diagram        struct {
 		Rooms []FlowDiagramRoom `json:"rooms"`
 		Edges []FlowEdge        `json:"edges"`
 	} `json:"diagram"`
@@ -92,7 +93,7 @@ var ErrTeamFlowRev = errors.New("team flow revision changed")
 var ErrTeamFlowSelection = errors.New("selected room membership is no longer a conflict")
 
 func TeamFlowTemplates() []TeamFlowTemplate {
-	base := TeamFlowTemplate{Key: "leader-workers", Label: "Leader and workers", Description: "The leader plans with you and manages workers and reviewers."}
+	base := TeamFlowTemplate{Key: "leader-workers", Label: "Leader and workers", Description: "The leader plans with you and manages workers and reviewers.", Recommendation: "Recommended for small to medium projects."}
 	base.Rooms = []FlowRoom{{Key: "home", Title: "Home", Kind: "home"}, {Key: "general", Title: "general", Kind: "task"}}
 	base.Diagram.Rooms = []FlowDiagramRoom{{"home", "Home", []string{"leader"}}, {"general", "General and tasks", []string{"leader", "worker", "reviewer"}}}
 	base.Diagram.Edges = []FlowEdge{{"home", "general"}}
@@ -105,7 +106,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	base.RoleTextOverrides = map[string]string{
 		"leader": leadRoleBody + "\n\nGeneral is the shared room for project announcements and coordination. Keep task work in task rooms.",
 	}
-	routed := TeamFlowTemplate{Key: "leader-dispatcher", Label: "Leader and dispatcher", Description: "The leader writes specs; the dispatcher runs workers and reviews."}
+	routed := TeamFlowTemplate{Key: "leader-dispatcher", Label: "Leader and dispatcher", Description: "The leader writes specs; the dispatcher runs workers and reviews.", Recommendation: "Recommended for large projects; the dispatcher handles routing so the leader's context stays lean."}
 	routed.Rooms = []FlowRoom{{Key: "home", Title: "Home", Kind: "home"}, {Key: "routing", Title: "routing", Kind: "task", Restricted: true}, {Key: "general", Title: "general", Kind: "task"}}
 	routed.Diagram.Rooms = []FlowDiagramRoom{{"home", "Home", []string{"leader"}}, {"routing", "Routing", []string{"leader", "dispatcher"}}, {"general", "General and tasks", []string{"leader", "dispatcher", "worker", "reviewer"}}}
 	routed.Diagram.Edges = []FlowEdge{{"home", "routing"}, {"routing", "general"}}
@@ -119,7 +120,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 		"leader":     "You are the project leader. Talk with the human and write specifications with goal, acceptance criteria, constraints, base, priority, and the team: how many workers and whether a reviewer is needed. Hand each specification to the dispatcher in routing. Do not spawn or manage workers and reviewers. Decide questions escalated by the dispatcher; report the outcome to the human in the home room. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + leadSafety + "\n\n" + roleCommunication,
 		"dispatcher": dispatcherRoleBody + " Spawn only the workers and reviewers called for by the specification or the leader. Add a reviewer only when the specification or leader asks for one; if the specification does not say, ask the leader in routing before spawning a reviewer. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + roleSafety + "\n\n" + roleCommunication,
 	}
-	custom := TeamFlowTemplate{Key: "custom", Label: "Custom", Description: "Keep the current rooms and role permissions."}
+	custom := TeamFlowTemplate{Key: "custom", Label: "Custom", Description: "Keep the current rooms and role permissions.", Recommendation: "For setting up rooms and roles yourself."}
 	custom.Rooms = []FlowRoom{}
 	custom.Diagram.Rooms = []FlowDiagramRoom{}
 	custom.Diagram.Edges = []FlowEdge{}
@@ -130,7 +131,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	custom.TaskParentKey = "home"
 	custom.GrantRoles = []string{"leader", "dispatcher"}
 	custom.RoleTextOverrides = map[string]string{}
-	advised := TeamFlowTemplate{Key: "leader-advisor", Label: "Leader and advisor", Description: "A fast leader runs the work and consults a stronger advisor for plans and decisions."}
+	advised := TeamFlowTemplate{Key: "leader-advisor", Label: "Leader and advisor", Description: "A fast leader runs the work and consults a stronger advisor for plans and decisions.", Recommendation: "Recommended when a fast, cheaper leader should get a stronger model's judgment on key decisions."}
 	advised.Rooms = []FlowRoom{{Key: "home", Title: "Home", Kind: "home"}, {Key: "advice", Title: "advice", Kind: "task", Restricted: true}, {Key: "general", Title: "general", Kind: "task"}}
 	advised.Diagram.Rooms = []FlowDiagramRoom{{"home", "Home", []string{"leader", "advisor"}}, {"advice", "Advice", []string{"leader", "advisor"}}, {"general", "General and tasks", []string{"leader", "advisor", "worker", "reviewer"}}}
 	advised.Diagram.Edges = []FlowEdge{{"home", "advice"}, {"advice", "general"}}
@@ -333,6 +334,11 @@ func (s *Store) PreviewTeamFlow(ctx context.Context, projectID, userID, key stri
 	if role == "viewer" {
 		return TeamFlowPreview{}, ErrForbidden
 	}
+	if archived, err := s.ArchivedScope(ctx, userID, "project", projectID); err != nil {
+		return TeamFlowPreview{}, err
+	} else if archived {
+		return TeamFlowPreview{}, ErrProjectArchived
+	}
 	t, ok := teamFlowTemplate(key)
 	if !ok {
 		return TeamFlowPreview{}, fmt.Errorf("unknown team flow %q", key)
@@ -465,6 +471,9 @@ func (s *Store) ApplyTeamFlow(ctx context.Context, projectID, userID, key string
 func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals []FlowRemoval) (TeamFlowApplied, error) {
 	var out TeamFlowApplied
 	err := func() error {
+		if err := tx.refuseArchived(projectID); err != nil {
+			return err
+		}
 		var current string
 		var currentRev int64
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key,team_flow_rev FROM project WHERE id=? AND system=0`, projectID).Scan(&current, &currentRev); err != nil {

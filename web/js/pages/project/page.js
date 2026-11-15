@@ -18,10 +18,12 @@ export class ProjectSettings {
 
   load(id) { return this.store.load(id); }
 
-  mount(parent, projectID) {
+  // roomID is the project's home room, which the wizard asks for free agent names.
+  mount(parent, projectID, roomID = '') {
     this.mounts = this.mounts.filter(item => item.parent !== parent);
     this.mounts.push({ parent, projectID });
     if (this.body.parentElement !== parent) parent.append(this.body);
+    this.store.flow.roomID = roomID;
     this.load(projectID);
   }
 

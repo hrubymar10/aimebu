@@ -1642,6 +1642,13 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 	var first store.AgentCard
 	_, reused, err := s.Store.WithRequestKey(r.Context(), requestKey, func(tx *store.Tx) (string, error) {
+		active, err := tx.AgentInActiveFlowMigration(id)
+		if err != nil {
+			return "", err
+		}
+		if active {
+			return "", store.ErrTeamFlowMigrationActive
+		}
 		card, err := tx.BeginAgentSwitchWithContinuity(id, userID(r), req.RoomID, req.Tool, req.Variant, req.Model, provider, targetID, path, launcherID, req.Rev)
 		if err != nil {
 			return "", err
@@ -1652,6 +1659,10 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 	})
 	if errors.Is(err, errSwitchMachineUnavailable) {
 		apiError(w, 503, "machine_unavailable", "agent's supervisor does not list this adapter")
+		return
+	}
+	if errors.Is(err, store.ErrTeamFlowMigrationActive) {
+		apiError(w, 409, "migration_active", "agent is part of an active team flow migration")
 		return
 	}
 	if err != nil {

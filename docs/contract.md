@@ -135,10 +135,10 @@ Projects, rooms, people
   source room can read that one cited message across rooms of the same
   project, without access to its room. The source must remain readable; the
   grant vanishes when the source message is deleted.
-  Initial team setup for A, B, or D uses an idempotent request. Machine and
+  Initial team setup for A, B, or C uses an idempotent request. Machine and
   launcher choices are checked before the transaction; applying the flow,
   saving per-project spawn defaults and settings, and creating the leader
-  (plus dispatcher for B or advisor for D) are one transaction. The supervisor receives spawn
+  (plus dispatcher for B or advisor for C) are one transaction. The supervisor receives spawn
   requests after commit, and a keyed retry can redeliver them. The setup
   accepts an optional name for each initial agent; names use the same syntax,
   project-wide collision check, and random fallback as ordinary spawn.
@@ -161,6 +161,39 @@ Projects, rooms, people
   Migration 112 seeds the built-in advisor; if a custom global role already
   uses that key, it keeps its identity, body, and agents under a free
   `advisor-v1` style key, and roles extending it follow the renamed key.
+  Migration 113 adds a durable team-flow migration and per-agent progress;
+  migration 114 adds the consecutive drain-error counter.
+  Switching a configured flow uses the same role choices as initial setup:
+  the leader is retained, workers and reviewers are retained, a missing core
+  role is spawned or a stopped core agent is reactivated with its identity,
+  and a dispatcher or advisor outside the target flow hands
+  off to the leader before stopping. Kept agents with a changed harness or
+  model use the existing switch with handoff. Unchanged kept agents receive
+  a targeted one-off system notice with the new rules, manager, and rooms;
+  their process continues. Normal dispatch is held during a cancellable drain
+  until current turns and departing handoffs finish. Applying the flow,
+  settings, defaults, and agent actions starts after that point of no return.
+  If a stale choice prevents application after draining, the apply transaction
+  rolls back and progress becomes failed with the original flow intact.
+  An invalid departing handoff fails only that migration and cancels its
+  pending handoff turn. Transient drain errors retry up to three consecutive
+  attempts, with each failed attempt rolled back before retrying. Ordinary
+  agent switches are refused for agents in an active migration. An applying
+  migration fails after twenty minutes without confirmed starts or stops; a
+  lost agent fails it immediately. An unresolved turn older than fifteen minutes makes
+  progress report `stalled_since`, with Cancel still available while draining.
+  The leader joins the departing agent's open task rooms. Handoff details go
+  to their shared restricted routing or advice room, or an agent DM; general
+  gets only a short notice without the handoff content. One general-room
+  system message summarizes the switch. Room conflicts still require an
+  explicit removal choice, and existing restricted rooms remain restricted.
+  Archived projects refuse flow changes. The template catalog includes a
+  card recommendation, and the role/flow/harness model recommendation table
+  maps the strong, fast, and top tiers to model IDs. A selected machine and
+  launcher filter the response to its live catalog; custom has no rows.
+  The migration preview can plan a new role without a target and returns
+  `can_apply:false`; final preview and migrate require the targets. Custom
+  changes use the ordinary flow PUT route.
 - **scope_control_agent**(scope_kind[room|project], scope_id, agent_id,
   restore_desired, hold_desired, bulk_desired, bulk_rev) — records each
   scope's pause or stop hold, a shared pre-scope desired state, and the last
@@ -524,9 +557,9 @@ Execution
   UNIQUE (actor_kind, actor_id, kind, key); same key + same digest → original
   result; same key + different digest → `conflict`. The `kind` column has a
   CHECK constraint (migration 52 rebuild, extended with `dm_agent` by migration
-  81 and `dm_human` by migration 87) listing exactly the values above, so a new kind needs a migration. `team_spawn` and `leaderboard_start` are
-  retired: no code writes them (the leaderboard rows were deleted by migration
-  56), they stay only in the constraint. The kinds written today are spawn,
+  81 and `dm_human` by migration 87) listing exactly the values above, so a new kind needs a migration. `team_spawn` is reused by keyed team-flow
+  migration requests; `leaderboard_start` is retired (the leaderboard rows
+  were deleted by migration 56). The kinds written today are spawn, team_spawn,
   switch, scope_control, control (agent lead tool), room_create, room_close,
   schedule_create, inbox_answer, recovery_decision, dm_agent (a lead's private
   message to an agent) and dm_human (an agent's private message to a person of

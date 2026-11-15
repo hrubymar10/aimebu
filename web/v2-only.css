@@ -696,6 +696,9 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-flow-card-heading strong { font-size: 14px; }
 .team-flow-letter { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 7px; border-radius: 6px; background: var(--bg-tertiary); color: var(--accent-text); }
 .team-flow-card-heading > span { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
+.team-flow-recommendation { flex: 1 0 100%; color: var(--text-muted); font-size: 11px; line-height: 1.35; }
+.team-flow-coming { opacity: .6; }
+.team-flow-coming .team-flow-card { cursor: not-allowed; }
 .team-flow-diagram { display: grid; place-items: center; min-width: 0; margin: 0; padding: 4px 8px; border-left: 1px solid var(--border); font-size: 11px; overflow: hidden; }
 .team-flow-diagram svg { display: block; max-width: 100%; max-height: 110px; }
 .team-flow-thumbnail { grid-template-columns: minmax(0, 1fr); padding-bottom: 24px; }
@@ -762,6 +765,25 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-setup-limit-hint { color: var(--text-muted); }
 .team-setup-hint { color: var(--text-muted); margin: 0 0 8px; }
 .team-setup-summary p { margin: 7px 0; }
+.team-setup-embedded { min-height: 0; padding: 0; border: 0; background: transparent; }
+.team-wizard-banner { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); font-size: 13px; }
+.team-wizard-banner-kept { border-left-color: var(--accent); }
+.team-wizard-banner-new { border-left-color: var(--success, var(--accent)); }
+.team-wizard-banner-leaving { border-left-color: var(--warning, var(--border)); }
+.team-wizard-kept { display: grid; gap: 8px; justify-items: start; margin: 8px 0; }
+.team-wizard-kept p { margin: 0; }
+.team-wizard-kept .team-setup-target { width: 100%; box-sizing: border-box; }
+.team-wizard-current { color: var(--text-muted); }
+.team-wizard-kept-list h3 { margin: 12px 0 0; }
+.team-wizard-leaving { margin: 8px 0; padding-left: 20px; }
+.team-wizard-recommended { margin: 12px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); font-size: 12px; }
+.team-wizard-recommended ul { margin: 6px 0 0; padding-left: 18px; }
+.team-wizard-summary-role { margin: 10px 0; }
+.team-wizard-summary-role ul, .team-wizard-summary-role p { margin: 4px 0 0; }
+.team-wizard-summary-role ul { padding-left: 20px; }
+.team-wizard-notice { margin: 12px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; }
+.team-wizard-progress ul { margin: 8px 0 12px; padding-left: 20px; }
+.team-wizard-progress-failed { color: var(--danger, var(--text-primary)); }
 @media (max-width: 720px) { .team-setup-target, .team-setup-defaults { grid-template-columns: 1fr; } #team-flow-home:not([hidden]) { padding: 8px 10px; } }
 .chat-references { display: grid; gap: 6px; margin-top: 10px; }
 .chat-reference { min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--bg-tertiary); }
