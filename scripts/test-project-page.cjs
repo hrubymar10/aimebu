@@ -27,10 +27,10 @@ const limit = { rev: 3, cost_mode: 'inherit', turn_mode: 'custom', daily_turn_ca
 const usage = { turns: 4, by_agent: [{ key: 'a1', label: 'leader', turns: 4 }], by_model: [] };
 const roles = [{ role_key: 'worker', inherited: true, global_agents: [{}, {}], default_agents: [], pick_mode: 'in_turn' }, { role_key: 'leader', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }];
 const flows = [
-  { key: 'leader-workers', label: 'A · Leader and workers', description: 'Leader coordinates workers.', core_roles: ['leader'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'general', label: 'General', roles: ['worker'] }], edges: [{ from: 'home', to: 'general' }] } },
-  { key: 'leader-dispatcher', label: 'B · Leader and dispatcher', description: 'Dispatcher coordinates workers.', core_roles: ['leader', 'dispatcher'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['dispatcher'] }, { actor_role: 'dispatcher', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'routing', label: 'Routing', roles: ['leader', 'dispatcher'] }], edges: [{ from: 'home', to: 'routing' }] } },
-  { key: 'custom', label: 'C · Custom', description: 'Choose your own team.', core_roles: ['leader'], spawn_rules: [], diagram: { rooms: [], edges: [] } },
-  { key: 'leader-advisor', label: 'D · Leader and advisor', description: 'A fast leader consults a stronger advisor.', core_roles: ['leader', 'advisor'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [], edges: [] } },
+  { key: 'leader-workers', label: 'Leader and workers', description: 'Leader coordinates workers.', core_roles: ['leader'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'general', label: 'General', roles: ['worker'] }], edges: [{ from: 'home', to: 'general' }] } },
+  { key: 'leader-dispatcher', label: 'Leader and dispatcher', description: 'Dispatcher coordinates workers.', core_roles: ['leader', 'dispatcher'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['dispatcher'] }, { actor_role: 'dispatcher', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'routing', label: 'Routing', roles: ['leader', 'dispatcher'] }], edges: [{ from: 'home', to: 'routing' }] } },
+  { key: 'leader-advisor', label: 'Leader and advisor', description: 'A fast leader consults a stronger advisor.', core_roles: ['leader', 'advisor'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [], edges: [] } },
+  { key: 'custom', label: 'Custom', description: 'Choose your own team.', core_roles: ['leader'], spawn_rules: [], diagram: { rooms: [], edges: [] } },
 ];
 const rule = (status, body) => ({ status, body });
 const base = () => ({
@@ -41,7 +41,7 @@ const base = () => ({
   'GET /api/machines?project_id=p1': { machines: [{ id: 'm1', name: 'Box', approved: true, connected: true, project_allowed: true }] },
   'GET /api/spawn-catalog?machine_id=m1': { tools: [{ tool: 'claude', variant: 'native', launcher_id: 'l1', label: 'Claude', available: true, models: [{ id: 'm1', label: 'Opus', default: true }, { id: 'm2', label: 'Sonnet' }] }] },
   'GET /api/team-flows': { templates: flows },
-  'GET /api/projects/p1/team-flow': { key: 'custom', rev: 1, review_pending: false, template: flows[2], conflicts: [] },
+  'GET /api/projects/p1/team-flow': { key: 'custom', rev: 1, review_pending: false, template: flows[3], conflicts: [] },
   'POST /api/projects/p1/team-flow/preview': { key: 'custom', create_rooms: [], role_changes: [], conflicts: [] },
   'POST /api/projects/p1/team-setup/preview': { can_create: true, settings: { worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10 }, created_rooms: [], conflicts: [] },
 });
@@ -163,7 +163,7 @@ async function main() {
         await page.waitForFunction(() => document.querySelectorAll('#project-team-flow .team-flow-thumbnail').length === 3);
         assert.deepEqual(await page.$$eval('#project-team-flow .team-flow-option', options => options.filter(option => option.querySelector('.team-flow-thumbnail')).map(option => {
           const label = option.querySelector('.team-flow-diagram-open span').getBoundingClientRect(), frame = option.querySelector('.team-flow-thumbnail').getBoundingClientRect();
-          const nodes = [...option.querySelectorAll('.team-flow-thumbnail-agent rect, .team-flow-thumbnail-consults text')].map(node => node.getBoundingClientRect());
+          const nodes = [...option.querySelectorAll('.team-flow-thumbnail-agent rect')].map(node => node.getBoundingClientRect());
           return [nodes.filter(node => node.left < label.right && node.right > label.left && node.top < label.bottom && node.bottom > label.top).length,
             nodes.filter(node => node.left < frame.left - .5 || node.right > frame.right + .5 || node.top < frame.top - .5 || node.bottom > frame.bottom + .5).length];
         })), [[0, 0], [0, 0], [0, 0]], `no diagram node is covered by the expand label or clipped at ${width}px`);
@@ -195,7 +195,7 @@ async function main() {
       assert.deepEqual(await page.$eval('#project-team-flow .team-flow-preview', node => [node.textContent.includes('private'), node.textContent.includes('No rooms or roles need changing.')]), [true, false]);
       assert.deepEqual(await page.$eval('#project-team-flow .btn-primary', node => [node.disabled, node.textContent.trim()]), [true, 'Current flow']);
       await page.evaluate(() => { window.__auto['POST /api/projects/p1/team-flow/preview'].conflicts = [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }]; });
-      await page.$eval('#project-team-flow .team-flow-option:nth-child(3) .team-flow-card', node => node.click());
+      await page.$eval('#project-team-flow .team-flow-option[data-flow-key="custom"] .team-flow-card', node => node.click());
       await page.waitForSelector('#project-team-flow .team-flow-removal input');
       await page.$eval('#project-team-flow .team-flow-removal input', node => node.click());
       assert.deepEqual(await page.$eval('#project-team-flow .btn-primary', node => [node.disabled, node.textContent.trim()]), [false, 'Apply team flow']);
@@ -238,10 +238,13 @@ async function main() {
       }), ['none', 'block', true, true], 'setup fills the message area while the composer stays visible');
       assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false, false], 'owner permission is read after the home page mounts');
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), [...node.querySelectorAll('.team-flow-thumbnail-agent text')].map(text => text.textContent)])),
-        [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', []], ['false', ['Leader', 'Worker', 'Worker', 'Worker', 'Advisor']]], 'the topology comes from spawn rules, not the room diagram; core roles outside the spawn path attach to the leader');
-      assert.equal(await page.$eval('#team-flow-home .team-flow-option:nth-child(4) .team-flow-thumbnail-consults text', node => node.textContent), 'consults', 'the advisor hangs off the leader with a labelled dashed edge');
-      assert.equal(await page.$eval('#team-flow-home .team-flow-option:nth-child(4) .team-flow-thumbnail-consults line', node => getComputedStyle(node).strokeDasharray !== 'none'), true);
-      assert.equal(await page.$eval('#team-flow-home .team-flow-option:nth-child(4) .team-flow-letter', node => node.textContent), 'D');
+        [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Worker', 'Worker', 'Worker', 'Advisor']], ['false', []]], 'the topology comes from spawn rules, not the room diagram; core roles outside the spawn path attach to the leader');
+      assert.equal(await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-thumbnail-consults title', node => node.textContent), 'consults', 'the advisor hangs off the leader with a dashed edge named consults');
+      assert.equal(await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-thumbnail-consults line', node => getComputedStyle(node).strokeDasharray !== 'none'), true);
+      assert.equal(await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-letter', node => node.textContent), 'C', 'letters follow the display order');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-option', options => [options.map(option => option.dataset.flowKey), options.map(option => option.querySelector('.team-flow-letter').textContent)]), [['leader-workers', 'leader-dispatcher', 'leader-advisor', 'custom'], ['A', 'B', 'C', 'D']], 'Custom is always the last option');
+      // Rows stay compact so many variants fit on one screen: every card is at most 110px tall on a desktop width, and the first four fit well inside the setup area.
+      assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 110), true, 'each flow card is compact');
       const fitted = () => page.$$eval('#team-flow-home .team-flow-option:nth-child(-n+2)', options => options.map(option => {
         const frame = option.querySelector('.team-flow-thumbnail').getBoundingClientRect();
         const worker = option.querySelector('.team-flow-thumbnail-agent:last-child rect').getBoundingClientRect();
@@ -256,7 +259,8 @@ async function main() {
       await page.$eval('#team-flow-home .team-flow-lightbox-close', node => node.click());
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-lightbox')?.open);
       await page.setViewport({ width: 390, height: 844 });
-      assert.equal(await page.$eval('#team-flow-home .team-flow-card', row => getComputedStyle(row).gridTemplateColumns.split(' ').length), 1, 'phone layout stacks description above diagram');
+      assert.equal(await page.$eval('#team-flow-home .team-flow-card', row => getComputedStyle(row).gridTemplateColumns.split(' ').length), 2, 'phone layout keeps the description beside a compact diagram');
+      assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 130), true, 'phone cards stay compact too');
       assert.deepEqual(await fitted(), [true, true], 'phone thumbnails fit above the expand control');
       await page.setViewport({ width: 1280, height: 800 });
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
@@ -304,7 +308,7 @@ async function main() {
       await answer(page, create, 200, { flow: { key: 'leader-dispatcher', rev: 1, review_pending: false }, agents: [{ role: 'leader', agent_id: 'agt_1' }, { role: 'dispatcher', agent_id: 'agt_2' }], created_rooms: [{ key: 'routing' }] });
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-home-card'));
       await page.close();
-      const migrated = base(); migrated['GET /api/projects/p1/team-flow'] = { key: 'custom', rev: 4, review_pending: true, template: flows[2] };
+      const migrated = base(); migrated['GET /api/projects/p1/team-flow'] = { key: 'custom', rev: 4, review_pending: true, template: flows[3] };
       const kept = await mount({ auto: migrated });
       await kept.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
       await kept.waitForFunction(() => document.querySelector('#team-flow-home .team-flow-option.selected')?.textContent.includes('Custom'));
@@ -329,7 +333,7 @@ async function main() {
       const page = await mount({ auto });
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ id: 'r1', kind: 'home', project_id: 'p1' }); });
       await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 4);
-      await page.$eval('#team-flow-home .team-flow-option:nth-child(4) .team-flow-card', node => node.click());
+      await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-card', node => node.click());
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
       const title = () => page.$eval('#team-flow-home-title', node => node.textContent);
       const next = async expected => { await page.$eval('#team-flow-home .btn-primary', node => node.click()); await page.waitForFunction(text => document.querySelector('#team-flow-home-title')?.textContent === text, {}, expected); };
@@ -361,7 +365,7 @@ async function main() {
 
       await answer(page, setupPreview, 200, { can_create: true, created_rooms: [{ key: 'advice', title: 'advice' }], conflicts: [] });
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Summary' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
-      assert.match(await page.$eval('.team-setup-summary', node => node.textContent), /D · Leader and advisor.*Leader: zed · .*Fast.*Advisor: cy · .*Strong.*Rooms to create: advice/s);
+      assert.match(await page.$eval('.team-setup-summary', node => node.textContent), /C · Leader and advisor.*Leader: zed · .*Fast.*Advisor: cy · .*Strong.*Rooms to create: advice/s);
       assert.equal(await title(), 'Summary');
       await page.close();
     }

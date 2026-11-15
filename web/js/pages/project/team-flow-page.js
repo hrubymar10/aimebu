@@ -48,10 +48,11 @@ function Diagram({ template }) {
 function DiagramPreview({ template }) {
   const path = workerPath(template);
   if (path.length < 2) return html`<p class="team-flow-diagram team-flow-empty-diagram">Choose your own agent topology.</p>`;
-  const boxWidth = 70, boxHeight = 28, gapX = 18, gapY = 8, pad = 8;
+  const boxWidth = 62, boxHeight = 22, gapX = 14, gapY = 5, pad = 4, attachedDrop = 8;
   const centerY = pad + boxHeight + gapY + boxHeight / 2;
-  const attached = attachedRoles(template, path), attachedGap = 16;
-  const attachedY = index => pad + 3 * boxHeight + 2 * gapY + attachedGap + index * (boxHeight + attachedGap);
+  // Attached roles (the advisor) sit under the root in the bottom row, a little lower so the dashed edge has room for its arrow.
+  const attached = attachedRoles(template, path);
+  const attachedY = index => pad + 2 * (boxHeight + gapY) + attachedDrop;
   const nodes = [
     ...path.slice(0, -1).map((role, index) => ({ key: `role${index}`, label: roleLabel(role), x: pad + index * (boxWidth + gapX), y: centerY - boxHeight / 2 })),
     ...Array.from({ length: 3 }, (_, index) => ({ key: `worker${index}`, label: 'Worker', x: pad + (path.length - 1) * (boxWidth + gapX), y: pad + index * (boxHeight + gapY) })),
@@ -61,13 +62,13 @@ function DiagramPreview({ template }) {
   const edges = [...path.slice(0, -2).map((_, index) => ({ from: `role${index}`, to: `role${index + 1}` })),
     ...Array.from({ length: 3 }, (_, index) => ({ from: `role${path.length - 2}`, to: `worker${index}` }))];
   const width = pad * 2 + path.length * boxWidth + (path.length - 1) * gapX;
-  const height = pad * 2 + 3 * boxHeight + 2 * gapY + attached.length * (boxHeight + attachedGap);
+  const height = pad * 2 + 3 * boxHeight + 2 * gapY + (attached.length ? attachedDrop : 0);
   const consults = attached.map((_, index) => {
     const x = pad + boxWidth / 2, y1 = boxes.get('role0').y + boxHeight, y2 = attachedY(index);
     return html`<g key=${`consults${index}`} class="team-flow-thumbnail-arrow team-flow-thumbnail-consults">
       <line x1=${x} y1=${y1} x2=${x} y2=${y2 - 7} />
       <polygon points=${`${x},${y2} ${x - 4},${y2 - 9} ${x + 4},${y2 - 9}`} />
-      <text x=${x + 5} y=${(y1 + y2) / 2 + 3}>consults</text>
+      <title>consults</title>
     </g>`;
   });
   const arrow = edge => {
@@ -98,11 +99,11 @@ export function TeamFlowCards({ templates, selected, onSelect, disabled = false 
   const opened = templates.find(template => template.key === openKey);
   useEffect(() => { if (opened && dialog.current && !dialog.current.open) dialog.current.showModal(); }, [openKey]);
   return html`<div class="team-flow-cards" role="radiogroup" aria-label="Team flow">
-    ${templates.map((template, index) => html`<div key=${template.key} class=${`team-flow-option${selected === template.key ? ' selected' : ''}`}>
+    ${templates.map((template, index) => html`<div key=${template.key} data-flow-key=${template.key} class=${`team-flow-option${selected === template.key ? ' selected' : ''}`}>
       <button type="button" class="btn team-flow-card" role="radio" aria-checked=${String(selected === template.key)} disabled=${disabled} onClick=${() => onSelect(template.key)}>
         <span class="team-flow-card-heading"><strong><span class="team-flow-letter" aria-hidden="true">${String.fromCharCode(65 + index)}</span>${template.label}</strong><span>${template.description}</span></span>
         <${DiagramPreview} template=${template} />
-      </button><button type="button" class="team-flow-diagram-open" aria-label=${`Expand ${template.label} diagram`} title="Expand diagram" onClick=${() => setOpenKey(template.key)}><span>Expand diagram ↗</span></button>
+      </button>${diagramSource(template) && html`<button type="button" class="team-flow-diagram-open" aria-label=${`Expand ${template.label} diagram`} title="Expand diagram" onClick=${() => setOpenKey(template.key)}><span>Expand diagram ↗</span></button>`}
     </div>`)}
     <dialog class="team-flow-lightbox" ref=${dialog} onClose=${() => setOpenKey('')} aria-label=${opened ? `${opened.label} diagram` : 'Team flow diagram'}>
       ${opened && html`<button type="button" class="btn team-flow-lightbox-close" onClick=${() => dialog.current?.close()}>Close diagram</button><h2>${opened.label}</h2><${Diagram} template=${opened} />`}

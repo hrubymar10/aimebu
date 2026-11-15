@@ -144,7 +144,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 		"leader":  leadRoleBody + "\n\nConsult the advisor in advice before writing a plan for a non-trivial task, making a consequential decision about behavior, data, spend, or irreversible operations, after two failed attempts at the same problem, and before handing a large change to the human. Each consult must state the goal, current state, options considered, a concrete question, and relevant message IDs. Decide cosmetic and routine matters yourself. Report the advisor's input to the human only when it changed the plan. Ask for a review of the final handoff only when needed. General is the shared project room; keep task work in task rooms.",
 		"advisor": advisorRoleBody + "\n\n" + roleSafety + "\n\n" + roleCommunication,
 	}
-	return []TeamFlowTemplate{base, routed, custom, advised}
+	return []TeamFlowTemplate{base, routed, advised, custom}
 }
 
 func teamFlowTemplate(key string) (TeamFlowTemplate, bool) {

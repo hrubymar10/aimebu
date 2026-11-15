@@ -690,29 +690,28 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-flow-option { position: relative; min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); }
 .team-flow-option:hover, .team-flow-option:focus-within { border-color: var(--accent); }
 .team-flow-option.selected { border: 2px solid var(--accent); background: var(--accent-dim); }
-.team-flow-card { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); align-items: stretch; width: 100%; min-width: 0; min-height: 118px; padding: 0; border: 0; border-radius: inherit; background: transparent; color: var(--text-primary); text-align: left; white-space: normal; cursor: pointer; }
+.team-flow-card { display: grid; grid-template-columns: minmax(0, 1fr) clamp(150px, 30%, 240px); align-items: stretch; width: 100%; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; color: var(--text-primary); text-align: left; white-space: normal; cursor: pointer; }
 .team-flow-card:disabled { cursor: default; opacity: .72; }
-.team-flow-card-heading { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 16px; }
+.team-flow-card-heading { display: flex; flex-flow: row wrap; align-items: baseline; align-content: center; gap: 2px 10px; min-width: 0; padding: 8px 14px; }
 .team-flow-card-heading strong { font-size: 14px; }
 .team-flow-letter { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 7px; border-radius: 6px; background: var(--bg-tertiary); color: var(--accent-text); }
 .team-flow-card-heading > span { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
-.team-flow-diagram { display: grid; place-items: center; min-width: 0; margin: 0; padding: 8px; border-left: 1px solid var(--border); font-size: 11px; overflow: hidden; }
+.team-flow-diagram { display: grid; place-items: center; min-width: 0; margin: 0; padding: 4px 8px; border-left: 1px solid var(--border); font-size: 11px; overflow: hidden; }
 .team-flow-diagram svg { display: block; max-width: 100%; max-height: 110px; }
-.team-flow-thumbnail { grid-template-columns: minmax(0, 1fr); padding-bottom: 28px; }
-.team-flow-thumbnail svg { width: 100%; height: auto; min-width: 0; max-height: 130px; color: var(--text-muted); }
+.team-flow-thumbnail { grid-template-columns: minmax(0, 1fr); padding-bottom: 24px; }
+.team-flow-thumbnail svg { width: 100%; height: auto; min-width: 0; max-height: 64px; color: var(--text-muted); }
 .team-flow-thumbnail-agent rect { fill: var(--bg-tertiary); stroke: var(--border); }
-.team-flow-thumbnail-agent text { text-anchor: middle; fill: var(--text-primary); font-size: 10px; }
+.team-flow-thumbnail-agent text { text-anchor: middle; fill: var(--text-primary); font-size: 9px; }
 .team-flow-thumbnail-arrow line { stroke: currentColor; stroke-width: 1.6; }
 .team-flow-thumbnail-arrow polygon { fill: currentColor; }
 .team-flow-thumbnail-consults line { stroke-dasharray: 3 3; }
-.team-flow-thumbnail-consults text { fill: var(--text-muted); font-size: 9px; }
-.team-flow-diagram-open { position: absolute; inset: 0 0 0 70%; width: 30%; padding: 8px; border: 0; background: transparent; color: var(--text-muted); text-align: right; cursor: zoom-in; }
+.team-flow-diagram-open { position: absolute; inset: 0 0 0 auto; width: clamp(150px, 30%, 240px); padding: 8px; border: 0; background: transparent; color: var(--text-muted); text-align: right; cursor: zoom-in; }
 /* The settings dialog gives every button a fixed 32px height, which collapses this overlay to a strip at the card's top. */
 #room-info-dialog button.team-flow-diagram-open[type="button"] { box-sizing: border-box; height: 100%; }
 #room-info-dialog button.team-flow-card[type="button"] { height: auto; }
-.team-flow-diagram-open span { position: absolute; right: 8px; bottom: 7px; padding: 2px 4px; border-radius: 4px; background: var(--bg-primary); font-size: 10px; }
+.team-flow-diagram-open span { position: absolute; right: 8px; bottom: 3px; padding: 2px 4px; border-radius: 4px; background: var(--bg-primary); font-size: 10px; }
 .team-flow-diagram-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.team-flow-empty-diagram { color: var(--text-muted); }
+.team-flow-empty-diagram { color: var(--text-muted); font-size: 11px; line-height: 1.3; text-align: center; }
 .team-flow-lightbox { width: 100vw; max-width: none; height: 100vh; max-height: none; margin: 0; padding: 24px; border: 0; background: var(--bg-primary); color: var(--text-primary); }
 .team-flow-lightbox::backdrop { background: rgba(0, 0, 0, .76); }
 .team-flow-lightbox h2 { margin: 0 0 16px; }
@@ -763,7 +762,7 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-setup-limit-hint { color: var(--text-muted); }
 .team-setup-hint { color: var(--text-muted); margin: 0 0 8px; }
 .team-setup-summary p { margin: 7px 0; }
-@media (max-width: 720px) { .team-flow-card { grid-template-columns: 1fr; min-height: 0; } .team-flow-diagram { border-left: 0; border-top: 1px solid var(--border); min-height: 110px; } .team-flow-diagram-open { inset: auto 0 0; width: 100%; height: 110px; } .team-setup-target, .team-setup-defaults { grid-template-columns: 1fr; } #team-flow-home:not([hidden]) { padding: 8px 10px; } }
+@media (max-width: 720px) { .team-setup-target, .team-setup-defaults { grid-template-columns: 1fr; } #team-flow-home:not([hidden]) { padding: 8px 10px; } }
 .chat-references { display: grid; gap: 6px; margin-top: 10px; }
 .chat-reference { min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--bg-tertiary); }
 .chat-reference header { display: flex; flex-wrap: wrap; gap: 5px 10px; color: var(--text-muted); font-size: 11px; }

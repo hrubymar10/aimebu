@@ -35,7 +35,6 @@ function initialTarget(options, defaults, role) {
   return cleanTarget(options.find(item => item.launcher_id === agent?.launcher_id && item.model === agent?.model) || options.find(item => item.default_model) || options[0]);
 }
 const SECOND_ROLE = { 'leader-dispatcher': 'Dispatcher', 'leader-advisor': 'Advisor' };
-const FLOW_LABEL = { 'leader-workers': 'A · Leader and workers', 'leader-dispatcher': 'B · Leader and dispatcher', 'leader-advisor': 'D · Leader and advisor' };
 function initialDefaults(options, defaults, role) {
   const row = defaults.find(item => item.role_key === role);
   const available = (row?.default_agents || []).filter(item => options.some(option => option.launcher_id === item.launcher_id && option.model === item.model));
@@ -59,11 +58,11 @@ function TargetPicker({ label, prefix, options, value, onChange, name, nameBusy,
   </fieldset>`;
 }
 
-function Summary({ body, preview, options, selectedRemovals, onToggleRemoval }) {
+function Summary({ body, flowLabel, preview, options, selectedRemovals, onToggleRemoval }) {
   const name = target => options.find(item => sameTarget(item, target));
   const describe = target => { const item = name(target); return `${target?.name ? `${target.name} · ` : ''}${item ? `${item.machine_name} · ${item.tool_label} · ${item.model_label}` : 'No available agent'}`; };
   return html`<div class="team-setup-summary">
-    <p><strong>Team flow:</strong> ${FLOW_LABEL[body.flow_key] || FLOW_LABEL['leader-workers']}</p>
+    <p><strong>Team flow:</strong> ${flowLabel}</p>
     <p><strong>Leader:</strong> ${describe(body.leader)}</p>
     ${body.dispatcher && html`<p><strong>Dispatcher:</strong> ${describe(body.dispatcher)}</p>`}
     ${body.advisor && html`<p><strong>Advisor:</strong> ${describe(body.advisor)}</p>`}
@@ -135,6 +134,9 @@ export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
   if (!state && flow.error.value) return html`<section class="team-flow-home-card"><p class="error" role="alert">Could not load team flows: ${flow.error.value}</p><button type="button" class="btn" onClick=${onRetry}>Retry</button></section>`;
   if (!state || !state.review_pending && state.key) return null;
   const migrated = state.key === 'custom' && state.review_pending;
+  // The letter is the card's place in the list (the same one the cards show), so a new flow never needs a mapping here.
+  const flowIndex = templates.findIndex(item => item.key === selected);
+  const flowLabel = flowIndex < 0 ? '' : `${String.fromCharCode(65 + flowIndex)} · ${templates[flowIndex].label}`;
   const second = SECOND_ROLE[selected];
   const steps = second ? ['Team flow', 'Leader', second, 'Workers and reviewers', 'Project settings', 'Summary'] : ['Team flow', 'Leader', 'Workers and reviewers', 'Project settings', 'Summary'];
   const minimumAgents = 1;
@@ -188,7 +190,7 @@ export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
       <label><input type="checkbox" checked=${settings.memory_enabled} onChange=${event => { settingsTouched.current = true; setSettings({ ...settings, memory_enabled: event.currentTarget.checked }); }} /> Enable project memory</label>
       <label>Maximum workers and reviewers<input type="number" min=${minimumAgents} max="100" value=${settings.max_live_agents} onInput=${event => { settingsTouched.current = true; setSettings({ ...settings, max_live_agents: Number(event.currentTarget.value) }); }} />${coreHint && html`<small class="team-setup-limit-hint">${coreHint}</small>`}</label>
     </div>`}
-    ${stepLabel === 'Summary' && html`<${Summary} body=${body} preview=${preview} options=${choices?.options || []} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => { flow.toggleRemoval(item, checked); commitKey.current = ''; }} />`}
+    ${stepLabel === 'Summary' && html`<${Summary} body=${body} flowLabel=${flowLabel} preview=${preview} options=${choices?.options || []} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => { flow.toggleRemoval(item, checked); commitKey.current = ''; }} />`}
     <div class="team-flow-actions">
       ${step > 1 && html`<button type="button" class="btn" disabled=${busy} onClick=${() => go(step - 1)}>Back</button>`}
       ${step === 1 && selected === 'custom' && html`<button type="button" class="btn btn-primary" disabled=${!canEdit || flow.applying.value || flow.previewing.value || !flow.preview.value} onClick=${() => flow.apply()}>${flow.applying.value ? 'Saving…' : 'Keep current'}</button>`}

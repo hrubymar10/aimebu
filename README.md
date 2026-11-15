@@ -270,18 +270,18 @@ history; see the room lifecycle routes in the API guide.
 A new project starts with its home room and a `general` task room beneath it.
 The home room shows a team-flow setup card until a project owner or operator
 chooses a flow: **A · Leader and workers**, **B · Leader and dispatcher**,
-**C · Custom**, or **D · Leader and advisor**. A vertical list shows each flow's
+**C · Leader and advisor**, or **D · Custom**. A vertical list shows each flow's
 description beside an agent topology drawn from who may spawn whom (three
-worker positions; D also draws the advisor under the leader with a dashed
+worker positions; C also draws the advisor under the leader with a dashed
 "consults" edge); the diagram opens at full size. Rooms to create appear in
-the change preview. Choosing A, B, or D starts a wizard for the leader's
-machine, harness, and model, a dispatcher for B or an advisor for D, worker
+the change preview. Choosing A, B, or C starts a wizard for the leader's
+machine, harness, and model, a dispatcher for B or an advisor for C, worker
 and reviewer defaults, and project settings. The Advisor step asks for a
 stronger model than the leader's; both steps preselect the role's saved
 default, else the harness default. A summary previews
 the changes; **Create team** applies them and starts the leader (and B's
-dispatcher or D's advisor) together. Back keeps the unsaved choices. C ends with **Keep
-current**. Existing projects start on C; saving it closes the setup prompt.
+dispatcher or C's advisor) together. Back keeps the unsaved choices. D ends with **Keep
+current**. Existing projects start on D; saving it closes the setup prompt.
 The "Maximum workers and reviewers" setting counts task roles; the flow's
 leader and optional dispatcher or advisor are excluded, as the wizard's hint explains.
 While setup is open, the wizard fills the message area and scrolls within it;

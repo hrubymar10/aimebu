@@ -12,10 +12,10 @@ import (
 
 func TestAdvisorFlowTemplateAndSetup(t *testing.T) {
 	templates := TeamFlowTemplates()
-	if len(templates) != 4 || templates[2].Key != "custom" || templates[3].Key != "leader-advisor" {
+	if len(templates) != 4 || templates[2].Key != "leader-advisor" {
 		t.Fatalf("template order: %+v", templates)
 	}
-	flow := templates[3]
+	flow := templates[2]
 	if len(flow.CoreRoles) != 2 || !flowAllows(flow.CoreRoles, "advisor") || flowAllows(flow.SpawnRules[0].AllowedRoles, "advisor") || flow.GrantRoles[0] != "leader" {
 		t.Fatalf("flow rules: %+v", flow)
 	}
@@ -119,6 +119,18 @@ func TestAdvisorFlowTemplateAndSetup(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTeamFlowTemplatesCustomLast(t *testing.T) {
+	templates := TeamFlowTemplates()
+	if len(templates) == 0 || templates[len(templates)-1].Key != "custom" {
+		t.Fatalf("custom must be the last template: %+v", templates)
+	}
+	for _, template := range templates[:len(templates)-1] {
+		if template.Key == "custom" {
+			t.Fatal("custom appears before the last template")
+		}
 	}
 }
 
