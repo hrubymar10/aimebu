@@ -132,8 +132,8 @@ func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
 func TestRoleDefaultsFreshAndUpgradeMatch(t *testing.T) {
 	fresh, _ := testStore(t, Options{})
 	want := roleBodies(t, fresh.db)
-	if len(want) != 7 {
-		t.Fatalf("fresh global role count = %d, want 7", len(want))
+	if len(want) != 8 {
+		t.Fatalf("fresh global role count = %d, want 8", len(want))
 	}
 	for key, body := range want {
 		for _, local := range []string{"AIMEBU2_CONFIG_DIR", "flock", "prohibited substring"} {
@@ -195,8 +195,8 @@ func TestRoleDefaultsMigrationPreservesEdits(t *testing.T) {
 			t.Errorf("%s body=%q err=%v", id, got, err)
 		}
 	}
-	if got := len(roleBodies(t, s.db)); got != 7 {
-		t.Errorf("idempotent migration role count = %d, want 7", got)
+	if got := len(roleBodies(t, s.db)); got != 8 {
+		t.Errorf("idempotent migration role count = %d, want 8", got)
 	}
 }
 

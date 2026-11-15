@@ -10,6 +10,7 @@ export class TeamFlowStore {
     this.onApplied = onApplied;
     this.canPreview = canPreview;
     this.projectID = '';
+    this.roomID = '';
     this.templates = signal([]);
     this.state = signal(null);
     this.selected = signal('');

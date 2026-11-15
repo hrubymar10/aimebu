@@ -174,7 +174,7 @@ func TestRoomMembersSingletonHolders(t *testing.T) {
 		byKey[singleton.RoleKey] = singleton
 		order = append(order, singleton.Label)
 	}
-	if want := []string{"Courier", "Dispatcher", "Gatekeeper", "Leader", "Planner", "Scribe"}; !reflect.DeepEqual(order, want) {
+	if want := []string{"Advisor", "Courier", "Dispatcher", "Gatekeeper", "Leader", "Planner", "Scribe"}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("singleton roles = %v, want %v (%+v)", order, want, got.Singletons)
 	}
 	if h := byKey["leader"].HeldBy; h == nil || h.Slug != "tessa" || !h.InThisRoom || byKey["leader"].Emoji != "👑" {

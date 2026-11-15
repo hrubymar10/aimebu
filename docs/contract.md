@@ -92,7 +92,7 @@ Projects, rooms, people
   absolute depth cap of 5 still applying. Root task trees use the configured
   budget without an extra level.
 - **team flow** (migration 106): new projects start with an empty key and must
-  choose `leader-workers`, `leader-dispatcher`, or `custom`; existing projects
+  choose `leader-workers`, `leader-dispatcher`, `custom`, or `leader-advisor`; existing projects
   start `custom` with review pending. Revision guards apply. The template
   catalog carries room, spawn, join, diagram, and `core_roles` data. Applying a flow creates
   missing rooms and preserves agents, messages, and rooms. Conflicting agent
@@ -135,14 +135,32 @@ Projects, rooms, people
   source room can read that one cited message across rooms of the same
   project, without access to its room. The source must remain readable; the
   grant vanishes when the source message is deleted.
-  Initial team setup for A or B uses an idempotent request. Machine and
+  Initial team setup for A, B, or D uses an idempotent request. Machine and
   launcher choices are checked before the transaction; applying the flow,
   saving per-project spawn defaults and settings, and creating the leader
-  (plus dispatcher for B) are one transaction. The supervisor receives spawn
+  (plus dispatcher for B or advisor for D) are one transaction. The supervisor receives spawn
   requests after commit, and a keyed retry can redeliver them. The setup
-  does not change the project folder or global agent keep-warm settings.
+  accepts an optional name for each initial agent; names use the same syntax,
+  project-wide collision check, and random fallback as ordinary spawn.
+  The setup does not change the project folder or global agent keep-warm
+  settings.
   Those initial agents use the mapped project folder; the worktree-mode choice
   applies to later task-room spawns.
+  The `leader-advisor` flow adds restricted `advice` (leader and advisor),
+  `general` (leader, advisor, workers, reviewers), and task rooms (leader,
+  workers, reviewers). The leader and advisor are singleton core roles excluded
+  from the live-agent cap. Setup starts both in one transaction. The leader
+  joins home, advice, and general automatically; the advisor joins advice
+  and general automatically and may explicitly join home. Only the leader
+  may spawn workers and reviewers. The advisor wakes on addressed messages,
+  including a human addressing it in home or general, and when a human sends
+  it a direct message. Other unaddressed traffic does not wake it. Its role
+  text requires read-only repo access,
+  recommendations, and no implementation or spawning. The leader may cite a
+  task-room message in advice to grant the advisor access to that one message.
+  Migration 112 seeds the built-in advisor; if a custom global role already
+  uses that key, it keeps its identity, body, and agents under a free
+  `advisor-v1` style key, and roles extending it follow the renamed key.
 - **scope_control_agent**(scope_kind[room|project], scope_id, agent_id,
   restore_desired, hold_desired, bulk_desired, bulk_rev) — records each
   scope's pause or stop hold, a shared pre-scope desired state, and the last

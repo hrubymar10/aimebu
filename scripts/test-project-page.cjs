@@ -30,6 +30,7 @@ const flows = [
   { key: 'leader-workers', label: 'A · Leader and workers', description: 'Leader coordinates workers.', core_roles: ['leader'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'general', label: 'General', roles: ['worker'] }], edges: [{ from: 'home', to: 'general' }] } },
   { key: 'leader-dispatcher', label: 'B · Leader and dispatcher', description: 'Dispatcher coordinates workers.', core_roles: ['leader', 'dispatcher'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['dispatcher'] }, { actor_role: 'dispatcher', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'routing', label: 'Routing', roles: ['leader', 'dispatcher'] }], edges: [{ from: 'home', to: 'routing' }] } },
   { key: 'custom', label: 'C · Custom', description: 'Choose your own team.', core_roles: ['leader'], spawn_rules: [], diagram: { rooms: [], edges: [] } },
+  { key: 'leader-advisor', label: 'D · Leader and advisor', description: 'A fast leader consults a stronger advisor.', core_roles: ['leader', 'advisor'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [], edges: [] } },
 ];
 const rule = (status, body) => ({ status, body });
 const base = () => ({
@@ -156,6 +157,17 @@ async function main() {
       const page = await mount();
       await ready(page);
       await page.waitForSelector('#project-team-flow .team-flow-card');
+      // The settings dialog gives buttons a fixed height; the expand label must still sit below every diagram node (D included), and no node may be clipped.
+      for (const width of [1280, 600]) {
+        await page.setViewport({ width, height: 1000 });
+        await page.waitForFunction(() => document.querySelectorAll('#project-team-flow .team-flow-thumbnail').length === 3);
+        assert.deepEqual(await page.$$eval('#project-team-flow .team-flow-option', options => options.filter(option => option.querySelector('.team-flow-thumbnail')).map(option => {
+          const label = option.querySelector('.team-flow-diagram-open span').getBoundingClientRect(), frame = option.querySelector('.team-flow-thumbnail').getBoundingClientRect();
+          const nodes = [...option.querySelectorAll('.team-flow-thumbnail-agent rect, .team-flow-thumbnail-consults text')].map(node => node.getBoundingClientRect());
+          return [nodes.filter(node => node.left < label.right && node.right > label.left && node.top < label.bottom && node.bottom > label.top).length,
+            nodes.filter(node => node.left < frame.left - .5 || node.right > frame.right + .5 || node.top < frame.top - .5 || node.bottom > frame.bottom + .5).length];
+        })), [[0, 0], [0, 0], [0, 0]], `no diagram node is covered by the expand label or clipped at ${width}px`);
+      }
       await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-flow/preview']; });
       await page.$eval('#project-team-flow .team-flow-option:nth-child(2) .team-flow-card', node => node.click());
       const preview = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/preview');
@@ -218,15 +230,18 @@ async function main() {
       const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
       const page = await mount({ auto });
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeRole = ''; window.__homeFlow = new TeamFlowHome({ canEdit: () => window.__homeRole === 'owner', onApplied: () => {} }); window.__homeRole = 'owner'; window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
-      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 3);
+      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 4);
       assert.deepEqual(await page.evaluate(() => {
         const host = document.querySelector('#team-flow-home'), card = host.querySelector('.team-setup-wizard');
         return [getComputedStyle(document.querySelector('#messages')).display, getComputedStyle(document.querySelector('.send-bar')).display,
           host.clientHeight > 600, Math.abs(card.clientWidth - host.clientWidth + 32) < 3];
       }), ['none', 'block', true, true], 'setup fills the message area while the composer stays visible');
-      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false], 'owner permission is read after the home page mounts');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false, false], 'owner permission is read after the home page mounts');
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#team-flow-home .team-flow-card')].map(node => [node.getAttribute('aria-checked'), [...node.querySelectorAll('.team-flow-thumbnail-agent text')].map(text => text.textContent)])),
-        [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', []]], 'the topology comes from spawn rules, not the room diagram');
+        [['true', ['Leader', 'Worker', 'Worker', 'Worker']], ['false', ['Leader', 'Dispatcher', 'Worker', 'Worker', 'Worker']], ['false', []], ['false', ['Leader', 'Worker', 'Worker', 'Worker', 'Advisor']]], 'the topology comes from spawn rules, not the room diagram; core roles outside the spawn path attach to the leader');
+      assert.equal(await page.$eval('#team-flow-home .team-flow-option:nth-child(4) .team-flow-thumbnail-consults text', node => node.textContent), 'consults', 'the advisor hangs off the leader with a labelled dashed edge');
+      assert.equal(await page.$eval('#team-flow-home .team-flow-option:nth-child(4) .team-flow-thumbnail-consults line', node => getComputedStyle(node).strokeDasharray !== 'none'), true);
+      assert.equal(await page.$eval('#team-flow-home .team-flow-option:nth-child(4) .team-flow-letter', node => node.textContent), 'D');
       const fitted = () => page.$$eval('#team-flow-home .team-flow-option:nth-child(-n+2)', options => options.map(option => {
         const frame = option.querySelector('.team-flow-thumbnail').getBoundingClientRect();
         const worker = option.querySelector('.team-flow-thumbnail-agent:last-child rect').getBoundingClientRect();
@@ -304,6 +319,51 @@ async function main() {
       await settle(kept);
       assert.equal(await kept.$('#team-flow-home .team-flow-home-card'), null, 'the server-backed acknowledgment keeps setup dismissed');
       await kept.close();
+    }
+    // Flow D: the advisor step preselects a stronger model than the leader's, follows the leader's harness until touched, and sends `advisor`.
+    {
+      const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
+      auto['GET /api/rooms/r1/agent-name'] = { name: 'ada' }; auto['GET /api/rooms/r1/agent-name?exclude=ada'] = { name: 'bea' }; auto['GET /api/rooms/r1/agent-name?exclude=zed'] = { name: 'cy' };
+      auto['GET /api/projects/p1/role-spawn-defaults'] = [{ role_key: 'advisor', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'strong' }], pick_mode: 'in_turn' }];
+      auto['GET /api/spawn-catalog?machine_id=m1'] = { tools: [{ tool: 'claude', variant: 'native', launcher_id: 'l1', label: 'Claude', available: true, models: [{ id: 'strong', label: 'Strong' }, { id: 'fast', label: 'Fast', default: true }] }] };
+      const page = await mount({ auto });
+      await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ id: 'r1', kind: 'home', project_id: 'p1' }); });
+      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 4);
+      await page.$eval('#team-flow-home .team-flow-option:nth-child(4) .team-flow-card', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      const title = () => page.$eval('#team-flow-home-title', node => node.textContent);
+      const next = async expected => { await page.$eval('#team-flow-home .btn-primary', node => node.click()); await page.waitForFunction(text => document.querySelector('#team-flow-home-title')?.textContent === text, {}, expected); };
+      await next('Leader');
+      assert.equal(await page.$eval('#team-flow-home [aria-label="Leader tool"]', node => node.closest('fieldset').querySelector('select[name=model]').value), 'fast', 'the leader falls back to the harness default');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-setup-target select', nodes => { const rects = nodes.map(node => node.getBoundingClientRect()); return [new Set(rects.map(rect => Math.round(rect.top))).size, new Set(rects.map(rect => Math.round(rect.height))).size, Math.round(rects[0].height)]; }), [1, 1, 40], 'Machine, Tool and Model selects share one row and the 40px control height');
+      assert.equal(await page.$eval('#team-flow-home .model-picker input[type=search]', node => node.getBoundingClientRect().top >= document.querySelector('#team-flow-home .model-picker select').getBoundingClientRect().bottom), true, 'the model filter sits under the Model select');
+      // The Name field is Spawn's: a free name is prefilled when the step opens, the dice asks for another, and typing wins over both.
+      await page.waitForFunction(() => document.querySelector('#team-setup-leader-name')?.value === 'ada');
+      await page.$eval('#team-setup-leader-name-dice', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-setup-leader-name')?.value === 'bea');
+      await page.$eval('#team-setup-leader-name', node => { node.focus(); node.select(); });
+      await page.keyboard.type('zed');
+      assert.equal(await page.$eval('#team-setup-leader-name', node => node.value), 'zed');
+      assert.deepEqual(await page.$eval('#team-setup-leader-name', node => [node.maxLength, node.placeholder]), [21, 'Automatic']);
+      await next('Advisor');
+      await page.waitForFunction(() => document.querySelector('#team-setup-advisor-name')?.value === 'cy');
+      assert.equal(await page.$eval('#team-flow-home select[name=model]', node => node.value), 'strong', 'the advisor preselects its role default');
+      assert.equal(await page.$eval('#team-flow-home .team-setup-hint', node => node.textContent), "Pick a stronger model than the leader's.");
+      await next('Workers and reviewers');
+      await next('Project settings');
+      assert.equal(await page.$eval('#team-flow-home .team-setup-limit-hint', node => node.textContent), 'Leader and advisor are not counted.');
+      await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-setup/preview']; });
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      const setupPreview = await waitRequest(page, 'POST', '/api/projects/p1/team-setup/preview');
+      const draft = await page.evaluate(index => window.__requests[index].body, setupPreview);
+      assert.deepEqual([draft.flow_key, draft.leader?.model, draft.advisor?.model, draft.advisor?.launcher_id, draft.dispatcher], ['leader-advisor', 'fast', 'strong', 'l1', undefined]);
+      assert.deepEqual([draft.leader?.name, draft.advisor?.name], ['zed', 'cy'], 'the chosen names are sent with their targets');
+
+      await answer(page, setupPreview, 200, { can_create: true, created_rooms: [{ key: 'advice', title: 'advice' }], conflicts: [] });
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Summary' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      assert.match(await page.$eval('.team-setup-summary', node => node.textContent), /D · Leader and advisor.*Leader: zed · .*Fast.*Advisor: cy · .*Strong.*Rooms to create: advice/s);
+      assert.equal(await title(), 'Summary');
+      await page.close();
     }
     // A worker-room reference displays exactly the granted message, as plain text and without opening the source room.
     {

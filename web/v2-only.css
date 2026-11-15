@@ -704,7 +704,12 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-flow-thumbnail-agent text { text-anchor: middle; fill: var(--text-primary); font-size: 10px; }
 .team-flow-thumbnail-arrow line { stroke: currentColor; stroke-width: 1.6; }
 .team-flow-thumbnail-arrow polygon { fill: currentColor; }
+.team-flow-thumbnail-consults line { stroke-dasharray: 3 3; }
+.team-flow-thumbnail-consults text { fill: var(--text-muted); font-size: 9px; }
 .team-flow-diagram-open { position: absolute; inset: 0 0 0 70%; width: 30%; padding: 8px; border: 0; background: transparent; color: var(--text-muted); text-align: right; cursor: zoom-in; }
+/* The settings dialog gives every button a fixed 32px height, which collapses this overlay to a strip at the card's top. */
+#room-info-dialog button.team-flow-diagram-open[type="button"] { box-sizing: border-box; height: 100%; }
+#room-info-dialog button.team-flow-card[type="button"] { height: auto; }
 .team-flow-diagram-open span { position: absolute; right: 8px; bottom: 7px; padding: 2px 4px; border-radius: 4px; background: var(--bg-primary); font-size: 10px; }
 .team-flow-diagram-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .team-flow-empty-diagram { color: var(--text-muted); }
@@ -731,7 +736,23 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-setup-target legend { padding: 0 5px; font-weight: 700; }
 .team-setup-target label, .team-setup-settings label { display: grid; gap: 5px; }
 .team-setup-target select, .team-setup-target input, .team-setup-settings input { min-width: 0; width: 100%; }
-.team-setup-target .model-picker { min-width: 0; }
+/* One row: Machine, Tool and Model share a label row and a 40px control row, as in the Spawn dialog; the model filter is a quieter third row under Model. */
+.team-setup-target { row-gap: 4px; }
+.team-setup-target > label, .team-setup-target .model-picker { display: grid; grid-row: span 2; grid-template-rows: subgrid; gap: 4px; margin: 0; min-width: 0; }
+.team-setup-target .model-picker { grid-row: span 4; }
+.team-setup-target > label > :is(select, input) { grid-row: 2; }
+.team-setup-target .model-picker > label { grid-row: 1; }
+.team-setup-target .model-picker > select { grid-row: 2; }
+.team-setup-target .model-picker > input[type=search] { grid-row: 3; }
+.team-setup-target .model-picker > .model-picker-count { grid-row: 4; }
+.team-setup-target :is(select, input) { box-sizing: border-box; height: 40px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font: inherit; }
+.team-setup-target .model-picker > input[type=search] { height: 32px; font-size: 12px; }
+.team-setup-name { grid-column: 1 / -1; display: grid; gap: 4px; margin-bottom: 4px; }
+.team-setup-name-row { display: flex; gap: 6px; align-items: stretch; }
+.team-setup-name-row input { flex: 1 1 auto; min-width: 0; margin: 0; }
+.team-setup-name-row .btn-icon { flex: 0 0 auto; box-sizing: border-box; width: 40px; height: 40px; padding: 0; }
+.team-setup-name-error { margin: 0; font-size: 12px; }
+.team-setup-name-error:empty { display: none; }
 .team-setup-defaults { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .team-setup-defaults > div { min-width: 0; }
 .team-setup-defaults h3 { margin: 12px 0 0; }
@@ -740,6 +761,7 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-setup-settings label:has([type=checkbox]) { display: flex; align-items: center; gap: 8px; }
 .team-setup-settings [type=checkbox] { width: auto; }
 .team-setup-limit-hint { color: var(--text-muted); }
+.team-setup-hint { color: var(--text-muted); margin: 0 0 8px; }
 .team-setup-summary p { margin: 7px 0; }
 @media (max-width: 720px) { .team-flow-card { grid-template-columns: 1fr; min-height: 0; } .team-flow-diagram { border-left: 0; border-top: 1px solid var(--border); min-height: 110px; } .team-flow-diagram-open { inset: auto 0 0; width: 100%; height: 110px; } .team-setup-target, .team-setup-defaults { grid-template-columns: 1fr; } #team-flow-home:not([hidden]) { padding: 8px 10px; } }
 .chat-references { display: grid; gap: 6px; margin-top: 10px; }

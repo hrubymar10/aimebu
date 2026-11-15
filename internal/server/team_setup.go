@@ -23,6 +23,8 @@ func teamSetupError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "stale_conflict", "selected room membership changed; preview again")
 	case errors.Is(err, store.ErrTeamSetupInvalid), errors.Is(err, store.ErrInvalidSpawnDefaults):
 		apiError(w, 400, "invalid_request", err.Error())
+	case errors.Is(err, store.ErrTeamSetupName):
+		apiError(w, 400, "invalid_name", "a name is 3 to 21 characters: lowercase letters, digits, - and _, starting with a letter, ending with a letter or digit, and not a group tag such as all or here")
 	case errors.Is(err, store.ErrForbidden):
 		apiError(w, 403, "forbidden", "project owner or operator required")
 	case errors.Is(err, store.ErrConflict):
@@ -71,6 +73,9 @@ func (s *Server) teamSetupPreview(w http.ResponseWriter, r *http.Request) {
 	agents := []store.TeamSetupAgent{{Role: "leader", RoomKey: "home", Target: &input.Leader}}
 	if input.Dispatcher != nil {
 		agents = append(agents, store.TeamSetupAgent{Role: "dispatcher", RoomKey: "routing", Target: input.Dispatcher})
+	}
+	if input.Advisor != nil {
+		agents = append(agents, store.TeamSetupAgent{Role: "advisor", RoomKey: "advice", Target: input.Advisor})
 	}
 	current, err := s.Store.GetProjectRecoverySettings(r.Context(), projectID, actorID)
 	if err != nil {
@@ -185,7 +190,7 @@ func (s *Server) deliverTeamSetup(w http.ResponseWriter, r *http.Request, result
 }
 
 func (s *Server) preflightTeamSetup(r *http.Request, projectID string, input *store.TeamSetupInput) error {
-	for _, target := range []*store.TeamSetupTarget{&input.Leader, input.Dispatcher} {
+	for _, target := range []*store.TeamSetupTarget{&input.Leader, input.Dispatcher, input.Advisor} {
 		if target == nil {
 			continue
 		}

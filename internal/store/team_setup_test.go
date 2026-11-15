@@ -12,8 +12,8 @@ func TestTeamSetupCommitsOrRollsBackTogether(t *testing.T) {
 	limit := 2
 	input := TeamSetupInput{
 		FlowKey: "leader-dispatcher", FlowRev: 0,
-		Leader:     TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"},
-		Dispatcher: &TeamSetupTarget{MachineID: "mch_missing", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"},
+		Leader:     TeamSetupTarget{MachineID: "mch_members", Name: "leader-one", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"},
+		Dispatcher: &TeamSetupTarget{MachineID: "mch_missing", Name: "dispatch-one", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"},
 		Settings:   TeamSetupSettings{MaxLiveAgents: &limit},
 	}
 	if err := f.s.ValidateTeamSetup(ctx, f.project.ID, f.bob, input); !errors.Is(err, ErrForbidden) {
@@ -50,6 +50,12 @@ func TestTeamSetupCommitsOrRollsBackTogether(t *testing.T) {
 	}
 	if result.Flow.Rev != 1 || len(result.Agents) != 2 || result.Agents[0].Role != "leader" || result.Agents[1].Role != "dispatcher" {
 		t.Fatalf("committed team: %+v", result)
+	}
+	for i, want := range []string{"leader-one", "dispatch-one"} {
+		card, err := f.s.AgentCardByID(ctx, result.Agents[i].AgentID)
+		if err != nil || card.Slug != want {
+			t.Fatalf("agent %d name: %q %v", i, card.Slug, err)
+		}
 	}
 	if len(result.CreatedRooms) != 2 {
 		t.Fatalf("created flow rooms: %+v", result.CreatedRooms)

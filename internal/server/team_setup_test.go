@@ -98,3 +98,71 @@ func TestTeamSetupPreviewCreateAndReplay(t *testing.T) {
 		t.Fatalf("invalid project limit status=%d", invalidLimit.StatusCode)
 	}
 }
+
+func TestTeamSetupAdvisorPreviewAndCreate(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{}, capabilities: []protocol.CapabilityReport{{Tool: "fake", Environment: adapter.Environment{Variant: "test"}}}}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID] = machine
+	f.srv.machineMu.Unlock()
+	path := "/api/projects/" + f.project.ID + "/team-setup"
+	leader := map[string]any{"machine_id": f.machineID, "tool": "fake", "variant": "test", "model": "test", "name": "lead-one"}
+	advisor := map[string]any{"machine_id": f.machineID, "tool": "fake", "variant": "test", "model": "test", "name": "advisor-one"}
+	body := map[string]any{"flow_key": "leader-advisor", "flow_rev": 0, "leader": leader, "advisor": advisor}
+	for _, check := range []struct {
+		name, errorCode string
+		status          int
+	}{
+		{"Bad Name", "invalid_name", 400},
+		{"worker", "name_in_use", 409},
+		{"lead-one", "name_in_use", 409},
+	} {
+		advisor["name"] = check.name
+		refused := f.request(http.MethodPost, path+"/preview", body, true)
+		var result map[string]any
+		if err := json.NewDecoder(refused.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		refused.Body.Close()
+		if refused.StatusCode != check.status || result["error"] != check.errorCode {
+			t.Fatalf("name %q: %d %+v", check.name, refused.StatusCode, result)
+		}
+	}
+	advisor["name"] = "advisor-one"
+	preview := f.request(http.MethodPost, path+"/preview", body, true)
+	var data struct {
+		Agents []store.TeamSetupAgent `json:"agents"`
+	}
+	if err := json.NewDecoder(preview.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	preview.Body.Close()
+	if preview.StatusCode != 200 || len(data.Agents) != 2 || data.Agents[1].Role != "advisor" || data.Agents[1].RoomKey != "advice" {
+		t.Fatalf("preview %d %+v", preview.StatusCode, data)
+	}
+	encoded, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, f.http.URL+path, bytes.NewReader(encoded))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.Header.Set("Idempotency-Key", "advisor-setup")
+	req.AddCookie(f.cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var created store.TeamSetupResult
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 201 || len(created.Agents) != 2 || created.Agents[1].Role != "advisor" {
+		t.Fatalf("create %d %+v", resp.StatusCode, created)
+	}
+	for i, want := range []string{"lead-one", "advisor-one"} {
+		card, err := f.db.AgentCardByID(t.Context(), created.Agents[i].AgentID)
+		if err != nil || card.Slug != want {
+			t.Fatalf("agent %d name: %q %v", i, card.Slug, err)
+		}
+	}
+}

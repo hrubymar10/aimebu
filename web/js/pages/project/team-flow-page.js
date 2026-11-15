@@ -21,6 +21,9 @@ function workerPath(template) {
 
 const roleLabel = role => role.charAt(0).toUpperCase() + role.slice(1);
 
+// Core roles outside the spawn path (the advisor) hang off the root with a dashed "consults" edge.
+const attachedRoles = (template, path) => (template?.core_roles || []).filter(role => !path.includes(role));
+
 function diagramSource(template) {
   const path = workerPath(template);
   if (path.length < 2) return '';
@@ -29,6 +32,9 @@ function diagramSource(template) {
   for (let index = 0; index < 3; index++) lines.push(`  worker${index}["Worker"]`);
   path.slice(0, -2).forEach((_, index) => lines.push(`  role${index} --> role${index + 1}`));
   for (let index = 0; index < 3; index++) lines.push(`  role${path.length - 2} --> worker${index}`);
+  attachedRoles(template, path).forEach((role, index) => {
+    lines.push(`  attached${index}["${roleLabel(role)}"]`, `  role0 -. consults .-> attached${index}`);
+  });
   return lines.join('\n');
 }
 
@@ -44,15 +50,26 @@ function DiagramPreview({ template }) {
   if (path.length < 2) return html`<p class="team-flow-diagram team-flow-empty-diagram">Choose your own agent topology.</p>`;
   const boxWidth = 70, boxHeight = 28, gapX = 18, gapY = 8, pad = 8;
   const centerY = pad + boxHeight + gapY + boxHeight / 2;
+  const attached = attachedRoles(template, path), attachedGap = 16;
+  const attachedY = index => pad + 3 * boxHeight + 2 * gapY + attachedGap + index * (boxHeight + attachedGap);
   const nodes = [
     ...path.slice(0, -1).map((role, index) => ({ key: `role${index}`, label: roleLabel(role), x: pad + index * (boxWidth + gapX), y: centerY - boxHeight / 2 })),
     ...Array.from({ length: 3 }, (_, index) => ({ key: `worker${index}`, label: 'Worker', x: pad + (path.length - 1) * (boxWidth + gapX), y: pad + index * (boxHeight + gapY) })),
   ];
+  attached.forEach((role, index) => nodes.push({ key: `attached${index}`, label: roleLabel(role), x: pad, y: attachedY(index) }));
   const boxes = new Map(nodes.map(node => [node.key, node]));
   const edges = [...path.slice(0, -2).map((_, index) => ({ from: `role${index}`, to: `role${index + 1}` })),
     ...Array.from({ length: 3 }, (_, index) => ({ from: `role${path.length - 2}`, to: `worker${index}` }))];
   const width = pad * 2 + path.length * boxWidth + (path.length - 1) * gapX;
-  const height = pad * 2 + 3 * boxHeight + 2 * gapY;
+  const height = pad * 2 + 3 * boxHeight + 2 * gapY + attached.length * (boxHeight + attachedGap);
+  const consults = attached.map((_, index) => {
+    const x = pad + boxWidth / 2, y1 = boxes.get('role0').y + boxHeight, y2 = attachedY(index);
+    return html`<g key=${`consults${index}`} class="team-flow-thumbnail-arrow team-flow-thumbnail-consults">
+      <line x1=${x} y1=${y1} x2=${x} y2=${y2 - 7} />
+      <polygon points=${`${x},${y2} ${x - 4},${y2 - 9} ${x + 4},${y2 - 9}`} />
+      <text x=${x + 5} y=${(y1 + y2) / 2 + 3}>consults</text>
+    </g>`;
+  });
   const arrow = edge => {
     const from = boxes.get(edge.from), to = boxes.get(edge.to);
     const x1 = from.x + boxWidth, y1 = from.y + boxHeight / 2;
@@ -64,8 +81,9 @@ function DiagramPreview({ template }) {
     </g>`;
   };
   return html`<div class="team-flow-diagram team-flow-thumbnail" aria-label="Agent topology diagram preview">
-    <svg viewBox=${`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label=${`${path.slice(0, -1).map(roleLabel).join(' to ')} to three workers`}>
+    <svg viewBox=${`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label=${`${path.slice(0, -1).map(roleLabel).join(' to ')} to three workers${attached.length ? `, consulting ${attached.map(roleLabel).join(' and ')}` : ''}`}>
       ${edges.map(arrow)}
+      ${consults}
       ${nodes.map(box => html`<g key=${box.key} class="team-flow-thumbnail-agent">
         <title>${box.label}</title>
         <rect x=${box.x} y=${box.y} width=${boxWidth} height=${boxHeight} rx="6" />

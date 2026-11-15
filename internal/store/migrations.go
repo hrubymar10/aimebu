@@ -1799,6 +1799,11 @@ ALTER TABLE message ADD COLUMN switch_handoff_json TEXT;
 INSERT INTO global_setting(key,value,updated_at)
   VALUES ('codex_warm_enabled','0',strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   ON CONFLICT(key) DO NOTHING;
+`}, {112, `
+INSERT OR IGNORE INTO role(id,key,label,body,cap_is_lead,cap_can_spawn,cap_singleton_writer,project_id,role_key,emoji,cardinality)
+VALUES ('role_advisor_default','advisor','Advisor',
+'You are the project advisor. Wake and answer when someone addresses you in advice, general, or home, or when a human sends you a direct message. Give a recommendation, the reasoning in a few bullets, risks and what would change the answer, and anything the leader must verify. Read the repository and documentation when needed, but never edit files, implement, or spawn agents. Do not talk to workers. The leader makes the final decision and asks for a final handoff review only when needed.',
+0,0,0,NULL,'advisor','💡','singleton');
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -1922,6 +1927,9 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if err == nil && m.version == 102 {
 			leaderFacts, err = migrateLeaderRole(ctx, tx)
 		}
+		if err == nil && m.version == 112 {
+			err = moveCustomAdvisorRole(ctx, tx)
+		}
 		if err == nil {
 			_, err = tx.ExecContext(ctx, m.sql)
 		}
@@ -1965,6 +1973,35 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		}
 	}
 	return nil
+}
+
+// moveCustomAdvisorRole preserves an existing role and its agents before the
+// built-in advisor claims the public key. The old role keeps its identity.
+func moveCustomAdvisorRole(ctx context.Context, tx *sql.Tx) error {
+	var id string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM role WHERE project_id IS NULL AND deleted_at IS NULL AND (key='advisor' OR role_key='advisor') LIMIT 1`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) || id == "role_advisor_default" {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	key := "advisor-v1"
+	for n := 2; ; n++ {
+		var occupied bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM role WHERE key=? OR role_key=?)`, key, key).Scan(&occupied); err != nil {
+			return err
+		}
+		if !occupied {
+			break
+		}
+		key = fmt.Sprintf("advisor-v1-%d", n)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE role SET key=?,role_key=?,label=label || ' (existing)',rev=rev+1 WHERE id=?`, key, key, id); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE role SET extends=? WHERE extends='advisor'`, key)
+	return err
 }
 
 // migrateLeaderRole keeps the custom role's identity and assignments if an

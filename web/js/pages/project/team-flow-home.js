@@ -21,6 +21,7 @@ export class TeamFlowHome {
 
   setRoom(room) {
     if (room?.kind !== 'home') { this.reset(); return; }
+    this.flow.roomID = room.id;
     this.host.hidden = false;
     this.onSetupChange(true);
     void this.load(room.project_id);

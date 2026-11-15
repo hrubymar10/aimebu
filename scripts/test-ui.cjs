@@ -1596,7 +1596,8 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke' && document.querySelector('.room-item.active .room-item-name')?.textContent.includes('UI smoke'));
     // The creator's POST response must already grant owner controls when the first home view opens.
     await first.waitForSelector('#team-flow-home .team-flow-card');
-    assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false], 'the new project owner can choose a flow immediately');
+    assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card', cards => cards.map(card => card.disabled)), [false, false, false, false], 'the new project owner can choose a flow immediately');
+    assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card strong', nodes => nodes.map(node => node.textContent.replace(/^[A-D]/, '').trim())), ['Leader and workers', 'Leader and dispatcher', 'Custom', 'Leader and advisor'], 'the server offers A, B, Custom (C) and then the advisor flow (D)');
     assert.equal(await first.$eval('#team-flow-home', host => host.textContent.includes('Ask a project owner or operator')), false);
     assert.deepEqual(await first.$eval('#composer', form => [form.querySelector('textarea').disabled, form.querySelector('button[type=submit]').disabled, form.querySelector('textarea').placeholder, form.inert]),
       [true, true, 'Finish the project setup to start chatting', true], 'setup keeps the composer visible and disabled');

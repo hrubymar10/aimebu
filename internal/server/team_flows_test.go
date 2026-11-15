@@ -38,7 +38,7 @@ func TestTeamFlowAPISetupAndRoomKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 200 || len(catalog.Templates) != 3 {
+	if resp.StatusCode != 200 || len(catalog.Templates) != 4 {
 		t.Fatalf("catalog: %d %+v", resp.StatusCode, catalog)
 	}
 	path := "/api/projects/" + f.project.ID + "/team-flow"

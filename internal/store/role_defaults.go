@@ -158,6 +158,7 @@ func builtinRoles() map[string]builtinRole {
 	roles := map[string]builtinRole{
 		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: leadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
 		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: dispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
+		"role_advisor_default":    {ID: "role_advisor_default", Key: "advisor", Label: "Advisor", Emoji: "💡", Body: advisorRoleBody, Cardinality: "singleton"},
 		"role_worker_default":     {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
 		"role_reviewer_default":   {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
 	}
@@ -169,6 +170,8 @@ func builtinRoles() map[string]builtinRole {
 }
 
 const dispatcherRoleBody = `Take specifications from the leader in routing. Create task rooms, spawn and brief workers and reviewers, run review, gate, and fix rounds. Report to the leader in routing only: done <what, SHA, how verified>; blocked <why>; or needs decision <question>. Do not send routine worker traffic to the home room.`
+
+const advisorRoleBody = `You are the project advisor. Wake and answer when someone addresses you in advice, general, or home, or when a human sends you a direct message. Give a recommendation, the reasoning in a few bullets, risks and what would change the answer, and anything the leader must verify. Read the repository and documentation when needed, but never edit files, implement, or spawn agents. Do not talk to workers. The leader makes the final decision and asks for a final handoff review only when needed.`
 
 func specialistFocus(body string) string { return "Additional focus: " + body }
 

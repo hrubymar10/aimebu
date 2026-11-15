@@ -130,7 +130,21 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	custom.TaskParentKey = "home"
 	custom.GrantRoles = []string{"leader", "dispatcher"}
 	custom.RoleTextOverrides = map[string]string{}
-	return []TeamFlowTemplate{base, routed, custom}
+	advised := TeamFlowTemplate{Key: "leader-advisor", Label: "Leader and advisor", Description: "A fast leader runs the work and consults a stronger advisor for plans and decisions."}
+	advised.Rooms = []FlowRoom{{Key: "home", Title: "Home", Kind: "home"}, {Key: "advice", Title: "advice", Kind: "task", Restricted: true}, {Key: "general", Title: "general", Kind: "task"}}
+	advised.Diagram.Rooms = []FlowDiagramRoom{{"home", "Home", []string{"leader", "advisor"}}, {"advice", "Advice", []string{"leader", "advisor"}}, {"general", "General and tasks", []string{"leader", "advisor", "worker", "reviewer"}}}
+	advised.Diagram.Edges = []FlowEdge{{"home", "advice"}, {"advice", "general"}}
+	advised.JoinRules = []FlowJoinRule{{"home", []string{"leader", "advisor"}}, {"advice", []string{"leader", "advisor"}}, {"general", []string{"leader", "advisor", "worker", "reviewer"}}, {"task", []string{"leader", "worker", "reviewer"}}}
+	advised.SpawnRules = []FlowSpawnRule{{"leader", []string{"worker", "reviewer"}}}
+	advised.AutoJoinRoles = []string{"leader", "advisor"}
+	advised.CoreRoles = []string{"leader", "advisor"}
+	advised.TaskParentKey = "general"
+	advised.GrantRoles = []string{"leader"}
+	advised.RoleTextOverrides = map[string]string{
+		"leader":  leadRoleBody + "\n\nConsult the advisor in advice before writing a plan for a non-trivial task, making a consequential decision about behavior, data, spend, or irreversible operations, after two failed attempts at the same problem, and before handing a large change to the human. Each consult must state the goal, current state, options considered, a concrete question, and relevant message IDs. Decide cosmetic and routine matters yourself. Report the advisor's input to the human only when it changed the plan. Ask for a review of the final handoff only when needed. General is the shared project room; keep task work in task rooms.",
+		"advisor": advisorRoleBody + "\n\n" + roleSafety + "\n\n" + roleCommunication,
+	}
+	return []TeamFlowTemplate{base, routed, custom, advised}
 }
 
 func teamFlowTemplate(key string) (TeamFlowTemplate, bool) {
@@ -214,6 +228,15 @@ func (tx *Tx) flowAutoJoin(projectID, role string, lead bool, roomKind, roomKey 
 	if key == "leader-dispatcher" && role == "dispatcher" {
 		return roomKind == "routing" || roomKey == "general", nil
 	}
+	if key == "leader-advisor" {
+		if role == "leader" {
+			return roomKind == "home" || roomKey == "advice" || roomKey == "general", nil
+		}
+		if role == "advisor" {
+			return roomKey == "advice" || roomKey == "general", nil
+		}
+		return false, nil
+	}
 	t, ok := teamFlowTemplate(key)
 	return ok && flowAllows(t.AutoJoinRoles, role), nil
 }
@@ -244,6 +267,9 @@ func flowRoomKind(kind, key, title string) string {
 	}
 	if key == "routing" {
 		return "routing"
+	}
+	if key == "advice" {
+		return "advice"
 	}
 	if key == "general" || title == GeneralRoomTitle {
 		return "general"

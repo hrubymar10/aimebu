@@ -545,7 +545,7 @@ func (tx *Tx) loopGuardAnnounced(roomID string) (bool, error) {
 	return found == 1, err
 }
 
-func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, projectID string) error {
+func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, projectID, roomKind string) error {
 	members, err := tx.roomRecipients(message.RoomID)
 	if err != nil {
 		return err
@@ -596,6 +596,8 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 		case message.AuthorKind == "system" && message.OnlyTargets == nil:
 			skip = "system_chatter"
 		case reason == "":
+			skip = "not_addressed"
+		case member.role == "advisor" && roomKind != "dm" && (reason == "human_message" || reason == "broadcast"):
 			skip = "not_addressed"
 		case (reason == "human_message" || reason == "broadcast") && member.auto:
 			skip = "auto_member" // the lead reads this room but was not put in it; an unaddressed message is the worker's

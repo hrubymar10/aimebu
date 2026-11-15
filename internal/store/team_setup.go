@@ -16,6 +16,7 @@ import (
 // fields supplied by a browser.
 type TeamSetupTarget struct {
 	MachineID  string `json:"machine_id"`
+	Name       string `json:"name,omitempty"`
 	Tool       string `json:"tool"`
 	Variant    string `json:"variant"`
 	LauncherID string `json:"launcher_id,omitempty"`
@@ -41,6 +42,7 @@ type TeamSetupInput struct {
 	FlowRev           int64                           `json:"flow_rev"`
 	Leader            TeamSetupTarget                 `json:"leader"`
 	Dispatcher        *TeamSetupTarget                `json:"dispatcher,omitempty"`
+	Advisor           *TeamSetupTarget                `json:"advisor,omitempty"`
 	RoleDefaults      map[string]TeamSetupRoleDefault `json:"role_defaults,omitempty"`
 	Settings          TeamSetupSettings               `json:"settings,omitempty"`
 	RemoveMemberships []FlowRemoval                   `json:"remove_memberships,omitempty"`
@@ -63,6 +65,7 @@ type TeamSetupResult struct {
 }
 
 var ErrTeamSetupInvalid = errors.New("invalid team setup")
+var ErrTeamSetupName = errors.New("invalid team setup agent name")
 
 // TeamSetupRequestResult lets a keyed retry return the committed result even
 // if a machine went offline after the transaction completed.
@@ -85,11 +88,19 @@ func (s *Store) TeamSetupRequestResult(ctx context.Context, actorID, key, digest
 }
 
 func validateTeamSetupShape(in TeamSetupInput) error {
-	if in.FlowKey != "leader-workers" && in.FlowKey != "leader-dispatcher" || in.Leader.Tool == "" || in.Leader.Model == "" {
+	if in.FlowKey != "leader-workers" && in.FlowKey != "leader-dispatcher" && in.FlowKey != "leader-advisor" || in.Leader.Tool == "" || in.Leader.Model == "" {
 		return ErrTeamSetupInvalid
 	}
 	if (in.FlowKey == "leader-dispatcher") != (in.Dispatcher != nil) {
 		return fmt.Errorf("%w: dispatcher required only for leader-dispatcher", ErrTeamSetupInvalid)
+	}
+	if (in.FlowKey == "leader-advisor") != (in.Advisor != nil) {
+		return fmt.Errorf("%w: advisor required only for leader-advisor", ErrTeamSetupInvalid)
+	}
+	for _, target := range []*TeamSetupTarget{&in.Leader, in.Dispatcher, in.Advisor} {
+		if target != nil && target.Name != "" && !ValidAgentSlug(target.Name) {
+			return ErrTeamSetupName
+		}
 	}
 	if in.Settings.WorktreeMode != nil && *in.Settings.WorktreeMode != "auto" && *in.Settings.WorktreeMode != "off" {
 		return fmt.Errorf("%w: worktree_mode", ErrTeamSetupInvalid)
@@ -98,8 +109,11 @@ func validateTeamSetupShape(in TeamSetupInput) error {
 		return fmt.Errorf("%w: max_live_agents must be 1..100", ErrTeamSetupInvalid)
 	}
 	for role := range in.RoleDefaults {
-		if role != "worker" && role != "reviewer" {
+		if role != "worker" && role != "reviewer" && role != "leader" && role != "advisor" {
 			return fmt.Errorf("%w: unknown role default %s", ErrTeamSetupInvalid, role)
+		}
+		if role == "advisor" && in.FlowKey != "leader-advisor" {
+			return fmt.Errorf("%w: advisor default requires leader-advisor", ErrTeamSetupInvalid)
 		}
 	}
 	return nil
@@ -132,11 +146,24 @@ func (tx *Tx) validateTeamSetup(projectID, actorID string, in TeamSetupInput) er
 		return ErrTeamFlowRev
 	}
 	var occupied int
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND a.revoked_at IS NULL AND r.role_key IN ('leader','dispatcher') AND (a.desired!='stopped' OR a.observed!='stopped')`, projectID).Scan(&occupied); err != nil {
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND a.revoked_at IS NULL AND r.role_key IN ('leader','dispatcher','advisor') AND (a.desired!='stopped' OR a.observed!='stopped')`, projectID).Scan(&occupied); err != nil {
 		return err
 	}
 	if occupied != 0 {
-		return fmt.Errorf("%w: project already has a leader or dispatcher", ErrTeamSetupInvalid)
+		return fmt.Errorf("%w: project already has a core agent", ErrTeamSetupInvalid)
+	}
+	taken, err := tx.takenSlugs(projectID)
+	if err != nil {
+		return err
+	}
+	for _, target := range []*TeamSetupTarget{&in.Leader, in.Dispatcher, in.Advisor} {
+		if target == nil || target.Name == "" {
+			continue
+		}
+		if taken[target.Name] {
+			return ErrSlugTaken
+		}
+		taken[target.Name] = true
 	}
 	for role, config := range in.RoleDefaults {
 		mode := config.PickMode
@@ -195,7 +222,7 @@ func (tx *Tx) CreateTeamSetup(projectID, actorID string, in TeamSetupInput) (Tea
 	for _, spec := range []struct {
 		role, roomKey string
 		target        *TeamSetupTarget
-	}{{"leader", "home", &in.Leader}, {"dispatcher", "routing", in.Dispatcher}} {
+	}{{"leader", "home", &in.Leader}, {"dispatcher", "routing", in.Dispatcher}, {"advisor", "advice", in.Advisor}} {
 		if spec.target == nil {
 			continue
 		}
@@ -208,7 +235,7 @@ func (tx *Tx) CreateTeamSetup(projectID, actorID string, in TeamSetupInput) (Tea
 				return out, err
 			}
 		}
-		card, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "user", ActorID: actorID, MachineID: spec.target.MachineID, Path: spec.target.Path, RoleKey: spec.role, Tool: spec.target.Tool, Variant: spec.target.Variant, LauncherID: spec.target.LauncherID, Model: spec.target.Model, Provider: spec.target.Provider, KeyHash: spec.target.KeyHash})
+		card, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "user", ActorID: actorID, MachineID: spec.target.MachineID, Path: spec.target.Path, Slug: spec.target.Name, RoleKey: spec.role, Tool: spec.target.Tool, Variant: spec.target.Variant, LauncherID: spec.target.LauncherID, Model: spec.target.Model, Provider: spec.target.Provider, KeyHash: spec.target.KeyHash})
 		if err != nil {
 			return out, err
 		}
