@@ -242,8 +242,13 @@ API key without refresh credentials. A full Codex login runs cold and logs
 "Codex warm needs token-only credentials" once per credential stamp and
 reason; the same check runs before reuse.
 The supervisor stamps the native adapter's linked auth file (following its
-symlink), or the Docker launcher's shared host auth file, before reusing a
-process; a change to that file starts a new process.
+symlink), or `auth.json` under the Docker launcher's reported `codex_home=`
+directory, before reusing a process; a change to that file starts a new process.
+The launcher reports `codex_home=` from the running container in its cached
+feature probe. A missing answer, failed probe, or timeout keeps that turn
+cold with a reason. Docker warm never infers the home from host environment
+variables. A changed launcher re-probes and a changed home changes the warm
+fingerprint.
 
 ## Codex native adapter
 
@@ -494,9 +499,12 @@ A launcher that predates the feature would start the harness with none of this. 
 and every turn therefore run the launcher with `HARNESS_DOCKER_PRINT_FEATURES=1 … --version`: a launcher
 that has the feature prints `forward_env` and exits before it touches Docker, and one that does not
 prints a version. The latter is refused with a message to update harness-docker. The supervisor also runs the probe once
-when it inspects such a launcher in a project folder of the machine and reports the answer with the launcher row (`features`, and `feature_problem` when the
-probe failed or the launcher is too old), which `GET /api/machines/{id}/launchers` passes on and `aimebu doctor --live`
-reads; the row stays available, the turn's preflight is what refuses. The opt-in live canary
+when it inspects such a launcher in a project folder of the machine and reports the answer with the launcher row
+(`features`, and `feature_problem` when the probe failed or the launcher is too old). For Docker Codex, a missing
+`codex_home=` also appears as `feature_problem` while warm mode is on; it may mean a stopped container or an old
+launcher and clears once a later probe finds the home. `GET /api/machines/{id}/launchers` passes the field on and
+`aimebu doctor --live` reads it. The row stays available; preflight refuses a turn only when a required feature is
+missing. The opt-in live canary
 (`AIMEBU2_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode`) runs two real turns through the
 launcher (a nonce, then a `-s` resume that must give it back) and checks the session id and the usage of
 each. The provider key comes from the environment (`OLLAMA_API_KEY` for the default model

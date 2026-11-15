@@ -22,7 +22,10 @@ var warmDockerInertKeys = map[string]bool{"model": true, "mcp_servers": true, "p
 // skip is disabled before initialization. A name that cannot be overridden
 // safely, or invalid TOML, keeps this turn on the cold path.
 func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
-	path := filepath.Join(filepath.Dir(hostCodexAuthPath(spec)), "config.toml")
+	if spec.LauncherCodexHome == "" || !filepath.IsAbs(spec.LauncherCodexHome) {
+		return nil, nil, fmt.Errorf("%w: Docker Codex home was not reported by the launcher", adapter.ErrNoWarm)
+	}
+	path := filepath.Join(spec.LauncherCodexHome, "config.toml")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil

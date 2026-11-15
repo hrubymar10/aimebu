@@ -73,8 +73,11 @@ type TurnSpec struct {
 	LauncherArgs          []string
 	LauncherEnvRefs       map[string]string
 	LauncherContainerized bool
-	VisibleCheckoutPath   string
-	AgentServerURL        string
+	// LauncherCodexHome is the running Docker container's CODEX_HOME, reported
+	// by the cached launcher feature probe. Empty means warm Codex is unsafe.
+	LauncherCodexHome   string
+	VisibleCheckoutPath string
+	AgentServerURL      string
 	// Providers are the custom providers the turn's model needs (OpenCode only): the one provider its model id names, or none.
 	Providers []CustomProvider
 	// AgentTools is how the turn reaches the bus: the agent's own key, never anyone else's. It is process-only like the capabilities below: it

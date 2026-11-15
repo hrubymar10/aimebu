@@ -300,6 +300,11 @@ func TestWarmFingerprintTracksProcessInputsButNotSession(t *testing.T) {
 	if launch.fingerprint() == keyOne {
 		t.Fatal("agent key did not change fingerprint")
 	}
+	beforeAuthPath := launch.fingerprint()
+	launch.authPath += ".other"
+	if launch.fingerprint() == beforeAuthPath {
+		t.Fatal("changed auth path did not change fingerprint")
+	}
 }
 
 func TestWarmResumedThreadDoesNotChargePreviousTurns(t *testing.T) {

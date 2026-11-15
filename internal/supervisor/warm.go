@@ -410,6 +410,9 @@ func (c *Client) setCodexWarmEnabled(enabled bool) {
 	c.codexWarmEnabled = enabled
 	pool := c.warmPool
 	c.mu.Unlock()
+	if enabled != wasEnabled {
+		c.reportLauncherStatus()
+	}
 	if enabled || !wasEnabled || pool == nil {
 		return
 	}
@@ -526,6 +529,9 @@ func warmCredentials(spec adapter.TurnSpec, sharesHome bool, codexFile ...string
 	if !sharesHome {
 		return "", false
 	}
+	if spec.Agent.Tool == "codex" && (spec.LauncherContainerized || spec.Agent.Variant == "docker") && (len(codexFile) == 0 || codexFile[0] == "") {
+		return "", false
+	}
 	var file, stampPath string
 	if spec.Agent.Tool == "codex" {
 		file = codexAuthPath(spec)
@@ -587,6 +593,9 @@ func (c *Client) warmCodexAuthPath(spec adapter.TurnSpec) string {
 			return path
 		}
 	}
+	if spec.LauncherContainerized || spec.Agent.Variant == "docker" {
+		return ""
+	}
 	return codexAuthPath(spec)
 }
 
@@ -612,6 +621,9 @@ func claudeLoginDir(spec adapter.TurnSpec) (dir, accountHome string, ok bool) {
 // a /login rewrites the one its process uses. "" when no file names one.
 func warmAccount(spec adapter.TurnSpec, codexFile ...string) string {
 	if spec.Agent.Tool == "codex" {
+		if (spec.LauncherContainerized || spec.Agent.Variant == "docker") && (len(codexFile) == 0 || codexFile[0] == "") {
+			return ""
+		}
 		path := codexAuthPath(spec)
 		if len(codexFile) > 0 && codexFile[0] != "" {
 			path = codexFile[0]
@@ -1222,6 +1234,7 @@ func (c *Client) applyWarmIdle(seconds *int) {
 	c.mu.Unlock()
 	if changed {
 		c.warmChanged() // the server shows what the window is (a card's warm or sleeping), so it hears when it changes
+		c.reportLauncherStatus()
 	}
 	if changed && idle <= 0 {
 		c.RetireAllWarm("warm mode was turned off")

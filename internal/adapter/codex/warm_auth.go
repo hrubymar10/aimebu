@@ -12,9 +12,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 )
 
-// hostCodexAuthPath names the host file the launcher exposes in its Codex
-// home. A Docker launcher must advertise codex_home_shared before the
-// supervisor allows its app-server process to start.
+// hostCodexAuthPath names the native host login when no explicit path is set.
 func hostCodexAuthPath(spec adapter.TurnSpec) string {
 	dir := adapter.EnvValue("CODEX_HOME", spec.LauncherEnvRefs)
 	if dir == "" {
@@ -30,9 +28,15 @@ func hostCodexAuthPath(spec adapter.TurnSpec) string {
 	return filepath.Join(dir, "auth.json")
 }
 
-// WarmAuthPath identifies the file linked into native Codex's private home,
-// or the host file a Docker launcher shares with its container.
+// WarmAuthPath identifies the native login, or the exact login under the
+// CODEX_HOME reported by the running Docker container.
 func (a *Adapter) WarmAuthPath(spec adapter.TurnSpec) string {
+	if a.variant() == "docker" {
+		if spec.LauncherCodexHome == "" || !filepath.IsAbs(spec.LauncherCodexHome) {
+			return ""
+		}
+		return filepath.Join(spec.LauncherCodexHome, "auth.json")
+	}
 	if a.variant() == "native" && a.AuthPath != "" {
 		if resolved, err := filepath.EvalSymlinks(a.AuthPath); err == nil {
 			return resolved

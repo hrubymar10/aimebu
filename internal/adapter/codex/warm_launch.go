@@ -53,7 +53,12 @@ func (a *Adapter) prepareWarm(spec adapter.TurnSpec) (warmLaunch, error) {
 		}
 	}
 	authPath := a.AuthPath
-	if a.variant() == "docker" || authPath == "" {
+	if a.variant() == "docker" {
+		authPath = a.WarmAuthPath(spec)
+		if authPath == "" {
+			return warmLaunch{}, fmt.Errorf("%w: Docker Codex home was not reported by the launcher", adapter.ErrNoWarm)
+		}
+	} else if authPath == "" {
 		authPath = hostCodexAuthPath(spec)
 	}
 	if err := warmAuthAllowed(authPath, spec); err != nil {
@@ -78,7 +83,7 @@ func (a *Adapter) prepareWarm(spec adapter.TurnSpec) (warmLaunch, error) {
 		l.command = spec.LauncherPath
 	}
 	if a.variant() == "docker" {
-		l.authPath = hostCodexAuthPath(spec)
+		l.authPath = authPath
 		config, overrides, err := warmDockerConfig(spec)
 		if err != nil {
 			return warmLaunch{}, err
@@ -123,6 +128,7 @@ func (l warmLaunch) fingerprint() string {
 	add(l.dir)
 	add(l.visibleCheckout)
 	add(l.model)
+	add(l.authPath)
 	for _, arg := range l.args {
 		add(arg)
 	}

@@ -89,28 +89,42 @@ func DockerAgentKeyEnv(authorization string) []string {
 	return []string{AgentKeyEnv + "=" + strings.TrimPrefix(authorization, "Bearer "), "HARNESS_DOCKER_FORWARD_ENV=" + AgentKeyEnv}
 }
 
-// DockerFeatures asks a Docker launcher which features it has. With HARNESS_DOCKER_PRINT_FEATURES=1 a launcher that knows the probe prints
-// them, one per line, and exits before it touches Docker. One that predates it runs the harness with the arguments instead, which is why
-// the probe always carries --version: its answer is then a version string, which names no feature.
-func DockerFeatures(ctx context.Context, command string, args []string, dir string, env []string) (map[string]bool, error) {
+// DockerFeatureReport is the launcher's one cached probe answer. CodexHome is
+// present only when the launcher can read the running container's CODEX_HOME.
+type DockerFeatureReport struct {
+	Features  map[string]bool
+	CodexHome string
+}
+
+// DockerProbe asks a Docker launcher for features and, for Codex, the actual
+// container home. Older launchers answer --version with no recognized lines.
+func DockerProbe(ctx context.Context, command string, args []string, dir string, env []string) (DockerFeatureReport, error) {
 	probe := exec.CommandContext(ctx, command, append(append([]string(nil), args...), "--version")...)
 	probe.Dir = dir
 	probe.Env = append(append([]string(nil), env...), "HARNESS_DOCKER_PRINT_FEATURES=1")
 	out, err := cmdprobe.CombinedOutput(probe)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("Docker launcher feature probe: %w", ctx.Err())
+			return DockerFeatureReport{}, fmt.Errorf("Docker launcher feature probe: %w", ctx.Err())
 		}
-		return nil, fmt.Errorf("Docker launcher feature probe: %s: %w", SanitizeStderr(string(out)), err)
+		return DockerFeatureReport{}, fmt.Errorf("Docker launcher feature probe: %s: %w", SanitizeStderr(string(out)), err)
 	}
-	features := map[string]bool{}
+	report := DockerFeatureReport{Features: map[string]bool{}}
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" && featureName.MatchString(line) {
-			features[line] = true
+		if home, ok := strings.CutPrefix(line, "codex_home="); ok && filepath.IsAbs(home) {
+			report.CodexHome = filepath.Clean(home)
+		} else if line != "" && featureName.MatchString(line) {
+			report.Features[line] = true
 		}
 	}
-	return features, nil
+	return report, nil
+}
+
+// DockerFeatures is the feature-only view used by ordinary preflight.
+func DockerFeatures(ctx context.Context, command string, args []string, dir string, env []string) (map[string]bool, error) {
+	report, err := DockerProbe(ctx, command, args, dir, env)
+	return report.Features, err
 }
 
 var featureName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)

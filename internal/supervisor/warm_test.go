@@ -970,14 +970,34 @@ func TestNativeCodexWarmStampsTheLinkedAuthFile(t *testing.T) {
 
 func TestMultiWarmAuthPathFollowsTheImplementation(t *testing.T) {
 	hostHome := t.TempDir()
+	reportedHome := t.TempDir()
 	t.Setenv("CODEX_HOME", hostHome)
 	link := filepath.Join(t.TempDir(), "auth.json")
 	native := codex.New(t.TempDir())
 	native.AuthPath = link
 	c := &Client{Adapter: adapter.NewMulti(native, codex.NewDocker())}
-	dockerSpec := adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex", LauncherID: "l1"}, LauncherContainerized: true}
-	if got, want := c.warmCodexAuthPath(dockerSpec), filepath.Join(hostHome, "auth.json"); got != want {
+	dockerSpec := adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "codex", LauncherID: "l1"}, LauncherContainerized: true, LauncherCodexHome: reportedHome}
+	if got, want := c.warmCodexAuthPath(dockerSpec), filepath.Join(reportedHome, "auth.json"); got != want {
 		t.Fatalf("Docker launcher auth path = %q, want the shared host file %q", got, want)
+	}
+	if err := os.WriteFile(filepath.Join(reportedHome, "auth.json"), []byte(`{"tokens":{"account_id":"reported","access_token":"token"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if stamp, ok := warmCredentials(dockerSpec, true, c.warmCodexAuthPath(dockerSpec)); !ok || !strings.Contains(stamp, reportedHome) {
+		t.Fatalf("Docker stamp used another home: %q %t", stamp, ok)
+	}
+	dockerSpec.LauncherCodexHome = ""
+	if err := os.WriteFile(filepath.Join(hostHome, "auth.json"), []byte(`{"tokens":{"account_id":"wrong","access_token":"token"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.warmCodexAuthPath(dockerSpec); got != "" {
+		t.Fatalf("Docker launcher without a reported home used %q", got)
+	}
+	if _, ok := warmCredentials(dockerSpec, true, c.warmCodexAuthPath(dockerSpec)); ok {
+		t.Fatal("Docker launcher without a reported home was allowed warm")
+	}
+	if account := warmAccount(dockerSpec, c.warmCodexAuthPath(dockerSpec)); account != "" {
+		t.Fatalf("Docker launcher without a reported home read host account %q", account)
 	}
 	// A tool whose adapter has no WarmAuthPath answers "" and the supervisor falls back to the launcher's own file.
 	if got := adapter.NewMulti(native).WarmAuthPath(adapter.TurnSpec{Agent: adapter.AgentSpec{Tool: "claude"}}); got != "" {

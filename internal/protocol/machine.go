@@ -345,10 +345,13 @@ type LauncherRow struct {
 	Available         bool   `json:"available"`
 	UnavailableReason string `json:"unavailable_reason,omitempty"`
 	// Features is what a Docker launcher says it can do (its HARNESS_DOCKER_PRINT_FEATURES answer), asked once when the launcher is
-	// inspected and only for a tool that depends on one. FeatureProblem says why that answer cannot be used: the probe failed, or the
-	// launcher is too old for the tool. It does not make the launcher unavailable; the turn's own preflight still refuses it.
+	// inspected and only for a tool that depends on one. FeatureProblem describes a failed probe, a missing required feature, or a
+	// missing Codex home that disables warm mode. It does not make the launcher unavailable; a turn's preflight checks required features.
 	Features       []string `json:"features,omitempty"`
 	FeatureProblem string   `json:"feature_problem,omitempty"`
+	// CodexHome is kept on the supervisor only; it comes from the launcher's
+	// feature probe and identifies the running container's credential mount.
+	CodexHome string `json:"-"`
 	// VersionProblem says why Version is empty for a launcher that runs in a container: there was no folder to ask it from, it said so itself
 	// (a folder it does not mount, the container stopped), or it did not answer in time. Empty when the version is known.
 	VersionProblem string `json:"version_problem,omitempty"`

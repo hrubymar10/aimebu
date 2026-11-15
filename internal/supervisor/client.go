@@ -50,6 +50,7 @@ type Client struct {
 	harnessProbeDir         string
 	harnessProbeMore        []string
 	launcherReprobeInterval time.Duration
+	codexHomeRetries        map[string]codexHomeRetry
 	reprobeRunning          bool
 	reprobeDone             chan struct{}
 	// ConfigDir is the machine's aimebu config root; model detection uses a private detect/run-* folder unless the request names a folder.
@@ -590,12 +591,13 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				if row, err := inspectLauncher(*frame.LauncherDefinition, first, more...); err != nil {
 					result.Code, result.Message = "invalid_launcher", err.Error()
 				} else {
+					row = c.launcherRowForReport(row)
 					result.Launcher = &row
 				}
 			} else if err := c.setLauncher(*frame.LauncherDefinition); err != nil {
 				result.Code, result.Message = "invalid_launcher", err.Error()
 			} else {
-				row := c.launcherRow(frame.LauncherDefinition.ID)
+				row := c.launcherRowForReport(c.launcherRow(frame.LauncherDefinition.ID))
 				result.Launcher = &row
 				c.refreshCapabilities()
 			}
@@ -906,6 +908,12 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		spec.LauncherArgs = append([]string(nil), row.Args...)
 		spec.LauncherEnvRefs = row.EnvRefs
 		spec.LauncherContainerized = row.Containerized
+		if row.Containerized && delivery.Agent.Tool == "codex" {
+			spec.LauncherCodexHome = row.CodexHome
+			if delivery.Mode == adapter.ModeNormal && !delivery.ForkSession {
+				c.maybeReprobeCodexHome(row)
+			}
+		}
 		if visible != delivery.CheckoutPath {
 			spec.VisibleCheckoutPath = visible
 		}

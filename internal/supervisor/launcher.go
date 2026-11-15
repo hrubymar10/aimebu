@@ -101,9 +101,10 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string, more ...s
 	} else {
 		row.VersionProblem = "no project folder is set on this machine yet, and a container launcher can only be asked from a folder it mounts"
 	}
-	// The feature probe exits before it touches Docker, so it needs no folder the container mounts: without a project folder it runs in a fresh
-	// empty one of ours. A launcher too old to know the probe would run the harness there, and dies first on "not mounted" (the folder is not).
-	// The hello loop must not wait on every launcher, so the answer is asked once, from the first folder.
+	// The feature probe needs no mounted project folder: without one it runs in
+	// a fresh empty folder of ours. Codex's probe does ask the Docker daemon for
+	// its actual home, with a separate deadline. Other probes return promptly.
+	// A launcher too old to know the probe dies on its mount check there.
 	if def.Containerized && (adapter.DockerNeedsForwardEnv(def.Tool) || def.Tool == "claude") {
 		probeLauncherFeatures(&row, def, path, checkout)
 	}
@@ -304,9 +305,19 @@ func (c *Client) reprobeUnknownLaunchers(ctx context.Context, timedOutOnly bool)
 	}
 }
 
-// probeLauncherFeatures asks a Docker launcher for its features (the probe exits before it touches Docker) and records them, or why they cannot be used, on the row. Doctor and Settings read them from there instead of probing again.
+// probeLauncherFeatures asks once per launcher row and records features and
+// Codex's home, or why the answer is unavailable. Doctor and Settings read
+// that row instead of probing on every turn.
 func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefinition, path, checkout string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	timeout := 3 * time.Second
+	if def.Tool == "codex" {
+		timeout = 10 * time.Second // Codex's probe waits for the Docker daemon.
+	}
+	probeLauncherFeaturesWithTimeout(row, def, path, checkout, timeout)
+}
+
+func probeLauncherFeaturesWithTimeout(row *protocol.LauncherRow, def protocol.LauncherDefinition, path, checkout string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	private := checkout == ""
 	if private {
@@ -318,7 +329,7 @@ func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefin
 		defer os.RemoveAll(empty)
 		checkout = empty
 	}
-	features, err := adapter.DockerFeatures(ctx, path, def.Args, checkout, launcherEnvironment(def.EnvRefs, def.Tool))
+	report, err := adapter.DockerProbe(ctx, path, def.Args, checkout, launcherEnvironment(def.EnvRefs, def.Tool))
 	if err != nil {
 		if !adapter.DockerNeedsForwardEnv(def.Tool) {
 			return // the tool needs no feature: an answer that cannot be read only means none is known
@@ -332,14 +343,17 @@ func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefin
 		row.FeatureProblem = "the launcher's feature probe failed: " + err.Error()
 		return
 	}
-	for feature := range features {
+	row.CodexHome = report.CodexHome
+	for feature := range report.Features {
 		row.Features = append(row.Features, feature)
 	}
 	sort.Strings(row.Features)
 	// A tool that is handed a variable by name (the agent's key, or its configuration) needs forward_env; Claude asks for the features as well to know
 	// whether its sessions are shared with the host.
-	if adapter.DockerNeedsForwardEnv(def.Tool) && !features[adapter.FeatureForwardEnv] {
+	if adapter.DockerNeedsForwardEnv(def.Tool) && !report.Features[adapter.FeatureForwardEnv] {
 		row.FeatureProblem = "launcher too old: it does not forward environment variables, which " + def.Tool + " needs (update harness-docker)"
+	} else if def.Tool == "codex" && report.CodexHome == "" {
+		row.FeatureProblem = codexHomeMissingProblem
 	}
 }
 
@@ -447,6 +461,13 @@ func (c *Client) setLauncher(def protocol.LauncherDefinition) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.codexHomeRetries == nil {
+		c.codexHomeRetries = make(map[string]codexHomeRetry)
+	}
+	retry := c.codexHomeRetries[def.ID]
+	retry.generation++
+	retry.next = time.Time{}
+	c.codexHomeRetries[def.ID] = retry
 	for i := range c.Launchers {
 		if c.Launchers[i].ID == def.ID {
 			c.Launchers[i] = row
@@ -455,6 +476,70 @@ func (c *Client) setLauncher(def protocol.LauncherDefinition) error {
 	}
 	c.Launchers = append(c.Launchers, row)
 	return nil
+}
+
+const codexHomeRetryInterval = 2 * time.Minute
+const codexHomeMissingProblem = "Codex warm: the launcher has not reported codex_home; the container may not be running yet or harness-docker may be too old"
+
+type codexHomeRetry struct {
+	next       time.Time
+	generation uint64
+}
+
+// A missing Docker home may mean the container was stopped at hello. A turn
+// stays cold while a bounded background probe refreshes the launcher's row.
+func (c *Client) maybeReprobeCodexHome(row protocol.LauncherRow) {
+	if row.Tool != "codex" || !row.Containerized || row.CodexHome != "" || row.ResolvedCommand == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.Warm.Idle <= 0 || !c.codexWarmEnabled {
+		c.mu.Unlock()
+		return
+	}
+	if c.codexHomeRetries == nil {
+		c.codexHomeRetries = make(map[string]codexHomeRetry)
+	}
+	retry := c.codexHomeRetries[row.ID]
+	if time.Now().Before(retry.next) {
+		c.mu.Unlock()
+		return
+	}
+	retry.next = time.Now().Add(codexHomeRetryInterval)
+	c.codexHomeRetries[row.ID] = retry
+	checkout := c.harnessProbeDir
+	c.mu.Unlock()
+
+	go func() {
+		fresh := protocol.LauncherRow{LauncherDefinition: row.LauncherDefinition}
+		probeLauncherFeatures(&fresh, row.LauncherDefinition, row.ResolvedCommand, checkout)
+		if fresh.CodexHome == "" {
+			return
+		}
+		c.mu.Lock()
+		if c.codexHomeRetries[row.ID].generation != retry.generation {
+			c.mu.Unlock()
+			return
+		}
+		updated := false
+		for i := range c.Launchers {
+			current := &c.Launchers[i]
+			if current.ID == row.ID && current.CodexHome == "" && current.ResolvedCommand == row.ResolvedCommand && reflect.DeepEqual(current.LauncherDefinition, row.LauncherDefinition) {
+				current.CodexHome = fresh.CodexHome
+				current.Features = fresh.Features
+				current.FeatureProblem = fresh.FeatureProblem
+				updated = true
+				break
+			}
+		}
+		c.mu.Unlock()
+		if updated {
+			c.refreshCapabilities()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus, Launchers: c.launcherRows(), Capabilities: c.capabilityReportsSnapshot()})
+		}
+	}()
 }
 
 func (c *Client) launcherRow(id string) protocol.LauncherRow {
@@ -471,5 +556,30 @@ func (c *Client) launcherRow(id string) protocol.LauncherRow {
 func (c *Client) launcherRows() []protocol.LauncherRow {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]protocol.LauncherRow(nil), c.Launchers...)
+	rows := append([]protocol.LauncherRow(nil), c.Launchers...)
+	for i := range rows {
+		rows[i] = c.launcherRowForReportLocked(rows[i])
+	}
+	return rows
+}
+
+// The missing home matters only while Codex warm mode is active. Keep the
+// raw probe result in the cache so a later opt-in can expose the limitation.
+func (c *Client) launcherRowForReport(row protocol.LauncherRow) protocol.LauncherRow {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.launcherRowForReportLocked(row)
+}
+
+func (c *Client) launcherRowForReportLocked(row protocol.LauncherRow) protocol.LauncherRow {
+	if row.FeatureProblem == codexHomeMissingProblem && (!c.codexWarmEnabled || c.Warm.Idle <= 0) {
+		row.FeatureProblem = ""
+	}
+	return row
+}
+
+func (c *Client) reportLauncherStatus() {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus, Launchers: c.launcherRows(), Capabilities: c.capabilityReportsSnapshot()})
 }

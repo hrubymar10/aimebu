@@ -78,6 +78,7 @@ func TestLiveMachineChecks(t *testing.T) {
 			{ID: "l3", Tool: "claude", Name: "native", Enabled: true, Reported: true, Available: false, UnavailableReason: "command not found on this machine"},
 			{ID: "l4", Tool: "pi", Name: "native", Enabled: true},
 			{ID: "l5", Tool: "codex", Name: "native"}, // disabled: not judged
+			{ID: "l6", Tool: "codex", Name: "docker", Enabled: true, Reported: true, Available: true, FeatureProblem: "Codex warm: the launcher has not reported codex_home"},
 		}},
 		{ID: "m2", Name: "old", Approved: true, Connected: true, Supports: supports("supports_worktree", "supports_stop_replay")},
 		{ID: "m3", Name: "away", Approved: true},
@@ -93,6 +94,7 @@ func TestLiveMachineChecks(t *testing.T) {
 		"launcher vibe/docker on current":       statusWarn,
 		"launcher claude/native on current":     statusWarn,
 		"launcher pi/native on current":         statusWarn,
+		"launcher codex/docker on current":      statusWarn,
 		"machine old":                           statusWarn,
 		"machine away":                          statusOK,
 	}
@@ -110,6 +112,9 @@ func TestLiveMachineChecks(t *testing.T) {
 	}
 	if got := byName["launcher claude/native on current"]; !strings.Contains(got.Description, "command not found") {
 		t.Errorf("unavailable launcher: %+v", got)
+	}
+	if got := byName["launcher codex/docker on current"]; !strings.Contains(got.Hint, "Start the container") || !strings.Contains(got.Hint, "update harness-docker") {
+		t.Errorf("missing Codex home hint: %+v", got)
 	}
 	// With nothing connected no agent can run.
 	none := liveMachineChecks(protocol.DoctorLive{Machines: []protocol.DoctorMachine{{ID: "m", Name: "x", Approved: true}}})

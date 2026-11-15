@@ -189,8 +189,10 @@ which of the machine's folders that is; when none is mounted the row says so onc
 folder's text). The harnesses found on the machine ("Found on this machine" in the wizard and in
 Settings → Harnesses) get their container versions the same way, within a shared 20 second budget;
 without a project folder the entry says why instead of showing nothing. A container launcher's
-features (`claude_home_shared`, `forward_env`) are asked with `HARNESS_DOCKER_PRINT_FEATURES=1`,
-which exits before it touches Docker, so they need no project folder: without one the probe runs in
+features (`claude_home_shared`, `forward_env`, and Codex's `codex_home_shared`)
+are asked with `HARNESS_DOCKER_PRINT_FEATURES=1`. The Codex probe asks the
+Docker daemon for the container home; the others exit before they touch Docker.
+They need no project folder: without one the probe runs in
 a fresh empty folder of the supervisor's (a launcher too old to know the probe checks the mount
 first, fails there, and is reported as too old). When it cannot be answered the launcher row carries a
 `version_problem` instead of a bare "unknown": the missing folder, what the launcher said on stderr,
@@ -614,11 +616,22 @@ agents are warm and what the processes use (`warm` on the machine row). The memo
 harness container is shared by all agents and Docker reports no finer, so it is labelled container memory,
 all containers.
 
-A Codex warm process is stamped with the host `auth.json` size, modification
+A Codex warm process is stamped with the `auth.json` size, modification
 time, and content hash. A different stamp retires it before another turn. Docker
-Codex needs `codex_home_shared` and `stop_on_signal` from harness-docker; an
-older launcher stays cold. A stamp changed during a turn is accepted only when
-the file still names the same account. Codex app-server may request external
+Codex needs `codex_home_shared` and `stop_on_signal` from harness-docker, and
+the launcher's cached feature probe must report the running container's
+absolute `codex_home=` path. The Codex probe has its own 10-second deadline;
+missing, failed, or timed-out answers keep warm mode off for that launcher.
+When warm mode is on and the probe answers without `codex_home=`, Settings
+and Doctor show that the container may be stopped or the launcher may be too
+old; the feature output cannot tell which case applies. The warning clears when a
+later probe reports the home.
+When a normal Codex Docker turn wants warm mode but the cached home is missing,
+the supervisor starts a background reprobe at most once every two minutes per
+launcher. That turn runs cold; if the probe finds the home, the next turn can
+run warm. Replacing the launcher also refreshes the cached answer. A stamp
+changed during a turn is accepted only when the file still names the same
+account. Codex app-server may request external
 auth tokens on a 401; aimebu does not refresh a token there. It rereads the
 live token-only target and responds only with a newer access token for the
 process's original account, otherwise the turn fails and the process ends.
