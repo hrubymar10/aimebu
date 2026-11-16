@@ -180,10 +180,11 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			DockerOnly       *bool `json:"docker_only"`
-			WarmIdleMinutes  *int  `json:"warm_idle_minutes"`
-			CodexWarmEnabled *bool `json:"codex_warm_enabled"`
-			KeepAlive        *struct {
+			DockerOnly            *bool `json:"docker_only"`
+			ReviewerAgentsEnabled *bool `json:"reviewer_agents_enabled"`
+			WarmIdleMinutes       *int  `json:"warm_idle_minutes"`
+			CodexWarmEnabled      *bool `json:"codex_warm_enabled"`
+			KeepAlive             *struct {
 				Enabled       *bool `json:"enabled"`
 				ClaudeMinutes *int  `json:"claude_minutes"`
 				CodexMinutes  *int  `json:"codex_minutes"`
@@ -193,8 +194,8 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		if !readJSON(w, r, &body) {
 			return
 		}
-		if body.DockerOnly == nil && body.WarmIdleMinutes == nil && body.CodexWarmEnabled == nil && body.KeepAlive == nil {
-			apiError(w, 400, "invalid_request", "docker_only, warm_idle_minutes, codex_warm_enabled or keep_alive is required")
+		if body.DockerOnly == nil && body.ReviewerAgentsEnabled == nil && body.WarmIdleMinutes == nil && body.CodexWarmEnabled == nil && body.KeepAlive == nil {
+			apiError(w, 400, "invalid_request", "docker_only, reviewer_agents_enabled, warm_idle_minutes, codex_warm_enabled or keep_alive is required")
 			return
 		}
 		if body.KeepAlive != nil {
@@ -232,6 +233,16 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 				value = "1"
 			}
 			if err := s.Store.SetGlobalSettingValue(r.Context(), agentsDockerOnlyKey, value); err != nil {
+				fail(w, err)
+				return
+			}
+		}
+		if body.ReviewerAgentsEnabled != nil {
+			value := "0"
+			if *body.ReviewerAgentsEnabled {
+				value = "1"
+			}
+			if err := s.Store.SetGlobalSettingValue(r.Context(), store.ReviewerAgentsGlobalKey, value); err != nil {
 				fail(w, err)
 				return
 			}
@@ -283,6 +294,11 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	reviewers, _, err := s.Store.GlobalSettingValue(r.Context(), store.ReviewerAgentsGlobalKey)
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	canEdit, err := s.Store.IsGlobalAdmin(r.Context(), userID(r))
 	if err != nil {
 		fail(w, err)
@@ -308,5 +324,5 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"docker_only": on, "can_edit": canEdit, "warm_idle_minutes": warm / 60, "warm_idle_saved": warmSaved, "can_edit_warm": canEditWarm, "codex_warm_enabled": s.codexWarmOn.Load(), "keep_alive": keep})
+	writeJSON(w, 200, map[string]any{"reviewer_agents_enabled": reviewers != "0", "docker_only": on, "can_edit": canEdit, "warm_idle_minutes": warm / 60, "warm_idle_saved": warmSaved, "can_edit_warm": canEditWarm, "codex_warm_enabled": s.codexWarmOn.Load(), "keep_alive": keep})
 }

@@ -153,7 +153,8 @@ func (s *Store) PreviewTeamFlowMigration(ctx context.Context, projectID, actorID
 			return fmt.Errorf("%w: use the team-flow route for custom", ErrTeamFlowMigration)
 		}
 		if in.Settings.WorktreeMode != nil && *in.Settings.WorktreeMode != "auto" && *in.Settings.WorktreeMode != "off" ||
-			in.Settings.MaxLiveAgents != nil && (*in.Settings.MaxLiveAgents < 1 || *in.Settings.MaxLiveAgents > 100) {
+			in.Settings.MaxLiveAgents != nil && (*in.Settings.MaxLiveAgents < 1 || *in.Settings.MaxLiveAgents > 100) ||
+			in.Settings.ReviewerAgents != nil && !validReviewerOverride(*in.Settings.ReviewerAgents) {
 			return ErrTeamFlowMigration
 		}
 		var active bool
@@ -467,7 +468,8 @@ func (tx *Tx) BeginTeamFlowMigration(projectID, actorID string, in TeamFlowMigra
 		return out, ErrTeamFlowMigration
 	}
 	if in.Settings.WorktreeMode != nil && *in.Settings.WorktreeMode != "auto" && *in.Settings.WorktreeMode != "off" ||
-		in.Settings.MaxLiveAgents != nil && (*in.Settings.MaxLiveAgents < 1 || *in.Settings.MaxLiveAgents > 100) {
+		in.Settings.MaxLiveAgents != nil && (*in.Settings.MaxLiveAgents < 1 || *in.Settings.MaxLiveAgents > 100) ||
+		in.Settings.ReviewerAgents != nil && !validReviewerOverride(*in.Settings.ReviewerAgents) {
 		return out, ErrTeamFlowMigration
 	}
 	for role, config := range in.RoleDefaults {
@@ -1027,15 +1029,23 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 	if err != nil {
 		return nil, err
 	}
+	reviewersEnabled, err := tx.projectReviewerEnabled(projectID)
+	if err != nil {
+		return nil, err
+	}
 	for _, a := range items {
 		switch a.action {
 		case "notice":
+			staffingRole, err := tx.roleLineageContains(a.role, "leader", "dispatcher")
+			if err != nil {
+				return nil, err
+			}
 			roomID, err := tx.flowMigrationNoticeRoom(projectID, a.agentID)
 			if err != nil {
 				return nil, err
 			}
 			if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system",
-				Body: flowMigrationNotice(fromKey, toKey, a.role), OnlyTargets: []string{a.agentID}}); err != nil {
+				Body: flowMigrationNotice(fromKey, toKey, a.role, reviewersEnabled, staffingRole), OnlyTargets: []string{a.agentID}}); err != nil {
 				return nil, err
 			}
 			if _, err := tx.Exec(`UPDATE team_flow_migration_agent SET state='done' WHERE migration_id=? AND agent_id=?`, id, a.agentID); err != nil {
@@ -1203,7 +1213,7 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 	return controls, nil
 }
 
-func flowMigrationNotice(fromKey, toKey, role string) string {
+func flowMigrationNotice(fromKey, toKey, role string, reviewersEnabled, staffingRole bool) string {
 	assignment := "Report to the leader. Use general and your task rooms."
 	switch {
 	case role == "leader" && toKey == "leader-dispatcher":
@@ -1225,6 +1235,10 @@ func flowMigrationNotice(fromKey, toKey, role string) string {
 		if rules == "" && strings.HasSuffix(role, "-reviewer") {
 			rules = template.RoleTextOverrides["reviewer"]
 		}
+	}
+	if !reviewersEnabled && staffingRole {
+		assignment = withoutReviewerStaffing(assignment)
+		rules = withoutReviewerStaffing(rules)
 	}
 	notice := fmt.Sprintf("The team flow changed from %s to %s for your %s role. %s", fromKey, toKey, role, assignment)
 	if rules != "" {

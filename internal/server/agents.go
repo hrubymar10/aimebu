@@ -1320,6 +1320,8 @@ func (s *Server) enqueuePendingSpawns(ctx context.Context, machine *machineConn)
 
 func spawnError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrReviewerAgentsDisabled):
+		apiError(w, 409, "reviewer_agents_disabled", "Reviewer agents are disabled for this project")
 	case errors.Is(err, store.ErrTeamFlowRule):
 		apiError(w, 409, "team_flow_rule", "this team flow does not allow that role to be spawned here by this actor")
 	case errors.Is(err, store.ErrProjectArchived):

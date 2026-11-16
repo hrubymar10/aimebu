@@ -212,7 +212,7 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general > div')].map(div => `${div.id}:${div.querySelector('h3').textContent}`)),
         ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'agent-isolation:Agents', 'prompt-cache:Prompt cache', 'settings-backup:Settings backup']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general .settings-row')].filter(row => !row.hidden).map(row => (row.querySelector('input, select, button')).id)),
-        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
+        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
       await page.close();
     }
     // The chat switches show what this person has and change the page at once: the bell and the debug button follow them.
@@ -302,6 +302,20 @@ async function main() {
       await viewer.waitForFunction(() => document.querySelector('#agent-docker-only').checked);
       assert.deepEqual(await viewer.evaluate(() => [document.querySelector('#agent-docker-only').disabled, document.querySelector('#agent-isolation [role=status]').textContent]), [true, 'Only the owner or an admin can change this.']);
       await viewer.close();
+    }
+    // Reviewer agents default on; an admin can turn new reviewer spawning off for projects that inherit it.
+    {
+      const page = await mount({}, { auto: { 'GET /api/agent-isolation': { reviewer_agents_enabled: true, can_edit: true } } });
+      await page.evaluate(() => window.__general.open());
+      await page.waitForFunction(() => !document.querySelector('#agent-reviewer-enabled').disabled);
+      assert.equal(await page.$eval('#agent-reviewer-enabled', el => el.checked), true);
+      await page.$eval('#agent-reviewer-enabled', el => el.click());
+      await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/agent-isolation' && !request.answered));
+      const put = await page.evaluate(() => window.__requests.findLastIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { reviewer_agents_enabled: false });
+      await page.evaluate(index => window.__answer(index, 200, { reviewer_agents_enabled: false, can_edit: true }), put);
+      await page.waitForFunction(() => !document.querySelector('#agent-reviewer-enabled').checked && !document.querySelector('#agent-reviewer-enabled').disabled);
+      await page.close();
     }
     // Settings backup: who sees it, export, and the two-step import with the order of answers chosen.
     {

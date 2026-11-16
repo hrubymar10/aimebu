@@ -28,6 +28,7 @@ export class ProjectStore {
     this.detailsStatus = signal('');
     this.detailsBusy = signal(false);
     this.flags = { autoResume: signal({ checked: false, disabled: true }), worktrees: signal({ checked: false, disabled: true }), homeLeadOnly: signal({ checked: false, disabled: true }) };
+    this.reviewerAgents = signal({ value: 'inherit', global: true, enabled: true, disabled: true });
     this.lifecycleBusy = signal('');
     this.lifecycleTurn = 0;
     this.lifecycleNote = signal('');
@@ -64,6 +65,7 @@ export class ProjectStore {
     batch(() => {
       this.projectID.value = id || ''; this.revision.value++; this.error.value = ''; this.lifecycleBusy.value = ''; this.lifecycleTurn++;
       for (const flag of Object.values(this.flags)) flag.value = { checked: false, disabled: true };
+      this.reviewerAgents.value = { value: 'inherit', global: true, enabled: true, disabled: true };
     });
     this.refreshDetails(id);
     this.scope.load(id); this.limit.load(id); this.usage.load(id); this.flow.load(id);
@@ -72,6 +74,7 @@ export class ProjectStore {
       const settings = await this.source.get(id);
       if (!this.alive || generation !== this.generation) return;
       for (const name of Object.keys(this.flags)) this.flags[name].value = { checked: flagValue(name, settings), disabled: false };
+      this.reviewerAgents.value = { value: settings.reviewer_agents || 'inherit', global: settings.reviewer_agents_global_enabled !== false, enabled: settings.reviewer_agents_enabled !== false, disabled: false };
     } catch (failure) { if (this.alive && generation === this.generation) this.error.value = failure.message; }
   }
 
@@ -103,6 +106,17 @@ export class ProjectStore {
       if (this.alive && generation === this.generation) this.flags[name].value = { checked, disabled: false };
     } catch (failure) {
       if (this.alive && generation === this.generation) batch(() => { this.flags[name].value = { checked: !checked, disabled: false }; this.error.value = failure.message; });
+    }
+  }
+
+  async saveReviewerAgents(value) {
+    const id = this.projectID.peek(), generation = this.generation, previous = this.reviewerAgents.peek();
+    this.reviewerAgents.value = { ...previous, value, disabled: true };
+    try {
+      const settings = await this.source.update(id, { reviewer_agents: value });
+      if (this.alive && generation === this.generation) this.reviewerAgents.value = { value: settings.reviewer_agents ?? value, global: settings.reviewer_agents_global_enabled ?? previous.global, enabled: settings.reviewer_agents_enabled ?? (value === 'on' || (value === 'inherit' && previous.global)), disabled: false };
+    } catch (failure) {
+      if (this.alive && generation === this.generation) { this.reviewerAgents.value = previous; this.error.value = failure.message; }
     }
   }
 

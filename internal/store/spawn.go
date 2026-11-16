@@ -172,6 +172,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if err := tx.authorizeSpawnActor(projectID, actorKind, in.ActorID, true); err != nil {
 		return AgentCard{}, err
 	}
+	if disabled, err := tx.reviewerSpawnDisabled(projectID, in.RoleKey); err != nil {
+		return AgentCard{}, err
+	} else if disabled {
+		return AgentCard{}, ErrReviewerAgentsDisabled
+	}
 	var flowKey string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key FROM project WHERE id=?`, projectID).Scan(&flowKey); err != nil {
 		return AgentCard{}, err

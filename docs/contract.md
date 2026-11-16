@@ -171,6 +171,13 @@ Projects, rooms, people
   `advisor-v1` style key, and roles extending it follow the renamed key.
   Migration 113 adds a durable team-flow migration and per-agent progress;
   migration 114 adds the consecutive drain-error counter.
+  Migration 115 adds `settings_project.reviewer_agents` with the existing-data
+  default `inherit`. The global `reviewer_agents_enabled` value defaults on.
+  Project `on` and `off` override it. When the effective value is off,
+  `SpawnAgent` and `set_role` refuse reviewer and every role whose `extends`
+  chain reaches reviewer with 409 `reviewer_agents_disabled`; running
+  reviewers continue. Leader and dispatcher delivery text and flow-change
+  notices omit reviewer staffing instructions.
   Switching a configured flow uses the same role choices as initial setup:
   the leader is retained, workers and reviewers are retained, a missing core
   role is spawned or a stopped core agent is reactivated with its identity,
@@ -611,7 +618,9 @@ Inbox, usage, events, settings
   turn_id?, payload_json, created_at) — same transaction as the change
 - **settings_project**(project_id, max_live_agents=10, spawn_rate_per_min=6,
   auto_resume_after_clean_diagnostic=false, memory_enabled=false,
-  worktree_mode='auto', worktree_auto_since, home_lead_only=true); **cleanup_log**(id, seq, category, target, project_id,
+  worktree_mode='auto', worktree_auto_since, home_lead_only=true,
+  reviewer_agents='inherit'); **global_setting** holds reviewer_agents_enabled
+  (absent means on); **cleanup_log**(id, seq, category, target, project_id,
   reason, bytes, action, actor, created_at) (the cleanup log: what each cleanup
   removed and why; also `attachment.removed_at`, `removed_after_days`)
 - **seq_counter**(id=1, value) — internal sequence allocator, seeded in
@@ -628,7 +637,7 @@ Inbox, usage, events, settings
   read, by number, any message of any room of its own project (rooms it is not
   in and archived ones included; a private chat only as a member), for
   `referenced_messages`, `message_get`, and paginated `room_history`. Another project's messages never,
-  except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, and preserves role cardinality.
+  except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, preserves role cardinality, and refuses reviewer-lineage roles while reviewers are disabled.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
 - **room_view_preference**(user_id, room_id, hidden 0|1, notify[default|all|

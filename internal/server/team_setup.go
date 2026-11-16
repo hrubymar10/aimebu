@@ -96,7 +96,10 @@ func (s *Server) teamSetupPreview(w http.ResponseWriter, r *http.Request) {
 	if input.Settings.MaxLiveAgents != nil {
 		current.MaxLiveAgents = *input.Settings.MaxLiveAgents
 	}
-	settings := map[string]any{"worktree_mode": current.WorktreeMode, "memory_enabled": memory, "max_live_agents": current.MaxLiveAgents}
+	if input.Settings.ReviewerAgents != nil {
+		current.ReviewerAgents = *input.Settings.ReviewerAgents
+	}
+	settings := map[string]any{"worktree_mode": current.WorktreeMode, "memory_enabled": memory, "max_live_agents": current.MaxLiveAgents, "reviewer_agents": current.ReviewerAgents, "reviewer_agents_global_enabled": current.ReviewerAgentsGlobalEnabled}
 	writeJSON(w, 200, map[string]any{"flow": flow, "created_rooms": flow.CreateRooms, "conflicts": flow.Conflicts, "agents": agents, "defaults_saved": defaults, "settings": settings, "can_create": true})
 }
 

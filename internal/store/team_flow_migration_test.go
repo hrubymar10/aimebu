@@ -32,6 +32,22 @@ func flowMigrationFixture(t *testing.T, key string) (*membersFixture, TeamSetupR
 	return f, result
 }
 
+func TestFlowMigrationRejectsReviewerSettingBeforeDrain(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-workers")
+	bad := "sometimes"
+	in := TeamFlowMigrationInput{FlowKey: "leader-dispatcher", FlowRev: setup.Flow.Rev, Settings: TeamSetupSettings{ReviewerAgents: &bad}}
+	if _, err := f.s.PreviewTeamFlowMigration(t.Context(), f.project.ID, f.alice, in); !errors.Is(err, ErrTeamFlowMigration) {
+		t.Fatalf("preview: %v", err)
+	}
+	if err := f.s.Tx(t.Context(), func(tx *Tx) error { _, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, in); return err }); !errors.Is(err, ErrTeamFlowMigration) {
+		t.Fatalf("begin: %v", err)
+	}
+	var count int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM team_flow_migration WHERE project_id=?`, f.project.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("migration count=%d err=%v", count, err)
+	}
+}
+
 func TestFlowMigrationAtoBKeepsLeaderAndWorkers(t *testing.T) {
 	f, setup := flowMigrationFixture(t, "leader-workers")
 	ctx := t.Context()

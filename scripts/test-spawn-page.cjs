@@ -32,6 +32,7 @@ const catalog = { tools: [
 const machines = { machines: [{ id: 'm1', name: 'Host', is_host: true, approved: true, connected: true, project_allowed: true }, { id: 'm2', name: 'Remote', approved: true, connected: true, project_allowed: true }] };
 const roles = [{ role_key: 'worker', label: 'Worker', emoji: '🔧', cap_is_lead: false }, { role_key: 'leader', label: 'Leader', emoji: '🧭', cap_is_lead: true }];
 const stable = (extra = {}) => ({ 'GET /api/projects/p1/machine-folders': { folders: [{ machine_id: 'm2', folder: '/srv/p1' }] }, 'GET /api/machines?project_id=p1': machines, 'GET /api/roles': roles,
+  'GET /api/projects/p1/settings': { reviewer_agents_enabled: true, home_lead_only: true },
   'GET /api/projects/p1/team-flow': { key: 'custom', rev: 1, review_pending: false, template: { key: 'custom', join_rules: [] } },
   'GET /api/rooms/r1/agent-name': { name: 'nova' }, 'GET /api/spawn-catalog?machine_id=m1': catalog, 'GET /api/spawn-catalog?machine_id=m2': catalog, 'GET /api/projects/p1/role-spawn-defaults/worker/next': { available: false }, 'GET /api/projects/p1/role-spawn-defaults/leader/next': { available: false },
   'GET /api/rooms/r1/agents': [agent('a1', 'ada')], 'GET /api/rooms/r1/members': { humans: [] },
@@ -136,6 +137,14 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('#spawn-dialog').open);
     await settle(page);
     assert.equal(await count(page, 'GET', '/api/rooms/r1/agents') >= 1, true, 'the list is read again after a spawn');
+    await page.close();
+  }
+  // Disabled reviewer roles, including descendants, are absent from the Spawn choices.
+  {
+    const auto = stable({ 'GET /api/projects/p1/settings': { reviewer_agents_enabled: false }, 'GET /api/roles': [...roles, { role_key: 'reviewer', label: 'Reviewer', extends: '' }, { role_key: 'custom-review', label: 'Custom review', extends: 'reviewer' }, { role_key: 'deep-review', label: 'Deep review', extends: 'custom-review' }] });
+    const page = await mount({ auto });
+    await open(page); await ready(page);
+    assert.deepEqual((await form(page)).roles, ['🔧 Worker', '🧭 Leader']);
     await page.close();
   }
 

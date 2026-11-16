@@ -32,9 +32,10 @@ type TeamSetupRoleDefault struct {
 }
 
 type TeamSetupSettings struct {
-	WorktreeMode  *string `json:"worktree_mode,omitempty"`
-	MemoryEnabled *bool   `json:"memory_enabled,omitempty"`
-	MaxLiveAgents *int    `json:"max_live_agents,omitempty"`
+	WorktreeMode   *string `json:"worktree_mode,omitempty"`
+	MemoryEnabled  *bool   `json:"memory_enabled,omitempty"`
+	MaxLiveAgents  *int    `json:"max_live_agents,omitempty"`
+	ReviewerAgents *string `json:"reviewer_agents,omitempty"`
 }
 
 type TeamSetupInput struct {
@@ -107,6 +108,9 @@ func validateTeamSetupShape(in TeamSetupInput) error {
 	}
 	if in.Settings.MaxLiveAgents != nil && (*in.Settings.MaxLiveAgents < 1 || *in.Settings.MaxLiveAgents > 100) {
 		return fmt.Errorf("%w: max_live_agents must be 1..100", ErrTeamSetupInvalid)
+	}
+	if in.Settings.ReviewerAgents != nil && !validReviewerOverride(*in.Settings.ReviewerAgents) {
+		return fmt.Errorf("%w: reviewer_agents", ErrTeamSetupInvalid)
 	}
 	for role := range in.RoleDefaults {
 		if role != "worker" && role != "reviewer" && role != "leader" && role != "advisor" {
@@ -244,10 +248,11 @@ func (tx *Tx) CreateTeamSetup(projectID, actorID string, in TeamSetupInput) (Tea
 	var worktreeMode string
 	var memoryEnabled bool
 	var maxLiveAgents int
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT worktree_mode,memory_enabled,max_live_agents FROM settings_project WHERE project_id=?`, projectID).Scan(&worktreeMode, &memoryEnabled, &maxLiveAgents); err != nil {
+	var reviewerAgents string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT worktree_mode,memory_enabled,max_live_agents,reviewer_agents FROM settings_project WHERE project_id=?`, projectID).Scan(&worktreeMode, &memoryEnabled, &maxLiveAgents, &reviewerAgents); err != nil {
 		return out, err
 	}
-	out.Settings = map[string]any{"worktree_mode": worktreeMode, "memory_enabled": memoryEnabled, "max_live_agents": maxLiveAgents}
+	out.Settings = map[string]any{"worktree_mode": worktreeMode, "memory_enabled": memoryEnabled, "max_live_agents": maxLiveAgents, "reviewer_agents": reviewerAgents}
 	return out, nil
 }
 
@@ -276,7 +281,12 @@ func (tx *Tx) applyTeamSetupSettings(projectID, actorID string, update TeamSetup
 			return err
 		}
 	}
-	if update.WorktreeMode != nil || update.MaxLiveAgents != nil {
+	if update.ReviewerAgents != nil {
+		if _, err := tx.Exec(`UPDATE settings_project SET reviewer_agents=? WHERE project_id=?`, *update.ReviewerAgents, projectID); err != nil {
+			return err
+		}
+	}
+	if update.WorktreeMode != nil || update.MaxLiveAgents != nil || update.ReviewerAgents != nil {
 		_, err := tx.AppendEvent(Event{Kind: "project_settings_updated", ProjectID: projectID, PayloadJSON: payloadJSON(map[string]string{"actor_id": actorID})})
 		return err
 	}

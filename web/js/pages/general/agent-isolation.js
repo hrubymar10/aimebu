@@ -14,6 +14,8 @@ export function AgentIsolation() {
   const alive = useAlive();
   const [, changed] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [reviewerSaving, setReviewerSaving] = useState(false);
+  const [reviewerError, setReviewerError] = useState('');
   const [error, setError] = useState('');
   const [warmError, setWarmError] = useState('');
   const [warmSaving, setWarmSaving] = useState(false);
@@ -29,6 +31,12 @@ export function AgentIsolation() {
     setError('');
     setSaving(true);
     try { await agentIsolation.save(checked); } catch (failure) { if (alive()) setError(failure.message || 'Could not save'); } finally { writing.current = false; if (alive()) { setSaving(false); changed(count => count + 1); } }
+  };
+  const changeReviewers = async checked => {
+    if (writing.current) return;
+    writing.current = true; setReviewerError(''); setReviewerSaving(true);
+    try { await agentIsolation.saveReviewerAgents(checked); } catch (failure) { if (alive()) setReviewerError(failure.message || 'Could not save'); }
+    finally { writing.current = false; if (alive()) { setReviewerSaving(false); changed(count => count + 1); } }
   };
   const saveWarm = async () => {
     if (warmDraft === null || writing.current) return;
@@ -50,6 +58,9 @@ export function AgentIsolation() {
   return html`
     <h3>Agents</h3>
     <${SettingsGroup} label="Agents">
+      <${SettingsRow} label="Reviewer agents" desc="Allow new reviewer agents by default. A project can override this setting. Existing reviewers keep running." id="agent-reviewer-enabled" className="settings-row-toggle">
+        <input type="checkbox" checked=${agentIsolation.reviewerAgentsEnabled} disabled=${!canEdit || reviewerSaving} onChange=${event => changeReviewers(event.currentTarget.checked)} />
+      <//>
       <${SettingsRow} label="Only run agents in docker" desc=${DESC} id="agent-docker-only" className="settings-row-toggle">
         <input type="checkbox" checked=${agentIsolation.dockerOnly} disabled=${!canEdit || saving} onChange=${event => change(event.currentTarget.checked)} />
       <//>
@@ -65,6 +76,7 @@ export function AgentIsolation() {
     <//>
     <p class="settings-intro" role="status">${canEdit ? '' : READ_ONLY}</p>
     <p id="agent-docker-only-error" class="error" role="alert">${error}</p>
+    <p id="agent-reviewer-error" class="error" role="alert">${reviewerError}</p>
     <p class="settings-intro" role="note" hidden=${agentIsolation.canEditWarm}>${WARM_OWNER_ONLY}</p>
     <p id="agent-warm-idle-error" class="error" role="alert">${warmError}</p>
     <p id="agent-codex-warm-error" class="error" role="alert">${codexError}</p>

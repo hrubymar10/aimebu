@@ -159,6 +159,11 @@ func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (A
 	if newRoleID == oldRoleID {
 		return tx.agentCardByID(agentID)
 	}
+	if disabled, err := tx.reviewerSpawnDisabled(projectID, roleKey); err != nil {
+		return AgentCard{}, err
+	} else if disabled {
+		return AgentCard{}, ErrReviewerAgentsDisabled
+	}
 	var flowKey string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key FROM project WHERE id=?`, projectID).Scan(&flowKey); err != nil {
 		return AgentCard{}, err

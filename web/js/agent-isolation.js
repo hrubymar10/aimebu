@@ -3,6 +3,7 @@ import { request } from './api.js';
 // "Only run agents in docker": an instance setting. It is read from the server for any signed-in person and written by an admin.
 export const agentIsolation = {
   dockerOnly: false,
+  reviewerAgentsEnabled: true,
   canEdit: false,
   warmIdleMinutes: 5, // how long agents are kept warm after a turn (5 until the owner saves another, 0 is off); only the owner changes it
   canEditWarm: false,
@@ -15,6 +16,7 @@ export const agentIsolation = {
   },
   apply(body) {
     this.dockerOnly = !!body?.docker_only;
+    this.reviewerAgentsEnabled = body?.reviewer_agents_enabled !== false;
     this.canEdit = !!body?.can_edit;
     if (typeof body?.warm_idle_minutes === 'number' && Number.isFinite(body.warm_idle_minutes)) this.warmIdleMinutes = body.warm_idle_minutes; // a server that says none leaves the default
     this.canEditWarm = !!body?.can_edit_warm;
@@ -24,6 +26,11 @@ export const agentIsolation = {
   },
   async save(dockerOnly) {
     const body = await request('/api/agent-isolation', { method: 'PUT', body: { docker_only: !!dockerOnly } });
+    this.apply(body);
+    return body;
+  },
+  async saveReviewerAgents(enabled) {
+    const body = await request('/api/agent-isolation', { method: 'PUT', body: { reviewer_agents_enabled: !!enabled } });
     this.apply(body);
     return body;
   },

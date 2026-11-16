@@ -276,7 +276,7 @@ worker positions; C also draws the advisor under the leader with a dashed
 "consults" edge); the diagram opens at full size. Rooms to create appear in
 the change preview. Choosing A, B, or C starts a wizard for the leader's
 machine, harness, and model, a dispatcher for B or an advisor for C, worker
-and reviewer defaults, and project settings. The Advisor step asks for a
+and reviewer defaults when enabled, and project settings. The Advisor step asks for a
 stronger model than the leader's; both steps preselect the role's saved
 default, else the harness default. A summary previews
 the changes; **Create team** applies them and starts the leader (and B's
@@ -290,6 +290,12 @@ enables it without a reload, and the room's messages return when setup closes.
 If the flow list fails to load, the composer remains usable and the card offers Retry.
 Each card also says when its flow fits, and a disabled "Leader, advisor and
 dispatcher" card (coming later) sits before Custom, which is always last.
+Settings → General → Agents has an instance-wide **Reviewer agents** switch,
+on by default. Initial team setup and Project settings offer Inherit, On,
+and Off per project. When off, new reviewer agents and roles extending
+reviewer cannot be spawned or assigned to another agent; existing reviewers
+keep running. The setup wizard and Spawn dialog omit reviewer choices while
+the effective setting is off.
 Project settings → Team flow shows the current flow and a **Change team flow**
 button that opens the same wizard the home room uses. For a project that
 already has a flow the wizard is a migration: the leader is the only constant,

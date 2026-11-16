@@ -21,6 +21,7 @@ export class MockAgentSource {
   async roles() { return [{ id: 'role_worker', role_key: 'worker', label: 'Worker' }, { id: 'role_reviewer', role_key: 'reviewer', label: 'Reviewer' }, { id: 'role_leader', role_key: 'leader', label: 'Leader', cap_is_lead: true }]; }
   // The mock projects keep today's behaviour: every role may be spawned into the home room.
   async homeLeadOnly() { return false; }
+  async reviewerAgentsEnabled() { return true; }
   async teamFlow() { return null; }
   // The mock's pool of names, like the server's: the next free one, in a fixed order so a test can tell two asks apart.
   takenNames() { return new Set([...this.agents.values()].flatMap(agent => [agent.slug, agent.name].filter(Boolean).map(name => name.toLowerCase()))); }
@@ -84,6 +85,7 @@ export class HttpAgentSource {
   teamFlow(projectID) { return request(`/api/projects/${encodeURIComponent(projectID)}/team-flow`); }
   // Whether the project's home room takes only lead roles (Home room: lead only, on unless the project turned it off).
   async homeLeadOnly(projectID) { return (await request(`/api/projects/${encodeURIComponent(projectID)}/settings`)).home_lead_only !== false; }
+  async reviewerAgentsEnabled(projectID) { return (await request(`/api/projects/${encodeURIComponent(projectID)}/settings`)).reviewer_agents_enabled !== false; }
   // The end of what an agent's harness wrote to stderr, for a project's owner or an admin (the server refuses anyone else).
   async output(roomID, agentID, lines = 200) {
     return request(`/api/rooms/${encodeURIComponent(roomID)}/agents/${encodeURIComponent(agentID)}/output?lines=${encodeURIComponent(lines)}`);

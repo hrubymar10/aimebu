@@ -66,6 +66,17 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				roleBody += fmt.Sprintf("\n\nHand specifications over in %s (%s).", routingTitle, routingID)
 			}
 		}
+		staffingRole, err := tx.roleLineageContains(roleKey, "leader", "dispatcher")
+		if err != nil {
+			return err
+		}
+		if staffingRole {
+			if enabled, err := tx.projectReviewerEnabled(projectID); err != nil {
+				return err
+			} else if !enabled {
+				roleBody = withoutReviewerStaffing(roleBody)
+			}
+		}
 		if flowKey == "leader-dispatcher" && (roleKey == "worker" || roleKey == "reviewer" || strings.HasSuffix(roleKey, "-reviewer")) {
 			roleBody += "\n\nIn a task room, report to the agent who briefed you (normally the dispatcher). Do not @mention the leader there; the leader is not a member of task rooms in this flow."
 		}

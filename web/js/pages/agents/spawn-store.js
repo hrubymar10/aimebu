@@ -107,7 +107,9 @@ export class SpawnStore {
     const roomKind = this.startRoom.peek() === NEW_ROOM ? 'task' : target?.team_flow_room_key || target?.kind;
     const rule = this.flowTemplate?.join_rules?.find(item => item.room_kind === roomKind);
     const eligible = rule ? this.allRoles.filter(role => rule.allowed_roles.includes(role.role_key)) : this.allRoles;
-    const roles = this.homeLeadOnly ? eligible.filter(role => role.cap_is_lead) : eligible;
+    const byKey = new Map(this.allRoles.map(role => [role.role_key, role]));
+    const reviewerRole = role => { const seen = new Set(); while (role && !seen.has(role.role_key)) { if (role.role_key === 'reviewer') return true; seen.add(role.role_key); role = byKey.get(role.extends); } return false; };
+    const roles = eligible.filter(role => (!this.homeLeadOnly || role.cap_is_lead) && (this.reviewerAgentsEnabled || !reviewerRole(role)));
     const current = this.role.peek();
     batch(() => {
       this.roles.value = roles.map(role => ({ value: role.role_key, label: `${role.emoji || ''} ${role.label}`.trim() }));
@@ -124,7 +126,7 @@ export class SpawnStore {
     const continuing = resume?.kind === 'claude_session';
     // A catalog or a name asked for by an earlier opening is no answer to this one.
     this.catalogRequestID++; this.nameRequestID++;
-    this.allRoles = null; this.flowTemplate = null; this.homeLeadOnly = false;
+    this.allRoles = null; this.flowTemplate = null; this.homeLeadOnly = false; this.reviewerAgentsEnabled = true;
     batch(() => {
       this.worktree.value = false; this.baseRef.value = '';
       // Nothing of the last opening is left to act on: the roles and the lead-only rule are read again below, and until they are, Start
@@ -146,12 +148,13 @@ export class SpawnStore {
       const room = this.room, roomID = room.id;
       // A start from v1 history goes to a task room, so the home room's lead-only rule does not apply to it.
       const home = room.kind === 'home' && !resume;
-      const [allRoles, leadOnly, flow] = await Promise.all([this.host.source.roles(), home ? Promise.resolve(this.host.source.homeLeadOnly?.(room.project_id)).catch(() => true) : false, this.host.source.teamFlow?.(room.project_id), this.machine.load(room.project_id, resume?.machine_id || '')]);
+      const [allRoles, leadOnly, flow, reviewers] = await Promise.all([this.host.source.roles(), home ? Promise.resolve(this.host.source.homeLeadOnly?.(room.project_id)).catch(() => true) : false, this.host.source.teamFlow?.(room.project_id), Promise.resolve(this.host.source.reviewerAgentsEnabled?.(room.project_id)).catch(() => true), this.machine.load(room.project_id, resume?.machine_id || '')]);
       if (!current() || this.room?.id !== roomID) return;
       // With Home room: lead only (the default) the home room offers the lead roles alone; the server refuses the others.
       this.allRoles = allRoles;
       this.flowTemplate = flow?.template;
       this.homeLeadOnly = !!leadOnly;
+      this.reviewerAgentsEnabled = reviewers !== false;
       this.leadHint.value = !!leadOnly;
       this.role.value = resume?.role_key || '';
       this.filterRoles();

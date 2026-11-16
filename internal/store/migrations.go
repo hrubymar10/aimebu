@@ -1834,6 +1834,8 @@ CREATE TABLE IF NOT EXISTS team_flow_migration_agent (
 );
 `}, {114, `
 ALTER TABLE team_flow_migration ADD COLUMN drain_errors INTEGER NOT NULL DEFAULT 0;
+`}, {115, `
+ALTER TABLE settings_project ADD COLUMN reviewer_agents TEXT NOT NULL DEFAULT 'inherit' CHECK (reviewer_agents IN ('inherit','on','off'));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

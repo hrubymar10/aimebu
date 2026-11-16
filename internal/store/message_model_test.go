@@ -32,6 +32,7 @@ func TestMigration110BackfillsOnlyKnownMessageGeneration(t *testing.T) {
 		`UPDATE message SET author_harness='',author_model='' WHERE id IN ('` + old.ID + `','` + current.ID + `','` + known.ID + `')`,
 		`ALTER TABLE message DROP COLUMN switch_handoff_json`,
 		`ALTER TABLE team_flow_migration DROP COLUMN drain_errors`,
+		`ALTER TABLE settings_project DROP COLUMN reviewer_agents`,
 		`DELETE FROM schema_version WHERE version>=110`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -84,6 +85,7 @@ func TestMigration110LeavesMessagesBeforeModelSettlementUnknown(t *testing.T) {
 	for _, statement := range []string{
 		`ALTER TABLE message DROP COLUMN switch_handoff_json`,
 		`ALTER TABLE team_flow_migration DROP COLUMN drain_errors`,
+		`ALTER TABLE settings_project DROP COLUMN reviewer_agents`,
 		`DELETE FROM schema_version WHERE version>=110`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {

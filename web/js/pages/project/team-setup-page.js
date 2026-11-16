@@ -20,8 +20,8 @@ function Summary({ body, flowLabel, preview, options, selectedRemovals, onToggle
     ${body.dispatcher && html`<p><strong>Dispatcher:</strong> ${describe(body.dispatcher)}</p>`}
     ${body.advisor && html`<p><strong>Advisor:</strong> ${describe(body.advisor)}</p>`}
     <p><strong>Worker defaults:</strong> ${body.role_defaults.worker.default_agents.length} choice(s)</p>
-    <p><strong>Reviewer defaults:</strong> ${body.role_defaults.reviewer.default_agents.length} choice(s)</p>
-    <p><strong>Project:</strong> ${body.settings.worktree_mode === 'auto' ? 'Separate task worktrees' : 'Shared folder'} · Memory ${body.settings.memory_enabled ? 'on' : 'off'} · Up to ${body.settings.max_live_agents} workers and reviewers</p>
+    ${body.role_defaults.reviewer && html`<p><strong>Reviewer defaults:</strong> ${body.role_defaults.reviewer.default_agents.length} choice(s)</p>`}
+    <p><strong>Project:</strong> ${body.settings.worktree_mode === 'auto' ? 'Separate task worktrees' : 'Shared folder'} · Memory ${body.settings.memory_enabled ? 'on' : 'off'} · Up to ${body.settings.max_live_agents} agents</p>
     ${preview?.created_rooms?.length > 0 && html`<p><strong>Rooms to create:</strong> ${preview.created_rooms.map(room => room.title || room.key || room).join(', ')}</p>`}
     ${preview?.conflicts?.length > 0 && html`<div class="team-flow-change-group"><strong>Agents needing action</strong><ul>${preview.conflicts.map(item => html`<li key=${`${item.agent_id}:${item.room_id}`}><label class="team-flow-removal"><input type="checkbox" checked=${selectedRemovals.some(selected => selected.agent_id === item.agent_id && selected.room_id === item.room_id)} onChange=${event => onToggleRemoval(item, event.currentTarget.checked)} />Remove ${item.slug || item.agent_id} (${item.role_label || item.role_key || 'agent'}) from ${item.room_title || 'this room'} when applying</label></li>`)}</ul></div>`}
   </div>`;
@@ -47,18 +47,24 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   const [worker, setWorker] = useState(null), [reviewer, setReviewer] = useState(null);
   // null: not asked for yet; '' is a name the person cleared (the server then picks one).
   const [names, setNames] = useState({}), [nameBusy, setNameBusy] = useState({}), [nameErrors, setNameErrors] = useState({}), nameRequests = useRef({});
-  const [settings, setSettings] = useState({ worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10 });
+  const [settings, setSettings] = useState({ worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10, reviewer_agents: 'inherit', reviewer_agents_global_enabled: true });
   const [preview, setPreview] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [plan, setPlan] = useState(null), [changes, setChanges] = useState({}), [recommended, setRecommended] = useState([]);
   const [migration, setMigration] = useState(null), [cancelling, setCancelling] = useState(false);
   const commitKey = useRef(''), generation = useRef(0), settingsTouched = useRef(false);
+  const reviewerAgentsLoaded = useRef(false), reviewerAgentsTouched = useRef(false);
   useEffect(() => {
     const id = flow.projectID, turn = ++generation.current;
     setStep(1); setChoices(null); setLeader(null); setDispatcher(null); setAdvisor(null); setNames({}); setNameBusy({}); setNameErrors({}); nameRequests.current = {}; setWorker(null); setReviewer(null);
-    setSettings({ worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10 });
-    setLoadError(''); setPreview(null); setBusy(false); setError(''); commitKey.current = ''; settingsTouched.current = false;
+    setSettings({ worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10, reviewer_agents: 'inherit', reviewer_agents_global_enabled: true });
+    setLoadError(''); setPreview(null); setBusy(false); setError(''); commitKey.current = ''; settingsTouched.current = false; reviewerAgentsLoaded.current = false; reviewerAgentsTouched.current = false;
     setPlan(null); setChanges({}); setMigration(null); setCancelling(false);
     if (!id) return undefined;
+    request(`${projectPath(id)}/settings`).then(answer => {
+      if (turn !== generation.current || !answer?.reviewer_agents) return;
+      reviewerAgentsLoaded.current = true;
+      if (!reviewerAgentsTouched.current) setSettings(previous => ({ ...previous, reviewer_agents: answer.reviewer_agents, reviewer_agents_global_enabled: answer.reviewer_agents_global_enabled !== false }));
+    }, () => {});
     Promise.resolve(flow.source.recommendedModels?.()).then(answer => { if (turn === generation.current) setRecommended(Array.isArray(answer?.rows) ? answer.rows : []); }, () => {});
     // A change already under way keeps its progress on screen, whoever started it.
     if (state?.key && canEdit) Promise.resolve(flow.source.migration?.(id)).then(answer => {
@@ -83,9 +89,13 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
           ...(key === 'leader-advisor' ? { advisor: initialTarget(result.options, result.defaults, 'advisor') } : {}),
           role_defaults: {
             worker: { default_agents: initialDefaults(result.options, result.defaults, 'worker').items, pick_mode: initialDefaults(result.options, result.defaults, 'worker').mode },
-            reviewer: { default_agents: initialDefaults(result.options, result.defaults, 'reviewer').items, pick_mode: initialDefaults(result.options, result.defaults, 'reviewer').mode },
           },
-        } }).then(answer => { if (turn === generation.current && !settingsTouched.current && answer.settings) setSettings(answer.settings); }, () => {});
+        } }).then(answer => {
+          if (turn !== generation.current || !answer.settings) return;
+          if (answer.settings.reviewer_agents) reviewerAgentsLoaded.current = true;
+          if (!settingsTouched.current) setSettings(previous => ({ ...previous, ...answer.settings }));
+          else if (!reviewerAgentsTouched.current && answer.settings.reviewer_agents) setSettings(previous => ({ ...previous, reviewer_agents: answer.settings.reviewer_agents, reviewer_agents_global_enabled: answer.settings.reviewer_agents_global_enabled !== false }));
+        }, () => {});
       }
     }, failure => { if (turn === generation.current) setLoadError(failure.message); });
     return () => { generation.current++; };
@@ -107,9 +117,11 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   const entryOf = role => roleEntries.find(item => item.role_key === role);
   const secondRoles = roleEntries.filter(item => !CORE.includes(item.role_key));
   const second = SECOND_ROLE[selected];
+  const reviewersEnabled = settings.reviewer_agents === 'on' || (settings.reviewer_agents !== 'off' && settings.reviewer_agents_global_enabled !== false);
+  const staffingStep = reviewersEnabled ? 'Workers and reviewers' : 'Workers';
   const steps = setupMode
-    ? (second ? ['Team flow', 'Leader', second, 'Workers and reviewers', 'Project settings', 'Summary'] : ['Team flow', 'Leader', 'Workers and reviewers', 'Project settings', 'Summary'])
-    : selected === 'custom' || !plan ? ['Team flow'] : ['Team flow', 'Leader', ...secondRoles.map(item => roleLabel(item.role_key)), 'Workers and reviewers', 'Summary'];
+    ? (second ? ['Team flow', 'Leader', second, staffingStep, 'Project settings', 'Summary'] : ['Team flow', 'Leader', staffingStep, 'Project settings', 'Summary'])
+    : selected === 'custom' || !plan ? ['Team flow'] : ['Team flow', 'Leader', ...secondRoles.map(item => roleLabel(item.role_key)), staffingStep, 'Summary'];
   const stepLabel = steps[step - 1], isLast = step === steps.length && steps.length > 1;
   const roleKey = { Leader: 'leader', Dispatcher: 'dispatcher', Advisor: 'advisor' }[stepLabel] || '';
   const roleStatus = setupMode ? 'new' : entryOf(roleKey)?.status || '';
@@ -138,15 +150,16 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   const coreHint = coreNames ? `${coreNames} ${coreRoles.length === 1 ? 'is' : 'are'} not counted.` : '';
   const named = (target, role) => target && (names[role]?.trim() ? { ...target, name: names[role].trim() } : target);
   const roleTargets = { leader, dispatcher, advisor };
-  const defaults = { worker: { default_agents: worker?.items || [], pick_mode: worker?.mode || 'in_turn' }, reviewer: { default_agents: reviewer?.items || [], pick_mode: reviewer?.mode || 'in_turn' } };
+  const defaults = { worker: { default_agents: worker?.items || [], pick_mode: worker?.mode || 'in_turn' }, ...(reviewersEnabled ? { reviewer: { default_agents: reviewer?.items || [], pick_mode: reviewer?.mode || 'in_turn' } } : {}) };
   const removals = flow.removals.value.length ? { remove_memberships: flow.removals.value } : {};
   // Only a pick that differs from what the agent runs is a change: an opened but untouched "Change model or harness" must not become a switch the server refuses after the drain.
   const planAgents = roleEntries.flatMap(item => item.agents || []);
   const realChanges = Object.fromEntries(Object.entries(changes).filter(([id, target]) => isModelChange(planAgents.find(agent => agent.agent_id === id), target)));
   const newRoles = ['leader', 'dispatcher', 'advisor'].filter(role => entryOf(role)?.status === 'new');
   const newTargets = Object.fromEntries(newRoles.map(role => [role, entryOf(role)?.agents?.length ? roleTargets[role] : named(roleTargets[role], role)]));
+  const settingsPayload = { worktree_mode: settings.worktree_mode, memory_enabled: settings.memory_enabled, max_live_agents: settings.max_live_agents, ...(reviewerAgentsLoaded.current || reviewerAgentsTouched.current ? { reviewer_agents: settings.reviewer_agents || 'inherit' } : {}) };
   const body = setupMode
-    ? { flow_key: selected, flow_rev: state.rev, leader: named(leader, 'leader'), ...(selected === 'leader-dispatcher' ? { dispatcher: named(dispatcher, 'dispatcher') } : {}), ...(selected === 'leader-advisor' ? { advisor: named(advisor, 'advisor') } : {}), role_defaults: defaults, settings, ...removals }
+    ? { flow_key: selected, flow_rev: state.rev, leader: named(leader, 'leader'), ...(selected === 'leader-dispatcher' ? { dispatcher: named(dispatcher, 'dispatcher') } : {}), ...(selected === 'leader-advisor' ? { advisor: named(advisor, 'advisor') } : {}), role_defaults: defaults, settings: settingsPayload, ...removals }
     : { flow_key: selected, flow_rev: state.rev, ...newTargets, changes: Object.entries(realChanges).map(([agent_id, target]) => ({ agent_id, target })), role_defaults: defaults, ...removals };
   const run = async (work, fail = true) => {
     const projectID = flow.projectID, turn = generation.current;
@@ -222,14 +235,15 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
       ${roleStatus === 'kept' && html`<div class="team-wizard-kept-list">${(entryOf(roleKey)?.agents || []).map(agent => renderKept(agent, `team-setup-${roleKey}`))}</div>`}
       ${roleStatus === 'leaving' && html`<ul class="team-wizard-leaving">${(entryOf(roleKey)?.agents || []).map(agent => html`<li key=${agent.agent_id}><strong>${agent.slug || agent.agent_id}</strong> · ${describeTarget(options, agent)}</li>`)}</ul>`}
       <${RecommendedModels} rows=${recommended} role=${roleKey} flowKey=${selected} options=${options} target=${stepTarget} />`}
-    ${stepLabel === 'Workers and reviewers' && html`${!setupMode && (keptOf('worker').length > 0 || keptOf('reviewer').length > 0) && html`<${StatusBanner} status="kept" role="workers" plural=${true} from=${fromLetter} to=${toLetter} />
-        <div class="team-wizard-kept-list">${['worker', 'reviewer'].map(role => keptOf(role).length > 0 && html`<div key=${role}><h3>${roleLabel(role)}s</h3>${keptOf(role).map(agent => renderKept(agent, `team-setup-${role}`))}</div>`)}</div>`}
-      ${choices && html`<p>${setupMode ? 'These defaults are saved for future spawns. No workers or reviewers start now.' : 'Defaults for workers and reviewers started from now on.'}</p><div class="team-setup-defaults"><div><h3>${setupMode ? 'Workers' : 'Default for new workers'}</h3><${SpawnDefaults} items=${worker?.items || []} mode=${worker?.mode || 'in_turn'} options=${optionsList} onChange=${setWorker} /></div><div><h3>${setupMode ? 'Reviewers' : 'Default for new reviewers'}</h3><${SpawnDefaults} items=${reviewer?.items || []} mode=${reviewer?.mode || 'in_turn'} options=${optionsList} onChange=${setReviewer} /></div></div>`}
-      ${[['worker', worker, 'workers'], ['reviewer', reviewer, 'reviewers']].map(([role, picked, label]) => html`<${RecommendedModels} key=${role} rows=${recommended} role=${role} flowKey=${selected} label=${label} target=${options.find(item => item.launcher_id === picked?.items?.[0]?.launcher_id && item.model === picked.items[0].model)} options=${options} />`)}`}
+    ${(stepLabel === 'Workers and reviewers' || stepLabel === 'Workers') && html`${!setupMode && (keptOf('worker').length > 0 || reviewersEnabled && keptOf('reviewer').length > 0) && html`<${StatusBanner} status="kept" role="workers" plural=${true} from=${fromLetter} to=${toLetter} />
+        <div class="team-wizard-kept-list">${(reviewersEnabled ? ['worker', 'reviewer'] : ['worker']).map(role => keptOf(role).length > 0 && html`<div key=${role}><h3>${roleLabel(role)}s</h3>${keptOf(role).map(agent => renderKept(agent, `team-setup-${role}`))}</div>`)}</div>`}
+      ${choices && html`<p>${setupMode ? 'These defaults are saved for future spawns. No agents start now.' : 'Defaults for workers started from now on.'}</p><div class="team-setup-defaults"><div><h3>${setupMode ? 'Workers' : 'Default for new workers'}</h3><${SpawnDefaults} items=${worker?.items || []} mode=${worker?.mode || 'in_turn'} options=${optionsList} onChange=${setWorker} /></div>${reviewersEnabled && html`<div><h3>${setupMode ? 'Reviewers' : 'Default for new reviewers'}</h3><${SpawnDefaults} items=${reviewer?.items || []} mode=${reviewer?.mode || 'in_turn'} options=${optionsList} onChange=${setReviewer} /></div>`}</div>`}
+      ${(reviewersEnabled ? [['worker', worker, 'workers'], ['reviewer', reviewer, 'reviewers']] : [['worker', worker, 'workers']]).map(([role, picked, label]) => html`<${RecommendedModels} key=${role} rows=${recommended} role=${role} flowKey=${selected} label=${label} target=${options.find(item => item.launcher_id === picked?.items?.[0]?.launcher_id && item.model === picked.items[0].model)} options=${options} />`)}`}
     ${stepLabel === 'Project settings' && html`<div class="team-setup-settings">
       <label>Project folder<input value=${project?.folder || ''} readonly aria-label="Project folder" /></label>
       <label><input type="checkbox" checked=${settings.worktree_mode === 'auto'} onChange=${event => { settingsTouched.current = true; setSettings({ ...settings, worktree_mode: event.currentTarget.checked ? 'auto' : 'off' }); }} /> Separate Git worktree for each task room</label>
       <label><input type="checkbox" checked=${settings.memory_enabled} onChange=${event => { settingsTouched.current = true; setSettings({ ...settings, memory_enabled: event.currentTarget.checked }); }} /> Enable project memory</label>
+      <label>Reviewer agents<select id="team-setup-reviewer-agents" value=${settings.reviewer_agents || 'inherit'} onChange=${event => { settingsTouched.current = true; reviewerAgentsTouched.current = true; setSettings({ ...settings, reviewer_agents: event.currentTarget.value }); }}><option value="inherit">Inherit (${settings.reviewer_agents_global_enabled === false ? 'off' : 'on'})</option><option value="on">On</option><option value="off">Off</option></select></label>
       <label>Maximum workers and reviewers<input type="number" min=${minimumAgents} max="100" value=${settings.max_live_agents} onInput=${event => { settingsTouched.current = true; setSettings({ ...settings, max_live_agents: Number(event.currentTarget.value) }); }} />${coreHint && html`<small class="team-setup-limit-hint">${coreHint}</small>`}</label>
     </div>`}
     ${stepLabel === 'Summary' && (setupMode

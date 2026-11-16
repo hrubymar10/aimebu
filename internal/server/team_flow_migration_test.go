@@ -82,16 +82,23 @@ func TestTeamFlowMigrationHTTPPreviewApplyCancel(t *testing.T) {
 		}
 	}
 	path := "/api/projects/" + f.project.ID + "/team-flow"
-	plan := f.request(http.MethodPost, path+"/migration/preview", map[string]any{"flow_key": "leader-dispatcher", "flow_rev": 1}, true)
+	plan := f.request(http.MethodPost, path+"/migration/preview", map[string]any{"flow_key": "leader-dispatcher", "flow_rev": 1, "settings": map[string]any{"reviewer_agents": "off"}}, true)
 	var planned struct {
 		CanApply bool `json:"can_apply"`
-		Roles    []struct {
+		Settings struct {
+			ReviewerAgents              string `json:"reviewer_agents"`
+			ReviewerAgentsGlobalEnabled bool   `json:"reviewer_agents_global_enabled"`
+		} `json:"settings"`
+		Roles []struct {
 			RoleKey string `json:"role_key"`
 			Status  string `json:"status"`
 		} `json:"roles"`
 	}
 	if err := json.NewDecoder(plan.Body).Decode(&planned); err != nil {
 		t.Fatal(err)
+	}
+	if planned.Settings.ReviewerAgents != "off" || !planned.Settings.ReviewerAgentsGlobalEnabled {
+		t.Fatalf("reviewer preview settings: %+v", planned.Settings)
 	}
 	plan.Body.Close()
 	if plan.StatusCode != 200 || planned.CanApply || len(planned.Roles) != 4 || planned.Roles[1].Status != "new" {

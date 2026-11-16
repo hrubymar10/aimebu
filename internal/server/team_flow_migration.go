@@ -87,9 +87,12 @@ func (s *Server) teamFlowMigrationPreview(w http.ResponseWriter, r *http.Request
 	if in.Settings.MaxLiveAgents != nil {
 		current.MaxLiveAgents = *in.Settings.MaxLiveAgents
 	}
+	if in.Settings.ReviewerAgents != nil {
+		current.ReviewerAgents = *in.Settings.ReviewerAgents
+	}
 	writeJSON(w, 200, map[string]any{"from_key": preview.FromKey, "to_key": preview.ToKey, "roles": preview.Roles,
 		"created_rooms": preview.CreatedRooms, "conflicts": preview.Conflicts,
-		"settings":  map[string]any{"worktree_mode": current.WorktreeMode, "memory_enabled": memory, "max_live_agents": current.MaxLiveAgents},
+		"settings":  map[string]any{"worktree_mode": current.WorktreeMode, "memory_enabled": memory, "max_live_agents": current.MaxLiveAgents, "reviewer_agents": current.ReviewerAgents, "reviewer_agents_global_enabled": current.ReviewerAgentsGlobalEnabled},
 		"can_apply": preview.CanApply})
 }
 

@@ -38,12 +38,13 @@ const base = () => ({
   'GET /api/projects/p1/usage-limit': limit,
   'GET /api/projects/p1/usage?range=today': usage,
   'GET /api/projects/p1/role-spawn-defaults': roles,
+  'GET /api/projects/p1/settings': { reviewer_agents: 'inherit', reviewer_agents_global_enabled: true, reviewer_agents_enabled: true },
   'GET /api/machines?project_id=p1': { machines: [{ id: 'm1', name: 'Box', approved: true, connected: true, project_allowed: true }] },
   'GET /api/spawn-catalog?machine_id=m1': { tools: [{ tool: 'claude', variant: 'native', launcher_id: 'l1', label: 'Claude', available: true, models: [{ id: 'm1', label: 'Opus', default: true }, { id: 'm2', label: 'Sonnet' }] }] },
   'GET /api/team-flows': { templates: flows },
   'GET /api/projects/p1/team-flow': { key: 'custom', rev: 1, review_pending: false, template: flows[3], conflicts: [] },
   'POST /api/projects/p1/team-flow/preview': { key: 'custom', create_rooms: [], role_changes: [], conflicts: [] },
-  'POST /api/projects/p1/team-setup/preview': { can_create: true, settings: { worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10 }, created_rooms: [], conflicts: [] },
+  'POST /api/projects/p1/team-setup/preview': { can_create: true, settings: { worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10, reviewer_agents: 'inherit', reviewer_agents_global_enabled: true }, created_rooms: [], conflicts: [] },
 });
 
 function installFetch(auto) {
@@ -135,7 +136,7 @@ async function main() {
       const page = await mount();
       await ready(page);
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#project-settings-body').children].map(node => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}`)),
-        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section', 'section#project-team-flow', 'section#project-usage', 'div', 'div', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
+        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section', 'section#project-team-flow', 'div', 'section#project-usage', 'div', 'div', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
       assert.deepEqual(await page.evaluate(() => ({ name: [document.querySelector('#project-details-name').value, document.querySelector('#project-details-name').disabled], folder: [document.querySelector('#project-details-folder').value, document.querySelector('#project-details-folder').disabled],
         save: document.querySelector('#project-details-save').disabled, status: document.querySelector('#project-details-status').textContent,
         flags: ['#project-auto-resume', '#project-worktrees', '#project-home-lead-only'].map(id => [document.querySelector(id).checked, document.querySelector(id).disabled]),
@@ -421,6 +422,8 @@ async function main() {
     // The inline home setup starts with A for a new project; migrated C can be kept in one click and stays dismissed after reload.
     {
       const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
+      auto['GET /api/projects/p1/settings'] = { reviewer_agents: 'on', reviewer_agents_global_enabled: true, reviewer_agents_enabled: true };
+      auto['POST /api/projects/p1/team-setup/preview'] = { can_create: true, settings: { worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10, reviewer_agents: 'on', reviewer_agents_global_enabled: true }, created_rooms: [], conflicts: [] };
       auto['GET /api/spawn-catalog?machine_id=m1'] = { tools: [
         { tool: 'claude', variant: 'native', launcher_id: 'l1', label: 'Claude Code', available: true, models: [{ id: 'm1', label: 'Opus', default: true }, { id: 'm2', label: 'Sonnet' }] },
         { tool: 'codex', variant: 'native', launcher_id: 'l2', label: 'Codex', available: true, models: [{ id: 'gpt-6-sol', label: 'GPT-6 Sol' }, { id: 'gpt-6-luna', label: 'GPT-6 Luna' }, { id: 'gpt-6-astra', label: 'GPT-6 Astra' }] },
@@ -478,6 +481,7 @@ async function main() {
       assert.deepEqual(await page.$$eval('#team-flow-home .team-wizard-recommended', nodes => nodes.map(node => [...node.querySelectorAll('.team-wizard-recommended-group')].map(group => group.querySelector('strong').textContent))), [['Claude Code · Selected', 'Codex'], ['Claude Code · Selected', 'Codex']], 'workers and reviewers both include Claude and Codex');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Project settings');
+      await page.waitForFunction(() => document.querySelector('#team-setup-reviewer-agents')?.value === 'on');
       assert.equal(await page.$eval('#team-flow-home .team-setup-limit-hint', node => node.textContent), 'Leader is not counted.', 'flow A excludes only its leader');
       await page.$$eval('#team-flow-home .team-flow-actions .btn:not(.btn-primary)', nodes => nodes[0].click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
@@ -506,6 +510,8 @@ async function main() {
       const setupPreview = await waitRequest(page, 'POST', '/api/projects/p1/team-setup/preview');
       const draft = await page.evaluate(index => window.__requests[index].body, setupPreview);
       assert.deepEqual([draft.flow_key, draft.flow_rev, draft.leader?.machine_id, draft.dispatcher?.machine_id, draft.settings?.max_live_agents], ['leader-dispatcher', 0, 'm1', 'm1', 10]);
+      assert.deepEqual(Object.keys(draft.settings).sort(), ['max_live_agents', 'memory_enabled', 'reviewer_agents', 'worktree_mode'], 'setup sends only accepted settings keys');
+      assert.equal(draft.settings.reviewer_agents, 'on', 'setup previews the loaded reviewer override');
       assert.equal(await calls(page, 'PUT').then(rows => rows.some(([path]) => path.includes('/team-flow'))), false, 'wizard does not apply the flow early');
       await answer(page, setupPreview, 200, { can_create: true, created_rooms: [{ key: 'routing', title: 'routing' }], conflicts: [{ agent_id: 'agt_old', slug: 'ian', role_key: 'leader', role_label: 'Leader', room_id: 'rm_general', room_title: 'general', reason: 'Leader in task room' }] });
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Summary' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
@@ -513,6 +519,8 @@ async function main() {
       await page.$eval('#team-flow-home .team-flow-removal input', node => node.click());
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       const create = await waitRequest(page, 'POST', '/api/projects/p1/team-setup');
+      assert.deepEqual(await page.evaluate(index => Object.keys(window.__requests[index].body.settings).sort(), create), ['max_live_agents', 'memory_enabled', 'reviewer_agents', 'worktree_mode'], 'create uses the same accepted settings keys');
+      assert.equal(await page.evaluate(index => window.__requests[index].body.settings.reviewer_agents, create), 'on', 'create keeps the loaded reviewer override');
       assert.equal(await page.evaluate(index => !!window.__requests[index].headers['Idempotency-Key'], create), true, 'create uses an idempotency key');
       assert.deepEqual(await page.evaluate(index => window.__requests[index].body.remove_memberships, create), [{ agent_id: 'agt_old', room_id: 'rm_general' }], 'setup removes only checked memberships');
       await answer(page, create, 200, { flow: { key: 'leader-dispatcher', rev: 1, review_pending: false }, agents: [{ role: 'leader', agent_id: 'agt_1' }, { role: 'dispatcher', agent_id: 'agt_2' }], created_rooms: [{ key: 'routing' }] });
@@ -577,6 +585,55 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Summary' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
       assert.match(await page.$eval('.team-setup-summary', node => node.textContent), /C · Leader and advisor.*Leader: zed · .*Fast.*Advisor: cy · .*Strong.*Rooms to create: advice/s);
       assert.equal(await title(), 'Summary');
+      await page.close();
+    }
+    // Initial setup follows the inherited reviewer switch and can opt a project back in.
+    {
+      const auto = base();
+      auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
+      auto['GET /api/projects/p1/settings'] = { reviewer_agents: 'inherit', reviewer_agents_global_enabled: false, reviewer_agents_enabled: false };
+      auto['POST /api/projects/p1/team-setup/preview'] = { can_create: true, settings: { worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10, reviewer_agents: 'inherit', reviewer_agents_global_enabled: false }, created_rooms: [], conflicts: [] };
+      const page = await mount({ auto });
+      await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
+      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers');
+      assert.equal(await page.$eval('#team-flow-home .team-setup-defaults', node => node.textContent.includes('Reviewers')), false);
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Project settings');
+      assert.equal(await page.$eval('#team-setup-reviewer-agents', node => node.value), 'inherit');
+      await page.select('#team-setup-reviewer-agents', 'on');
+      await page.$eval('#team-flow-home .team-flow-actions .btn:not(.btn-primary)', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
+      assert.equal(await page.$eval('#team-flow-home .team-setup-defaults', node => node.textContent.includes('Reviewers')), true);
+      await page.close();
+    }
+    // A failed settings read must not replace an existing project override with the wizard's initial Inherit value.
+    {
+      const auto = base();
+      auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
+      auto['GET /api/projects/p1/settings'] = rule(503, { error: 'temporarily unavailable' });
+      auto['POST /api/projects/p1/team-setup/preview'] = rule(503, { error: 'temporarily unavailable' });
+      const page = await mount({ auto });
+      await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
+      await page.waitForFunction(() => window.__requests.some(row => row.path === '/api/projects/p1/settings' && row.answered) && window.__requests.some(row => row.path === '/api/projects/p1/team-setup/preview' && row.answered));
+      for (const title of ['Leader', 'Workers and reviewers', 'Project settings']) {
+        await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+        await page.$eval('#team-flow-home .btn-primary', node => node.click());
+        await page.waitForFunction(title => document.querySelector('#team-flow-home-title')?.textContent === title, {}, title);
+      }
+      await page.$eval('#team-flow-home .team-setup-settings input[type=checkbox]', node => node.click());
+      await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-setup/preview']; });
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      const preview = await waitRequest(page, 'POST', '/api/projects/p1/team-setup/preview');
+      assert.equal(await page.evaluate(index => Object.hasOwn(window.__requests[index].body.settings, 'reviewer_agents'), preview), false, 'failed loads omit the untouched reviewer override from preview');
+      await answer(page, preview, 200, { can_create: true, created_rooms: [], conflicts: [] });
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Summary' && !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      const create = await waitRequest(page, 'POST', '/api/projects/p1/team-setup');
+      assert.equal(await page.evaluate(index => Object.hasOwn(window.__requests[index].body.settings, 'reviewer_agents'), create), false, 'failed loads omit the untouched reviewer override from create');
       await page.close();
     }
     // Two roles outside the spawn path hang under the leader one below the other: no two boxes overlap and none is clipped.
@@ -667,6 +724,16 @@ async function main() {
       await page.$eval('#project-auto-resume', el => el.click());
       await page.waitForFunction(() => document.querySelector('#project-settings-error').textContent === 'Not allowed');
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#project-auto-resume').checked, document.querySelector('#project-auto-resume').disabled]), [true, false], 'a refused switch goes back');
+      await page.close();
+    }
+    // A project override is saved independently of the instance default.
+    {
+      const page = await mount({ settings: { auto_resume_after_clean_diagnostic: true, worktree_mode: 'auto', home_lead_only: false, reviewer_agents: 'inherit', reviewer_agents_global_enabled: false, reviewer_agents_enabled: false } });
+      await ready(page);
+      assert.equal(await page.$eval('#project-reviewer-agents', el => el.value), 'inherit');
+      await page.select('#project-reviewer-agents', 'on');
+      await page.waitForFunction(() => window.__calls.some(call => call[0] === 'update' && call[2]?.reviewer_agents === 'on'));
+      assert.equal(await page.$eval('#project-reviewer-agents', el => el.value), 'on');
       await page.close();
     }
     // Daily limits: a value box only for Custom, a refusal for a bad value, a save of what was entered, and a stale revision refreshing.
