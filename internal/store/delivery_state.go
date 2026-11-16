@@ -146,11 +146,26 @@ func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
 		if err != nil {
 			return err
 		}
-		if len(state) != len(input.NoteIDs) {
+		// A dedicated handoff carries its request as a synthetic delivery note.
+		// It has no note row and must not be counted as a queued source note.
+		noteIDs := input.NoteIDs
+		var handoff bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM switch_handoff_turn WHERE turn_id=?)`, input.TurnID).Scan(&handoff); err != nil {
+			return err
+		}
+		if handoff {
+			noteIDs = nil
+			for _, id := range input.NoteIDs {
+				if id != "handoff:"+input.TurnID {
+					noteIDs = append(noteIDs, id)
+				}
+			}
+		}
+		if len(state) != len(noteIDs) {
 			return ErrScopeMismatch
 		}
 		seen := map[string]bool{}
-		for _, id := range input.NoteIDs {
+		for _, id := range noteIDs {
 			if seen[id] || state[id] != "queued" {
 				return ErrInvalidTransition
 			}
@@ -492,6 +507,9 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 				payload["result_text"] = summary
 				if info.DefiniteFailure {
 					payload["definite_failure"] = "1"
+				}
+				if info.StartFailure {
+					payload["start_failure"] = "1"
 				}
 			}
 		}

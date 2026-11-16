@@ -68,7 +68,7 @@ func TestMissedAgentMentionHoldsWholeAnswerAndWakesAuthor(t *testing.T) {
 			}
 			raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"first"},{"room":%q,"body":"@peer please review"}]}`, f.room.ID, f.room.ID)
 			receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
-			if err != nil || !strings.Contains(receipt.Error, peer.ID) || !strings.Contains(receipt.Error, task.ID) {
+			if err != nil || !strings.Contains(receipt.Error, peer.ID) || strings.Contains(receipt.Error, task.ID) || !strings.Contains(receipt.Error, "dm_agent") {
 				t.Fatalf("receipt=%+v err=%v", receipt, err)
 			}
 			messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
@@ -80,7 +80,7 @@ func TestMissedAgentMentionHoldsWholeAnswerAndWakesAuthor(t *testing.T) {
 					t.Fatalf("correction receipt=%+v messages=%+v", receipt, messages)
 				}
 			} else {
-				if receipt.Result != "held" || receipt.HeldReason != "correction_unavailable" || len(messages) != 2 || !strings.Contains(messages[1].Body, "message out_") || strings.Contains(messages[1].Body, "@peer please review") {
+				if receipt.Result != "held" || receipt.HeldReason != "correction_unavailable" || len(messages) != 2 || !strings.Contains(messages[1].Body, "message out_") || strings.Contains(messages[1].Body, "@peer") || strings.Contains(messages[1].Body, task.ID) || !strings.Contains(messages[1].Body, "dm_agent") {
 					t.Fatalf("held receipt=%+v messages=%+v", receipt, messages)
 				}
 				if _, err := s.NoteForAgentMessage(ctx, f.agent.ID, messages[1].ID); err != nil {
@@ -99,7 +99,95 @@ func TestMissedAgentMentionHoldsWholeAnswerAndWakesAuthor(t *testing.T) {
 	}
 }
 
-func TestMissedMentionNoteKeepsOtherRoomCandidatePrivate(t *testing.T) {
+func TestMissedMentionForwardsOneMessageThroughSharedRoutingRoom(t *testing.T) {
+	s, f := answerFixture(t, false)
+	ctx := context.Background()
+	peer, err := s.CreateAgent(ctx, Agent{Slug: "peer", ProjectID: f.project.ID, RoleID: "role_test", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "hash", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := s.CreateAgent(ctx, Agent{Slug: "third", ProjectID: f.project.ID, RoleID: "role_test", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "hash3", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE room SET title='ghi.md',restricted=1 WHERE id=?`, f.room.ID); err != nil {
+		t.Fatal(err)
+	}
+	routing, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "routing", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE room SET team_flow_room_key='routing' WHERE id=?`, routing.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{f.agent.ID, peer.ID, third.ID} {
+		if err := s.AddMember(ctx, routing.ID, "agent", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_viewer_pointer','viewer','hash','{}','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,'usr_viewer_pointer','viewer')`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	general, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "general", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE room SET team_flow_room_key='general' WHERE id=?`, general.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{f.agent.ID, peer.ID} {
+		if err := s.AddMember(ctx, general.ID, "agent", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: "unrelated task detail"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"@peer, done: ghi.md"}]}`, f.room.ID)
+	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+	if err != nil || receipt.Result != "committed" || len(receipt.MessageIDs) != 1 {
+		t.Fatalf("answer=%+v %v", receipt, err)
+	}
+	var reportNo int64
+	if err := s.db.QueryRow(`SELECT no FROM message WHERE id=?`, receipt.MessageIDs[0]).Scan(&reportNo); err != nil {
+		t.Fatal(err)
+	}
+	pointers, err := s.ListMessagesAfter(ctx, routing.ID, 0)
+	if err != nil || len(pointers) != 1 || !strings.Contains(pointers[0].Body, "mentioned you in ghi.md: #"+fmt.Sprint(reportNo)) {
+		t.Fatalf("routing pointer=%+v %v", pointers, err)
+	}
+	if _, err := s.NoteForAgentMessage(ctx, peer.ID, pointers[0].ID); err != nil {
+		t.Fatalf("pointer did not wake recipient: %v", err)
+	}
+	if generalMessages, err := s.ListMessagesAfter(ctx, general.ID, 0); err != nil || len(generalMessages) != 0 {
+		t.Fatalf("pointer should prefer routing: %+v %v", generalMessages, err)
+	}
+	if got, err := s.AgentMessageByNo(ctx, peer.ID, f.project.ID, reportNo); err != nil || !got.Available || got.Body != "@peer, done: ghi.md" {
+		t.Fatalf("referenced report=%+v %v", got, err)
+	}
+	if got, err := s.AgentMessageByNo(ctx, third.ID, f.project.ID, reportNo); err != nil || got.Available {
+		t.Fatalf("shared-room third agent read pointer target=%+v %v", got, err)
+	}
+	if got, err := s.ReferencedMessageForUser(ctx, "usr_viewer_pointer", pointers[0].ID, reportNo); err != nil || got.Available {
+		t.Fatalf("viewer read pointer target=%+v %v", got, err)
+	}
+	if got, err := s.ReferencedMessageForUser(ctx, "usr_answers", pointers[0].ID, reportNo); err != nil || !got.Available {
+		t.Fatalf("owner lost pointer oversight=%+v %v", got, err)
+	}
+	if got, err := s.AgentMessageByNo(ctx, peer.ID, f.project.ID, secret.No); err != nil || got.Available {
+		t.Fatalf("unrelated task detail leaked=%+v %v", got, err)
+	}
+	var failures int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE turn_id=? AND kind='delivery_failed'`, f.turn.ID).Scan(&failures); err != nil || failures != 0 {
+		t.Fatalf("delivery failures=%d %v", failures, err)
+	}
+}
+
+func TestSharedMentionPointerKeepsOtherRoomCandidatePrivate(t *testing.T) {
 	s, f := answerFixture(t, false)
 	ctx := context.Background()
 	other, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "private brief", CreatedBy: "usr_answers"})
@@ -118,15 +206,21 @@ func TestMissedMentionNoteKeepsOtherRoomCandidatePrivate(t *testing.T) {
 	}
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"secret routing brief"},{"room":%q,"body":"@privatepeer please review this task"}]}`, other.ID, f.room.ID)
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
-	if err != nil || receipt.Result != "held" {
+	if err != nil || receipt.Result != "committed" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
 	if err != nil || len(messages) != 2 {
 		t.Fatalf("turn room messages=%+v err=%v", messages, err)
 	}
-	if strings.Contains(messages[1].Body, "secret routing brief") || strings.Contains(messages[1].Body, "@privatepeer please review this task") || !strings.Contains(messages[1].Body, "message out_") {
-		t.Fatalf("held note disclosed candidate text or lost the message ID: %q", messages[1].Body)
+	if messages[1].Body != "@privatepeer please review this task" {
+		t.Fatalf("original answer missing from target room: %q", messages[1].Body)
+	}
+	sharedMessages, err := s.ListMessagesAfter(ctx, other.ID, 0)
+	if err != nil || len(sharedMessages) != 2 || sharedMessages[0].Body != "secret routing brief" ||
+		!strings.Contains(sharedMessages[1].Body, fmt.Sprintf("#%d", messages[1].No)) ||
+		strings.Contains(sharedMessages[1].Body, "secret routing brief") || strings.Contains(sharedMessages[1].Body, "please review this task") {
+		t.Fatalf("pointer disclosed candidate text or lost the reference: %+v %v", sharedMessages, err)
 	}
 }
 
@@ -174,7 +268,7 @@ func TestMissedMentionHintOmitsInaccessibleRestrictedRoom(t *testing.T) {
 	}
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"@routingpeer please review"}]}`, f.room.ID)
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
-	if err != nil || receipt.Result != "held" || strings.Contains(receipt.Error, routing.ID) || strings.Contains(receipt.Error, routing.Title) || !strings.Contains(receipt.Error, "no open task room") {
+	if err != nil || receipt.Result != "held" || strings.Contains(receipt.Error, routing.ID) || strings.Contains(receipt.Error, routing.Title) || !strings.Contains(receipt.Error, "dm_agent") {
 		t.Fatalf("restricted room leaked in hint: %+v %v", receipt, err)
 	}
 }

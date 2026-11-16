@@ -74,6 +74,8 @@ func excerptRunes(text string, limit int) string {
 func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectID string, no int64, limit int) (AgentMessage, error) {
 	unavailable := AgentMessage{No: no}
 	var roomID, title, kind, authorKind, authorID, body, createdAt string
+	// System citation grants come from server-created missed-mention pointers.
+	// Their persisted targets_json records the sole agent allowed to follow one.
 	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at
 		FROM message m JOIN room r ON r.id=m.room_id
 		WHERE m.no=? AND m.no>0 AND r.project_id IN (?,`+agentDMProjectSQL+`) AND (
@@ -81,7 +83,8 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 			OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL)
 			OR EXISTS (SELECT 1 FROM message_reference_grant g JOIN message source ON source.id=g.source_message_id
 				JOIN room_member own ON own.room_id=source.room_id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL
-				WHERE g.target_no=m.no AND r.kind<>'dm' AND source.room_id<>r.id AND source.room_id IN (SELECT id FROM room WHERE project_id=r.project_id)))`, no, projectID, agentID, agentID).
+				WHERE g.target_no=m.no AND r.kind<>'dm' AND source.room_id<>r.id AND source.room_id IN (SELECT id FROM room WHERE project_id=r.project_id)
+				AND (source.author_kind<>'system' OR EXISTS (SELECT 1 FROM json_each(source.targets_json) WHERE value=?))))`, no, projectID, agentID, agentID, agentID).
 		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt)
 	if err == sql.ErrNoRows {
 		return unavailable, nil
@@ -124,11 +127,15 @@ func (s *Store) AgentMessageByNo(ctx context.Context, agentID, projectID string,
 func (s *Store) ReferencedMessageForUser(ctx context.Context, userID, sourceID string, no int64) (AgentMessage, error) {
 	out := AgentMessage{No: no}
 	var sourceRoom, targetRoom string
+	// A system pointer is visible in the shared room, but its cited message is
+	// available to people only through project owner/operator oversight.
 	err := s.db.QueryRowContext(ctx, `SELECT source.room_id,target.room_id FROM message_reference_grant g
 		JOIN message source ON source.id=g.source_message_id
 		JOIN message target ON target.no=g.target_no
 		JOIN room sr ON sr.id=source.room_id JOIN room tr ON tr.id=target.room_id
-		WHERE g.source_message_id=? AND g.target_no=? AND sr.project_id=tr.project_id AND source.room_id<>target.room_id AND tr.kind<>'dm'`, sourceID, no).Scan(&sourceRoom, &targetRoom)
+		WHERE g.source_message_id=? AND g.target_no=? AND sr.project_id=tr.project_id AND source.room_id<>target.room_id AND tr.kind<>'dm'
+		AND (source.author_kind<>'system' OR EXISTS (SELECT 1 FROM membership oversight WHERE oversight.project_id=sr.project_id
+			AND oversight.user_id=? AND oversight.role IN ('owner','operator')))`, sourceID, no, userID).Scan(&sourceRoom, &targetRoom)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}

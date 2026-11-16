@@ -469,8 +469,7 @@ func (tx *Tx) insertSwitchHandoff(agentID, roomID, oldTool, newTool, oldModel, n
 			return err
 		}
 		body := "Switch handoff (" + source + "). The " + oldTool + " session ended; this " + newTool + " session starts fresh.\n" +
-			"Current task: " + handoff.CurrentTask + "\nStatus: " + handoff.Status + "\nWork state: " + handoff.WorkState +
-			"\nNext steps: " + handoff.NextSteps + "\nOpen questions: " + handoff.OpenQuestions + "\nCautions: " + handoff.Cautions
+			formatSwitchHandoffBody(handoff)
 		if moved {
 			body += "\nMachine changed; verify files in the target checkout."
 		}

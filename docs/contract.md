@@ -10,17 +10,22 @@ account switch versus new dispatch. Corrections require a verified
 isolation. Migrations may reshape tables later.
 
 Final-answer delivery checks each live prose mention of a current project
-agent against membership in its message room. A message with at least one
-present addressee commits; absent agent mentions then produce a receipt
-warning and notify nobody outside the room. A message whose agent mentions
-are all absent holds the entire candidate before publication. A per-message
-`force:true` bypasses this guard; it does not make the mention reach the
-absent agent. Verified read-only harnesses get one correction turn. Other
+agent against membership in its message room. When every absent addressee
+shares another open project room with the author, the answer commits and the
+server posts a short targeted pointer in each shared room. The pointer cites
+the single committed message, lets only its addressed agent read it
+through the reference path, and wakes that agent; it does not grant room
+history. Routing takes priority when the dispatcher reports to the leader.
+If an absent addressee has no shared room, a message whose agent mentions are
+all absent holds the entire candidate before publication. A message with
+another present addressee still commits with a warning for an unshared absent
+mention. A per-message
+`force:true` bypasses this guard and does not forward a pointer. Verified
+no-action harnesses get one correction turn for a held answer. Other
 harnesses get a targeted one-sentence system note naming the held outbox
-message ID, without quoting candidate content; the receipt offers an
-accessible task room, `dm_agent`, or `force:true`.
-Restricted room names are omitted from the hint unless the author can read
-them. A future agent toolbox room-send
+message ID, without quoting candidate content; the receipt offers
+`dm_agent` or `force:true` when no shared task room exists.
+The held-answer hint names no room that the author cannot post in. A future agent toolbox room-send
 tool must apply the same guard and report the missed agent and alternatives.
 
 ## Project handbook
@@ -131,9 +136,12 @@ Projects, rooms, people
   mentioning the leader from a task room where the leader is not a member.
   **message_reference_grant**(source_message_id, target_no) records each
   existing `#N` cited by a role listed in the template's `grant_roles`,
-  only when that author can read the target room directly. A member of the
-  source room can read that one cited message across rooms of the same
-  project, without access to its room. The source must remain readable; the
+  only when that author can read the target room directly. The server also
+  records a grant for a targeted missed-mention pointer when the author and
+  recipient share the pointer's room. An ordinary role citation grants that
+  one message to members of its source room; a system pointer grants it only
+  to the addressed agent, while project owners and operators can inspect it.
+  No grant opens the target room history. The source must remain readable; the
   grant vanishes when the source message is deleted.
   Initial team setup for A, B, or C uses an idempotent request. Machine and
   launcher choices are checked before the transaction; applying the flow,

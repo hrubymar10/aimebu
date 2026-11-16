@@ -64,6 +64,9 @@ func TestSwitchContinuityHandoffAndBootstrap(t *testing.T) {
 			if err != nil || !ready || !strings.Contains(string(delivery.Context), "switch_handoff_request") {
 				t.Fatalf("handoff delivery %t %v %s", ready, err, delivery.Context)
 			}
+			if len(delivery.Notes) != 1 || delivery.Notes[0].RoomID != room.ID || !strings.Contains(delivery.Notes[0].Body, "dedicated switch handoff turn") || delivery.Notes[0].FYI {
+				t.Fatalf("handoff task must be delivered as an addressed note: %+v", delivery.Notes)
+			}
 			body, _ := json.Marshal(SwitchHandoffBody{CurrentTask: "Feature X", Status: "Tests green", WorkState: "branch feature, SHA abc, file x.go", NextSteps: "Review and merge", OpenQuestions: "none", Cautions: "Do not push"})
 			candidate, _ := json.Marshal(map[string]any{"messages": []map[string]string{{"room": room.ID, "body": string(body)}}})
 			parsed, err := answer.Parse(candidate, false)

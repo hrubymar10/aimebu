@@ -66,7 +66,7 @@ func TestFakeLeadCoordinatesTaskFromHomeToArchive(t *testing.T) {
 	go func() { done <- client.RunOnce(runCtx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor not ready")
 	}
 
@@ -99,7 +99,7 @@ func TestFakeLeadCoordinatesTaskFromHomeToArchive(t *testing.T) {
 	}
 	waitTurn := func(id string) {
 		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(machineWaitGuard)
 		for {
 			state, err := f.db.DeliveryState(ctx, id)
 			if err != nil {
@@ -209,7 +209,7 @@ func TestFakeLeadCoordinatesTaskFromHomeToArchive(t *testing.T) {
 	}
 	var third protocol.Delivery
 	ok = false
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(machineWaitGuard)
 	for !ok && time.Now().Before(deadline) {
 		third, ok, err = f.db.PrepareDispatch(ctx, lead.ID, "")
 		if err != nil {
@@ -230,7 +230,7 @@ func TestFakeLeadCoordinatesTaskFromHomeToArchive(t *testing.T) {
 			return data
 		}},
 		adapter.Step{Kind: adapter.StepEffect, Effect: func(ctx context.Context) error {
-			deadline := time.Now().Add(4 * time.Second)
+			deadline := time.Now().Add(machineWaitGuard)
 			for {
 				messages, err := f.db.ListMessagesAfter(ctx, homeID, 0)
 				if err != nil {
@@ -267,7 +267,7 @@ func TestFakeLeadCoordinatesTaskFromHomeToArchive(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not stop")
 	}
 }

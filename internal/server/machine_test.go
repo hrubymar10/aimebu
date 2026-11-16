@@ -1017,13 +1017,13 @@ func TestFakeCorrectionTurnCommitsAfterInvalidBatch(t *testing.T) {
 	go func() { done <- client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor not ready")
 	}
 	if err := f.srv.Dispatch(ctx, delivery); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(machineWaitGuard)
 	var correction store.Turn
 	for {
 		correction, err = f.db.CorrectionTurn(context.Background(), parent.ID)
@@ -1054,7 +1054,7 @@ func TestFakeCorrectionTurnCommitsAfterInvalidBatch(t *testing.T) {
 	if err := f.srv.Dispatch(ctx, fixDelivery); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(4 * time.Second)
+	deadline = time.Now().Add(machineWaitGuard)
 	for {
 		_, childJSON, childErr := f.db.ReceiptByTurn(context.Background(), correction.ID, 1)
 		_, parentJSON, parentErr := f.db.ReceiptByTurn(context.Background(), parent.ID, 0)
@@ -1074,7 +1074,7 @@ func TestFakeCorrectionTurnCommitsAfterInvalidBatch(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not stop")
 	}
 }

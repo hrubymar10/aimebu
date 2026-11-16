@@ -260,6 +260,9 @@ The ack of a stop that interrupts a running turn is dropped and that stop stays
 pending, so deleting the project is refused (409) until the supervisor is
 upgraded or the machine is revoked.
 A lost turn remains unsettled until recovery establishes quiescence.
+Dedicated handoff turns carry their request as a synthetic delivery note.
+Admission checks queued source notes separately, so that request can reach
+the supervisor even though it has no note row.
 
 `POST /api/agents/{id}/switch` first sets the agent to `not_accepting`,
 letting an active turn finish without admitting another. Once open work has
@@ -359,7 +362,12 @@ item exposes the held reason from the parent or correction receipt.
 An exited turn with an uncertain outcome starts a diagnostic only when its
 admitted capability snapshot verifies read-only mode. The diagnostic report
 stays private to the recovery inbox. A lost turn goes straight to the inbox
-because its previous process may still be running. Owner/operator decisions
+because its previous process may still be running. If the harness never
+launched, the supervisor reports a definite start failure. Recovery shows the
+start error and offers Retry or Abandon without a diagnostic or a warning that
+work may have run. A missing tools access error tells the owner to start the
+agent again before retrying.
+Owner/operator decisions
 use an item revision and idempotency key: Resume creates a linked turn with
 evidence and a continuation instruction, Retry creates one with raw notes,
 and Abandon aborts the notes. The notes become done only after the linked
@@ -413,12 +421,18 @@ turn's policy includes verified `no_action_mode`; otherwise the batch is
 held. A correction answer uses revision 1. The parent revision's
 `correction_requested` receipt becomes terminal `superseded` when the
 correction settles. Closed rooms and lost membership hold immediately.
-An answer mentioning an active agent of the project outside its target room
-is held as a whole unless that message sets `force:true`. The receipt names
-the missed agent and suggests an open task room or `dm_agent`. A verified
-read-only correction mode gets one correction turn. Other harnesses receive
-a targeted system note with the held candidate and can send it again to the
-right room or repeat it with `force:true`; no candidate message is published.
+An answer mentioning active agents outside its target room commits when the
+author shares another open project room with each absent addressee. The
+server posts a targeted pointer there. Only the addressed agent can read
+the cited message by number; project owners and operators can inspect it on
+the web. The pointer does not open the rest of the target room.
+Routing is preferred for dispatcher-to-leader reports. Without a shared
+room, an answer whose only agent addressee is absent is held as a whole
+unless the message sets `force:true`. The receipt names the missed agent
+and offers `dm_agent` or `force:true`. A verified no-action mode gets one
+correction turn. Other harnesses receive a targeted one-sentence system note
+naming the held outbox message, without quoting the mention or suggesting an
+inaccessible room; no candidate message is published.
 Diagnostic output is stored on the turn for recovery and never posted to a
 room. Message insertion resolves room mentions, replies, roles, DM peers and
 handoffs, then queues eligible agent notes or records why an agent was not

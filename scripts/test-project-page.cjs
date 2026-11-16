@@ -159,7 +159,7 @@ async function main() {
       const agent = (id, slug, extra = {}) => ({ agent_id: id, slug, machine_id: 'm1', tool: 'claude', variant: 'native', launcher_id: 'l1', launcher_label: 'Claude', model: 'm1', ...extra });
       const plan = { from_key: 'custom', to_key: 'leader-dispatcher', roles: [
         { role_key: 'leader', status: 'kept', agents: [agent('agt_l', 'ada')] }, { role_key: 'dispatcher', status: 'new', agents: [] },
-        { role_key: 'worker', status: 'kept', agents: [agent('agt_w', 'bo')] }, { role_key: 'reviewer', status: 'kept', agents: [] }] };
+        { role_key: 'worker', status: 'kept', agents: [agent('agt_w', 'bo'), agent('agt_s', 'iris', { state: 'stopped' })] }, { role_key: 'reviewer', status: 'kept', agents: [] }] };
       const auto = base();
       auto['GET /api/rooms/r1/agent-name'] = { name: 'cy' };
       auto['GET /api/team-flows/recommended-models'] = { rows: [{ role_key: 'dispatcher', flow_key: 'leader-dispatcher', tool: 'claude', models: [{ model: 'm2', why: 'cheap and quick routing' }, { model: 'not-offered-yet', why: 'the strongest model for rare advice' }] },
@@ -203,11 +203,13 @@ async function main() {
       await next('Dispatcher');
       assert.equal(await banner(), 'Dispatcher is new in B and will be added');
       await page.waitForFunction(() => document.querySelector('#team-setup-dispatcher-name')?.value === 'cy');
-      assert.match(await page.$eval('#project-team-flow .team-wizard-recommended', node => node.textContent), /^💡 Recommended models.*Sonnet — cheap and quick routing$/, 'the recommendation for this role, flow and harness is shown under the picker\'s label, without the model the harness does not offer');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-recommended', node => node.textContent), /^💡 Recommended modelsClaude · SelectedSonnet — cheap and quick routing$/, 'the live catalog filters recommendations under the selected harness label');
       await next('Workers and reviewers');
       assert.equal(await banner(), 'Workers are kept between D → B migration');
       assert.match(await page.$eval('#project-team-flow .team-wizard-kept-list', node => node.textContent), /Workers.*bo · Box · Claude · Opus/s);
-      assert.deepEqual(await page.$$eval('#project-team-flow .team-wizard-recommended', nodes => nodes.map(node => node.textContent)), ['💡 Recommended models for workersSonnet — executes: speed and cost matter'], 'workers get their row; reviewers have none for this harness, so that panel stays hidden');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-kept-list', node => node.textContent), /iris · Box · Claude · Opus \(stopped, unchanged\)/);
+      assert.equal(await page.$$eval('#project-team-flow .team-wizard-kept-list .team-wizard-kept', rows => rows.find(row => row.textContent.includes('iris'))?.querySelector('button') || null), null, 'a stopped worker cannot pick a switch that the server refuses');
+      assert.deepEqual(await page.$$eval('#project-team-flow .team-wizard-recommended', nodes => nodes.map(node => node.textContent)), ['💡 Recommended models for workersClaude · SelectedSonnet — executes: speed and cost matter'], 'workers get their row; reviewers have no offered recommendation, so that panel stays hidden');
       // Opening "Change model or harness" on a worker and leaving the choice alone is not a change: it must not reach the server as one.
       await page.$eval('#project-team-flow .team-wizard-kept-list .team-wizard-kept .btn', node => node.click());
       await page.waitForSelector('#team-setup-worker-agt_w-model');
@@ -229,6 +231,7 @@ async function main() {
       assert.match(summary, /Leader.*ada: switches to the chosen model after its current turn \(Box · Claude · Sonnet\)/s);
       assert.match(summary, /Dispatcher.*cy · Box · Claude · Opus is added/s);
       assert.match(summary, /Worker.*bo: keeps running with the new rules \(not restarted\)/s);
+      assert.match(summary, /iris: stopped, unchanged/);
       assert.match(summary, /Rooms to create: routing/);
       assert.match(summary, /This can take a while: each agent first finishes its current turn before the change applies; you will have to wait until then\./);
       assert.equal(await page.$eval('#project-team-flow .team-flow-removal input', node => node.checked), false, 'membership removal is opt-in');
@@ -266,7 +269,7 @@ async function main() {
       assert.deepEqual(errors.splice(0), [], 'rendering the wizard without a flow state throws nothing');
       await page.close();
     }
-    // A change that finishes reloads the flow and closes the wizard; a project that is already changing shows that progress on opening.
+    // A completed change keeps its per-agent summary visible until the person closes it; a project already changing shows progress on opening.
     {
       const running = { id: 'mg2', state: 'applying', can_cancel: false, agents: [{ agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'notice', state: 'running' }] };
       const auto = base(); auto['GET /api/projects/p1/team-flow/migration'] = { migration: running };
@@ -274,7 +277,13 @@ async function main() {
       await ready(page);
       await page.waitForSelector('#project-team-flow .team-wizard-progress');
       assert.equal(await page.$('#project-team-flow .team-wizard-progress .btn'), null, 'no cancel after the point of no return');
-      await page.evaluate(() => { window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg2', state: 'done', can_cancel: false, agents: [] } }; window.__auto['GET /api/projects/p1/team-flow'] = { key: 'leader-dispatcher', rev: 2, review_pending: false, conflicts: [] }; });
+      await page.evaluate(() => { window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg2', state: 'done', can_cancel: false, agents: [
+        { agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'notice', state: 'done' },
+        { agent_id: 'agt_d', slug: 'cy', role_key: 'dispatcher', action: 'reactivate', state: 'done' }] } }; window.__auto['GET /api/projects/p1/team-flow'] = { key: 'leader-dispatcher', rev: 2, review_pending: false, conflicts: [] }; });
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Team flow changed');
+      assert.match(await page.$eval('#project-team-flow .team-wizard-progress', node => node.textContent), /Team flow changed\..*ada \(leader\) keeps running with the new rules: Done.*cy \(dispatcher\) is started again: Done/s);
+      assert.match(await page.$eval('#project-team-flow .team-flow-current', node => node.textContent), /D · Custom/, 'the completed summary remains until Done');
+      await page.$eval('#project-team-flow .team-flow-actions .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('B · Leader and dispatcher') && !document.querySelector('#project-team-flow .team-wizard-progress'), { timeout: 8000 });
       assert.equal(await page.evaluate(() => window.__hooks.at(-1)[0]), 'flow', 'the page is told the flow changed');
       await page.close();
@@ -391,6 +400,14 @@ async function main() {
     // The inline home setup starts with A for a new project; migrated C can be kept in one click and stays dismissed after reload.
     {
       const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
+      auto['GET /api/spawn-catalog?machine_id=m1'] = { tools: [
+        { tool: 'claude', variant: 'native', launcher_id: 'l1', label: 'Claude Code', available: true, models: [{ id: 'm1', label: 'Opus', default: true }, { id: 'm2', label: 'Sonnet' }] },
+        { tool: 'codex', variant: 'native', launcher_id: 'l2', label: 'Codex', available: true, models: [{ id: 'gpt-6-sol', label: 'GPT-6 Sol' }, { id: 'gpt-6-luna', label: 'GPT-6 Luna' }, { id: 'gpt-6-astra', label: 'GPT-6 Astra' }] },
+      ] };
+      auto['GET /api/team-flows/recommended-models'] = { rows: ['leader', 'dispatcher', 'worker', 'reviewer'].flatMap(role => ['leader-workers', 'leader-dispatcher'].flatMap(flow => [
+        { role_key: role, flow_key: flow, tool: 'claude', models: [{ model: 'm2', why: 'Claude choice' }] },
+        { role_key: role, flow_key: flow, tool: 'codex', models: [{ model: 'gpt-6-sol', why: 'Codex choice' }, { model: 'missing', why: 'not offered' }] },
+      ])) };
       const page = await mount({ auto });
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeRole = ''; window.__homeFlow = new TeamFlowHome({ canEdit: () => window.__homeRole === 'owner', onApplied: () => {} }); window.__homeRole = 'owner'; window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
       await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 5);
@@ -431,8 +448,13 @@ async function main() {
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-wizard-recommended-group', nodes => nodes.map(node => [node.querySelector('strong').textContent, node.querySelector('li').textContent])), [['Claude Code · Selected', 'Sonnet — Claude choice'], ['Codex', 'GPT-6 Sol — Codex choice']], 'leader lists every available harness against its live models');
+      await page.select('#team-flow-home [aria-label="Leader tool"]', 'l2');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-wizard-recommended-group', nodes => nodes.map(node => node.querySelector('strong').textContent)), ['Claude Code', 'Codex · Selected'], 'the current harness is highlighted after a tool change');
+      await page.select('#team-flow-home [aria-label="Leader tool"]', 'l1');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-wizard-recommended', nodes => nodes.map(node => [...node.querySelectorAll('.team-wizard-recommended-group')].map(group => group.querySelector('strong').textContent))), [['Claude Code · Selected', 'Codex'], ['Claude Code · Selected', 'Codex']], 'workers and reviewers both include Claude and Codex');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Project settings');
       assert.equal(await page.$eval('#team-flow-home .team-setup-limit-hint', node => node.textContent), 'Leader is not counted.', 'flow A excludes only its leader');
@@ -449,8 +471,10 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Dispatcher');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-wizard-recommended-group', nodes => nodes.map(node => node.querySelector('strong').textContent)), ['Claude Code · Selected', 'Codex'], 'dispatcher includes both harnesses');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-wizard-recommended', nodes => nodes.map(node => [...node.querySelectorAll('.team-wizard-recommended-group')].map(group => group.querySelector('strong').textContent))), [['Claude Code · Selected', 'Codex'], ['Claude Code · Selected', 'Codex']], 'flow B workers and reviewers include both harnesses');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Project settings');
       assert.equal(await page.$eval('#team-flow-home [aria-label="Project folder"]', node => node.readOnly), true);

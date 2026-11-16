@@ -77,16 +77,24 @@ export function StatusBanner({ status, role, from, to, plural = false, reactivat
   return text ? html`<p class=${`team-wizard-banner team-wizard-banner-${status}`} role="status">${text}</p>` : null;
 }
 
-// Recommended models for a role in the chosen flow and harness, from the table the server serves. The table names models the harness may not
-// offer yet, so only those the picker offers right now (the live catalog of the selected machine and harness) are listed, under the label the
-// picker shows; the panel is hidden while nothing is left.
-export function RecommendedModels({ rows, role, flowKey, tool, options = [], target, label = '' }) {
-  const offered = model => options.find(option => option.model === model && (!target || option.machine_id === target.machine_id && option.launcher_id === target.launcher_id));
-  const matches = (rows || []).filter(row => row.role_key === role && row.flow_key === flowKey && (!row.tool || !tool || row.tool === tool))
-    .flatMap(row => (row.models || []).map(item => ({ ...item, tool: row.tool, offered: offered(item.model) }))).filter(item => item.offered);
-  if (!matches.length) return null;
+// Show each available harness on the chosen machine against its own live catalog.
+export function RecommendedModels({ rows, role, flowKey, options = [], target, label = '' }) {
+  const machineID = target?.machine_id || options[0]?.machine_id;
+  const launchers = [...new Map(options.filter(option => option.machine_id === machineID)
+    .map(option => [option.launcher_id, option])).values()];
+  const groups = launchers.map(launcher => {
+    const catalog = options.filter(option => option.launcher_id === launcher.launcher_id && option.machine_id === machineID);
+    const models = (rows || []).filter(row => row.role_key === role && row.flow_key === flowKey && (!row.tool || row.tool === launcher.tool))
+      .flatMap(row => (row.models || []).map(item => ({ ...item, offered: catalog.find(option => option.model === item.model) })))
+      .filter(item => item.offered);
+    return { launcher, models };
+  }).filter(group => group.models.length);
+  if (!groups.length) return null;
   return html`<aside class="team-wizard-recommended" aria-label="Recommended models"><strong>💡 Recommended models${label ? ` for ${label}` : ''}</strong>
-    <ul>${matches.map(item => html`<li key=${`${item.tool || ''}:${item.model}`}><strong>${item.offered.model_label}</strong>${item.why ? ` — ${item.why}` : ''}</li>`)}</ul></aside>`;
+    ${groups.map(({ launcher, models }) => html`<div key=${launcher.launcher_id} class=${`team-wizard-recommended-group${target?.launcher_id === launcher.launcher_id ? ' selected' : ''}`}>
+      <strong>${launcher.tool_label}${target?.launcher_id === launcher.launcher_id ? ' · Selected' : ''}</strong>
+      <ul>${models.map(item => html`<li key=${item.model}><strong>${item.offered.model_label}</strong>${item.why ? ` — ${item.why}` : ''}</li>`)}</ul>
+    </div>`)}</aside>`;
 }
 
 const originalTarget = agent => cleanTarget(agent);
@@ -97,8 +105,8 @@ export const MIGRATION_TERMINAL = ['done', 'cancelled', 'failed', 'lost'];
 // A kept agent: what it runs now, and an optional change of harness or model (which becomes a full model switch for that agent).
 export function KeptAgent({ agent, options, changed, onChange, onReset, prefix }) {
   return html`<div class="team-wizard-kept">
-    <p><strong>${agent.slug || agent.agent_id}</strong> · ${describeTarget(options, agent)} <span class="team-wizard-current">${isModelChange(agent, changed) ? '(will switch)' : '(current)'}</span></p>
-    ${changed ? html`<${TargetPicker} label=${`${agent.slug || agent.agent_id} agent`} prefix=${`${prefix}-${agent.agent_id}`} options=${options} value=${changed} onChange=${onChange} withName=${false} />
+    <p><strong>${agent.slug || agent.agent_id}</strong> · ${describeTarget(options, agent)} <span class="team-wizard-current">${agent.state === 'stopped' ? '(stopped, unchanged)' : isModelChange(agent, changed) ? '(will switch)' : '(current)'}</span></p>
+    ${agent.state === 'stopped' ? null : changed ? html`<${TargetPicker} label=${`${agent.slug || agent.agent_id} agent`} prefix=${`${prefix}-${agent.agent_id}`} options=${options} value=${changed} onChange=${onChange} withName=${false} />
       <button type="button" class="btn" onClick=${onReset}>Keep current model</button>`
       : html`<button type="button" class="btn" disabled=${!options.length} onClick=${() => onChange(originalTarget(agent))}>Change model or harness</button>`}
   </div>`;
@@ -106,13 +114,14 @@ export function KeptAgent({ agent, options, changed, onChange, onReset, prefix }
 
 const ACTION = {
   kept: 'keeps running with the new rules (not restarted)',
+  stopped: 'stopped, unchanged',
   switch: 'switches to the chosen model after its current turn',
   new: 'is added',
   reactivate: 'is started again (it was stopped by an earlier switch and keeps its name)',
   leaving: 'hands off to the leader and is stopped',
 };
 
-export function agentAction(status, changed) { return status === 'kept' ? (changed ? 'switch' : 'kept') : status; }
+export function agentAction(status, changed, state) { return status === 'kept' ? (state === 'stopped' ? 'stopped' : changed ? 'switch' : 'kept') : status; }
 
 export const MIGRATION_NOTICE = 'This can take a while: each agent first finishes its current turn before the change applies; you will have to wait until then.';
 
@@ -122,7 +131,7 @@ export function MigrationSummary({ plan, options, changes, newTargets, flowLabel
     <p><strong>Team flow:</strong> ${fromLabel} → ${flowLabel}</p>
     ${roles.map(role => html`<div key=${role.role_key} class="team-wizard-summary-role"><strong>${roleLabel(role.role_key)}</strong>
       ${role.status === 'new' && newTargets[role.role_key] ? html`<p>${role.agents?.[0] ? `${role.agents[0].slug || role.agents[0].agent_id} · ` : newTargets[role.role_key].name ? `${newTargets[role.role_key].name} · ` : ''}${describeTarget(options, newTargets[role.role_key])} ${role.agents?.[0] ? ACTION.reactivate : ACTION.new}</p>`
-    : (role.agents || []).length ? html`<ul>${role.agents.map(agent => html`<li key=${agent.agent_id}>${agent.slug || agent.agent_id}: ${ACTION[agentAction(role.status, !!changes[agent.agent_id])]}${changes[agent.agent_id] ? ` (${describeTarget(options, changes[agent.agent_id])})` : ''}</li>`)}</ul>` : html`<p>${role.status === 'leaving' ? 'No agent.' : 'None yet.'}</p>`}</div>`)}
+    : (role.agents || []).length ? html`<ul>${role.agents.map(agent => html`<li key=${agent.agent_id}>${agent.slug || agent.agent_id}: ${ACTION[agentAction(role.status, !!changes[agent.agent_id], agent.state)]}${changes[agent.agent_id] ? ` (${describeTarget(options, changes[agent.agent_id])})` : ''}</li>`)}</ul>` : html`<p>${role.status === 'leaving' ? 'No agent.' : 'None yet.'}</p>`}</div>`)}
     ${preview?.created_rooms?.length > 0 && html`<p><strong>Rooms to create:</strong> ${preview.created_rooms.map(room => room.title || room.key || room).join(', ')}</p>`}
     ${preview?.conflicts?.length > 0 && html`<div class="team-flow-change-group"><strong>Agents needing action</strong><ul>${preview.conflicts.map(item => html`<li key=${`${item.agent_id}:${item.room_id}`}><label class="team-flow-removal"><input type="checkbox" checked=${selectedRemovals.some(selected => selected.agent_id === item.agent_id && selected.room_id === item.room_id)} onChange=${event => onToggleRemoval(item, event.currentTarget.checked)} />Remove ${item.slug || item.agent_id} (${item.role_label || item.role_key || 'agent'}) from ${item.room_title || 'this room'} when applying</label></li>`)}</ul></div>`}
     <p class="team-wizard-notice" role="note">${MIGRATION_NOTICE}</p>

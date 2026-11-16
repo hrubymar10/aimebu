@@ -219,6 +219,9 @@ func (s *Store) PreviewTeamFlowMigration(ctx context.Context, projectID, actorID
 		}
 		for _, role := range []string{"leader", "dispatcher", "advisor", "worker", "reviewer"} {
 			agents := byRole[role]
+			if agents == nil {
+				agents = []TeamFlowMigrationAgent{}
+			}
 			live := 0
 			for _, agent := range agents {
 				if agent.State != "stopped" {
@@ -260,6 +263,21 @@ func (s *Store) PreviewTeamFlowMigration(ctx context.Context, projectID, actorID
 			}
 			out.Roles = append(out.Roles, TeamFlowMigrationRole{RoleKey: role, Status: status, Agents: agents})
 		}
+		leaving := map[string]bool{}
+		for _, role := range out.Roles {
+			if role.Status == "leaving" {
+				for _, agent := range role.Agents {
+					leaving[agent.AgentID] = true
+				}
+			}
+		}
+		conflicts := make([]FlowConflict, 0, len(out.Conflicts))
+		for _, conflict := range out.Conflicts {
+			if !leaving[conflict.AgentID] {
+				conflicts = append(conflicts, conflict)
+			}
+		}
+		out.Conflicts = conflicts
 		if countLiveFlowAgents(byRole["leader"]) > 1 || countLiveFlowAgents(byRole["dispatcher"]) > 1 || countLiveFlowAgents(byRole["advisor"]) > 1 {
 			return ErrTeamFlowMigration
 		}
@@ -319,7 +337,8 @@ func (s *Store) TeamFlowMigrationProgressByID(ctx context.Context, projectID, ac
 
 func flowMigrationProgressByID(ctx context.Context, db rowQuerier, id string) (TeamFlowMigrationProgress, error) {
 	var out TeamFlowMigrationProgress
-	if err := db.QueryRowContext(ctx, `SELECT id,state,error FROM team_flow_migration WHERE id=?`, id).Scan(&out.ID, &out.State, &out.Error); err != nil {
+	var input string
+	if err := db.QueryRowContext(ctx, `SELECT id,state,error,input_json FROM team_flow_migration WHERE id=?`, id).Scan(&out.ID, &out.State, &out.Error, &input); err != nil {
 		return out, err
 	}
 	out.CanCancel, out.Agents = out.State == "draining", []TeamFlowMigrationAgentProgress{}
@@ -346,7 +365,38 @@ func flowMigrationProgressByID(ctx context.Context, db rowQuerier, id string) (T
 		}
 		out.Agents = append(out.Agents, item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	if out.State == "draining" {
+		var saved flowMigrationStored
+		if err := json.Unmarshal([]byte(input), &saved); err != nil {
+			return out, err
+		}
+		for _, role := range []string{"leader", "dispatcher", "advisor"} {
+			target, planned := saved.Targets[role]
+			if !planned {
+				continue
+			}
+			exists := false
+			for _, agent := range out.Agents {
+				if agent.RoleKey == role && (agent.Action == "spawn" || agent.Action == "reactivate") {
+					exists = true
+					break
+				}
+			}
+			if exists {
+				continue
+			}
+			name := target.Name
+			if name == "" {
+				name = "new " + role
+			}
+			out.Agents = append(out.Agents, TeamFlowMigrationAgentProgress{AgentID: "planned:" + role, Slug: name,
+				RoleKey: role, Action: "spawn", State: "waiting"})
+		}
+	}
+	return out, nil
 }
 
 func (tx *Tx) appendFlowMigrationEvent(projectID, id string) error {
@@ -466,7 +516,8 @@ func (tx *Tx) BeginTeamFlowMigration(projectID, actorID string, in TeamFlowMigra
 		VALUES (?,?,?,?,?,?,'draining',?,?)`, id, projectID, actorID, from, in.FlowKey, rev, string(stored), timestamp()); err != nil {
 		return out, err
 	}
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.id,a.slug,r.role_key,a.desired,a.observed,a.generation FROM agent a JOIN role r ON r.id=a.role_id
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.id,a.slug,r.role_key,a.desired,a.observed,a.generation,a.recovery_block,
+		m.approved=1 AND m.revoked_at IS NULL FROM agent a JOIN role r ON r.id=a.role_id JOIN machine m ON m.id=a.machine_id
 		WHERE a.project_id=? AND a.revoked_at IS NULL ORDER BY a.created_at,a.id`, projectID)
 	if err != nil {
 		return out, err
@@ -474,11 +525,12 @@ func (tx *Tx) BeginTeamFlowMigration(projectID, actorID string, in TeamFlowMigra
 	type currentAgent struct {
 		id, slug, role, desired, observed string
 		generation                        int
+		blocked, machineReady             bool
 	}
 	items := []currentAgent{}
 	for rows.Next() {
 		var item currentAgent
-		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.desired, &item.observed, &item.generation); err != nil {
+		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.desired, &item.observed, &item.generation, &item.blocked, &item.machineReady); err != nil {
 			rows.Close()
 			return out, err
 		}
@@ -544,7 +596,7 @@ func (tx *Tx) BeginTeamFlowMigration(projectID, actorID string, in TeamFlowMigra
 			return out, err
 		}
 		status := "waiting"
-		if item.desired != "active" || item.observed == "stopped" || item.observed == "lost" {
+		if item.desired != "active" || item.observed == "stopped" || item.observed == "lost" || item.blocked || !item.machineReady {
 			status = "automatic"
 		}
 		var roomMember bool
@@ -687,7 +739,7 @@ func (s *Store) AdvanceTeamFlowMigrations(ctx context.Context) ([]AgentCard, err
 				if _, err := tx.Exec(`SAVEPOINT flow_migration_drain`); err != nil {
 					return err
 				}
-				ready, err := tx.flowMigrationDrainReady(m.id)
+				ready, err := tx.flowMigrationDrainReady(m.id, m.projectID, m.fromKey, m.toKey)
 				if err != nil {
 					if _, rollbackErr := tx.Exec(`ROLLBACK TO flow_migration_drain`); rollbackErr != nil {
 						return rollbackErr
@@ -776,21 +828,22 @@ func (tx *Tx) flowMigrationDrainError(id, projectID string, cause error) error {
 	return tx.flowMigrationFail(id, projectID, "Departing-role handoff could not be completed: "+cause.Error())
 }
 
-func (tx *Tx) flowMigrationDrainReady(migrationID string) (bool, error) {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT ma.agent_id,ma.action,a.desired,a.observed,a.generation,a.recovery_block FROM team_flow_migration_agent ma
-		JOIN agent a ON a.id=ma.agent_id WHERE ma.migration_id=? ORDER BY ma.agent_id`, migrationID)
+func (tx *Tx) flowMigrationDrainReady(migrationID, projectID, fromKey, toKey string) (bool, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT ma.agent_id,ma.role_key,ma.action,ma.state,a.desired,a.observed,a.generation,a.recovery_block,
+		m.approved=1 AND m.revoked_at IS NULL FROM team_flow_migration_agent ma
+		JOIN agent a ON a.id=ma.agent_id JOIN machine m ON m.id=a.machine_id WHERE ma.migration_id=? ORDER BY ma.agent_id`, migrationID)
 	if err != nil {
 		return false, err
 	}
 	type item struct {
-		id, action, desired, observed string
-		generation                    int
-		blocked                       bool
+		id, role, action, state, desired, observed string
+		generation                                 int
+		blocked, machineReady                      bool
 	}
 	items := []item{}
 	for rows.Next() {
 		var a item
-		if err := rows.Scan(&a.id, &a.action, &a.desired, &a.observed, &a.generation, &a.blocked); err != nil {
+		if err := rows.Scan(&a.id, &a.role, &a.action, &a.state, &a.desired, &a.observed, &a.generation, &a.blocked, &a.machineReady); err != nil {
 			rows.Close()
 			return false, err
 		}
@@ -802,7 +855,10 @@ func (tx *Tx) flowMigrationDrainReady(migrationID string) (bool, error) {
 		return false, err
 	}
 	ready := true
+	readyNotices := []item{}
 	for _, a := range items {
+		canHandoff := a.desired == "active" && a.observed != "stopped" && a.observed != "lost" && !a.blocked && a.machineReady
+		handoffReady := false
 		if a.action == "handoff_stop" {
 			status, roomID, overall, turnID, err := tx.switchHandoffStatus(a.id)
 			if err != nil {
@@ -811,7 +867,7 @@ func (tx *Tx) flowMigrationDrainReady(migrationID string) (bool, error) {
 			now := time.Now().UTC().Format(timestampLayout)
 			switch status {
 			case "waiting":
-				if now >= overall || a.desired != "active" || a.observed == "stopped" || a.observed == "lost" {
+				if now >= overall || !canHandoff {
 					if err := tx.switchAutomaticHandoff(a.id, roomID, "Departing agent unavailable or handoff deadline reached."); err != nil {
 						return false, err
 					}
@@ -832,19 +888,24 @@ func (tx *Tx) flowMigrationDrainReady(migrationID string) (bool, error) {
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT handoff_deadline FROM switch_handoff WHERE agent_id=?`, a.id).Scan(&deadline); err != nil {
 					return false, err
 				}
-				if now >= overall || status == "handing_off" && deadline.Valid && now >= deadline.String {
+				if !canHandoff || now >= overall || status == "handing_off" && deadline.Valid && now >= deadline.String {
 					if turnID != "" {
 						if _, err := tx.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=? AND exec='pending'`, timestamp(), turnID); err != nil {
 							return false, err
 						}
 					}
-					if err := tx.switchAutomaticHandoff(a.id, roomID, "Departing handoff turn timed out."); err != nil {
+					cause := "Departing handoff turn timed out."
+					if !canHandoff {
+						cause = "Departing agent unavailable for the handoff turn."
+					}
+					if err := tx.switchAutomaticHandoff(a.id, roomID, cause); err != nil {
 						return false, err
 					}
 				} else {
 					ready = false
 				}
 			case "ready", "automatic":
+				handoffReady = true
 			case "":
 				return false, ErrTeamFlowMigration
 			default:
@@ -858,12 +919,29 @@ func (tx *Tx) flowMigrationDrainReady(migrationID string) (bool, error) {
 		if open != 0 {
 			ready = false
 		}
+		if a.action == "notice" && open == 0 && a.state != "done" && a.desired == "active" && a.observed == "idle" && !a.blocked && a.machineReady {
+			readyNotices = append(readyNotices, a)
+		}
 		state := "draining"
-		if a.action == "handoff_stop" && ready {
+		if a.action == "notice" && open == 0 {
+			state = "done"
+		} else if a.action == "handoff_stop" && handoffReady && open == 0 {
 			state = "running"
 		}
 		if _, err := tx.Exec(`UPDATE team_flow_migration_agent SET state=? WHERE migration_id=? AND agent_id=? AND state<>?`, state, migrationID, a.id, state); err != nil {
 			return false, err
+		}
+	}
+	if !ready {
+		for _, a := range readyNotices {
+			roomID, err := tx.flowMigrationNoticeRoom(projectID, a.id)
+			if err != nil {
+				return false, err
+			}
+			if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system",
+				Body: fmt.Sprintf("The team flow is changing from %s to %s. Your %s role is ready; the change will finish when the other agents are ready.", fromKey, toKey, a.role), OnlyTargets: []string{a.id}}); err != nil {
+				return false, err
+			}
 		}
 	}
 	return ready, nil
@@ -952,7 +1030,7 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 	for _, a := range items {
 		switch a.action {
 		case "notice":
-			roomID, err := tx.flowMigrationAgentRoom(projectID, a.agentID)
+			roomID, err := tx.flowMigrationNoticeRoom(projectID, a.agentID)
 			if err != nil {
 				return nil, err
 			}
@@ -1008,7 +1086,8 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 			if _, err := tx.Exec(`DELETE FROM agent_switch WHERE agent_id=? AND state='failed'`, a.agentID); err != nil {
 				return nil, err
 			}
-			if _, err := tx.Exec(`UPDATE agent SET desired='active',desired_rev=desired_rev+1 WHERE id=?`, a.agentID); err != nil {
+			started, err := tx.setAgentDesired(a.agentID, "user", actorID, "active", a.desiredRev, true, false)
+			if err != nil {
 				return nil, err
 			}
 			changed := target.MachineID != a.machineID || target.Tool != a.tool || target.Variant != a.variant || target.Model != a.model || target.LauncherID != a.launcherID
@@ -1018,20 +1097,15 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 					path = ""
 				}
 				_, err := tx.BeginAgentSwitchWithContinuity(a.agentID, actorID, roomID, target.Tool, target.Variant,
-					target.Model, target.Provider, target.MachineID, path, target.LauncherID, a.desiredRev+1)
+					target.Model, target.Provider, target.MachineID, path, target.LauncherID, started.DesiredRev)
 				if err != nil {
+					return nil, err
+				}
+				if err := tx.switchAutomaticHandoff(a.agentID, roomID, "The prior session was already stopped before reactivation."); err != nil {
 					return nil, err
 				}
 			} else {
-				if _, err := tx.AppendEvent(Event{Kind: "agent_control_requested", ProjectID: projectID, AgentID: a.agentID,
-					PayloadJSON: payloadJSON(map[string]string{"desired": "active", "actor_kind": "system", "actor_id": "team_flow_migration"})}); err != nil {
-					return nil, err
-				}
-				card, err := tx.agentCardByID(a.agentID)
-				if err != nil {
-					return nil, err
-				}
-				controls = append(controls, card)
+				controls = append(controls, started)
 			}
 			if _, err := tx.Exec(`UPDATE team_flow_migration_agent SET state='running' WHERE migration_id=? AND agent_id=?`, id, a.agentID); err != nil {
 				return nil, err
@@ -1045,12 +1119,16 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT body_json FROM switch_handoff WHERE agent_id=?`, a.agentID).Scan(&body); err != nil {
 					return nil, err
 				}
+				var handoff SwitchHandoffBody
+				if err := json.Unmarshal([]byte(body), &handoff); err != nil {
+					return nil, err
+				}
 				privateRoom, err := tx.flowMigrationHandoffRoom(projectID, a.agentID, leaderID, a.role)
 				if err != nil {
 					return nil, err
 				}
 				if _, err := tx.InsertMessage(Message{RoomID: privateRoom, AuthorKind: "system", AuthorID: "system",
-					Body: fmt.Sprintf("%s handed off active work to the leader: %s", a.slug, body), OnlyTargets: []string{leaderID}}); err != nil {
+					Body: fmt.Sprintf("%s handed off active work to the leader:\n\n%s", a.slug, formatSwitchHandoffBody(handoff)), OnlyTargets: []string{leaderID}}); err != nil {
 					return nil, err
 				}
 				if generalID != "" {
@@ -1126,15 +1204,20 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 }
 
 func flowMigrationNotice(fromKey, toKey, role string) string {
-	manager := "the leader"
-	if toKey == "leader-dispatcher" && role != "leader" && role != "dispatcher" {
-		manager = "the dispatcher"
-	}
-	roomText := "Use the rooms allowed by the new flow."
-	if toKey == "leader-dispatcher" {
-		roomText = "The leader handles home and routing; the dispatcher manages task rooms."
-	} else if toKey == "leader-advisor" {
-		roomText = "The leader consults the advisor in advice and manages task rooms."
+	assignment := "Report to the leader. Use general and your task rooms."
+	switch {
+	case role == "leader" && toKey == "leader-dispatcher":
+		assignment = "You remain the project leader. Use home and routing; the dispatcher manages task rooms."
+	case role == "leader" && toKey == "leader-advisor":
+		assignment = "You remain the project leader. Use home and advice; consult the advisor and manage task rooms."
+	case role == "leader":
+		assignment = "You remain the project leader. Use home, general, and task rooms."
+	case role == "dispatcher":
+		assignment = "Report to the leader in routing. Manage workers and reviewers in task rooms."
+	case role == "advisor":
+		assignment = "Report to the leader in advice. Use advice and general for consultation."
+	case toKey == "leader-dispatcher":
+		assignment = "Report to the dispatcher. Use general and your task rooms."
 	}
 	rules := ""
 	if template, ok := teamFlowTemplate(toKey); ok {
@@ -1143,7 +1226,25 @@ func flowMigrationNotice(fromKey, toKey, role string) string {
 			rules = template.RoleTextOverrides["reviewer"]
 		}
 	}
-	return fmt.Sprintf("The team flow changed from %s to %s. Report to %s. %s Your role rules on the next turn are:\n%s", fromKey, toKey, manager, roomText, rules)
+	notice := fmt.Sprintf("The team flow changed from %s to %s for your %s role. %s", fromKey, toKey, role, assignment)
+	if rules != "" {
+		notice += "\n\nYour role rules on the next turn are:\n" + rules
+	}
+	return notice
+}
+
+func (tx *Tx) flowMigrationNoticeRoom(projectID, agentID string) (string, error) {
+	var roomID string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.id FROM agent a JOIN room r ON r.id=a.home_room_id
+		JOIN room_member m ON m.room_id=r.id AND m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL
+		WHERE a.id=? AND a.project_id=? AND r.lifecycle='open'`, agentID, projectID).Scan(&roomID)
+	if err == nil {
+		return roomID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	return tx.flowMigrationAgentRoom(projectID, agentID)
 }
 
 func (tx *Tx) flowMigrationHandoffRoom(projectID, departingID, leaderID, role string) (string, error) {

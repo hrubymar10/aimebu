@@ -62,6 +62,9 @@ const failed = item({ kind: 'recovery', turn_id: 't', definite_failure: true, re
 assert.deepEqual(plain(m.decisionOptions(failed)).map(o => o[0]), ['Retry', 'Abandon']);
 assert.deepEqual(plain(m.decisionOptions(item({ kind: 'recovery', turn_id: 't', definite_failure: false }))).map(o => o[0]), ['Resume', 'Retry', 'Abandon']);
 assert.match(m.retryWarning(failed), /^Retry is safe: the turn failed before it did anything/);
+const startFailed = item({ ...failed, start_failure: true, result_text: 'normal turn requires agent tools access' });
+assert.deepEqual(plain(m.decisionOptions(startFailed)).map(o => o[0]), ['Retry', 'Abandon']);
+assert.equal(m.retryWarning(startFailed), 'The harness did not run. Retry is safe once the start problem is fixed.');
 assert.equal(m.evidenceText(failed), 'Failed to authenticate: OAuth session expired · Please run /login');
 assert.deepEqual(plain(m.recoveryResult(failed)), { text: 'Failed to authenticate: OAuth session expired · Please run /login', raw: failed.evidence });
 assert.equal(m.recoveryResult(item({ kind: 'recovery', evidence: 'x' })), null, 'no sentence from the harness, no split');

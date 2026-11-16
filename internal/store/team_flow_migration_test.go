@@ -2,9 +2,12 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 func flowMigrationFixture(t *testing.T, key string) (*membersFixture, TeamSetupResult) {
@@ -54,6 +57,15 @@ func TestFlowMigrationAtoBKeepsLeaderAndWorkers(t *testing.T) {
 	if err != nil || !preview.CanApply || len(preview.Roles) != 4 || preview.Roles[0].Status != "kept" || preview.Roles[1].Status != "new" || preview.Roles[2].Status != "kept" {
 		t.Fatalf("preview: %+v %v", preview, err)
 	}
+	for _, role := range preview.Roles {
+		if role.Agents == nil {
+			t.Fatalf("preview role %s has nil agents", role.RoleKey)
+		}
+	}
+	encoded, err := json.Marshal(preview)
+	if err != nil || !strings.Contains(string(encoded), `"agents":[]`) {
+		t.Fatalf("empty role agents must be JSON arrays: %s %v", encoded, err)
+	}
 	if err := f.s.Tx(ctx, func(tx *Tx) error { _, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, in); return err }); err != nil {
 		t.Fatal(err)
 	}
@@ -84,6 +96,23 @@ func TestFlowMigrationAtoBKeepsLeaderAndWorkers(t *testing.T) {
 	}
 	if notices == 0 || summaries != 1 {
 		t.Fatalf("notices=%d summaries=%d", notices, summaries)
+	}
+	for _, message := range messages {
+		if strings.Contains(message.Body, "You remain the project leader") || strings.Contains(message.Body, "Your role rules on the next turn") {
+			t.Fatalf("leader's private rules leaked to general: %q", message.Body)
+		}
+	}
+	homeMessages, err := f.s.ListMessagesAfter(ctx, f.home.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaderNotice := false
+	for _, message := range homeMessages {
+		leaderNotice = leaderNotice || strings.Contains(message.Body, "You remain the project leader") &&
+			!strings.Contains(message.Body, "Report to the leader") && strings.Contains(message.Body, "Use home and routing")
+	}
+	if !leaderNotice {
+		t.Fatal("leader's role-specific notice missing from home")
 	}
 }
 
@@ -135,9 +164,64 @@ func TestFlowMigrationReactivatesStoppedDispatcher(t *testing.T) {
 	if err := f.s.db.QueryRow(`SELECT model FROM agent_switch WHERE agent_id=?`, dispatcherID).Scan(&switchedModel); err != nil || switchedModel != "other" {
 		t.Fatalf("reactivated model switch: %q %v", switchedModel, err)
 	}
+	var handoffStatus string
+	if err := f.s.db.QueryRow(`SELECT status FROM switch_handoff WHERE agent_id=?`, dispatcherID).Scan(&handoffStatus); err != nil || handoffStatus != "automatic" {
+		t.Fatalf("stopped session must not be asked for another handoff: %q %v", handoffStatus, err)
+	}
 	var count int
 	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND r.role_key='dispatcher'`, f.project.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("dispatcher identity not reused: %d %v", count, err)
+	}
+}
+
+func TestFlowMigrationReactivationPreparesNewSpawnAndToolsKey(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-dispatcher")
+	ctx := t.Context()
+	dispatcherID := setup.Agents[1].AgentID
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, TeamFlowMigrationInput{FlowKey: "leader-workers", FlowRev: setup.Flow.Rev})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE switch_handoff SET overall_deadline='2000-01-01T00:00:00.000000000Z' WHERE agent_id=?`, dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var generation int
+	var rev int64
+	if err := f.s.db.QueryRow(`SELECT generation,desired_rev FROM agent WHERE id=?`, dispatcherID).Scan(&generation, &rev); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.AckAgentControl(ctx, dispatcherID, generation, fmt.Sprint(rev)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var flowRev int64
+	if err := f.s.db.QueryRow(`SELECT team_flow_rev FROM project WHERE id=?`, f.project.ID).Scan(&flowRev); err != nil {
+		t.Fatal(err)
+	}
+	target := &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"}
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, TeamFlowMigrationInput{FlowKey: "leader-dispatcher", FlowRev: flowRev, Dispatcher: target})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	controls, err := f.s.AdvanceTeamFlowMigrations(ctx)
+	if err != nil || len(controls) != 1 || controls[0].ID != dispatcherID || controls[0].Generation != generation+1 {
+		t.Fatalf("reactivation control: %+v %v", controls, err)
+	}
+	spawn, pending, err := f.s.PendingSpawnByID(ctx, dispatcherID)
+	if err != nil || !pending || spawn.Generation != generation+1 || spawn.DesiredRev != controls[0].DesiredRev {
+		t.Fatalf("reactivation must issue a new spawn with agent tools key: %+v pending=%v err=%v", spawn, pending, err)
 	}
 }
 
@@ -242,6 +326,165 @@ func TestFlowMigrationPreviewSkipsStoppedDepartingRole(t *testing.T) {
 		if role.RoleKey == "dispatcher" {
 			t.Fatalf("stopped departing role in preview: %+v", preview.Roles)
 		}
+	}
+}
+
+func TestFlowMigrationPreviewSkipsLeavingAgentConflicts(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-dispatcher")
+	ctx := t.Context()
+	dispatcherID := setup.Agents[1].AgentID
+	if err := f.s.AddMember(ctx, f.other.ID, "agent", dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	flow, err := f.s.PreviewTeamFlow(ctx, f.project.ID, f.alice, "leader-advisor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preexisting := false
+	for _, conflict := range flow.Conflicts {
+		preexisting = preexisting || conflict.AgentID == dispatcherID
+	}
+	if !preexisting {
+		t.Fatal("fixture lacks a departing-agent conflict")
+	}
+	preview, err := f.s.PreviewTeamFlowMigration(ctx, f.project.ID, f.alice,
+		TeamFlowMigrationInput{FlowKey: "leader-advisor", FlowRev: setup.Flow.Rev})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, conflict := range preview.Conflicts {
+		if conflict.AgentID == dispatcherID {
+			t.Fatalf("departing dispatcher should not need a removal choice: %+v", conflict)
+		}
+	}
+}
+
+func TestFlowMigrationProgressShowsPlannedAdvisorDuringDrain(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-dispatcher")
+	ctx := t.Context()
+	advisor := &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake", Name: "lena"}
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice,
+			TeamFlowMigrationInput{FlowKey: "leader-advisor", FlowRev: setup.Flow.Rev, Advisor: advisor})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
+	if err != nil || progress.State != "draining" {
+		t.Fatalf("progress=%+v %v", progress, err)
+	}
+	found := false
+	for _, agent := range progress.Agents {
+		if agent.RoleKey == "advisor" {
+			found = true
+			if agent.Action != "spawn" || agent.State != "waiting" || agent.Slug != "lena" {
+				t.Fatalf("planned advisor=%+v", agent)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("planned advisor missing during drain: %+v", progress.Agents)
+	}
+}
+
+func TestFlowMigrationRecoveryBlockedDepartureUsesAutomaticHandoffAndNotifiesReadyAgent(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-dispatcher")
+	ctx := t.Context()
+	dispatcherID := setup.Agents[1].AgentID
+	if _, err := f.s.db.Exec(`UPDATE agent SET recovery_block=1 WHERE id=?`, dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	var sessionID string
+	if err := f.s.db.QueryRow(`SELECT id FROM session WHERE agent_id=? LIMIT 1`, dispatcherID).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	lost, err := f.s.RecordTurn(ctx, Turn{AgentID: dispatcherID, SessionID: sessionID, RoomID: f.home.ID, Attempt: 1, Mode: "normal", Exec: "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='lost',settle='settled' WHERE id=?`, lost.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, TeamFlowMigrationInput{FlowKey: "leader-workers", FlowRev: setup.Flow.Rev})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := f.s.db.QueryRow(`SELECT status FROM switch_handoff WHERE agent_id=?`, dispatcherID).Scan(&status); err != nil || status != "automatic" {
+		t.Fatalf("blocked agent handoff=%q %v", status, err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
+	if err != nil || progress.State != "draining" {
+		t.Fatalf("blocked drain: %+v %v", progress, err)
+	}
+	var leaderState string
+	if err := f.s.db.QueryRow(`SELECT state FROM team_flow_migration_agent WHERE migration_id=? AND agent_id=?`, progress.ID, setup.Agents[0].AgentID).Scan(&leaderState); err != nil || leaderState != "done" {
+		t.Fatalf("ready leader state=%q %v", leaderState, err)
+	}
+	countReady := func() int {
+		t.Helper()
+		var count int
+		if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND body LIKE 'The team flow is changing from %'`, f.home.ID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	if countReady() != 1 {
+		t.Fatalf("ready notice count=%d", countReady())
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil || countReady() != 1 {
+		t.Fatalf("duplicate ready notice count=%d err=%v", countReady(), err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='killed' WHERE id=?`, lost.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped',recovery_block=0 WHERE id=?`, dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	progress, err = f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
+	if err != nil || progress.State != "done" || countReady() != 1 {
+		t.Fatalf("migration after recovery: %+v ready=%d %v", progress, countReady(), err)
+	}
+}
+
+func TestFlowMigrationPendingHandoffFallsBackWhenAgentStops(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-dispatcher")
+	ctx := t.Context()
+	dispatcherID := setup.Agents[1].AgentID
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, TeamFlowMigrationInput{FlowKey: "leader-workers", FlowRev: setup.Flow.Rev})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var status, turnID string
+	if err := f.s.db.QueryRow(`SELECT status,turn_id FROM switch_handoff WHERE agent_id=?`, dispatcherID).Scan(&status, &turnID); err != nil || status != "pending" || turnID == "" {
+		t.Fatalf("expected pending handoff: %q %q %v", status, turnID, err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped',recovery_block=1 WHERE id=?`, dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var reason, exec string
+	if err := f.s.db.QueryRow(`SELECT status,error FROM switch_handoff WHERE agent_id=?`, dispatcherID).Scan(&status, &reason); err != nil || status != "automatic" || !strings.Contains(reason, "unavailable") {
+		t.Fatalf("stopped agent handoff=%q reason=%q err=%v", status, reason, err)
+	}
+	if err := f.s.db.QueryRow(`SELECT exec FROM turn WHERE id=?`, turnID).Scan(&exec); err != nil || exec != "killed" {
+		t.Fatalf("pending handoff turn=%q %v", exec, err)
 	}
 }
 
@@ -477,7 +720,7 @@ func TestFlowMigrationBtoAHandsDispatcherToLeader(t *testing.T) {
 	found := false
 	for _, message := range messages {
 		found = found || strings.Contains(message.Body, "handed off to the leader")
-		if strings.Contains(message.Body, "current_task") {
+		if strings.Contains(message.Body, "Current task:") {
 			t.Fatal("handoff content leaked to general")
 		}
 	}
@@ -494,10 +737,62 @@ func TestFlowMigrationBtoAHandsDispatcherToLeader(t *testing.T) {
 	}
 	privateHandoff := false
 	for _, message := range routingMessages {
-		privateHandoff = privateHandoff || strings.Contains(message.Body, "current_task")
+		privateHandoff = privateHandoff || strings.Contains(message.Body, "Current task: Review the recent room history") &&
+			strings.Contains(message.Body, "Next steps: Verify the current task") && !strings.Contains(message.Body, `"current_task"`)
 	}
 	if !privateHandoff {
 		t.Fatal("handoff content missing from routing")
+	}
+	var generation int
+	var rev int64
+	if err := f.s.db.QueryRow(`SELECT generation,desired_rev FROM agent WHERE id=?`, dispatcherID).Scan(&generation, &rev); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.AckAgentControl(ctx, dispatcherID, generation, fmt.Sprint(rev)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var observed, migrationState string
+	if err := f.s.db.QueryRow(`SELECT observed FROM agent WHERE id=?`, dispatcherID).Scan(&observed); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.db.QueryRow(`SELECT state FROM team_flow_migration WHERE project_id=?`, f.project.ID).Scan(&migrationState); err != nil {
+		t.Fatal(err)
+	}
+	if observed != "stopped" || migrationState != "done" {
+		t.Fatalf("acknowledged idle stop did not settle migration: observed=%q migration=%q", observed, migrationState)
+	}
+}
+
+func TestFlowMigrationHandoffDeliveryRequestsAnswer(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-dispatcher")
+	ctx := t.Context()
+	dispatcherID := setup.Agents[1].AgentID
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, TeamFlowMigrationInput{FlowKey: "leader-workers", FlowRev: setup.Flow.Rev})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='idle' WHERE id=?`, dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := f.s.PrepareDispatch(ctx, dispatcherID, "")
+	if err != nil || !ready || len(delivery.Notes) != 1 || !strings.Contains(delivery.Notes[0].Body, "Hand off to the leader") || delivery.Notes[0].FYI {
+		t.Fatalf("departing-role handoff task: ready=%v err=%v notes=%+v", ready, err, delivery.Notes)
+	}
+	if err := f.s.AdmitTurn(ctx, Admission{TurnID: delivery.TurnID, AgentID: dispatcherID, MachineID: "mch_members",
+		Generation: delivery.Generation, DesiredRev: delivery.DesiredRev, NoteIDs: []string{delivery.Notes[0].NoteID}}); err != nil {
+		t.Fatalf("synthetic handoff note must not block admission: %v", err)
+	}
+	admitted, err := f.s.TurnDispatchRequested(ctx, delivery.TurnID)
+	if err != nil || !admitted {
+		t.Fatalf("handoff delivery not admitted: %v %v", admitted, err)
 	}
 }
 
@@ -536,7 +831,7 @@ func TestFlowMigrationHandoffFallsBackToAgentDM(t *testing.T) {
 	}
 	found := false
 	for _, message := range messages {
-		found = found || strings.Contains(message.Body, "current_task")
+		found = found || strings.Contains(message.Body, "Current task:") && !strings.Contains(message.Body, `"current_task"`)
 	}
 	if !found {
 		t.Fatal("handoff details missing from private DM")

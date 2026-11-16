@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/answer"
@@ -355,38 +354,29 @@ func (tx *Tx) missedAnswerMention(roomID, projectID, authorID, body string) (mis
 	if len(absent) == 0 {
 		return "", "", nil
 	}
+	// A shared room can carry a pointer to the committed message. Keep the
+	// hold only for absent agents who have no room in common with the author.
+	unshared := absent[:0]
+	for _, missing := range absent {
+		sharedID, _, err := tx.sharedMentionRoom(roomID, projectID, authorID, missing.id)
+		if err != nil {
+			return "", "", err
+		}
+		if sharedID == "" {
+			unshared = append(unshared, missing)
+		}
+	}
+	if len(unshared) == 0 {
+		return "", "", nil
+	}
+	absent = unshared
 	if addressed {
 		return "", fmt.Sprintf("@%s is outside the target room and was not notified", absent[0].token), nil
 	}
 	missing := absent[0]
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.title,r.id FROM room_member m JOIN room r ON r.id=m.room_id
-			WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL AND r.project_id=?
-			AND r.lifecycle='open' AND r.kind='task' AND (r.restricted=0 OR EXISTS (
-				SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent'
-				AND own.member_id=? AND own.left_at IS NULL))
-			ORDER BY r.created_at DESC LIMIT 3`, missing.id, projectID, authorID)
-	if err != nil {
-		return "", "", err
-	}
-	var rooms []string
-	for rows.Next() {
-		var title, room string
-		if err := rows.Scan(&title, &room); err != nil {
-			rows.Close()
-			return "", "", err
-		}
-		rooms = append(rooms, fmt.Sprintf("%s (%s)", title, room))
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return "", "", err
-	}
-	location := "no open task room"
-	if len(rooms) > 0 {
-		location = "task room " + strings.Join(rooms, ", ")
-	}
-	return fmt.Sprintf("@%s refers to agent %s, who is not in the target room; send the message in %s or use dm_agent, or repeat this message with force:true", missing.token, missing.id, location), "", nil
+	// A room both agents can use would already have carried a pointer above.
+	// Do not suggest rooms the author cannot post in.
+	return fmt.Sprintf("@%s refers to agent %s, who is not in the target room; use dm_agent or retry with force:true", missing.token, missing.id), "", nil
 }
 
 func (tx *Tx) missedMentionNote(turn answerTurn, input AnswerInput, detail string) error {
@@ -398,7 +388,25 @@ func (tx *Tx) missedMentionNote(turn answerTurn, input AnswerInput, detail strin
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM outbox WHERE turn_id=? AND answer_rev=? AND idx=?`, turn.id, input.AnswerRev, index).Scan(&outboxID); err != nil {
 		return err
 	}
-	body := "Your final answer was held because message " + outboxID + " mentions an agent outside its room and addresses no room member; send it to a shared room or retry with force:true."
+	body := "Your final answer was held in message " + outboxID + "; use dm_agent to contact the absent agent or retry with force:true."
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
 	return err
+}
+
+// sharedMentionRoom chooses a room that both agents can read. Flow routing
+// rooms take priority so a leader receives dispatcher reports there.
+func (tx *Tx) sharedMentionRoom(targetRoom, projectID, authorID, recipientID string) (string, string, error) {
+	var id, title string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.id,r.title FROM room r
+		JOIN room_member author ON author.room_id=r.id AND author.member_kind='agent' AND author.member_id=? AND author.left_at IS NULL
+		JOIN room_member recipient ON recipient.room_id=r.id AND recipient.member_kind='agent' AND recipient.member_id=? AND recipient.left_at IS NULL
+		WHERE r.project_id=? AND r.id<>? AND r.lifecycle='open' AND r.kind<>'dm'
+			AND EXISTS(SELECT 1 FROM room target WHERE target.id=? AND target.kind<>'dm')
+		ORDER BY CASE r.team_flow_room_key WHEN 'routing' THEN 0 WHEN 'advice' THEN 1 ELSE 2 END,
+			(SELECT COUNT(*) FROM room_member member WHERE member.room_id=r.id AND member.left_at IS NULL),r.created_at,r.id LIMIT 1`,
+		authorID, recipientID, projectID, targetRoom, targetRoom).Scan(&id, &title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil
+	}
+	return id, title, err
 }

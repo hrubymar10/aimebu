@@ -539,6 +539,34 @@ func TestDefiniteFailureOfAClaudeTurnOffersRetryAndSaysWhenItRepeats(t *testing.
 	}
 }
 
+func TestHarnessStartFailureHasActionableRecovery(t *testing.T) {
+	t.Parallel()
+	s, f, owner := recoveryFixture(t, false)
+	ctx := context.Background()
+	reason := "normal turn requires agent tools access"
+	if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, adapter.ExitInfo{
+		ExitCode: 1, StderrTail: "harness failed to start: " + reason,
+		ErrorSummary: reason, DefiniteFailure: true, StartFailure: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.InboxForUser(ctx, owner)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%+v %v", items, err)
+	}
+	item := items[0]
+	if !item.StartFailure || !item.DefiniteFailure || strings.Join(item.Options, ",") != "Retry,Abandon" ||
+		!strings.HasPrefix(item.Question, "The agent could not start: "+reason) ||
+		!strings.Contains(item.Question, "restore tools access, then Retry") ||
+		strings.Contains(item.Question, "uncertain outcome") || strings.Contains(item.Question, "repeat an action") {
+		t.Fatalf("start failure recovery=%+v", item)
+	}
+	var diagnostics int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM turn WHERE parent_turn_id=? AND mode='diagnostic'`, f.turn.ID).Scan(&diagnostics); err != nil || diagnostics != 0 {
+		t.Fatalf("diagnostic for a turn that never started: %d %v", diagnostics, err)
+	}
+}
+
 // Without a sentence and a definite verdict from the harness the outcome stays uncertain, as before, and the evidence is labelled by its harness.
 func TestUncertainFailureKeepsResumeAndLabelsEvidenceByHarness(t *testing.T) {
 	t.Parallel()

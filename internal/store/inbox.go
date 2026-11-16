@@ -23,6 +23,7 @@ type InboxEntry struct {
 	// raw output. DefiniteFailure says the turn failed before it did anything, so Retry is safe and Resume cannot help.
 	ResultText        string                `json:"result_text,omitempty"`
 	DefiniteFailure   bool                  `json:"definite_failure,omitempty"`
+	StartFailure      bool                  `json:"start_failure,omitempty"`
 	DiagnosticReport  json.RawMessage       `json:"diagnostic_report,omitempty"`
 	RecoveryPhase     string                `json:"recovery_phase,omitempty"`
 	HeldReason        string                `json:"held_reason,omitempty"`
@@ -81,6 +82,7 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 		COALESCE(t.exec,''),COALESCE(t.outcome,''),COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=i.turn_id AND e.kind='turn_process_exit' ORDER BY e.seq DESC LIMIT 1),''),
 		COALESCE((SELECT json_extract(e.payload_json,'$.result_text') FROM event e WHERE e.turn_id=i.turn_id AND e.kind='turn_process_exit' ORDER BY e.seq DESC LIMIT 1),''),
 		COALESCE((SELECT json_extract(e.payload_json,'$.definite_failure') FROM event e WHERE e.turn_id=i.turn_id AND e.kind='turn_process_exit' ORDER BY e.seq DESC LIMIT 1),'')='1',
+		COALESCE((SELECT json_extract(e.payload_json,'$.start_failure') FROM event e WHERE e.turn_id=i.turn_id AND e.kind='turn_process_exit' ORDER BY e.seq DESC LIMIT 1),'')='1',
 		COALESCE((SELECT d.report_json FROM turn d WHERE d.parent_turn_id=i.turn_id AND d.mode='diagnostic' AND d.report_json IS NOT NULL ORDER BY d.id DESC LIMIT 1),''),
 		CASE WHEN i.kind='delivery_failed' THEN COALESCE(
 			NULLIF((SELECT json_extract(r.result_json,'$.held_reason') FROM receipt r WHERE r.turn_id=i.turn_id AND r.answer_rev=0),''),
@@ -114,7 +116,7 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 		var item InboxEntry
 		var options, fallback, report, memberRole, roomKind string
 		if err := rows.Scan(&item.ID, &item.ProjectID, &item.RoomID, &item.RoomLifecycle, &item.MessageID, &item.AgentID, &item.TurnID,
-			&item.TurnExec, &item.TurnOutcome, &item.Evidence, &item.ResultText, &item.DefiniteFailure, &report, &item.HeldReason, &item.DeliveryError, &item.Kind, &options, &fallback, &item.State, &item.Rev, &item.CreatedAt, &memberRole, &roomKind,
+			&item.TurnExec, &item.TurnOutcome, &item.Evidence, &item.ResultText, &item.DefiniteFailure, &item.StartFailure, &report, &item.HeldReason, &item.DeliveryError, &item.Kind, &options, &fallback, &item.State, &item.Rev, &item.CreatedAt, &memberRole, &roomKind,
 			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester, &item.NoteID, &item.Seen); err != nil {
 			return nil, err
 		}

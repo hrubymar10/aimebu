@@ -568,6 +568,24 @@ async function main() {
     await page.close();
   }
 
+  // Long system notices start as one line and expand into readable Markdown.
+  {
+    const page = await mount();
+    await page.evaluate(() => window.__data.rooms.rm_a.messages.push(
+      { id: 'rm_a_long_system', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: 'The team flow changed.\nYour role rules on the next turn are:\n\n**Review** the task.\nHand off active work.', created_at: '2026-01-10T12:01:00Z' }));
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.deepEqual(await page.$eval('[data-message-id=rm_a_long_system]', row => {
+      const disclosure = row.querySelector('details');
+      return [disclosure.open, disclosure.querySelector('summary').textContent, row.querySelector('.system-notice-content').getBoundingClientRect().height];
+    }), [false, 'The team flow changed.Show moreShow less', 0]);
+    await page.$eval('[data-message-id=rm_a_long_system] summary', node => node.click());
+    assert.deepEqual(await page.$eval('[data-message-id=rm_a_long_system]', row => {
+      const disclosure = row.querySelector('details'), body = row.querySelector('.system-notice-content .chat-msg-body');
+      return [disclosure.open, body.querySelector('strong')?.textContent, getComputedStyle(body).textAlign, getComputedStyle(disclosure).fontStyle];
+    }), [true, 'Review', 'left', 'normal']);
+    await page.close();
+  }
+
   // A model switch handoff is a compact disclosure; its detail reads as a normal message.
   {
     const page = await mount();

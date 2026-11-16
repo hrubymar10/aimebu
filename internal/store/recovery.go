@@ -150,6 +150,17 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 	if definite && reason != "lost" {
 		question = "The turn failed before it did anything: " + sentenceEnd(resultText) + " Nothing needs checking, so Retry is safe and Resume cannot help. Fix the cause first (for example sign in again), then Retry."
 		options = []string{"Retry", "Abandon"}
+		var startFailure bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(json_extract(payload_json,'$.start_failure'),'')='1' FROM event
+			WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, originID).Scan(&startFailure); err != nil {
+			return err
+		}
+		if startFailure {
+			question = "The agent could not start: " + sentenceEnd(resultText) + " The harness did not run. Retry after fixing the start problem."
+			if strings.Contains(resultText, "normal turn requires agent tools access") {
+				question = "The agent could not start: " + sentenceEnd(resultText) + " Start the agent again to restore tools access, then Retry."
+			}
+		}
 	}
 	if repeated, err := tx.repeatsParentFailure(originID); err != nil {
 		return err

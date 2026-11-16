@@ -30,6 +30,11 @@ func (body SwitchHandoffBody) valid() bool {
 	return strings.TrimSpace(body.CurrentTask) != "" && strings.TrimSpace(body.Status) != "" && strings.TrimSpace(body.NextSteps) != ""
 }
 
+func formatSwitchHandoffBody(body SwitchHandoffBody) string {
+	return "Current task: " + body.CurrentTask + "\nStatus: " + body.Status + "\nWork state: " + body.WorkState +
+		"\nNext steps: " + body.NextSteps + "\nOpen questions: " + body.OpenQuestions + "\nCautions: " + body.Cautions
+}
+
 // BeginAgentSwitchWithContinuity retains the outgoing session until its one
 // handoff turn settles or the fallback path is chosen.
 func (tx *Tx) BeginAgentSwitchWithContinuity(id, actorID, roomID, tool, variant, model, provider, machineID, checkoutPath, launcherID string, rev int64) (AgentCard, error) {

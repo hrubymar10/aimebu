@@ -155,6 +155,8 @@ type ExitInfo struct {
 	// to find. Both are empty for a harness that does not say.
 	ErrorSummary    string `json:"error_summary,omitempty"`
 	DefiniteFailure bool   `json:"definite_failure,omitempty"`
+	// StartFailure identifies a harness that never launched, which gives recovery a specific action and explanation.
+	StartFailure bool `json:"start_failure,omitempty"`
 	// ProcessAlive says the turn ended and its process did not: a warm process that was kept idle for the next turn. The exit then is the turn's end
 	// (a "turn finished"), not the process's; the process's own end is reported when it happens.
 	ProcessAlive bool `json:"process_alive,omitempty"`

@@ -1103,17 +1103,22 @@ func (s *Store) AckAgentControl(ctx context.Context, id string, generation int, 
 		return err
 	}
 	return s.Tx(ctx, func(tx *Tx) error {
-		var projectID string
+		var projectID, desired string
 		var currentGeneration int
 		var currentRev int64
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,generation,desired_rev FROM agent WHERE id=?`, id).Scan(&projectID, &currentGeneration, &currentRev); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,generation,desired_rev,desired FROM agent WHERE id=?`, id).Scan(&projectID, &currentGeneration, &currentRev, &desired); err != nil {
 			return err
 		}
 		if generation != currentGeneration || rev != currentRev {
 			return ErrStaleRev
 		}
-		_, err := tx.AppendEvent(Event{Kind: "agent_control_applied", ProjectID: projectID, AgentID: id, PayloadJSON: payloadJSON(map[string]string{"desired_rev": ref})})
-		return err
+		if _, err := tx.AppendEvent(Event{Kind: "agent_control_applied", ProjectID: projectID, AgentID: id, PayloadJSON: payloadJSON(map[string]string{"desired_rev": ref})}); err != nil {
+			return err
+		}
+		if desired == "stopped" {
+			return tx.confirmStoppedIfQuiescent(id)
+		}
+		return nil
 	})
 }
 

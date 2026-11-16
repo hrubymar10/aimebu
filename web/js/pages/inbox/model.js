@@ -133,6 +133,7 @@ export function decisionOptions(item) {
 }
 
 export const retryWarning = item => (item.recovery_phase === 'quiescence_wait' ? 'The old process may still be running. Override can overlap it and repeat an action.'
+  : item.turn_id && item.start_failure ? 'The harness did not run. Retry is safe once the start problem is fixed.'
   : item.turn_id && item.definite_failure ? 'Retry is safe: the turn failed before it did anything. It fails the same way until the cause is fixed.'
   : item.turn_id ? 'Resume may repeat an action if the diagnostic missed an effect. Retry repeats the task.' : '');
 

@@ -159,7 +159,8 @@ func TestStartFailureIsJournaledAndKeepsMachineConnection(t *testing.T) {
 			process := peer.next(t, protocol.Process)
 			if process.TurnID != "turn-start-fail" || process.Exit == nil || process.Exit.TerminalEvent ||
 				process.Exit.ExitCode != tc.exitCode || !strings.Contains(process.Exit.StderrTail, "harness failed to start") ||
-				!strings.Contains(process.Exit.StderrTail, tc.evidence) {
+				!strings.Contains(process.Exit.StderrTail, tc.evidence) || !process.Exit.DefiniteFailure || !process.Exit.StartFailure ||
+				!strings.Contains(process.Exit.ErrorSummary, tc.evidence) {
 				t.Fatalf("start failure exit=%+v", process.Exit)
 			}
 			peer.out <- protocol.Frame{V: protocol.Version, Type: protocol.Ping}

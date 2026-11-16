@@ -153,6 +153,12 @@ function NoticeBody({ message, view, host }) {
   return html`<span class="chat-msg-body" ref=${root} />`;
 }
 
+function LongSystemNotice({ message, view, host }) {
+  const body = String(message.body || '').trim();
+  const sentence = body.match(/^.*?[.!?…](?=\s|$)/s)?.[0] || body.split('\n', 1)[0];
+  return html`<details class="system-notice-disclosure"><summary><span class="system-notice-preview">${sentence}</span><span class="system-notice-more">Show more</span><span class="system-notice-less">Show less</span></summary><div class="system-notice-content"><${Body} message=${message} view=${view} host=${host} /></div></details>`;
+}
+
 function SystemRow({ message, view, host, classes, register }) {
   const handoff = message.switch_handoff;
   const legacyHandoff = !handoff && /^@agt_[^\s]+\s+Switch handoff\b/.test(message.body || '');
@@ -168,8 +174,9 @@ function SystemRow({ message, view, host, classes, register }) {
     </article>`;
   }
   const content = legacyHandoff ? { ...message, body: message.body.replace(/^@agt_[^\s]+\s+/, '') } : message;
+  const long = String(content.body || '').length > 300 || String(content.body || '').split('\n').length > 3;
   return html`<article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
-    <div class="chat-msg-system-row"><${NoticeBody} message=${content} view=${view} host=${host} />${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
+    <div class="chat-msg-system-row">${long ? html`<${LongSystemNotice} message=${content} view=${view} host=${host} />` : html`<${NoticeBody} message=${content} view=${view} host=${host} />`}${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
     <${Plan} message=${message} />
   </article>`;
 }

@@ -99,7 +99,6 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
         const answer = await flow.source.migration(id), latest = answer?.migration || answer;
         if (turn !== generation.current || !latest?.id) return;
         setMigration(latest);
-        if (latest.state === 'done') { await flow.completeMigration(id, latest); onClose(); }
       } catch { /* the next poll tries again */ }
     }, 2000);
     return () => clearInterval(timer);
@@ -178,7 +177,13 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
     if (setupMode) { await flow.completeTeamSetup(projectID, result); return; }
     const started = result.migration || result;
     setMigration(started);
-    if (started.state === 'done') { await flow.completeMigration(projectID, started); onClose(); }
+  };
+  const finishMigration = async () => {
+    if (migration?.state !== 'done' || busy) return;
+    setBusy(true); setError('');
+    try { await flow.completeMigration(flow.projectID, migration); onClose(); }
+    catch (failure) { setError(failure.message); }
+    finally { setBusy(false); }
   };
   const cancel = async () => {
     const projectID = flow.projectID;
@@ -195,7 +200,6 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   // The harness and machine a role's panel is about: the new agent's pick, else the kept agent as it will be (current, or the model change chosen).
   const keptAgent = roleStatus === 'new' ? null : entryOf(roleKey)?.agents?.[0];
   const stepTarget = roleStatus === 'new' ? roleTargets[roleKey] : keptAgent && (changes[keptAgent.agent_id] || cleanTarget(keptAgent));
-  const stepTool = stepTarget?.tool;
   const renderKept = (agent, prefix) => html`<${KeptAgent} key=${agent.agent_id} agent=${agent} options=${options} changed=${changes[agent.agent_id]} prefix=${prefix}
     onChange=${target => setChanges(old => ({ ...old, [agent.agent_id]: target }))} onReset=${() => setChanges(old => { const next = { ...old }; delete next[agent.agent_id]; return next; })} />`;
   const switching = !setupMode && migration;
@@ -203,9 +207,9 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   const nextDisabled = busy || needsTarget && !roleTargets[roleKey] || stepLabel === 'Project settings' && (!Number.isInteger(settings.max_live_agents) || settings.max_live_agents < minimumAgents || settings.max_live_agents > 100);
   const sameFlow = !setupMode && selected === from;
   return html`<section class=${`team-flow-home-card team-setup-wizard${embedded ? ' team-setup-embedded' : ''}`} aria-labelledby="team-flow-home-title">
-    <div class="team-flow-heading"><small>${heading}${step > 1 && !switching ? ` · Step ${step} of ${steps.length}` : ''}</small><h2 id="team-flow-home-title">${switching ? 'Changing your team flow' : step === 1 ? (setupMode ? 'Choose how your AI team works' : 'Choose a team flow') : stepLabel}</h2>
+    <div class="team-flow-heading"><small>${heading}${step > 1 && !switching ? ` · Step ${step} of ${steps.length}` : ''}</small><h2 id="team-flow-home-title">${switching ? migration.state === 'done' ? 'Team flow changed' : 'Changing your team flow' : step === 1 ? (setupMode ? 'Choose how your AI team works' : 'Choose a team flow') : stepLabel}</h2>
       ${step === 1 && !switching && html`<p>${state.key === 'custom' && state.review_pending ? 'Your existing setup is kept. Choose another flow, or keep the current custom setup.' : setupMode ? 'Pick a starting team flow. You can change it later in Project settings.' : 'Switching keeps the leader and your rooms and messages; other agents are kept, added, or hand off and stop.'}</p>`}</div>
-    ${switching ? html`<${MigrationProgress} migration=${migration} onCancel=${cancel} cancelling=${cancelling} />${TERMINAL.includes(migration.state) && migration.state !== 'done' && html`<div class="team-flow-actions"><button type="button" class="btn" onClick=${() => { setMigration(null); setStep(1); setPlan(null); }}>Back to the wizard</button></div>`}` : html`
+    ${switching ? html`<${MigrationProgress} migration=${migration} onCancel=${cancel} cancelling=${cancelling} />${migration.state === 'done' ? html`<div class="team-flow-actions"><button type="button" class="btn btn-primary" disabled=${busy} onClick=${finishMigration}>${busy ? 'Closing…' : 'Done'}</button></div>` : TERMINAL.includes(migration.state) && html`<div class="team-flow-actions"><button type="button" class="btn" onClick=${() => { setMigration(null); setStep(1); setPlan(null); }}>Back to the wizard</button></div>`}` : html`
     ${step === 1 && html`<${TeamFlowCards} templates=${templates} selected=${selected} onSelect=${key => flow.select(key)} disabled=${flow.applying.value || !canEdit} />
       <${TeamFlowPreview} preview=${flow.preview.value} busy=${flow.previewing.value} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => flow.toggleRemoval(item, checked)} />`}
     ${step > 1 && roleKey && html`${!setupMode && roleStatus && html`<${StatusBanner} status=${roleStatus} role=${roleKey} from=${fromLetter} to=${toLetter} reactivate=${!!reuse} />`}
@@ -217,11 +221,11 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
           name=${names[roleKey]} nameBusy=${!!nameBusy[roleKey]} nameError=${nameErrors[roleKey] || ''} onName=${value => typeName(roleKey, value)} onDice=${() => suggestName(roleKey, names[roleKey] || '')} />`}`}
       ${roleStatus === 'kept' && html`<div class="team-wizard-kept-list">${(entryOf(roleKey)?.agents || []).map(agent => renderKept(agent, `team-setup-${roleKey}`))}</div>`}
       ${roleStatus === 'leaving' && html`<ul class="team-wizard-leaving">${(entryOf(roleKey)?.agents || []).map(agent => html`<li key=${agent.agent_id}><strong>${agent.slug || agent.agent_id}</strong> · ${describeTarget(options, agent)}</li>`)}</ul>`}
-      <${RecommendedModels} rows=${recommended} role=${roleKey} flowKey=${selected} tool=${stepTool} options=${options} target=${stepTarget} />`}
+      <${RecommendedModels} rows=${recommended} role=${roleKey} flowKey=${selected} options=${options} target=${stepTarget} />`}
     ${stepLabel === 'Workers and reviewers' && html`${!setupMode && (keptOf('worker').length > 0 || keptOf('reviewer').length > 0) && html`<${StatusBanner} status="kept" role="workers" plural=${true} from=${fromLetter} to=${toLetter} />
         <div class="team-wizard-kept-list">${['worker', 'reviewer'].map(role => keptOf(role).length > 0 && html`<div key=${role}><h3>${roleLabel(role)}s</h3>${keptOf(role).map(agent => renderKept(agent, `team-setup-${role}`))}</div>`)}</div>`}
       ${choices && html`<p>${setupMode ? 'These defaults are saved for future spawns. No workers or reviewers start now.' : 'Defaults for workers and reviewers started from now on.'}</p><div class="team-setup-defaults"><div><h3>${setupMode ? 'Workers' : 'Default for new workers'}</h3><${SpawnDefaults} items=${worker?.items || []} mode=${worker?.mode || 'in_turn'} options=${optionsList} onChange=${setWorker} /></div><div><h3>${setupMode ? 'Reviewers' : 'Default for new reviewers'}</h3><${SpawnDefaults} items=${reviewer?.items || []} mode=${reviewer?.mode || 'in_turn'} options=${optionsList} onChange=${setReviewer} /></div></div>`}
-      ${[['worker', worker, 'workers'], ['reviewer', reviewer, 'reviewers']].map(([role, picked, label]) => html`<${RecommendedModels} key=${role} rows=${recommended} role=${role} flowKey=${selected} label=${label} tool=${picked?.items?.[0] && options.find(item => item.launcher_id === picked.items[0].launcher_id)?.tool} options=${options} />`)}`}
+      ${[['worker', worker, 'workers'], ['reviewer', reviewer, 'reviewers']].map(([role, picked, label]) => html`<${RecommendedModels} key=${role} rows=${recommended} role=${role} flowKey=${selected} label=${label} target=${options.find(item => item.launcher_id === picked?.items?.[0]?.launcher_id && item.model === picked.items[0].model)} options=${options} />`)}`}
     ${stepLabel === 'Project settings' && html`<div class="team-setup-settings">
       <label>Project folder<input value=${project?.folder || ''} readonly aria-label="Project folder" /></label>
       <label><input type="checkbox" checked=${settings.worktree_mode === 'auto'} onChange=${event => { settingsTouched.current = true; setSettings({ ...settings, worktree_mode: event.currentTarget.checked ? 'auto' : 'off' }); }} /> Separate Git worktree for each task room</label>

@@ -370,6 +370,32 @@ func TestTeamFlowDetectsConflictInRoomReusedAsRouting(t *testing.T) {
 	}
 }
 
+func TestTeamFlowIgnoresClosedRoomsForReuseAndConflicts(t *testing.T) {
+	f := newMembersFixture(t)
+	f.role(t, "role_archived_worker", f.project.ID, "worker", "Worker", "w", "multi")
+	if _, err := f.s.db.Exec(`UPDATE room SET title='routing' WHERE id=?`, f.other.ID); err != nil {
+		t.Fatal(err)
+	}
+	worker := f.agent(t, "archivedworker", "role_archived_worker", &f.other)
+	if _, err := f.s.db.Exec(`UPDATE room SET lifecycle='closed' WHERE id=?`, f.other.ID); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := f.s.PreviewTeamFlow(t.Context(), f.project.ID, f.alice, "leader-dispatcher")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Conflicts) != 0 {
+		t.Fatalf("archived member %s appeared in conflicts: %+v", worker.ID, preview.Conflicts)
+	}
+	foundRouting := false
+	for _, room := range preview.CreateRooms {
+		foundRouting = foundRouting || room.Key == "routing"
+	}
+	if !foundRouting {
+		t.Fatalf("archived routing room was reused: %+v", preview.CreateRooms)
+	}
+}
+
 func TestTeamFlowDuplicateRoutingTitlesUseOneRoom(t *testing.T) {
 	for _, keyedSecond := range []bool{false, true} {
 		name := "oldest title"

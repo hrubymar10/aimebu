@@ -117,6 +117,11 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 			return err
 		}
 		receipt.MessageIDs = append(receipt.MessageIDs, message.ID)
+		if !item.Force {
+			if err := tx.forwardMissingMentions(message); err != nil {
+				return err
+			}
+		}
 		if defaulted {
 			if err := tx.recordReplyDefault(turn, message); err != nil {
 				return err
@@ -151,6 +156,65 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE outbox SET state='committed' WHERE id=?`, outID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// forwardMissingMentions posts a short pointer in a room shared by the
+// author and each absent addressee. The grant exposes only this message,
+// never the rest of its room, and the targeted note wakes its recipient.
+func (tx *Tx) forwardMissingMentions(message Message) error {
+	var projectID, title, kind string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,title,kind FROM room WHERE id=?`, message.RoomID).Scan(&projectID, &title, &kind); err != nil {
+		return err
+	}
+	if kind == "dm" {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, token := range proseMentions(message.Body) {
+		if groupTag(token) != "" {
+			continue
+		}
+		var recipientID string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN project p ON p.id=a.project_id
+			WHERE a.project_id=? AND a.revoked_at IS NULL AND
+			(LOWER(a.id)=? OR LOWER(a.slug)=? OR LOWER(a.slug || '@' || p.name)=?)`,
+			projectID, token, token, token).Scan(&recipientID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if seen[recipientID] || recipientID == message.AuthorID {
+			continue
+		}
+		seen[recipientID] = true
+		var member bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`,
+			message.RoomID, recipientID).Scan(&member); err != nil {
+			return err
+		}
+		if member {
+			continue
+		}
+		sharedID, _, err := tx.sharedMentionRoom(message.RoomID, projectID, message.AuthorID, recipientID)
+		if err != nil {
+			return err
+		}
+		if sharedID == "" {
+			continue
+		}
+		pointer, err := tx.InsertMessage(Message{RoomID: sharedID, AuthorKind: "system", AuthorID: "system",
+			Body:        fmt.Sprintf("%s mentioned you in %s: #%d", authorLabel(tx.ctx, tx.tx, "agent", message.AuthorID), title, message.No),
+			OnlyTargets: []string{recipientID}})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no) VALUES (?,?)`, pointer.ID, message.No); err != nil {
 			return err
 		}
 	}

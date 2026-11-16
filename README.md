@@ -301,24 +301,38 @@ context to the leader and will be stopped", "Workers are kept between B → A
 migration"). A kept agent shows what it runs now and an owner or operator can
 switch it to another harness or model; a new agent gets the same machine, tool,
 model and name pickers as Spawn; the Workers step lists the kept workers and
-reviewers and sets the defaults for new ones. A 💡 panel lists recommended
-models for the role, flow and harness, only those the selected harness offers
-right now, and is hidden when none is left. The summary previews the agents
-that are kept, added and leaving, new rooms, restrictions and incompatible
-memberships (each removed only when ticked), and warns that every agent first
-finishes its current turn, so the change can take a while. Switching waits for
-current turns and any departing role's handoff; the progress view shows each
-agent (waiting, finishing its current turn, done), warns when a turn has
-stalled for fifteen minutes, offers **Cancel** until applying starts, and
-reopens by itself if a change is already running. A stopped dispatcher or
-advisor can be reactivated with the same identity if a later flow needs it
-again. Handoff details stay in a shared restricted room or an agent DM;
-general gets a short notice without that content.
+reviewers and sets the defaults for new ones. A 💡 panel groups recommended
+models for the role and flow by every available harness on the selected
+machine, checks each against its live catalog, and highlights the selected
+harness. It is hidden when none is offered. The summary previews the
+agents that are kept, added and leaving, new rooms, restrictions and
+incompatible memberships (each removed only when ticked), and warns that
+every agent first finishes its current turn, so the change can take a while.
+Archived rooms do not appear as conflicts or get reused for new flow rooms.
+Switching waits for current turns and any departing role's handoff; the
+progress view shows each agent (waiting, finishing its current turn, done),
+warns when a turn has stalled for fifteen minutes, offers **Cancel** until
+applying starts, and reopens by itself if a change is already running. The
+drain marks idle kept agents ready and tells them the change is pending even
+while another agent is still finishing. A departing agent that is stopped or
+blocked by recovery uses an automatic handoff instead of waiting for a turn
+it cannot run; an unresolved turn still holds the drain until recovery ends.
+The preview labels stopped kept agents as stopped and omits leaving agents
+from membership-removal choices. Progress shows planned new roles during the
+drain, before their agent records are created.
+The completed progress view lists each agent's result until the person selects
+**Done**. The leader receives the departing role's handoff as readable
+labeled text in their restricted room. A stopped dispatcher or advisor can
+be reactivated with the same identity and a fresh agent-tools key if a later
+flow needs it again. Handoff details stay in a shared restricted room or an
+agent DM; general gets a short notice without that content.
 Already-stopped roles outside the new flow do not appear as departing roles.
 Transient drain errors retry, while an unconfirmed start or stop after twenty
 minutes fails the migration.
-Unchanged kept agents continue without a restart and receive the new flow rules
-on their next turn. Changed agents use the normal switch with handoff. A
+An idle departing agent settles as soon as its supervisor confirms the stop.
+Unchanged kept agents continue without a restart and receive their own role
+notice in an open home room, addressed only to them. Changed agents use the
+normal switch with handoff. A
 departing dispatcher or advisor hands off active task work to the leader and
 stops; the leader joins its task rooms. The project keeps every room, message,
 and agent record. Archived projects cannot change flow. Choosing Custom keeps
@@ -439,7 +453,11 @@ a sender with no live agent record shows as departed, and one that exists only i
 human shows a 🔔. A model switch handoff appears as a collapsed card naming the
 agent, old and new runtimes, and summary source; opening it shows the handoff as
 left-aligned Markdown. Older handoffs without card metadata still hide their
-routing prefix in the message text. A chart icon beside an agent message's
+routing prefix in the message text.
+Long system notices (over 300 characters or three lines) show their first
+sentence and a **Show more** control. Opening one reveals the full notice as
+left-aligned Markdown; shorter notices stay inline.
+A chart icon beside an agent message's
 `#42` opens a popover with what the turn behind it spent
 (tokens, cost labelled when it uses the dated [model price list](docs/pricing.md),
 model, and its place among the turn's messages, such as "2 of 3"); these are the turn's figures, not

@@ -385,7 +385,7 @@ func (s *Store) PreviewTeamFlow(ctx context.Context, projectID, userID, key stri
 // apply. An explicit template key wins over a coincidental title match.
 func flowReuseRoomID(ctx context.Context, db rowQuerier, projectID string, spec FlowRoom) (string, error) {
 	var id string
-	err := db.QueryRowContext(ctx, `SELECT id FROM room WHERE project_id=? AND kind<>'dm'
+	err := db.QueryRowContext(ctx, `SELECT id FROM room WHERE project_id=? AND lifecycle='open' AND kind<>'dm'
 		AND (team_flow_room_key=? OR title=?)
 		ORDER BY CASE WHEN team_flow_room_key=? THEN 0 ELSE 1 END,created_at,id LIMIT 1`,
 		projectID, spec.Key, spec.Title, spec.Key).Scan(&id)
@@ -413,7 +413,7 @@ func flowConflicts(ctx context.Context, db rowQuerier, projectID string, t TeamF
 	}
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT a.id,a.slug,ro.role_key,ro.label,r.id,r.kind,r.team_flow_room_key,r.title FROM agent a
 		JOIN role ro ON ro.id=a.role_id JOIN room_member m ON m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL
-		JOIN room r ON r.id=m.room_id WHERE a.project_id=? AND r.kind<>'dm' AND a.revoked_at IS NULL ORDER BY a.slug,r.title,r.id`, projectID)
+		JOIN room r ON r.id=m.room_id WHERE a.project_id=? AND r.lifecycle='open' AND r.kind<>'dm' AND a.revoked_at IS NULL ORDER BY a.slug,r.title,r.id`, projectID)
 	if err != nil {
 		return out, err
 	}
