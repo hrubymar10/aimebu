@@ -65,6 +65,16 @@ func TestNativeSessionEventReplaysUntilTerminalReceipt(t *testing.T) {
 	if _, err := j.RecordAnswer(ctx, "turn-1", 0, "digest", json.RawMessage(`{"messages":[]}`)); err != nil {
 		t.Fatal(err)
 	}
+	if err := j.RecordExit(ctx, "turn-1", 0, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.AcknowledgeExit(ctx, "turn-1"); err != nil {
+		t.Fatal(err)
+	}
+	events, err = j.NativeSessionEvents(ctx)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("answered turn awaiting receipt replay=%+v err=%v", events, err)
+	}
 	if err := j.RecordReceipt(ctx, protocol.ReceiptBody{TurnID: "turn-1", Digest: "digest", Result: "committed"}); err != nil {
 		t.Fatal(err)
 	}

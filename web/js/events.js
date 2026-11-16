@@ -2,7 +2,7 @@
 const LIVE_REPLAY_LIMIT = 100;
 
 export class EventStream {
-  constructor(onEvent, onSnapshot, onState, seq = 0) { this.onEvent = onEvent; this.onSnapshot = onSnapshot; this.onState = onState; this.seq = seq; this.delay = 250; this.stopped = true; this.pending = Promise.resolve(); this.fresh = false; this.buffer = []; this.beat = 0; this.lastFrame = Date.now(); }
+  constructor(onEvent, onSnapshot, onState, seq = 0) { this.onEvent = onEvent; this.onSnapshot = onSnapshot; this.onState = onState; this.seq = seq; this.delay = 250; this.stopped = true; this.pending = Promise.resolve(); this.fresh = false; this.buffer = []; this.beat = 0; this.lastFrame = Date.now(); this.alertRevision = null; }
   start() {
     this.stopped = false; this.fresh = true; this.connect();
     // A tab that was asleep or offline cannot tell its socket died (nothing closes it for minutes), so waking up checks it at once.
@@ -25,7 +25,7 @@ export class EventStream {
   }
   connect() {
     if (this.stopped) return;
-    this.ready = false; this.buffer = [];
+    this.ready = false; this.buffer = []; this.alertRevision = null;
     // A connection opened straight after a snapshot (the first one, or the one after `snapshot_required`) replays only what happened since that
     // snapshot's cursor: a few events, which are applied like live ones. A connection after a drop can have missed anything, so it takes a snapshot.
     const liveReplay = this.fresh; this.fresh = false;
@@ -67,7 +67,15 @@ export class EventStream {
         }
       } else if (frame.type === 'usages_updated') {
         // Transient hint with no seq: nothing to replay or acknowledge.
-        if (this.ready) this.onUsagesUpdated?.();
+        if (this.ready) {
+          this.onUsagesUpdated?.();
+          // Ordinary usage refreshes cannot change Inbox. A missing revision
+          // means an older server, where every frame may need the old read.
+          if (frame.alert_revision == null || frame.alert_revision !== this.alertRevision) {
+            this.alertRevision = frame.alert_revision;
+            this.onInboxAlertsUpdated?.();
+          }
+        }
       } else if (frame.type === 'snapshot_required') {
         this.resyncing = true;
         this.socket = null;

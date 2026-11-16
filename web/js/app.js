@@ -584,6 +584,10 @@ async function signedIn(session) {
       if (!active()) return;
       if (event.room_id && event.room_id === chat.room?.id && ['room_read_changed', 'message_created', 'turn_recorded', 'turn_process_exit', 'turn_finished'].includes(event.kind)) receipts.schedule();
       if (event.kind.startsWith('inbox_item_')) { await inbox.source.changed?.(); if (active() && event.project_id) await sidebar.refreshProject(event.project_id); }
+      if (['limit_guard_soft', 'limit_guard_hard', 'limit_guard_clear'].includes(event.kind)) {
+        await inbox.refresh().catch(() => {});
+        void health.refreshLimits();
+      }
       if (!active()) return;
       if ((event.agent_id && agents.cards.has(event.agent_id)) || event.kind.startsWith('inbox_item_') || event.kind.startsWith('machine_')) health.schedule();
       knowledge.onEvent(event);
@@ -599,7 +603,12 @@ async function signedIn(session) {
       dot.title = label; dot.setAttribute('aria-label', label);
     }, seq);
     stream.baseline = () => pageBuild; stream.onVersionChange = () => updateBar.show();
-    stream.onUsagesUpdated = () => { settings.usagesChanged(); usagesPopover.changed(); inbox.refresh().catch(() => {}); };
+    stream.onUsagesUpdated = () => { if (active()) { settings.usagesChanged(); usagesPopover.changed(); } };
+    stream.onInboxAlertsUpdated = () => {
+      if (!active()) return;
+      inbox.refresh().catch(() => {});
+      if (rights.owner) void health.refreshLimits();
+    };
     stream.start();
     clearTimeout(preStreamDeadline);
     // A slow read can still recover; the first-run import decision remains

@@ -29,7 +29,7 @@ export class Health {
     this.toggle.onclick = () => { this.setOpen(this.popover.hidden); if (!this.popover.hidden) this.refreshLimits(); };
     this.onKey = event => { if (event.key === 'Escape' && !this.popover.hidden) { this.setOpen(false); this.toggle.focus(); } };
     document.addEventListener('keydown', this.onKey);
-    this.limitTimer = setInterval(() => this.refreshLimits(), LIMIT_POLL_MS);
+    this.limitTimer = setInterval(() => { if (!this.popover.hidden) this.refreshLimits(); }, globalThis.__healthLimitPollMs || LIMIT_POLL_MS);
     this.alive = true; this.turn = 0;
   }
 

@@ -151,16 +151,18 @@ reads the fuller of the session and weekly percentages and compares with `>=`:
   Nothing is paused or stopped: the hold clears itself, and agents keep their sessions.
 
 Only a healthy, fresh reading is acted on, with the same ageing as the switcher (a reading older than three
-refresh intervals, at least ten minutes, is stale): a stale or failed snapshot releases the hold and announces
-nothing, and a flapping snapshot does not repeat a notice. The hold is in memory and re-derived within
+refresh intervals, at least ten minutes, is stale): a stale or failed snapshot releases the hold without an
+owner system notice, while the socket still hints that the visible hold changed.
+A flapping snapshot does not repeat a notice. The hold is in memory and re-derived within
 seconds of a restart. Events are `limit_guard_soft`, `limit_guard_hard` and `limit_guard_clear`, once
 per change of state.
 
 Settings -> Usages -> **Limits before 100%** (owner only) edits the thresholds per tool and gives a profile
 its own, for one that should be held earlier or later than the rest. The **Health** list starts with a bar
 per tool whose active profile has a clear reading, with the soft and hard thresholds ticked on it; a tool
-that is holding new turns also counts toward the Health badge. The rows are re-read every 30 seconds and
-when the list opens.
+that is holding new turns also counts toward the Health badge. The rows are re-read every 30 seconds while
+the list is open and when it opens. Hold changes refresh the badge even when the list is closed,
+including a release after a stale or failed reading.
 
 It is on by default (soft Claude 95 / Codex 98, hard 99, so by default nothing the switcher does changes) and independent of the switcher's `enabled`. A tool with no stored
 profile is protected too, through its one implicit `local` profile. Settings are

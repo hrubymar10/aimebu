@@ -70,7 +70,7 @@ func (w *codexWarmSession) modelDefaultEffort(ctx context.Context, model string)
 		}
 		params["cursor"] = answer.NextCursor
 	}
-	return "", fmt.Errorf("%w: Codex model %q has no reported default reasoning effort", adapter.ErrNoWarm, model)
+	return "", fmt.Errorf("%w: Codex model %q has no reported default reasoning effort; native and Docker warm mode need it", adapter.ErrNoWarm, model)
 }
 
 func newWarmSession(cmd *exec.Cmd, stdin io.WriteCloser, fp, runtimeDir, cwd, authPath string,

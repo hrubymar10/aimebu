@@ -29,6 +29,7 @@ func (s *Server) StartQuotaSwitcher(ctx context.Context) *quota.Runner {
 	guard := quota.NewGuard(s.Store, quotaSource{s}, s.Store, quotaEvents{s})
 	guard.CanSwitch = runner.CanSwitch
 	guard.OnHold = runner.Trigger
+	guard.OnHoldChange = s.guardHoldChanged
 	runner.SetGuard(guard.ConfigOrDefault)
 	s.guard.Store(guard)
 	go runner.Run(ctx)
@@ -37,6 +38,13 @@ func (s *Server) StartQuotaSwitcher(ctx context.Context) *quota.Runner {
 }
 
 func (s *Server) limitGuard() *quota.Guard { return s.guard.Load() }
+
+func (s *Server) guardHoldChanged(string, bool) {
+	// A guard edge changes the visible synthetic Inbox alert for every
+	// global admin, including an unclear-reading release with no notice.
+	s.usageAlertRevision.Add(1)
+	s.nudgeUsageWatchers()
+}
 
 func (s *Server) quotaRunner() *quota.Runner { return s.quota.Load() }
 

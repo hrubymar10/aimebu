@@ -228,13 +228,16 @@ when a server name or config cannot be overridden safely. `model` and
 `history`, `file_opener`, and `desktop` are allowed. Both credential-store
 keys (`cli_auth_credentials_store`, `mcp_oauth_credentials_store`) are allowed
 only when set to `file`. App-server `model/list` supplies the model's default
-reasoning effort; every `turn/start` sends it explicitly, and thread/turn
-starts set personality to `none`. The known `js_repl` feature is reset to its
-cold default (`false`). When plugin or marketplace tables are present, warm
-Docker disables plugin loading, including remote plugins, so user plugin IDs
-never need to appear in command-line overrides. Provider, profile,
-instruction, unknown feature, and unknown top-level settings force a cold
-turn with a reason naming the key. The
+reasoning effort; every `turn/start` sends it explicitly. If that default is
+absent, both native and Docker warm mode fall back cold and name the missing
+default in the refusal. Warm starts leave personality unset to preserve the
+cold default. The known `js_repl`, `plugins`, and `remote_plugin` features are
+reset to their cold defaults (`false`, `true`, and `true`). Host `personality`,
+plugin, or marketplace tables force a cold Docker turn: the first cannot be
+neutralized to an unset personality, and disabling plugin loading could also
+remove account-installed plugins available to cold exec. Provider, profile,
+instruction, unknown feature, and unknown top-level settings likewise force
+a cold turn with a reason naming the key. The
 latest classified warm refusal appears in the agent card's cold tooltip.
 The generated private config bytes (or Docker host config bytes) are part of the warm
 fingerprint, so a change retires the old process before reuse. A token-only auth callback can receive a newer access token only

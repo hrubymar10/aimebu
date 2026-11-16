@@ -66,6 +66,146 @@ func TestRunOnceCancellationDoesNotWaitForCloseHandshake(t *testing.T) {
 // The one wait that is itself the property (a close that must not wait for the peer's handshake) keeps its own short limit.
 const waitGuard = 30 * time.Second
 
+func TestReconnectKeepsPausedWarmRefusal(t *testing.T) {
+	journal, err := OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		if _, err := readFrame(r.Context(), conn); err != nil {
+			return
+		}
+		ack, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Desired: []protocol.DesiredAgent{
+			{AgentID: "active", Desired: "active"},
+			{AgentID: "paused", Desired: "paused"},
+			{AgentID: "stopped", Desired: "stopped"},
+		}})
+		if err := conn.Write(r.Context(), websocket.MessageText, ack); err != nil {
+			return
+		}
+		for {
+			if _, err := readFrame(r.Context(), conn); err != nil {
+				return
+			}
+		}
+	}))
+	defer peer.Close()
+	client := NewClient("machine", "key", peer.URL, journal, adapter.NewFake())
+	client.warmRefusals = make(map[string]protocol.WarmRefusal)
+	for _, id := range []string{"active", "paused", "stopped", "absent"} {
+		client.warmRefusals[id] = protocol.WarmRefusal{AgentID: id, Reason: "warm unavailable"}
+	}
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- client.RunOnce(ctx) }()
+	select {
+	case <-ready:
+	case <-time.After(waitGuard):
+		t.Fatal("supervisor did not connect")
+	}
+	client.mu.Lock()
+	_, active := client.warmRefusals["active"]
+	_, paused := client.warmRefusals["paused"]
+	_, stopped := client.warmRefusals["stopped"]
+	_, absent := client.warmRefusals["absent"]
+	client.mu.Unlock()
+	if !active || !paused || stopped || absent {
+		t.Fatalf("warm refusals after reconnect: active=%t paused=%t stopped=%t absent=%t", active, paused, stopped, absent)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(waitGuard):
+		t.Fatal("supervisor did not stop")
+	}
+}
+
+func TestReconnectDoesNotReplaySettledNativeSessionForRemovedAgent(t *testing.T) {
+	ctx := t.Context()
+	journal, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	if _, err := journal.RecordStart(ctx, StartRecord{TurnID: "old-turn", AgentID: "removed", SpecJSON: json.RawMessage(`{}`), Mode: "normal"}); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(adapter.Event{Kind: adapter.EventNativeSessionStarted, SourceEventID: "old-session", NativeSessionHandle: "thread-1"})
+	if err := journal.RecordEvent(ctx, "old-turn", "old-session", string(adapter.EventNativeSessionStarted), "", payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.RecordExit(ctx, "old-turn", 1, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.AcknowledgeExit(ctx, "old-turn"); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(chan []string, 1)
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		hello, err := readFrame(r.Context(), conn)
+		if err != nil {
+			return
+		}
+		if len(hello.Agents) != 0 {
+			seen <- []string{"unexpected hello inventory"}
+			return
+		}
+		for _, frame := range []protocol.Frame{{V: protocol.Version, Type: protocol.HelloAck}, {V: protocol.Version, Type: protocol.Ping}} {
+			raw, _ := json.Marshal(frame)
+			if err := conn.Write(r.Context(), websocket.MessageText, raw); err != nil {
+				return
+			}
+		}
+		var kinds []string
+		for {
+			frame, err := readFrame(r.Context(), conn)
+			if err != nil {
+				return
+			}
+			kinds = append(kinds, frame.Type)
+			if frame.Type == protocol.Pong {
+				seen <- kinds
+				return
+			}
+		}
+	}))
+	defer peer.Close()
+	client := NewClient("machine", "key", peer.URL, journal, adapter.NewFake())
+	client.PingInterval = time.Hour
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- client.RunOnce(runCtx) }()
+	select {
+	case kinds := <-seen:
+		if len(kinds) != 1 || kinds[0] != protocol.Pong {
+			t.Fatalf("reconnect sent frames for settled removed agent: %v", kinds)
+		}
+	case <-time.After(waitGuard):
+		t.Fatal("supervisor did not answer reconnect ping")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(waitGuard):
+		t.Fatal("supervisor did not stop")
+	}
+}
+
 func TestStopAcceptingAndDrainJournalsInterruptedTurn(t *testing.T) {
 	ctx := context.Background()
 	journal, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))

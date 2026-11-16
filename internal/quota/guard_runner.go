@@ -50,6 +50,9 @@ type Guard struct {
 	// OnHold is called when a tool enters the soft or hard state, so the switcher decides at
 	// once instead of at its next tick. May be nil.
 	OnHold func()
+	// OnHoldChange reports every held/unheld edge, including a release on an
+	// unclear reading that intentionally produces no owner notice. May be nil.
+	OnHoldChange func(tool string, held bool)
 
 	trigger chan struct{}
 	// evalMu serialises everything that judges and sets a hold: an evaluation pass and Save, so a concurrent Save and
@@ -258,6 +261,7 @@ func (g *Guard) apply(ctx context.Context, tool string, cfg GuardConfig, res Gua
 	}
 	g.mu.Lock()
 	prevView := g.view[tool].Result.State
+	prevHeld := g.view[tool].Held
 	prev := g.announced[tool]
 	now := g.now()
 	if res.State != GuardUnknown {
@@ -276,6 +280,9 @@ func (g *Guard) apply(ctx context.Context, tool string, cfg GuardConfig, res Gua
 	}
 	g.view[tool] = v
 	g.mu.Unlock()
+	if prevHeld != held && g.OnHoldChange != nil {
+		g.OnHoldChange(tool, held)
+	}
 	if res.State == GuardUnknown || res.State == prev || g.ev == nil {
 		return
 	}

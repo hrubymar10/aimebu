@@ -107,36 +107,13 @@ func TestWarmDockerNeutralizesOrdinaryHostConfig(t *testing.T) {
 	home := t.TempDir()
 	config := `model = "gpt-6-sol"
 model_reasoning_effort = "high"
-personality = "friendly"
 cli_auth_credentials_store = "file"
 mcp_oauth_credentials_store = "file"
 
 [features]
 js_repl = true
-
-[plugins."documents@openai-primary-runtime"]
-enabled = true
-[plugins."spreadsheets@openai-primary-runtime"]
-enabled = true
-[plugins."presentations@openai-primary-runtime"]
-enabled = true
-[plugins."browser@openai-bundled"]
-enabled = true
-[plugins."example-architect@example-internal"]
-enabled = true
-
-[marketplaces.openai-bundled]
-source_type = "local"
-source = "/tmp/example-bundled"
-last_updated = "2026-01-01T00:00:00Z"
-[marketplaces.openai-primary-runtime]
-source_type = "local"
-source = "/tmp/example-primary"
-last_updated = "2026-01-01T00:00:00Z"
-[marketplaces.example-internal]
-source_type = "git"
-source = "https://example.invalid/repo.git"
-last_revision = "abc123"
+plugins = false
+remote_plugin = false
 
 [desktop]
 mac-menu-bar-enabled = true
@@ -165,13 +142,40 @@ url = "https://example.invalid/mcp"
 		t.Fatalf("ordinary host config ran cold: %v", err)
 	}
 	all := strings.Join(overrides, "\n")
-	for _, want := range []string{`personality="none"`, "features.js_repl=false", "features.plugins=false", "features.remote_plugin=false", "plugins._default.enabled=false", "mcp_servers.local.enabled=false", "mcp_servers.remote={url="} {
+	for _, want := range []string{"features.js_repl=false", "features.plugins=true", "features.remote_plugin=true", "mcp_servers.local.enabled=false", "mcp_servers.remote={url="} {
 		if !strings.Contains(all, want) {
 			t.Errorf("missing neutral override %q in %s", want, all)
 		}
 	}
-	if strings.Contains(all, "example-internal") || strings.Contains(all, "example-bundled") {
-		t.Fatalf("plugin or marketplace ID leaked into command line: %s", all)
+	if strings.Contains(all, "personality=") || strings.Contains(all, "plugins._default") {
+		t.Fatalf("warm overrides changed a cold default: %s", all)
+	}
+}
+
+func TestWarmDockerKeepsPluginAndPersonalityDefaults(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	spec := adapter.TurnSpec{LauncherCodexHome: home}
+	for _, config := range []string{
+		"personality = 'none'\n",
+		"[plugins.zed]\nenabled = true\n[plugins.alpha]\nenabled = false\n",
+		"[marketplaces.zed]\nsource_type = 'local'\n[marketplaces.alpha]\nsource_type = 'git'\n",
+	} {
+		if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var first string
+		for i := 0; i < 20; i++ {
+			_, _, err := warmDockerConfig(spec)
+			if !errors.Is(err, adapter.ErrNoWarm) || !strings.Contains(err.Error(), "cannot be neutralized") {
+				t.Fatalf("host config changed a cold default: %v", err)
+			}
+			if i == 0 {
+				first = err.Error()
+			} else if err.Error() != first {
+				t.Fatalf("refusal order changed: first %q, later %q", first, err)
+			}
+		}
 	}
 }
 

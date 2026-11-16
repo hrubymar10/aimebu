@@ -76,8 +76,8 @@ func TestCodexWarmHelper(t *testing.T) {
 			if mode == "require-defaults" {
 				var params map[string]any
 				_ = json.Unmarshal(frame.Params, &params)
-				if params["personality"] != "none" {
-					_ = writer.Encode(map[string]any{"id": frame.ID, "error": map[string]any{"code": -1, "message": "thread personality was not neutral"}})
+				if _, set := params["personality"]; set {
+					_ = writer.Encode(map[string]any{"id": frame.ID, "error": map[string]any{"code": -1, "message": "thread personality overrode the cold default"}})
 					continue
 				}
 			}
@@ -94,7 +94,8 @@ func TestCodexWarmHelper(t *testing.T) {
 				if params["model"] == "gpt-6.1-sol" {
 					want = "low"
 				}
-				if params["effort"] != want || params["personality"] != "none" {
+				_, personalitySet := params["personality"]
+				if params["effort"] != want || personalitySet {
 					_ = writer.Encode(map[string]any{"id": frame.ID, "error": map[string]any{"code": -1, "message": "turn defaults were not explicit"}})
 					continue
 				}

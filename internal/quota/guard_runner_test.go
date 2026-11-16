@@ -33,6 +33,7 @@ type guardHarness struct {
 	hold    *fakeHold
 	ev      *fakeEvents
 	holds   int
+	changes []bool
 	canSwap bool
 }
 
@@ -41,6 +42,7 @@ func newGuardHarness() *guardHarness {
 	h.src = &fakeSource{obs: map[string]Observation{}, names: map[string][]string{ToolClaude: {"a", "b"}, ToolCodex: {"a"}}}
 	h.g = NewGuard(&fakeSettings{m: map[string]string{}}, h.src, h.hold, h.ev)
 	h.g.OnHold = func() { h.holds++ }
+	h.g.OnHoldChange = func(_ string, held bool) { h.changes = append(h.changes, held) }
 	h.g.CanSwitch = func(context.Context, string, Observation, GuardConfig) bool { return h.canSwap }
 	return h
 }
@@ -157,9 +159,15 @@ func TestGuardNeverHoldsOnUnclearDataAndDoesNotRepeatNoticesAcrossIt(t *testing.
 	if len(h.hold.held) != 0 {
 		t.Fatalf("a stale reading must release the hold, got %v", h.hold.held)
 	}
+	if len(h.changes) != 2 || !h.changes[0] || h.changes[1] {
+		t.Fatalf("hold changes after stale release = %v", h.changes)
+	}
 	h.observe(okObs("a", 96, 10))
 	if got := h.ev.kinds(); len(got) != 1 {
 		t.Fatalf("events = %v", got)
+	}
+	if len(h.changes) != 3 || !h.changes[2] {
+		t.Fatalf("hold changes after recovery = %v", h.changes)
 	}
 }
 

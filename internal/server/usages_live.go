@@ -41,6 +41,7 @@ func (s *Server) StartUsageAlerts(ctx context.Context, root string) error {
 				if err != nil {
 					log.Printf("usage alerts: %v", err)
 				} else if changed {
+					s.usageAlertRevision.Add(1)
 					s.nudgeUsageWatchers()
 				}
 			}
@@ -60,8 +61,9 @@ func (s *Server) signalUsageAlerts() {
 	}
 }
 
-// watchUsages subscribes to snapshot changes. The channel holds at most one
-// pending nudge, so a burst of refreshes reaches a slow socket as one frame.
+// watchUsages subscribes to snapshot and visible-alert changes, including
+// guard hold edges. The channel holds at most one pending nudge, so a burst
+// of refreshes reaches a slow socket as one frame.
 // Call the returned function to unsubscribe. With usages disabled the channel
 // never fires.
 func (s *Server) watchUsages() (<-chan struct{}, func()) {

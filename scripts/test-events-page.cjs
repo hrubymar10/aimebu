@@ -132,6 +132,34 @@ async function main() {
             sockets[1].emit({ type: 'ready', seq: 102 }); await stream.pending;
           });
         }
+        // A burst of usage snapshots re-reads Inbox only when the alert
+        // revision changes; the usages view still hears every snapshot.
+        {
+          const { stream } = make(); let usageUpdates = 0, inboxReads = 0;
+          const fetchBefore = window.fetch;
+          window.fetch = (input, options) => {
+            if (String(input) === '/api/inbox') { inboxReads++; return Promise.resolve(new Response('[]', { headers: { 'Content-Type': 'application/json' } })); }
+            return fetchBefore(input, options);
+          };
+          try {
+            stream.onUsagesUpdated = () => { usageUpdates++; };
+            stream.onInboxAlertsUpdated = () => fetch('/api/inbox');
+            sockets[0].emit({ type: 'ready', seq: 0 }); await stream.pending;
+            for (let i = 0; i < 30; i++) sockets[0].emit({ type: 'usages_updated', alert_revision: 1 });
+            await stream.pending;
+            const first = inboxReads;
+            sockets[0].emit({ type: 'usages_updated', alert_revision: 2 }); await stream.pending;
+            const changed = inboxReads;
+            sockets[0].emit({ type: 'usages_updated' }); await stream.pending;
+            const legacy = inboxReads;
+            sockets[0].emit({ type: 'usages_updated', alert_revision: 2 }); await stream.pending;
+            const beforeReconnect = inboxReads;
+            sockets[0].close(); await sleep(400);
+            sockets[1].emit({ type: 'ready', seq: 0 }); await stream.pending;
+            sockets[1].emit({ type: 'usages_updated', alert_revision: 2 }); await stream.pending;
+            out.usageInboxReads = { first, changed, legacy, beforeReconnect, afterReconnect: inboxReads, usageUpdates };
+          } finally { stream.stop(); window.fetch = fetchBefore; }
+        }
       } finally { window.WebSocket = original; }
       // 6. The update bar: it asks, a click reloads, and a hidden page with nothing typed reloads by itself.
       {
@@ -162,6 +190,7 @@ async function main() {
     assert.deepEqual(result.liveReplayGap, { applied: [], snapshots: 1, seq: 101 }, 'a catch-up of more than 100 events is a gap and takes a snapshot');
     assert.deepEqual(result.reconnectReplay, { applied: [], snapshots: 1, seq: 100 }, 'a reconnect after a drop takes a snapshot, not a replay');
     assert.deepEqual(result.afterSnapshotRequired, { applied: [101, 102], snapshots: 1, seq: 102 }, 'the connection after a snapshot replays live again');
+    assert.deepEqual(result.usageInboxReads, { first: 1, changed: 2, legacy: 3, beforeReconnect: 4, afterReconnect: 5, usageUpdates: 34 }, 'usage bursts read Inbox on alert changes and after a reconnect, with old-server fallback');
     assert.equal(result.sameBuild, 0, 'the same build after a reconnect is not news');
     assert.deepEqual(result.newBuild, [['v2', 'v1']], 'a different build is reported once, against the one the page started with');
     assert.deepEqual(result.bar, { text: 'aimebu was updated. Reload to use the new version.Reload', role: 'alert', reloadsWhileVisible: 0, afterClick: 1, hiddenWithDraft: 1, hiddenClean: 2 }, 'the update bar asks, reloads on a click, and reloads a hidden page only when nothing typed would be lost');

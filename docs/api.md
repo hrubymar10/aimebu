@@ -241,7 +241,7 @@ and reconnects the event stream from its last seen `seq`.
 | PUT/DELETE | `/api/agent/messages/{message}/reactions/{emoji}` | agent key | `{message}` is a message id or its number (`#12` or `12`); 204; add/remove one Unicode emoji sequence in a joined room; DELETE accepts older stored reactions up to 128 bytes; unchanged reactions emit no event |
 | GET | `/api/message-numbers/{no}` | — | where the message numbered `#no` lives: `{id,no,seq,room_id}`; the caller needs access to its room (404 when no message has the number, 400 for a number that is not a positive integer); the web UI uses it for a `#N` link into another room |
 | GET | `/api/messages/referenced/{no}` | `source_message_id` query parameter | `{no,available,room_id?,room?,from?,body?,created_at?}` for exactly the target cited by the source message. The caller must be able to read the source room; for a missed-mention system pointer, only project owners and operators may open the cited target this way. Other source-room members receive `{no,available:false}`. A missing grant also returns `{no,available:false}` without identifying the target. This does not grant access to the target room or its history |
-| GET | `/api/events?after=<seq>` | WebSocket upgrade | event stream: project events for project members (private chats for their members), events with no project for the instance owner only; owners and global admins also get transient `{type:"usages_updated"}` frames (no `seq`, never replayed) |
+| GET | `/api/events?after=<seq>` | WebSocket upgrade | event stream: project events for project members (private chats for their members), events with no project for the instance owner only; owners and global admins also get transient `{type:"usages_updated",alert_revision}` frames (no `seq`, never replayed). `alert_revision` advances when a synthetic usage alert changes or is dismissed, or a limit guard hold changes; the browser refreshes Inbox on those changes and after reconnect |
 | GET | `/api/events/cursor` | — | `{seq}` current global event watermark |
 | GET | `/api/inbox` | — | open questions, approvals, recovery, and delivery failures visible to authorized project members and private-chat peers; each stored entry includes the caller's `seen` flag, which does not remove it from the Inbox. An `approval` entry with `note_id` is a shared agent note waiting for approval (only the owner and admins who own the agent's project see it; its card sits in the project's home room): `POST /api/inbox/{item}/decision` with choice `approve` switches the note on for every project's agents, `deny` deletes it, and either closes the card, as does any other change to the note |
 | GET | `/api/agent/rooms` | active or not-accepting agent key | rooms where the caller is an active member, including archived rooms; no message previews |
@@ -567,7 +567,8 @@ room badges and one entry per agent for the overall count. Machine offline
 uses the server's current supervisor connection, not its last heartbeat.
 An agent is stuck when a running turn has no server-recorded activity or
 usage for longer than `AIMEBU2_STUCK_MINUTES` (default 10). The UI refreshes
-time-derived flags every 30 seconds. The top-bar health list shows one plain
+time-derived flags every 30 seconds. It reads limit guard state once at sign-in,
+on guard events, and every 30 seconds while the Health panel is open. The top-bar health list shows one plain
 sentence per flag ("Ada looks stuck", "An answer to Bert could not be delivered",
 "Bert needs a recovery decision"); choosing one opens the matching Inbox item
 (variant A) or the room with its inline callout (variant B) for `recovery_waiting`

@@ -9,6 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/quota"
 	"github.com/hrubymar10/aimebu/internal/usages"
 	"github.com/hrubymar10/aimebu/internal/usages/providers"
 )
@@ -94,7 +95,7 @@ func TestUsageAlertInboxIsGlobalButUsagesChangesStayOwnerOnly(t *testing.T) {
 	}
 	resp = f.requestAs(t, adminCookie, adminCSRF, http.MethodPost, "/api/inbox/"+alertID+"/dismiss", map[string]int{"rev": 0})
 	resp.Body.Close()
-	if resp.StatusCode != 204 || len(read(f.cookie, f.csrf)) != 0 {
+	if resp.StatusCode != 204 || len(read(f.cookie, f.csrf)) != 0 || f.srv.usageAlertRevision.Load() != 1 {
 		t.Fatalf("admin dismiss: %d", resp.StatusCode)
 	}
 	resp = f.requestAs(t, adminCookie, adminCSRF, http.MethodGet, "/api/usages", nil)
@@ -158,6 +159,104 @@ func TestUsagesUpdateSocketOnlyForGlobalAdmin(t *testing.T) {
 	defer cancel()
 	if _, _, err := ordinaryConn.Read(ctx); err == nil {
 		t.Fatal("ordinary user received usages update")
+	}
+}
+
+func TestGuardHoldChangesRefreshNonOwnerAdminInbox(t *testing.T) {
+	f := newFixture(t)
+	tracker, err := usages.NewAlertTracker(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.usageAlerts = tracker
+	now := time.Now().UTC()
+	reset := now.Add(24 * time.Hour)
+	snapshot := usages.Response{Providers: []usages.Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
+		Profiles: []usages.Profile{{ProfileName: "work", Email: "work@example.test", Status: "ok", LastRefreshAt: &now,
+			Windows: []usages.Window{{Key: "session", PercentUsed: 81, ResetAt: &reset}}}}}}}
+	snapshot.Settings.AlertWarningRemaining, snapshot.Settings.AlertCriticalRemaining = 20, 10
+	if changed, err := tracker.Observe(snapshot); err != nil || !changed {
+		t.Fatalf("alert: %v %v", changed, err)
+	}
+	adminCookie, adminCSRF := registerSecondUser(t, f, "admin")
+	owner, err := f.db.UserByLogin(t.Context(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := f.db.UserByLogin(t.Context(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.SetUserAdmin(t.Context(), owner.ID, admin.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.Handler()
+	header := http.Header{}
+	header.Set("Origin", f.http.URL)
+	header.Set("Cookie", adminCookie.String())
+	conn, response, err := websocket.Dial(t.Context(), "ws"+strings.TrimPrefix(f.http.URL, "http")+"/api/events?after=0", &websocket.DialOptions{HTTPHeader: header})
+	if err != nil {
+		t.Fatalf("admin socket %v: %v", response, err)
+	}
+	defer conn.Close(1000, "")
+	for {
+		var kind string
+		_ = json.Unmarshal(readFrame(t, conn)["type"], &kind)
+		if kind == "ready" {
+			break
+		}
+	}
+	inboxCount := func() int {
+		t.Helper()
+		resp := f.requestAs(t, adminCookie, adminCSRF, http.MethodGet, "/api/inbox", nil)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("admin Inbox status = %d", resp.StatusCode)
+		}
+		var items []struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+			t.Fatal(err)
+		}
+		return len(items)
+	}
+	if got := inboxCount(); got != 1 {
+		t.Fatalf("initial admin Inbox = %d", got)
+	}
+	src := &quotaFakeSource{}
+	guard := quota.NewGuard(f.srv.Store, src, f.srv.Store, nil)
+	guard.OnHoldChange = f.srv.guardHoldChanged
+	f.srv.guard.Store(guard)
+	readRevision := func() uint64 {
+		t.Helper()
+		frame := readFrame(t, conn)
+		var kind string
+		_ = json.Unmarshal(frame["type"], &kind)
+		if kind != "usages_updated" {
+			t.Fatalf("admin guard frame = %q", kind)
+		}
+		var revision uint64
+		if err := json.Unmarshal(frame["alert_revision"], &revision); err != nil {
+			t.Fatal(err)
+		}
+		return revision
+	}
+	src.set(quota.Observation{Active: "A", Profiles: []quota.Obs{qobs("A", 96, 10)}, Ready: true})
+	guard.Evaluate(t.Context())
+	if revision := readRevision(); revision != 1 || inboxCount() != 0 {
+		t.Fatalf("admin did not lose guarded alert: revision=%d", revision)
+	}
+	stale := qobs("A", 96, 10)
+	stale.Stale = true
+	src.set(quota.Observation{Active: "A", Profiles: []quota.Obs{stale}, Ready: true})
+	guard.Evaluate(t.Context())
+	if revision := readRevision(); revision != 2 || inboxCount() != 1 {
+		t.Fatalf("admin did not regain alert after silent release: revision=%d", revision)
+	}
+	guard.Evaluate(t.Context())
+	if revision := f.srv.usageAlertRevision.Load(); revision != 2 {
+		t.Fatalf("unchanged guard sent another hint: revision=%d", revision)
 	}
 }
 
@@ -238,9 +337,20 @@ func TestUsagesUpdatePushedToOwnerSocket(t *testing.T) {
 	}
 	f.srv.Usages.ConfigChanged(providers.ProviderMistral, true, true)
 	var kind string
-	_ = json.Unmarshal(readFrame(t, conn)["type"], &kind)
+	frame := readFrame(t, conn)
+	_ = json.Unmarshal(frame["type"], &kind)
 	if kind != "usages_updated" {
 		t.Fatalf("frame type = %q, want usages_updated", kind)
+	}
+	var revision uint64
+	if err := json.Unmarshal(frame["alert_revision"], &revision); err != nil || revision != 0 {
+		t.Fatalf("ordinary snapshot changed alert revision: %s %v", frame["alert_revision"], err)
+	}
+	f.srv.usageAlertRevision.Add(1)
+	f.srv.nudgeUsageWatchers()
+	frame = readFrame(t, conn)
+	if err := json.Unmarshal(frame["alert_revision"], &revision); err != nil || revision != 1 {
+		t.Fatalf("changed alert revision = %s %v", frame["alert_revision"], err)
 	}
 }
 

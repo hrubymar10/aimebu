@@ -58,13 +58,14 @@ async function main() {
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
   const answerAll = (extra = {}) => ({ 'GET /api/health': { agents }, 'GET /api/limit-guard': guard(), 'GET /api/disk': disk(), ...extra });
-  const mount = async ({ auto = answerAll(), owner = true, refresh = true, cards = {} } = {}) => {
+  const mount = async ({ auto = answerAll(), owner = true, refresh = true, cards = {}, pollMs = null } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(installFetch, auto);
-    await page.evaluate(async ({ owner, refresh, cards, module, disk }) => {
+    await page.evaluate(async ({ owner, refresh, cards, module, disk, pollMs }) => {
+      if (pollMs) window.__healthLimitPollMs = pollMs;
       (await import('/js/api.js')).setSession({ csrf_token: 'token', id: 'usr_1', owner, admin: owner });
       const { Health } = await import(module);
       const { DiskUsage } = await import(disk);
@@ -75,7 +76,7 @@ async function main() {
       window.__item = true;
       window.__health = new Health(window.__sidebar, window.__agents, (room, agent) => window.__calls.push(['room', room?.id, agent]), async (row, flag) => { window.__calls.push(['item', row.id, flag.code]); if (window.__hold) await window.__hold; return window.__item; }, new DiskUsage());
       if (refresh) window.__refreshed = window.__health.refresh();
-    }, { owner, refresh, cards, module: HEALTH, disk: DISK });
+    }, { owner, refresh, cards, module: HEALTH, disk: DISK, pollMs });
     return page;
   };
   const items = page => page.$$eval('#health-popover .health-item', nodes => nodes.map(node => [node.dataset.healthAgent, node.dataset.code, node.querySelector('.health-item-title').textContent, node.querySelector('.health-item-hint').textContent]));
@@ -89,6 +90,32 @@ async function main() {
   const open = async page => { await page.$eval('#health-toggle', el => el.click()); await page.waitForFunction(() => !document.querySelector('#health-popover').hidden); };
   const count = (page, method, requestPath) => page.evaluate((method, requestPath) => window.__requests.filter(request => request.method === method && request.path === requestPath).length, method, requestPath);
   try {
+    // A burst of agent events coalesces to one health read and leaves the
+    // limit guard alone. Its timer reads the guard only while Health is open.
+    {
+      const page = await mount({ pollMs: 100 });
+      await page.evaluate(() => window.__refreshed);
+      const healthBefore = await count(page, 'GET', '/api/health');
+      const guardBefore = await count(page, 'GET', '/api/limit-guard');
+      await page.evaluate(() => { for (let i = 0; i < 30; i++) window.__health.schedule(); });
+      await new Promise(resolve => setTimeout(resolve, 700));
+      assert.equal(await count(page, 'GET', '/api/health'), healthBefore + 1, 'one health read for an event burst');
+      assert.equal(await count(page, 'GET', '/api/limit-guard'), guardBefore, 'closed Health does not poll the guard or read it for agent events');
+      const heldBadge = await badge(page);
+      await page.evaluate(async () => {
+        window.__auto['GET /api/limit-guard'] = { status: 200, body: { percent_display: 'used', profiles: {}, tools: {
+          claude: { config: {}, held: false, result: { state: 'unknown', profile: 'local', soft: 95, hard: 99 } },
+          codex: { config: {}, held: false, result: { state: 'ok', profile: 'main', percent: 40, window: 'session', soft: 98, hard: 99 } },
+        } } };
+        await window.__health.refreshLimits();
+      });
+      const releasedBadge = await badge(page);
+      assert.equal(Number(releasedBadge[0]), Number(heldBadge[0]) - 1, 'a guard change clears the hold badge while Health is closed');
+      await open(page);
+      await new Promise(resolve => setTimeout(resolve, 250));
+      assert.ok(await count(page, 'GET', '/api/limit-guard') > guardBefore, 'open Health refreshes live guard state');
+      await page.close();
+    }
     // Nothing wrong: one calm line, a hidden count, and the toggle says so; the popover is a labelled dialog that opens and closes.
     {
       const page = await mount({ auto: answerAll({ 'GET /api/health': { agents: [{ id: 'a3', name: 'fine', room_ids: ['r1'], flags: [] }] }, 'GET /api/limit-guard': guard('ok'), 'GET /api/disk': { status: 403, body: { message: 'no' } } }) });

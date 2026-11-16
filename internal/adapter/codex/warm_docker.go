@@ -20,10 +20,9 @@ var warmDockerInertKeys = map[string]bool{"model": true, "mcp_servers": true, "p
 // has the mounted file credentials used by the cold exec path.
 var warmDockerFileStores = map[string]bool{"cli_auth_credentials_store": true, "mcp_oauth_credentials_store": true}
 
-// The one host feature known to appear in existing configs is removed in
-// Codex 0.169 and defaults to false (`codex features list`). Other feature
-// values still fail closed until their cold defaults are verified.
-var warmDockerFeatureDefaults = map[string]bool{"js_repl": false}
+// These are the 0.169 cold defaults with user config ignored. Plugin features
+// remain enabled even when no user plugin table is loaded.
+var warmDockerFeatureDefaults = map[string]bool{"js_repl": false, "plugins": true, "remote_plugin": true}
 
 // warmDockerConfig closes the gap left by app-server having no exec's
 // --ignore-user-config flag. Every host MCP server the cold Docker path would
@@ -51,7 +50,6 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 	}
 	sort.Strings(keys)
 	var neutral []string
-	disablePlugins := false
 	for _, key := range keys {
 		if warmDockerInertKeys[key] {
 			continue
@@ -69,10 +67,7 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 			}
 			// The app-server's model/list default is sent on every turn/start.
 		case "personality":
-			if _, ok := doc[key].(string); !ok {
-				return nil, nil, fmt.Errorf("%w: Codex host config key %q is not a personality", adapter.ErrNoWarm, key)
-			}
-			neutral = append(neutral, `personality="none"`)
+			return nil, nil, fmt.Errorf("%w: Codex host config key %q cannot be neutralized to the cold default personality", adapter.ErrNoWarm, key)
 		case "features":
 			features, ok := doc[key].(map[string]any)
 			if !ok {
@@ -94,43 +89,13 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 				neutral = append(neutral, fmt.Sprintf("features.%s=%t", name, defaultValue))
 			}
 		case "plugins", "marketplaces":
-			entries, ok := doc[key].(map[string]any)
-			if !ok {
-				return nil, nil, fmt.Errorf("%w: Codex host config key %q is not a table", adapter.ErrNoWarm, key)
-			}
-			for name, raw := range entries {
-				fields, ok := raw.(map[string]any)
-				if !ok {
-					return nil, nil, fmt.Errorf("%w: Codex host %s entry %q is not a table", adapter.ErrNoWarm, key, name)
-				}
-				for field, value := range fields {
-					if key == "plugins" {
-						if field != "enabled" {
-							return nil, nil, fmt.Errorf("%w: Codex host plugin field %q cannot be neutralized", adapter.ErrNoWarm, field)
-						}
-						if _, ok := value.(bool); !ok {
-							return nil, nil, fmt.Errorf("%w: Codex host plugin enabled setting is not boolean", adapter.ErrNoWarm)
-						}
-					} else {
-						if field != "source" && field != "source_type" && field != "last_updated" && field != "last_revision" && field != "ref" {
-							return nil, nil, fmt.Errorf("%w: Codex host marketplace field %q cannot be neutralized", adapter.ErrNoWarm, field)
-						}
-						if _, ok := value.(string); !ok {
-							return nil, nil, fmt.Errorf("%w: Codex host marketplace field %q is not a string", adapter.ErrNoWarm, field)
-						}
-					}
-				}
-			}
-			disablePlugins = true
+			// Disabling this feature would also remove account-installed
+			// plugins that cold exec can load. Dotted overrides cannot clear a
+			// table, so use the cold path for this turn.
+			return nil, nil, fmt.Errorf("%w: Codex host config key %q cannot be neutralized without changing cold plugin loading", adapter.ErrNoWarm, key)
 		default:
 			return nil, nil, fmt.Errorf("%w: Codex host config key %q overrides provider/profile or other turn settings", adapter.ErrNoWarm, key)
 		}
-	}
-	if disablePlugins {
-		// A cold Docker exec ignores the user's plugin configuration. The
-		// plugin manager's feature gate also prevents marketplace loading,
-		// including entries whose IDs cannot be used in dotted -c paths.
-		neutral = append(neutral, "features.plugins=false", "features.remote_plugin=false", "plugins._default.enabled=false")
 	}
 	overrides, skipped, err := dockerOverrides(string(data))
 	if err != nil {

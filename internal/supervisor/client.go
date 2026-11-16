@@ -343,12 +343,12 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			stoppedTurns = append(stoppedTurns, c.running[item.AgentID])
 		}
 	}
-	active := make(map[string]bool, len(ack.Desired))
+	listed := make(map[string]bool, len(ack.Desired))
 	for _, item := range ack.Desired {
-		active[item.AgentID] = item.Desired == "active"
+		listed[item.AgentID] = item.Desired != "stopped"
 	}
 	for id := range c.warmRefusals {
-		if !active[id] {
+		if !listed[id] {
 			delete(c.warmRefusals, id)
 		}
 	}

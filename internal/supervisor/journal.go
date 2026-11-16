@@ -277,13 +277,15 @@ type NativeSessionEvent struct {
 	Generation                             int
 }
 
-// NativeSessionEvents replays durable thread handles after a socket reconnect.
-// The server accepts identical repeats, so no acknowledgement is needed.
+// NativeSessionEvents replays durable thread handles for turns still in the
+// hello inventory after a socket reconnect. The server accepts identical
+// repeats, so no separate acknowledgement is needed.
 func (j *Journal) NativeSessionEvents(ctx context.Context) ([]NativeSessionEvent, error) {
 	rows, err := j.db.QueryContext(ctx, `SELECT e.turn_id,t.agent_id,t.generation,e.source_event_id,e.payload_json
 		FROM journal_event e JOIN turn_start t ON t.turn_id=e.turn_id
-		WHERE e.kind=? AND NOT EXISTS(
-			SELECT 1 FROM receipt r WHERE r.turn_id=e.turn_id AND r.terminal=1)
+		WHERE e.kind=? AND (t.exec='running' OR (t.exec='exited' AND t.exit_acked=0)
+			OR (EXISTS(SELECT 1 FROM answer a WHERE a.turn_id=t.turn_id)
+				AND NOT EXISTS(SELECT 1 FROM receipt r WHERE r.turn_id=e.turn_id AND r.terminal=1)))
 		ORDER BY e.created_at,e.source_event_id`, string(adapter.EventNativeSessionStarted))
 	if err != nil {
 		return nil, err

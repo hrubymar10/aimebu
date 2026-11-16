@@ -127,6 +127,7 @@ type Server struct {
 	spawnKeys            map[string]string
 	usageWatchMu         sync.Mutex
 	usageWatchers        map[chan struct{}]struct{}
+	usageAlertRevision   atomic.Uint64
 	usageAlerts          *usages.AlertTracker
 	usageAlertWake       chan struct{}
 	telemetryIDs         sync.Map // user id -> the id that person's reports carry (see telemetry_identity.go)

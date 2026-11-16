@@ -82,6 +82,7 @@ func (s *Server) dismissInboxItem(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		s.usageAlertRevision.Add(1)
 		s.nudgeUsageWatchers()
 		w.WriteHeader(http.StatusNoContent)
 		return

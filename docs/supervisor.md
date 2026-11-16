@@ -292,7 +292,8 @@ any other non-terminal exit; the machine connection stays open for the
 machine's other agents. A CLI-reported native session handle is
 journaled before forwarding it to the server. The server binds it to the
 turn's session and rejects a conflicting handle. On reconnect, the supervisor
-replays unreceipted native-session events, then the usage and compaction
+replays native-session events only for turns still in the hello inventory,
+then the usage and compaction
 events of every turn whose exit the server has not yet acknowledged, before
 exits and answers. The server dedupes those events by `source_event_id`, so
 usage sent live before a disconnect is counted once, and usage or compaction
