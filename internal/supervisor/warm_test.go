@@ -1069,6 +1069,30 @@ func TestWrappedWarmRefusalLogsOncePerCredentialStamp(t *testing.T) {
 	}
 }
 
+func TestWarmRefusalClearsOnDifferentTurnAndStop(t *testing.T) {
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.c.setCodexWarmEnabled(true)
+	codexTurn := func(spec *adapter.TurnSpec) { spec.Agent.Tool = "codex" }
+	h.f.fingerprintErr = fmt.Errorf("%w: %s", adapter.ErrNoWarm, strings.Repeat("界", 245))
+	h.run("agt_a", codexTurn)
+	refusals := h.c.WarmReport().Refusals
+	if len(refusals) != 1 || len([]rune(refusals[0].Reason)) != 240 || !strings.HasSuffix(refusals[0].Reason, "界") {
+		t.Fatalf("refusal was not truncated at a rune boundary: %+v", refusals)
+	}
+	h.f.fingerprintErr = adapter.ErrNoWarm
+	h.run("agt_a", codexTurn)
+	if refusals := h.c.WarmReport().Refusals; len(refusals) != 0 {
+		t.Fatalf("ordinary cold turn kept the old refusal: %+v", refusals)
+	}
+	h.f.fingerprintErr = fmt.Errorf("%w: setting changed", adapter.ErrNoWarm)
+	h.run("agt_a", codexTurn)
+	h.c.handleControl(protocol.Frame{AgentID: "agt_a", Generation: 1, DesiredRev: 2, DesiredState: "stopped"})
+	if refusals := h.c.WarmReport().Refusals; len(refusals) != 0 {
+		t.Fatalf("stopped agent kept the old refusal: %+v", refusals)
+	}
+}
+
 func TestCodexWarmStampsAnEnvironmentAPIKeyWithoutAuthFile(t *testing.T) {
 	path := t.TempDir()
 	t.Setenv("WARM_TEST_CODEX_DIR", path)

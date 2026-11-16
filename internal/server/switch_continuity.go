@@ -65,7 +65,7 @@ func (s *Server) agentSwitchPreview(w http.ResponseWriter, r *http.Request) {
 	if selectedConn.supportsLaunchers && req.Tool != "fake" {
 		launcher, err := s.resolveLauncher(r.Context(), machineID, req.Tool, req.Variant, req.LauncherID)
 		if err != nil {
-			apiError(w, 409, "launcher_unavailable", errLauncherUnavailable.Error())
+			launcherSelectionError(w, err)
 			return
 		}
 		launcherID = launcher.ID

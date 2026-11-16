@@ -210,10 +210,14 @@ func (s *Server) claudeLauncher(w http.ResponseWriter, r *http.Request, conn *ma
 		return "", true
 	}
 	launcher, err := s.resolveLauncher(r.Context(), machine.ID, "claude", "native", id)
-	if err != nil && id == "" {
-		return "", true
+	if err != nil {
+		if id == "" && errors.Is(err, errLauncherUnavailable) {
+			return "", true
+		}
+		launcherSelectionError(w, err)
+		return "", false
 	}
-	if err != nil || !launcher.Enabled {
+	if !launcher.Enabled {
 		apiError(w, 409, "launcher_unavailable", errLauncherUnavailable.Error())
 		return "", false
 	}

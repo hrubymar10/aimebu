@@ -343,6 +343,15 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			stoppedTurns = append(stoppedTurns, c.running[item.AgentID])
 		}
 	}
+	active := make(map[string]bool, len(ack.Desired))
+	for _, item := range ack.Desired {
+		active[item.AgentID] = item.Desired == "active"
+	}
+	for id := range c.warmRefusals {
+		if !active[id] {
+			delete(c.warmRefusals, id)
+		}
+	}
 	c.mu.Unlock()
 	c.startLauncherReprobe(probeCtx)
 	if c.warmCapable() {
@@ -1427,6 +1436,9 @@ func (c *Client) handleControl(frame protocol.Frame) bool {
 		delete(c.pendingStopAck, frame.AgentID)
 	}
 	c.mu.Unlock()
+	if frame.DesiredState == "stopped" {
+		c.clearWarmRefusal(frame.AgentID)
+	}
 	if frame.DesiredState == "stopped" && turn == nil {
 		// A warm process is ended and reaped before the ack and before the key goes: nothing is left holding either. If it is not confirmed
 		// gone, the ack and the key wait for it and it is tried again.

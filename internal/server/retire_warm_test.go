@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -172,6 +173,48 @@ func TestAgentCardWarmState(t *testing.T) {
 	_ = old
 	if got := f.srv.agentWarmState(card); got != nil {
 		t.Fatalf("a machine that keeps nothing warm: %+v", got)
+	}
+}
+
+func TestWarmRefusalReasonIsGenericForViewer(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	agent, _ := f.createToolAgent(t, "role_reviewer_default")
+	if _, err := f.exec(`UPDATE agent SET tool='claude',observed='idle' WHERE id=?`, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	machine := connectHost(t, f, true)
+	five := 300
+	machine.warmMu.Lock()
+	machine.warm = &protocol.WarmReport{IdleSeconds: &five, Refusals: []protocol.WarmRefusal{{AgentID: agent.ID, Reason: "host config key changes turn behavior"}}}
+	machine.warmMu.Unlock()
+	viewerCookie, viewerCSRF := f.projectMember(t, "warmviewer", f.project.ID, "viewer")
+	read := func(cookie *http.Cookie, csrf string) string {
+		resp := f.requestAs(t, cookie, csrf, "GET", "/api/rooms/"+f.room.ID+"/agents", nil)
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("agent cards: %d", resp.StatusCode)
+		}
+		var cards []struct {
+			ID   string     `json:"id"`
+			Warm *agentWarm `json:"warm"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&cards); err != nil {
+			t.Fatal(err)
+		}
+		for _, card := range cards {
+			if card.ID == agent.ID && card.Warm != nil {
+				return card.Warm.Reason
+			}
+		}
+		t.Fatal("agent has no warm card")
+		return ""
+	}
+	if got := read(f.cookie, f.csrf); got != "host config key changes turn behavior" {
+		t.Fatalf("owner reason = %q", got)
+	}
+	if got := read(viewerCookie, viewerCSRF); got != "Warm mode is unavailable for this agent's configuration" {
+		t.Fatalf("viewer reason = %q", got)
 	}
 }
 

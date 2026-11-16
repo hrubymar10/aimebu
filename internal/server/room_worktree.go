@@ -78,11 +78,11 @@ func (s *Server) machineWorktree(ctx context.Context, machine store.Machine, roo
 		}
 		return result, nil
 	case <-conn.done:
-		return worktree.Result{}, errors.New("supervisor disconnected during worktree operation")
+		return worktree.Result{}, fmt.Errorf("%w: supervisor disconnected during worktree operation", ErrMachineUnavailable)
 	case <-ctx.Done():
 		return worktree.Result{}, ctx.Err()
 	case <-timer.C:
-		return worktree.Result{}, errors.New("supervisor did not answer worktree operation")
+		return worktree.Result{}, fmt.Errorf("%w: supervisor did not answer worktree operation", ErrSlowMachine)
 	}
 }
 
@@ -384,6 +384,21 @@ func worktreeError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, store.ErrForbidden) {
 		apiError(w, 403, "forbidden", "not allowed to manage this room worktree")
+		return
+	}
+	if errors.Is(err, errWorktreeUnsupported) {
+		apiError(w, 409, "supervisor_update_needed", "this machine's supervisor cannot manage worktrees; update it and retry")
+		return
+	}
+	if errors.Is(err, ErrMachineUnavailable) || errors.Is(err, ErrSlowMachine) {
+		apiError(w, 503, "machine_unavailable", "the supervisor could not answer the worktree operation; reconnect it and retry")
+		return
+	}
+	// SQLite failures are internal; path checks, git commands and request
+	// cancellation remain fixable worktree errors with their useful message.
+	var databaseError interface{ Code() int }
+	if errors.As(err, &databaseError) || errors.Is(err, sql.ErrConnDone) || errors.Is(err, sql.ErrTxDone) {
+		fail(w, fmt.Errorf("worktree operation: %w", err))
 		return
 	}
 	apiError(w, 409, "worktree_failed", fmt.Sprint(err))

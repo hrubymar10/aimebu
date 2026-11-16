@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +54,30 @@ func TestRemoteWorktreeRejectsOldSupervisorWithoutSending(t *testing.T) {
 	}
 	if len(machine.sendQueue) != 0 {
 		t.Fatal("old supervisor received an unsupported frame")
+	}
+}
+
+func TestWorktreeErrorsSeparateUnavailableMachineFromInternalFailure(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code int
+		name string
+	}{
+		{ErrMachineUnavailable, 503, "machine_unavailable"},
+		{ErrSlowMachine, 503, "machine_unavailable"},
+		{errWorktreeUnsupported, 409, "supervisor_update_needed"},
+		{errors.New("host git command failed"), 409, "worktree_failed"},
+		{sql.ErrConnDone, 500, "internal_error"},
+	} {
+		recorder := httptest.NewRecorder()
+		worktreeError(recorder, test.err)
+		var body map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if recorder.Code != test.code || body["error"] != test.name {
+			t.Fatalf("%v = %d %+v", test.err, recorder.Code, body)
+		}
 	}
 }
 

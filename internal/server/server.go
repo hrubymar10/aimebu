@@ -693,7 +693,7 @@ func fail(w http.ResponseWriter, err error) {
 	} else if errors.Is(err, store.ErrScopeMismatch) {
 		apiError(w, 409, "scope_mismatch", "the requested resources belong to different projects or machines")
 	} else {
-		log.Printf("http 500: %v", err)
+		log.Printf("http 500: %s", safeErrorChain(err))
 		if reporter, ok := w.(interface{ CaptureHTTPError(error) }); ok {
 			reporter.CaptureHTTPError(err)
 		} else {
@@ -701,6 +701,29 @@ func fail(w http.ResponseWriter, err error) {
 		}
 		apiError(w, 500, "internal_error", "internal server error")
 	}
+}
+
+// safeErrorChain keeps each wrapped cause visible in the local log while
+// applying the same secret and path scrubber used for Sentry events.
+func safeErrorChain(err error) string {
+	scrub := telemetry.NewScrubber()
+	parts := make([]string, 0, 4)
+	var visit func(error)
+	visit = func(cause error) {
+		if cause == nil || len(parts) >= 8 {
+			return
+		}
+		parts = append(parts, scrub.Text(strings.ReplaceAll(cause.Error(), "\n", " ")))
+		if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+			for _, item := range joined.Unwrap() {
+				visit(item)
+			}
+		} else {
+			visit(errors.Unwrap(cause))
+		}
+	}
+	visit(err)
+	return strings.Join(parts, " <- ")
 }
 func (s *Server) projectAccess(w http.ResponseWriter, r *http.Request, id string) bool {
 	if err := s.Store.ProjectAccess(r.Context(), userID(r), id); err != nil {

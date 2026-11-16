@@ -443,8 +443,8 @@ func (c *Client) reportWarmRefusal(spec adapter.TurnSpec, cred credentials, acti
 		// Only the adapter's classified reason is sent to the web UI. Other
 		// errors can include paths or credentials and remain in the local log.
 		reason := strings.TrimPrefix(err.Error(), adapter.ErrNoWarm.Error()+": ")
-		if len(reason) > 240 {
-			reason = reason[:240]
+		if runes := []rune(reason); len(runes) > 240 {
+			reason = string(runes[:240])
 		}
 		c.warmRefusals[spec.Agent.ID] = protocol.WarmRefusal{AgentID: spec.Agent.ID, Reason: reason}
 	}
@@ -460,6 +460,16 @@ func (c *Client) reportWarmRefusal(spec adapter.TurnSpec, cred credentials, acti
 	c.mu.Unlock()
 	c.warmChanged()
 	c.report(fmt.Errorf("agent %s: %s: %w; the turn runs cold", spec.Agent.ID, action, err))
+}
+
+func (c *Client) clearWarmRefusal(agentID string) {
+	c.mu.Lock()
+	_, had := c.warmRefusals[agentID]
+	delete(c.warmRefusals, agentID)
+	c.mu.Unlock()
+	if had {
+		c.warmChanged()
+	}
 }
 
 func (c *Client) retireAll(reason string, grace time.Duration) bool {
@@ -693,6 +703,9 @@ func warmAccount(spec adapter.TurnSpec, codexFile ...string) string {
 // mode is on and the adapter serves the turn warm, and as a process of its own otherwise. Warm mode never fails a turn: a process that cannot
 // be started, recorded or handed the turn is reported and the turn runs cold.
 func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.Writer, cred credentials) (adapter.Turn, error) {
+	if !spec.KeepAlive {
+		c.clearWarmRefusal(spec.Agent.ID)
+	}
 	if !spec.KeepAlive && !c.keepAliveYield(spec.Agent.ID) {
 		// A ping of the agent was told to end and is not confirmed gone: it may still be on the session, and a second process must never be. The
 		// turn waits for the quarantine to be over (this runs in the delivery's own goroutine) and then goes on, rather than failing its start.
@@ -819,9 +832,6 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 	}
 	entry.kept = false // it works again: if it ends during this turn, the turn's own exit says so
 	slot.busy = entry
-	c.mu.Lock()
-	delete(c.warmRefusals, spec.Agent.ID)
-	c.mu.Unlock()
 	c.warmChanged()
 	pool.mu.Lock()
 	if reused {

@@ -3,8 +3,11 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +65,35 @@ func TestListedAdapter(t *testing.T) {
 	}
 	if !listedAdapter(spawnRequest{Tool: "claude", Variant: "docker", Model: "sonnet"}) || !listedAdapter(spawnRequest{Tool: "codex", Variant: "docker", Model: "gpt-6-sol"}) {
 		t.Fatal("Docker adapters were rejected")
+	}
+}
+
+func TestLauncherLookupKeepsDatabaseFailuresDistinctFromMissingLaunchers(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.srv.resolveLauncher(t.Context(), f.machineID, "claude", "native", "missing"); !errors.Is(err, errLauncherUnavailable) {
+		t.Fatalf("missing launcher = %v", err)
+	}
+	if err := f.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.srv.resolveLauncher(t.Context(), f.machineID, "claude", "native", "missing"); err == nil || errors.Is(err, errLauncherUnavailable) || !strings.Contains(err.Error(), "look up launcher") {
+		t.Fatalf("database failure was disguised as missing launcher: %v", err)
+	}
+}
+
+func TestLauncherSelectionErrorKeepsMissingAndStoreFailureSeparate(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code int
+	}{
+		{errLauncherUnavailable, 409},
+		{fmt.Errorf("look up launcher: %w", sql.ErrConnDone), 500},
+	} {
+		response := httptest.NewRecorder()
+		launcherSelectionError(response, test.err)
+		if response.Code != test.code {
+			t.Fatalf("%v: status = %d", test.err, response.Code)
+		}
 	}
 }
 
@@ -906,6 +938,37 @@ func TestSpawnRetryAfterDeliveryFailureResendsUntilConfirmed(t *testing.T) {
 		if bytes.Contains(contents, []byte("aak_")) || bytes.Contains(contents, []byte(issuedKey)) {
 			t.Fatalf("raw agent key leaked to journal file %s", entry.Name())
 		}
+	}
+}
+
+func TestSpawnOnDisconnectedMachineReturnsUnavailable(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	f.srv.machineMu.Lock()
+	delete(f.srv.machines, f.machineID)
+	f.srv.machineMu.Unlock()
+	status, _, body := f.spawnRequest(t, "offline-machine", "worker")
+	if status != 503 || body["error"] != "machine_unavailable" || !strings.Contains(body["message"].(string), "reconnect") {
+		t.Fatalf("disconnected machine = %d %+v", status, body)
+	}
+}
+
+func TestRoomWorktreeWithMissingHostProjectFolderReportsConflict(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	if err := os.RemoveAll(f.project.Folder); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.request(http.MethodPost, "/api/rooms/"+f.room.ID+"/worktree", map[string]any{"enabled": true}, true)
+	defer resp.Body.Close()
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 409 || body["error"] != "worktree_failed" || !strings.Contains(body["message"].(string), "project folder must exist") {
+		t.Fatalf("missing host folder = %d %+v", resp.StatusCode, body)
 	}
 }
 

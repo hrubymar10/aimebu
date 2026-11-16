@@ -289,10 +289,24 @@ func (s *Server) resolveLauncher(ctx context.Context, machineID, tool, variant, 
 	} else {
 		item, err = s.Store.LauncherByName(ctx, machineID, tool, variant)
 	}
-	if err != nil || item.Tool != tool || (launcherID == "" && variant != "" && launcherAlias(item.Name) != variant) {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return store.Launcher{}, errLauncherUnavailable
+		}
+		return store.Launcher{}, fmt.Errorf("look up launcher: %w", err)
+	}
+	if item.Tool != tool || (launcherID == "" && variant != "" && launcherAlias(item.Name) != variant) {
 		return store.Launcher{}, errLauncherUnavailable
 	}
 	return item, nil
+}
+
+func launcherSelectionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errLauncherUnavailable) {
+		apiError(w, 409, "launcher_unavailable", errLauncherUnavailable.Error())
+	} else {
+		fail(w, err)
+	}
 }
 
 func (s *Server) selectedMachine(ctx context.Context, id, tool, variant string, launcherIDs ...string) (*machineConn, store.Machine, error) {
@@ -321,7 +335,7 @@ func (s *Server) selectedMachine(ctx context.Context, id, tool, variant string, 
 		}
 		launcher, err := s.resolveLauncher(ctx, id, tool, variant, launcherID)
 		if err != nil {
-			return nil, m, errLauncherUnavailable
+			return nil, m, err
 		}
 		if launcher.Containerized && launcher.AgentServerURL == "" && dockerBindIsLoopback() {
 			return nil, m, errDockerBindUnavailable
@@ -740,7 +754,11 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 					flags = append(flags, store.HealthFlag{Code: "machine_offline"})
 				}
 			}
-			withUsage = append(withUsage, agentCardWithUsage{card, state.Usage, flags, holds[card.ID], s.agentWarmState(card), s.agentKeepAliveState(card, state.Usage, keepConfig)})
+			warm := s.agentWarmState(card)
+			if warm != nil && warm.Reason != "" && list.ViewerRole == "viewer" {
+				warm.Reason = "Warm mode is unavailable for this agent's configuration"
+			}
+			withUsage = append(withUsage, agentCardWithUsage{card, state.Usage, flags, holds[card.ID], warm, s.agentKeepAliveState(card, state.Usage, keepConfig)})
 		}
 		writeJSON(w, 200, withUsage)
 		return
@@ -932,6 +950,10 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	}
 	machine, machineInfo, err := s.selectedMachine(r.Context(), req.MachineID, req.Tool, req.Variant, req.LauncherID)
 	if err != nil {
+		if errors.Is(err, ErrMachineUnavailable) && machineInfo.ID != "" && machineInfo.Approved && !machineInfo.RevokedAt.Valid {
+			apiError(w, 503, "machine_unavailable", "the selected machine is disconnected or does not list this adapter; reconnect it and retry")
+			return
+		}
 		machineSelectionError(w, machineInfo, err)
 		return
 	}
@@ -941,7 +963,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	if machine.supportsLaunchers && req.Tool != "fake" {
 		launcher, err := s.resolveLauncher(r.Context(), machine.id, req.Tool, req.Variant, req.LauncherID)
 		if err != nil {
-			apiError(w, 409, "launcher_unavailable", errLauncherUnavailable.Error())
+			launcherSelectionError(w, err)
 			return
 		}
 		launcherID = launcher.ID
@@ -1272,11 +1294,19 @@ func (s *Server) ensureSpawnDelivery(w http.ResponseWriter, r *http.Request, car
 	}
 	machine, err := s.machineForID(pending.MachineID)
 	if err != nil {
-		apiError(w, 503, "machine_unavailable", "agent created but supervisor is disconnected; retry with same key")
+		if errors.Is(err, ErrMachineUnavailable) {
+			apiError(w, 503, "machine_unavailable", "agent created but supervisor is disconnected; retry with the same key after it reconnects")
+		} else {
+			fail(w, fmt.Errorf("find spawn machine: %w", err))
+		}
 		return false
 	}
 	if err := s.sendPendingSpawn(r.Context(), machine, pending); err != nil {
-		apiError(w, 503, "machine_unavailable", "agent created but spawn delivery failed; retry with same key")
+		if errors.Is(err, ErrMachineUnavailable) || errors.Is(err, ErrSlowMachine) {
+			apiError(w, 503, "machine_unavailable", "agent created but spawn delivery could not reach the supervisor; retry with the same key after it reconnects")
+		} else {
+			fail(w, fmt.Errorf("deliver spawn to supervisor: %w", err))
+		}
 		return false
 	}
 	return true
@@ -1564,7 +1594,7 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 	if selectedConn.supportsLaunchers && req.Tool != "fake" {
 		launcher, err := s.resolveLauncher(r.Context(), targetID, req.Tool, req.Variant, req.LauncherID)
 		if err != nil {
-			apiError(w, 409, "launcher_unavailable", errLauncherUnavailable.Error())
+			launcherSelectionError(w, err)
 			return
 		}
 		launcherID = launcher.ID

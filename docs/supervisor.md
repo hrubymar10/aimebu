@@ -622,13 +622,14 @@ process starts or ends, with no polling of its own (the minutes follow the panel
 
 A supervisor that keeps processes warm sends the server a `warm_state` frame (at
 connect, and whenever the picture changes: a process goes idle, is taken for a turn, ends): the agents with a
-live process (idle until when, or working), the counts started and reused since it started, the memory of
+live process (idle until when, or working), `refusals` with each agent's last classified reason a turn ran cold,
+the counts started and reused since it started, the memory of
 the warm processes it runs itself, and what every running container uses. An idle Claude or opted-in Codex agent's card says
 "Warm · sleeps in N min" or "Sleeping" (`warm` on the card: `state` warm or sleeping, `sleeps_at`; absent when
 the window is off or does not apply to the agent), and the machine's card in Settings → Machines says how many
 agents are warm and what the processes use (`warm` on the machine row). The memory is **not per agent**: the
 harness container is shared by all agents and Docker reports no finer, so it is labelled container memory,
-all containers.
+all containers. A refusal clears on the next real turn and when the agent stops or disappears from the server's desired state. Its reason is limited to 240 Unicode characters; the server gives viewers a generic message instead of the specific configuration key.
 
 A Codex warm process is stamped with the `auth.json` size, modification
 time, and content hash. A different stamp retires it before another turn. Docker
