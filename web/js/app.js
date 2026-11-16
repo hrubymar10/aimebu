@@ -604,11 +604,13 @@ async function signedIn(session) {
     }, seq);
     stream.baseline = () => pageBuild; stream.onVersionChange = () => updateBar.show();
     stream.onUsagesUpdated = () => { if (active()) { settings.usagesChanged(); usagesPopover.changed(); } };
-    stream.onInboxAlertsUpdated = () => {
+    const refreshInboxAlerts = () => {
       if (!active()) return;
       inbox.refresh().catch(() => {});
       if (rights.owner) void health.refreshLimits();
     };
+    stream.onInboxAlertsUpdated = refreshInboxAlerts;
+    stream.onReconnect = refreshInboxAlerts;
     stream.start();
     clearTimeout(preStreamDeadline);
     // A slow read can still recover; the first-run import decision remains

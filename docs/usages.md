@@ -252,9 +252,10 @@ snapshot and no `seq`, and is never logged or replayed. The revision advances
 when a synthetic Inbox usage alert changes or is dismissed, or a limit guard
 hold changes. Every global admin receives this
 hint, including a hold release caused by a stale or failed reading that sends
-no system event. The browser reads Inbox when the revision advances and on the
-first frame after each connection; the owner also refreshes the Health hold
-badge. Stored Inbox items follow their own event stream updates;
+no system event. The browser reads Inbox when the revision advances, on a
+reconnect's `ready` frame, and on the first usage hint after each connection;
+the owner also refreshes the Health hold badge. Stored Inbox items follow their
+own event stream updates;
 the owner also re-reads `GET /api/usages`, so an
 open Settings → Usages panel updates without a reload. While a field in the
 panel has focus the reload is held so typing is not lost, and it runs once focus

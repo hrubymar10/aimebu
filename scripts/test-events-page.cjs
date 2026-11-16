@@ -135,7 +135,7 @@ async function main() {
         // A burst of usage snapshots re-reads Inbox only when the alert
         // revision changes; the usages view still hears every snapshot.
         {
-          const { stream } = make(); let usageUpdates = 0, inboxReads = 0;
+          const { stream } = make(); let usageUpdates = 0, inboxReads = 0, reconnects = 0;
           const fetchBefore = window.fetch;
           window.fetch = (input, options) => {
             if (String(input) === '/api/inbox') { inboxReads++; return Promise.resolve(new Response('[]', { headers: { 'Content-Type': 'application/json' } })); }
@@ -144,6 +144,7 @@ async function main() {
           try {
             stream.onUsagesUpdated = () => { usageUpdates++; };
             stream.onInboxAlertsUpdated = () => fetch('/api/inbox');
+            stream.onReconnect = () => { reconnects++; return fetch('/api/inbox'); };
             sockets[0].emit({ type: 'ready', seq: 0 }); await stream.pending;
             for (let i = 0; i < 30; i++) sockets[0].emit({ type: 'usages_updated', alert_revision: 1 });
             await stream.pending;
@@ -156,8 +157,9 @@ async function main() {
             const beforeReconnect = inboxReads;
             sockets[0].close(); await sleep(400);
             sockets[1].emit({ type: 'ready', seq: 0 }); await stream.pending;
+            const onReady = inboxReads;
             sockets[1].emit({ type: 'usages_updated', alert_revision: 2 }); await stream.pending;
-            out.usageInboxReads = { first, changed, legacy, beforeReconnect, afterReconnect: inboxReads, usageUpdates };
+            out.usageInboxReads = { first, changed, legacy, beforeReconnect, onReady, afterReconnect: inboxReads, usageUpdates, reconnects };
           } finally { stream.stop(); window.fetch = fetchBefore; }
         }
       } finally { window.WebSocket = original; }
@@ -190,7 +192,7 @@ async function main() {
     assert.deepEqual(result.liveReplayGap, { applied: [], snapshots: 1, seq: 101 }, 'a catch-up of more than 100 events is a gap and takes a snapshot');
     assert.deepEqual(result.reconnectReplay, { applied: [], snapshots: 1, seq: 100 }, 'a reconnect after a drop takes a snapshot, not a replay');
     assert.deepEqual(result.afterSnapshotRequired, { applied: [101, 102], snapshots: 1, seq: 102 }, 'the connection after a snapshot replays live again');
-    assert.deepEqual(result.usageInboxReads, { first: 1, changed: 2, legacy: 3, beforeReconnect: 4, afterReconnect: 5, usageUpdates: 34 }, 'usage bursts read Inbox on alert changes and after a reconnect, with old-server fallback');
+    assert.deepEqual(result.usageInboxReads, { first: 1, changed: 2, legacy: 3, beforeReconnect: 4, onReady: 5, afterReconnect: 6, usageUpdates: 34, reconnects: 1 }, 'a quiet reconnect reads Inbox on ready, before another usage hint, while bursts still coalesce');
     assert.equal(result.sameBuild, 0, 'the same build after a reconnect is not news');
     assert.deepEqual(result.newBuild, [['v2', 'v1']], 'a different build is reported once, against the one the page started with');
     assert.deepEqual(result.bar, { text: 'aimebu was updated. Reload to use the new version.Reload', role: 'alert', reloadsWhileVisible: 0, afterClick: 1, hiddenWithDraft: 1, hiddenClean: 2 }, 'the update bar asks, reloads on a click, and reloads a hidden page only when nothing typed would be lost');

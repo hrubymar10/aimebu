@@ -56,6 +56,8 @@ export class EventStream {
         this.replayDirty = false;
         this.seq = Math.max(this.seq, frame.seq); this.delay = 250; this.onState('Live');
         this.ready = true;
+        // Usage hints are transient, so a quiet disconnect can miss a hold release without a journaled event to replay.
+        if (!liveReplay) this.onReconnect?.();
         if (frame.heartbeat > 0 && socket === this.socket) { this.beat = frame.heartbeat * 1000; this.lastFrame = Date.now(); this.watchdog = setInterval(() => this.check(), this.beat); }
         // The build serving this page is the one it first heard from: a different one after a reconnect means the server was replaced (a deploy).
         if (frame.version) {
