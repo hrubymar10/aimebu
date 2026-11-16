@@ -133,6 +133,12 @@ func TestAgentCardWarmState(t *testing.T) {
 	if got := f.srv.agentWarmState(card); got == nil || got.State != "sleeping" {
 		t.Fatalf("no live process: %+v", got)
 	}
+	machine.warmMu.Lock()
+	machine.warm.Refusals = []protocol.WarmRefusal{{AgentID: card.ID, Reason: "Codex host config key changes turn behavior"}}
+	machine.warmMu.Unlock()
+	if got := f.srv.agentWarmState(card); got == nil || got.Reason == "" {
+		t.Fatalf("cold card lost warm refusal: %+v", got)
+	}
 	report(&five, protocol.WarmAgent{AgentID: "agt_w", State: "idle", SleepsAt: "2026-11-08T17:00:00Z"}, protocol.WarmAgent{AgentID: "agt_b", State: "busy"})
 	if got := f.srv.agentWarmState(card); got == nil || got.State != "warm" || got.SleepsAt != "2026-11-08T17:00:00Z" {
 		t.Fatalf("live idle process: %+v", got)

@@ -81,7 +81,8 @@ export function dotOf(agent, state, now = Date.now()) {
     const left = Date.parse(agent.warm.sleeps_at) - now, minutes = Number.isFinite(left) ? Math.max(1, Math.ceil(left / 60000)) : 0;
     return { kind: 'warm', title: minutes ? `Online \u00b7 warm, the next answer skips the start (\u2248${minutes} min left)` : 'Online \u00b7 warm, the next answer skips the start' };
   }
-  return { kind: 'cold', title: 'Online \u00b7 cold, the next answer starts the agent' };
+  const reason = agent.warm?.state === 'sleeping' && agent.warm.reason ? `; last warm attempt: ${agent.warm.reason}` : '';
+  return { kind: 'cold', title: `Online \u00b7 cold, the next answer starts the agent${reason}` };
 }
 
 // What a card says about the prompt cache keep-alive: how often it is pinged, what a stretch of pings costs (measured from the last ping when there is

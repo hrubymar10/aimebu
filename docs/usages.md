@@ -138,9 +138,11 @@ the real CLI in a throwaway container.
 Codex migration scans for running processes, the server asks the host
 supervisor to retire idle Codex app-server processes. If their end cannot be
 confirmed, migration waits and retries.
-  Codex warm mode needs a token-only target with no refresh token, or an API
-  key with no refresh credentials. A full Codex login runs cold even when the
-  owner enables warm mode; token-copy migration makes it eligible.
+  Codex warm mode works with a ChatGPT subscription once token auto-refresh is
+  on (Settings → Usages), or with an API key; otherwise the agent runs cold.
+  Token-copy migration makes the subscription login eligible by writing a
+  token-only target with no refresh token. A full Codex login runs cold even
+  when the owner enables warm mode.
 - The POST answers at once with every tool `pending`; the worker then answers per
   tool, and the UI re-reads until nothing is pending. `token_auto_refresh_state`
   in the settings maps `claude` and `codex` to `{status, reason?}`:

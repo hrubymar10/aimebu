@@ -5,7 +5,7 @@ import { agentIsolation } from '../../agent-isolation.js';
 
 const READ_ONLY = 'Only the owner or an admin can change this.';
 const WARM_DESC = 'After a turn, an agent\'s harness stays running for this many minutes, so a message that arrives in the window skips the start (a few seconds) and the agent answers faster. After the window it goes back to sleep and the next turn starts it again. Each warm agent holds memory (roughly 0.3 GB for Claude Code), and when the machine runs low the longest-idle one is put to sleep first. 5 minutes unless you set another; 0 turns it off. Claude Code uses this window, and Codex uses it when its experimental setting is enabled.';
-const CODEX_WARM_DESC = 'Keep a Codex process ready between turns during the warm window. Experimental and off by default. Requires token-only credentials or an API key; full credentials run cold. 0 warm minutes turns it off for every agent.';
+const CODEX_WARM_DESC = 'Keep a Codex process ready between turns during the warm window. Experimental and off by default. Works with a ChatGPT subscription once token auto-refresh is on (Settings → Usages), or with an API key; otherwise the agent runs cold. 0 warm minutes turns it off for every agent.';
 const WARM_OWNER_ONLY = 'Only the owner can change this.';
 const DESC = 'Agents on a native launcher run as the person who runs the supervisor, with that person’s files within reach, including other agents’ working folders. With this on, a native launcher is refused: no new agent is started on one, and an agent already on one gets no turns until it is moved to a Docker launcher. Off by default.';
 

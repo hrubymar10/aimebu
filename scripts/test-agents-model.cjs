@@ -166,6 +166,7 @@ assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: tr
   assert.match(dot({ ...idle, warm: { state: 'warm', sleeps_at: '2026-11-08T16:00:20Z' } }).title, /\(\u22481 min left\)$/, 'a window almost over still says one minute, never zero');
   assert.deepEqual(dot({ ...idle, warm: { state: 'warm', sleeps_at: 'garbage' } }), { kind: 'warm', title: 'Online \u00b7 warm, the next answer skips the start' }, 'an end that cannot be read is still warm, without minutes');
   assert.deepEqual(dot({ ...idle, warm: { state: 'sleeping' } }), { kind: 'cold', title: 'Online \u00b7 cold, the next answer starts the agent' });
+  assert.equal(dot({ ...idle, tool: 'codex', warm: { state: 'sleeping', reason: 'Codex host config key "features" changes turn behavior' } }).title, 'Online \u00b7 cold, the next answer starts the agent; last warm attempt: Codex host config key "features" changes turn behavior');
   assert.equal(dot({ ...idle }).kind, 'cold', 'warm mode off or not applicable: cold, the next answer starts the agent');
   assert.equal(dot({ ...idle, warm: undefined }).kind, 'cold', 'a missing first supervisor report leaves the dot green and cold');
   assert.equal(dot({ ...idle, tool: 'codex' }).kind, 'cold');

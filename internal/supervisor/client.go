@@ -82,7 +82,8 @@ type Client struct {
 	// Warm keeps an agent's harness process up for an idle window after a turn (see warm.go); the zero value is off.
 	Warm             WarmConfig
 	codexWarmEnabled bool
-	warmWarnings     map[string]string // last warm refusal per agent, guarded by mu
+	warmWarnings     map[string]string               // last warm refusal per agent, guarded by mu
+	warmRefusals     map[string]protocol.WarmRefusal // last safe card reason per agent, guarded by mu
 	// FreeMemory reports free and total memory for the warm memory guard; nil reads the system's (tests set it).
 	FreeMemory func() (free, total int64, err error)
 	// FreeDockerMemory reports the containers' use and the Docker host's total for the guard; nil asks docker (tests set it).

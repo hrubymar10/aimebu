@@ -1046,6 +1046,10 @@ func TestWrappedWarmRefusalLogsOncePerCredentialStamp(t *testing.T) {
 	codexTurn := func(spec *adapter.TurnSpec) { spec.Agent.Tool = "codex" }
 	h.run("agt_a", codexTurn)
 	h.run("agt_a", codexTurn)
+	report := h.c.WarmReport()
+	if len(report.Refusals) != 1 || report.Refusals[0].AgentID != "agt_a" || report.Refusals[0].Reason != "token-only credentials required" {
+		t.Fatalf("warm refusal missing from report: %+v", report.Refusals)
+	}
 	warnings := func() int {
 		count := 0
 		for _, err := range h.errs {

@@ -199,6 +199,9 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	if err == nil {
 		err = w.notify("initialized", map[string]any{})
 	}
+	if err == nil {
+		w.defaultEffort, err = w.modelDefaultEffort(initCtx, spec.Agent.Model)
+	}
 	if err != nil {
 		_ = w.Close(2 * time.Second)
 		return nil, err

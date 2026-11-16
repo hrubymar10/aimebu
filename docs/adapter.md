@@ -223,13 +223,20 @@ handshake/resume failure ends it and the supervisor falls back to `codex exec`.
 The adapter declines app-server approval requests and never asks it to refresh
 credentials. Docker app-server has no `--ignore-user-config` flag: the adapter
 disables host MCP servers the cold Docker path would omit, and falls back cold
-when a server name or config cannot be overridden safely. Only `model`,
-`mcp_servers` and the inert `projects` (trust), `notice`, `tui`, `history` and
-`file_opener` keys may appear in the host config for a warm Docker turn; any
-other setting, including provider, profile, reasoning and instruction
-overrides, forces a cold turn with a logged reason naming the key, so it
-cannot change its endpoint or behavior. The generated
-private config bytes (or Docker host config bytes) are part of the warm
+when a server name or config cannot be overridden safely. `model` and
+`mcp_servers` are handled separately; `projects` (trust), `notice`, `tui`,
+`history`, `file_opener`, and `desktop` are allowed. Both credential-store
+keys (`cli_auth_credentials_store`, `mcp_oauth_credentials_store`) are allowed
+only when set to `file`. App-server `model/list` supplies the model's default
+reasoning effort; every `turn/start` sends it explicitly, and thread/turn
+starts set personality to `none`. The known `js_repl` feature is reset to its
+cold default (`false`). When plugin or marketplace tables are present, warm
+Docker disables plugin loading, including remote plugins, so user plugin IDs
+never need to appear in command-line overrides. Provider, profile,
+instruction, unknown feature, and unknown top-level settings force a cold
+turn with a reason naming the key. The
+latest classified warm refusal appears in the agent card's cold tooltip.
+The generated private config bytes (or Docker host config bytes) are part of the warm
 fingerprint, so a change retires the old process before reuse. A token-only auth callback can receive a newer access token only
 from the same account's live `auth.json`; otherwise it gets an error. Fake
 app-server tests cover the protocol; live Codex compatibility still needs the
@@ -237,8 +244,10 @@ gated canary.
 For the first turn of a resumed thread, token usage is the change in thread
 totals from the first update's pre-turn baseline, so multiple model requests
 in that turn are counted without charging prior history.
-Codex warm mode requires a token-only `auth.json` (no refresh token) or an
-API key without refresh credentials. A full Codex login runs cold and logs
+Codex warm mode works with a ChatGPT subscription once token auto-refresh is
+on (Settings → Usages), or with an API key; otherwise the agent runs cold. The
+eligible `auth.json` is token-only (no refresh token), or holds an API key
+without refresh credentials. A full Codex login runs cold and logs
 "Codex warm needs token-only credentials" once per credential stamp and
 reason; the same check runs before reuse.
 The supervisor stamps the native adapter's linked auth file (following its

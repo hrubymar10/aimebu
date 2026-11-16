@@ -860,7 +860,8 @@ async function main() {
     assert.match((await read('f1')).tooltip, /\u2248[12] min left\)$/, 'three minutes later the tooltip counts fewer minutes');
     assert.equal(await count(page, 'GET', '/api/rooms/r1/agents'), before, 'no new request for it');
     await show(page, 'r1', [agent('c1', 'codexwarm', { tool: 'codex', warm: { state: 'warm', sleeps_at: soon } }),
-      agent('c2', 'codexsleep', { tool: 'codex', warm: { state: 'sleeping' } })]);
+      agent('c2', 'codexsleep', { tool: 'codex', warm: { state: 'sleeping', reason: 'Codex host config key "features" changes turn behavior' } })]);
+    assert.match((await read('c2')).tooltip, /last warm attempt: Codex host config key "features" changes turn behavior/);
     assert.equal((await read('c1')).kind, 'warm', 'an opted-in Codex process gets the warm ring');
     assert.equal((await read('c2')).kind, 'cold', 'a sleeping Codex process gets the cold dot');
     assert.match((await read('c1')).tooltip, /^Online \u00b7 warm, the next answer skips the start/);

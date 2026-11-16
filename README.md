@@ -563,10 +563,11 @@ and the related events, with previous and next to walk the room's messages and t
 text and Copy link actions). The HTML revalidates on refresh and its CSS and JS
 modules use a content version, so a deploy reaches a normal browser refresh.
 Settings → General → Agents has an owner-only Codex warm (experimental) switch,
-off by default. An opted-in Codex agent with token-only credentials or an API
-key can keep its process ready for the same Keep agents warm window as Claude
-Code; its card shows warm or sleeping from the supervisor's report. Full
-credentials with a refresh token run cold.
+off by default. An opted-in Codex agent works with a ChatGPT subscription once
+token auto-refresh is on (Settings → Usages), or with an API key; otherwise it
+runs cold. An eligible agent can keep its process ready for the same Keep agents
+warm window as Claude Code; its card shows warm or sleeping from the
+supervisor's report. Full credentials with a refresh token run cold.
 The New project button (+) sits to the right of the Filter rooms box. The room header
 shows the room kind glyph and a member-count chip, with the full count in its
 tooltip, with the Room settings button right beside it (on a phone it is the first entry of the room's overflow menu instead), and

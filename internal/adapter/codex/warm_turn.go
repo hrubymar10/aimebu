@@ -88,11 +88,11 @@ func (w *codexWarmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
 	if threadID == "" {
 		method := "thread/start"
 		params := map[string]any{"model": spec.Agent.Model, "cwd": w.cwd,
-			"approvalPolicy": "never", "sandbox": "danger-full-access", "ephemeral": false}
+			"approvalPolicy": "never", "sandbox": "danger-full-access", "ephemeral": false, "personality": "none"}
 		if spec.NativeSessionStarted {
 			method = "thread/resume"
 			params = map[string]any{"threadId": spec.NativeSessionHandle, "model": spec.Agent.Model,
-				"cwd": w.cwd, "approvalPolicy": "never", "sandbox": "danger-full-access", "excludeTurns": true}
+				"cwd": w.cwd, "approvalPolicy": "never", "sandbox": "danger-full-access", "excludeTurns": true, "personality": "none"}
 		}
 		var answer struct {
 			Thread struct {
@@ -123,7 +123,7 @@ func (w *codexWarmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
 	err = w.call(ctx, "turn/start", map[string]any{"threadId": threadID,
 		"input":        []map[string]any{{"type": "text", "text": string(input), "text_elements": []any{}}},
 		"outputSchema": json.RawMessage(responseSchema), "model": spec.Agent.Model, "cwd": w.cwd,
-		"approvalPolicy": "never"}, &answer)
+		"approvalPolicy": "never", "effort": w.defaultEffort, "personality": "none"}, &answer)
 	if err != nil {
 		return nil, err
 	}

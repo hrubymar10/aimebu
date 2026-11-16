@@ -70,13 +70,35 @@ func TestCodexWarmHelper(t *testing.T) {
 				home = "/wrong/home"
 			}
 			_ = writer.Encode(map[string]any{"id": frame.ID, "result": map[string]any{"codexHome": home}})
+		case "model/list":
+			_ = writer.Encode(map[string]any{"id": frame.ID, "result": map[string]any{"data": []map[string]string{{"id": "gpt-6-sol", "defaultReasoningEffort": "medium"}, {"id": "gpt-6.1-sol", "defaultReasoningEffort": "low"}}, "nextCursor": nil}})
 		case "thread/start", "thread/resume":
+			if mode == "require-defaults" {
+				var params map[string]any
+				_ = json.Unmarshal(frame.Params, &params)
+				if params["personality"] != "none" {
+					_ = writer.Encode(map[string]any{"id": frame.ID, "error": map[string]any{"code": -1, "message": "thread personality was not neutral"}})
+					continue
+				}
+			}
 			id := "thread-fake"
 			if mode == "resume-mismatch" && frame.Method == "thread/resume" {
 				id = "different"
 			}
 			_ = writer.Encode(map[string]any{"id": frame.ID, "result": map[string]any{"thread": map[string]string{"id": id}}})
 		case "turn/start":
+			if mode == "require-defaults" {
+				var params map[string]any
+				_ = json.Unmarshal(frame.Params, &params)
+				want := "medium"
+				if params["model"] == "gpt-6.1-sol" {
+					want = "low"
+				}
+				if params["effort"] != want || params["personality"] != "none" {
+					_ = writer.Encode(map[string]any{"id": frame.ID, "error": map[string]any{"code": -1, "message": "turn defaults were not explicit"}})
+					continue
+				}
+			}
 			turn++
 			_ = writer.Encode(map[string]any{"id": frame.ID, "result": map[string]any{"turn": map[string]any{"id": fmt.Sprintf("turn-%d", turn), "status": "inProgress"}}})
 			if mode == "stale" && turn > 1 {
@@ -182,6 +204,29 @@ func TestWarmAppServerHandshakeAndResumeMismatchFallBack(t *testing.T) {
 			defer w.Close(2 * time.Second)
 			if _, err := w.Run(spec); err == nil || !strings.Contains(err.Error(), "thread ID") {
 				t.Fatalf("resume mismatch %v", err)
+			}
+		})
+	}
+}
+
+func TestWarmAppServerUsesExplicitColdTurnDefaults(t *testing.T) {
+	for _, model := range []string{"gpt-6-sol", "gpt-6.1-sol"} {
+		t.Run(model, func(t *testing.T) {
+			a, spec := warmSpec(t, warmHelperScript(t, "require-defaults"))
+			spec.Agent.Model = model
+			w, err := a.StartWarm(context.Background(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer w.Close(2 * time.Second)
+			turn, err := w.Run(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range turn.Events() {
+			}
+			if exit, err := turn.Wait(); err != nil || !exit.TerminalEvent {
+				t.Fatalf("explicit defaults: exit=%+v err=%v", exit, err)
 			}
 		})
 	}

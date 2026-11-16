@@ -159,6 +159,7 @@ async function main() {
       await page.evaluate(() => window.__general.open());
       await page.waitForFunction(() => !!document.querySelector('#agent-codex-warm'));
       assert.deepEqual(await page.$eval('#agent-codex-warm', input => [input.checked, input.disabled]), [false, false], 'Codex warm starts off and the owner can opt in');
+      assert.match(await page.$eval('#agent-codex-warm-desc', node => node.textContent), /Works with a ChatGPT subscription once token auto-refresh is on \(Settings → Usages\), or with an API key; otherwise the agent runs cold\./);
       await page.click('#agent-codex-warm');
       await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/agent-isolation' && !request.answered));
       const put = await page.evaluate(() => window.__requests.findIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));

@@ -546,6 +546,7 @@ func (s *Server) agentKeepAliveState(card store.AgentCard, usage *store.AgentUsa
 type agentWarm struct {
 	State    string `json:"state"`
 	SleepsAt string `json:"sleeps_at,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // agentWarmState uses the supervisor's report for tools whose warm mode is on.
@@ -583,7 +584,14 @@ func (s *Server) agentWarmState(card store.AgentCard) *agentWarm {
 	if *report.IdleSeconds <= 0 {
 		return nil
 	}
-	return &agentWarm{State: "sleeping"}
+	warm := &agentWarm{State: "sleeping"}
+	for _, refusal := range report.Refusals {
+		if refusal.AgentID == card.ID {
+			warm.Reason = refusal.Reason
+			break
+		}
+	}
+	return warm
 }
 
 // agentHold is a reason an idle agent starts no new turn, for its card: Code names it (limit_guard), Text is the short form the card's state

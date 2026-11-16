@@ -436,15 +436,29 @@ func (c *Client) reportWarmRefusal(spec adapter.TurnSpec, cred credentials, acti
 	}
 	key := strings.Join([]string{action, err.Error(), cred.stamp, spec.Agent.Model, spec.Agent.LauncherID}, "\x00")
 	c.mu.Lock()
+	if errors.Is(err, adapter.ErrNoWarm) {
+		if c.warmRefusals == nil {
+			c.warmRefusals = make(map[string]protocol.WarmRefusal)
+		}
+		// Only the adapter's classified reason is sent to the web UI. Other
+		// errors can include paths or credentials and remain in the local log.
+		reason := strings.TrimPrefix(err.Error(), adapter.ErrNoWarm.Error()+": ")
+		if len(reason) > 240 {
+			reason = reason[:240]
+		}
+		c.warmRefusals[spec.Agent.ID] = protocol.WarmRefusal{AgentID: spec.Agent.ID, Reason: reason}
+	}
 	if c.warmWarnings == nil {
 		c.warmWarnings = make(map[string]string)
 	}
 	if c.warmWarnings[spec.Agent.ID] == key {
 		c.mu.Unlock()
+		c.warmChanged()
 		return
 	}
 	c.warmWarnings[spec.Agent.ID] = key
 	c.mu.Unlock()
+	c.warmChanged()
 	c.report(fmt.Errorf("agent %s: %s: %w; the turn runs cold", spec.Agent.ID, action, err))
 }
 
@@ -805,6 +819,9 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 	}
 	entry.kept = false // it works again: if it ends during this turn, the turn's own exit says so
 	slot.busy = entry
+	c.mu.Lock()
+	delete(c.warmRefusals, spec.Agent.ID)
+	c.mu.Unlock()
 	c.warmChanged()
 	pool.mu.Lock()
 	if reused {
@@ -1257,7 +1274,11 @@ func (c *Client) WarmReport() protocol.WarmReport {
 	}
 	c.mu.Lock()
 	pool := c.warmPool
+	for _, refusal := range c.warmRefusals {
+		report.Refusals = append(report.Refusals, refusal)
+	}
 	c.mu.Unlock()
+	sort.Slice(report.Refusals, func(i, j int) bool { return report.Refusals[i].AgentID < report.Refusals[j].AgentID })
 	if pool == nil {
 		return counted() // pings run without a pool (warm mode off): they still count
 	}

@@ -44,6 +44,33 @@ type codexWarmSession struct {
 	dead, termSent, hardKilled bool
 	exitCode                   int
 	lastTotal                  codexTokenUsage
+	defaultEffort              string // model/list's cold default, set before the session is returned
+}
+
+func (w *codexWarmSession) modelDefaultEffort(ctx context.Context, model string) (string, error) {
+	params := map[string]any{"includeHidden": true}
+	for page := 0; page < 10; page++ {
+		var answer struct {
+			Data []struct {
+				ID                     string `json:"id"`
+				DefaultReasoningEffort string `json:"defaultReasoningEffort"`
+			} `json:"data"`
+			NextCursor string `json:"nextCursor"`
+		}
+		if err := w.call(ctx, "model/list", params, &answer); err != nil {
+			return "", err
+		}
+		for _, entry := range answer.Data {
+			if entry.ID == model && entry.DefaultReasoningEffort != "" {
+				return entry.DefaultReasoningEffort, nil
+			}
+		}
+		if answer.NextCursor == "" {
+			break
+		}
+		params["cursor"] = answer.NextCursor
+	}
+	return "", fmt.Errorf("%w: Codex model %q has no reported default reasoning effort", adapter.ErrNoWarm, model)
 }
 
 func newWarmSession(cmd *exec.Cmd, stdin io.WriteCloser, fp, runtimeDir, cwd, authPath string,

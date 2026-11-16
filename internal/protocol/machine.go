@@ -594,6 +594,8 @@ type ModelCandidate struct {
 type WarmReport struct {
 	// Agents are the agents with a live process: State "idle" (kept until SleepsAt, RFC 3339) or "busy" (running a turn).
 	Agents []WarmAgent `json:"agents"`
+	// Refusals are the latest safe, bounded reasons an agent's warm attempt ran cold.
+	Refusals []WarmRefusal `json:"refusals,omitempty"`
 	// Seq numbers the report from the supervisor's one counter (shared with warm claims and ping scopes): the server ignores a report older than one
 	// it has applied. Processes counts every live warm process, whatever its state (busy, idle, or one that could not be confirmed gone); Agents is the
 	// picture for the screen and may omit what it cannot show.
@@ -615,6 +617,11 @@ type WarmReport struct {
 	// container is shared by all agents, and Docker reports no finer), where Docker warm processes live. Neither is measured per agent.
 	RSSBytes           int64 `json:"rss_bytes"`
 	ContainerWideBytes int64 `json:"container_wide_bytes"`
+}
+
+type WarmRefusal struct {
+	AgentID string `json:"agent_id"`
+	Reason  string `json:"reason"`
 }
 
 // WarmAgent is one agent's live process.

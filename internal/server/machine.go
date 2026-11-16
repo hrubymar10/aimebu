@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -490,6 +491,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if code := s.authorizeAgentFrame(ctx, c, frame); code != "" {
+			log.Printf("machine %s: agent frame rejected: type=%s agent_id=%s code=%s", c.id, frame.Type, frame.AgentID, code)
 			_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: frame.AgentID, TurnID: frame.TurnID, Code: code, Message: "agent frame rejected"})
 			continue
 		}
