@@ -397,6 +397,27 @@ async function main() {
       await page.waitForFunction(() => window.__setupChanges.at(-1) === true && !!document.querySelector('#team-flow-home .team-setup-wizard'));
       await page.close();
     }
+    // A stale load must not re-disable the composer while a newer flow read is pending.
+    {
+      const page = await mount();
+      await page.evaluate(async () => {
+        const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js');
+        window.__setupChanges = [];
+        window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onSetupChange: pending => window.__setupChanges.push(pending) });
+        window.__homeFlow.setRoom({ id: 'r1', kind: 'home', project_id: 'p1' });
+      });
+      await page.waitForFunction(() => window.__setupChanges.at(-1) === false);
+      await page.evaluate(() => { delete window.__auto['GET /api/projects/p1/team-flow']; window.__setupChanges = []; window.__firstLoad = window.__homeFlow.load('p1'); window.__secondLoad = window.__homeFlow.load('p1'); });
+      await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/projects/p1/team-flow' && !request.answered).length === 2);
+      const reads = await page.evaluate(() => window.__requests.map((request, index) => request.path === '/api/projects/p1/team-flow' && !request.answered ? index : -1).filter(index => index >= 0));
+      await answer(page, reads[0], 200, { key: '', rev: 0, review_pending: true });
+      await page.evaluate(() => window.__firstLoad);
+      assert.deepEqual(await page.evaluate(() => window.__setupChanges), [], 'a superseded read cannot mark setup pending');
+      await answer(page, reads[1], 200, { key: 'custom', rev: 1, review_pending: false, template: flows[3] });
+      await page.evaluate(() => window.__secondLoad);
+      assert.deepEqual(await page.evaluate(() => window.__setupChanges), [false], 'the current flow read enables the composer');
+      await page.close();
+    }
     // The inline home setup starts with A for a new project; migrated C can be kept in one click and stays dismissed after reload.
     {
       const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };

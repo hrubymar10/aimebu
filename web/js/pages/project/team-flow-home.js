@@ -8,6 +8,7 @@ export class TeamFlowHome {
     this.canEdit = canEdit;
     this.projectForID = projectForID;
     this.onSetupChange = onSetupChange;
+    this.loadGeneration = 0;
     this.flow = new TeamFlowStore({ onApplied: async (projectID, result) => {
       this.onSetupChange(false);
       await onApplied?.(projectID, result);
@@ -32,15 +33,16 @@ export class TeamFlowHome {
   }
 
   async load(projectID) {
+    const generation = ++this.loadGeneration;
     await this.flow.load(projectID);
-    if (this.flow.projectID === projectID) {
+    if (this.loadGeneration === generation && this.flow.projectID === projectID) {
       const state = this.flow.state.peek();
       const loadFailed = !state && !!this.flow.error.peek();
       this.onSetupChange(!loadFailed && (!state || !state.key || !!state.review_pending));
     }
   }
 
-  reset() { this.host.hidden = true; this.flow.reset(); this.onSetupChange(false); }
+  reset() { this.loadGeneration++; this.host.hidden = true; this.flow.reset(); this.onSetupChange(false); }
 
   destroy() { this.flow.destroy(); this.page.destroy(); this.host.remove(); }
 }
