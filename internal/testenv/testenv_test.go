@@ -152,13 +152,7 @@ func TestCheckFollowsSymlinksAndRefusesATemporaryRootItself(t *testing.T) {
 func TestEveryPackageWithTestsIsolatesThem(t *testing.T) {
 	root := moduleRoot(t)
 	var missing []string
-	dirs := map[string][]string{}
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err == nil && !entry.IsDir() && strings.HasSuffix(path, "_test.go") && !strings.Contains(path, string(filepath.Separator)+"testdata"+string(filepath.Separator)) && !strings.Contains(path, string(filepath.Separator)+"node_modules"+string(filepath.Separator)) && !strings.Contains(path, string(filepath.Separator)+"tmp"+string(filepath.Separator)) {
-			dirs[filepath.Dir(path)] = append(dirs[filepath.Dir(path)], path)
-		}
-		return nil
-	})
+	dirs := packageTestFiles(t, root)
 	if len(dirs) < 10 {
 		t.Fatalf("found only %d packages with tests under %s: the walk is broken", len(dirs), root)
 	}
@@ -172,6 +166,64 @@ func TestEveryPackageWithTestsIsolatesThem(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Fatalf("packages with tests and no TestMain that calls testenv (add `func TestMain(m *testing.M) { testenv.Main(m) }`, or call testenv.Isolate in your own): %s", strings.Join(missing, ", "))
+	}
+}
+
+// Git supplies both tracked tests and new, unignored tests. Review checkouts,
+// build directories and other ignored files are not packages of this module.
+func packageTestFiles(t *testing.T, root string) map[string][]string {
+	t.Helper()
+	cmd := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.go")
+	cmd.Dir = root
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("list module Go files: %v", err)
+	}
+	dirs := map[string][]string{}
+	for _, rel := range strings.Split(string(output), "\x00") {
+		if !strings.HasSuffix(rel, "_test.go") {
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		skip := false
+		for _, part := range parts[:len(parts)-1] {
+			if strings.HasPrefix(part, ".") || part == "testdata" || part == "node_modules" || part == "tmp" {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		path := filepath.Join(root, rel)
+		dirs[filepath.Dir(path)] = append(dirs[filepath.Dir(path)], path)
+	}
+	return dirs
+}
+
+func TestPackageTestFilesSkipsHiddenAndGitIgnoredDirectories(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "-q", root)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	for path, body := range map[string]string{
+		".gitignore":                 "ignored/\n",
+		"internal/good/good_test.go": "package good\n",
+		filepath.Join(".rag"+"nar-cr", "x/internal/foo/foo_test.go"): "package foo\n",
+		"ignored/hidden_test.go": "package ignored\n",
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dirs := packageTestFiles(t, root)
+	if len(dirs) != 1 || len(dirs[filepath.Join(root, "internal/good")]) != 1 {
+		t.Fatalf("found test packages %v, want only internal/good", dirs)
 	}
 }
 
