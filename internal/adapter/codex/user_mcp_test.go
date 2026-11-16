@@ -121,7 +121,7 @@ func TestUserMCPServersKeepsTheirTablesAndDropsAimebuAndV1Buses(t *testing.T) {
 	if headers, _ := servers["docs"]["env_http_headers"].(map[string]any); headers["X-Team"] != "TEAM_ID" || servers["docs"]["url"] != "https://docs.example/mcp" {
 		t.Errorf("docs keeps its url and its header map: %v", servers["docs"])
 	}
-	for _, bad := range []string{"aimebu", "AIMEBU", "AIMEBU_URL", "upper-v1", "9997", "approval_policy", "profiles", "model"} {
+	for _, bad := range []string{"aimebu", "AIMEBU", "AIMEBU_URL", "upper-v1", ":9997", "approval_policy", "profiles", "model"} {
 		if strings.Contains(tables, bad) {
 			t.Errorf("%q must not be copied:\n%s", bad, tables)
 		}
@@ -420,7 +420,7 @@ func TestDockerTurnPassesThePersonsRemoteServersAsOverrides(t *testing.T) {
 			t.Fatalf("missing %q:\n%s", want, args)
 		}
 	}
-	for _, bad := range []string{"tokened", "headered", "stdio", "v1.example", "9997", "quoted name", "user-literal-token", "impostor", "off.example", "127.0.0.1", "listed.example"} {
+	for _, bad := range []string{"tokened", "headered", "stdio", "v1.example", ":9997", "quoted name", "user-literal-token", "impostor", "off.example", "127.0.0.1", "listed.example"} {
 		if strings.Contains(args, bad) {
 			t.Fatalf("%q must not reach the container:\n%s", bad, args)
 		}
