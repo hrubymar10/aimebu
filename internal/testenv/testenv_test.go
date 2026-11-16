@@ -217,6 +217,7 @@ func cleanGitEnvironment() []string {
 
 func TestPackageTestFilesSkipsHiddenAndGitIgnoredDirectories(t *testing.T) {
 	root := t.TempDir()
+	hiddenPath := filepath.Join(".rag"+"nar-cr", "x/internal/foo/foo_test.go")
 	t.Setenv("GIT_DIR", filepath.Join(root, "foreign.git"))
 	t.Setenv("GIT_INDEX_FILE", filepath.Join(root, "foreign-index"))
 	cmd := exec.Command("git", "init", "-q", root)
@@ -228,8 +229,8 @@ func TestPackageTestFilesSkipsHiddenAndGitIgnoredDirectories(t *testing.T) {
 		".gitignore":                 "ignored/\n",
 		"internal/good/good_test.go": "package good\n",
 		"internal/gone/gone_test.go": "package gone\n",
-		filepath.Join(".rag"+"nar-cr", "x/internal/foo/foo_test.go"): "package foo\n",
-		"ignored/hidden_test.go": "package ignored\n",
+		hiddenPath:                   "package foo\n",
+		"ignored/hidden_test.go":     "package ignored\n",
 	} {
 		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {

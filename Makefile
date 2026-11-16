@@ -38,6 +38,8 @@ endef
 test: $(GOTESTPROGRESS) ## Run unit tests
 	$(call gotest,./...)
 
+# CI's two CPUs can take over 25m for internal/server under -race.
+test-race: GO_TEST_TIMEOUT = 45m
 test-race: $(GOTESTPROGRESS) ## Run tests with the race detector
 	$(call gotest,-race ./...)
 

@@ -94,10 +94,11 @@ For UI work without agents, the web app has mock switches such as
 | `make test-full` | `fmt-check`, `vet`, `test-race`, `test-web` | before every commit; it is also what CI runs |
 | `make gate` | `test-full` and `test-ui` as two lanes side by side (`GATE_UI_RUNS=2` runs of `test-ui` in its lane), a log for each under `tmp/` | on the tip that is about to be pushed |
 
-`make test` and `make test-race` (so `make test-full` and CI) run Go with `-timeout 25m` instead of Go's 10
-minutes per package: a package such as `cmd/aimebu` can pass 10 minutes under `-race` on CI's two CPUs without
-any test being wrong. `GO_TEST_TIMEOUT=10m` restores Go's limit; a stuck test is found by the `HANG?` line
-described below, not by this limit.
+`make test` runs Go with `-timeout 25m` per package; `make test-race` (also
+used by `make test-full` and CI) uses 45m. On CI's two CPUs, the
+`internal/server` race package exceeded 25m without a stuck test. Set
+`GO_TEST_TIMEOUT=10m` to restore Go's limit. The `HANG?` line described
+below identifies a stuck individual test before the package timeout.
 
 ### Running tests side by side
 
