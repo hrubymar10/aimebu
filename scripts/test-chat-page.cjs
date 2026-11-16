@@ -568,25 +568,46 @@ async function main() {
     await page.close();
   }
 
-  // Long system notices start as one line and expand into readable Markdown.
+  // Long system notices show one line and open a readable, copyable Markdown dialog.
   {
     const page = await mount();
     await page.evaluate(() => window.__data.rooms.rm_a.messages.push(
-      { id: 'rm_a_long_system', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: 'The team flow changed.\nYour role rules on the next turn are:\n\n**Review** the task.\nHand off active work.', created_at: '2026-01-10T12:01:00Z' }));
+      { id: 'rm_a_long_system', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: 'The team flow changed.\n\n## Instructions\n- **Review** the task with @tess. See #42.\n\n```text\nHand off active work.\n```', created_at: '2026-01-10T12:01:00Z' }));
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => window.__chat.setAgents([{ id: 'agt_tess', slug: 'tess', name: 'tess', project_id: 'prj_a', room_id: 'rm_a', status: 'online' }])); await settle(page);
     assert.deepEqual(await page.$eval('[data-message-id=rm_a_long_system]', row => {
-      const disclosure = row.querySelector('details');
-      return [disclosure.open, disclosure.querySelector('summary').textContent, row.querySelector('.system-notice-content').getBoundingClientRect().height];
-    }), [false, 'The team flow changed.Show moreShow less', 0]);
-    await page.$eval('[data-message-id=rm_a_long_system] summary', node => node.click());
+      const link = row.querySelector('.system-popup-link'), preview = row.querySelector('.system-notice-preview');
+      return [preview.textContent, link.tagName, link.textContent, getComputedStyle(link).borderStyle, getComputedStyle(link).fontSize === getComputedStyle(preview).fontSize, !!row.querySelector('.system-popup-show'), row.querySelector('dialog').open];
+    }), ['The team flow changed.', 'A', 'Show more', 'none', true, false, false], 'the trigger is an inline text link with no button frame');
+    await page.$eval('[data-message-id=rm_a_long_system] .system-popup-link', node => node.click());
     assert.deepEqual(await page.$eval('[data-message-id=rm_a_long_system]', row => {
-      const disclosure = row.querySelector('details'), body = row.querySelector('.system-notice-content .chat-msg-body');
-      return [disclosure.open, body.querySelector('strong')?.textContent, getComputedStyle(body).textAlign, getComputedStyle(disclosure).fontStyle];
-    }), [true, 'Review', 'left', 'normal']);
+      const dialog = row.querySelector('dialog'), body = dialog.querySelector('.system-message-dialog-body');
+      return [dialog.open, body.querySelector('h2')?.textContent, body.querySelector('li strong')?.textContent, body.querySelector('pre code')?.textContent, body.querySelector('.mention[role=button]')?.textContent, getComputedStyle(body).textAlign];
+    }), [true, 'Instructions', 'Review', 'Hand off active work.', '@tess', 'left']);
+    await page.evaluate(() => window.__chat.setRaw(true)); await settle(page);
+    assert.deepEqual(await page.$eval('[data-message-id=rm_a_long_system] dialog .system-message-dialog-body', body => [body.classList.contains('md-rendered'), body.textContent.includes('## Instructions'), !!body.querySelector('h2'), !!body.querySelector('.mention'), getComputedStyle(body).whiteSpace]),
+      [false, true, false, false, 'pre-wrap'], 'raw mode preserves source line breaks in the open dialog');
+    await page.evaluate(() => window.__chat.setRaw(false)); await settle(page);
+    assert.equal(await page.$eval('[data-message-id=rm_a_long_system] dialog .system-message-dialog-body', body => body.querySelector('.mention[role=button]')?.textContent), '@tess', 'rendered mode restores mentions');
+    await page.evaluate(() => { window.__chat.openMention = text => { window.__mentionFromDialog = [text, document.querySelector('[data-message-id=rm_a_long_system] dialog').open]; }; });
+    await page.$eval('[data-message-id=rm_a_long_system] dialog .mention[role=button]', node => node.click());
+    assert.deepEqual(await page.evaluate(() => window.__mentionFromDialog), ['@tess', false], 'opening a mentioned profile closes the dialog first');
+    await page.$eval('[data-message-id=rm_a_long_system] .system-popup-link', node => node.click());
+    await page.evaluate(() => { window.__mentionFromDialog = null; });
+    await page.focus('[data-message-id=rm_a_long_system] dialog .mention[role=button]');
+    await page.keyboard.press('Enter');
+    assert.deepEqual(await page.evaluate(() => window.__mentionFromDialog), ['@tess', false], 'keyboard activation closes the dialog before opening a mentioned profile');
+    await page.$eval('[data-message-id=rm_a_long_system] .system-popup-link', node => node.click());
+    await page.evaluate(() => { window.__copiedSystemMessage = ''; navigator.clipboard.writeText = async value => { window.__copiedSystemMessage = value; }; });
+    await page.$eval('[data-message-id=rm_a_long_system] dialog header button:first-of-type', node => node.click());
+    assert.match(await page.evaluate(() => window.__copiedSystemMessage), /## Instructions/, 'Copy keeps the message source');
+    await page.evaluate(() => { window.__chat.jumpToMessage = no => { window.__jumpFromDialog = [no, document.querySelector('[data-message-id=rm_a_long_system] dialog').open]; }; });
+    await page.$eval('[data-message-id=rm_a_long_system] dialog a.msg-ref', node => node.click());
+    assert.deepEqual(await page.evaluate(() => window.__jumpFromDialog), [42, false], 'message references close the dialog before navigating');
     await page.close();
   }
 
-  // A model switch handoff is a compact disclosure; its detail reads as a normal message.
+  // A model switch handoff opens the same formatted dialog.
   {
     const page = await mount();
     await page.evaluate(() => window.__data.rooms.rm_a.messages.push(
@@ -594,11 +615,11 @@ async function main() {
       { id: 'rm_a_switch_old', seq: 132, no: 132, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: '@agt_01OLD Switch handoff (written).\nCurrent task: review.', created_at: '2026-01-10T12:02:00Z' },
       { id: 'rm_a_other', seq: 133, no: 133, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: '@agt_01OLD please read the notice.', created_at: '2026-01-10T12:03:00Z' }));
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    assert.deepEqual(await page.$eval('[data-message-id=rm_a_switch]', row => { const card = row.querySelector('details'); return [card.open, card.querySelector('summary').textContent, row.textContent.includes('agt_01RAW'), row.textContent.includes('Current task')]; }),
-      [false, 'Switch handoff: gus · claude-opus-5-5 → claude-sonnet-5-5 (written by the agent)', false, true]);
-    await page.$eval('[data-message-id=rm_a_switch] summary', node => node.click());
-    assert.deepEqual(await page.$eval('[data-message-id=rm_a_switch]', row => [row.querySelector('details').open, row.querySelector('.switch-handoff-content strong')?.textContent, getComputedStyle(row.querySelector('.switch-handoff-content .chat-msg-body')).textAlign]),
-      [true, 'review', 'left'], 'the expanded handoff uses left-aligned Markdown');
+    assert.deepEqual(await page.$eval('[data-message-id=rm_a_switch]', row => [row.querySelector('dialog').open, row.querySelector('.system-notice-preview').textContent, row.querySelector('.system-popup-show').textContent]),
+      [false, 'Switch handoff: gus · claude-opus-5-5 → claude-sonnet-5-5 (written by the agent)', 'Show']);
+    await page.$eval('[data-message-id=rm_a_switch] .system-popup-show', node => node.click());
+    assert.deepEqual(await page.$eval('[data-message-id=rm_a_switch]', row => [row.querySelector('dialog').open, row.querySelector('.system-message-dialog-body strong')?.textContent, getComputedStyle(row.querySelector('.system-message-dialog-body')).textAlign]),
+      [true, 'review', 'left'], 'the handoff dialog uses left-aligned Markdown');
     assert.deepEqual(await page.evaluate(() => ['rm_a_switch_old', 'rm_a_other'].map(id => document.querySelector(`[data-message-id=${id}] .chat-msg-system-row`).textContent.includes('@agt_01OLD'))),
       [false, true], 'legacy handoffs lose the routing prefix while ordinary system messages keep their body');
     await page.close();

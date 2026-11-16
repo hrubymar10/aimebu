@@ -7,6 +7,7 @@ import { treeLayout } from './model.js';
 import { applySenderIdentity, fillSenderPresence, SENDER_PRESENCE_ROOT } from '../../sender-identity.js';
 import { fillVisualPlan, hasVisualPlan, VISUAL_PLAN_ROOT } from '../../visual-plan.js';
 import { AnswerControls, AnswerHistory } from '../../components/answer-controls.js';
+import { copyText } from '../../markdown.js';
 
 export const rowRenders = { count: 0, thread: 0, main: 0 };
 
@@ -153,10 +154,24 @@ function NoticeBody({ message, view, host }) {
   return html`<span class="chat-msg-body" ref=${root} />`;
 }
 
-function LongSystemNotice({ message, view, host }) {
-  const body = String(message.body || '').trim();
-  const sentence = body.match(/^.*?[.!?…](?=\s|$)/s)?.[0] || body.split('\n', 1)[0];
-  return html`<details class="system-notice-disclosure"><summary><span class="system-notice-preview">${sentence}</span><span class="system-notice-more">Show more</span><span class="system-notice-less">Show less</span></summary><div class="system-notice-content"><${Body} message=${message} view=${view} host=${host} /></div></details>`;
+function SystemMessagePopup({ message, view, host, title, preview, link = false }) {
+  const dialog = useRef(null), content = useRef(null), show = useRef(null);
+  useLayoutEffect(() => { host.renderBody(content.current, message); }, [message, view.bodyKey]);
+  const open = event => { event.preventDefault(); dialog.current.showModal(); };
+  const close = () => { dialog.current.close(); show.current.focus(); };
+  const copy = async event => {
+    const button = event.currentTarget;
+    try { await copyText(message.body || ''); button.textContent = 'Copied'; }
+    catch { button.textContent = 'Copy failed'; }
+    setTimeout(() => { if (button.isConnected) button.textContent = 'Copy'; }, 1500);
+  };
+  const followDialogLink = event => { if (!event.button && event.target.closest?.('a.msg-ref, .mention[role=button]')) dialog.current.close(); };
+  const followDialogKey = event => { if ((event.key === 'Enter' || event.key === ' ') && event.target.closest?.('.mention[role=button]')) dialog.current.close(); };
+  return html`<span class="system-popup-trigger"><span class="system-notice-preview">${preview}</span>${link
+    ? html`<a href="#" class="system-popup-link" ref=${show} onClick=${open}>Show more</a>`
+    : html`<button type="button" class="row-btn system-popup-show" ref=${show} onClick=${open}>Show</button>`}
+    <dialog class="system-message-dialog" aria-label=${title} ref=${dialog} onClick=${followDialogLink} onKeyDown=${followDialogKey}><header><h2>${title}</h2><button type="button" class="btn" onClick=${copy}>Copy</button><button type="button" class="btn" onClick=${close}>Close</button></header><div class=${view.raw ? 'chat-msg-body system-message-dialog-body' : 'chat-msg-body md-rendered system-message-dialog-body'} ref=${content} /></dialog>
+  </span>`;
 }
 
 function SystemRow({ message, view, host, classes, register }) {
@@ -169,14 +184,15 @@ function SystemRow({ message, view, host, classes, register }) {
     const title = `Switch handoff: ${handoff.agent_slug || 'agent'} · ${from} → ${to} (${source})`;
     const content = { ...message, body: String(message.body || '').replace(/^@agt_[^\s]+\s*/, '') };
     return html`<article class=${`${classes} chat-msg-switch-handoff`} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
-      <details class="switch-handoff-card"><summary>${title}</summary><div class="switch-handoff-content"><${Body} message=${content} view=${view} host=${host} /></div></details>
+      <${SystemMessagePopup} message=${content} view=${view} host=${host} title="Switch handoff" preview=${title} />
       <div class="switch-handoff-meta"><${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
     </article>`;
   }
   const content = legacyHandoff ? { ...message, body: message.body.replace(/^@agt_[^\s]+\s+/, '') } : message;
   const long = String(content.body || '').length > 300 || String(content.body || '').split('\n').length > 3;
+  const preview = String(content.body || '').trim().split('\n', 1)[0];
   return html`<article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
-    <div class="chat-msg-system-row">${long ? html`<${LongSystemNotice} message=${content} view=${view} host=${host} />` : html`<${NoticeBody} message=${content} view=${view} host=${host} />`}${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
+    <div class="chat-msg-system-row">${long ? html`<${SystemMessagePopup} message=${content} view=${view} host=${host} title="System message" preview=${preview} link=${true} />` : html`<${NoticeBody} message=${content} view=${view} host=${host} />`}${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
     <${Plan} message=${message} />
   </article>`;
 }

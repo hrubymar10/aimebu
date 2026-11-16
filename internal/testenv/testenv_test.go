@@ -175,6 +175,7 @@ func packageTestFiles(t *testing.T, root string) map[string][]string {
 	t.Helper()
 	cmd := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.go")
 	cmd.Dir = root
+	cmd.Env = cleanGitEnvironment()
 	output, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("list module Go files: %v", err)
@@ -196,20 +197,37 @@ func packageTestFiles(t *testing.T, root string) map[string][]string {
 			continue
 		}
 		path := filepath.Join(root, rel)
+		if _, err := os.Stat(path); err != nil {
+			continue // the index can still list a file deleted during local work
+		}
 		dirs[filepath.Dir(path)] = append(dirs[filepath.Dir(path)], path)
 	}
 	return dirs
 }
 
+func cleanGitEnvironment() []string {
+	var env []string
+	for _, variable := range os.Environ() {
+		if !strings.HasPrefix(variable, "GIT_") {
+			env = append(env, variable)
+		}
+	}
+	return env
+}
+
 func TestPackageTestFilesSkipsHiddenAndGitIgnoredDirectories(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("GIT_DIR", filepath.Join(root, "foreign.git"))
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(root, "foreign-index"))
 	cmd := exec.Command("git", "init", "-q", root)
+	cmd.Env = cleanGitEnvironment()
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, output)
 	}
 	for path, body := range map[string]string{
 		".gitignore":                 "ignored/\n",
 		"internal/good/good_test.go": "package good\n",
+		"internal/gone/gone_test.go": "package gone\n",
 		filepath.Join(".rag"+"nar-cr", "x/internal/foo/foo_test.go"): "package foo\n",
 		"ignored/hidden_test.go": "package ignored\n",
 	} {
@@ -220,6 +238,15 @@ func TestPackageTestFilesSkipsHiddenAndGitIgnoredDirectories(t *testing.T) {
 		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	add := exec.Command("git", "add", "internal/gone/gone_test.go")
+	add.Dir = root
+	add.Env = cleanGitEnvironment()
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+	if err := os.Remove(filepath.Join(root, "internal/gone/gone_test.go")); err != nil {
+		t.Fatal(err)
 	}
 	dirs := packageTestFiles(t, root)
 	if len(dirs) != 1 || len(dirs[filepath.Join(root, "internal/good")]) != 1 {

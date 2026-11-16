@@ -450,13 +450,14 @@ history has no model tooltip), and a liveness dot (green working or idle, amber 
 the agent waits for a recovery or approval decision, red when stopped or lost;
 a sender with no live agent record shows as departed, and one that exists only in imported v1 history is red too, with the tooltip
 "Imported from v1 (no live agent)"). A message that needs a
-human shows a 🔔. A model switch handoff appears as a collapsed card naming the
-agent, old and new runtimes, and summary source; opening it shows the handoff as
-left-aligned Markdown. Older handoffs without card metadata still hide their
+human shows a 🔔. A model switch handoff appears as a compact card naming the
+agent, old and new runtimes, and summary source; its **Show** button opens a
+dialog with the handoff and a Copy button. The dialog follows the viewer's
+rendered or raw Markdown setting. Older handoffs without card metadata still hide their
 routing prefix in the message text.
 Long system notices (over 300 characters or three lines) show their first
-sentence and a **Show more** control. Opening one reveals the full notice as
-left-aligned Markdown; shorter notices stay inline.
+line and an inline **Show more** link. It opens a dialog with the full body and Copy;
+the rendered or raw Markdown setting applies there too. Shorter notices stay inline.
 A chart icon beside an agent message's
 `#42` opens a popover with what the turn behind it spent
 (tokens, cost labelled when it uses the dated [model price list](docs/pricing.md),

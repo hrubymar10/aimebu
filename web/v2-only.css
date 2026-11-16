@@ -573,25 +573,18 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 
 /* A system line that wraps keeps every line centred, as v1's centred row does: the body is its own centred block, not a left-aligned one inside a centred row. */
 .chat-msg-system-row > :first-child, .chat-msg-system-body { text-align: center; }
-.system-notice-disclosure { min-width: 0; max-width: 100%; }
-.system-notice-disclosure > summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; list-style: none; }
-.system-notice-disclosure > summary::-webkit-details-marker { display: none; }
-.system-notice-disclosure:not([open]) > .system-notice-content { display: none; }
+.system-popup-trigger { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 100%; }
 .system-notice-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.system-notice-more, .system-notice-less { flex: none; color: var(--text-secondary); text-decoration: underline; font-style: normal; }
-.system-notice-less, .system-notice-disclosure[open] .system-notice-more { display: none; }
-.system-notice-disclosure[open] .system-notice-less { display: inline; }
-.chat-msg-system-row:has(.system-notice-disclosure[open]) { display: block; text-align: left; }
-.system-notice-disclosure[open] { width: 100%; text-align: left; font-size: 0.85rem; font-style: normal; color: var(--text-primary); }
-.system-notice-disclosure[open] .system-notice-preview { text-overflow: clip; }
-.system-notice-content { padding: 8px 0; text-align: left; }
-.system-notice-content .chat-msg-body { display: block; text-align: left; white-space: pre-wrap; }
+.system-popup-show { flex: none; color: var(--text-secondary); text-decoration: underline; font-style: normal; }
+.system-popup-link { flex: none; color: var(--text-secondary); text-decoration: underline; font-style: normal; font-size: inherit; }
+.system-message-dialog { width: min(720px, calc(100vw - 24px)); max-height: calc(100vh - 32px); padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); color: var(--text-primary); text-align: left; font-size: 14px; font-style: normal; }
+.system-message-dialog::backdrop { background: var(--scrim); }
+.system-message-dialog header { position: sticky; top: 0; display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
+.system-message-dialog h2 { flex: 1; margin: 0; font-size: 16px; }
+.system-message-dialog-body { display: block; padding: 16px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.system-message-dialog-body:not(.md-rendered) { white-space: pre-wrap; }
 .chat-msg-switch-handoff { padding: 0; font-size: 12px; font-style: normal; text-align: left; }
-.switch-handoff-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-primary); }
-.switch-handoff-card > summary { padding: 9px 12px; cursor: pointer; font-weight: 600; }
-.switch-handoff-card[open] > summary { border-bottom: 1px solid var(--border); }
-.switch-handoff-content { padding: 12px; }
-.switch-handoff-content .chat-msg-body { text-align: left; font-style: normal; }
+.chat-msg-switch-handoff > .system-popup-trigger { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-primary); padding: 9px 12px; font-weight: 600; }
 .switch-handoff-meta { display: flex; justify-content: flex-end; align-items: center; gap: 8px; color: var(--text-muted); }
 
 /* The memory viewer's switch for a project's memory: a plain line under the filter row, in v1's field text. */
