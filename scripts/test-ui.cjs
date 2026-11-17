@@ -156,7 +156,7 @@ async function main() {
       await first.waitForFunction(() => !document.querySelector('#settings-general').hidden && document.querySelector('#message-expiry-save').getBoundingClientRect().width > 0);
       const general = await first.evaluate(() => {
         const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; };
-        const input = box('#message-expiry-seconds'), save = box('#message-expiry-save');
+        const input = box('#message-expiry-amount'), save = box('#message-expiry-save');
         const root = document.querySelector('#settings-general');
         const groups = [...root.querySelectorAll('.settings-group')].filter(group => group.getClientRects().length), gaps = [];
         for (const group of groups) { const heading = group.parentElement.querySelector(':scope > h3') || group.previousElementSibling; const next = groups[groups.indexOf(group) + 1]; if (!next) continue; const nextHeading = next.parentElement.querySelector(':scope > h3'); if (nextHeading) gaps.push(Math.round(nextHeading.getBoundingClientRect().top - group.getBoundingClientRect().bottom)); }
@@ -282,8 +282,8 @@ async function main() {
       await first.locator('#harnesses-list .harness-model-add [name=slug]').fill('gpt-ui-two');
       await domClick(first, '#harnesses-list .harness-model-add button[type=submit]');
       assert.deepEqual(await first.$$eval('#harnesses-list .harness-model-row', rows => rows.map(row => [row.dataset.slug, row.querySelector('input[type=radio]').checked])), [['gpt-ui-test', true], ['gpt-ui-two', false]], 'the first model is the default');
-      assert.deepEqual(await first.$$eval('#harnesses-list .harness-model-row', rows => rows.map(row => { const star = row.querySelector('.harness-model-star'); return [star.querySelector('use').getAttribute('href'), getComputedStyle(star).fill === 'none', row.querySelector('.harness-model-default-text').textContent, row.querySelector('.harness-model-default').title]; })), [['/icons/star.svg#star', false, 'Default', 'Default model'], ['/icons/star.svg#star', true, '', 'Make default']], 'the supplied star fills only on the active default');
-      assert.deepEqual(await first.$eval('#harnesses-list .harness-model-row[data-slug="gpt-ui-test"]', row => [row.querySelector('[name=note]').title, row.querySelector('.harness-model-remove').title, row.querySelector('.harness-model-remove').getAttribute('aria-label'), !!row.querySelector('.icon-mask-trash')]), ['added by the smoke', 'Remove gpt-ui-test', 'Remove gpt-ui-test', true], 'the full note and trash action have tooltips');
+      assert.deepEqual(await first.$$eval('#harnesses-list .harness-model-row', rows => rows.map(row => [!!row.querySelector('.harness-model-star'), row.querySelector('.harness-model-default-text').textContent, row.querySelector('.harness-model-default').title, row.querySelector('.harness-model-remove').disabled])), [[false, 'Default', 'Default model', true], [false, '', 'Make default', false]], 'the default is shown once (radio and word), and its trash is off while another model exists');
+      assert.deepEqual(await first.$eval('#harnesses-list .harness-model-row[data-slug="gpt-ui-test"]', row => [row.querySelector('[name=note]').title, row.querySelector('.harness-model-remove').title, row.querySelector('.harness-model-remove').getAttribute('aria-label'), !!row.querySelector('.icon-mask-trash')]), ['added by the smoke', 'gpt-ui-test is the default model: make another one the default before removing it', 'gpt-ui-test is the default model: make another one the default before removing it', true], 'the full note and trash action have tooltips (the default says why it cannot go)');
       assert.deepEqual(await first.$eval('#harnesses-list .harness-model-detect', button => [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-refresh'), button.textContent.trim()]), ['Reload models from harness', 'Reload models from harness', true, ''], 'model detection is an accessible icon action');
       await first.$eval('#harnesses-list .harness-model-row[data-slug="gpt-ui-two"] input[type=radio]', el => el.click());
       assert.deepEqual(await first.$$eval('#harnesses-list .harness-model-row', rows => rows.map(row => [row.querySelector('input[type=radio]').checked, row.querySelector('.harness-model-default-text').textContent])), [[true, 'Default'], [false, '']], 'changing the default moves the visible marker and puts it first');
@@ -1517,7 +1517,7 @@ async function main() {
     assert.ok(hcNavContrast.ratio >= 7, `selected HC settings tab contrast ${JSON.stringify(hcNavContrast)}`);
     const settingsSize = await first.$eval('#settings-dialog .settings-pane', el => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, nav: el.querySelector('nav').getBoundingClientRect().width }));
     assert.equal(Math.round(settingsSize.width), 760);
-    assert.equal(Math.round(settingsSize.height), 720);
+    assert.equal(Math.round(settingsSize.height), 720 - 48, 'the Settings pane is inset 24px from the top and the bottom of the window, not edge to edge');
     assert.equal(Math.round(settingsSize.nav), 180);
     for (const section of ['general', 'usages', 'notifications', 'roles', 'machines']) {
       await first.click(`#settings-${section}-tab`);
@@ -1600,7 +1600,9 @@ async function main() {
     assert.deepEqual(await first.$$eval('#team-flow-home .team-flow-card strong', nodes => nodes.map(node => node.textContent.replace(/^[A-D·]/, '').trim())), ['Leader and workers', 'Leader and dispatcher', 'Leader and advisor', 'Leader, advisor and dispatcher', 'Custom'], 'the server offers the flows in order and Custom is always the last one, after the disabled combined card');
     assert.equal(await first.$eval('#team-flow-home', host => host.textContent.includes('Ask a project owner or operator')), false);
     assert.deepEqual(await first.$eval('#composer', form => [form.querySelector('textarea').disabled, form.querySelector('button[type=submit]').disabled, form.querySelector('textarea').placeholder, form.inert]),
-      [true, true, 'Finish the project setup to start chatting', true], 'setup keeps the composer visible and disabled');
+      [true, true, 'Finish setup to chat', true], 'setup keeps the composer visible and disabled');
+    // Every control of the locked composer is dimmed with it (formatting, attach, emoji and send), not only the emoji button, and the short placeholder fits on one line.
+    assert.deepEqual(await first.$eval('#composer', form => { const style = getComputedStyle(form), field = form.querySelector('textarea'); return [style.opacity < 1, field.scrollWidth <= field.clientWidth + 1, style.cursor]; }), [true, true, 'not-allowed'], 'a locked composer is dimmed as a whole');
     const rowLayout = await first.$eval('#team-flow-home .team-flow-card', row => {
       const text = row.querySelector('.team-flow-card-heading').getBoundingClientRect(), picture = row.querySelector('.team-flow-diagram').getBoundingClientRect();
       return [text.width / row.getBoundingClientRect().width, picture.width, row.getBoundingClientRect().height];
@@ -1716,6 +1718,7 @@ async function main() {
       assert.deepEqual(await visibleFacts(), ['Status', 'Members'], 'Kind and Room ID stay behind the inspector, and the title is the field above');
       await first.evaluate(() => { document.documentElement.dataset.debugInspector = 'on'; });
       assert.deepEqual(await visibleFacts(), ['Kind', 'Status', 'Members', 'Room ID'], 'the inspector shows Kind and Room ID');
+      assert.deepEqual(await first.$eval('#room-info-facts .room-fact-copyable', node => [node.querySelector('button')?.getAttribute('aria-label'), !!node.querySelector('span')?.textContent]), ['Copy Room ID', true], 'the raw room ID has an explicit copy control');
       await first.evaluate(() => { document.documentElement.dataset.debugInspector = 'off'; });
       const sizes = await first.evaluate(() => {
         const dialog = document.querySelector('#room-info-dialog');
@@ -1724,22 +1727,22 @@ async function main() {
       });
       assert.ok(sizes.count >= 6 && sizes.heights.length === 1 && sizes.heights[0] >= 32, `Room settings controls share one height: ${JSON.stringify(sizes)}`);
       assert.equal(/\bbtn-primary\b/.test(sizes.pause) || /\bbtn-primary\b/.test(sizes.stop), false, 'Pause and Stop are not primary');
-      // Pause, Stop and Resume are icons: a glyph, a tooltip and an accessible name, and no text of their own.
-      const scopeIcons = await first.evaluate(() => [...document.querySelectorAll('#room-scope-control [data-scope-action], #project-scope-control [data-scope-action]')].map(button => ({ action: button.dataset.scopeAction, glyph: Boolean(button.querySelector('.icon-mask')), title: button.title, name: button.getAttribute('aria-label'), desired: button.closest('#room-scope-control, #project-scope-control').dataset.desired, text: [...button.childNodes].filter(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()).length })));
+      // Each control names the action and scope in visible text, tooltip, and accessible name.
+      const scopeIcons = await first.evaluate(() => [...document.querySelectorAll('#room-scope-control [data-scope-action], #project-scope-control [data-scope-action]')].map(button => ({ action: button.dataset.scopeAction, glyph: Boolean(button.querySelector('.icon-mask')), title: button.title, name: button.getAttribute('aria-label'), desired: button.closest('#room-scope-control, #project-scope-control').dataset.desired, scope: button.closest('#room-scope-control') ? 'room agents' : 'project agents', text: button.textContent.trim() })));
       assert.equal(scopeIcons.length >= 3, true, JSON.stringify(scopeIcons));
-      assert.deepEqual(scopeIcons.filter(icon => !icon.glyph || !icon.title || icon.title !== icon.name || icon.text).length, 0, `scope controls are icon buttons: ${JSON.stringify(scopeIcons)}`);
+      assert.deepEqual(scopeIcons.filter(icon => !icon.glyph || !icon.title || icon.title !== icon.name || !icon.text || !icon.title.startsWith(icon.text)).length, 0, `scope controls name the action and scope: ${JSON.stringify(scopeIcons)}`);
       // Each scope's Resume is named from its own state: "Retry resume" when that scope is already active, "Resume" otherwise.
       const expectedName = icon => ({ pause: 'Pause', stop: 'Stop', resume: icon.desired === 'active' ? 'Retry resume' : 'Resume' })[icon.action];
-      assert.deepEqual(scopeIcons.filter(icon => icon.name !== expectedName(icon)).map(icon => `${icon.action}:${icon.name} (scope ${icon.desired || 'unloaded'})`), [], 'each scope control is named from its own state');
+      assert.deepEqual(scopeIcons.filter(icon => icon.name !== `${expectedName(icon)} ${icon.scope}`).map(icon => `${icon.action}:${icon.name} (scope ${icon.desired || 'unloaded'})`), [], 'each scope control is named from its own state');
       assert.deepEqual([...new Set(scopeIcons.map(icon => icon.action))].sort(), ['pause', 'resume', 'stop'], 'every scope control is present');
       assert.equal(/\bbtn-danger\b/.test(sizes.stop) && !/\bbtn-danger\b/.test(sizes.pause), true, 'Stop is the danger button, Pause is secondary');
     }
-    // Room settings is v1's pane, from the bottom of the top bar to the bottom of the window, 560px wide, a title bar that stays at the top while the sections scroll under it, and a close button in
+    // Room settings is a pane inset from the window's edges (the top bar included, never off the bottom), 560px wide, a title bar that stays at the top while the sections scroll under it, and a close button in
     // that bar (there is no Close button at the bottom).
     {
       const shape = () => first.evaluate(() => {
         const dialog = document.querySelector('#room-info-dialog'), box = dialog.getBoundingClientRect(), close = document.querySelector('#room-info-close');
-        return { width: Math.round(box.width), full: Math.round(box.bottom) === innerHeight && Math.round(box.top) === Math.round(document.querySelector('.topbar').getBoundingClientRect().bottom), closeInHeader: !!close.closest('.room-info-header') && !!close.offsetParent, closeButtons: dialog.querySelectorAll('#room-info-close, .room-info-actions .btn').length, title: document.querySelector('#room-info-title').textContent };
+        return { width: Math.round(box.width), full: box.top >= 16 && box.bottom <= innerHeight - 16 && box.left >= 16 && box.right <= innerWidth - 16, closeInHeader: !!close.closest('.room-info-header') && !!close.offsetParent, closeButtons: dialog.querySelectorAll('#room-info-close, .room-info-actions .btn').length, title: document.querySelector('#room-info-title').textContent };
       });
       const pane = await shape();
       assert.deepEqual([pane.width > 420 && pane.width <= 620, pane.full, pane.closeInHeader, pane.closeButtons, pane.title], [true, true, true, 1, 'Room settings'], `Room settings is a pane with its close button in the title bar: ${JSON.stringify(pane)}`);
@@ -1946,16 +1949,19 @@ async function main() {
     assert.equal(await first.$eval('.chat-msg:first-child .message-actions', el => !el.dataset.built && el.querySelectorAll('button:not(.message-actions-wake)').length === 0 && getComputedStyle(el).width === '1px'), true, 'the message actions are not even made until the message is hovered or focused');
     await first.hover('.chat-msg:first-child');
     await first.waitForFunction(() => getComputedStyle(document.querySelector('.chat-msg:first-child .message-actions')).opacity === '1');
-    // Own messages use the same bubble corner as every other message.
+    // An own message has its toolbar beside the bubble, on its left (its sender line is at the right, where the toolbar would cover it), clear of the line and the text.
     assert.deepEqual(await first.evaluate(() => {
       const root = document.querySelector('.chat-msg:first-child');
       const bubble = root.querySelector('.chat-msg-bubble').getBoundingClientRect();
       const bar = root.querySelector('.message-actions').getBoundingClientRect();
       const text = root.querySelector('.chat-msg-body').getBoundingClientRect();
-      return { atTopRight: Math.abs(bar.right - (bubble.right - 6)) < 2 && bar.top < bubble.top && bar.bottom > bubble.top,
+      const parts = [...root.querySelectorAll('.chat-msg-header *')].map(node => node.getBoundingClientRect()).filter(box => box.width > 0 && box.height > 0);
+      const line = { left: Math.min(...parts.map(box => box.left)), right: Math.max(...parts.map(box => box.right)), top: Math.min(...parts.map(box => box.top)), bottom: Math.max(...parts.map(box => box.bottom)) };
+      const column = document.querySelector('#messages').clientWidth;
+      return { atTopRight: column >= 656 ? Math.abs(bar.right - (bubble.left - 6)) < 2 && bar.left >= 0 && (bar.right <= line.left || bar.left >= line.right || bar.bottom <= line.top || bar.top >= line.bottom) : Math.abs(bar.right - (bubble.right - 6)) < 2 && bar.top < bubble.top && bar.bottom > bubble.top,
         clearOfText: bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom,
         buttons: root.querySelectorAll('.message-actions > .message-action').length };
-    }), { atTopRight: true, clearOfText: true, buttons: 6 }, 'an own message has its actions at the bubble\'s top-right without covering text');
+    }), { atTopRight: true, clearOfText: true, buttons: 6 }, 'an own message has its actions beside the bubble without covering the sender line or text');
     // v1 parity of the message frame: the bubble sits right under the sender line, at v1's gap, for the viewer's own message too (the hover toolbar
     // reserves no space), and the sender's name is plain text until it is hovered or focused.
     assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.chat-msg:first-child .chat-msg-header').getBoundingClientRect(), bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), author = document.querySelector('.chat-msg:first-child .chat-msg-from-name'); return { gap: Math.round(bubble.top - meta.bottom), own: document.querySelector('.chat-msg:first-child').classList.contains('self'), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 2, own: true, underline: 'none' }, 'the bubble is 2px under the sender line (v1\'s gap) for the viewer\'s own message too, and the sender name has no permanent underline');
@@ -2268,9 +2274,13 @@ async function main() {
             const box = node => node.getBoundingClientRect(), hit = (a, b) => !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
             const list = box(document.querySelector('#messages')), root = document.querySelector(selector), bubble = box(root.querySelector('.chat-msg-bubble')), bar = box(root.querySelector('.message-actions')), text = box(root.querySelector('.chat-msg-body'));
             const items = [...root.querySelector('.chat-msg-header').children].filter(node => node.getClientRects().length).map(box);
-            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.chat-msg-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), levelWithHeader: bar.top < box(root.querySelector('.chat-msg-header')).bottom && bar.bottom > box(root.querySelector('.chat-msg-header')).top, overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2, list: Math.round(list.width), bubble: Math.round(bubble.width) };
+            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.chat-msg-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), levelWithHeader: bar.top < box(root.querySelector('.chat-msg-header')).bottom && bar.bottom > box(root.querySelector('.chat-msg-header')).top, overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2, besideBubble: Math.abs(bar.right - (bubble.left - 6)) < 2, clearOfLine: items.every(item => !hit(bar, item)), self: root.classList.contains('self'), list: Math.round(list.width), bubble: Math.round(bubble.width) };
           }, message);
-          assert.deepEqual([geometry.readable, geometry.insideList, geometry.clearOfText, geometry.levelWithHeader, geometry.overlapsTopEdge, geometry.atTopRightCorner], [true, true, true, true, true, true], `${kind} message at ${width}px (the toolbar is at the bubble's top-right corner): ${JSON.stringify(geometry)}`);
+          // Someone else's toolbar is at the bubble's top-right corner, level with the (left-aligned, short) sender line; the viewer's own, whose sender line is at the right, is beside the bubble on its left and covers neither.
+          // (a column under 656px has no room beside an own bubble, which is up to 75% of it: the toolbar stays at its corner there, as for everyone else's)
+          const beside = geometry.self && geometry.list >= 656;
+          const got = beside ? [geometry.readable, geometry.insideList, geometry.clearOfText, geometry.besideBubble, geometry.clearOfLine] : [geometry.readable, geometry.insideList, geometry.clearOfText, geometry.levelWithHeader && geometry.overlapsTopEdge, geometry.atTopRightCorner];
+          assert.deepEqual(got, [true, true, true, true, true], `${kind} message at ${width}px, a ${geometry.list}px column (${beside ? 'the toolbar is beside the bubble' : "the toolbar is at the bubble's top-right corner"}): ${JSON.stringify(geometry)}`);
         }
       }
       // The same on a touch tablet (hover: none, a coarse pointer, 701px or wider), whose 46px-tall toolbar appears on a selected message: it sits wholly
@@ -2483,7 +2493,7 @@ async function main() {
       const readUsage = () => first.$eval('#room-usage', el => ({ rows: [...el.querySelectorAll('.usage-popover-rows dt')].map((dt, i) => [dt.textContent, el.querySelectorAll('.usage-popover-rows dd')[i].textContent]), groups: [...el.querySelectorAll('.usage-summary-groups li')].map(li => li.textContent), notes: [...el.querySelectorAll('.usage-popover-note')].map(note => note.textContent), range: el.querySelector('select').value, title: el.querySelector('h3').textContent }));
       const today = await readUsage();
       assert.deepEqual(today.rows, [['Turns', '3'], ['Input', '2,200'], ['Output', '40'], ['Cache read', '9,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$1.50']]);
-      assert.deepEqual([today.range, today.title, today.groups], ['today', 'Usage', ['worker@proj 2 turns \u00b7 2,000 in / 30 out \u00b7 $1.40', 'm1 1 turn \u00b7 100 in / 10 out \u00b7 $1.40', 'unknown 2 turns \u00b7 \u2014']]);
+      assert.deepEqual([today.range, today.title, today.groups], ['today', "This room's usage", ['worker@proj 2 turns \u00b7 2,000 in / 30 out \u00b7 $1.40', 'm1 1 turn \u00b7 100 in / 10 out \u00b7 $1.40', 'unknown 2 turns \u00b7 \u2014']]);
       assert.equal(today.notes.length, 2, 'the note on the unpriced turn and on the partial ones');
       await first.select('#room-usage select', 'all');
       await first.waitForFunction(() => [...document.querySelectorAll('#room-usage .usage-popover-rows dd')][5]?.textContent === '$12.50');
@@ -2837,9 +2847,9 @@ async function main() {
     // only while the browser has not been asked, on a phone as well. Enable is the click that raises the permission prompt; Dismiss is kept on
     // the account, so a reload and a brand new browser do not show it again.
     {
-      const askedPage = async () => {
+      const askedPage = async (width = 390) => {
         const context = await browser.createBrowserContext(), page = await context.newPage();
-        await page.setViewport({ width: 390, height: 780 });
+        await page.setViewport({ width, height: 780 });
         await page.evaluateOnNewDocument(() => {
           let permission = 'default';
           Object.defineProperty(Notification, 'permission', { configurable: true, get: () => permission });
@@ -2865,6 +2875,13 @@ async function main() {
         await enabled.page.waitForSelector('.notification-banner', { hidden: true });
         assert.equal(await enabled.page.evaluate(() => window.__permissionAsks), 1, 'Enable raises the permission prompt once');
       } finally { await enabled.context.close(); }
+      // On a desktop the bar ends where the chat column does (the agents column sits beside it): its Enable and dismiss controls are on screen, not under that column.
+      const wide = await askedPage(1280);
+      try {
+        await wide.page.waitForSelector('.notification-banner:not([hidden])');
+        assert.deepEqual(await wide.page.evaluate(() => { const bar = document.querySelector('.notification-banner').getBoundingClientRect(), header = document.querySelector('.chat > header').getBoundingClientRect(), agents = document.querySelector('.agents-panel').getBoundingClientRect(), last = [...document.querySelectorAll('.notification-banner button')].at(-1).getBoundingClientRect();
+          return { sameEdge: Math.abs(bar.right - header.right) <= 1, clearOfAgents: last.right <= agents.left + 1 }; }), { sameEdge: true, clearOfAgents: true }, 'the notification bar ends at the chat column on a desktop');
+      } finally { await wide.context.close(); }
       const dismissed = await askedPage();
       try {
         await dismissed.page.waitForSelector('.notification-banner:not([hidden])');
@@ -3520,7 +3537,7 @@ async function main() {
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
     for (const id of ['settings-general', 'settings-usages', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
-    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, the reviewer switch, the docker-only and warm-agent settings including the Codex opt-in, the prompt-cache keep-alive settings, and the settings backup, all as rows');
+    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, the reviewer switch, the docker-only and warm-agent settings including the Codex opt-in, the prompt-cache keep-alive settings, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
     // edge, and row actions such as move, remove and delete are icon buttons with a tooltip and an accessible name.
@@ -4445,7 +4462,7 @@ async function main() {
       const longAgo = new Date(Date.now() - 6 * 3600 * 1000); fs.utimesSync(orphanFile, longAgo, longAgo);
       await domClick(agentPage, '#health-toggle');
       await agentPage.waitForSelector('#health-disk:not([hidden]) .health-disk-total');
-      assert.equal(await agentPage.$eval('#health-popover', el => el.firstElementChild.id), 'health-disk', 'disk usage comes first in the health panel');
+      assert.deepEqual(await agentPage.$eval('#health-popover', el => [el.firstElementChild.className, el.children[1].id]), ['health-title', 'health-disk'], 'the health panel has its title, then disk usage');
       assert.match(await agentPage.$eval('#health-disk .health-disk-total', el => el.textContent), /\d/, 'the total is a size');
       await domClick(agentPage, '#health-disk .health-disk-clean');
       await agentPage.waitForSelector('#health-disk .health-disk-plan:not([hidden]) li[data-action="would_remove"]');
@@ -4707,10 +4724,10 @@ async function main() {
     }
     await agentPage.setViewport({ width: 1100, height: 720 });
     // The profile's actions are labelled buttons; Stop is the danger one, Pause a plain one, and the row's hover icons are not repeated.
-    assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-actions button', els => els.map(el => [el.getAttribute('aria-label'), el.textContent, el.classList.contains('btn-icon'), el.classList.contains('icon-btn-danger')])), [['Message', '', true, false], ['Pause', '', true, false], ['Stop', '', true, true], ['Switch', '', true, false], ['Start', '', true, false], ['Start fresh', '', true, false], ['Remove', '', true, true]], 'the agent actions are icon buttons named by aria-label, with no text');
+    assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-actions button', els => els.map(el => [el.getAttribute('aria-label'), el.textContent, el.classList.contains('btn-icon'), el.classList.contains('icon-btn-danger')])), [['Message', '', true, false], ['Pause', '', true, false], ['Stop', '', true, true], ['Switch', '', true, false], ['Start is unavailable: it is already active', '', true, false], ['Start fresh is unavailable: stop this agent first', '', true, false], ['Remove is unavailable: stop it first', '', true, true]], 'the agent actions are icon buttons named by aria-label, with no text');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => [...el.children].filter(child => getComputedStyle(child).display !== 'none').length), 0, 'the open profile has no button in the row: the panel\'s back arrow is its one close control');
-    // A disabled action says why: in its tooltip and in a line under the buttons.
-    assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const button = card.querySelector('.agent-reactivate'), hint = card.querySelector(`#${button.getAttribute('aria-describedby')}`); return { disabled: button.disabled, title: button.title, hint: hint?.textContent, shown: !!hint?.offsetParent, pauseTitle: card.querySelector('.agent-act-pause').title, pauseDescribed: card.querySelector('.agent-act-pause').hasAttribute('aria-describedby') }; }), { disabled: true, title: 'Start is unavailable: it is already active', hint: 'Start is unavailable: it is already active.', shown: true, pauseTitle: 'Pause: finish the current turn, then accept no new work', pauseDescribed: false });
+    // A disabled action says why in its tooltip and accessible name.
+    assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const button = card.querySelector('.agent-reactivate'); return { disabled: button.disabled, title: button.title, name: button.getAttribute('aria-label'), hint: card.querySelector('.agent-action-hints'), pauseTitle: card.querySelector('.agent-act-pause').title }; }), { disabled: true, title: 'Start is unavailable: it is already active', name: 'Start is unavailable: it is already active', hint: null, pauseTitle: 'Pause: finish the current turn, then accept no new work' });
     const factLabels = await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .profile-fact-label', els => els.map(el => el.textContent));
     for (const label of ['Runtime', 'Agent ID']) assert.ok(factLabels.includes(label), `the profile lacks ${label}: ${factLabels}`);
     for (const label of ['Status', 'Presence', 'Last seen']) assert.ok(!factLabels.includes(label), `the profile repeats the card's state line as ${label}`);
@@ -5344,7 +5361,7 @@ async function main() {
     // The feed holds only what needs a look (the server's notable events), so this run may have none: the panel then says so. (The panel's rows are tested in test-system-events-page.)
     await first.waitForFunction(() => !document.querySelector('#system-events-popover').hidden && document.querySelectorAll('#system-events-popover .system-event-row, #system-events-popover .system-events-empty').length > 0);
     assert.equal(await first.$eval('#system-events-popover .system-event-row .system-event-text, #system-events-popover .system-events-empty', el => el.textContent.length > 0), true);
-    assert.deepEqual(await first.$$eval('#system-events-popover > header button', els => els.map(el => el.textContent.trim())), [], 'the feed has no button of its own to hide the bell; Settings -> General is the only switch');
+    assert.deepEqual(await first.$$eval('#system-events-popover > header button:not(.system-events-close)', els => els.map(el => el.textContent.trim())), [], 'the feed has no button of its own to hide the bell (only a phone\'s close control for the sheet); Settings -> General is the only switch');
     await first.keyboard.press('Escape');
     await first.waitForFunction(() => document.querySelector('#system-events-popover').hidden);
     await first.setViewport({ width: 1100, height: 720 });
@@ -6014,17 +6031,15 @@ async function main() {
     await openProjectSettings(first, actualProjectID);
     await first.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await first.$eval('#project-auto-resume', el => el.checked), false, 'real project auto-resume default is on');
-    // The owner edits the project's name and folder here: a bad folder is refused with its reason, a rename reaches the sidebar.
-    await first.waitForFunction(() => document.querySelector('#project-details-folder').value && !document.querySelector('#project-details-save').disabled);
-    assert.deepEqual(await first.evaluate(() => ({ name: document.querySelector('#project-details-name').value, folder: document.querySelector('#project-details-folder').value, locked: document.querySelector('#project-details-save').disabled })), { name: 'UI smoke', folder: gitRoot, locked: false }, 'the project details are filled in for the owner');
-    await first.evaluate(() => { document.querySelector('#project-details-folder').value = 'not/absolute'; });
-    await domClick(first, '#project-details-save');
-    await first.waitForFunction(() => /absolute path/.test(document.querySelector('#project-details-status').textContent));
-    await first.evaluate(path => { document.querySelector('#project-details-folder').value = path; document.querySelector('#project-details-name').value = 'UI smoke renamed'; }, gitRoot);
+    // The occupied project's folder is read-only; the owner can rename it and Save appears only for that change.
+    await first.waitForFunction(() => document.querySelector('#project-details-folder').value);
+    assert.deepEqual(await first.evaluate(() => ({ name: document.querySelector('#project-details-name').value, folder: document.querySelector('#project-details-folder').value, locked: document.querySelector('#project-details-save').disabled, folderReadOnly: document.querySelector('#project-details-folder').readOnly })), { name: 'UI smoke', folder: gitRoot, locked: true, folderReadOnly: true }, 'the project details are filled in for the owner');
+    await first.evaluate(() => { const input = document.querySelector('#project-details-name'); input.value = 'UI smoke renamed'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await first.waitForFunction(() => !document.querySelector('#project-details-save').disabled);
     await domClick(first, '#project-details-save');
     await first.waitForFunction(() => document.querySelector('#project-details-status').textContent === 'Saved.');
     assert.equal(await first.evaluate(async () => (await (await fetch('/api/projects')).json()).some(project => project.name === 'UI smoke renamed')), true, 'the rename was stored');
-    await first.evaluate(() => { document.querySelector('#project-details-name').value = 'UI smoke'; });
+    await first.evaluate(() => { const input = document.querySelector('#project-details-name'); input.value = 'UI smoke'; input.dispatchEvent(new Event('input', { bubbles: true })); });
     await domClick(first, '#project-details-save');
     await first.waitForFunction(() => document.querySelector('#project-details-status').textContent === 'Saved.');
     await domClick(first, '#project-auto-resume');
@@ -6478,7 +6493,7 @@ async function main() {
     // stopping itself is checked against the server in Go, since stopping here would take down the agents the rest of this run uses).
     {
       const stopButton = '#machines-list .machine-card:first-child .machine-stop-all';
-      assert.deepEqual(await first.$eval(stopButton, el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-stop'), el.textContent]), ['Stop all agents on this machine', 'Stop all agents on this machine', true, ''], 'the machine stop is an icon with a name');
+      assert.deepEqual(await first.$eval(stopButton, el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-stop'), el.textContent]), [null, 'Stop all agents on this machine', true, 'Stop all agents'], 'the machine stop is a labelled danger button (icon and words) with the scope as its tooltip');
       const answerBefore = first.__dialogAnswer; let asked = '';
       first.__dialogAnswer = text => { asked = text; return { accept: false }; };
       try {
@@ -7269,12 +7284,12 @@ async function main() {
     }
     const scopeDump = scope => { const root = document.querySelector(`#${scope}-scope-control`), pause = root?.querySelector('[data-scope-action="pause"]'), box = pause?.getBoundingClientRect(); return { status: root?.querySelector('.scope-control-status')?.textContent, error: root?.querySelector('.scope-control-error')?.textContent, results: root?.querySelector('.scope-control-results')?.textContent, desired: root?.dataset.desired, pauseDisabled: pause?.disabled, box: box && [box.x, box.y, box.width, box.height].map(Math.round), hit: box && document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.className }; };
     await first.click(`#room-info`);
-    await first.waitForFunction(() => document.querySelector('#room-scope-control .scope-control-status')?.textContent === 'State: Active');
+    await first.waitForFunction(() => document.querySelector('#room-scope-control .scope-control-status')?.textContent === 'Room agents: Active');
     await domClick(first, '#room-scope-control [data-scope-action="pause"]');
-    await waitDump(first, 'room scope paused', () => document.querySelector('#room-scope-control .scope-control-status')?.textContent === 'State: Paused', scopeDump, 'room');
+    await waitDump(first, 'room scope paused', () => document.querySelector('#room-scope-control .scope-control-status')?.textContent === 'Room agents: Paused', scopeDump, 'room');
     assert.equal(await first.$eval('#room-scope-control [data-scope-action="pause"]', el => el.disabled), true);
     await domClick(first, '#room-scope-control [data-scope-action="resume"]');
-    await first.waitForFunction(() => document.querySelector('#room-scope-control .scope-control-status')?.textContent === 'State: Active');
+    await first.waitForFunction(() => document.querySelector('#room-scope-control .scope-control-status')?.textContent === 'Room agents: Active');
     // Daily limits are per project: the room settings have no limit control, and the room route is gone.
     assert.equal(await first.$('#room-usage-limit'), null, 'room settings must not have a daily limit control');
     assert.equal(await first.evaluate(async id => (await fetch(`/api/rooms/${id}/usage-limit`)).status, roomID), 404, 'the room usage-limit route is gone');
@@ -7291,22 +7306,22 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#room-schedules .schedule-row')?.textContent.includes('paused'));
     assert.deepEqual(await first.$eval('#room-schedules [data-action=toggle]', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-play'), el.textContent]), ['Resume', 'Resume', true, '']);
     await openProjectSettings(first, actualProjectID);
-    await first.waitForFunction(() => [...document.querySelectorAll('.project-role-default h4')].some(item => item.textContent === 'analyst'));
-    const analystDefaults = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].find(item => item.querySelector('h4')?.textContent === 'analyst')?.outerHTML);
+    await first.waitForFunction(() => [...document.querySelectorAll('.project-role-default h4')].some(item => item.textContent === 'Analyst'));
+    const analystDefaults = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].find(item => item.querySelector('h4')?.textContent === 'Analyst')?.outerHTML);
     assert.ok(analystDefaults?.includes('Inherit global'), 'the project shows the global source');
-    const analystIndex = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].findIndex(item => item.querySelector('h4')?.textContent === 'analyst'));
-    await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="analyst default source"]`, 'custom');
+    const analystIndex = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].findIndex(item => item.querySelector('h4')?.textContent === 'Analyst'));
+    await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="Analyst default source"]`, 'custom');
     assert.equal(await first.$(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="Default agent selection mode"]`), null, 'a role with no default agents has nothing to order, so no Pick order');
-    await domClick(first, `.project-role-default:nth-child(${analystIndex + 1}) > button`);
-    await first.waitForFunction(index => document.querySelector(`.project-role-default:nth-child(${index + 1}) [role=status]`)?.textContent === 'Saved.', {}, analystIndex);
+    await domClick(first, '#project-role-defaults-save');
+    await first.waitForFunction(() => document.querySelector('#project-role-defaults [role=status]')?.textContent === 'Saved.');
     assert.deepEqual(await first.evaluate(async id => { const rows = await (await fetch(`/api/projects/${id}/role-spawn-defaults`)).json(); const item = rows.find(row => row.role_key === 'analyst'); return [item.inherited, item.pick_mode, item.default_agents.length]; }, actualProjectID), [false, 'in_turn', 0]);
-    await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="analyst default source"]`, 'inherit');
-    await domClick(first, `.project-role-default:nth-child(${analystIndex + 1}) > button`);
-    await first.waitForFunction(() => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'State: Active');
+    await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="Analyst default source"]`, 'inherit');
+    await domClick(first, '#project-role-defaults-save');
+    await first.waitForFunction(() => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'Project agents: Active');
     await domClick(first, '#project-scope-control [data-scope-action="pause"]');
-    await waitDump(first, 'project scope paused', () => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'State: Paused', scopeDump, 'project');
+    await waitDump(first, 'project scope paused', () => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'Project agents: Paused', scopeDump, 'project');
     await domClick(first, '#project-scope-control [data-scope-action="resume"]');
-    await first.waitForFunction(() => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'State: Active');
+    await first.waitForFunction(() => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'Project agents: Active');
     await first.waitForFunction(() => document.querySelector('#project-usage-limit .usage-limit-summary')?.textContent.includes('turns /'));
     // A project inherits the default (Settings, Usages), sets its own value, or has no limit; each for cost and for turns.
     assert.equal(await first.$eval('#project-turn-mode', el => el.value), 'inherit', 'a project inherits by default');
@@ -7540,7 +7555,7 @@ async function main() {
       await invitedPage.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, viewerHome);
       await domClick(invitedPage, '#room-info');
       await invitedPage.waitForFunction(() => document.querySelector('#project-details-status')?.textContent === 'Only the project owner can change these.' && document.querySelector('#room-project #project-details'));
-      assert.deepEqual(await invitedPage.evaluate(() => ({ project: document.querySelector('#room-project').hidden, name: document.querySelector('#project-details-name').disabled, folder: document.querySelector('#project-details-folder').disabled, save: document.querySelector('#project-details-save').disabled, schedules: document.querySelector('#room-schedules').hidden })),
+      assert.deepEqual(await invitedPage.evaluate(() => ({ project: document.querySelector('#room-project').hidden, name: document.querySelector('#project-details-name').disabled, folder: document.querySelector('#project-details-folder').readOnly, save: document.querySelector('#project-details-save').disabled, schedules: document.querySelector('#room-schedules').hidden })),
         { project: false, name: true, folder: true, save: true, schedules: false }, 'a viewer cannot edit the project from the home room settings');
       await domClick(invitedPage, '#room-info-close');
     }
@@ -9114,10 +9129,11 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       assert.equal(await expiryPage.$eval('#messages > article.expiry-boundary > .expiry-label', el => getComputedStyle(el, '::after').borderTopStyle), 'dashed', 'a rule runs on from the words');
       await openSettings(expiryPage);
       await domClick(expiryPage, '#settings-general-tab');
-      await expiryPage.waitForSelector('#message-expiry-seconds');
-      assert.equal(await expiryPage.$eval('#message-expiry-seconds', el => el.value), '21600', 'the default window is six hours');
-      assert.equal(await expiryPage.$eval('#message-expiry-seconds', el => el.disabled), false, 'the owner can edit it');
-      const setExpiry = async value => { await expiryPage.$eval('#message-expiry-seconds', el => { el.focus(); el.select(); }); await expiryPage.keyboard.type(String(value)); await expiryPage.click('#message-expiry-save'); };
+      await expiryPage.waitForSelector('#message-expiry-amount');
+      assert.deepEqual(await expiryPage.evaluate(() => [document.querySelector('#message-expiry-amount').value, document.querySelector('#message-expiry-unit').value]), ['6', 'hours'], 'the default window is six hours');
+      assert.equal(await expiryPage.$eval('#message-expiry-amount', el => el.disabled), false, 'the owner can edit it');
+      // The window is typed as an amount in a unit and kept in seconds: `value` is seconds here, entered in the seconds unit.
+      const setExpiry = async value => { await expiryPage.select('#message-expiry-unit', 'seconds'); await expiryPage.$eval('#message-expiry-amount', el => { el.focus(); el.select(); }); await expiryPage.keyboard.type(String(value)); await expiryPage.click('#message-expiry-save'); };
       await setExpiry(5);
       await expiryPage.waitForFunction(() => /60/.test(document.querySelector('#message-expiry-error')?.textContent || ''));
       assert.equal((await expiryState()).expired.length, 3, 'a rejected value changes nothing');

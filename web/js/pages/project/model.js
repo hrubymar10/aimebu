@@ -45,9 +45,9 @@ export function limitRequest(draft, rev) {
 }
 
 export function detailsView(project, admin) {
-  const canName = !!project && (project.role === 'owner' || admin), canFolder = !!project && admin;
+  const canName = !!project && (project.role === 'owner' || admin), canFolder = !!project && admin && !project.folder_in_use;
   return { canName, canFolder, archived: !!project?.archived_at,
-    status: !project || canFolder ? '' : canName ? 'Only an admin can change the folder.' : 'Only the project owner can change these.' };
+    status: !project || canFolder ? '' : !canName ? 'Only the project owner can change these.' : project.folder_in_use ? 'The folder is fixed while this project has agents or worktrees.' : 'Only an admin can change the folder.' };
 }
 
 // Only what changed goes to the server: a project from before folders were checked can still be renamed.

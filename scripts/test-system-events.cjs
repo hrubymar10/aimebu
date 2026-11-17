@@ -33,21 +33,22 @@ const alert = (payload, extra = {}) => ({ kind: 'credential_alert', payload_json
 
 // The label and the payload's own kind + detail are shown.
 let view = describe(alert({ kind: 'reauth_required', detail: 'claude/main: the provider rejected the refresh token' }));
-assert.equal(view.text, 'Credential alert');
-assert.equal(view.details, 'reauth required: claude/main: the provider rejected the refresh token');
+assert.equal(view.text, 'Credential alert: reauth required');
+assert.equal(view.where, 'claude/main', 'the row names whose login it is');
+assert.equal(view.details, 'the provider rejected the refresh token');
 
 // The reply loop guard reads as a sentence.
 assert.equal(describe({ kind: 'loop_guard', payload_json: '{"hops":"4"}' }).text, 'Agents stopped answering each other');
 
 // A kind with no detail, and a detail with no kind, still read sensibly.
-assert.equal(describe(alert({ kind: 'login_imported' })).details, 'login imported');
+assert.equal(describe(alert({ kind: 'login_imported' })).text, 'Credential alert: login imported');
 assert.equal(describe(alert({ detail: 'only detail' })).details, 'only detail');
 assert.equal(describe(alert({})).details, '');
 
 // Markup in the detail is returned as text, untouched: the feed renders it with
 // textContent, so it is never parsed. (Escaping here would double-escape.)
 view = describe(alert({ kind: 'expiring', detail: '<img src=x onerror=alert(1)> & "quoted"' }));
-assert.equal(view.details, 'expiring: <img src=x onerror=alert(1)> & "quoted"');
+assert.equal(view.details, '<img src=x onerror=alert(1)> & "quoted"');
 assert.match(source, /node\('div', 'system-event-details', view\.details\)/, 'the feed must render details through node(), which uses textContent');
 assert.doesNotMatch(source, /innerHTML\s*=\s*[^;]*view\.details/, 'details must never be written with innerHTML');
 

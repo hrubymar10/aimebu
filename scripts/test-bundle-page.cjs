@@ -69,7 +69,7 @@ async function main() {
     await page.$eval('#composer button[type=submit]', node => node.click());
     await page.waitForFunction(() => [...document.querySelectorAll('#messages .chat-msg')].some(node => node.textContent.includes('sent from the bundle')));
     await page.$eval('#room-info', node => node.click());
-    await page.waitForFunction(() => document.querySelector('#room-info-dialog').open && document.querySelector('#room-info-title').textContent === 'Room settings');
+    await page.waitForFunction(() => document.querySelector('#room-info-dialog').open && document.querySelector('#room-info-title').textContent === 'Project settings');
     await page.$eval('#room-info-close', node => node.click());
     await page.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
     await page.$eval('#settings-toggle', node => node.click());

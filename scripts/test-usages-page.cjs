@@ -108,6 +108,12 @@ async function main() {
     // Switching asks first and names who is affected; the switch, then a read, follows. A failure says why.
     {
       const page = await mount();
+      // Switch is a framed rectangular button, not the rounded status pill that ACTIVE is, and a bar track is outlined so it shows on a page of its own colour.
+      assert.deepEqual(await page.evaluate(card => { const button = document.querySelector(`${card} .usage-profile:nth-child(2) .usage-switch`), style = getComputedStyle(button), active = document.querySelector(`${card} .switcher-tile-active, ${card} .usage-profile-active`), track = getComputedStyle(document.querySelector('.usage-track'));
+        return { radius: style.borderTopLeftRadius, border: style.borderTopWidth, upper: style.textTransform, activeUpper: active ? getComputedStyle(active).textTransform : 'none', track: track.borderTopWidth }; }, cardOf('codex')),
+        { radius: '6px', border: '1px', upper: 'none', activeUpper: 'uppercase', track: '1px' }, 'Switch is a real button, the status pill is a different shape, and the track is outlined');
+      assert.deepEqual(await page.evaluate(card => { const [first, second] = [...document.querySelectorAll(`${card} .usage-profile`)]; const say = node => { const label = node.querySelector('.usage-profile-active:not([hidden]), .usage-profile-inactive:not([hidden])'); return label?.textContent; }; return [say(first), say(second)]; }, cardOf('codex')),
+        ['Active', 'Inactive'], 'an account says in words whether it is the active one');
       await click(page, `${cardOf('codex')} .usage-profile:nth-child(2) .usage-switch`);
       await dialog(page);
       assert.match(await page.$eval('#app-dialog .app-dialog-message', el => el.textContent), /Affected agents: milo@mock\. Switch to backup\?/);
@@ -333,7 +339,7 @@ async function main() {
       await page.evaluate(async () => { window.__source.preferences.token_auto_refresh = true; await window.__usages.load(); });
       assert.deepEqual(await page.evaluate(() => { const box = document.querySelector('.usage-credential-alerts'); return [box.getAttribute('role'), [...box.children].map(p => [p.className, p.textContent])]; }),
         ['alert', [['usage-credential-alert usage-credential-alert-expiring', 'claude live: the access token expires in 4 min.']]]);
-      // Refresher conflicts of several tools are one alert in plain words with the paths folded under Details, in a red box.
+      // Refresher conflicts of several tools are one alert in plain words with the paths folded under Details, in a neutral style (an error is red; this is information).
       await page.evaluate(async () => {
         const list = window.__source.list.bind(window.__source);
         window.__source.list = async () => { const out = await list(); out.credential_alerts = [...(out.credential_alerts || []),
@@ -343,8 +349,8 @@ async function main() {
       });
       assert.deepEqual(await page.evaluate(() => { const box = document.querySelector('.usage-credential-alerts'), conflict = box.querySelector('.usage-credential-alert-refresher_conflict');
         return { alerts: box.children.length, text: conflict.querySelector(':scope > p').textContent.slice(0, 60), details: conflict.querySelector('details > summary').textContent, lines: conflict.querySelectorAll('details p').length, pathInSentence: /\/h\/\.aimebu/.test(conflict.querySelector(':scope > p').textContent),
-          red: getComputedStyle(box).borderTopColor !== getComputedStyle(document.body).borderTopColor && getComputedStyle(conflict).color }; }),
-        { alerts: 2, text: 'Token refresh is paused for claude, codex: another aimebu (v', details: 'Details', lines: 2, pathInSentence: false, red: await page.evaluate(() => getComputedStyle(document.querySelector('.usage-credential-alert')).color) });
+          neutral: getComputedStyle(conflict).color === getComputedStyle(document.querySelector('.usage-credential-alert-expiring')).color ? 'same as an error' : 'differs from an error', bar: getComputedStyle(conflict).borderLeftColor !== getComputedStyle(document.querySelector('.usage-credential-alert-expiring')).borderLeftColor }; }),
+        { alerts: 2, text: 'Token refresh is paused for claude, codex: another aimebu (v', details: 'Details', lines: 2, pathInSentence: false, neutral: 'differs from an error', bar: true });
       await page.close();
       const other = await mount({ owner: false });
       await other.evaluate(async () => { window.__source.preferences.token_auto_refresh = true; await window.__usages.load(); });

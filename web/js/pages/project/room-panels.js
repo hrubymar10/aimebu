@@ -18,7 +18,7 @@ export class RoomScopeControl {
 export class RoomUsage {
   constructor(section) {
     this.store = new UsageSummaryStore(id => `/api/rooms/${id}/usage`);
-    this.page = mountPreactPage(section, () => html`<${UsageSummary} store=${this.store} />`);
+    this.page = mountPreactPage(section, () => html`<${UsageSummary} store=${this.store} title="This room's usage" />`);
   }
 
   load(id) { return this.store.load(id); }

@@ -42,7 +42,7 @@ export function TelemetryPage({ onDirty = () => {} }) {
     else if (dialog) { observer = new MutationObserver(() => { if (dialog.open) load(); }); observer.observe(dialog, { attributes: true, attributeFilter: ['open'] }); }
     return () => observer?.disconnect();
   }, []);
-  const outcome = next => (next.env_locked ? 'Saved, but AIMEBU2_SENTRY_DSN is set on the server and wins over this.' : next.active ? 'Saved. Telemetry is on; reload the page to include this page.' : 'Saved. Telemetry is off.');
+  const outcome = next => (next.env_locked ? 'Saved, but the server has its own Sentry setting, which wins over this.' : next.active ? 'Saved. Telemetry is on; reload the page to include this page.' : 'Saved. Telemetry is off.');
   // The switch applies at once; the DSN has its own Save.
   const toggle = async checked => {
     report(); setSaving(true); setEnabled(checked);
@@ -91,11 +91,11 @@ export function TelemetryPage({ onDirty = () => {} }) {
     <p class="settings-intro" id="telemetry-status" role="status">${readOnly && !message.status && !message.error ? 'Only the owner or an admin changes what is sent and where.' : message.status}</p>
     <p id="telemetry-error" class="error" role="alert">${message.error}</p>
     ${known && html`
-      <dl class=${`settings-facts${muted}`} id="telemetry-facts" aria-label="Volume">
-        <dt>Trace sample rate</dt><dd id="telemetry-sample-rate">${sampleRate(view.traces_sample_rate)} of server requests and of page loads. AIMEBU2_SENTRY_TRACES_SAMPLE_RATE changes it.</dd>
+      <${SettingsGroup} label="Volume"><dl class=${`settings-facts${muted}`} id="telemetry-facts" aria-label="Volume">
+        <dt>Trace sample rate</dt><dd id="telemetry-sample-rate">${sampleRate(view.traces_sample_rate)} of server requests and of page loads. A server setting changes it.</dd>
         <dt>Database spans</dt><dd id="telemetry-db-spans">At most ${view.max_db_spans} per request; the rest are counted on the request, not traced.</dd>
         <dt>Server file loads</dt><dd id="telemetry-static-files">Not traced: the scripts, styles and icons the server hands out are not requests of their own; the API and the pages are.</dd>
         <dt>Browser file loads</dt><dd id="telemetry-resource-spans">Not traced: no span per script, stylesheet or image, and a page load keeps only its request and response phases.</dd>
-      </dl>`}
+      </dl><//>`}
   `;
 }

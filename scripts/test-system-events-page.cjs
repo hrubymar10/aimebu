@@ -81,6 +81,21 @@ async function main() {
       window.__routine = document.querySelector('#system-events-count').hidden;
       for (const item of [live(5, 'turn_process_exit', { exit_code: '1' }, true), live(6, 'agent_spawn_failed', {}, true), live(7, 'agent_turn_budget_exceeded', {}, true)]) feed.onEvent(item); });
     assert.deepEqual([await page.evaluate(() => window.__routine), await page.$eval('#system-events-count', el => [el.hidden, el.textContent])], [true, [false, '3']], 'routine events leave the badge alone; each notable one counts');
+    // The same alert again and again is one row with a count, and names whose login it is; a phone gets its own close control and the sheet ends above the tab bar.
+    await page.evaluate(() => { const feed = window.__events; feed.reset(); for (let seq = 1; seq <= 4; seq++) feed.onEvent({ id: `evt_cred_${seq}`, seq, kind: 'credential_alert', payload_json: JSON.stringify({ kind: 'expiring', detail: 'claude/main: the access token expires in 4 min.' }), created_at: new Date().toISOString(), names: {}, notable: true }); });
+    await page.click('#system-events-toggle'); await page.waitForSelector('#system-events-popover:not([hidden]) .system-event-row');
+    // While the panel is open its button in the top bar is the marked one, as the Inbox's is.
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 500))); // (a button's colours fade over a moment)
+    assert.equal(await page.evaluate(() => { const toggle = document.querySelector('#system-events-toggle'), probe = document.createElement('i'); probe.style.color = 'var(--accent)'; document.body.append(probe); const accent = getComputedStyle(probe).color; probe.remove(); return getComputedStyle(toggle).borderTopColor === accent && getComputedStyle(toggle).color === accent; }), true, 'the open panel marks its top-bar button');
+    assert.deepEqual(await page.$$eval('#system-events-popover .system-event-row', rows => rows.map(row => [row.querySelector('.system-event-text').textContent, row.querySelector('.system-event-count')?.textContent, row.querySelector('.system-event-where')?.textContent])), [['Credential alert: expiring', '×4', 'claude/main']], 'identical alerts are one row with a count and the account');
+    assert.equal(await page.$eval('.system-events-close', el => getComputedStyle(el).display), 'none', 'a desktop popover closes by a click outside, with no close control');
+    await page.setViewport({ width: 390, height: 780 });
+    assert.deepEqual(await page.evaluate(() => { const close = document.querySelector('.system-events-close'), panel = document.querySelector('#system-events-popover').getBoundingClientRect(); return [getComputedStyle(close).display !== 'none', close.getBoundingClientRect().width >= 36, panel.bottom <= innerHeight - 70]; }), [true, true, true], 'a phone has a close control, and the sheet leaves the bottom tab bar free');
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 500))); // (colours fade over a moment)
+    assert.equal(await page.evaluate(() => { const toggle = document.querySelector('#system-events-toggle'), probe = document.createElement('i'); probe.style.color = 'var(--accent)'; document.body.append(probe); const accent = getComputedStyle(probe).color; probe.remove(); return getComputedStyle(toggle).borderTopColor === accent; }), true, 'the open sheet marks its button on a phone too');
+    await page.click('.system-events-close');
+    assert.equal(await page.$eval('#system-events-popover', el => el.hidden), true, 'the close control closes the sheet');
+    await page.setViewport({ width: 1100, height: 800 });
     // Nothing notable: the panel says so.
     await page.evaluate(() => { window.__events.reset(); }); await page.click('#system-events-toggle');
     assert.equal(await page.$eval('#system-events-popover .system-events-empty', el => el.textContent), 'Nothing needs a look.');

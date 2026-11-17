@@ -51,6 +51,7 @@ export function AnswerHistory({ message, answered, className = '' }) {
   const choice = (message.proposed_answers || []).find(value => plain === value);
   return html`<div class=${`answer-history${className}`} data-answered=${String(answered)}>
     ${message.open_questions?.length ? html`<button type="button" class="btn" disabled title=${note}>Open Questions${' '}<span class="open-questions-count">${message.open_questions.length}</span></button>` : null}
+    ${answered && choice ? html`<span class="answer-history-label">Answered:</span>` : null}
     ${(message.proposed_answers || []).map(value => html`<button type="button" class=${`btn proposed-answer-btn${choice === value ? ' answer-chosen' : ''}`} key=${value} disabled title=${choice === value ? 'Chosen answer' : note}>${choice === value ? '✓ ' : ''}${value}</button>`)}
     ${chosen && (message.open_questions?.length || !choice) ? html`<span class="answer-history-choice">${chosen}</span>` : null}
     ${answered ? null : html`<span class="answer-history-status">${note}</span>`}

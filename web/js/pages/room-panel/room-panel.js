@@ -1,5 +1,6 @@
 import { html, useLayoutEffect, useRef } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
+import { copyText } from '../../markdown.js';
 import { canLeave, facts, lifecycleControl, notesView, removeControl } from './model.js';
 
 export function RenameForm({ store }) {
@@ -12,7 +13,7 @@ export function RoomFacts({ store }) {
   store.version.value;
   const room = store.room.value;
   if (!room) return null;
-  return facts(room, store.renamable.value).map(fact => html`<dt class=${fact.debug ? 'room-fact-debug' : undefined}>${fact.label}</dt><dd class=${fact.debug ? 'room-fact-debug' : undefined}>${fact.value}</dd>`);
+  return facts(room, store.renamable.value).map(fact => html`<dt class=${fact.debug ? 'room-fact-debug' : undefined}>${fact.label}</dt><dd class=${[fact.debug && 'room-fact-debug', fact.copy && 'room-fact-copyable'].filter(Boolean).join(' ')}><span>${fact.value}</span>${fact.copy && html`<${IconButton} name="copy" label=${`Copy ${fact.label}`} onClick=${() => copyText(fact.value).catch(() => {})} />`}</dd>`);
 }
 
 export function ViewActions({ store }) {

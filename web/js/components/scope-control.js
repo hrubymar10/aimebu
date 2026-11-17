@@ -67,10 +67,13 @@ const ACTIONS = [['pause', 'Pause', 'pause', 'btn'], ['stop', 'Stop', 'stop', 'b
 
 export function ScopeControl({ store }) {
   const state = store.state.value, buttons = scopeButtons(state, { busy: store.busy.value, retryResume: store.retryResume.value });
-  return html`<p class="scope-control-status" role="status">${scopeStatus(state, store.id.value)}</p>
+  const scope = store.kind === 'project' ? 'project agents' : 'room agents';
+  const status = scopeStatus(state, store.id.value);
+  return html`<p class="scope-control-status" role="status">${status ? `${store.kind === 'project' ? 'Project agents' : 'Room agents'}: ${status.replace(/^State: /, '')}` : ''}</p>
     <div class="scope-control-actions">${ACTIONS.map(([action, label, glyph, classes]) => {
       const name = action === 'resume' ? buttons.resume.label : label;
-      return html`<button type="button" data-scope-action=${action} class=${`${classes} btn-glyph`} title=${name} aria-label=${name} disabled=${buttons[action].disabled} onClick=${() => store.act(action)}><span class=${`icon-mask icon-mask-${glyph}`} aria-hidden="true"></span></button>`;
+      const title = `${name} ${scope}`;
+      return html`<button type="button" data-scope-action=${action} class=${`${classes} btn-glyph`} title=${title} aria-label=${title} disabled=${buttons[action].disabled} onClick=${() => store.act(action)}><span class=${`icon-mask icon-mask-${glyph}`} aria-hidden="true"></span><span>${name}</span></button>`;
     })}</div>
     <p class="scope-control-results" role="status">${store.results.value}</p>
     <p class="scope-control-error error" role="alert">${store.error.value}</p>`;

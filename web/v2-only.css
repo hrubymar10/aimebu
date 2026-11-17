@@ -492,7 +492,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 #app-view.inbox-open .sidebar .room-item.active { background: transparent; outline-color: transparent; }
 #app-view.inbox-open .sidebar .room-item.active:hover { background: var(--bg-hover); }
 #app-view.inbox-open .sidebar .room-item.active .room-item-name { color: var(--text-primary); }
-.app > .topbar nav #inbox-toggle[aria-pressed="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+:root:root .app > .topbar nav :is(#inbox-toggle[aria-pressed="true"], .btn-icon[aria-expanded="true"]) { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); } /* the open view's or popover's own button is the marked one: Inbox, System events, Health, Memory, Usages, the More menu */
 
 /* The rooms drawer on a phone: a close control of its own (the scrim and the tab bar also close it), and the chevron sits next to its icon instead of a wide
    gap away. Wider screens have the edge toggle and no drawer. */
@@ -571,8 +571,12 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
     mask-image: linear-gradient(to right, transparent 0, #000 var(--tools-fade-start), #000 calc(100% - var(--tools-fade-end)), transparent 100%); }
 }
 
-/* A system line that wraps keeps every line centred, as v1's centred row does: the body is its own centred block, not a left-aligned one inside a centred row. */
-.chat-msg-system-row > :first-child, .chat-msg-system-body { text-align: center; }
+/* Every system line is the same small, grey, left-aligned sans line (v1's centred italic monospace is gone): a short one is shown whole, a long one is cut to its first
+   line with "Show more". */
+.chat-msg-system { font-style: normal; text-align: left; }
+.chat-msg-system-row { display: flex; justify-content: flex-start; }
+.chat-msg-system-row > :first-child, .chat-msg-system-body { text-align: left; }
+.chat-msg-system-row .chat-msg-body { font: inherit; color: inherit; }
 .system-popup-trigger { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 100%; }
 .system-notice-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .system-popup-show { flex: none; color: var(--text-secondary); text-decoration: underline; font-style: normal; }
@@ -594,7 +598,9 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 
 /* The memory viewer's buttons are v1's: its plain button is the browser's light one with black text, and its danger button the translucent red; the high-contrast themes
    already draw both that way. The project select takes the key box's place, in the key box's monospace. */
-:root:not([data-theme^="high-contrast"]) #knowledge-dialog button.btn:not(.btn-primary, .btn-danger, .btn-icon) { background: #efefef; color: #000000; }
+/* The memory viewer's plain buttons (Refresh, Deactivate, a disabled Save) are the theme's own: the browser-light fill they had outranked Save, the one action that matters, which is now the
+   primary button once there is something to save. */
+:root:not([data-theme^="high-contrast"]) #knowledge-dialog button.btn:not(.btn-primary, .btn-danger, .btn-icon) { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
 #knowledge-dialog button.btn:disabled:not(.btn-primary, .btn-danger, .btn-icon) { opacity: .5; }
 :root:not([data-theme^="high-contrast"]) #knowledge-dialog button.btn-danger:not(:hover, :focus-visible) { background: rgba(220, 38, 38, 0.15); border-color: rgba(220, 38, 38, 0.35); color: #ef4444; }
 #knowledge-dialog button.btn { line-height: normal; }
@@ -607,9 +613,12 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
    draws for them. */
 :root:root :is(button.proposed-answer-btn, button.open-questions-open):not(:disabled) { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
 :root:root :is(button.proposed-answer-btn, button.open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--bg-tertiary); border-color: var(--accent); color: var(--text-primary); }
-:root:root .answer-history button:disabled { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); opacity: .52; cursor: default; }
-:root:root .answer-history button.open-questions-open:disabled { opacity: .58; }
-:root:root .answer-history button.answer-chosen:disabled { opacity: 1; border-color: var(--accent); }
+/* A closed one (answered, or no longer pending) is not a control any more, so it is not drawn as one: plain text at full contrast, no frame, no fill, no dimming (a dimmed,
+   framed chip read as clickable, and was hard to read in the high-contrast themes). The chosen answer is the bold primary text, after "Answered:". */
+:root:root .answer-history { gap: 4px 12px; }
+:root:root .answer-history button:disabled { background: none; border: 0; box-shadow: none; min-height: 0; padding: 0; color: var(--text-secondary); opacity: 1; cursor: default; font-weight: 400; font-size: 12px; }
+:root:root .answer-history button.answer-chosen:disabled { color: var(--text-primary); font-weight: 700; }
+.answer-history-label { color: var(--text-secondary); font-size: 12px; }
 
 /* "Review in Inbox" on an agent card that needs a decision (v2 only): a small outlined control like the card's other buttons, in v1's palette (the orange of a decision
    waiting, the border colour for its outline, the accent on hover and focus), not the browser's plain button; the high-contrast themes fill it with the page colour. */
@@ -695,6 +704,18 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-flow-modal-status { padding: 18px; }
 .team-flow-modal .team-setup-wizard { box-sizing: border-box; padding: 18px; }
 @media (max-width: 700px) { .team-flow-modal { width: 100vw; height: 100dvh; max-height: none; margin: 0; border: 0; border-radius: 0; } }
+/* Agent profiles keep their controls and final row inside the scrollable pane. */
+.agents-scroll { padding-bottom: 28px; }
+.agent-card.expanded .agent-actions { flex-wrap: nowrap; gap: 2px; overflow-x: auto; padding-bottom: 4px; }
+.agent-card.expanded .agent-actions .agent-act { flex: 0 0 26px; width: 26px; min-width: 26px; height: 30px; padding: 0; }
+.agent-card.expanded .agent-actions .agent-remove { margin-left: auto; }
+.human-card.is-you { box-shadow: inset 0 0 0 1px var(--accent); }
+[data-theme="high-contrast-light"] .agent-context-track { box-sizing: border-box; height: 8px; border: 1px solid var(--text-primary); background: var(--bg-primary); }
+[data-theme="high-contrast-light"] .agent-context-fill { background: var(--accent); }
+:is(.agent-card .agent-actions, .agent-card .agent-card-actions, .scope-control-actions) button:disabled, .room-item .project-move:disabled { opacity: .42; color: var(--text-muted); background: var(--bg-primary); border-style: dashed; cursor: not-allowed; }
+:is(.agent-card .agent-actions, .agent-card .agent-card-actions, .scope-control-actions) button:disabled .icon-mask { background-color: currentColor; }
+@media (max-width: 700px) { .agents-panel.mobile-open { box-sizing: border-box; width: 100vw; max-width: 100vw; box-shadow: none; } }
+
 .team-flow-heading small { color: var(--accent-text); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .team-flow-heading h2 { margin: 4px 0 6px; font-size: 20px; }
 .team-flow-heading p, .team-flow-current { margin: 0 0 14px; color: var(--text-secondary); }
@@ -703,6 +724,7 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-flow-option:hover, .team-flow-option:focus-within { border-color: var(--accent); }
 .team-flow-option.selected { border: 2px solid var(--accent); background: var(--accent-dim); }
 .team-flow-card { display: grid; grid-template-columns: minmax(0, 1fr) clamp(150px, 30%, 240px); align-items: stretch; width: 100%; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; color: var(--text-primary); text-align: left; white-space: normal; cursor: pointer; }
+.team-flow-current-badge { align-self: center; padding: 2px 7px; border: 1px solid currentColor; border-radius: 999px; color: var(--text-primary); font-size: 11px; font-weight: 700; }
 .team-flow-card:disabled { cursor: default; opacity: .72; }
 .team-flow-card-heading { display: flex; flex-flow: row wrap; align-items: baseline; align-content: center; gap: 2px 10px; min-width: 0; padding: 8px 14px; }
 .team-flow-card-heading strong { font-size: 14px; }
@@ -727,6 +749,13 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-flow-diagram-open span { position: absolute; right: 8px; bottom: 3px; padding: 2px 4px; border-radius: 4px; background: var(--bg-primary); font-size: 10px; }
 .team-flow-diagram-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .team-flow-empty-diagram { color: var(--text-muted); font-size: 11px; line-height: 1.3; text-align: center; }
+@media (max-width: 700px) {
+  .team-flow-card { grid-template-columns: minmax(0, 1fr); }
+  .team-flow-diagram { min-height: 100px; border-left: 0; border-top: 1px solid var(--border); }
+  .team-flow-thumbnail svg { max-height: 88px; }
+  .team-flow-thumbnail-agent text { font-size: 12px; }
+  .team-flow-diagram-open { inset: auto 0 0; width: 100%; height: 100px; }
+}
 .team-flow-lightbox { width: 100vw; max-width: none; height: 100vh; max-height: none; margin: 0; padding: 24px; border: 0; background: var(--bg-primary); color: var(--text-primary); }
 .team-flow-lightbox::backdrop { background: rgba(0, 0, 0, .76); }
 .team-flow-lightbox h2 { margin: 0 0 16px; }
@@ -734,6 +763,9 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-flow-lightbox .team-flow-diagram svg { max-height: none; }
 .team-flow-lightbox-close { float: right; }
 .team-flow-preview { margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: var(--bg-tertiary); font-size: 12px; }
+.team-flow-settings .team-flow-warning { border: 2px solid var(--warning); background: color-mix(in srgb, var(--warning) 12%, var(--bg-primary)); }
+.team-flow-settings .team-flow-warning li { margin: 8px 0; }
+.team-flow-settings .team-flow-warning li button { margin-left: 8px; }
 .team-flow-preview p { margin: 0; }
 .team-flow-change-group + .team-flow-change-group { margin-top: 8px; }
 .team-flow-change-group ul { margin: 4px 0 0; padding-left: 20px; }
@@ -834,3 +866,80 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .switch-preview p { margin: 6px 0; color: var(--text-secondary); font-size: 12px; }
 .agent-switch-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 .agent-switch-actions .btn { padding: 4px 8px; font-size: 11px; }
+
+/* A composer that cannot be used yet (the project setup is not finished, so it is inert) is dimmed as a whole: formatting, attach, emoji and send, not only the one control that
+   happens to be disabled, so none of them looks usable. */
+#composer[inert] { opacity: .5; cursor: not-allowed; }
+
+/* A member row's remove button that cannot be used (yourself, or the last owner) is visibly off: dimmed, with a not-allowed cursor; its tooltip says why. */
+:root:root .user-member-row .btn-icon:disabled { opacity: .35; cursor: not-allowed; }
+
+/* System events: a repeat count beside the text; on a phone the panel (a sheet) has its own close control and ends above the bottom tab bar, so its last row is reachable. */
+.system-event-count { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+:root:root .system-events-close { display: none; }
+@media (max-width: 700px) {
+  :root:root .system-events-close { display: inline-flex; }
+  .system-events-popover.popover-panel-sheet { max-height: calc(100dvh - 48px - 72px - env(safe-area-inset-bottom)); }
+}
+
+/* Modals sit inset on a desktop: Settings, Memory and Room settings used to run edge to edge, up over the top bar, and Room settings off the bottom of a short window. Each is now a framed
+   pane with a margin all round, on its backdrop, scrolling inside. A phone keeps the full-screen pane. */
+@media (min-width: 701px) {
+  dialog.settings-modal .settings-pane { height: calc(100dvh - 48px); max-height: calc(100dvh - 48px); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+  #room-info-dialog { height: calc(100dvh - 48px); max-height: calc(100dvh - 48px); margin: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow-y: auto; }
+}
+
+/* "Stop all agents on this machine" is a labelled danger button (icon and words), not a bare red square that reads as a checkbox; it asks before it stops anything. */
+:root:root .machine-card-actions .machine-stop-all { flex: 0 0 auto; width: auto; min-width: 0; padding: 0 12px; gap: 6px; font-size: 12px; }
+
+/* The harness tab strip says it scrolls where the browser has no scroll-driven fade (above): the edges fade in the page colour while there is more to reach, and the strip itself is the only
+   thing that moves. */
+@supports not (animation-timeline: scroll()) {
+  .harness-master { background: linear-gradient(90deg, var(--bg-primary) 30%, transparent) left center / 36px 100% no-repeat local, linear-gradient(270deg, var(--bg-primary) 30%, transparent) right center / 36px 100% no-repeat local,
+    linear-gradient(90deg, var(--border), transparent) left center / 12px 100% no-repeat scroll, linear-gradient(270deg, var(--border), transparent) right center / 12px 100% no-repeat scroll; }
+}
+
+/* A file field (the sound upload, the settings backup) is drawn like the rest: its button is a plain button of the theme, not the browser's grey one. */
+input[type="file"]::file-selector-button { margin-right: 10px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-primary); font: inherit; font-size: 12px; cursor: pointer; }
+input[type="file"]:disabled::file-selector-button { opacity: .5; cursor: not-allowed; }
+input[type="file"] { color: var(--text-secondary); font-size: 12px; }
+.message-expiry-human { white-space: nowrap; }
+
+/* Health: a title, a verdict line, and touch-sized rows and buttons on a phone (they were under 44px). */
+.health-title { display: flex; align-items: center; margin: 0 0 8px; font-size: 13px; }
+.health-ok { margin: 0 0 8px; color: var(--text-secondary); font-size: 12px; }
+@media (max-width: 700px) { .health-popover :is(.health-item, .health-disk-clean, button.btn) { min-height: 44px; } }
+
+/* High contrast (light above all): a selected thing is not only a pale tint. The selected room, the open Settings section and a destructive button have a strong edge, and the disabled Send
+   keeps its outline, so each reads on the white page. */
+:root:root[data-theme^="high-contrast"] :is(.sidebar .room-item.active, .settings-nav-item.active) { box-shadow: inset 4px 0 0 var(--accent); outline: 2px solid var(--accent); outline-offset: -2px; }
+:root:root[data-theme="high-contrast-light"] button.btn-danger:not(:disabled) { background: var(--bg-primary); color: var(--red); border: 2px solid var(--red); }
+:root:root[data-theme="high-contrast-light"] #composer button[type="submit"]:disabled { border: 1px solid var(--border); }
+
+/* The Continue-a-session list can be long: its Close stays in view at the bottom of the dialog instead of at the end of the list. */
+#cc-sessions-dialog .cc-sessions-actions { position: sticky; bottom: -20px; margin: 0 -20px -20px; padding: 10px 20px 20px; background: var(--bg-primary); border-top: 1px solid var(--border); }
+
+/* Spawn: "This team flow allows ..." is a helper line, not a warning (amber stays for the reasons a tool cannot be used). The model's filter and its list are drawn as one control: the field
+   sits on top of the list with no gap, sharing its frame. */
+:root:root #spawn-flow-hint:not(:empty) { color: var(--text-muted); }
+:is(#spawn-form, #switch-form) .model-picker { gap: 0; }
+:is(#spawn-form, #switch-form) .model-picker > label { margin-bottom: 4px; }
+:is(#spawn-form, #switch-form) .model-picker > input[type="search"] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+:is(#spawn-form, #switch-form) .model-picker > select { margin-top: -1px; border-top-left-radius: 0; border-top-right-radius: 0; }
+:is(#spawn-form, #switch-form) .model-picker > .model-picker-count { margin-top: 4px; }
+
+/* New project: its title is a real dialog title (it was set small, like an eyebrow). The footer order, Cancel then Create, is Spawn's. */
+:root:root #project-dialog h2 { font-size: 1.15rem; }
+
+.settings-group > .settings-facts { margin: 0; padding: 12px 14px; }
+
+/* An account that is not the active one says so in words, beside the name (the active one's green edge and ACTIVE pill are not the only difference). */
+.usage-profile-inactive { color: var(--text-muted); font-size: 11px; }
+
+/* Harnesses: a phone picks the harness from a select (44px tall, like the machine's) and the tab strip, which scrolls sideways and clips its labels, is for wider screens. */
+.harness-master-select { display: none; }
+@media (max-width: 700px) {
+  :root:root .harness-master-select { display: block; width: 100%; height: 44px; min-height: 44px; margin: 4px 0 10px; }
+  :root:root .harness-master { display: none; }
+  :root:root :is(#settings-dialog, #onboarding-harnesses) .settings-control select { height: 44px; min-height: 44px; }
+}

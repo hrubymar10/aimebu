@@ -64,6 +64,14 @@ func TestRoomPreviewSkipsSystemMessages(t *testing.T) {
 	if _, err := f.s.InsertMessage(ctx, Message{RoomID: f.home.ID, AuthorKind: "system", AuthorID: "system", Body: "alice joined"}); err != nil {
 		t.Fatal(err)
 	}
+	// A room whose newest message from a person has no text (it carries only an attachment) still has messages from people: the count says so, the preview is empty.
+	attachmentOnly, err := f.s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "pictures", CreatedBy: f.alice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.InsertMessage(ctx, Message{RoomID: attachmentOnly.ID, AuthorKind: "user", AuthorID: f.alice, Body: ""}); err != nil {
+		t.Fatal(err)
+	}
 	check := func(label string, list func() ([]Room, error)) {
 		t.Helper()
 		rooms, err := list()
@@ -73,12 +81,16 @@ func TestRoomPreviewSkipsSystemMessages(t *testing.T) {
 		for _, room := range rooms {
 			switch room.ID {
 			case f.other.ID:
-				if room.LastMessageBody != "what somebody said" {
-					t.Fatalf("%s: a room whose newest message is a notice shows %q", label, room.LastMessageBody)
+				if room.LastMessageBody != "what somebody said" || room.UserMessageCount != 1 {
+					t.Fatalf("%s: a room whose newest message is a notice shows %q (not notices %d)", label, room.LastMessageBody, room.UserMessageCount)
+				}
+			case attachmentOnly.ID:
+				if room.LastMessageBody != "" || room.UserMessageCount != 1 || room.MessageCount < 1 {
+					t.Fatalf("%s: a room whose only message from a person has no text shows %q (messages %d, not notices %d)", label, room.LastMessageBody, room.MessageCount, room.UserMessageCount)
 				}
 			case f.home.ID:
-				if room.LastMessageBody != "" || room.MessageCount == 0 {
-					t.Fatalf("%s: a room with only notices shows %q (messages %d)", label, room.LastMessageBody, room.MessageCount)
+				if room.LastMessageBody != "" || room.MessageCount == 0 || room.UserMessageCount != 0 {
+					t.Fatalf("%s: a room with only notices shows %q (messages %d, not notices %d)", label, room.LastMessageBody, room.MessageCount, room.UserMessageCount)
 				}
 			}
 		}

@@ -250,7 +250,7 @@ async function popup() {
     const facts = (await server.api(page, '/api/telemetry/settings')).body;
     assert.deepEqual([facts.traces_sample_rate, facts.max_db_spans], [1, 50], 'the defaults: every request, 50 database spans per request');
     assert.deepEqual(await page.evaluate(() => ({ rate: document.querySelector('#telemetry-sample-rate').textContent, db: document.querySelector('#telemetry-db-spans').textContent, files: document.querySelector('#telemetry-resource-spans').textContent, served: document.querySelector('#telemetry-static-files').textContent, inputs: document.querySelectorAll('#telemetry-facts input, #telemetry-facts button').length })),
-      { rate: '100% of server requests and of page loads. AIMEBU2_SENTRY_TRACES_SAMPLE_RATE changes it.', db: 'At most 50 per request; the rest are counted on the request, not traced.', files: 'Not traced: no span per script, stylesheet or image, and a page load keeps only its request and response phases.', served: 'Not traced: the scripts, styles and icons the server hands out are not requests of their own; the API and the pages are.', inputs: 0 }, 'the facts, read-only');
+      { rate: '100% of server requests and of page loads. A server setting changes it.', db: 'At most 50 per request; the rest are counted on the request, not traced.', files: 'Not traced: no span per script, stylesheet or image, and a page load keeps only its request and response phases.', served: 'Not traced: the scripts, styles and icons the server hands out are not requests of their own; the API and the pages are.', inputs: 0 }, 'the facts, read-only');
     // Closing Settings takes a clean section out of the page, and opening it again reads the settings again.
     await page.click('#settings-close');
     await page.waitForFunction(() => !document.querySelector('#settings-dialog').open && document.querySelector('#settings-telemetry').childElementCount === 0);
@@ -387,7 +387,7 @@ async function member() {
       };
     });
     assert.match(view.fingerprint, /^[0-9a-f]{16}$/);
-    assert.deepEqual({ ...view, fingerprint: undefined }, { fingerprint: undefined, readOnly: true, roll: true, rollLabel: 'Generate a new fingerprint', rollEnabled: true, sendName: true, sendNameEnabled: true, sendNameChecked: false,
+    assert.deepEqual({ ...view, fingerprint: undefined }, { fingerprint: undefined, readOnly: true, roll: true, rollLabel: 'Generate a new anonymous ID (the current one stops being used)', rollEnabled: true, sendName: true, sendNameEnabled: true, sendNameChecked: false,
       dsn: false, enabled: false, save: false, facts: false, rate: false, note: true }, 'a member sees their own fingerprint, the re-roll and the name switch, and none of the owner\'s controls');
     // Their own fingerprint is theirs: not the owner's, and a roll changes it.
     const owner = (await call('/api/me/telemetry')).body.fingerprint;

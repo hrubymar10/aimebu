@@ -1,16 +1,19 @@
-import { html, useState } from '../../ui.js';
+import { html, useState, useLayoutEffect, useRef } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
 import { GLOBAL_SCOPES, VIEW_LABELS, VIEW_OPTIONS, awaitsApproval, emptyText, offNotice, recordKey, recordMeta, recordScope, usageCount, usageRows, usageShare } from './model.js';
 
 // One record, as v1 draws it: a card that leads with the scope's badge and the key, then the grey line (version, author, date), the text, and Save, Delete.
 // A switched-off global record also has its activation button (v2 only), a text button like the others.
 function Record({ store, item, mode, names }) {
-  const scope = recordScope(item, mode), [edited, setEdited] = useState(false);
+  const scope = recordScope(item, mode), [edited, setEdited] = useState(false), box = useRef(null);
+  // The field is as tall as its text (up to a limit, then it scrolls): a record was cut off after three lines with the rest behind a nested scroll.
+  const fit = () => { const field = box.current; if (!field) return; field.style.height = 'auto'; field.style.height = `${Math.min(field.scrollHeight + 2, 360)}px`; };
+  useLayoutEffect(fit, [item.body, item._edit]);
   const when = item.updated_at ? new Date(item.updated_at).toLocaleDateString() : 'never';
   return html`<div class="memory-row knowledge-record" data-id=${item.id}>
     <div class="memory-row-header"><span class="memory-scope-badge">${VIEW_LABELS[scope] || scope}</span><code>${recordKey(item, mode, names)}</code><span class="memory-meta" title=${item.updated_at ? new Date(item.updated_at).toLocaleString() : ''}>${recordMeta(item, { mode, when })}</span></div>
-    <textarea class="memory-textarea" rows="3" maxlength="2000" aria-label=${`Record ${item.id}`} readOnly=${!item._edit} defaultValue=${item.body} onInput=${event => setEdited(event.currentTarget.value !== item.body)}></textarea>
-    ${item._edit && html`<div class="memory-row-actions"><button type="button" class="btn btn-sm knowledge-save" disabled=${!edited} onClick=${event => store.save(item, event.currentTarget.closest('.knowledge-record').querySelector('textarea').value)}>Save</button>
+    <textarea class="memory-textarea" ref=${box} rows="3" maxlength="2000" aria-label=${`Record ${item.id}`} readOnly=${!item._edit} defaultValue=${item.body} onInput=${event => { setEdited(event.currentTarget.value !== item.body); fit(); }}></textarea>
+    ${item._edit && html`<div class="memory-row-actions"><button type="button" class=${edited ? 'btn btn-sm btn-primary knowledge-save' : 'btn btn-sm knowledge-save'} disabled=${!edited} onClick=${event => store.save(item, event.currentTarget.closest('.knowledge-record').querySelector('textarea').value)}>Save</button>
       <button type="button" class="btn btn-sm btn-danger knowledge-delete" onClick=${() => store.remove(item)}>Delete</button>
       ${GLOBAL_SCOPES.includes(scope) && html`<button type="button" class="btn btn-sm knowledge-activation" onClick=${() => store.activate(item, !item.active)}>${item.active ? 'Deactivate' : awaitsApproval(item, scope) ? 'Approve for agents' : 'Activate for agents'}</button>`}</div>`}</div>`;
 }

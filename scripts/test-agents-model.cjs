@@ -67,7 +67,7 @@ assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'warm', sleeps_at: 'gar
 assert.equal(m.warmOf({ observed: 'idle', warm: { state: 'sleeping' } }, nowMs).text, 'Sleeping');
 assert.equal(m.warmOf({ observed: 'in_turn', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs), null);
 assert.equal(m.warmOf({ observed: 'idle' }, nowMs), null);
-assert.equal(m.activityOf({ observed: 'idle', warm: { state: 'sleeping' } }, state({ observed: 'idle' })).text, 'Sleeping', 'the card shows it where an idle agent has nothing else to say');
+assert.equal(m.activityOf({ observed: 'idle', warm: { state: 'sleeping' } }, state({ observed: 'idle' })).text, '', 'the idle status stays primary; sleep appears in process details');
 assert.equal(m.warmOf({ observed: 'idle', tool: 'codex', warm: { state: 'warm', sleeps_at: '2026-11-08T16:04:10Z' } }, nowMs).text, 'Warm · sleeps in 5 min', 'Codex follows the same reported warm state');
 assert.equal(m.warmOf({ observed: 'idle', tool: 'codex', warm: { state: 'sleeping' } }, nowMs).text, 'Sleeping');
 

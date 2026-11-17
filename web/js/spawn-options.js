@@ -9,7 +9,7 @@ export async function loadSpawnOptions(projectID = '') {
       const catalog = await request(`/api/spawn-catalog?machine_id=${encodeURIComponent(machine.id)}`);
       return (catalog.tools || []).flatMap(tool => (tool.models || []).filter(model => tool.launcher_id && model.id).map(model => ({
         launcher_id: tool.launcher_id, model: model.id,
-        label: `${machine.name} · ${tool.label} · ${model.label || model.id}`,
+        label: `${tool.label} · ${model.label || model.id} — ${machine.name}`,
       })));
     } catch { return []; }
   }));

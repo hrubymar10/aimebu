@@ -52,7 +52,7 @@ export function TeamFlowSettings({ flow, canEdit, project }) {
       <p class="settings-desc">Choose who coordinates work. Switching keeps the leader and your rooms and messages; other agents are kept, added, or hand off and stop.</p>
       ${flow.loading.value && html`<p role="status">Loading team flows…</p>`}
       ${state && html`<p class="team-flow-current">Current: <strong>${current ? `${flowLetter(templates, current.key)} · ${current.label}` : 'Not chosen'}</strong>${state.review_pending ? ' · Setup needs review' : ''}</p>`}
-      ${!open && state?.conflicts?.length > 0 && html`<div class="team-flow-preview"><div class="team-flow-change-group"><strong>Agents needing action</strong><ul>${state.conflicts.map((item, index) => html`<li key=${index}>${conflictName(item)} in ${item.room_title || 'a room'}: ${item.reason}</li>`)}</ul></div></div>`}
+      ${!open && state?.conflicts?.length > 0 && html`<div class="team-flow-preview team-flow-warning" role="alert"><div class="team-flow-change-group"><strong>⚠ Agents needing action</strong><ul>${state.conflicts.map((item, index) => html`<li key=${index}>${conflictName(item)} in ${item.room_title || 'a room'}: ${item.reason} <button type="button" class="btn" onClick=${show}>Review in wizard</button></li>`)}</ul></div></div>`}
       ${!open && html`<button type="button" class="btn btn-primary" disabled=${!canEdit || !state} onClick=${show}>Change team flow</button>`}
       ${open && createPortal(html`
         <header class="team-flow-modal-header"><button type="button" class="btn team-flow-modal-close" onClick=${dismiss}>Back to settings</button></header>

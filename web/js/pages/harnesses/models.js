@@ -170,11 +170,10 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
                   aria-label=${model.default ? `${model.label || model.slug} is the default model` : `Make ${model.label || model.slug} the default`}
                   onChange=${() => edit(list => setDefaultModel(list, model.slug))}
                 />
-                <svg class="harness-model-star" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/star.svg#star" /></svg>
                 <span class="harness-model-default-text">${model.default ? 'Default' : ''}</span>
               </label>
               <code class="harness-model-slug">${model.slug}</code>
-              <${IconButton} name="trash" label=${`Remove ${model.slug}`} danger className="harness-model-remove" onClick=${() => edit(list => removeModel(list, model.slug))} />
+              <${IconButton} name="trash" label=${model.default && models.length > 1 ? `${model.slug} is the default model: make another one the default before removing it` : `Remove ${model.slug}`} danger className="harness-model-remove" disabled=${model.default && models.length > 1} onClick=${() => edit(list => removeModel(list, model.slug))} />
             </div>
             <div class="harness-detail-fields">
               <input

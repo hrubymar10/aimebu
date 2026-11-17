@@ -83,7 +83,7 @@ export class UsagesPopover {
     const groups = providers.map(provider => ({ provider, profiles: provider.profiles?.length ? provider.profiles : [{ profile_name: 'local', active: true }] }));
     // One alert for all the tools whose refresh is paused, in plain words, with the reasons folded away: the box was most of the first screen.
     const alerts = mergeAlerts(usage?.credential_alerts).map(alert => {
-      const node = element('div', 'usages-credential-alert'); node.append(element('p', '', alert.text));
+      const node = element('div', `usages-credential-alert usages-credential-alert-${String(alert.kind || '').replace(/[^a-z_]/g, '')}`); node.append(element('p', '', alert.text));
       if (alert.details.length) { const more = element('details', ''); more.append(element('summary', '', 'Details'), ...alert.details.map(line => element('p', '', line))); node.append(more); }
       return node;
     });
@@ -125,6 +125,7 @@ export class UsagesPopover {
     if (badge) head.append(badge);
     if (this.canSwitch(tool) && !profile.active) head.append(this.switchPill(tool, profile));
     if (profile.active) head.append(element('span', 'usage-profile-active switcher-tile-active', 'Active'));
+    else head.append(element('span', 'usage-profile-inactive', 'Inactive')); // said in words, not only by the colour of the card's edge
     if (profile.plan) head.append(element('span', 'usage-profile-plan switcher-tile-plan', profile.plan));
     node.append(head);
     const windows = profile.windows || [];

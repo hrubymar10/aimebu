@@ -74,13 +74,13 @@ async function main() {
     const typeInto = async (selector, text) => { await page.$eval(selector, (input, text) => { input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })); }, text); await settle(); };
     const sectionNodes = name => page.evaluate(id => document.querySelector(id)?.getElementsByTagName('*').length || 0, `#settings-${name}`);
     await open('general');
-    const savedWindow = await page.$eval('#message-expiry-seconds', input => input.value);
-    await typeInto('#message-expiry-seconds', '4321');
+    const savedWindow = await page.$eval('#message-expiry-amount', input => input.value);
+    await typeInto('#message-expiry-amount', '4321');
     await close();
     assert.ok(await sectionNodes('general') > 0, 'General keeps its page while a message-expiry window is typed and not saved');
     await open('general');
-    assert.equal(await page.$eval('#message-expiry-seconds', input => input.value), '4321', 'the typed window is still there on the next open');
-    await typeInto('#message-expiry-seconds', savedWindow); // back to what is saved: nothing is unsaved any more
+    assert.equal(await page.$eval('#message-expiry-amount', input => input.value), '4321', 'the typed window is still there on the next open');
+    await typeInto('#message-expiry-amount', savedWindow); // back to what is saved: nothing is unsaved any more
     await close();
     assert.equal(await sectionNodes('general'), 0, 'General is released again once the typed window equals the saved one');
     await open('usages');

@@ -11,6 +11,7 @@ export function MacroForm({ state, keyRef, onSave, onCancel, onDirty }) {
   useDirty(onDirty, 'macro-form', formDirty(form, editing, state.macros.value));
   const set = (name, value) => { state.form.value = { ...state.form.peek(), [name]: value }; };
   return html`<form id="macro-editor" hidden=${!state.canEdit.value} onSubmit=${event => { event.preventDefault(); onSave(); }}>
+    <h3>${editing ? 'Edit macro' : 'New macro'}</h3>
     <${SettingsGroup} label="Macro">
       <${SettingsRow} label="Key" desc=${KEY_DESC} id="macro-key">
         <input class="settings-text-input" name="key" required placeholder="greeting" ref=${keyRef} disabled=${busy} value=${form.key} onInput=${event => set('key', event.currentTarget.value)} />

@@ -113,7 +113,7 @@ class EmojiPicker {
   columnsFor() { return Math.max(1, Math.floor((this.canvas.clientWidth || 328) / this.metrics().cell)); }
 
   // Lays the entries out as rows: a heading per block, then lines of `cols` cells. `reset` goes back to the top and the first cell.
-  layout(reset) {
+  layout(reset, again = false) {
     const db = this.db; if (!db) return;
     this.query = this.search.value.trim();
     let blocks;
@@ -137,6 +137,8 @@ class EmojiPicker {
     }
     this.rows = rows; this.entries = entries; this.blocks = tops;
     this.canvas.replaceChildren(); this.live.clear(); this.canvas.style.height = `${top}px`; this.grid.setAttribute('aria-rowcount', String(rows.length));
+    // The rows made the grid scroll, and a classic scrollbar takes its width from the canvas: a column counted without it would be cut in half under it. Lay out once more with it.
+    if (!again && this.sizeKey() !== this.laidOut) { this.layout(reset, true); return; }
     if (reset) { this.grid.scrollTop = 0; this.focused = 0; this.previewEntry(null); } else this.focused = Math.min(this.focused, Math.max(0, entries.length - 1));
     this.render(); this.syncTabs();
   }

@@ -118,14 +118,26 @@ func (s *Store) RoomMembersOf(ctx context.Context, room Room) (RoomMembers, erro
 		return out, nil // a private chat has no roles to show
 	}
 
+	// Built-in flows show vacant core roles only. A held singleton remains
+	// visible even when it falls outside the selected flow.
+	coreByFlow := make(map[string]map[string]bool)
+	for _, flow := range TeamFlowTemplates() {
+		if flow.Key == "custom" {
+			continue
+		}
+		coreByFlow[flow.Key] = make(map[string]bool, len(flow.CoreRoles))
+		for _, key := range flow.CoreRoles {
+			coreByFlow[flow.Key][key] = true
+		}
+	}
 	// The holder is the same "occupied" rule spawn applies: the first live agent of that role in the project.
-	rows, err = s.db.QueryContext(ctx, `SELECT r.role_key,r.label,r.emoji,h.id,h.slug,
+	rows, err = s.db.QueryContext(ctx, `SELECT r.role_key,r.label,r.emoji,h.id,h.slug,p.team_flow_key,
 		EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=? AND m.member_kind='agent' AND m.member_id=h.id AND m.left_at IS NULL)
-		FROM role r LEFT JOIN agent h ON h.id=(SELECT a.id FROM agent a JOIN role ar ON ar.id=a.role_id
+		FROM role r JOIN project p ON p.id=? LEFT JOIN agent h ON h.id=(SELECT a.id FROM agent a JOIN role ar ON ar.id=a.role_id
 			WHERE a.project_id=? AND ar.role_key=r.role_key AND a.revoked_at IS NULL AND (a.desired!='stopped' OR a.observed!='stopped')
 			ORDER BY a.created_at,a.id LIMIT 1)
 		WHERE r.cardinality='singleton' AND r.deleted_at IS NULL
-		ORDER BY r.label,r.role_key`, roomID, projectID)
+		ORDER BY r.label,r.role_key`, roomID, projectID, projectID)
 	if err != nil {
 		return RoomMembers{}, err
 	}
@@ -133,9 +145,13 @@ func (s *Store) RoomMembersOf(ctx context.Context, room Room) (RoomMembers, erro
 	for rows.Next() {
 		var singleton RoomSingleton
 		var holderID, holderSlug sql.NullString
+		var flowKey string
 		var inRoom bool
-		if err := rows.Scan(&singleton.RoleKey, &singleton.Label, &singleton.Emoji, &holderID, &holderSlug, &inRoom); err != nil {
+		if err := rows.Scan(&singleton.RoleKey, &singleton.Label, &singleton.Emoji, &holderID, &holderSlug, &flowKey, &inRoom); err != nil {
 			return RoomMembers{}, err
+		}
+		if core, builtIn := coreByFlow[flowKey]; builtIn && !core[singleton.RoleKey] && !holderID.Valid {
+			continue
 		}
 		if holderID.Valid {
 			singleton.HeldBy = &RoomSingletonHolder{AgentID: holderID.String, Slug: holderSlug.String, InThisRoom: inRoom}

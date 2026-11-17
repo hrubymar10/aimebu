@@ -183,7 +183,7 @@ export class Chat {
   setSetupPending(pending) {
     this.setupPending = !!pending;
     this.form.inert = this.setupPending;
-    const placeholder = this.setupPending ? 'Finish the project setup to start chatting' : 'Message';
+    const placeholder = this.setupPending ? 'Finish setup to chat' : 'Message';
     this.draft.placeholder = placeholder; this.formatting.setPlaceholder(placeholder);
     if (this.room) this.setRoomFacts(this.room);
   }

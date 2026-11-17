@@ -122,7 +122,7 @@ async function main() {
       await page.evaluate(() => window.__refreshed);
       assert.deepEqual(await badge(page), ['0', true, 'All agents healthy', 'Health', false, 'false', 'dialog']);
       assert.deepEqual(await page.evaluate(() => { const p = document.querySelector('#health-popover'); return [p.getAttribute('role'), p.getAttribute('aria-label'), p.hidden, [...p.querySelectorAll('.health-limit')].map(n => n.dataset.tool + ':' + n.dataset.state)]; }), ['dialog', 'Health', true, ['claude:ok', 'codex:ok']]);
-      assert.equal(await page.$eval('#health-popover > p:last-child', el => el.textContent), 'All agents healthy');
+      assert.equal(await page.$eval('#health-popover > p.health-ok', el => el.textContent), 'No agent needs attention');
       await open(page);
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#health-toggle').getAttribute('aria-expanded'), document.activeElement.id]), ['true', 'health-popover']);
       await page.keyboard.press('Escape');
@@ -136,6 +136,8 @@ async function main() {
       await page.waitForSelector('#health-popover .health-limit');
       assert.deepEqual(await page.$$eval('#health-popover .health-limit', nodes => nodes.map(node => [node.querySelector('.health-limit-text').textContent, node.querySelector('.health-limit-fill').style.width, [...node.querySelectorAll('.health-limit-tick')].map(t => t.style.left)])),
         [['Claude (local) has 4% left of its weekly window: new turns are held, running ones finish.', '4%', ['5%', '1%']], ['Codex (main) has 60% left of its session window.', '60%', ['2%', '1%']]]);
+      // The two marks of a limit bar are told apart (colour and height), so they do not read as one when the thresholds are close.
+      assert.deepEqual(await page.$$eval('#health-popover .health-limit-bar', bars => bars.map(bar => { const soft = bar.querySelector('[data-mark=soft]'), hard = bar.querySelector('[data-mark=hard]'); return [getComputedStyle(soft).backgroundColor !== getComputedStyle(hard).backgroundColor, hard.getBoundingClientRect().height > soft.getBoundingClientRect().height]; })).then(list => [...new Set(list.map(String))]), ['true,true'], 'the soft and hard marks differ in colour and height');
       assert.ok((await page.$eval('.health-limit-legend', el => el.textContent)).includes('two marks'), 'the marks are explained');
       await page.close();
     }
@@ -151,7 +153,7 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => window.__sidebar.health), ['a1', 'a2']);
       assert.deepEqual(await page.$$eval('#health-popover .health-limit', nodes => nodes.map(node => [node.dataset.tool, node.dataset.state, node.querySelector('.health-limit-text').textContent, node.querySelector('.health-limit-fill').style.width, [...node.querySelectorAll('.health-limit-tick')].map(t => t.style.left)])),
         [['claude', 'soft', 'Claude (local) is at 96% of its weekly window: new turns are held, running ones finish.', '96%', ['95%', '99%']], ['codex', 'ok', 'Codex (main) is at 40% of its session window.', '40%', ['98%', '99%']]]);
-      assert.deepEqual(await page.$$eval('#health-popover > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase())), ['health-disk', 'health-limits', 'row-btn health-item', 'row-btn health-item', 'row-btn health-item']);
+      assert.deepEqual(await page.$$eval('#health-popover > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase())), ['health-title', 'health-disk', 'health-limits', 'row-btn health-item', 'row-btn health-item', 'row-btn health-item']);
       await page.close();
     }
     // An entry closes the list and goes to its Inbox item; one without an item (or a flag the Inbox does not hold) opens the agent's room.
@@ -216,7 +218,7 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => ({ head: document.querySelector('.health-disk-head').textContent, projects: [...document.querySelectorAll('.health-disk-projects li')].map(li => [li.dataset.project, li.querySelector('.health-disk-name').textContent, li.querySelector('.health-disk-size').textContent, li.title]),
         kinds: [...document.querySelectorAll('.health-disk-kinds li')].map(li => li.textContent), trees: [...document.querySelectorAll('.health-disk-worktrees li')].map(li => [li.dataset.state, li.textContent, li.title]), foot: document.querySelector('.health-disk-foot').textContent, label: document.querySelector('#health-disk').getAttribute('aria-label'),
         settings: [document.querySelector('#cleanup-enabled').checked, document.querySelector('#cleanup-hour').value, document.querySelector('#cleanup-attachment-days').value] })),
-        { head: 'Disk4.00 KBClean now', projects: [['p1', 'Alpha', '2.93 KB', 'Attachments 1000 B · Worktrees 1.95 KB'], ['', 'Other', '1.07 KB', 'Database, sounds, logs and anything that belongs to no project']], kinds: ['Attachments1000 B'], trees: [['dirty', 'taskUncommitted work (3 files)1.95 KB', '/tmp/w/task']],
+        { head: 'Disk4.00 KBClean up old data', projects: [['p1', 'Alpha', '2.93 KB', 'Attachments 1000 B · Worktrees 1.95 KB'], ['', 'Other', '1.07 KB', 'Database, sounds, logs and anything that belongs to no project']], kinds: ['Attachments1000 B'], trees: [['dirty', 'taskUncommitted work (3 files)1.95 KB', '/tmp/w/task']],
           foot: '5.00 GB free of 100 GB. No cleanup has removed anything yet.', label: 'Disk usage', settings: [true, '4', '90'] });
       const cols = await page.$$eval('.health-disk-projects li', rows => rows.map(li => ['.health-disk-bar', '.health-disk-size'].map(sel => Math.round(li.querySelector(sel).getBoundingClientRect().left))));
       assert.ok(cols.length === 2 && cols.every(c => c[0] === cols[0][0] && c[1] === cols[0][1]), `bar and value columns line up: ${JSON.stringify(cols)}`);
@@ -306,7 +308,7 @@ async function main() {
       const page = await mount({ auto: answerAll({ 'GET /api/health': { status: 500, body: { message: 'down' } } }) });
       await open(page);
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => [!!document.querySelector('#health-disk'), [...document.querySelectorAll('#health-popover > *')].map(node => node.tagName.toLowerCase() + (node.className ? `.${node.className}` : '')), document.querySelector('#health-popover').textContent.includes('All agents healthy')]), [true, ['section.health-disk', 'div.health-limits', 'p'], true]);
+      assert.deepEqual(await page.evaluate(() => [!!document.querySelector('#health-disk'), [...document.querySelectorAll('#health-popover > *')].map(node => node.tagName.toLowerCase() + (node.className ? `.${node.className}` : '')), document.querySelector('#health-popover').textContent.includes('No agent needs attention')]), [true, ['header.health-title', 'p.health-ok', 'section.health-disk', 'div.health-limits'], true]);
       await page.close();
     }
     // A panel destroyed while a read or a write is held sends nothing more and draws nothing.

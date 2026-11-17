@@ -28,7 +28,7 @@ export class RoomPanel {
     this.store = new RoomPanelStore(host);
     this.worktreeSection = section('room-worktree'); this.notesSection = section('room-notes', 'room-notes-title'); this.memorySection = section('room-memory-setting');
     const error = document.querySelector('#room-info-error');
-    error.before(this.worktreeSection, this.notesSection, this.memorySection);
+    this.projectSection.before(document.querySelector('#room-usage'), this.worktreeSection, this.notesSection, this.memorySection);
     const mount = (container, view) => { container.replaceChildren(); return mountPreactPage(container, view); };
     const store = this.store;
     this.roots = [
@@ -63,9 +63,17 @@ export class RoomPanel {
     return effect(() => {
       this.store.version.value;
       const room = this.store.room.value;
-      if (!room) { title.textContent = 'Choose a room'; icon.hidden = true; members.hidden = true; crumbs.replaceChildren(); crumbs.hidden = true; return; }
+      if (!room) { title.textContent = 'Choose a room'; document.querySelector('#room-restricted')?.setAttribute('hidden', ''); icon.hidden = true; members.hidden = true; crumbs.replaceChildren(); crumbs.hidden = true; return; }
       this.crumbs(crumbs, room);
       title.textContent = room.title; // a rename by someone else reaches here through the room list
+      // A restricted room says so beside its title (the sidebar row has the same lock): the header is where a person looks to know who can read this.
+      let lock = document.querySelector('#room-restricted');
+      if (!lock) {
+        lock = document.createElement('span'); lock.id = 'room-restricted'; lock.className = 'room-restricted'; lock.setAttribute('role', 'img'); lock.title = 'Restricted room'; lock.setAttribute('aria-label', 'Restricted room');
+        lock.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg>';
+        title.after(lock);
+      }
+      lock.hidden = !room.restricted;
       const count = room.member_count || 0, status = headerStatus(room, !!this.chat.projectArchived?.(room.project_id));
       icon.textContent = kindIcon(room); icon.classList.toggle('dm', room.kind === 'dm'); icon.hidden = false;
       members.querySelector('.room-members-count').textContent = String(count);
@@ -109,6 +117,8 @@ export class RoomPanel {
     this.store.open(renamable);
     this.notifySettings.render();
     const home = room.kind === 'home';
+    document.querySelector('#room-info-title').textContent = home ? 'Project settings' : 'Room settings';
+    document.querySelector('#room-info-close').setAttribute('aria-label', home ? 'Close project settings' : 'Close room settings');
     this.infoDialog.classList.toggle('room-info-home', home);
     this.projectSection.hidden = !home || !this.chat.projectSettings;
     this.infoDialog.showModal();

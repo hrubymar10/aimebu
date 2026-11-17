@@ -28,7 +28,7 @@ func TestRoleSpawnDefaultsInheritOverrideAndCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	global, err := s.RoleSpawnDefaults(ctx, project.ID, role.Key)
-	if err != nil || !global.Inherited || len(global.DefaultAgents) != 2 || global.DefaultAgents[0] != a {
+	if err != nil || !global.Inherited || global.RoleLabel != "Planner" || len(global.DefaultAgents) != 2 || global.DefaultAgents[0] != a {
 		t.Fatalf("global: %+v %v", global, err)
 	}
 	if err := s.Tx(ctx, func(tx *Tx) error { return tx.AdvanceRoleSpawnCursor(project.ID, role.ID, 0, 1) }); err != nil {

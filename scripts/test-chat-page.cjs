@@ -561,10 +561,9 @@ async function main() {
       const text = system.querySelector('.chat-msg-system-row').firstElementChild, words = text.textContent; text.textContent = 'ian looks offline';
       const onSystem = strip(system).getBoundingClientRect(), onOther = strip(other).getBoundingClientRect();
       const list = document.querySelector('#messages'), cs = getComputedStyle(list), box = list.getBoundingClientRect(), row = system.querySelector('.chat-msg-system-row').getBoundingClientRect();
-      const middle = box.left + parseFloat(cs.paddingLeft) + (list.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) / 2;
       document.querySelectorAll('#messages .message-receipts').forEach(node => node.remove()); text.textContent = words;
-      return { sameRight: Math.abs(onSystem.right - onOther.right) <= 1, rowCentred: Math.abs((row.left + row.right) / 2 - middle) <= 2 };
-    }), { sameRight: true, rowCentred: true }, 'a receipt after a system line is right-aligned with the ones after other messages, and the line itself stays centred');
+      return { sameRight: Math.abs(onSystem.right - onOther.right) <= 1, rowLeft: Math.abs(row.left - (box.left + parseFloat(cs.paddingLeft))) <= 2, style: getComputedStyle(system.querySelector('.chat-msg-system-row')).fontStyle };
+    }), { sameRight: true, rowLeft: true, style: 'normal' }, 'a receipt after a system line is right-aligned with the ones after other messages, and the line itself is a left-aligned non-italic line');
     await page.close();
   }
 
@@ -780,6 +779,9 @@ async function main() {
     });
     await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m120] .answer-chosen')?.textContent.includes('beta'));
     assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-chosen', button => button.disabled && button.title === 'Chosen answer'), true, 'the selected proposed answer stays visible and disabled');
+    // A resolved answer reads as a result, not as a control: "Answered:" and the bold choice, with no button frame and no dimming.
+    assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-history', box => { const chosen = box.querySelector('.answer-chosen'), style = getComputedStyle(chosen); return [box.querySelector('.answer-history-label')?.textContent, style.borderTopStyle, style.opacity, style.fontWeight, style.backgroundColor]; }),
+      ['Answered:', 'none', '1', '700', 'rgba(0, 0, 0, 0)'], 'the resolved answer is plain text at full contrast');
     await page.close();
   }
 
@@ -1124,8 +1126,13 @@ async function main() {
       assert.equal(await page.$eval(`[data-message-id=${id}]`, row => {
         const bubble = row.querySelector('.chat-msg-bubble').getBoundingClientRect();
         const actions = row.querySelector('.message-actions').getBoundingClientRect();
-        return Math.abs(bubble.right - actions.right - 6) < 2;
-      }), true, `message actions sit at the bubble's top-right for ${id}`);
+        // What the sender line actually draws (its box spans the column): the extent of its visible children.
+        const parts = [...row.querySelectorAll('.chat-msg-header *')].map(node => node.getBoundingClientRect()).filter(box => box.width > 0 && box.height > 0);
+        const header = { left: Math.min(...parts.map(box => box.left)), right: Math.max(...parts.map(box => box.right)), top: Math.min(...parts.map(box => box.top)), bottom: Math.max(...parts.map(box => box.bottom)) };
+        const clear = actions.right <= header.left + 1 || actions.left >= header.right - 1 || actions.bottom <= header.top + 1 || actions.top >= header.bottom - 1;
+        // Someone else's toolbar is at the bubble's top-right; the viewer's own, whose sender line is at the right, is beside the bubble on its left; neither covers the sender line.
+        return (row.classList.contains('self') ? Math.abs(bubble.left - actions.right - 6) < 2 : Math.abs(bubble.right - actions.right - 6) < 2) && clear ? true : JSON.stringify({ self: row.classList.contains('self'), bubble, actions, header });
+      }), true, `message actions sit clear of the sender line for ${id}`);
     }
     await hover(page, '[data-message-id=rm_a_m120] .chat-msg-bubble');
     await page.evaluate(() => { const bar = document.querySelector('[data-message-id=rm_a_m120] .message-actions'); window.__buttons = [...bar.querySelectorAll('button')].filter(button => !button.closest('[hidden]')).map(button => button.getAttribute('aria-label')); bar.querySelector('button').focus(); });
@@ -1451,9 +1458,8 @@ async function main() {
     const page = await panelRoom();
     await page.evaluate(() => { window.__hidden = []; window.__chat.setRoomPreference = async (room, field, value) => { window.__hidden.push([room.id, field, value]); return true; }; window.__chat.showRoomInfo(); });
     await settle(page);
-    // The pane starts where the top bar ends instead of covering it, and Hide room is a button that says what it is (an icon and its name), with a tooltip.
-    // (This page has no laid-out top bar; the app's is 43px high on a desktop, which is where the pane starts.)
-    assert.deepEqual(await page.evaluate(() => { const pane = document.querySelector('#room-info-dialog').getBoundingClientRect(); return [Math.round(pane.top), Math.round(pane.bottom) === innerHeight]; }), [43, true], 'the room settings pane starts below the 53px top bar and ends at the bottom of the window');
+    // The pane is inset on a desktop (24px above and below, never under the top bar or off the bottom), and Hide room is a button that says what it is (an icon and its name), with a tooltip.
+    assert.deepEqual(await page.evaluate(() => { const pane = document.querySelector('#room-info-dialog').getBoundingClientRect(); return [Math.round(pane.top), Math.round(innerHeight - pane.bottom)]; }), [24, 24], 'the room settings pane is inset 24px from the top and the bottom of the window');
     assert.deepEqual(await page.$eval('#room-hide', el => [el.textContent.trim(), !!el.querySelector('.icon-mask-eye-off'), el.title.length > 10, el.classList.contains('btn-icon')]), ['Hide room', true, true, false]);
     await page.$eval('#room-hide', node => node.click()); await settle(page);
     assert.deepEqual(await page.evaluate(() => [window.__hidden, document.querySelector('#room-info-dialog').open, document.querySelector('#room-hide').disabled]), [[['rm_a', 'hidden', true]], false, false]);
@@ -1571,6 +1577,12 @@ async function main() {
       const state = await header(page);
       assert.deepEqual([state.title, ...state.icon, state.count, state.status, state.label, state.tooltip, state.hidden], [extra.title || 'rm_a', expected[0], expected[1], expected[2], String(extra.member_count ?? 2), expected[4], expected[3], expected[3], false]);
     }
+    // A restricted room shows a lock beside its title, and an open one does not.
+    const lock = () => page.evaluate(() => { const node = document.querySelector('#room-restricted'); return node && [node.hidden, node.title, node.previousElementSibling.id]; });
+    await openRoom(page, 'rm_a', { restricted: true }); await opened(page); await settle(page);
+    assert.deepEqual(await lock(), [false, 'Restricted room', 'room-title'], 'the header of a restricted room carries a lock beside the title');
+    await openRoom(page, 'rm_a', {}); await opened(page); await settle(page);
+    assert.equal((await lock())[0], true, 'an unrestricted room has no lock');
     await page.evaluate(() => { window.__chat.projectArchived = () => true; window.__chat.setRoomFacts(window.__chat.room); }); await settle(page);
     assert.equal((await header(page)).status, 'Project archived');
     await page.evaluate(() => { window.__chat.room.title = 'renamed elsewhere'; window.__chat.setRoomFacts(window.__chat.room); }); await settle(page);
@@ -1598,7 +1610,7 @@ async function main() {
     };
     let page = await show({});
     let state = await dialog(page);
-    assert.deepEqual([state.open, state.rename, state.facts, state.debug], [true, [true, 'rm_a'], ['Kind', 'task', 'Status', 'open', 'Members', '2', 'Room ID', 'rm_a'], 4], 'an owner renames the task room in its own field');
+    assert.deepEqual([state.open, state.rename, state.facts, state.debug], [true, [true, 'rm_a'], ['Kind', 'Task room', 'Status', 'Open', 'Members', '2', 'Room ID', 'rm_a'], 4], 'an owner renames the task room in its own field');
     assert.deepEqual([state.lifecycle, state.leave.shown, state.remove, state.hide], [{ shown: true, disabled: false, label: 'Archive room', title: 'Archive room' }, false, { shown: true, disabled: false, label: 'Delete room', title: 'Delete this room and its messages for good' }, true]);
     assert.deepEqual([state.notes, state.worktree.shown, state.memory.shown], [{ shown: true, text: 'Task notes Notes the agents keep for this task. They stay with this room. Open task notes' }, true, true]);
     await page.$eval('#room-info-close', node => node.click());

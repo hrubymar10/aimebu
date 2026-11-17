@@ -174,9 +174,11 @@ async function main() {
     await page.$eval(claudeSave, save => save.click());
     await saved('Haiku edited');
     assert.deepEqual(await claudeModels(), [['opus', 'Opus', 'Deep work', false], ['sonnet', 'Sonnet', 'Everyday', true], ['haiku', 'Haiku edited', 'edited note', false]], 'the edited labels, notes and default are saved');
-    await page.$eval(`${row('sonnet')} .harness-model-remove`, button => button.click());
-    assert.deepEqual(await page.$$eval(`#harnesses-list .machine-harness[data-harness-id="${seed.claude.id}"] .harness-detail-row`, rows => rows.map(item => item.dataset.slug)), ['opus', 'haiku'], 'removing a model drops its row');
-    assert.equal(await page.$eval(`${row('opus')} input[type=radio]`, el => el.checked), true, 'removing the default makes the first model the default');
+    // The default model's trash is off while others exist (make another one the default first); a model that is not the default is removed.
+    assert.equal(await page.$eval(`${row('sonnet')} .harness-model-remove`, button => button.disabled), true, 'the default model cannot be removed while others exist');
+    await page.$eval(`${row('haiku')} .harness-model-remove`, button => button.click());
+    assert.deepEqual(await page.$$eval(`#harnesses-list .machine-harness[data-harness-id="${seed.claude.id}"] .harness-detail-row`, rows => rows.map(item => item.dataset.slug)), ['sonnet', 'opus'], 'removing a model drops its row');
+    assert.equal(await page.$eval(`${row('sonnet')} input[type=radio]`, el => el.checked), true, 'the default stays the default');
     // An unsaved removal is not stored: after a reload the model is back. Then put the labels back as they were.
     await page.reload(); await page.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: 90000 });
     await openHarnesses();

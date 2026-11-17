@@ -118,6 +118,9 @@ async function main() {
     assert.deepEqual(state.tools, [['Codex', false], ['Claude Code', false], ['Pi — not installed; check Settings → Harnesses', true]]);
     assert.deepEqual([state.tool, state.model, state.version, state.name, state.submit, state.machine], ['Codex', 'gpt-6-sol', 'CLI version 0.9', 'nova', false, 'm1']);
     assert.deepEqual(state.models, [['gpt-6-sol', 'GPT-6 Sol', ''], ['gpt-6-mini', 'GPT-6 Mini', '']]);
+    // The flow hint is a helper line (not amber), and the model's filter and list are one joined control.
+    assert.deepEqual(await page.evaluate(() => { const hint = document.querySelector('#spawn-flow-hint'), orange = (() => { const probe = document.createElement('i'); probe.style.color = 'var(--orange)'; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color; })(), filter = document.querySelector('#spawn-model-filter').getBoundingClientRect(), select = document.querySelector('#spawn-model').getBoundingClientRect();
+      return [!hint || hint.hidden || getComputedStyle(hint).color !== orange, Math.abs(select.top - filter.bottom) <= 1.5]; }), [true, true], 'the flow hint is not amber, and the model field and list touch');
     await page.$eval('#spawn-model-filter', node => { node.value = 'mini'; node.dispatchEvent(new Event('input', { bubbles: true })); });
     await page.waitForFunction(() => document.querySelector('#spawn-form .model-picker-count').textContent === '1 matching model');
     assert.deepEqual((await form(page)).models.map(model => model[0]), ['gpt-6-sol', 'gpt-6-mini'], 'the selected model stays visible until another is picked');

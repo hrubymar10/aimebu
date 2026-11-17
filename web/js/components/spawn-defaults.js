@@ -30,7 +30,7 @@ export function SpawnDefaults({ items, mode, options, onChange }) {
         <label class="settings-label" for=${`${id}-${index}`}>${name}</label>
         <span class="settings-desc" id=${`${id}-${index}-desc`}>${description}</span>
       </div>
-      ${control}${extra}
+      ${control}${extra.length > 0 && html`<div class="spawn-default-actions">${extra}</div>`}
     </div>`;
   return html`<section class="settings-subsection spawn-defaults" ref=${root}>
     <h4>Default agents</h4>

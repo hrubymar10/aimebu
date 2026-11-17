@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -194,6 +195,60 @@ func TestRoomMembersSingletonHolders(t *testing.T) {
 		if singleton.RoleKey == "planner" && (singleton.HeldBy == nil || !singleton.HeldBy.InThisRoom) {
 			t.Fatalf("planner from its own room: %+v", singleton)
 		}
+	}
+}
+
+func TestRoomMembersShowsOnlySingletonsUsedByBuiltInFlow(t *testing.T) {
+	t.Parallel()
+	f := newMembersFixture(t)
+	for _, flow := range TeamFlowTemplates() {
+		if _, err := f.s.db.Exec(`UPDATE project SET team_flow_key=? WHERE id=?`, flow.Key, f.project.ID); err != nil {
+			t.Fatal(err)
+		}
+		got := f.members(t, f.home)
+		keys := make([]string, 0, len(got.Singletons))
+		for _, role := range got.Singletons {
+			keys = append(keys, role.RoleKey)
+		}
+		want := append([]string(nil), flow.CoreRoles...)
+		if flow.Key == "custom" {
+			want = nil
+			rows, err := f.s.db.Query(`SELECT role_key FROM role WHERE cardinality='singleton' AND deleted_at IS NULL ORDER BY label,role_key`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var key string
+				if err := rows.Scan(&key); err != nil {
+					rows.Close()
+					t.Fatal(err)
+				}
+				want = append(want, key)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			if err := rows.Close(); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			sort.Strings(want)
+		}
+		if !reflect.DeepEqual(keys, want) {
+			t.Fatalf("%s: singleton roles = %v, want %v", flow.Key, keys, want)
+		}
+	}
+	if _, err := f.s.db.Exec(`UPDATE project SET team_flow_key='leader-advisor' WHERE id=?`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.agent(t, "advisorflow", "role_advisor_default", nil)
+	if _, err := f.s.db.Exec(`UPDATE project SET team_flow_key='leader-workers' WHERE id=?`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := f.members(t, f.home)
+	if len(got.Singletons) != 2 || got.Singletons[0].RoleKey != "advisor" || got.Singletons[0].HeldBy == nil || got.Singletons[1].RoleKey != "leader" {
+		t.Fatalf("held singleton outside the core flow disappeared: %+v", got.Singletons)
 	}
 }
 

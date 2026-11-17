@@ -138,6 +138,8 @@ async function main() {
       assert.equal(await saveOff(), false, 'an edit can be saved');
       await type(page, 'tail', original);
       assert.equal(await saveOff(), true, 'the original text is nothing to save');
+      await type(page, 'tail', 'tail shipped');
+      assert.equal(await saveOff(), true, 'the shipped text with no override of its own is nothing to save either');
       assert.equal(await page.$eval('#prompt-inline-plan', el => !el.closest('.settings-group, section, fieldset')?.querySelector('#prompt-scope')), true, 'Inline plans is not in the Scope card');
       await type(page, 'tail', 'KEEP ME');
       const box = await page.$('#prompt-tail');

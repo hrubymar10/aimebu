@@ -24,7 +24,9 @@ func (s *Store) ProjectsForUser(ctx context.Context, userID string) ([]Project, 
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.readDB.QueryContext(ctx, `SELECT p.id,p.name,p.folder,COALESCE(p.repo_url,''),m.role,COALESCE(p.archived_at,'')
+	rows, err := s.readDB.QueryContext(ctx, `SELECT p.id,p.name,p.folder,COALESCE(p.repo_url,''),m.role,COALESCE(p.archived_at,''),
+		EXISTS(SELECT 1 FROM agent a WHERE a.project_id=p.id) OR
+		EXISTS(SELECT 1 FROM room_worktree w JOIN room r ON r.id=w.room_id WHERE r.project_id=p.id AND w.state<>'removed')
 		FROM project p JOIN membership m ON m.project_id=p.id WHERE m.user_id=? ORDER BY p.created_at,p.id`, userID)
 	if err != nil {
 		return nil, err
@@ -33,7 +35,7 @@ func (s *Store) ProjectsForUser(ctx context.Context, userID string) ([]Project, 
 	projects := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Folder, &p.RepoURL, &p.Role, &p.ArchivedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Folder, &p.RepoURL, &p.Role, &p.ArchivedAt, &p.FolderInUse); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -149,6 +151,7 @@ func (s *Store) RoomsForProject(ctx context.Context, projectID string) ([]Room, 
 		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,r.team_flow_room_key,r.restricted,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
+		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system'),
 		COALESCE((SELECT substr(m.body,1,160) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system' ORDER BY m.seq DESC LIMIT 1),''),
 		COALESCE((SELECT m.created_at FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),r.created_at)
 		FROM room r WHERE r.project_id=? ORDER BY r.depth,r.created_at,r.id`, projectID)
@@ -162,7 +165,7 @@ func (s *Store) RoomsForProject(ctx context.Context, projectID string) ([]Room, 
 		var parent, dm, closed sql.NullString
 		var memory sql.NullBool
 		if err := rows.Scan(&r.ID, &r.ProjectID, &parent, &r.Depth, &r.Kind, &dm, &r.Title, &r.CreatedBy,
-			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.MemberCount, &r.MessageCount, &r.LastMessageBody, &r.LastActivityAt); err != nil {
+			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.MemberCount, &r.MessageCount, &r.UserMessageCount, &r.LastMessageBody, &r.LastActivityAt); err != nil {
 			return nil, err
 		}
 		r.ParentID = parent.String
@@ -201,6 +204,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,r.team_flow_room_key,r.restricted,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
+		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system'),
 		COALESCE((SELECT substr(m.body,1,160) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system' ORDER BY m.seq DESC LIMIT 1),''),
 		COALESCE((SELECT m.created_at FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),r.created_at),
 		COALESCE(v.hidden,0),COALESCE(v.notify,'default'),COALESCE(v.muted_until,''),COALESCE(c.last_read_seq,0),
@@ -225,7 +229,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		var parent, dm, closed sql.NullString
 		var memory sql.NullBool
 		if err := rows.Scan(&r.ID, &r.ProjectID, &parent, &r.Depth, &r.Kind, &dm, &r.Title, &r.CreatedBy,
-			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.MemberCount, &r.MessageCount, &r.LastMessageBody, &r.LastActivityAt, &r.Hidden, &r.Notify, &r.MutedUntil, &r.ReadCursor, &r.UnreadCount); err != nil {
+			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.MemberCount, &r.MessageCount, &r.UserMessageCount, &r.LastMessageBody, &r.LastActivityAt, &r.Hidden, &r.Notify, &r.MutedUntil, &r.ReadCursor, &r.UnreadCount); err != nil {
 			return nil, err
 		}
 		r.ParentID, r.DMKey, r.ClosedAt = parent.String, dm.String, closed.String

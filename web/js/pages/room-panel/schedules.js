@@ -93,6 +93,7 @@ export function RoomSchedules({ store }) {
   return html`<h3>Schedules</h3>
     <div class="schedule-list">${items === null ? null : items.length ? items.map(item => html`<${ScheduleRow} key=${item.id} store=${store} item=${item} />`) : 'No schedules'}</div>
     <form class="schedule-form" key=${store.formKey.value} onSubmit=${event => { event.preventDefault(); store.create(event.currentTarget); }}>
+      <h4>New schedule</h4>
       <label>Note<textarea name="body" maxlength="2000" required></textarea></label>
       <label>Target<select name="target" required><option value="lead">Current room leader</option>${store.targets.value.map(agent => html`<option key=${agent.id} value=${agent.id}>${agent.slug} (${agent.role_key})</option>`)}</select></label>
       <label>Repeat<select name="kind" value=${kind} onChange=${event => { store.kind.value = event.currentTarget.value; }}><option value="once">Once</option><option value="interval">Interval</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>

@@ -35,6 +35,7 @@ func (s *Store) SpawnDefaultLauncher(ctx context.Context, launcherID string) (Sp
 type RoleSpawnDefaults struct {
 	RoleID        string               `json:"role_id"`
 	RoleKey       string               `json:"role_key"`
+	RoleLabel     string               `json:"role_label"`
 	DefaultAgents []SpawnDefaultChoice `json:"default_agents"`
 	PickMode      string               `json:"pick_mode"`
 	Inherited     bool                 `json:"inherited"`
@@ -77,8 +78,8 @@ func (tx *Tx) validateSpawnDefaults(items []SpawnDefaultChoice, mode string) err
 func (s *Store) RoleSpawnDefaults(ctx context.Context, projectID, roleKey string) (RoleSpawnDefaults, error) {
 	var result RoleSpawnDefaults
 	var globalJSON string
-	err := s.db.QueryRowContext(ctx, `SELECT id,role_key,spawn_defaults_json,spawn_pick_mode FROM role
-  WHERE role_key=? AND deleted_at IS NULL`, roleKey).Scan(&result.RoleID, &result.RoleKey, &globalJSON, &result.GlobalMode)
+	err := s.db.QueryRowContext(ctx, `SELECT id,role_key,label,spawn_defaults_json,spawn_pick_mode FROM role
+  WHERE role_key=? AND deleted_at IS NULL`, roleKey).Scan(&result.RoleID, &result.RoleKey, &result.RoleLabel, &globalJSON, &result.GlobalMode)
 	if err != nil {
 		return result, err
 	}

@@ -11,7 +11,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css"><link rel="stylesheet" href="/v2-only.css">${importMap}</head>
 <body><dialog id="settings-dialog" open><nav></nav></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -98,6 +98,7 @@ async function main() {
         { login: 'off', off: 'Deactivated', badge: null, toggle: null, buttons: [], select: null }], 'an account is listed once; the owner is never deactivated and a deactivated account has no actions');
       assert.deepEqual(await page.$$eval('#settings-users h4', nodes => nodes.map(node => node.textContent)), ['Project members', 'Accounts']);
       assert.deepEqual(await page.$eval('#settings-users .user-members .btn-icon', el => [el.title, el.querySelector('.icon-mask-trash') !== null, el.classList.contains('btn-danger')]), ['You cannot remove yourself from the project', true, true]);
+      assert.deepEqual(await page.$$eval('#settings-users .user-members .btn-icon', els => els.map(el => [getComputedStyle(el).opacity < 0.6, getComputedStyle(el).cursor])), [[true, 'not-allowed'], [false, 'pointer'], [false, 'pointer']], 'a remove button that cannot be used looks off, and one that can does not');
       assert.deepEqual(await page.$$eval('#settings-users .user-members .btn-icon', els => els.map(el => el.disabled)), [true, false, false], 'your own row (and the last owner) cannot be removed; the others can');
       await page.close();
     }

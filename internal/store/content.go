@@ -19,6 +19,8 @@ type Project struct {
 	RepoURL string `json:"repo_url"`
 	// Role is the caller's role in the project (owner, operator, viewer); it is only filled for a user's own project list.
 	Role string `json:"role,omitempty"`
+	// FolderInUse means agents or live worktrees still depend on this path.
+	FolderInUse bool `json:"folder_in_use,omitempty"`
 	// ArchivedAt is when the project was archived (read-only, agents stopped); empty for a live project.
 	ArchivedAt string `json:"archived_at,omitempty"`
 }
@@ -108,32 +110,34 @@ func (tx *Tx) updateProject(id string, name, folder *string, actorID string, ren
 }
 
 type Room struct {
-	ID              string        `json:"id"`
-	ProjectID       string        `json:"project_id"`
-	ParentID        string        `json:"parent_id,omitempty"`
-	Depth           int           `json:"depth"`
-	Kind            string        `json:"kind"`
-	TeamFlowRoomKey string        `json:"team_flow_room_key,omitempty"`
-	Restricted      bool          `json:"restricted,omitempty"`
-	DMKey           string        `json:"dm_key,omitempty"`
-	Title           string        `json:"title"`
-	CreatedBy       string        `json:"created_by"`
-	Lifecycle       string        `json:"lifecycle"`
-	Gate            string        `json:"gate"`
-	LifecycleRev    int64         `json:"lifecycle_rev"`
-	ClosedAt        string        `json:"closed_at,omitempty"`
-	MemberCount     int           `json:"member_count"`
-	MessageCount    int           `json:"message_count"`
-	MemoryEnabled   *bool         `json:"memory_enabled"`
-	LastMessageBody string        `json:"last_message_body,omitempty"`
-	LastActivityAt  string        `json:"last_activity_at,omitempty"`
-	Hidden          bool          `json:"hidden"`
-	Notify          string        `json:"notify"`
-	MutedUntil      string        `json:"muted_until,omitempty"`
-	ReadCursor      int64         `json:"read_cursor"`
-	UnreadCount     int           `json:"unread_count"`
-	AttentionCount  int           `json:"attention_count"`
-	Worktree        *RoomWorktree `json:"worktree,omitempty"`
+	ID              string `json:"id"`
+	ProjectID       string `json:"project_id"`
+	ParentID        string `json:"parent_id,omitempty"`
+	Depth           int    `json:"depth"`
+	Kind            string `json:"kind"`
+	TeamFlowRoomKey string `json:"team_flow_room_key,omitempty"`
+	Restricted      bool   `json:"restricted,omitempty"`
+	DMKey           string `json:"dm_key,omitempty"`
+	Title           string `json:"title"`
+	CreatedBy       string `json:"created_by"`
+	Lifecycle       string `json:"lifecycle"`
+	Gate            string `json:"gate"`
+	LifecycleRev    int64  `json:"lifecycle_rev"`
+	ClosedAt        string `json:"closed_at,omitempty"`
+	MemberCount     int    `json:"member_count"`
+	MessageCount    int    `json:"message_count"`
+	// UserMessageCount counts the messages that are not system notices: a room whose newest such message has no text (only an attachment) still has them, which the preview cannot show.
+	UserMessageCount int           `json:"user_message_count"`
+	MemoryEnabled    *bool         `json:"memory_enabled"`
+	LastMessageBody  string        `json:"last_message_body,omitempty"`
+	LastActivityAt   string        `json:"last_activity_at,omitempty"`
+	Hidden           bool          `json:"hidden"`
+	Notify           string        `json:"notify"`
+	MutedUntil       string        `json:"muted_until,omitempty"`
+	ReadCursor       int64         `json:"read_cursor"`
+	UnreadCount      int           `json:"unread_count"`
+	AttentionCount   int           `json:"attention_count"`
+	Worktree         *RoomWorktree `json:"worktree,omitempty"`
 	// AgentChat marks a private chat between two agents, which belongs to no project (ProjectID is the reserved one). CanWrite, set when
 	// a person's room list is read, says whether that person may post in it: they need a role to write in an agent's project, and the
 	// chat must not be archived.

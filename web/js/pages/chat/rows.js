@@ -189,7 +189,7 @@ function SystemRow({ message, view, host, classes, register }) {
     </article>`;
   }
   const content = legacyHandoff ? { ...message, body: message.body.replace(/^@agt_[^\s]+\s+/, '') } : message;
-  const long = String(content.body || '').length > 300 || String(content.body || '').split('\n').length > 3;
+  const long = String(content.body || '').length > 160 || String(content.body || '').includes('\n');
   const preview = String(content.body || '').trim().split('\n', 1)[0];
   return html`<article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
     <div class="chat-msg-system-row">${long ? html`<${SystemMessagePopup} message=${content} view=${view} host=${host} title="System message" preview=${preview} link=${true} />` : html`<${NoticeBody} message=${content} view=${view} host=${host} />`}${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>

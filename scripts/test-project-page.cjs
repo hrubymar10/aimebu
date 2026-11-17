@@ -65,13 +65,13 @@ async function main() {
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
   // `held` lists the project source methods to hold; the project is p1 and the person's role and admin flag are chosen per test.
-  const mount = async ({ auto = base(), role = 'owner', admin = false, archived = false, held = [], load = true, settings = { auto_resume_after_clean_diagnostic: true, worktree_mode: 'auto', home_lead_only: false }, rooms = [{ id: 'r1', project_id: 'p1', kind: 'home' }] } = {}) => {
+  const mount = async ({ auto = base(), role = 'owner', admin = false, archived = false, folderInUse = false, held = [], load = true, settings = { auto_resume_after_clean_diagnostic: true, worktree_mode: 'auto', home_lead_only: false }, rooms = [{ id: 'r1', project_id: 'p1', kind: 'home' }] } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(installFetch, auto);
-    await page.evaluate(async ({ role, admin, archived, held, load, settings, rooms }) => {
+    await page.evaluate(async ({ role, admin, archived, folderInUse, held, load, settings, rooms }) => {
       (await import('/js/api.js')).setSession({ csrf_token: 'token', id: 'usr_1', owner: admin, admin });
       const { ProjectSettings } = await import('/js/pages/project/page.js');
       window.__calls = []; window.__waiting = {}; window.__hooks = [];
@@ -82,7 +82,7 @@ async function main() {
       };
       const source = { get: wrap('get', async () => structuredClone(settings)), update: wrap('update', async (id, fields) => fields), edit: wrap('edit', async (id, fields) => ({ id, name: fields.name ?? 'Alpha', folder: fields.folder ?? '/srv/alpha' })) };
       window.__release = name => (window.__waiting[name] || []).shift()?.();
-      const project = { id: 'p1', name: 'Alpha', folder: '/srv/alpha', role, ...(archived ? { archived_at: '2026-02-03T04:05:06Z' } : {}) };
+      const project = { id: 'p1', name: 'Alpha', folder: '/srv/alpha', role, folder_in_use: folderInUse, ...(archived ? { archived_at: '2026-02-03T04:05:06Z' } : {}) };
       const settingsPage = window.__project = new ProjectSettings(source, () => ({ projects: [project, { ...project, id: 'p2' }], rooms, selectedProjectID: 'p1' }));
       settingsPage.onLifecycle = async id => { window.__hooks.push(['lifecycle', id]); };
       settingsPage.onRemoved = async id => { window.__hooks.push(['removed', id]); };
@@ -91,7 +91,7 @@ async function main() {
       window.__roomUsage = new (await import('/js/pages/project/room-panels.js')).RoomUsage(document.querySelector('#room-usage'));
       settingsPage.store.flow.roomID = 'r1';
       if (load) await settingsPage.load('p1');
-    }, { role, admin, archived, held, load, settings, rooms });
+    }, { role, admin, archived, folderInUse, held, load, settings, rooms });
     return page;
   };
   const ready = page => page.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled && document.querySelector('.usage-limit-summary').textContent.includes('turns /') && document.querySelectorAll('.project-role-default').length === 2 && document.querySelector('.usage-summary-body dl'));
@@ -136,19 +136,19 @@ async function main() {
       const page = await mount();
       await ready(page);
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#project-settings-body').children].map(node => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}`)),
-        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section', 'section#project-team-flow', 'div', 'section#project-usage', 'div', 'div', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
+        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section#project-role-defaults', 'section#project-team-flow', 'div', 'section#project-usage', 'div', 'div', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
       assert.deepEqual(await page.evaluate(() => ({ name: [document.querySelector('#project-details-name').value, document.querySelector('#project-details-name').disabled], folder: [document.querySelector('#project-details-folder').value, document.querySelector('#project-details-folder').disabled],
         save: document.querySelector('#project-details-save').disabled, status: document.querySelector('#project-details-status').textContent,
         flags: ['#project-auto-resume', '#project-worktrees', '#project-home-lead-only'].map(id => [document.querySelector(id).checked, document.querySelector(id).disabled]),
         desired: document.querySelector('#project-scope-control').dataset.desired, scope: document.querySelector('#project-scope-control .scope-control-status').textContent })),
-        { name: ['Alpha', false], folder: ['/srv/alpha', true], save: false, status: 'Only an admin can change the folder.', flags: [[true, false], [true, false], [false, false]], desired: 'active', scope: 'State: Active' });
+        { name: ['Alpha', false], folder: ['/srv/alpha', false], save: true, status: 'Only an admin can change the folder.', flags: [[true, false], [true, false], [false, false]], desired: 'active', scope: 'Project agents: Active' });
       assert.deepEqual(await page.evaluate(() => ({ cost: [document.querySelector('#project-cost-mode').value, document.querySelector('#project-cost-mode option').textContent, document.querySelector('#project-cost-cap').hidden],
         turn: [document.querySelector('#project-turn-mode').value, document.querySelector('#project-turn-cap').value, document.querySelector('#project-turn-cap').hidden, document.querySelector('#project-turn-mode option').textContent],
         described: document.querySelector('#project-cost-mode').getAttribute('aria-describedby'), summary: document.querySelector('.usage-limit-summary').textContent.replace(/^.+?\(UTC\)/, 'DAY (UTC)'),
         rows: [...document.querySelectorAll('.usage-popover-rows dt')].length > 0, groups: [...document.querySelectorAll('.usage-summary-groups li')].map(li => li.textContent.split(' ')[0]) })),
         { cost: ['inherit', 'Inherit (default: $5.00)', true], turn: ['custom', '50', false, 'Inherit (default: no limit)'], described: 'project-cost-mode-desc', summary: 'DAY (UTC), all rooms: 2 turns / 50 cap; $0.50 reported cost / no cap. Dispatch: active.', rows: true, groups: ['leader'] });
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.project-role-default')].map(card => [card.querySelector('h4').textContent, card.querySelector('select').value, card.querySelector('select').options[0].textContent, card.querySelector(':scope > div[hidden]') !== null, card.querySelectorAll('.spawn-default-row').length])),
-        [['worker', 'inherit', 'Inherit global (2 agents)', true, 0], ['leader', 'custom', 'Inherit global (0 agents)', false, 1]]);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.project-role-default')].map(card => [card.querySelector('h4').textContent, card.querySelector('select').value, card.querySelector('select').options[0].textContent, !!card.querySelector(':scope > div[hidden]'), card.querySelectorAll('.spawn-default-row').length])),
+        [['Worker', 'inherit', 'Inherit global (2 agents)', true, 0], ['Leader', 'custom', 'Inherit global (0 agents)', false, 1]]);
       assert.deepEqual(await page.evaluate(() => ({ session: [document.querySelector('#project-session-import').hidden, document.querySelector('#project-session-import-open').disabled, document.querySelector('#project-session-import-open').title],
         rows: ['archive', 'reopen', 'delete'].map(key => [key, document.querySelector(`#project-${key}-row`).hidden, document.querySelector(`#project-${key}`).disabled]), note: document.querySelector('#project-lifecycle > p').textContent, group: document.querySelector('#project-lifecycle').hidden })),
         { session: [false, false, 'Import Claude Code sessions'], rows: [['archive', false, false], ['reopen', true, false], ['delete', false, false]], note: '', group: false });
@@ -174,6 +174,7 @@ async function main() {
       await page.$eval('#project-team-flow .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelectorAll('#team-flow-modal .team-flow-card').length === 5);
       await page.waitForFunction(() => document.querySelector('.team-flow-modal')?.matches(':modal'));
+      assert.deepEqual(await page.$$eval('#team-flow-modal .team-flow-option', rows => rows.filter(row => row.querySelector('.team-flow-current-badge')).map(row => [row.dataset.flowKey, row.querySelector('.team-flow-current-badge').textContent])), [['custom', 'Current']], 'the current flow is identified by text on its card');
       assert.deepEqual(await page.evaluate(() => { const modal = document.querySelector('.team-flow-modal'); return [modal.matches(':modal'), modal.parentElement === document.body, document.querySelector('#room-info-dialog').open, modal.getBoundingClientRect().width]; }), [true, true, false, 960], 'the wizard replaces settings with a wide body-level modal');
       await page.$eval('.team-flow-modal-close', node => node.click());
       await page.waitForFunction(() => !document.querySelector('.team-flow-modal')?.open);
@@ -516,8 +517,8 @@ async function main() {
       await page.$eval('#team-flow-home .team-flow-lightbox-close', node => node.click());
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-lightbox')?.open);
       await page.setViewport({ width: 390, height: 844 });
-      assert.equal(await page.$eval('#team-flow-home .team-flow-card', row => getComputedStyle(row).gridTemplateColumns.split(' ').length), 2, 'phone layout keeps the description beside a compact diagram');
-      assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 160), true, 'phone cards stay compact too');
+      assert.equal(await page.$eval('#team-flow-home .team-flow-card', row => getComputedStyle(row).gridTemplateColumns.split(' ').length), 1, 'phone layout stacks the diagram under readable text');
+      assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 240), true, 'phone cards remain scannable');
       assert.deepEqual(await fitted(), [true, true], 'phone thumbnails fit above the expand control');
       await page.setViewport({ width: 1280, height: 800 });
       await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
@@ -729,12 +730,16 @@ async function main() {
       await ready(admin);
       assert.deepEqual(await admin.evaluate(() => [document.querySelector('#project-details-name').disabled, document.querySelector('#project-details-folder').disabled, document.querySelector('#project-details-status').textContent, document.querySelector('#project-archive').disabled]), [false, false, '', false]);
       await admin.close();
+      const occupied = await mount({ admin: true, folderInUse: true });
+      await ready(occupied);
+      assert.deepEqual(await occupied.evaluate(() => [document.querySelector('#project-details-folder').readOnly, document.querySelector('#project-details-status').textContent]), [true, 'The folder is fixed while this project has agents or worktrees.']);
+      await occupied.close();
       const viewer = await mount({ role: 'viewer' });
       await ready(viewer);
       await viewer.waitForFunction(() => document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('Custom'));
       await settle(viewer);
       assert.deepEqual(await viewer.evaluate(() => [window.__requests.filter(request => request.path.endsWith('/team-flow/preview')).length, document.querySelector('#project-team-flow .team-flow-preview'), document.querySelector('#project-team-flow .error').textContent.trim(), document.querySelector('#project-team-flow .team-flow-settings .btn-primary').disabled, document.querySelectorAll('#team-flow-modal .team-flow-card').length]), [0, null, '', true, 0], 'viewer sees the current flow without requesting a restricted preview');
-      assert.deepEqual(await viewer.evaluate(() => [document.querySelector('#project-details-name').disabled, document.querySelector('#project-details-folder').disabled, document.querySelector('#project-details-save').disabled, document.querySelector('#project-details-status').textContent,
+      assert.deepEqual(await viewer.evaluate(() => [document.querySelector('#project-details-name').disabled, document.querySelector('#project-details-folder').readOnly, document.querySelector('#project-details-save').disabled, document.querySelector('#project-details-status').textContent,
         document.querySelector('#project-archive').disabled, document.querySelector('#project-lifecycle > p').textContent]), [true, true, true, 'Only the project owner can change these.', true, 'Only the project owner or an admin can archive, reopen or delete a project.']);
       await viewer.close();
       const archived = await mount({ archived: true });
@@ -744,19 +749,16 @@ async function main() {
         [true, true, true, [true, false, false], 'Archived X. It is read-only.']);
       await archived.close();
     }
-    // Details: nothing changed says so; a rename sends only the name; a refusal says why.
+    // Details: Save enables only for an editable change; a rename sends only the name.
     {
       const page = await mount();
       await ready(page);
-      await page.$eval('#project-details-save', el => el.click());
-      assert.equal(await page.$eval('#project-details-status', el => el.textContent), 'Nothing changed.');
+      assert.equal(await page.$eval('#project-details-save', el => el.disabled), true, 'unchanged details do not offer a Save action');
       await page.$eval('#project-details-name', el => { el.focus(); el.select(); });
       await page.keyboard.type('Beta');
       await page.$eval('#project-details-save', el => el.click());
       await page.waitForFunction(() => document.querySelector('#project-details-status').textContent === 'Saved.');
-      await page.$eval('#project-details-folder', el => { el.value = '/elsewhere'; });
-      await page.$eval('#project-details-save', el => el.click());
-      assert.equal(await page.$eval('#project-details-status', el => el.textContent), 'Nothing changed.', 'a folder the owner may not change is not sent');
+      assert.equal(await page.$eval('#project-details-folder', el => el.readOnly), true, 'the folder stays selectable but read-only for a non-admin');
       assert.deepEqual(await page.evaluate(() => [window.__calls.filter(call => call[0] === 'edit'), document.querySelector('#project-details-name').value]), [[['edit', 'p1', { name: 'Beta' }]], 'Beta']);
       await page.close();
     }
@@ -818,7 +820,7 @@ async function main() {
       const page = await mount({ auto: { ...base(), 'POST /api/projects/p1/control': { desired: 'paused', effective_state: 'paused', rev: 8, results: [{ error: 'busy' }] } } });
       await ready(page);
       assert.deepEqual(await page.$$eval('#project-scope-control [data-scope-action]', buttons => buttons.map(b => [b.dataset.scopeAction, b.title, b.getAttribute('aria-label'), b.disabled, b.className, b.querySelector('.icon-mask').className.replace('icon-mask ', '')])),
-        [['pause', 'Pause', 'Pause', false, 'btn btn-glyph', 'icon-mask-pause'], ['stop', 'Stop', 'Stop', false, 'btn btn-danger btn-glyph', 'icon-mask-stop'], ['resume', 'Retry resume', 'Retry resume', true, 'btn btn-glyph', 'icon-mask-play']]);
+        [['pause', 'Pause project agents', 'Pause project agents', false, 'btn btn-glyph', 'icon-mask-pause'], ['stop', 'Stop project agents', 'Stop project agents', false, 'btn btn-danger btn-glyph', 'icon-mask-stop'], ['resume', 'Retry resume project agents', 'Retry resume project agents', true, 'btn btn-glyph', 'icon-mask-play']]);
       await page.$eval('#project-scope-control [data-scope-action=stop]', el => el.click());
       await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
       await page.$eval('#app-dialog .app-dialog-cancel', el => el.click());
@@ -834,8 +836,8 @@ async function main() {
     {
       const page = await mount({ auto: { ...base(), 'GET /api/rooms/r1/control': { desired: 'paused', effective_state: 'paused', rev: 1 }, 'GET /api/rooms/r1/usage?range=today': usage } });
       await page.evaluate(() => { window.__room.load('r1'); window.__roomUsage.load('r1'); });
-      await page.waitForFunction(() => document.querySelector('#room-scope-control .scope-control-status').textContent === 'State: Paused' && document.querySelector('#room-usage .usage-popover-rows'));
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#room-scope-control').dataset.desired, document.querySelector('#room-scope-control > h3').textContent, document.querySelector('#room-usage > h3').textContent, document.querySelector('#room-scope-control .settings-card')]), ['paused', 'Agents homed in this room', 'Usage', null]);
+      await page.waitForFunction(() => document.querySelector('#room-scope-control .scope-control-status').textContent === 'Room agents: Paused' && document.querySelector('#room-usage .usage-popover-rows'));
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#room-scope-control').dataset.desired, document.querySelector('#room-scope-control > h3').textContent, document.querySelector('#room-usage > h3').textContent, document.querySelector('#room-scope-control .settings-card')]), ['paused', 'Agents homed in this room', "This room's usage", null]);
       await page.select('#room-usage select', '7d');
       await page.waitForFunction(() => window.__requests.some(request => request.path === '/api/rooms/r1/usage?range=7d'));
       await page.evaluate(() => window.__room.reset());
@@ -848,13 +850,40 @@ async function main() {
       await ready(page);
       const card = key => `.project-role-default:nth-child(${key})`;
       await page.select(`${card(1)} select`, 'custom');
-      assert.equal(await page.$eval(`${card(1)} > div`, el => el.hidden), false);
+      assert.equal(await page.$eval(`${card(1)} > div:last-child`, el => el.hidden), false);
       await page.$eval(`${card(1)} [aria-label="Add default agent"]`, el => el.click());
-      await page.$eval(`${card(1)} .btn-primary`, el => el.click());
-      await page.waitForFunction(() => document.querySelector('.project-role-default .settings-desc[role=status]').textContent === 'Saved.');
+      await page.$eval('#project-role-defaults-save', el => el.click());
+      await page.waitForFunction(() => document.querySelector('#project-role-defaults .settings-desc[role=status]').textContent === 'Saved.');
       assert.deepEqual((await calls(page, 'PUT')).find(([path]) => path.endsWith('/worker')), ['/api/projects/p1/role-spawn-defaults/worker', { inherit: false, default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }]);
-      await page.$eval(`${card(2)} .btn-primary`, el => el.click());
-      await page.waitForFunction(() => document.querySelectorAll('.project-role-default .settings-desc[role=status]')[1].textContent === 'Not yours');
+      await page.select(`${card(2)} select`, 'inherit');
+      await page.$eval('#project-role-defaults-save', el => el.click());
+      await page.waitForFunction(() => document.querySelector('#project-role-defaults .settings-desc[role=status]').textContent === 'Not yours');
+      await page.select(`${card(1)} select`, 'inherit');
+      await page.$eval('#project-role-defaults-save', el => el.click());
+      await page.waitForFunction(() => document.querySelector('#project-role-defaults .settings-desc[role=status]').textContent === 'Not yours');
+      await page.$eval('#project-role-defaults-save', el => el.click());
+      await page.waitForFunction(() => window.__requests.filter(request => request.method === 'PUT' && request.path.includes('/role-spawn-defaults/')).length === 5);
+      assert.deepEqual((await calls(page, 'PUT')).map(([path]) => path.split('/').at(-1)), ['worker', 'leader', 'worker', 'leader', 'leader'], 'a retry after a partial save sends only the role that failed');
+      await page.close();
+    }
+    // A pending save from another project cannot change this project's rows or status; custom roles use their stored labels.
+    {
+      const otherRoles = [
+        { role_key: 'worker', role_label: 'Worker', inherited: true, global_agents: [], default_agents: [], pick_mode: 'in_turn' },
+        { role_key: 'leader', role_label: 'Leader', inherited: true, global_agents: [], default_agents: [], pick_mode: 'in_turn' },
+        { role_key: 'quality-gate', role_label: 'Quality gate', inherited: true, global_agents: [], default_agents: [], pick_mode: 'in_turn' },
+      ];
+      const page = await mount({ auto: { ...base(), 'GET /api/projects/p2/role-spawn-defaults': otherRoles, 'GET /api/projects/p2/settings': { reviewer_agents: 'inherit' } } });
+      await ready(page);
+      await page.select('.project-role-default:first-child select', 'custom');
+      await page.$eval('.project-role-default:first-child [aria-label="Add default agent"]', el => el.click());
+      await page.$eval('#project-role-defaults-save', el => el.click());
+      const oldSave = await waitRequest(page, 'PUT', '/api/projects/p1/role-spawn-defaults/worker');
+      await page.evaluate(() => window.__project.load('p2'));
+      await page.waitForFunction(() => document.querySelectorAll('.project-role-default').length === 3 && document.querySelector('.project-role-default:last-child h4').textContent === 'Quality gate');
+      await answer(page, oldSave, 200, { inherited: false });
+      await settle(page);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#project-role-defaults [role=status]').textContent, document.querySelector('#project-role-defaults-save').disabled, document.querySelector('.project-role-default:first-child select').value]), ['', true, 'inherit'], 'a save from the previous project cannot alter the new project');
       await page.close();
     }
     // Archive and delete: each asks first; archive reads the project again and lists agents that could not be stopped; delete needs the name typed.
@@ -971,7 +1000,7 @@ async function main() {
       await answer(page, 1, 200, { desired: 'paused', effective_state: 'paused', rev: 2 });
       await answer(page, 0, 200, { desired: 'active', effective_state: 'active', rev: 1 });
       await settle(page);
-      assert.equal(await page.$eval('#project-scope-control .scope-control-status', el => el.textContent), 'State: Paused');
+      assert.equal(await page.$eval('#project-scope-control .scope-control-status', el => el.textContent), 'Project agents: Paused');
       await page.close();
     }
     // Importing sessions needs the home room.

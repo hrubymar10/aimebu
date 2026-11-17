@@ -84,7 +84,8 @@ export class InboxNotifications {
   get status() {
     if (!window.isSecureContext) return 'Browser notifications require a secure context (HTTPS or localhost); this page cannot show them.';
     if (!('Notification' in window)) return 'Browser notifications are unavailable in this browser.';
-    return `Browser permission: ${Notification.permission}. Notifications appear only while this tab is hidden.`;
+    const words = { default: 'not asked yet', granted: 'allowed', denied: 'blocked' }[Notification.permission] || Notification.permission; // the browser's own words are "default", "granted" and "denied"
+    return `Browser permission: ${words}. Notifications appear only while this tab is hidden.`;
   }
   async requestPermission() {
     if (!this.available || Notification.permission !== 'default') return;

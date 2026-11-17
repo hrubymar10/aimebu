@@ -5,7 +5,7 @@ import { confirmDialog } from '../../dialogs.js';
 import { setTelemetryUser } from '../../telemetry.js';
 import { SEND_NAME_LABEL, SEND_NAME_DESC } from '../../telemetry-consent.js';
 
-export const ROLL_LABEL = 'Generate a new fingerprint';
+export const ROLL_LABEL = 'Generate a new anonymous ID (the current one stops being used)';
 export const ROLL_LABEL_NAME = 'Use a random fingerprint instead';
 export const ROLL_CONFIRM = 'Rolling a new fingerprint turns off sending your user name and gives you a new anonymous id.';
 

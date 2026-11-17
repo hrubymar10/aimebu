@@ -15,7 +15,7 @@ const KNOWLEDGE = fs.existsSync(path.join(root, 'js', 'pages', 'knowledge', 'pag
 const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(indexHtml)[0];
 const dialog = /<dialog id="knowledge-dialog".*?<\/dialog>/s.exec(indexHtml)[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css"><link rel="stylesheet" href="/v2-only.css">${importMap}</head>
 <body><button id="knowledge-toggle" type="button">Memory</button><button id="task-notes-toggle" type="button" hidden>Notes</button>${dialog}</body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -136,6 +136,11 @@ async function main() {
       assert.equal(await page.$eval('.knowledge-record:first-child .knowledge-save', el => el.disabled), true, 'Save waits for an edit');
       await page.$eval('.knowledge-record:first-child textarea', el => { el.value = 'Edited'; el.dispatchEvent(new Event('input', { bubbles: true })); });
       await page.waitForFunction(() => !document.querySelector('.knowledge-record:first-child .knowledge-save').disabled);
+      // Hierarchy: Save is the primary button once there is something to save, and the plain buttons (Refresh, Deactivate) are the theme's, not a browser-light fill.
+      assert.deepEqual(await page.evaluate(() => { const first = document.querySelector('.knowledge-record:first-child'), plain = first.querySelector('.knowledge-activation') || document.querySelector('#knowledge-refresh'); return [first.querySelector('.knowledge-save').classList.contains('btn-primary'), getComputedStyle(plain).backgroundColor !== 'rgb(239, 239, 239)']; }), [true, true], 'Save leads when enabled, and the plain buttons are not white');
+      // A long record is shown whole (up to a limit), not cut after three lines behind a nested scroll.
+      assert.equal(await page.$eval('.knowledge-record:first-child textarea', el => { el.value = 'line\n'.repeat(12); el.dispatchEvent(new Event('input', { bubbles: true })); return el.clientHeight >= el.scrollHeight - 2; }), true, 'the record field grows with its text');
+      await page.$eval('.knowledge-record:first-child textarea', el => { el.value = 'Edited'; el.dispatchEvent(new Event('input', { bubbles: true })); });
       await page.$eval('.knowledge-record:first-child .knowledge-save', el => el.click());
       await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT'));
       assert.deepEqual((await calls(page, 'PUT'))[0], [`${PROJECT}/k1`, { body: 'Edited', rev: 2, scope_key: 'p1' }]);

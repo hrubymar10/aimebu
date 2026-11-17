@@ -96,7 +96,7 @@ async function main() {
   // button for everyone but the person themselves.
   {
     const page = await mount();
-    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn' }), agent('a2', 'bert', { desired: 'stopped', observed: 'stopped' }), agent('a3', 'cleo', { desired: 'not_accepting' })]);
+    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn', latest_usage: { context_used: 14, context_window: 100 } }), agent('a2', 'bert', { desired: 'stopped', observed: 'stopped' }), agent('a3', 'cleo', { desired: 'not_accepting' })]);
     assert.deepEqual(await cards(page), [['a1', 'ada', 'working'], ['a2', 'bert', 'stopped'], ['a3', 'cleo', 'paused']]);
     assert.deepEqual(await humans(page), [['usr_me', 'me', 'owner', true, false], ['usr_bob', 'bob', 'viewer', false, true]]);
     // The role label ends at the same right edge on every person's card, yours (no private-chat button) and another's (with one).
@@ -109,12 +109,19 @@ async function main() {
     assert.equal(human[2], agentDot[2], 'and they are centred on the same line');
     const row = id => page.$eval(`[data-agent-id=${id}]`, node => ({ activity: node.querySelector('.agent-activity').textContent, dot: node.querySelector('.agent-dot').dataset.state,
       pause: [node.querySelector('.agent-act-pause').disabled, node.querySelector('.agent-act-pause').title], stop: node.querySelector('.agent-act-stop').disabled, reactivate: node.querySelector('.agent-reactivate').disabled,
-      hint: [...node.querySelectorAll('.agent-action-hint:not([hidden])')].map(hint => hint.textContent) }));
+      hints: node.querySelectorAll('.agent-action-hint').length, actionRows: new Set([...node.querySelectorAll('.agent-actions button')].map(button => Math.round(button.getBoundingClientRect().top))).size }));
     const working = await row('a1'), stopped = await row('a2'), paused = await row('a3');
     assert.equal(working.activity, 'Working…'); assert.equal(working.dot, 'working'); assert.deepEqual(working.pause, [false, 'Pause: finish the current turn, then accept no new work']);
     assert.deepEqual([stopped.pause[0], stopped.stop, stopped.reactivate], [true, true, false]);
-    assert.deepEqual(stopped.hint, ['Pause is unavailable: it is stopped; start it first.', 'Stop is unavailable: it is already stopped.', 'Switch is unavailable: start it first.']);
+    assert.equal(stopped.hints, 0, 'disabled reasons live in tooltips instead of loose paragraphs');
+    assert.equal(stopped.actionRows, 1, 'profile actions stay in one row');
     assert.equal(paused.pause[1], 'Pause is unavailable: it is already paused');
+    assert.equal(await page.$eval('#agents-humans .human-card.is-you', node => getComputedStyle(node).boxShadow.includes('inset')), true, 'the owner card has a clear inset border');
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'high-contrast-light'; });
+    assert.equal(await page.$eval('[data-agent-id=a2] .agent-act-pause', node => getComputedStyle(node).borderStyle), 'dashed', 'disabled agent actions remain distinct in high contrast');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    assert.deepEqual(await page.$eval('[data-agent-id=a1] .agent-context-track', node => [getComputedStyle(node).backgroundColor === getComputedStyle(node.querySelector('.agent-context-fill')).backgroundColor, Math.round(node.querySelector('.agent-context-fill').getBoundingClientRect().width / node.getBoundingClientRect().width * 100)]), [false, 14], 'high contrast memory track distinguishes 14% fill from the rest');
+    await page.evaluate(() => { document.documentElement.removeAttribute('data-theme'); });
     assert.deepEqual((await calls(page)).filter(call => call[0] === 'change'), [['change', ''], ['change', 'a1,a2,a3']]);
     await page.close();
   }
@@ -306,6 +313,7 @@ async function main() {
     assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')), true, 'the focus is back on the card');
     // A phone: the Agents tab opens the members list even when a profile was left open.
     await page.setViewport({ width: 390, height: 800 });
+    await page.evaluate(() => document.querySelector('.app').classList.add('chat-open'));
     await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click()); await settle(page);
     assert.equal(await page.evaluate(() => document.querySelector('#agents-panel').classList.contains('profile-open')), true);
     await page.$eval('#agents-toggle', node => node.click()); // opens the drawer
@@ -314,6 +322,8 @@ async function main() {
     // A tap on a member in the drawer opens its profile, which has the back arrow, and the drawer stays open.
     await page.$eval('[data-agent-id=a2] .agent-expand', node => node.click()); await settle(page);
     assert.deepEqual(await page.evaluate(() => [document.querySelector('#agents-panel').classList.contains('mobile-open'), document.querySelector('#agents-panel').classList.contains('profile-open'), getComputedStyle(document.querySelector('#agent-profile-close')).display !== 'none']), [true, true, true]);
+    await page.waitForFunction(() => document.querySelector('#agents-panel').getBoundingClientRect().left <= 1);
+    assert.deepEqual(await page.$eval('#agents-panel', node => [Math.round(node.getBoundingClientRect().left) <= 1, Math.round(node.getBoundingClientRect().right)]), [true, 390], 'the phone profile covers the full screen width');
     await page.close();
   }
 
@@ -738,7 +748,7 @@ async function main() {
     assert.deepEqual(await page.$eval('[data-agent-id=stopped] .agent-actions', row => {
       const remove = row.querySelector('.agent-remove').getBoundingClientRect(), edge = row.getBoundingClientRect();
       return { wrapped: remove.top > row.querySelector('button').getBoundingClientRect().top, rightAligned: Math.abs(remove.right - edge.right) < 2 };
-    }), { wrapped: true, rightAligned: true }, 'when space is tight the remove action ends its own row');
+    }), { wrapped: false, rightAligned: false }, 'when space is tight the actions stay on one scrollable row');
     await page.close();
     // An event that reaches a destroyed panel through the source starts no read.
     page = await mount();
@@ -775,7 +785,7 @@ async function main() {
     const page = await mount();
     await show(page, 'r1', [agent('a1', 'ada'), agent('a2', 'bert', { desired: 'stopped', observed: 'stopped' }), agent('a3', 'cleo', { desired: 'stopped', observed: 'stopped' })]);
     const remove = id => page.$eval(`[data-agent-id=${id}] .agent-remove`, node => ({ disabled: node.disabled, title: node.title, label: node.getAttribute('aria-label'), glyph: node.querySelector('.icon-mask').className }));
-    assert.deepEqual(await remove('a1'), { disabled: true, title: 'Remove is unavailable: stop it first', label: 'Remove', glyph: 'icon-mask icon-mask-trash' });
+    assert.deepEqual(await remove('a1'), { disabled: true, title: 'Remove is unavailable: stop it first', label: 'Remove is unavailable: stop it first', glyph: 'icon-mask icon-mask-trash' });
     assert.equal((await remove('a2')).disabled, false, 'a stopped agent can be removed');
     const ask = async id => {
       await page.$eval(`[data-agent-id=${id}] .agent-remove`, node => node.click());
@@ -851,7 +861,7 @@ async function main() {
     assert.deepEqual([f1.spoken === f1.tooltip, f1.hiddenVisually], [true, true], 'and in words for a screen reader, hidden visually');
     assert.equal((await read('f2')).tooltip, 'Online \u00b7 cold, the next answer starts the agent');
     assert.equal((await read('f7')).tooltip, "Online \u00b7 warm n/a: this harness doesn't keep its process warm");
-    assert.equal(await page.$eval('[data-agent-id=f7] .agent-activity', node => node.textContent), 'Warm n/a');
+    assert.equal(await page.$eval('[data-agent-id=f7] .agent-activity', node => node.textContent), '', 'secondary process detail does not compete with the primary status');
     assert.match((await read('f3')).tooltip, /^Online \u00b7 working/);
     assert.match((await read('f4')).tooltip, /^State unknown/, 'an unknown warm state says so');
     assert.match((await read('f5')).tooltip, /^Offline/);
@@ -875,7 +885,7 @@ async function main() {
     assert.equal((await read('c1')).kind, 'warm', 'an opted-in Codex process gets the warm ring');
     assert.equal((await read('c2')).kind, 'cold', 'a sleeping Codex process gets the cold dot');
     assert.match((await read('c1')).tooltip, /^Online \u00b7 warm, the next answer skips the start/);
-    assert.equal(await page.$eval('[data-agent-id=c2] .agent-activity', node => node.textContent), 'Sleeping');
+    assert.equal(await page.$eval('[data-agent-id=c2] .agent-activity', node => node.textContent), '');
     await page.close();
   }
 

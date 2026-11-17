@@ -26,11 +26,23 @@ export function sessionFacts(session) {
 // still be worked on, so it warns and does not stop.
 export function sessionFlags(session) {
   const flags = [];
-  if (session.agent) flags.push([`continued by ${session.agent.slug}`, 'warn']);
+  if (session.agent) flags.push([`continued by ${session.agent.slug}`, 'note']); // a fact, not a danger: amber is kept for what can go wrong (a terminal has it open)
   if (session.active) flags.push(['open in a terminal', 'warn']);
   if (session.outside_folder) flags.push(['outside the project folder', 'note']);
   if (session.entrypoint === 'sdk-cli') flags.push(['started by an agent', 'note']);
   return flags;
+}
+
+// What a row is called. Claude gives a session its own title, and the sessions an agent starts are all titled alike ("aimebu turn"): a list of such rows cannot be told
+// apart, so a title that more than one row has says when the session was last used, to the minute ("aimebu turn · Nov 16, 22:41").
+export function rowTitles(sessions) {
+  const seen = new Map();
+  for (const session of sessions) { const title = session.title || 'Untitled session'; seen.set(title, (seen.get(title) || 0) + 1); }
+  return sessions.map(session => {
+    const title = session.title || 'Untitled session', at = new Date(session.modified_at || '');
+    if (seen.get(title) < 2 || Number.isNaN(at.getTime())) return title;
+    return `${title} · ${at.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+  });
 }
 
 // The line above the list: how many sessions, and what the scan could not show (transcripts it could not read, a list cut at its limits).
@@ -94,12 +106,13 @@ export class ClaudeSessionPicker {
   render(sessions, empty, result = {}) {
     this.error.textContent = '';
     this.status.textContent = listingStatus(sessions.length, empty, result);
-    this.list.replaceChildren(...sessions.map(session => this.row(session)));
+    const titles = rowTitles(sessions);
+    this.list.replaceChildren(...sessions.map((session, index) => this.row(session, titles[index])));
   }
-  row(session) {
+  row(session, title = session.title || 'Untitled session') {
     const row = node('div', 'cc-session'); row.dataset.sessionId = session.id;
     const main = node('div', 'cc-session-main');
-    main.append(node('span', 'cc-session-title', session.title || 'Untitled session'), node('span', 'cc-session-facts', sessionFacts(session).join(' · ')));
+    main.append(node('span', 'cc-session-title', title), node('span', 'cc-session-facts', sessionFacts(session).join(' · ')));
     if (session.outside_folder) main.append(node('span', 'cc-session-cwd', session.cwd));
     const flags = node('span', 'cc-session-flags');
     const sessionFlagList = sessionFlags(session);

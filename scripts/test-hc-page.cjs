@@ -57,7 +57,7 @@ async function main() {
       assert.ok(seen.tools.every(Boolean) && new Set(seen.tools).size === 1 && !seen.tools[0].startsWith('0px'), `the composer buttons share one border: ${JSON.stringify(seen.tools)}`);
       assert.deepEqual([...new Set(seen.toolFill)], [seen.tertiary], `and one fill, v1's attach button: ${JSON.stringify(seen.toolFill)}`);
       assert.equal(seen.sendFill, seen.green, `Send is v1's green in ${theme}`);
-      assert.equal(seen.sendEdgeColor, seen.green, 'and is edged in that green, as in v1');
+      if (theme !== 'high-contrast-light') assert.equal(seen.sendEdgeColor, seen.green, 'and is edged in that green, as in v1'); // (a disabled Send is outlined in the border colour in the light theme, below)
       assert.notEqual(seen.pillFill, seen.pageFill, `a reaction you made is tinted (as in v1), not the page colour: ${seen.pillFill}`);
       assert.ok(seen.sendText >= 4.5, `Send is readable (${seen.sendText.toFixed(1)}:1)`);
       assert.ok(seen.sendMuted >= 4.5, `and so is a Send that is off (${seen.sendMuted.toFixed(1)}:1)`);
@@ -81,10 +81,16 @@ async function main() {
       assert.equal(more.quote, more.accent, `a reply's quote is the accent in ${theme}`);
       assert.equal(more.id, more.muted, `a message id is the muted text colour in ${theme}`);
       assert.deepEqual([more.bar[0], more.bar[1]], ['1px', more.bar[2]], `the memory usage bar is a track with an outline in ${theme}`);
-      assert.deepEqual(more.chips, [[more.tertiary, 'solid', more.border, '0.52'], [more.tertiary, 'solid', more.border, '0.58']], `a closed proposed answer and its question button are v1's dimmed chip, solid and not grey, in ${theme}`);
+      assert.deepEqual(more.chips.map(chip => [chip[1], chip[3]]), [['none', '1'], ['none', '1']], `a closed proposed answer and its question button are plain text at full contrast, not a framed or dimmed chip, in ${theme}`);
       assert.deepEqual(more.live, Array(2).fill([more.tertiary, more.text, 'solid', more.border]), `an open proposed answer and the question button are v1's chip, not the plain light button, in ${theme}`);
       assert.deepEqual(more.review.slice(0, 4), [more.page, 'solid', more.border, 'none'], `"Review in Inbox" on an agent card is an outlined control, not the plain button, in ${theme}`);
       assert.ok(more.review[4] >= 4.5, `and its text reads (${more.review[4].toFixed(1)}:1) in ${theme}`);
+      // A selected room or Settings section has a strong edge, not only a tint; a destructive button is outlined in the danger colour (light), and a disabled Send keeps its outline.
+      const strong = await page.evaluate(() => { const style = el => getComputedStyle(el), make = (tag, cls, parent = document.body) => { const el = document.createElement(tag); el.className = cls; parent.append(el); return el; };
+        const list = make('div', 'sidebar'), room = make('div', 'room-item active', list), nav = make('button', 'settings-nav-item active'), danger = make('button', 'btn btn-danger'), send = document.querySelector('#composer button[type=submit]'); const was = send.disabled; send.disabled = true;
+        const out = { room: [style(room).outlineStyle, style(room).boxShadow !== 'none'], nav: [style(nav).outlineStyle, style(nav).boxShadow !== 'none'], danger: [style(danger).borderTopWidth, style(danger).backgroundColor], send: style(send).borderTopStyle }; send.disabled = was; list.remove(); nav.remove(); danger.remove(); return out; });
+      assert.deepEqual([strong.room, strong.nav, strong.send], [['solid', true], ['solid', true], 'solid'], `selected room and Settings section have a strong edge, and a disabled Send an outline, in ${theme}`);
+      if (theme === 'high-contrast-light') assert.equal(strong.danger[0], '2px', 'a destructive button has a strong outline in high-contrast light');
       // A plain button: the tertiary fill, the outline and the primary text, the accent outline on hover, and a disabled one is the same button dimmed.
       await page.evaluate(() => {
         for (const [id, off] of [['hc-probe', false], ['hc-probe-off', true]]) { let el = document.getElementById(id); if (!el) { el = document.createElement('button'); el.id = id; el.className = 'btn'; el.textContent = 'x'; el.disabled = off; el.style.cssText = `position:fixed;top:${off ? 60 : 10}px;left:10px;z-index:99999`; document.body.append(el); } }

@@ -64,8 +64,11 @@ async function main() {
     const empty = await state(page);
     assert.equal(empty.value, '', 'focusing the field does not fill it');
     assert.ok(empty.button && empty.button.left >= empty.input.left && empty.button.right < empty.input.left + empty.input.width / 2, `the button is inside the field at its left edge: ${JSON.stringify(empty)}`);
-    assert.deepEqual([empty.label, empty.title, empty.placeholder], ['Use my home folder', 'Use my home folder', 'Folder path']);
+    assert.deepEqual([empty.label, empty.title, empty.placeholder], ['Use my home folder', 'Use my home folder', '/path/to/the/repo']);
     assert.ok(empty.padding[0] >= 38 && empty.inset, 'the text is inset for the button');
+    // The dialog's own details: the name placeholder is an example (not the label again), and the footer is Cancel then Create, as Spawn's is.
+    assert.deepEqual(await page.evaluate(() => ({ name: document.querySelector('#project-form [name=name]').placeholder, buttons: [...document.querySelectorAll('#project-form footer button')].map(button => button.textContent), title: parseFloat(getComputedStyle(document.querySelector('#project-dialog h2')).fontSize) > 15 })),
+      { name: 'e.g. billing-service', buttons: ['Cancel', 'Create'], title: true }, 'the New project dialog has an example placeholder, Cancel before Create, and a real title');
     await page.$eval('.folder-home-btn', el => el.click()); await settle(page);
     const filled = await state(page);
     assert.deepEqual([filled.value, filled.focused, filled.caret, filled.button], ['/home/ana/', true, [10, 10], null], 'a click fills the home folder, keeps the focus, puts the caret after it and hides the button');

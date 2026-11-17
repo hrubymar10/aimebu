@@ -617,7 +617,7 @@ func projectView(p store.Project) map[string]any {
 	if p.RepoURL != "" {
 		repo = p.RepoURL
 	}
-	view := map[string]any{"id": p.ID, "name": p.Name, "folder": p.Folder, "repo_url": repo}
+	view := map[string]any{"id": p.ID, "name": p.Name, "folder": p.Folder, "repo_url": repo, "folder_in_use": p.FolderInUse}
 	if p.Role != "" {
 		view["role"] = p.Role
 	}

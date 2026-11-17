@@ -354,7 +354,7 @@ async function main() {
       modelled.models = [{ slug: 'one', label: 'One', note: 'full note', default: true }, { slug: 'two', label: 'Two', note: '', default: false }];
       const page = await mount({ 'GET /api/machines/mch_a/launchers': { launchers: [modelled, launchers.mch_a[1]], activity: [] } });
       assert.deepEqual(await page.$eval(card('a1'), el => [el.querySelector('.machine-harness-edit').title, !!el.querySelector('.machine-harness-edit .icon-mask-edit'), el.querySelector('.machine-harness-remove').getAttribute('aria-label'), !!el.querySelector('.machine-harness-remove .icon-mask-trash')]), ['Edit Codex', true, 'Remove Codex', true], 'card actions are labelled icons');
-      assert.deepEqual(await page.$$eval(`${card('a1')} .harness-model-row`, rows => rows.map(row => [row.querySelector('.harness-model-star use').getAttribute('href'), row.querySelector('.harness-model-default-text').textContent, row.querySelector('.harness-model-default').title, row.querySelector('.harness-model-remove').getAttribute('aria-label'), !!row.querySelector('.icon-mask-trash')])), [['/icons/star.svg#star', 'Default', 'Default model', 'Remove one', true], ['/icons/star.svg#star', '', 'Make default', 'Remove two', true]], 'model rows: star default and trash');
+      assert.deepEqual(await page.$$eval(`${card('a1')} .harness-model-row`, rows => rows.map(row => [!!row.querySelector('.harness-model-star'), row.querySelector('.harness-model-default-text').textContent, row.querySelector('.harness-model-default').title, row.querySelector('.harness-model-remove').getAttribute('aria-label'), row.querySelector('.harness-model-remove').disabled, !!row.querySelector('.icon-mask-trash')])), [[false, 'Default', 'Default model', 'one is the default model: make another one the default before removing it', true, true], [false, '', 'Make default', 'Remove two', false, true]], 'model rows: the default is shown once (radio and word), its trash is off while others exist');
       assert.equal(await page.$eval(`${card('a1')} .harness-model-row [name=note]`, el => el.title), 'full note', 'the full note is a tooltip');
       assert.deepEqual(await page.$eval(`${card('a1')} .harness-model-detect`, el => [el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Reload models from harness', true, ''], 'model detection is an icon');
       await page.close();
@@ -423,6 +423,15 @@ async function main() {
       const shown = () => page.$$eval('#harnesses-list .machine-harness', cards => cards.map(el => !el.hidden));
       assert.deepEqual(await page.$$eval('.harness-master [role=tab]', tabs => tabs.map(tab => [tab.dataset.harnessId, tab.getAttribute('aria-selected'), tab.tabIndex, tab.getAttribute('aria-controls')])), [['a1', 'true', 0, 'harness-card-a1'], ['a2', 'false', -1, 'harness-card-a2']], 'the list names the harnesses, the first is chosen');
       assert.deepEqual(await shown(), [true, false], 'only the chosen harness is shown');
+      // On a phone the harnesses are a select (the tab strip clips its labels), 44px tall, and choosing from it shows that harness.
+      const wide = page.viewport();
+      await page.setViewport({ ...wide, width: 390, height: 800 });
+      assert.deepEqual(await page.evaluate(() => { const select = document.querySelector('.harness-master-select'), tabs = document.querySelector('.harness-master'); return [getComputedStyle(select).display !== 'none', getComputedStyle(tabs).display === 'none', Math.round(select.getBoundingClientRect().height), select.options.length === tabs.querySelectorAll('[role=tab]').length]; }), [true, true, 44, true], 'a phone picks the harness from a select, 44px tall');
+      await page.select('.harness-master-select', 'a2');
+      assert.deepEqual(await shown(), [false, true], 'choosing from the select shows that harness');
+      await page.select('.harness-master-select', 'a1');
+      await page.setViewport(wide);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.harness-master-select')).display), 'none', 'a wider screen keeps the tab strip');
       assert.equal(await page.$('.machine-harness-models-toggle'), null, 'the models are always shown: no Models toggle');
       await page.$eval('#harness-tab-a2', el => el.click());
       assert.deepEqual(await shown(), [false, true], 'choosing a harness shows its detail');

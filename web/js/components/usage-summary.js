@@ -40,9 +40,9 @@ function Groups({ title, groups }) {
   return html`<h4>${title}</h4><ul class="usage-summary-groups" aria-label=${title}>${groups.map(group => html`<li><span class="usage-summary-group-name">${group.label || group.key}</span> <span class="usage-summary-group-figures">${groupLine(group)}</span></li>`)}</ul>`;
 }
 
-export function UsageSummary({ store }) {
+export function UsageSummary({ store, title = 'Usage' }) {
   const totals = store.totals.value;
-  return html`<h3>Usage</h3>
+  return html`<h3>${title}</h3>
     <${SettingsGroup}><${SettingsRow} label="Range" desc="Today is the server's local day.">
       <select value=${store.range.value} onChange=${event => store.setRange(event.currentTarget.value)}>${RANGES.map(([value, text]) => html`<option value=${value}>${text}</option>`)}</select><//><//>
     <p class="usage-summary-status" role="status">${store.status.value}</p>

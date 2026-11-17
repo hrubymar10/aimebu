@@ -103,7 +103,7 @@ export function activityOf(agent, state) {
   // An idle agent that has done nothing has nothing to say here: the pill already says idle and for how long.
   const said = agent.activity || (state.observed === 'Working' ? 'Working…' : '');
   const warm = state.why ? null : warmOf(agent);
-  const text = state.why || (said ? woken + said : woken ? 'Woken by reply' : warm ? warm.text : '');
+  const text = state.why || (state.kind === 'idle' && !woken && (said === 'Sleeping' || !said) ? '' : said ? woken + said : woken ? 'Woken by reply' : warm ? warm.text : '');
   const last = agent.last_activity_at || agent.activity_at, seen = agent.machine_last_seen;
   return { text, last, seen };
 }
@@ -182,7 +182,7 @@ export function profileRows(agent, profile, { harness, relative }) {
     ['Project', data.project_name], ['Repo', data.repo_url, { mono: true }],
     ['Spawned', data.spawned_by ? `${data.spawned_by}${data.spawned_at ? ` · ${relative(data.spawned_at)}` : ''}` : ''],
     data.resumed_from ? ['Continues', `the v1 session of ${data.resumed_from}`] : null,
-    ['Last 24 h', today], ['Agent ID', agent.id, { mono: true }],
+    ['Last 24 h', today], ['Agent ID', agent.id, { mono: true, copy: true }],
   ];
   return rows.filter(row => row && row[1] !== undefined && row[1] !== null && row[1] !== '');
 }

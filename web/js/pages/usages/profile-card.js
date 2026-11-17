@@ -36,6 +36,7 @@ export function ProfileCard({ store, provider, profile, state, usedDisplay, refr
       <button type="button" class="btn usage-switch switcher-switch-pill" hidden=${view.hidden} disabled=${view.disabled} title=${view.title} onClick=${use}>Switch</button>
       ${reauth && profile.has_credentials && !view.hidden && html`<button type="button" class="btn usage-switch-force" disabled=${view.disabled} title=${view.title} onClick=${installAnyway}>Install anyway</button>`}
       <span class="usage-profile-active switcher-tile-active" hidden=${!profile.active}>${profile.active ? 'Active' : ''}</span>
+      <span class="usage-profile-inactive" hidden=${!!profile.active}>${profile.active ? '' : 'Inactive'}</span>
       <span class="usage-profile-plan switcher-tile-plan" title=${profile.plan || ''} hidden=${!profile.plan}>${profile.plan || ''}</span>
     </div>
     <p class="usage-profile-email" hidden=${!profile.email}>${profile.email || ''}</p>

@@ -104,7 +104,7 @@ const RECOMMENDATIONS = {
 };
 const COMING_LATER = { key: 'coming-later', label: 'Leader, advisor and dispatcher', description: 'Coming later.' };
 
-export function TeamFlowCards({ templates, selected, onSelect, disabled = false }) {
+export function TeamFlowCards({ templates, selected, currentKey = '', onSelect, disabled = false }) {
   const [openKey, setOpenKey] = useState(''), dialog = useRef(null);
   const opened = templates.find(template => template.key === openKey);
   // Letters follow the display order; the "coming later" card has none, and sits right before Custom (always last).
@@ -120,7 +120,7 @@ export function TeamFlowCards({ templates, selected, onSelect, disabled = false 
       </button>
     </div>` : html`<div key=${template.key} data-flow-key=${template.key} class=${`team-flow-option${selected === template.key ? ' selected' : ''}`}>
       <button type="button" class="btn team-flow-card" role="radio" aria-checked=${String(selected === template.key)} disabled=${disabled} onClick=${() => onSelect(template.key)}>
-        <span class="team-flow-card-heading"><strong><span class="team-flow-letter" aria-hidden="true">${letter}</span>${template.label}</strong><span>${template.description}</span>${(template.recommendation || RECOMMENDATIONS[template.key]) && html`<small class="team-flow-recommendation">${template.recommendation || RECOMMENDATIONS[template.key]}</small>`}</span>
+        <span class="team-flow-card-heading"><strong><span class="team-flow-letter" aria-hidden="true">${letter}</span>${template.label}</strong>${currentKey === template.key && html`<small class="team-flow-current-badge">Current</small>`}<span>${template.description}</span>${(template.recommendation || RECOMMENDATIONS[template.key]) && html`<small class="team-flow-recommendation">${template.recommendation || RECOMMENDATIONS[template.key]}</small>`}</span>
         <${DiagramPreview} template=${template} />
       </button>${diagramSource(template) && html`<button type="button" class="team-flow-diagram-open" aria-label=${`Expand ${template.label} diagram`} title="Expand diagram" onClick=${() => setOpenKey(template.key)}><span>Expand diagram ↗</span></button>`}
     </div>`)}

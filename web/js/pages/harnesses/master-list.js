@@ -15,7 +15,10 @@ export function MasterList({ rows, selected, onSelect }) {
     tab.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     onSelect(rows[to].id);
   };
+  // On a phone the tab strip is a select (the strip scrolls sideways and clips its labels); only one of the two is shown, by the style sheet.
+  const picker = html`<select class="harness-master-select" aria-label="Harness" value=${selected} onChange=${event => onSelect(event.currentTarget.value)}>${rows.map(harness => html`<option key=${harness.id} value=${harness.id}>${`${harnessTitle(harness)} · ${modelCount(harness)}`}</option>`)}</select>`;
   return html`
+    ${picker}
     <div class="harness-master" role="tablist" aria-orientation="horizontal" aria-label="Harnesses" ref=${list}>
       ${rows.map((harness, index) => html`
         <button

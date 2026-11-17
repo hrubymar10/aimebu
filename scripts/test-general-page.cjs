@@ -213,7 +213,7 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general > div')].map(div => `${div.id}:${div.querySelector('h3').textContent}`)),
         ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'agent-isolation:Agents', 'prompt-cache:Prompt cache', 'settings-backup:Settings backup']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general .settings-row')].filter(row => !row.hidden).map(row => (row.querySelector('input, select, button')).id)),
-        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
+        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
       await page.close();
     }
     // The chat switches show what this person has and change the page at once: the bell and the debug button follow them.
@@ -239,37 +239,40 @@ async function main() {
       const read = { messages_considered_expired_after_seconds: 21600, can_edit: true };
       const page = await mount({}, { auto: { 'GET /api/retention': read } });
       await page.evaluate(() => window.__general.open());
-      await page.waitForFunction(() => document.querySelector('#message-expiry-seconds').value === '21600');
-      const type = value => page.$eval('#message-expiry-seconds', (el, value) => { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); }, value);
+      // The window is stored in seconds but shown as an amount and a unit: 21600 is "6 hours".
+      const shown = target => target.evaluate(() => [document.querySelector('#message-expiry-amount').value, document.querySelector('#message-expiry-unit').value]);
+      await page.waitForFunction(() => document.querySelector('#message-expiry-amount').value === '6' && document.querySelector('#message-expiry-unit').value === 'hours');
+      assert.deepEqual(await page.$$eval('#message-expiry-unit option', options => options.map(option => option.value)), ['seconds', 'minutes', 'hours', 'days']);
+      const type = (amount, unit = 'seconds') => page.evaluate((amount, unit) => { const select = document.querySelector('#message-expiry-unit'), el = document.querySelector('#message-expiry-amount'); select.value = unit; select.dispatchEvent(new Event('change', { bubbles: true })); el.value = amount; el.dispatchEvent(new Event('input', { bubbles: true })); }, amount, unit);
       await type('5');
       await page.$eval('#message-expiry-save', el => el.click());
       await page.waitForFunction(() => /60/.test(document.querySelector('#message-expiry-error').textContent));
       assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT').length), 0, 'a refused value sends nothing');
       await page.evaluate(() => window.__general.open());
       await settle(page);
-      assert.equal(await page.$eval('#message-expiry-seconds', el => el.value), '5', 'reading the window again leaves what is typed');
-      await type('3600');
+      assert.deepEqual(await shown(page), ['5', 'seconds'], 'reading the window again leaves what is typed');
+      await type('1', 'hours');
       await page.evaluate(() => { delete window.__auto['GET /api/retention']; document.querySelector('#message-expiry-save').click(); document.querySelector('#message-expiry-save').click(); });
       await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && !request.answered));
       const put = await page.evaluate(() => window.__requests.findIndex(request => request.method === 'PUT'));
       assert.deepEqual(await page.evaluate(() => [window.__requests.filter(request => request.method === 'PUT').length, document.querySelector('#message-expiry-save').disabled, window.__requests.find(request => request.method === 'PUT').body]), [1, true, { messages_considered_expired_after_seconds: 3600 }]);
       await page.evaluate(index => window.__answer(index, 400, { message: 'Not now' }), put);
       await page.waitForFunction(() => document.querySelector('#message-expiry-error').textContent === 'Not now');
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#message-expiry-seconds').value, document.querySelector('#message-expiry-save').disabled]), ['3600', false], 'a failed save keeps what was typed');
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#message-expiry-amount').value, document.querySelector('#message-expiry-unit').value, document.querySelector('#message-expiry-save').disabled]), ['1', 'hours', false], 'a failed save keeps what was typed');
       await page.$eval('#message-expiry-save', el => el.click());
       const again = await page.evaluate(() => window.__requests.findLastIndex(request => request.method === 'PUT'));
       await page.evaluate(index => window.__answer(index, 200, { messages_considered_expired_after_seconds: 3600, can_edit: true }), again);
       await page.waitForFunction(() => document.querySelector('#message-retention [role=status]').textContent === 'Saved.');
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#message-expiry-seconds').value, document.querySelector('#message-expiry-error').textContent]), ['3600', '']);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#message-expiry-amount').value, document.querySelector('#message-expiry-unit').value, document.querySelector('#message-expiry-error').textContent]), ['1', 'hours', '']);
       await page.close();
       const viewer = await mount({}, { auto: { 'GET /api/retention': { messages_considered_expired_after_seconds: 600, can_edit: false } } });
       await viewer.evaluate(() => window.__general.open());
-      await viewer.waitForFunction(() => document.querySelector('#message-expiry-seconds').value === '600');
-      assert.deepEqual(await viewer.evaluate(() => [document.querySelector('#message-expiry-seconds').disabled, document.querySelector('#message-expiry-save').disabled, document.querySelector('#message-retention [role=status]').textContent]), [true, true, 'Only the owner or an admin can change this.']);
+      await viewer.waitForFunction(() => document.querySelector('#message-expiry-amount').value === '10' && document.querySelector('#message-expiry-unit').value === 'minutes');
+      assert.deepEqual(await viewer.evaluate(() => [document.querySelector('#message-expiry-amount').disabled && document.querySelector('#message-expiry-unit').disabled, document.querySelector('#message-expiry-save').disabled, document.querySelector('#message-retention [role=status]').textContent]), [true, true, 'Only the owner or an admin can change this.']);
       await viewer.close();
       const gone = await mount({}, { auto: { 'GET /api/retention': read } });
       await gone.evaluate(() => window.__general.open());
-      await gone.waitForFunction(() => document.querySelector('#message-expiry-seconds').value === '21600');
+      await gone.waitForFunction(() => document.querySelector('#message-expiry-amount').value === '6');
       await gone.evaluate(() => { delete window.__auto['GET /api/retention']; document.querySelector('#message-expiry-save').click(); });
       const held = await gone.evaluate(() => window.__requests.findIndex(request => request.method === 'PUT'));
       await gone.evaluate(() => window.__general.destroy());

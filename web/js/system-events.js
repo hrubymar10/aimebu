@@ -66,9 +66,11 @@ export function describeEvent(event, names = {}) {
     // needs a human, expiring, ...) and `detail` is already redacted by the server.
     // A dedicated branch, not detailKeys, so a `kind` key never leaks into the other
     // events. The caller renders it with textContent, so it is shown as plain text.
+    // The row names the alert and, beside it, whose login it is (the tool and account the server's sentence starts with: "claude/main: ..."); the rest of the sentence is behind the row.
     const what = String(payload.kind ?? '').replaceAll('_', ' ');
     const detail = String(payload.detail ?? '');
-    return { text: parts[0], where, details: [what, detail].filter(Boolean).join(': ') };
+    const split = detail.indexOf(': '), subject = split > 0 && split <= 40 ? detail.slice(0, split) : '';
+    return { text: what ? `${parts[0]}: ${what}` : parts[0], where: where || subject, details: subject ? detail.slice(split + 2) : detail };
   }
   if (event.kind.startsWith('quota_')) {
     // {tool, from, to, profile, reason}: the tool, the move or the watched profile, and
@@ -101,6 +103,10 @@ export class SystemEvents {
     this.badge = node('span', 'badge'); this.badge.id = 'system-events-count'; this.badge.hidden = true; this.toggle.append(this.badge);
     this.popover = node('div', 'system-events-popover popover-panel popover-panel-sheet'); this.popover.id = 'system-events-popover'; this.popover.setAttribute('role', 'dialog'); this.popover.setAttribute('aria-label', 'System events'); this.popover.hidden = true;
     const head = node('header'); head.append(node('strong', '', 'System events'));
+    // A phone shows the panel as a sheet over the page, with no click-outside to reach: it has its own close control.
+    this.closeButton = node('button', 'btn-icon system-events-close'); this.closeButton.type = 'button'; this.closeButton.title = 'Close system events'; this.closeButton.setAttribute('aria-label', 'Close system events');
+    this.closeButton.innerHTML = '<span class="icon-mask icon-mask-close" aria-hidden="true"></span>'; this.closeButton.onclick = () => { this.close(); this.toggle.focus(); };
+    head.append(this.closeButton);
     this.list = node('div', 'system-events-list'); this.popover.append(head, this.list);
     const health = document.querySelector('#health-toggle');
     health.before(this.toggle);
@@ -144,12 +150,19 @@ export class SystemEvents {
   // One line per event: what happened, which agent, which room, how long ago. The detail (an exit code, a reason) is behind the row: a click, Enter or Space opens it.
   renderList() {
     if (!this.events.length) { this.list.replaceChildren(node('p', 'system-events-empty', 'Nothing needs a look.')); return; }
-    this.list.replaceChildren(...this.events.map(event => {
-      const view = describeEvent(event, this.names);
+    // Identical neighbours (the same alert again and again) are one row with a count and the newest time.
+    const groups = [];
+    for (const event of this.events) {
+      const view = describeEvent(event, this.names), last = groups.at(-1);
+      if (last && last.view.text === view.text && last.view.where === view.where && last.view.details === view.details && last.event.kind === event.kind) last.count++;
+      else groups.push({ event, view, count: 1 });
+    }
+    this.list.replaceChildren(...groups.map(({ event, view, count }) => {
       const row = node('div', 'system-event-row'); row.dataset.kind = event.kind;
       const line = node('div', 'system-event-line');
       const main = node('div', 'system-event-main');
       main.append(node('span', 'system-event-text', view.text));
+      if (count > 1) { const times = node('span', 'system-event-count', `×${count}`); times.title = `${count} identical events in a row; the newest is shown`; main.append(times); }
       if (view.where) main.append(node('span', 'system-event-where', view.where));
       const time = node('time', 'system-event-time', relativeTime(event.created_at)); time.dateTime = event.created_at; time.title = new Date(event.created_at).toLocaleString();
       line.append(main, time); row.append(line);

@@ -11,7 +11,7 @@ function MachineCard({ store, machine }) {
     <div class="machine-card-actions">
       ${view.approve && html`<${IconButton} name="check" label="Approve" ...${lock('Approve')} onClick=${() => store.change(machine, 'approve')} /><span class="machine-action-label">Approve</span>`}
       ${view.revoke && html`<${IconButton} name="key-off" label="Revoke" ...${lock('Revoke')} onClick=${() => store.change(machine, 'revoke')} /><span class="machine-action-label">Revoke</span>`}
-      ${view.stop && html`<${IconButton} name="stop" label="Stop all agents on this machine" className="machine-stop-all" onClick=${() => store.stopAgents(machine)} /><span class="machine-action-label">Stop all agents on this machine</span>`}
+      ${view.stop && html`<button type="button" class="btn-icon btn-danger machine-stop-all" title="Stop all agents on this machine" onClick=${() => store.stopAgents(machine)}><span class="icon-mask icon-mask-stop" aria-hidden="true"></span><span>Stop all agents</span></button>`}
     </div></article>`;
 }
 

@@ -298,8 +298,10 @@ keep running. The setup wizard and Spawn dialog omit reviewer choices while
 the effective setting is off.
 Project settings → Team flow shows the current flow and a **Change team flow**
 button that opens the same wizard the home room uses in a wide dialog above
-settings (full screen on a phone). Closing the wizard returns to settings;
-applying a change closes it. For a project that
+settings (full screen on a phone). The current flow has an explicit
+**Current** badge, and on a phone each flow diagram sits below its
+description. Closing the wizard returns to settings; applying a change
+closes it. For a project that
 already has a flow the wizard is a migration: the leader is the only constant,
 and every other agent is kept, added, or handed off and stopped. After you pick
 a flow the server returns a plan, and each role of the new flow gets a step
@@ -463,8 +465,9 @@ agent, old and new runtimes, and summary source; its **Show** button opens a
 dialog with the handoff and a Copy button. The dialog follows the viewer's
 rendered or raw Markdown setting. Older handoffs without card metadata still hide their
 routing prefix in the message text.
-Long system notices (over 300 characters or three lines) show their first
-line and an inline **Show more** link. It opens a dialog with the full body and Copy;
+System notices are one small grey left-aligned line in every theme. A long one
+(over 160 characters or more than one line) shows its first line and an inline
+**Show more** link. It opens a dialog with the full body and Copy;
 the rendered or raw Markdown setting applies there too. Shorter notices stay inline.
 A chart icon beside an agent message's
 `#42` opens a popover with what the turn behind it spent
@@ -472,10 +475,12 @@ A chart icon beside an agent message's
 model, and its place among the turn's messages, such as "2 of 3"); these are the turn's figures, not
 per-message ones, and an unreported figure shows as a dash, never zero. The `#42` number is the message's own number, one sequence across every room (as in v1, where an imported message keeps its v1 number); it copies itself, a `#42` in text links to that message (opening its room when it is elsewhere), and an agent may name a message by it. Hovering or focusing a
 message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the bubble's top-right corner, over
-its top edge, for someone else's message and for your own alike (it extends to the left when the bubble is narrower than the toolbar). Someone
-else's sender line is at the left, clear of it; your own is right-aligned over that corner, so it leaves 22px below it and the toolbar sits in
-that room. A chat column under 420px does the same for everyone's message. On a touch tablet your own messages keep the toolbar beside the
-bubble, to its left, and on a phone it is part of the bubble's flow. On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. The root of a conversation
+its top edge (it extends to the left when the bubble is narrower than the toolbar). Someone else's sender line is at the left, clear of it.
+Your own sender line is right-aligned, where the toolbar would cover it, so once the message column is 656px wide (your own bubble is at most 75% of it,
+which always leaves room) your toolbar sits beside the bubble, on its left, covering neither the line nor the text; in a narrower column it stays at the
+corner, as for everyone. On a touch tablet your own messages keep the toolbar beside the bubble, to its left, and on a phone it is part of the bubble's flow. A restricted room shows a lock beside its title in the
+chat header as well as in the sidebar. With the sidebar's last-message previews on, a room that holds only system notices says "Only system messages", and one whose newest message from a person has no text
+(only an attachment) says "📎 Attachment" (the room list carries `user_message_count` for this). On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. The root of a conversation
 shows an "N replies" chip counting the whole conversation. In the panel, a message's reply button makes the panel's next send answer that message (a chip above the box names it; cancelling answers the root again), and there is no thread button there. The panel shows the conversation like `tree` (depth first, a reply under its parent, with guide lines). A reply that comes in away from the end is marked by a pill that leads to it, and a send goes to its own row. Arrow keys, Home and End move through the buttons. A row's toolbar is not in the page until the row is hovered, focused or touched (it is about 30 DOM nodes a row, more than half of a 100-message room's page); only the last three rows reached keep theirs, and a row that holds the focus, the pointer or an open reaction row keeps its own. System messages
 appear as compact inline notices. UI experiments run behind an A/B/C pill (up to A–E, one letter per option label) in the top bar (`web/js/ui-variant.js`): an
 experiment registers a name and labels for its options, the pill then reads "UI A | B | C … — TESTING: <name>" with the chosen option
@@ -577,7 +582,12 @@ the room's icon buttons (task notes (v1's brain; in task rooms, and in the home 
 opens the project's memory instead), go to
 message, raw Markdown, export). Every room has the same Room settings dialog, a full-height pane
 with a title bar and a close button (v1's settings pane), with
-the sections that apply to it. Its **Title** field (for owners and operators; a
+the sections that apply to it. The home room title is **Project settings**;
+other rooms use **Room settings**. In the home room, project and room usage
+have separate headings, and the project danger zone is last. Default agent
+rows lead with harness and model, with the machine after them; their section
+has one Save button, enabled only after a change. Bulk agent controls name
+their room or project scope. Its **Title** field (for owners and operators; a
 private chat has none) is the only place a room is renamed: the header and the
 room list follow at once, and the home room's title is the project's name, so
 editing it renames the project too (the project's owner or an admin). The home room's adds a **Project** section, the
@@ -588,7 +598,10 @@ line saying that the home room works in the project folder while task rooms can
 have their own Git worktree. Project folder inputs offer matching directories
 as a path is typed, using the machine that holds the folder. Tab completes the
 highlighted or first suggestion and keeps focus in the field; `/` after a
-complete directory name accepts it and continues to the next level. Room settings (one control size throughout; Kind and Room ID show only while the message debug
+complete directory name accepts it and continues to the next level. The
+folder is read-only with an inline reason while agents or worktrees depend
+on it. The project details Save button is disabled until an editable field
+changes. Room settings (one control size throughout; Kind and Room ID show only while the message debug
 inspector is on) offers
 Archive/Reopen for non-home rooms and, for a task room, a destructive
 Delete room (project owner only; open rooms are archived and their agents stopped
@@ -770,7 +783,7 @@ of the list, as in v1 (status, presence, last seen, runtime, role, native sessio
 a copyable resume command for a confirmed native session on the host (including its private session path when needed), working directory and branch, machine, launcher,
 project, who spawned it, the last 24 hours' turns and cost, memory; the state shows as a pill, and the actions are labelled
 buttons: Message, Pause, Stop (the red one), Switch…, Start (Resume on a paused agent) and Remove (the red trash can: a project owner or operator removes a **stopped** agent for good after a confirmation; it leaves its rooms, its name and role slot are free, its worktree of its own is removed by the worktree rules, and its messages stay, shown as "name (removed)"), each with a tooltip saying what it does and, when
-unavailable, why (also written under the buttons);
+unavailable, why; the profile scrolls through its full contents and keeps the actions in one row, including on a phone. Cards show one primary activity status; process and cache details appear on a labelled secondary line;
 a project viewer does not get the session id, resume command or working directory; a project owner or an admin also gets an **Output** section with the end of what the agent's harness printed to stderr, read from its machine on demand and kept there for 14 days, see [the supervisor](docs/supervisor.md#agent-output));
 the × button or Escape returns to the members. The Spawn dialog's **Continue a Claude Code session…** entry (the one item of the ⋯ menu in its title row) lists the Claude Code sessions a machine already has for the project's folder (or one by id) and starts an agent that continues the chosen one with `claude --resume` (or works on a copy of it with `--fork-session`, your choice), in a room of its own by default; no history is copied. The home room's settings → Project can import many sessions at once, one room and one copy-working agent per session. See [continuing a Claude Code session](docs/claude-sessions.md). Settings opens on General. Agent rows show the latest turn activity from the live event
 stream. Open `/?mock_agents=1` to preview cards and controls

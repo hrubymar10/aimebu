@@ -11,7 +11,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css"><link rel="stylesheet" href="/v2-only.css">${importMap}</head>
 <body><dialog id="settings-dialog" open><section id="settings-machines" class="settings-section active"></section></dialog>
 <dialog id="machine-pair-dialog" class="dialog-card" aria-labelledby="machine-pair-title"></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
@@ -88,10 +88,12 @@ async function main() {
       const read = page.$$eval('#machines-list .machine-card', cards => cards.map(card => ({ id: card.dataset.machineId, title: card.querySelector('strong').textContent, status: card.querySelector('.machine-status').textContent, detail: card.querySelector('small').textContent.replace(/Last seen .+/, 'Last seen X'),
         actions: [...card.querySelectorAll('.machine-card-actions button')].map(b => [b.getAttribute('aria-label'), b.title, b.disabled, b.className, b.querySelector('.icon-mask')?.className.replace('icon-mask ', ''), b.textContent]) })));
       const icon = (label, glyph, cls = 'btn-icon') => [label, label, false, cls, `icon-mask-${glyph}`, ''];
+      // The one labelled button: its name is its words, its title says the scope.
+      const stopAll = [null, 'Stop all agents on this machine', false, 'btn-icon btn-danger machine-stop-all', 'icon-mask-stop', 'Stop all agents'];
       assert.deepEqual(await read, [
-        { id: 'mch_host', title: 'This computer · Host', status: 'Connected', detail: 'Supervisor 1.2', actions: [icon('Stop all agents on this machine', 'stop', 'btn-icon machine-stop-all')] },
+        { id: 'mch_host', title: 'This computer · Host', status: 'Connected', detail: 'Supervisor 1.2', actions: [stopAll] },
         { id: 'mch_new', title: 'Laptop', status: 'Pending approval', detail: '', actions: [icon('Approve', 'check'), icon('Revoke', 'key-off')] },
-        { id: 'mch_away', title: 'Box', status: 'Offline', detail: 'Last seen X', actions: [icon('Revoke', 'key-off'), icon('Stop all agents on this machine', 'stop', 'btn-icon machine-stop-all')] },
+        { id: 'mch_away', title: 'Box', status: 'Offline', detail: 'Last seen X', actions: [icon('Revoke', 'key-off'), stopAll] },
         { id: 'mch_old', title: 'Old', status: 'Revoked', detail: '', actions: [] }]);
       assert.deepEqual(await page.$eval('#machine-refresh', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent]), ['Refresh', 'Refresh', true, '']);
       await page.close();
@@ -107,7 +109,8 @@ async function main() {
         locked: [...document.querySelectorAll('.machine-card-actions button:not(.machine-stop-all)')].map(b => [b.disabled, b.title]), stop: [...document.querySelectorAll('.machine-stop-all')].every(b => !b.disabled) })),
         { add: [false, true, 'Only the owner can pair machines'], locked: [[true, 'Only the owner can approve machines'], [true, 'Only the owner can revoke machines'], [true, 'Only the owner can revoke machines']], stop: true });
       assert.equal(await page.$eval('#machines-add-note', el => el.textContent), 'Only the owner can add machines, approve them or revoke them.', 'an admin is told why Add machine is off');
-      assert.deepEqual(await page.$$eval('.machine-card-actions .machine-action-label', nodes => nodes.map(node => node.textContent)).then(list => list.slice(-1)), ['Stop all agents on this machine'], 'a card action says what it does beside its icon');
+      // "Stop all agents" is a labelled danger button: its words are in it, it is wider than an icon, and it is the danger colour (not a bare square).
+      assert.deepEqual(await page.$$eval('.machine-stop-all', nodes => nodes.map(node => [node.textContent.trim(), node.classList.contains('btn-danger'), node.getBoundingClientRect().width > 80, node.title])).then(list => list[0]), ['Stop all agents', true, true, 'Stop all agents on this machine'], 'Stop all agents says what it does inside a danger button');
       await page.close();
       const forbidden = await mount({ auto: { [MACHINES]: { status: 403, body: { message: 'forbidden' } } }, owner: false });
       await forbidden.waitForFunction(() => document.querySelector('#machines-error').textContent === 'Machines are for the owner and the admins.');

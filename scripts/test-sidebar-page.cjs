@@ -438,6 +438,15 @@ async function main() {
     await page.evaluate(() => { localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1'); document.dispatchEvent(new CustomEvent('aimebu:sidebar-preview')); });
     assert.equal((await active()).previews.length > 5, true, 'every room previews');
     assert.equal((await active()).previews.find(item => item[0] === 'rm_api')[1], 'No messages yet');
+    // A room that holds only system messages (the preview skips them) must not claim to be empty while its count says otherwise.
+    await page.evaluate(() => { window.__sidebar.rooms.get('rm_notes').message_count = 3; window.__sidebar.rooms.get('rm_notes').user_message_count = 0; window.__sidebar.store.touch(); });
+    await settle(page);
+    assert.equal((await active()).previews.find(item => item[0] === 'rm_notes')[1], 'Only system messages');
+    // A room whose newest message from a person is only an attachment (no text) has messages from people: it says so, not "only system messages".
+    await page.evaluate(() => { window.__sidebar.rooms.get('rm_notes').user_message_count = 1; window.__sidebar.store.touch(); });
+    await settle(page);
+    assert.equal((await active()).previews.find(item => item[0] === 'rm_notes')[1], '📎 Attachment');
+    assert.equal(await page.$eval('[data-room-id=rm_api] .room-item-unread', node => node.title), '12 unread messages', 'the unread chip says what it counts');
     await page.close();
   }
 

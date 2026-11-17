@@ -217,7 +217,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-context-track { flex: 1; height: 5px; overflow: hidden; border-radius: 3px; background: var(--border); }
 .agent-context-fill { display: block; height: 100%; background: var(--accent); }
 .agent-context-value { min-width: 27px; text-align: right; font-variant-numeric: tabular-nums; }
-.chat > .messages, .chat > .send-bar { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
+.chat > .messages, .chat > .send-bar, .chat > .notification-banner { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
 
 .inbox-view { background: var(--bg-primary); }
 .inbox-view > header { background: var(--bg-secondary); border-color: var(--border); }
@@ -273,8 +273,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .harness-model-default { display: flex; align-items: center; gap: 5px; min-width: 98px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; cursor: pointer; }
 .harness-model-default input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
 .harness-model-default.is-default { color: var(--accent); font-weight: 600; }
-.harness-model-star { width: 16px; height: 16px; flex: none; fill: none; }
-.harness-model-default.is-default .harness-model-star { fill: var(--accent); }
 .harness-model-slug { overflow-wrap: anywhere; font-size: 11px; color: var(--text-secondary); }
 .harness-model-row input[type=text], .harness-model-add input[type=text] { min-width: 0; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: inherit; }
 .harness-model-add { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: center; }
@@ -392,7 +390,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .usage-profile-actions[hidden] { display: none; }
 .usage-profile-email, .usage-profile-credits, .usage-profile-status { margin: 3px 0; color: var(--text-muted); font-size: 10px; }
 .usage-windows { display: grid; gap: 10px; margin-top: 10px; }
-.usage-track { position: relative; height: 7px; margin: 5px 0; border-radius: 99px; background: var(--bg-primary); overflow: hidden; }
+.usage-track { position: relative; height: 7px; margin: 5px 0; border: 1px solid var(--border); box-sizing: content-box; border-radius: 99px; background: var(--bg-primary); overflow: hidden; } /* outlined, so the track shows where the page and the track are the same colour (light and high-contrast) */
 .usage-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: inherit; background: var(--usage-color); }
 .usage-pace-marker { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text-muted); }
 .usage-switch:disabled { opacity: .65; }
@@ -426,7 +424,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .chat.agents-open #agents-scrim { display: block; position: absolute; z-index: 3; inset: 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: var(--scrim-soft); }
   #agents-close { display: inline-flex; margin-left: auto; padding: 2px 7px; font-size: 20px; }
   .agents-panel header { gap: 8px; }
-  .chat > .messages, .chat > .send-bar { margin-right: 0; }
+  .chat > .messages, .chat > .send-bar, .chat > .notification-banner { margin-right: 0; }
   .messages { padding: 12px 10px; }
   .chat-msg-system { max-width: 100%; }
   .chat > header { padding: 8px 10px; }
@@ -445,6 +443,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   #agents-close { display: inline-flex; padding: 2px 7px; font-size: 17px; }
   .chat.agents-collapsed .agents-panel { display: none; }
   .chat.agents-collapsed > .messages,
+  .chat.agents-collapsed > .notification-banner,
   .chat.agents-collapsed > .send-bar { margin-right: 0; }
 }
 @media (max-width: 360px) {
@@ -689,13 +688,15 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .chat > #usages-popover .usages-popover-body, .chat > #usages-popover .usages-popover-note { padding: 0 8px; }
 .chat > #usages-popover .usages-popover-body { padding-top: 8px; }
 .switcher-expiry-icon { display: inline-flex; align-items: center; margin-left: 2px; color: var(--text-secondary); }
-.btn.switcher-switch-pill { min-height: 0; height: auto; margin: 0; padding: 0 5px; border: 2px solid currentColor; border-radius: 999px; background: transparent; color: var(--accent); font-size: 10.5px; line-height: 1.45; letter-spacing: .04em; text-transform: uppercase; }
+/* Switch is a control, not a status: a framed rectangular button (the ACTIVE marker beside it stays the rounded status pill), so the two are not read as the same thing. */
+.btn.switcher-switch-pill { min-height: 0; height: auto; margin: 0; padding: 2px 10px; border: 1px solid var(--border-hover); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-primary); font-size: 11px; font-weight: 600; line-height: 1.4; letter-spacing: 0; text-transform: none; }
 .btn.switcher-switch-pill:disabled { opacity: .55; }
 .btn.switcher-switch-pill:hover:not(:disabled), .btn.switcher-switch-pill:focus-visible { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 .switcher-switch-pill:hover:not(:disabled), .switcher-switch-pill:focus-visible { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 .switcher-tile-active { padding: 0 5px; border: 1px solid currentColor; border-radius: 999px; color: var(--green-text); font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; }
 .usages-popover-profile .usage-windows { display: flex; flex-direction: column; gap: 10px; margin-top: 0; }
-.usages-popover-profile .usage-track { position: relative; height: 6px; margin: 0; overflow: hidden; border-radius: 999px; background: var(--bg-primary); }
+.usages-popover-profile .usage-track { position: relative; height: 6px; margin: 0; overflow: hidden; border: 1px solid var(--border); box-sizing: content-box; border-radius: 999px; background: var(--bg-primary); }
+.usages-popover-profile .switcher-tile-plan { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; } /* a plan name wraps whole, it is not cut */
 .usages-popover-profile .usage-fill { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: inherit; background: var(--usage-provider-color); }
 .usages-empty button { margin-top: 10px; font-style: normal; }
 .chat.usages-open > .agents-panel { display: none; }
@@ -916,8 +917,7 @@ body:has(.import-v1-dialog[open]) #app-view { visibility: hidden; }
 .room-view-actions button { border: 1px solid var(--border); }
 /* Message expiry: expired messages stay readable (the chat shows everything); they are dimmed, carry an
    hourglass, and one divider marks where AI context begins. */
-/* An expired message is dimmed, as in v1 (.chat-msg-expired); a system notice that has expired is also set in italics. */
-.chat-msg-expired.chat-msg-system .chat-msg-system-row { font-style: italic; }
+/* An expired message is dimmed, as in v1 (.chat-msg-expired); a system notice that has expired is one of the same small plain lines as any other (v2-only.css), not an italic one. */
 .chat-msg-expired-icon { display: inline-flex; margin-right: 4px; color: var(--text-muted); line-height: 1; cursor: help; }
 .chat-msg-expired-icon svg { display: block; width: 11px; height: 11px; }
 .expiry-boundary { position: relative; }
@@ -1012,9 +1012,13 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .sidebar > header { justify-content: flex-start; gap: 6px; padding-right: 12px; }
 .sidebar > header > strong { flex: 1 1 auto; }
 .sidebar form.room-filter { margin: 8px 0 10px; padding: 0; border: 0; }
-/* Message actions float at the bubble's top-right for every sender. The toolbar
-   covers the header while shown and leaves the message text unobstructed. */
+/* Message actions float at the bubble's top-right, over the empty end of the sender line (which is left-aligned and short), and leave the message text unobstructed.
+   The viewer's own messages have their sender line at the right, so their toolbar sits beside the bubble, on its left, and covers neither the line nor the text. */
 .message-actions { position: absolute; top: -24px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
+/* The list is a size container so a wide enough column can ask: a viewer's own bubble is at most 75% of it, so from 656px (75% + the 158px toolbar + its gap fit) the toolbar always has room
+   beside it; a narrower column keeps it at the bubble's corner. */
+#messages { container-type: inline-size; }
+@media not all and (hover: none) and (pointer: coarse) and (min-width: 701px) { @container (min-width: 656px) { .chat-msg.self .message-actions { top: 0; right: calc(100% + 6px); } } }
 .chat-msg:hover .message-actions, .chat-msg:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
 /* A toolbar that has not been made yet (it is made when its row is reached, see message-actions.js) is not drawn. */
 .message-actions:not([data-built]) { position: absolute !important; display: block !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: hidden !important; clip-path: inset(50%) !important; opacity: 0 !important; pointer-events: none !important; box-shadow: none !important; }
@@ -1130,6 +1134,10 @@ html[data-debug-inspector="on"] dt.room-fact-debug, html[data-debug-inspector="o
 .health-limit[data-state="soft"] .health-limit-fill { background: var(--orange); }
 .health-limit[data-state="hard"] .health-limit-fill { background: var(--red); }
 .health-limit-tick { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text-primary); }
+/* The two marks of a limit bar are told apart by colour and height, and the second steps aside when it is within a few percent of the first (they drew over each other). */
+.health-limit-tick-soft { background: var(--orange); }
+.health-limit-tick-hard { background: var(--red); top: -4px; bottom: -4px; }
+.health-limit-tick-hard.is-near { margin-left: 4px; }
 html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-debug-inspector="on"]) .inbox-raw { display: none; }
 
 
@@ -1175,7 +1183,7 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
 .emoji-tabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 2px 6px 4px; border-bottom: 1px solid var(--border); overflow-x: auto; }
 .emoji-tab { flex: 1 1 0; min-width: 0; padding: 4px 0; font-size: 15px; line-height: 1.3; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; }
 .emoji-tab[aria-current="true"] { border-bottom-color: var(--accent); background: var(--bg-hover); }
-.emoji-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 6px 6px; }
+.emoji-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 0 6px 6px; }
 /* The grid is virtual (web/js/emoji-picker.js): a canvas as tall as all the rows, and only the rows in view placed in it at their offsets. */
 .emoji-canvas { position: relative; }
 .emoji-heading { position: absolute; left: 0; right: 0; height: var(--emoji-heading); box-sizing: border-box; margin: 0; padding: 8px 2px 0; background: var(--bg-secondary); color: var(--text-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
@@ -1335,6 +1343,8 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .notification-banner > .icon-mask { flex: 0 0 auto; width: 16px; height: 16px; color: var(--text-muted); }
 .notification-banner-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .notification-banner .btn-icon { flex: 0 0 auto; }
+/* A slim strip on a phone: the same two controls (still 36px targets), less padding around them and the bell glyph left out of the row's height. */
+@media (max-width: 700px) { .notification-banner { padding: 2px 10px; gap: 8px; } .notification-banner button.btn-icon { width: 36px; height: 36px; min-height: 36px; flex-basis: 36px; } }
 .composer-notice-host { display: contents; }
 .composer-notice { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .composer-notice[hidden] { display: none; }
@@ -1920,6 +1930,11 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 /* The alerts about token refresh: in the column v1's own red box; Settings -> Usages (v2's page) draws the same box with the same values. Their reasons are folded under Details. */
 .usage-credential-alerts { margin: 6px 0 2px; padding: 6px 8px; border: 1px solid var(--red); border-radius: 6px; display: grid; gap: 4px; }
 .usage-credential-alert { color: var(--red); font-size: 0.72rem; line-height: 1.35; }
+/* A refresher conflict is information (nothing is broken, there is usually nothing to do), not an error: neutral text and an accent bar, where a real credential problem keeps
+   the red. The box around them is neutral too, so one calm notice is not framed as a failure. */
+.usage-credential-alerts, .usages-credential-alerts { border-color: var(--border); }
+.usage-credential-alert, .usages-credential-alert { padding-left: 8px; border-left: 3px solid var(--red); }
+.usage-credential-alert-refresher_conflict, .usages-credential-alert-refresher_conflict { color: var(--text-secondary); border-left-color: var(--accent); }
 .usage-credential-alert p, .usages-credential-alert p { margin: 0; }
 .usage-credential-alert details, .usages-credential-alert details { margin-top: 3px; color: var(--text-secondary); }
 .usage-credential-alert summary, .usages-credential-alert summary { cursor: pointer; }

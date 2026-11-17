@@ -112,6 +112,9 @@ async function main() {
     await page.waitForFunction(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))));
     const overlap = await page.evaluate(() => { const rows = [...document.querySelectorAll('.emoji-picker .emoji-row')].map(node => node.getBoundingClientRect()).sort((a, b) => a.top - b.top); let worst = 0; for (let at = 1; at < rows.length; at++) worst = Math.max(worst, rows[at - 1].bottom - rows[at].top); return worst; });
     assert.ok(overlap <= 1, `rows do not overlap after the picker is resized across the phone breakpoint (${overlap}px)`);
+    // The scrollbar takes its width from the grid, so the columns are counted without it: no cell is cut under it (a ninth column was half hidden on a phone).
+    const cut = await page.evaluate(() => { const grid = document.querySelector('.emoji-grid'), edge = grid.getBoundingClientRect().left + grid.clientWidth; return Math.max(...[...document.querySelectorAll('.emoji-picker .emoji-cell')].map(cell => cell.getBoundingClientRect().right - edge)); });
+    assert.ok(cut <= 8, `no emoji cell reaches under the scrollbar (${cut}px past the content edge, 6px of it is the grid's padding)`);
     await page.setViewport({ width: 1280, height: 900 });
     await closePicker();
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'emoji-button', 'Escape closes it and the focus goes back to the button');

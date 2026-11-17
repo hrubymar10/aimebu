@@ -29,8 +29,10 @@ export function canRename(room, role, admin) {
 
 // Kind and Room ID are for debugging: they show only while the message debug inspector is on. Whoever may rename edits the title in its own form.
 export function facts(room, renamable) {
-  return [...(renamable ? [] : [['Name', room.title]]), ['Kind', room.kind, true], ['Status', room.lifecycle || 'open'], ['Members', String(room.member_count || 0)], ['Room ID', room.id, true]]
-    .map(([label, value, debug]) => ({ label, value, debug: !!debug }));
+  const kind = { home: 'Home room', task: 'Task room', dm: 'Private chat' }[room.kind] || room.kind;
+  const status = { open: 'Open', closing: 'Closing', closed: 'Archived' }[room.lifecycle || 'open'] || room.lifecycle;
+  return [...(renamable ? [] : [['Name', room.title]]), ['Kind', kind, true], ['Status', status], ['Members', String(room.member_count || 0)], ['Room ID', room.id, true, true]]
+    .map(([label, value, debug, copy]) => ({ label, value, debug: !!debug, copy: !!copy }));
 }
 
 export function lifecycleControl(room) {

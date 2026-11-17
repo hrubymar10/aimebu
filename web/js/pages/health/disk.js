@@ -120,7 +120,7 @@ export function DiskSection({ disk }) {
   const peak = Math.max(...(report.projects || []).map(project => project.bytes), 1);
   const last = report.last_cleanup ? `Last cleanup ${new Date(report.last_cleanup.created_at).toLocaleString()}: ${report.last_cleanup.reason}` : 'No cleanup has removed anything yet.';
   return html`<section class="health-disk" id="health-disk" aria-label="Disk usage">
-    <div class="health-disk-head"><strong>Disk</strong><span class="health-disk-total">${formatBytes(report.total_bytes)}</span><button type="button" class="btn health-disk-clean" onClick=${() => disk.preview()}>Clean now</button></div>
+    <div class="health-disk-head"><strong>Disk</strong><span class="health-disk-total">${formatBytes(report.total_bytes)}</span><button type="button" class="btn health-disk-clean" title="Show what would be removed from disk; nothing goes until you confirm" onClick=${() => disk.preview()}>Clean up old data</button></div>
     ${report.low_disk && html`<p class="health-disk-warning">${`Only ${formatBytes(report.free_bytes)} free on this disk.`}</p>`}
     ${(report.warnings || []).map(warning => html`<p class="health-disk-warning">${warning}</p>`)}
     ${report.projects?.length ? html`<ul class="health-disk-projects" aria-label="Disk used by project">${projectRows(report, peak).map(row => html`<li data-project=${row.id} title=${row.title}>

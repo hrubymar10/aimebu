@@ -26,8 +26,8 @@ assert.deepEqual([['owner', false], ['operator', false], ['viewer', true], ['vie
 assert.equal(canRename({ kind: 'dm' }, 'owner', true), false);
 
 assert.deepEqual(plain(facts({ id: 'rm_1', title: 'general', kind: 'task', lifecycle: 'closed', member_count: 3 }, true)), [
-  { label: 'Kind', value: 'task', debug: true }, { label: 'Status', value: 'closed', debug: false }, { label: 'Members', value: '3', debug: false }, { label: 'Room ID', value: 'rm_1', debug: true }]);
-assert.deepEqual(plain(facts({ id: 'rm_1', title: 'general', kind: 'task' }, false)).slice(0, 3), [{ label: 'Name', value: 'general', debug: false }, { label: 'Kind', value: 'task', debug: true }, { label: 'Status', value: 'open', debug: false }], 'without a title field the name is a fact; a room with no lifecycle is open');
+  { label: 'Kind', value: 'Task room', debug: true, copy: false }, { label: 'Status', value: 'Archived', debug: false, copy: false }, { label: 'Members', value: '3', debug: false, copy: false }, { label: 'Room ID', value: 'rm_1', debug: true, copy: true }]);
+assert.deepEqual(plain(facts({ id: 'rm_1', title: 'general', kind: 'task' }, false)).slice(0, 3), [{ label: 'Name', value: 'general', debug: false, copy: false }, { label: 'Kind', value: 'Task room', debug: true, copy: false }, { label: 'Status', value: 'Open', debug: false, copy: false }], 'without a title field the name is a fact; a room with no lifecycle is open');
 
 assert.deepEqual([{ kind: 'task' }, { kind: 'task', lifecycle: 'closing' }, { kind: 'task', lifecycle: 'closed' }, { kind: 'home' }].map(room => plain(lifecycleControl(room))), [
   { hidden: false, disabled: false, glyph: 'archive', label: 'Archive room' }, { hidden: false, disabled: true, glyph: 'archive', label: 'Closing…' },
