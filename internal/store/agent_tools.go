@@ -268,7 +268,8 @@ func (s *Store) RoomsForAgent(ctx context.Context, agentID, projectID string) ([
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.project_id,r.parent_id,r.depth,r.kind,r.dm_key,r.title,r.created_by,
 		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,
 		`+roomMemberCountSQL+`,
-		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id)
+		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
+		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system')
 		FROM room r JOIN room_member own ON own.room_id=r.id AND own.member_kind='agent'
 			AND own.member_id=? AND own.left_at IS NULL
 		WHERE r.project_id IN (?,`+agentDMProjectSQL+`) ORDER BY r.depth,r.created_at,r.id`, agentID, projectID)
@@ -282,7 +283,7 @@ func (s *Store) RoomsForAgent(ctx context.Context, agentID, projectID string) ([
 		var parent, dm, closed sql.NullString
 		if err := rows.Scan(&room.ID, &room.ProjectID, &parent, &room.Depth, &room.Kind, &dm,
 			&room.Title, &room.CreatedBy, &room.Lifecycle, &room.Gate, &room.LifecycleRev,
-			&closed, &room.MemberCount, &room.MessageCount); err != nil {
+			&closed, &room.MemberCount, &room.MessageCount, &room.UserMessageCount); err != nil {
 			return nil, err
 		}
 		room.ParentID, room.DMKey, room.ClosedAt = parent.String, dm.String, closed.String

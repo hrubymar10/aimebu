@@ -1,4 +1,5 @@
 import { request } from './api.js';
+import { captureError } from './telemetry.js';
 
 // "Only run agents in docker": an instance setting. It is read from the server for any signed-in person and written by an admin.
 export const agentIsolation = {
@@ -11,7 +12,7 @@ export const agentIsolation = {
   keepAlive: { enabled: true, claude_minutes: 50, codex_minutes: 10, stop_after_hours: 24 }, // the cache keep-alive: pings that keep an idle agent's prompt cache
   listeners: new Set(),
   async load() {
-    try { this.apply(await request('/api/agent-isolation')); } catch {}
+    try { this.apply(await request('/api/agent-isolation')); } catch (error) { captureError(error, 'agent-isolation.load'); }
     return this;
   },
   apply(body) {

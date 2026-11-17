@@ -14,6 +14,7 @@ import (
 
 	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"github.com/hrubymar10/aimebu/internal/switcher"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
@@ -180,6 +181,7 @@ func (s *Server) StartTokenCopies(ctx context.Context, configure ...func(*usages
 	// same login again. WaitTokenCopies joins this goroutine.
 	s.claimsDone = make(chan struct{})
 	go func() {
+		defer telemetry.Recover(ctx)
 		defer close(s.claimsDone)
 		ticker := time.NewTicker(liveClaimInterval)
 		defer ticker.Stop()
@@ -196,8 +198,8 @@ func (s *Server) StartTokenCopies(ctx context.Context, configure ...func(*usages
 			}
 		}
 	}()
-	go tr.Run(ctx)
-	go rec.Run(ctx)
+	telemetry.Go(ctx, func() { tr.Run(ctx) })
+	telemetry.Go(ctx, func() { rec.Run(ctx) })
 	if s.Usages != nil {
 		s.Usages.SetCredentialAlerts(func() []usages.CredentialAlert {
 			if !tr.Enabled() {
@@ -215,7 +217,7 @@ func (s *Server) StartTokenCopies(ctx context.Context, configure ...func(*usages
 		}
 		s.tokenSetting = ts
 		s.Usages.SetTokenSetting(ts)
-		go ts.Run(ctx)
+		telemetry.Go(ctx, func() { ts.Run(ctx) })
 	}
 	return tr
 }
@@ -295,11 +297,13 @@ func (s *Server) tokenCopyController(mgr *switcher.Manager, rec *credtarget.Reco
 					} else {
 						// Never migrated: the setting is off, whatever the link repair says.
 						log.Printf("credtarget: %s active-link repair: %s", tool, usages.RedactDetail(err.Error()))
+						telemetry.WarnCause(context.Background(), "credentials", "active-link repair")
 					}
 				}
 			}
 			if migrationBlocks.changed(tool, migrationErr) {
 				log.Printf("credtarget: %s migration blocked: %s", tool, usages.RedactDetail(migrationErr.Error()))
+				telemetry.WarnCause(context.Background(), "credentials", "migration blocked")
 			}
 			states[tool] = state
 			if state.Status != last[tool].Status {
@@ -417,6 +421,14 @@ func (s *Server) credentialAlertSink(dedupe bool) func(kind, detail string) {
 		}
 		detail = usages.RedactDetail(detail)
 		log.Printf("credential alert: %s: %s", kind, detail)
+		// What needs a person is a warning (a login to redo), what failed is an error; the rest (expiring soon, a login imported, another refresher present) is
+		// information. The detail names accounts and paths: only the kind goes out.
+		switch kind {
+		case "refresh_failed", "fanout_failed", "state_save_failed", "login_strip_failed", "login_import_failed", "commit_failed":
+			telemetry.ReportCause(context.Background(), "credentials", "credential alert: "+kind)
+		case "reauth_required", "expired":
+			telemetry.WarnCause(context.Background(), "credentials", "credential alert: "+kind)
+		}
 		if err := s.Store.RecordCredentialAlert(context.Background(), kind, detail); err != nil {
 			log.Printf("credential alert: record event: %v", err)
 		}

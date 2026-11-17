@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'telemetry.js'), 'utf8');
 const context = { URL };
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { setTelemetryUser, SDK_URL, scrubUrl, routeOf, scrubText, scrubEvent, scrubBreadcrumb, sentryOptions, startTelemetry, resetTelemetryForTest };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { setTelemetryUser, SDK_URL, scrubUrl, routeOf, scrubText, scrubEvent, scrubBreadcrumb, sentryOptions, startTelemetry, resetTelemetryForTest, captureError };', context);
 const api = context.api;
 // The vendored SDK is the file the README records.
 const vendor = path.join(__dirname, '..', 'web', 'vendor');
@@ -98,5 +98,24 @@ assert.equal(options.beforeSendTransaction, api.scrubEvent); assert.equal(option
   assert.equal(await api.startTelemetry({ dsn: 'https://k@h/1' }, { load: async () => { throw new Error('offline'); } }), false);
   api.resetTelemetryForTest();
   assert.equal(await api.startTelemetry({ dsn: 'https://k@h/1' }, { load: async () => {}, Sentry: () => undefined }), false);
+  // Caught errors reach Sentry through captureError: only while reporting runs, once per cause, tagged with a fixed place name, and never for what is not a defect
+  // (a lost session, a request that got no answer, a cancelled one, a 4xx).
+  const sent = [], scopes = [];
+  const fake = { captureException: error => sent.push(error), withScope: run => { const scope = { tags: {}, fingerprint: null, level: null, setTag(name, value) { this.tags[name] = value; }, setFingerprint(value) { this.fingerprint = value; }, setLevel(value) { this.level = value; } }; scopes.push(scope); run(scope); } };
+  api.resetTelemetryForTest();
+  assert.equal(api.captureError(new Error('boom'), 'render', fake), false, 'nothing is reported while reporting is off');
+  assert.equal(await api.startTelemetry({ dsn: 'https://k@h/1' }, { load: async () => {}, Sentry: () => ({ setUser() {}, init() {}, browserTracingIntegration: () => 'tracing' }) }), true);
+  assert.equal(api.captureError(new Error('boom at /Users/alice/x'), 'render', fake), true);
+  assert.deepEqual(plain({ tags: scopes[0].tags, fingerprint: scopes[0].fingerprint, level: scopes[0].level }), { tags: { source: 'render' }, fingerprint: ['render', 'Error', ''], level: 'error' }, 'the place is the tag; the place, name and status are the fingerprint');
+  assert.equal(api.captureError(new Error('boom at /Users/alice/x'), 'render', fake), false, 'the same cause is reported once');
+  assert.equal(api.captureError(new Error('another'), 'render', fake), true, 'another message is another cause');
+  const server = Object.assign(new Error('Request failed (500)'), { status: 500 });
+  assert.equal(api.captureError(server, 'usages.load', fake), true, 'a 5xx is reported');
+  assert.deepEqual(plain(scopes.at(-1).fingerprint), ['usages.load', 'Error', '500']);
+  for (const [label, error] of [['a lost session', Object.assign(new Error('x'), { status: 401, unauthorized: true })], ['no answer', Object.assign(new TypeError('Failed to fetch'), { network: true })], ['a cancel', Object.assign(new Error('a'), { name: 'AbortError' })], ['a refusal', Object.assign(new Error('nope'), { status: 409 })]]) {
+    assert.equal(api.captureError(error, 'x.y', fake), false, `${label} is not reported`);
+  }
+  assert.equal(api.captureError(null, 'x', fake), false); assert.equal(api.captureError(new Error('e'), '', fake), false);
+  assert.equal(api.captureError(new Error('e2'), 'z', { withScope() { throw new Error('sdk broke'); }, captureException() {} }), false, 'a broken SDK never throws into the page');
   console.log('telemetry test passed');
 })().catch(error => { console.error(error); process.exit(1); });

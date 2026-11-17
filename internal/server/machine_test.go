@@ -14,11 +14,13 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/getsentry/sentry-go"
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 func (f *fixture) execution(t *testing.T) (store.Agent, store.Turn, store.Note, protocol.Delivery) {
@@ -468,6 +470,76 @@ func TestMachineRejectsAnswerForAnotherAgentsTurn(t *testing.T) {
 	}
 	if response := send(agentB.ID); response.Type != protocol.Receipt || response.Result != "committed" {
 		t.Fatalf("owner answer rejected: %+v", response)
+	}
+}
+
+// A frame the server refuses, and a store failure behind a frame, were a log line and an error frame to the supervisor and nothing more: they reach Sentry as
+// area `machine` (a rejection a warning, once per cause, with no id in it). Not parallel: the reporter is process-wide.
+func TestMachineRejectedFrameReachesSentry(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := &captureTransport{}
+	tel, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test", Release: "v1", TracesSampleRate: 1}, transport)
+	if err != nil || tel == nil {
+		t.Fatalf("telemetry.Init: %v %v", tel, err)
+	}
+	t.Cleanup(tel.Close)
+	f := newFixture(t)
+	agentA, _, _, _ := f.execution(t)
+	ctx := context.Background()
+	agentB, err := f.db.CreateAgent(ctx, store.Agent{Slug: "workerb", ProjectID: f.project.ID, RoleID: "role_t6", Tool: "fake", Variant: "test", Model: "test", Provider: "test", MachineID: f.machineID, CheckoutID: "chk_t6", KeyHash: "pending", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AddMember(ctx, f.room.ID, "agent", agentB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_t6b',?,0,'fresh_with_history','2026-10-13T00:00:00.000000000Z')`, agentB.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	turnB, err := f.db.RecordTurn(ctx, store.Turn{AgentID: agentB.ID, SessionID: "ses_t6b", Generation: 0, RoomID: f.room.ID, Attempt: 1, Mode: "normal", Exec: "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := f.dialMachine(t, []protocol.HelloAgent{{AgentID: agentA.ID, Generation: 0}, {AgentID: agentB.ID, Generation: 0}})
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	candidate := `{"messages":[]}`
+	sum := sha256.Sum256([]byte(candidate))
+	digest := hex.EncodeToString(sum[:])
+	send := func(agentID string) protocol.Frame {
+		t.Helper()
+		raw, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.Answer, AgentID: agentID, Generation: 0, TurnID: turnB.ID, AnswerRev: 0, Digest: digest, Candidate: candidate})
+		ioCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		if err := conn.Write(ioCtx, websocket.MessageText, raw); err != nil {
+			t.Fatal(err)
+		}
+		_, raw, err := conn.Read(ioCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response protocol.Frame
+		if err := json.Unmarshal(raw, &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	if response := send("agt_not_on_this_machine"); response.Type != protocol.Error {
+		t.Fatalf("a frame for an agent that is not this machine's was accepted: %+v", response)
+	}
+	telemetry.Current().Flush(time.Second)
+	transport.mu.Lock()
+	var events []*sentry.Event
+	for _, event := range transport.events {
+		if len(event.Exception) > 0 { // (the server also sends transactions of its own)
+			events = append(events, event)
+		}
+	}
+	transport.mu.Unlock()
+	if len(events) != 1 || events[0].Level != sentry.LevelWarning || events[0].Tags["area"] != "machine" || !strings.HasPrefix(events[0].Exception[0].Value, "agent frame rejected: type=answer code=") {
+		t.Fatalf("the rejected frame must reach Sentry once, as a machine warning: %+v", events)
 	}
 }
 

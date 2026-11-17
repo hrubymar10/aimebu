@@ -2,6 +2,7 @@ package usages
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // maxRotatedRescues is how many rotated-credential rescue files are kept per
@@ -230,6 +232,7 @@ func saveAbortedRotation(tool, name string, rotated []byte, root string, cause e
 	}
 	pruneRotatedRescues(dir, name)
 	log.Printf("usages: ERROR %s token refresh profile=%q outcome=aborted reason=%v rotated_saved=%s — the run spent the stored refresh token; the rescue file holds the new one", tool, name, cause, path)
+	telemetry.ReportCause(context.Background(), "credentials", "token refresh aborted after the run spent the stored refresh token (the rescue file holds the new one)")
 	return fmt.Errorf("%w; rotated_saved=%s", cause, path)
 }
 

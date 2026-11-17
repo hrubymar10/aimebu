@@ -10,7 +10,7 @@ const READ_ONLY = 'Only the owner or an admin can change this.';
 const UNITS = [['seconds', 1], ['minutes', 60], ['hours', 3600], ['days', 86400]];
 const multiplier = unit => UNITS.find(([name]) => name === unit)?.[1] || 1;
 const shownAs = seconds => { const fit = seconds > 0 ? [...UNITS].reverse().find(([, size]) => seconds % size === 0) : null; return fit ? { amount: String(seconds / fit[1]), unit: fit[0] } : { amount: '0', unit: 'hours' }; };
-const secondsOf = ({ amount, unit }) => (String(amount).trim() === '' ? NaN : Number(amount) * multiplier(unit));
+const secondsOf = ({ amount, unit }) => (String(amount).trim() === '' ? NaN : Math.round(Number(amount) * multiplier(unit))); // whole seconds: 1.1 hours is 3960
 const DESC = `Messages older than this are hidden from what AI agents are given. They are never deleted and stay visible here, marked with an hourglass. 0 turns expiry off; otherwise from 1 minute to 30 days. Default 6 hours.`;
 
 // The window is the chat's too: `retention` is the shared store, and what is typed is a draft kept apart from it until Save.

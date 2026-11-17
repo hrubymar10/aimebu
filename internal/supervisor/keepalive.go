@@ -14,6 +14,7 @@ import (
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // Cache keep-alive. A harness's prompt cache is what makes a turn after a long pause cheap (Claude Code writes it with a one-hour lifetime, so a ping
@@ -445,6 +446,7 @@ func (c *Client) keepAlivePing(agentID string, gen int) {
 	c.kaMu.Unlock()
 	c.warmChanged() // the picture now has a ping in it (what the server needs to know if the connection drops)
 	go func() {
+		defer telemetry.Recover(context.Background())
 		defer c.warmChanged() // runs after close(done): the picture without it
 		defer close(done)
 		defer cancel()
@@ -455,9 +457,11 @@ func (c *Client) keepAlivePing(agentID string, gen int) {
 				// The process may still be alive in its container (a kill of the wrapper confirms nothing): the ping stays blocked, and the server
 				// keeps refusing the toolbox, until the quarantine is over. Neither is lifted on an unconfirmed end.
 				log.Printf("keep-alive %s: the ping's end is not confirmed; the agent stays blocked for %v", spec.Agent.ID, c.quarantine())
+				telemetry.ReportWarning(ctx, "supervisor", errors.New("keep-alive: the ping's end is not confirmed; the agent stays blocked"))
 				c.keepAliveHoldScope(spec.Agent.ID, result.gen, c.quarantine())
 				c.kaUnconfirmed.Add(1)
 				log.Printf("WARNING keep-alive %s: the quarantine is over and the ping's end was never confirmed; going on as if the orphaned process is gone (%d unconfirmed ping ends so far)", spec.Agent.ID, c.kaUnconfirmed.Load())
+				telemetry.ReportWarning(ctx, "supervisor", errors.New("keep-alive: the quarantine is over and the ping's end was never confirmed"))
 				c.warmChanged()
 			}
 			// Lifted only after the process is confirmed gone (or the quarantine is over), and before the ping counts as ended: a real turn that
@@ -466,6 +470,7 @@ func (c *Client) keepAlivePing(agentID string, gen int) {
 			if err := c.keepAliveScopeCall(liftCtx, spec.Agent.ID, result.gen, false); err != nil {
 				// Owed: re-sent when the supervisor reconnects and before the agent's next real turn starts, so that turn's toolbox is not refused.
 				log.Printf("keep-alive %s: the scope was not lifted (it is owed, and re-sent on reconnect and before the next turn): %v", spec.Agent.ID, err)
+				telemetry.ReportError(ctx, "supervisor", fmt.Errorf("keep-alive: the scope was not lifted: %w", err))
 				c.keepAliveOweLift(spec.Agent.ID, result.gen)
 			}
 			liftCancel()
@@ -546,6 +551,7 @@ func (c *Client) runKeepAlive(ctx context.Context, spec adapter.TurnSpec, cred c
 	stop := make(chan struct{})
 	watching := make(chan struct{})
 	go func() {
+		defer telemetry.Recover(context.Background())
 		defer close(watching)
 		select {
 		case <-ctx.Done():
@@ -646,6 +652,7 @@ func (c *Client) sendKeepAliveReport(report protocol.KeepAliveReport) {
 		log.Printf("keep-alive %s: cache read %d, written %d, in %d, out %d, %.1fs", report.AgentID, report.CacheRead, report.CacheWrite, report.TokensIn, report.TokensOut, report.DurationSeconds)
 	} else {
 		log.Printf("keep-alive %s failed: %s", report.AgentID, report.Error)
+		telemetry.WarnCause(context.Background(), "supervisor", "keep-alive ping failed") // report.Error is the harness's own words: the local log only
 	}
 	if c.keepAliveSink != nil {
 		c.keepAliveSink(report)
@@ -781,6 +788,7 @@ func (c *Client) keepAliveHoldScope(agentID, gen string, quarantine time.Duratio
 		ctx, cancel := context.WithTimeout(context.Background(), keepAliveScopeWait+time.Second)
 		if err := c.keepAliveScopeCall(ctx, agentID, gen, true); err != nil {
 			log.Printf("keep-alive %s: the scope could not be renewed during the quarantine: %v", agentID, err)
+			telemetry.ReportError(ctx, "supervisor", fmt.Errorf("keep-alive: the scope could not be renewed during the quarantine: %w", err))
 			wait = min(wait, keepAliveScopeWait)
 		}
 		cancel()

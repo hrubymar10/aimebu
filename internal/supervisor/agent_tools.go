@@ -26,7 +26,7 @@ func (c *Client) legacyAgentToolsDir() string {
 func (c *Client) SweepLegacyKeys() {
 	if dir := c.legacyAgentToolsDir(); dir != "" {
 		if err := os.RemoveAll(dir); err != nil {
-			c.report(err)
+			c.report("the legacy agent-tools directory could not be removed", err)
 		}
 	}
 	if sweeper, ok := c.Adapter.(interface{ SweepKeys() }); ok {

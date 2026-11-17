@@ -3,6 +3,7 @@ package quota
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -384,6 +385,23 @@ func TestAFailedSwitchIsAnErrorWithAFixedReasonAndGrowingBackoff(t *testing.T) {
 		if len(h.act.calls) != before+1 {
 			t.Fatalf("step %d: not retried after %s", i, wait)
 		}
+	}
+}
+
+// An automatic switch that fails is reported (through Report: the package imports nothing of the program, the server wires Sentry in) on every attempt, and
+// the report is a fixed phrase, never the error (it can name an account), which the server's reporter takes down to one issue. Not parallel: Report is package-wide.
+func TestAFailedSwitchIsReported(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	Report = func(cause string, warning bool) { mu.Lock(); got = append(got, cause); _ = warning; mu.Unlock() }
+	t.Cleanup(func() { Report = nil })
+	h := newHarness(t)
+	h.act.err = errors.New("permission denied")
+	h.tick(0)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != "automatic account switch failed" || strings.Contains(got[0], "permission denied") {
+		t.Fatalf("reports = %v", got)
 	}
 }
 

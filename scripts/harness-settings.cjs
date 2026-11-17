@@ -28,7 +28,7 @@ async function main() {
   // A start whose port was taken between picking it and binding it is tried again on another (see server-start.cjs).
   const { child: server, origin, logs: serverLogs } = await startServer(binary, port => ({ ...env, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }), { label: 'harness server' });
   let supervisor, browser, page;
-  const roleSaves = [], pageErrors = [];
+  const roleSaves = [], unavailable = [], consoleErrors = [], pageErrors = [];
   const cleanup = async () => {
     try { await browser?.close(); } catch { /* gone */ }
     for (const child of [supervisor, server]) { try { child?.kill('SIGTERM'); } catch { /* gone */ } }
@@ -41,9 +41,13 @@ async function main() {
     page = await browser.newPage(); page.setDefaultTimeout(60000);
     await page.evaluateOnNewDocument(() => { try { Object.defineProperty(Notification, 'permission', { configurable: true, get: () => 'denied' }); localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch { /* not available */ } });
     await page.setViewport({ width: 1280, height: 900 });
-    page.on('response', async response => { const request = response.request(); if (request.method() === 'PUT' && /\/api\/roles\//.test(request.url())) roleSaves.push(`${response.status()} rev=${JSON.parse(request.postData() || '{}').rev} ${request.url().split('/').pop()}`); });
+    page.on('response', response => {
+      const request = response.request();
+      if (response.status() === 503) unavailable.push(`${request.method()} ${new URL(request.url()).pathname}`);
+      if (request.method() === 'PUT' && /\/api\/roles\//.test(request.url())) roleSaves.push(`${response.status()} rev=${JSON.parse(request.postData() || '{}').rev} ${request.url().split('/').pop()}`);
+    });
     page.on('pageerror', error => pageErrors.push(error.message));
-    page.on('console', message => { if (message.type() === 'error') roleSaves.push(`console: ${message.text()}`); });
+    page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
     await page.goto(origin);
     // Seed through the API as the owner: three harnesses with models, and role defaults on two roles.
     const seed = await page.evaluate(async () => {
@@ -200,14 +204,15 @@ async function main() {
     assert.deepEqual((await state()).defaults.worker, ['gpt-6-sol', 'sonnet', 'haiku']);
     assert.deepEqual(pageErrors, [], 'no script errors so far');
 
-    // A phone width: the harness list stays one scrolling row above the detail, and nothing overflows sideways.
+    // A phone width: the harnesses are a select above the detail (the tab strip, which scrolled sideways and clipped its labels, is for wider screens), 44px tall,
+    // and nothing overflows sideways.
     await page.setViewport(PHONE);
     const fits = () => page.evaluate(() => {
-      const dialog = document.querySelector('#settings-dialog'), split = document.querySelector('.harness-split'), master = document.querySelector('.harness-master');
-      return { dialog: dialog.scrollWidth <= dialog.clientWidth + 1, split: split.scrollWidth <= split.clientWidth + 1, row: getComputedStyle(master).display, masterTop: master.getBoundingClientRect().bottom <= document.querySelector('.harness-detail').getBoundingClientRect().top + 1 };
+      const dialog = document.querySelector('#settings-dialog'), split = document.querySelector('.harness-split'), master = document.querySelector('.harness-master'), picker = document.querySelector('.harness-master-select');
+      return { dialog: dialog.scrollWidth <= dialog.clientWidth + 1, split: split.scrollWidth <= split.clientWidth + 1, tabs: getComputedStyle(master).display, select: getComputedStyle(picker).display, tall: Math.round(picker.getBoundingClientRect().height) >= 44, selectTop: picker.getBoundingClientRect().bottom <= document.querySelector('.harness-detail').getBoundingClientRect().top + 1 };
     });
-    assert.deepEqual(await fits(), { dialog: true, split: true, row: 'flex', masterTop: true }, 'the harness list sits above the detail and fits at 390 px');
-    // A model row is one line at 390 px too: the default radio, the star, the id and the remove button share it.
+    assert.deepEqual(await fits(), { dialog: true, split: true, tabs: 'none', select: 'block', tall: true, selectTop: true }, 'the harness select sits above the detail and fits at 390 px');
+    // A model row is one line at 390 px too: the default radio, the id and the remove button share it.
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#harnesses-list .machine-harness:not([hidden]) .harness-detail-top')].map(top => { const radio = top.querySelector('input[type=radio]').getBoundingClientRect(), slug = top.querySelector('.harness-model-slug').getBoundingClientRect(), trash = top.querySelector('.harness-model-remove').getBoundingClientRect(); return [Math.abs(radio.top + radio.height / 2 - (trash.top + trash.height / 2)) < 4, Math.abs(slug.top + slug.height / 2 - (trash.top + trash.height / 2)) < 4]; }).every(row => row.every(Boolean))), true, 'the model rows are one line on a phone');
     await shot('phone', PHONE);
     await page.setViewport(DESKTOP);
@@ -300,6 +305,8 @@ async function main() {
   } catch (error) {
     if (shots) { try { fs.mkdirSync(shots, { recursive: true }); await page?.screenshot({ path: path.join(shots, 'failure.png') }); } catch { /* best effort */ } }
     console.error(`role saves: ${JSON.stringify(roleSaves)}`);
+    console.error(`503 responses: ${JSON.stringify(unavailable)}`);
+    console.error(`console errors: ${JSON.stringify(consoleErrors)}`);
     console.error(`server log tail:\n${serverLogs().slice(-600)}`);
     throw error;
   } finally { await cleanup(); }

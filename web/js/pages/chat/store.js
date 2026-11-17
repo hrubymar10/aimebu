@@ -3,6 +3,7 @@ import { megabytes } from '../../notice.js';
 import { expiryCutoffMs, planExpiry } from '../../expiry.js';
 import { retention } from '../../retention.js';
 import { answerEligible, liveArrival, liveRoute, messageSnippet, overCap, threadCount, trimCap } from './model.js';
+import { captureError } from '../../telemetry.js';
 
 // The room's messages and the calls that load them; `host` draws. A call says nothing and starts nothing once its generation or the store is gone.
 export class ChatStore {
@@ -358,7 +359,7 @@ export class ChatStore {
       this.threadEntries = this.threadEntries.map(entry => entry.id === id ? message : entry);
       this.answeredMessages.delete(id);
       this.host.listUpdate(); this.host.threadUpdate();
-    } catch { /* A later room load will read the durable answer state. */ }
+    } catch (error) { captureError(error, 'chat.answer-state'); /* A later room load will read the durable answer state. */ }
   }
 
   // An agent that wrote in this room and is no longer a member (or came from the v1 import) still reads as @name in message bodies:

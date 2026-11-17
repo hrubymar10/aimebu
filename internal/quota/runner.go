@@ -245,6 +245,7 @@ func (r *Runner) record(ctx context.Context, d Decision) {
 	}
 	if err != nil {
 		log.Printf("quota: record %s decision: %v", d.Tool, err)
+		report("recording a switch decision", false)
 		return
 	}
 	r.last[d.Tool] = d
@@ -268,6 +269,7 @@ func (r *Runner) Evaluate(ctx context.Context) {
 		}
 		if err := r.evaluateTool(ctx, tool); err != nil {
 			log.Printf("quota: %s: %v", tool, err)
+			report("checking a tool", false)
 		}
 	}
 }
@@ -380,6 +382,7 @@ func (r *Runner) evaluateTool(ctx context.Context, tool string) error {
 		if durableChanged(state, np) {
 			if err := r.saveState(ctx, tool, np); err != nil {
 				log.Printf("quota: save %s state: %v", tool, err)
+				report("saving the switcher state", false)
 			}
 		}
 	}
@@ -430,6 +433,7 @@ func (r *Runner) evaluateTool(ctx context.Context, tool string) error {
 		finish(d, next)
 	case err != nil:
 		log.Printf("quota: switch %s %s -> %s: %v", tool, from, to, err)
+		report("automatic account switch failed", false)
 		d.Action, d.Reason = ActionError, ReasonSwitchFailed
 		b := r.backoff[tool]
 		announce := b.failures == 0 || b.lastErr != err.Error()

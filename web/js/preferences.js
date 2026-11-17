@@ -1,6 +1,7 @@
 // Personal interface preferences live on the server (per user, the same on every device). The browser keeps a copy under its own keys
 // only so the page can paint the right theme and sound before anyone signs in; the server's value wins once it is loaded.
 import { request, currentUser } from './api.js';
+import { captureError } from './telemetry.js';
 
 // Preference name -> the browser key that caches it. Layout state of one device (collapsed panels and rooms) is deliberately not here.
 export const PREFERENCE_KEYS = {
@@ -38,7 +39,7 @@ export async function loadPreferences(userID, { send = request, storage = localS
       else { const local = storage.getItem(key); if (local !== null && local.length <= limitOf(name)) upload[name] = local; }
     } catch { /* private browsing: the server copy still applies on the next load */ }
   }
-  if (Object.keys(upload).length) { try { await send('/api/me/preferences', { method: 'PUT', body: { preferences: upload } }); } catch { /* retried on the next sign-in */ } }
+  if (Object.keys(upload).length) { try { await send('/api/me/preferences', { method: 'PUT', body: { preferences: upload } }); } catch (error) { captureError(error, 'preferences.upload'); /* retried on the next sign-in */ } }
   return stored;
 }
 

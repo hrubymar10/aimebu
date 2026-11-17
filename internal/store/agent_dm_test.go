@@ -330,7 +330,13 @@ func TestAgentDMVisibleToItsAgentsOnly(t *testing.T) {
 		}
 		found := false
 		for _, r := range rooms {
-			found = found || r.ID == room.ID
+			if r.ID == room.ID {
+				found = true
+				// The room list says how many of its messages are from people or agents (not notices): an agent's list must not claim none.
+				if r.UserMessageCount < 1 || r.UserMessageCount > r.MessageCount {
+					t.Fatalf("%s: the chat has %d messages, %d not notices", agent.Slug, r.MessageCount, r.UserMessageCount)
+				}
+			}
 		}
 		if !found {
 			t.Fatalf("%s does not list the chat", agent.Slug)

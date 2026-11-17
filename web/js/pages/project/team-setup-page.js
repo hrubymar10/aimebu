@@ -7,6 +7,7 @@ import {
   projectPath, cleanTarget, roleLabel, flowLetter, loadChoices, initialTarget, initialDefaults, describeTarget,
   TargetPicker, StatusBanner, RecommendedModels, KeptAgent, MigrationSummary, MigrationProgress, isModelChange, MIGRATION_TERMINAL,
 } from './team-wizard-parts.js';
+import { captureError } from '../../telemetry.js';
 
 const SECOND_ROLE = { 'leader-dispatcher': 'Dispatcher', 'leader-advisor': 'Advisor' };
 const CORE = ['leader', 'worker', 'reviewer'];
@@ -109,7 +110,7 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
         const answer = await flow.source.migration(id), latest = answer?.migration || answer;
         if (turn !== generation.current || !latest?.id) return;
         setMigration(latest);
-      } catch { /* the next poll tries again */ }
+      } catch (error) { captureError(error, 'team-setup.poll'); /* the next poll tries again */ }
     }, 2000);
     return () => clearInterval(timer);
   }, [migration?.id, migration?.state]);

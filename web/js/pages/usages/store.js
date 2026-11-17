@@ -1,5 +1,6 @@
 import { signal, batch } from '../../ui.js';
 import { tokenStatesPending, flowExpired, pollDelay } from './model.js';
+import { captureError } from '../../telemetry.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -112,7 +113,7 @@ export class UsagesStore {
     }
     this.pushDirty = false;
     this.pushLoading = true;
-    try { await this.load(); } catch { /* the next push or open reads again */ } finally {
+    try { await this.load(); } catch (error) { captureError(error, 'usages.load'); /* the next push or open reads again */ } finally {
       this.pushLoading = false;
       if (this.pushDirty) this.changed();
     }

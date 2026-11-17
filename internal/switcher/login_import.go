@@ -2,6 +2,7 @@ package switcher
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/credtarget"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // ErrLinkedProfile is returned when a profile's stored credential is still a
@@ -207,6 +209,7 @@ func (m *Manager) deleteLoginRescuesFor(tool string, refreshTokens map[string]bo
 		if cred, err := credtarget.ParseFull(tool, data); err == nil && refreshTokens[cred.RefreshToken] {
 			if err := os.Remove(path); err != nil {
 				log.Printf("switcher: %s: delete rescued login of a removed profile: %v", tool, err)
+				telemetry.WarnCause(context.Background(), "switcher", "deleting the rescued login of a removed profile")
 			}
 		}
 	}
@@ -359,6 +362,7 @@ func (m *Manager) importTokenCopies(tool, name, livePath string, liveData []byte
 	}
 	if err := replace(tool, liveData); err != nil {
 		log.Printf("switcher: ERROR %s/%s imported and active, but the live file could not be rewritten token-only yet (the reconciler will strip it): %v", tool, name, err)
+		telemetry.ReportCause(context.Background(), "switcher", "a login was imported and is active, but the live file could not be rewritten token-only yet")
 	}
 	return nil
 }

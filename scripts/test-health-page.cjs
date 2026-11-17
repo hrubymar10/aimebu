@@ -134,6 +134,8 @@ async function main() {
       const page = await mount({ auto: answerAll({ 'GET /api/limit-guard': guard('soft', 'left') }) });
       await page.$eval('#health-toggle', button => button.click());
       await page.waitForSelector('#health-popover .health-limit');
+      // Marks within a few percent of each other step apart in the direction the bar runs: drawn as percent left the hard mark is the one on the left.
+      assert.deepEqual(await page.evaluate(() => { const hard = document.querySelector('#health-popover .health-limit[data-tool=codex] [data-mark=hard]'); return hard && [hard.classList.contains('is-near'), hard.classList.contains('is-near-left')]; }), [false, true], 'percent left: the near hard mark steps left');
       assert.deepEqual(await page.$$eval('#health-popover .health-limit', nodes => nodes.map(node => [node.querySelector('.health-limit-text').textContent, node.querySelector('.health-limit-fill').style.width, [...node.querySelectorAll('.health-limit-tick')].map(t => t.style.left)])),
         [['Claude (local) has 4% left of its weekly window: new turns are held, running ones finish.', '4%', ['5%', '1%']], ['Codex (main) has 60% left of its session window.', '60%', ['2%', '1%']]]);
       // The two marks of a limit bar are told apart (colour and height), so they do not read as one when the thresholds are close.

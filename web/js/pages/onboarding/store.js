@@ -1,5 +1,6 @@
 import { batch, signal } from '../../ui.js';
 import { HARNESS_MISSING, NO_MODEL_NOTE, checkProject, harnessStatusText, howView } from './model.js';
+import { captureError } from '../../telemetry.js';
 
 // The first-run onboarding: Create your first project, the Harnesses step, and How aimebu works. Every answer is checked against `ticket`:
 // show(), close(), opening or leaving the Harnesses step, and destroy() start a new one, so a creation, a readiness poll, an addition or a
@@ -118,7 +119,7 @@ export class OnboardingStore {
     // who set one up is neither recorded as having skipped nor told to set one up first.
     if (!ready) { try { ready = await this.harnessReady(); } catch { ready = false; } if (!this.current(ticket)) return; }
     // Skipping the step is remembered by the app (on the person's account), so it is not offered again until a harness exists.
-    if (!ready) { try { await this.onSkip(this.mode); } catch { /* the offer may come back on the next sign-in */ } if (!this.current(ticket)) return; }
+    if (!ready) { try { await this.onSkip(this.mode); } catch (error) { captureError(error, 'onboarding.skip'); /* the offer may come back on the next sign-in */ } if (!this.current(ticket)) return; }
     if (this.mode === 'harness-only') { this.close(); return; }
     this.set(() => { this.step.value = 'how'; this.focusOn('done'); }); // until offerSpawn knows which button leads, focus stays on one that is there
     await this.offerSpawn(ready, ticket);

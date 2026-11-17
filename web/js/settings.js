@@ -15,6 +15,7 @@ import { PromptSettings } from './pages/prompts/page.js';
 import { TelemetrySettings } from './pages/telemetry/page.js';
 import { HttpQuotaSource } from './quota-source.js';
 import { HttpLimitGuardSource } from './limit-guard-source.js';
+import { captureError } from './telemetry.js';
 
 export class SettingsPanel {
   constructor(source, projectContext, notifications) {
@@ -86,7 +87,7 @@ export class SettingsPanel {
     this.selectSection(section); // the dialog shows at once; what the account may do is read again right after
     if (!wanted) this.shell.store.showList();
     this.usages.setError(''); // before the wait: whatever the person does in the meantime may write here, and must not be wiped
-    try { await refreshRights(); this.setRights(rights); this.onRights?.(rights); } catch { /* keep what sign-in said */ }
+    try { await refreshRights(); this.setRights(rights); this.onRights?.(rights); } catch (error) { captureError(error, 'settings.rights'); /* keep what sign-in said */ }
     this.usersSettings.prepare().catch(() => this.usersSettings.settle(true));
     // The default daily limits do not depend on the switcher or the usage snapshots, so they load on their own.
     void this.usages.syncDefault();

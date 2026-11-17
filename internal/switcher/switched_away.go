@@ -1,6 +1,7 @@
 package switcher
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // switchedAwayFile records, per profile, when it last stopped being the active
@@ -72,9 +75,11 @@ func (m *Manager) loadSwitchedAwayForWrite() map[string]time.Time {
 	}
 	if renameErr := os.Rename(m.switchedAwayPath(), dest); renameErr != nil {
 		log.Printf("ERROR switcher: %s is unreadable (%v) and could not be set aside (%v); not recording this switch-away time", switchedAwayFile, err, renameErr)
+		telemetry.ReportCause(context.Background(), "credentials", "switched_away.json is unreadable and could not be set aside")
 		return nil
 	}
 	log.Printf("ERROR switcher: %s is unreadable (%v); moved it to %s and started a new record", switchedAwayFile, err, filepath.Base(dest))
+	telemetry.WarnCause(context.Background(), "credentials", "switched_away.json was unreadable and was set aside")
 	return map[string]time.Time{}
 }
 

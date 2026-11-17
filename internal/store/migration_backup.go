@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	sqlite "modernc.org/sqlite"
 )
 
@@ -143,9 +144,11 @@ func backupBeforeMigration(ctx context.Context, db *sql.DB, path string, from, t
 		if multiple, ok := err.(interface{ Unwrap() []error }); ok {
 			for _, failure := range multiple.Unwrap() {
 				log.Printf("pre-migration backup rotation: %v; verified backup retained at %s", failure, dest)
+				telemetry.ReportWarning(context.Background(), "store", fmt.Errorf("pre-migration backup rotation: %w", failure))
 			}
 		} else {
 			log.Printf("pre-migration backup rotation: %v; verified backup retained at %s", err, dest)
+			telemetry.ReportWarning(context.Background(), "store", fmt.Errorf("pre-migration backup rotation: %w", err))
 		}
 	}
 	return nil

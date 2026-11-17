@@ -4,6 +4,7 @@ import { useAlive } from '../../hooks/use-alive.js';
 import { launcherReady } from '../../harness-offer.js';
 import { RoleDefaults, ROLE_DEFAULTS_CHANGED } from '../../role-defaults.js';
 import { harnessFromLauncher, createBody, detectNotes, detectInfo, detectionFailure, machineSummary, chosenHarness, staleModelsMessage, staleProvidersMessage, defaultLabel } from './model.js';
+import { captureError } from '../../telemetry.js';
 
 export const anyReady = rows => rows.some(row => launcherReady(row.enabled, row.models));
 
@@ -260,7 +261,7 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
       try {
         const response = await request(launchersURL(machine.id));
         for (const row of response?.launchers || []) found.set(row.config.id, { machine: machine.name || machine.id, label: row.config.label || row.config.name, models: row.models || [] });
-      } catch { /* those entries are then named by their ids */ }
+      } catch (error) { captureError(error, 'harnesses.launchers'); /* those entries are then named by their ids */ }
     }));
     if (alive() && state.machineID.peek() === machineID) state.others.value = new Map([...state.others.peek(), ...found]);
   }

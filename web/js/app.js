@@ -37,7 +37,7 @@ import { ImportV1Wizard } from './import-v1.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
 import { DiskUsage } from './pages/health/disk.js';
 import { showBuildVersion } from './build-version.js';
-import { startTelemetry } from './telemetry.js';
+import { startTelemetry, captureError } from './telemetry.js';
 import { askTelemetryConsent } from './telemetry-consent.js';
 import { formDialog, cancelAppDialogs } from './dialogs.js';
 import { UpdateBar } from './update-bar.js';
@@ -131,7 +131,7 @@ async function roomGone(room) {
 chat.onChatLeft = async room => {
   const generation = sessionGeneration;
   sidebar.forgetRoom(room.id);
-  try { await sidebar.refreshAgentChats(); } catch { /* the list is read again with the next event; the chat is already gone from here */ }
+  try { await sidebar.refreshAgentChats(); } catch (error) { captureError(error, 'sidebar.agent-chats'); /* the list is read again with the next event; the chat is already gone from here */ }
   if (generation !== sessionGeneration || chat.room?.id !== room.id) return;
   const home = [...sidebar.rooms.values()].find(item => item.kind === 'home');
   if (home) await selectRoom(home); else { chat.reset(); refreshEmptyState(); }
@@ -617,7 +617,7 @@ async function signedIn(session) {
     // part of startup even after the Retry state becomes visible.
     if (!preStreamTimedOut) startupDeadline = setTimeout(expireStartup, 10000);
     // The v1 import is the owner's; nobody else asks (a 403 on every sign-in).
-    if (rights.owner) try { await importWizard.maybeOpen(startupAbort.signal, active); } catch (error) { if (startupActive()) console.error('v1 import status:', error); }
+    if (rights.owner) try { await importWizard.maybeOpen(startupAbort.signal, active); } catch (error) { if (startupActive()) { console.error('v1 import status:', error); captureError(error, 'startup.import-status'); } }
     if (!startupActive()) return;
     refreshEmptyState();
     // The last step of the first run: with no project yet (nothing imported, or the import skipped) the owner makes the first one.
@@ -633,7 +633,7 @@ async function signedIn(session) {
       void offerHarnessSetup({
         user: currentUser, canSetUp: rights.owner, skipped: harnessSkipStored, configured: () => anyHarnessConfigured(request),
         show: async () => { if (active() && !onboarding.open) await onboarding.showHarnesses('harness-only'); }, setSkipped: value => setHarnessSkipped(value, generation),
-      }).catch(error => { if (active()) console.error('harness setup:', error); });
+      }).catch(error => { if (active()) { console.error('harness setup:', error); captureError(error, 'startup.harness-setup'); } });
     }
   } catch (error) {
     if (!active()) return;
@@ -643,6 +643,7 @@ async function signedIn(session) {
       return;
     }
     console.error('workspace startup:', error);
+    captureError(error, 'startup');
     setStartupState('timeout');
   } finally {
     clearTimeout(preStreamDeadline);

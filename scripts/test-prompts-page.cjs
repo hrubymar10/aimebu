@@ -139,7 +139,7 @@ async function main() {
       await type(page, 'tail', original);
       assert.equal(await saveOff(), true, 'the original text is nothing to save');
       await type(page, 'tail', 'tail shipped');
-      assert.equal(await saveOff(), true, 'the shipped text with no override of its own is nothing to save either');
+      assert.equal(await saveOff(), true, 'the shipped text with no override anywhere is nothing to save');
       assert.equal(await page.$eval('#prompt-inline-plan', el => !el.closest('.settings-group, section, fieldset')?.querySelector('#prompt-scope')), true, 'Inline plans is not in the Scope card');
       await type(page, 'tail', 'KEEP ME');
       const box = await page.$('#prompt-tail');
@@ -151,6 +151,15 @@ async function main() {
       await page.close();
     }
     // Reset in a project scope sends that scope and the layer's revision, then reads the list again.
+    // A project can save the shipped text over a global override (to say "the default, whatever the global says"): Save is on for it, though the text equals the shipped one.
+    {
+      const page = await mount({ [read('prj_a')]: view('prj_a', { slots: { tail: { global: 'tail global override', effective: 'tail global override', source: 'global' } } }) });
+      await chooseScope(page, 'prj_a');
+      await page.waitForFunction(() => document.querySelector('#prompt-tail').value === 'tail global override');
+      await type(page, 'tail', 'tail shipped');
+      assert.equal(await page.$eval('.prompt-slot[data-key=tail] .prompt-save', el => el.disabled), false, 'the shipped text over a global override can be saved by a project');
+      await page.close();
+    }
     {
       const overridden = view('prj_a', { slots: { tail: { source: 'project', effective: 'project tail', project: { value: 'project tail', rev: 4 } } } });
       const page = await mount({ [read('prj_a')]: overridden });

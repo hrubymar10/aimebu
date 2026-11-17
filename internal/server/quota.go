@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/quota"
 	"github.com/hrubymar10/aimebu/internal/switcher"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
@@ -26,14 +28,16 @@ func (s *Server) StartQuotaSwitcher(ctx context.Context) *quota.Runner {
 	if !s.quota.CompareAndSwap(nil, runner) {
 		return s.quota.Load()
 	}
+	// The quota package imports nothing of the program, so the server gives it the way to report to Sentry (before either runner starts, once).
+	quota.Report = reportQuota
 	guard := quota.NewGuard(s.Store, quotaSource{s}, s.Store, quotaEvents{s})
 	guard.CanSwitch = runner.CanSwitch
 	guard.OnHold = runner.Trigger
 	guard.OnHoldChange = s.guardHoldChanged
 	runner.SetGuard(guard.ConfigOrDefault)
 	s.guard.Store(guard)
-	go runner.Run(ctx)
-	go guard.Run(ctx)
+	telemetry.Go(ctx, func() { runner.Run(ctx) })
+	telemetry.Go(ctx, func() { guard.Run(ctx) })
 	return runner
 }
 
@@ -187,6 +191,7 @@ func (e quotaEvents) Event(kind string, payload map[string]string) {
 	defer cancel()
 	if err := e.s.Store.RecordQuotaEvent(ctx, kind, payload); err != nil {
 		log.Printf("quota: record %s event: %v", kind, err)
+		telemetry.ReportError(context.Background(), "quota", fmt.Errorf("recording a quota event: %w", err))
 	}
 }
 
@@ -331,4 +336,14 @@ func (s *Server) guardSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, view)
+}
+
+// reportQuota is quota.Report: what the quota switcher and the limit guard say went wrong, to Sentry (area `quota`), once per cause. Only the package's fixed
+// phrase goes out: the errors behind it can name accounts and profiles.
+func reportQuota(cause string, warning bool) {
+	if warning {
+		telemetry.WarnCause(context.Background(), "quota", cause)
+		return
+	}
+	telemetry.ReportCause(context.Background(), "quota", cause)
 }

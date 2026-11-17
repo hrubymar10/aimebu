@@ -29,6 +29,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/answer"
 	"github.com/hrubymar10/aimebu/internal/pathlist"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"github.com/hrubymar10/aimebu/internal/tlsclient"
 	"github.com/hrubymar10/aimebu/internal/worktree"
 )
@@ -197,18 +198,33 @@ func (c *Client) capabilityReportsSnapshot() []protocol.CapabilityReport {
 	return append([]protocol.CapabilityReport(nil), c.CapabilityReports...)
 }
 
+// reconnectHealthy is how long a connection must have lasted to count as one that worked; reconnectPersistent is how many failed attempts in a row are
+// reported.
+const (
+	reconnectHealthy    = 30 * time.Second
+	reconnectPersistent = 5
+)
+
 func (c *Client) Run(ctx context.Context) error {
 	c.SweepLegacyKeys()
 	c.SweepWarmOrphans(ctx)
-	go c.sweepAgentLogs(ctx)
-	go c.warmGuard(ctx)
+	telemetry.Go(ctx, func() { c.sweepAgentLogs(ctx) })
+	telemetry.Go(ctx, func() { c.warmGuard(ctx) })
+	failures := 0
 	for {
+		began := time.Now()
 		err := c.RunOnce(ctx)
 		if ctx.Err() != nil {
 			return nil
 		}
-		if c.OnError != nil {
-			c.OnError(err)
+		// A connection that drops now and then is the network; one that cannot be had again and again is a fault worth a report (once a day, like every cause).
+		if time.Since(began) > reconnectHealthy {
+			failures = 0
+		}
+		failures++
+		c.reportLocal(err)
+		if failures == reconnectPersistent {
+			telemetry.ReportWarning(ctx, "supervisor", fmt.Errorf("the server connection failed %d times in a row: %w", failures, err))
 		}
 		delay := c.ReconnectDelay
 		if delay <= 0 {
@@ -289,8 +305,8 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	// New keys first, before anything that could start a turn: an agent that lost its key with a restart gets another here.
 	for _, grant := range ack.AgentKeys {
-		if err := c.setAgentKey(grant.AgentID, grant.Key); err != nil && c.OnError != nil {
-			c.OnError(fmt.Errorf("key for agent %s: %w", grant.AgentID, err))
+		if err := c.setAgentKey(grant.AgentID, grant.Key); err != nil {
+			c.report("an agent key from the server could not be stored", fmt.Errorf("key for agent %s: %w", grant.AgentID, err))
 		}
 	}
 	c.mu.Lock()
@@ -302,22 +318,22 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	rows := append([]protocol.HarnessRow(nil), c.Harnesses...)
 	c.mu.Unlock()
 	for _, definition := range ack.LauncherDefinitions {
-		if err := c.setLauncher(definition); err != nil && c.OnError != nil {
-			c.OnError(err)
+		if err := c.setLauncher(definition); err != nil {
+			c.report("a launcher definition from the server was not applied", err)
 		}
 	}
 	if ack.HarnessProbeDir != "" || len(ack.HarnessProbeDirs) > 0 {
 		for _, row := range rows {
 			if row.Variant == "docker" {
-				if err := c.setHarness(row.HarnessSetting); err != nil && c.OnError != nil {
-					c.OnError(err)
+				if err := c.setHarness(row.HarnessSetting); err != nil {
+					c.report("a harness setting was not applied", err)
 				}
 			}
 		}
 	}
 	for _, setting := range ack.HarnessSettings {
-		if err := c.setHarness(setting); err != nil && c.OnError != nil {
-			c.OnError(err)
+		if err := c.setHarness(setting); err != nil {
+			c.report("a harness setting from the server was not applied", err)
 		}
 	}
 	if ack.Telemetry != nil && c.OnTelemetry != nil {
@@ -433,6 +449,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	pingCtx, pingCancel := context.WithCancel(ctx)
 	defer pingCancel()
 	go func() {
+		defer telemetry.Recover(ctx)
 		for {
 			select {
 			case <-pingCtx.Done():
@@ -493,7 +510,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				result.Code, result.Message = "no_log", "no output has been captured for this agent on this machine"
 			} else if err != nil {
 				result.Code, result.Message = "log_failed", "the output could not be read"
-				c.report(fmt.Errorf("agent %s output log: %w", frame.AgentID, err))
+				c.report("an agent output log could not be opened", fmt.Errorf("agent %s output log: %w", frame.AgentID, err))
 			} else {
 				result.Details, _ = json.Marshal(page)
 			}
@@ -514,17 +531,19 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		case protocol.SessionScan:
 			// A scan reads files, never the whole of them; it still runs off the read loop, like a path probe.
 			go func(scan protocol.Frame) {
+				defer telemetry.Recover(ctx)
 				result := c.sessionScanResult(scan)
 				if probeCtx.Err() != nil {
 					return
 				}
 				if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
-					c.report(err)
+					c.report("a probe result could not be sent to the server", err)
 				}
 			}(frame)
 		case protocol.RetireWarm:
 			// Ending a process can take its grace; keep reading frames meanwhile.
 			go func(request protocol.Frame) {
+				defer telemetry.Recover(ctx)
 				result := protocol.Frame{V: protocol.Version, Type: protocol.RetireWarmResult, ReqID: request.ReqID, Result: "ok"}
 				if !c.RetireWarmTool(request.RetireTool, "an account switch") {
 					result.Result, result.Message = "error", "a warm process of the tool is not confirmed gone"
@@ -533,39 +552,42 @@ func (c *Client) RunOnce(ctx context.Context) error {
 					return
 				}
 				if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
-					c.report(err)
+					c.report("a probe result could not be sent to the server", err)
 				}
 			}(frame)
 		case protocol.PathProbe:
 			// Launcher version checks can take up to a minute. Keep reading
 			// machine frames while the probe runs; send serializes writes.
 			go func(probe protocol.Frame) {
+				defer telemetry.Recover(ctx)
 				result := c.pathProbeResult(probeCtx, probe)
 				if probeCtx.Err() != nil {
 					return
 				}
 				if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
-					c.report(err)
+					c.report("a probe result could not be sent to the server", err)
 				}
 			}(frame)
 		case protocol.Detect:
 			// Looking around the machine can take a while; keep reading frames meanwhile.
 			go func(request protocol.Frame) {
+				defer telemetry.Recover(ctx)
 				result := c.detectResult(probeCtx, request)
 				if probeCtx.Err() != nil {
 					return
 				}
 				if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
-					c.report(err)
+					c.report("a probe result could not be sent to the server", err)
 				}
 			}(frame)
 		case protocol.DirectoryList:
 			go func(request protocol.Frame) {
+				defer telemetry.Recover(ctx)
 				result := protocol.Frame{V: protocol.Version, Type: protocol.DirectoryListResult, ReqID: request.ReqID,
 					DirectoryNames: pathlist.Directories(request.CheckoutPath, request.DirectoryPrefix)}
 				if probeCtx.Err() == nil {
 					if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
-						c.report(err)
+						c.report("a probe result could not be sent to the server", err)
 					}
 				}
 			}(frame)
@@ -680,8 +702,9 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				// A ping of the agent runs (or was not confirmed gone): the delivery waits for it to end, which can take as long as a container's
 				// cleanup, so it does that in a goroutine of its own and the loop goes on reading frames (pings, controls, the keep-alive pause).
 				go func() {
+					defer telemetry.Recover(ctx)
 					if err := c.handleDeliver(ctx, conn, delivery); err != nil {
-						c.report(fmt.Errorf("agent %s turn %s: %w", delivery.AgentID, delivery.TurnID, err))
+						c.report("a delivery could not be handled", fmt.Errorf("agent %s turn %s: %w", delivery.AgentID, delivery.TurnID, err))
 						_ = conn.CloseNow() // what returning the error would have done: the loop ends and the connection is made again
 					}
 				}()
@@ -703,9 +726,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				return err
 			}
 		case protocol.Error:
-			if c.OnError != nil {
-				c.OnError(fmt.Errorf("server %s: %s", frame.Code, frame.Message))
-			}
+			c.handleServerError(frame)
 		default:
 			return fmt.Errorf("unexpected machine frame %q", frame.Type)
 		}
@@ -817,7 +838,7 @@ func (c *Client) applySpawn(frame protocol.Frame) protocol.Frame {
 		return result
 	}
 	if err := c.setAgentKey(frame.AgentID, frame.AgentKey); err != nil {
-		c.report(fmt.Errorf("agent tools config for %s: %w", frame.AgentID, err))
+		c.report("the agent tools config could not be written", fmt.Errorf("agent tools config for %s: %w", frame.AgentID, err))
 		result.Result, result.Message = "error", err.Error()
 		return result
 	}
@@ -1090,7 +1111,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	var sink *agentlog.Turn
 	if c.AgentLogs != nil {
 		if opened, err := c.AgentLogs.OpenTurn(delivery.AgentID, delivery.TurnID, delivery.Generation, string(delivery.Mode)); err != nil {
-			c.report(fmt.Errorf("agent %s turn %s: output log: %w", delivery.AgentID, delivery.TurnID, err))
+			c.report("a turn output log could not be written", fmt.Errorf("agent %s turn %s: output log: %w", delivery.AgentID, delivery.TurnID, err))
 		} else {
 			sink = opened
 			spec.StderrSink = sink
@@ -1126,6 +1147,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	release = false
 	tracked = false
 	go func() {
+		defer telemetry.Recover(ctx)
 		c.runTurn(ctx, delivery, turn)
 		if sink != nil {
 			// The adapter closes its event stream only after it has read the harness's stderr to the end, so nothing is written after this.
@@ -1142,7 +1164,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 // for the other agents. Returning the error instead would drop the socket and
 // leave the turn running in the journal with no evidence of why.
 func (c *Client) reportStartFailure(ctx context.Context, conn *websocket.Conn, delivery protocol.Delivery, startErr error) error {
-	c.report(fmt.Errorf("agent %s turn %s: harness failed to start: %w", delivery.AgentID, delivery.TurnID, startErr))
+	c.report("harness failed to start", fmt.Errorf("agent %s turn %s: harness failed to start: %w", delivery.AgentID, delivery.TurnID, startErr))
 	reason := adapter.SanitizeStderr(startErr.Error())
 	exit := adapter.ExitInfo{ExitCode: 1, StderrTail: "harness failed to start: " + reason,
 		ErrorSummary: reason, DefiniteFailure: true, StartFailure: true}
@@ -1212,7 +1234,7 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 	var journalErr error
 	abandon := func(err error) {
 		journalErr = err
-		c.report(fmt.Errorf("agent %s turn %s: journal write failed; killing harness: %w", delivery.AgentID, delivery.TurnID, err))
+		c.report("journal write failed; killing harness", fmt.Errorf("agent %s turn %s: journal write failed; killing harness: %w", delivery.AgentID, delivery.TurnID, err))
 		if killer, ok := turn.(interface{ Kill() error }); ok {
 			_ = killer.Kill()
 		} else {
@@ -1248,7 +1270,7 @@ events:
 				continue
 			}
 			stall = reason
-			c.report(fmt.Errorf("agent %s turn %s stalled: %s; killing harness", delivery.AgentID, delivery.TurnID, stall.describe(limits)))
+			c.report("a turn stalled; killing harness", fmt.Errorf("agent %s turn %s stalled: %s; killing harness", delivery.AgentID, delivery.TurnID, stall.describe(limits)))
 			if killer, ok := turn.(interface{ Kill() error }); ok {
 				_ = killer.Kill()
 			} else {
@@ -1295,12 +1317,12 @@ events:
 			}
 		}
 		if err := c.sendCurrent(ctx, frame); err != nil {
-			c.report(err)
+			c.report("a turn frame could not be sent to the server", err)
 		}
 	}
 	exit, err := turn.Wait()
 	if err != nil {
-		c.report(err)
+		c.report("waiting for a turn failed", err)
 	}
 	if stall != "" && !exit.TerminalEvent {
 		// Our own kill is not an owner cancel: leave CancelIntent false so the
@@ -1327,7 +1349,7 @@ events:
 		exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\n" + reason)
 	}
 	if err := c.Journal.RecordExitInfo(ctx, delivery.TurnID, exit); err != nil {
-		c.report(err)
+		c.report("the exit info of a turn could not be recorded", err)
 		c.warmTurnEnded(turn, adapter.ExitInfo{})
 		c.keepAliveTurnEnded(delivery.AgentID, adapter.ExitInfo{})
 		release()
@@ -1347,7 +1369,7 @@ events:
 		c.processSink(delivery.TurnID, exit)
 	}
 	if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.Process, AgentID: delivery.AgentID, Generation: delivery.Generation, TurnID: delivery.TurnID, Exit: &exit}); err != nil {
-		c.report(err)
+		c.report("the process exit of a turn could not be sent to the server", err)
 	}
 }
 
@@ -1372,7 +1394,7 @@ func (c *Client) sendDeferredStopAck(ctx context.Context, agentID string) {
 	}
 	if pending {
 		if err := c.sendCurrent(ctx, ack); err != nil {
-			c.report(fmt.Errorf("agent %s stop ack after process exit: %w", agentID, err))
+			c.report("a stop acknowledgement after a process exit failed", fmt.Errorf("agent %s stop ack after process exit: %w", agentID, err))
 		}
 	}
 }
@@ -1390,7 +1412,7 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 	c.shutdownWarm()
 	for _, turn := range turns {
 		if err := turn.Cancel(); err != nil {
-			c.report(err)
+			c.report("a turn could not be cancelled on shutdown", err)
 		}
 	}
 	done := make(chan struct{})
@@ -1473,7 +1495,40 @@ func (c *Client) handleControl(frame protocol.Frame) bool {
 	return deferAck
 }
 
-func (c *Client) report(err error) {
+// handleServerError is what an error frame from the server gets. The refusals the server classifies (a stale generation, a conflict, a forbidden or invalid
+// transition) are the protocol working: logged only. Any other code is a failure on the server's side of the frame, reported to Sentry by its code (the frame's
+// message is the server's own text and stays in the local log).
+func (c *Client) handleServerError(frame protocol.Frame) {
+	c.reportLocal(fmt.Errorf("server %s: %s", frame.Code, frame.Message))
+	switch frame.Code {
+	case "stale_generation", "conflict", "forbidden", "invalid_transition":
+		return
+	}
+	telemetry.ReportCause(context.Background(), "supervisor", "server error frame: "+frame.Code)
+}
+
+// report says what went wrong: to the local log (OnError), with the whole error, and, while telemetry is on, to Sentry, once per cause, with `cause` alone: a fixed
+// phrase of the call site's. The error behind it can carry a harness's own output, a path or a name, and stays in the local log. It is the one place the supervisor's
+// own failures go through, so a failed journal write, a stalled turn or a harness that would not start no longer end in a line on stderr that nobody reads.
+func (c *Client) report(cause string, err error) {
+	if err == nil {
+		return
+	}
+	c.reportLocal(err)
+	telemetry.ReportCause(context.Background(), "supervisor", cause)
+}
+
+// degraded is report for what the supervisor recovers from by itself (a turn that falls back to cold, a warm process that ended on its own): a warning.
+func (c *Client) degraded(cause string, err error) {
+	if err == nil {
+		return
+	}
+	c.reportLocal(err)
+	telemetry.WarnCause(context.Background(), "supervisor", cause)
+}
+
+// reportLocal is for a failure that has its own, classified Sentry report (a warm-process refusal, an error frame from the server): the local log only.
+func (c *Client) reportLocal(err error) {
 	if c.OnError != nil {
 		c.OnError(err)
 	}
@@ -1486,7 +1541,7 @@ func (c *Client) sweepAgentLogs(ctx context.Context) {
 	}
 	run := func() {
 		if _, err := c.AgentLogs.Sweep(agentlog.DefaultMaxAge, agentlog.DefaultMaxTotal); err != nil {
-			c.report(fmt.Errorf("agent output logs: sweep: %w", err))
+			c.report("sweeping the agent output logs failed", fmt.Errorf("agent output logs: sweep: %w", err))
 		}
 	}
 	run()

@@ -265,6 +265,15 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('#message-retention [role=status]').textContent === 'Saved.');
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#message-expiry-amount').value, document.querySelector('#message-expiry-unit').value, document.querySelector('#message-expiry-error').textContent]), ['1', 'hours', '']);
       await page.close();
+      // A fractional amount is rounded to whole seconds before it is sent: 1.1 hours is 3960.
+      const fractional = await mount({}, { auto: { 'GET /api/retention': read } });
+      await fractional.evaluate(() => window.__general.open());
+      await fractional.waitForFunction(() => document.querySelector('#message-expiry-amount').value === '6');
+      await fractional.evaluate(() => { const select = document.querySelector('#message-expiry-unit'), el = document.querySelector('#message-expiry-amount'); select.value = 'hours'; select.dispatchEvent(new Event('change', { bubbles: true })); el.value = '1.1'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await fractional.evaluate(() => { delete window.__auto['GET /api/retention']; document.querySelector('#message-expiry-save').click(); });
+      await fractional.waitForFunction(() => window.__requests.some(request => request.method === 'PUT'));
+      assert.deepEqual(await fractional.evaluate(() => window.__requests.find(request => request.method === 'PUT').body), { messages_considered_expired_after_seconds: 3960 }, 'a fractional amount is sent as whole seconds');
+      await fractional.close();
       const viewer = await mount({}, { auto: { 'GET /api/retention': { messages_considered_expired_after_seconds: 600, can_edit: false } } });
       await viewer.evaluate(() => window.__general.open());
       await viewer.waitForFunction(() => document.querySelector('#message-expiry-amount').value === '10' && document.querySelector('#message-expiry-unit').value === 'minutes');

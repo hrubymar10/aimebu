@@ -55,10 +55,41 @@ transport inside a test binary.
   shown as `~`), the request **method and route pattern** (for example `GET /api/projects/{id}`), the status code. A panic is reported
   and then raised again, so the process behaves exactly as it would without telemetry.
 - Panics at the entry points of the subcommands (server, supervisor, CLI).
+- Panics in the long-lived background goroutines (the dispatcher, the supervisor's connection loops and warm/keep-alive/launcher workers, the
+  credential refreshers, the quota runner, the machine and event-stream writers): reported as `fatal` and then raised again, so the process
+  still dies as it always did (`telemetry.Go` / `defer telemetry.Recover`).
 - A classified warm-process refusal and an unrecognized Docker Codex host
   config key are warnings. `CaptureWarning` and `CaptureOnce` send each stable
-  reason key once per process with a key-only fingerprint; values, paths, and
+  reason key once a day (per process) with a key-only fingerprint; values, paths, and
   agent IDs are excluded from the event and fingerprint.
+- Caught failures, by place. One API (`telemetry.ReportError`, `ReportWarning`, `ReportCause`, `WarnCause`): an error the program logs and carries on from
+  goes to Sentry as an `error` (a degradation it recovers from by itself as a `warning`), tagged `area`, **once per cause per day** (a set of at most 2000 keys;
+  a failure that goes on for days is one report a day, not one per pass). The key and the message are the error text with ids, request ids, timestamps,
+  e-mail addresses, hex digests, paths (Unix and Windows) and counts replaced (`telemetry.Classify`), its first line, bounded. Where an error can carry what has no
+  recognisable shape (an account or profile name, a person's file, a harness's own output) only a **fixed phrase** is sent (`ReportCause` / `WarnCause`); the
+  text stays in the local log. A cancelled context (a client that went away) is not a failure and is not reported. The local log lines are unchanged.
+  - `supervisor`: the supervisor's own failures (a harness that would not start, a failed journal write, a stalled turn, an error frame from the server that is
+    not one of the classified refusals (those are the protocol working and are only logged), a warm process not confirmed gone, keep-alive and detection problems,
+    a server connection that failed five times in a row). Each call site names its cause with a **fixed phrase** and only that goes out; the error behind it (a
+    harness's own words, a path, a name) stays in the local log.
+  - `machine`, `event-stream`: a failure while a supervisor connects (machine state, reconciliation, harness and launcher state, agent keys), an agent frame
+    that fails for a reason that is not a classified refusal, a refused frame (a warning, with its code), a write the server used to ignore (that the machine is
+    alive, its harnesses, capabilities and last warm report), a failed event replay or poll.
+  - `dispatcher`: any failure of a pass (it runs every 100ms), a room that failed to close, a team-flow migration or agent switch whose spawn could not be sent,
+    the checks that hold an agent's turn, the scheduled cleanup.
+  - `credentials` (the credential alerts, the refresher, the reconcile pass and the corrupt state files; fixed phrases): a credential alert goes by its kind
+    alone: a refresh, fan-out, state-save, login-import, login-strip or commit that failed is an error, a login to redo (`reauth_required`, `expired`) a warning,
+    and the information (expiring soon, a login imported, another refresher present) nothing. Also a refresh or warm-up pass that fails as a whole, the start-up
+    reconcile, a refresh that could not journal that the token may be spent, rotated credentials not saved first, the aborted refresh whose rescue file holds the
+    new login, a switch refused because the maintenance lock could not be taken, and a corrupt `removed.json`, refresh state, usage-alert state or
+    `switched_away.json` that was set aside.
+  - `switcher`, `usages`, `quota` (fixed phrases): the account switcher's degradations (a link that fell back to a plain copy, MCP logins not carried over or
+    replaced, a login imported but not yet rewritten token-only), the usage alerts, and the automatic switcher and limit guard (a switch that failed, a decision
+    or state that could not be saved, an unreadable guard configuration). The quota package may import nothing of the program: it reports through
+    `quota.Report`, which the server wires to `reportQuota`.
+  - `startup`: a server that cannot start (the database file, `store.Open`, the host key, the owner, the listeners), reported and flushed before the process
+    exits. The reporter is the one configured by `AIMEBU2_SENTRY_DSN`: telemetry turned on only in Settings is applied once the store is open, so a failure before
+    that is reported only when the variable is set. `store`: a pre-migration backup that could not be rotated (a warning).
 - Traces: one transaction per HTTP request (method, route, status, duration), with one span per SQLite statement made while serving it:
   the SQL text **with its `?` placeholders**, the duration and the number of rows. Never an argument value. The span's description is that statement
   normalized (white space collapsed, any literal written into the text replaced by `?`, cut at 1000 characters), so one query can be told from another in Sentry. The files of the app (the ~240 scripts, styles and icons one page load fetches) are not
@@ -73,6 +104,11 @@ transport inside a test binary.
 - Uncaught errors and unhandled promise rejections, with stack frames reduced to the script path. The page's own code is one bundled script
   (`/bundle/app.js`), so the path says no more than that; the bundle keeps function and class names (esbuild's `keepNames`), so a frame still names
   the function, and its source map is served beside it but is not uploaded anywhere.
+- Errors the page catches and carries on from (`captureError` in `web/js/telemetry.js`): a page's render error (its `ErrorBoundary` shows nothing and
+  reports it, tag `source: render`), a failed workspace startup or a read the page tolerates (`startup`, `usages.load`, `preferences.upload`, ... one
+  fixed place name each, never an id or a name). Each cause goes out once per page load, fingerprinted by place, error name and HTTP status. Not
+  reported, because none of them is a defect: a lost session (401), a request that got no answer (the server restarting), a cancelled request and
+  any 4xx answer (the server refusing, which the page shows). The message goes through the same scrubber as every other event.
 - Web Vitals and page-load / navigation traces, and the page's own requests as spans (method, route, status). Spans go out inside their
   transaction (`traceLifecycle: 'static'`), so the same scrubber sees them. **No span per loaded file** (script, stylesheet, image: about
   240 per page load), and of the page load's own timing spans only `browser.request` and `browser.response` stay; the vitals are measurements of the

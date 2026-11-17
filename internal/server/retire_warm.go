@@ -14,6 +14,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // retireWarmTimeout bounds the wait for the host's supervisor to end its idle warm processes of a tool: each gets a few seconds to go on its own,
@@ -141,6 +142,7 @@ func (s *Server) noteWarmSeen(machineID string, count int) {
 	defer s.warmSeenMu.Unlock()
 	if err := s.setWarmSeenLocked(machineID, warmSeenEntry{count: count}); err != nil {
 		log.Printf("machine %s: its last warm report was not saved: %v", machineID, err)
+		telemetry.ReportError(context.Background(), "machine", fmt.Errorf("its last warm report was not saved: %w", err))
 	}
 }
 
@@ -164,6 +166,7 @@ func (s *Server) applyWarmCount(c *machineConn, seq uint64, count int, raiseOnly
 	}
 	if err := s.setWarmSeenLocked(c.id, warmSeenEntry{count: count, conn: c, seq: seq}); err != nil {
 		log.Printf("machine %s: its last warm report was not saved: %v", c.id, err)
+		telemetry.ReportError(context.Background(), "machine", fmt.Errorf("its last warm report was not saved: %w", err))
 		return false
 	}
 	return true
@@ -217,6 +220,7 @@ func (s *Server) handleWarmEnded(ctx context.Context, c *machineConn, frame prot
 	})
 	if err != nil {
 		log.Printf("machine %s: a warm process's end was not recorded: %v", c.id, err)
+		telemetry.ReportError(context.Background(), "machine", fmt.Errorf("a warm process's end was not recorded: %w", err))
 	}
 }
 
@@ -234,6 +238,7 @@ func (s *Server) forgetWarmSeen(ctx context.Context, machineID string) {
 	s.warmSeenMu.Unlock()
 	if err := s.Store.DeleteGlobalSettingValue(ctx, warmSeenKeyPrefix+machineID); err != nil {
 		log.Printf("machine %s: its last warm report was not removed: %v", machineID, err)
+		telemetry.ReportWarning(ctx, "machine", fmt.Errorf("its last warm report was not removed: %w", err))
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // Token-only design (rev 3): the server is the only refresher, working on the
@@ -448,10 +450,10 @@ func (r *TargetRefresher) Run(ctx context.Context) {
 		if r.reconcile != nil {
 			if err := r.reconcile(ctx); err != nil {
 				log.Printf("usages: token refresh: startup reconcile: %s", errString(err))
+				telemetry.ReportCause(ctx, "credentials", "token refresh: startup reconcile")
 			}
 		}
-		_ = r.RefreshDue(ctx)
-		_ = r.WarmupDue(ctx)
+		r.duePasses(ctx)
 	}
 	bootstrap()
 	ticker := time.NewTicker(r.interval)
@@ -471,9 +473,18 @@ func (r *TargetRefresher) Run(ctx context.Context) {
 				bootstrap()
 				continue
 			}
-			_ = r.RefreshDue(ctx)
-			_ = r.WarmupDue(ctx)
+			r.duePasses(ctx)
 		}
+	}
+}
+
+// duePasses runs the refresh and the warmup pass of one tick. A pass that fails as a whole (not one account's failure, which is its own alert) used to be dropped.
+func (r *TargetRefresher) duePasses(ctx context.Context) {
+	if err := r.RefreshDue(ctx); err != nil && ctx.Err() == nil {
+		telemetry.ReportCause(ctx, "credentials", "token refresh pass")
+	}
+	if err := r.WarmupDue(ctx); err != nil && ctx.Err() == nil {
+		telemetry.ReportCause(ctx, "credentials", "token warmup pass")
 	}
 }
 
@@ -600,6 +611,7 @@ func (r *TargetRefresher) refreshProfile(ctx context.Context, p StoredProfile, h
 		release, ok, err := AcquireMaintenance(r.root(), tool, p.Name, p.CredPath)
 		if err != nil {
 			log.Printf("usages: token refresh %s/%s: account lock unavailable, skipping: %s", tool, p.Name, errString(err))
+			telemetry.WarnCause(ctx, "credentials", "token refresh: account lock unavailable, skipping")
 			return nil
 		}
 		if !ok {
@@ -678,6 +690,7 @@ func (r *TargetRefresher) spend(ctx context.Context, p StoredProfile, start []by
 	// the journal cannot be written the run does not start.
 	if err := store.setJournal(refreshJournalEntry{Tool: tool, Name: p.Name, Phase: journalSpending, SpentHash: hash, TempDir: dir, StartedAt: runStarted.UTC()}); err != nil {
 		log.Printf("usages: ERROR token refresh %s/%s: cannot journal the spend, not refreshing: %s", tool, p.Name, errString(err))
+		telemetry.ReportCause(ctx, "credentials", "token refresh: cannot journal the spend, not refreshing")
 		return r.noteFailure(acct, tool, p.Name, "cannot write the refresh journal: "+cleanDetail(err.Error()), false)
 	}
 	flag := r.modelFlag(tool)
@@ -691,6 +704,7 @@ func (r *TargetRefresher) spend(ctx context.Context, p StoredProfile, start []by
 		// before this point never reached it, and recovery treats it as not sent.
 		if err := store.setJournal(refreshJournalEntry{Tool: tool, Name: p.Name, Phase: journalStarted, SpentHash: hash, TempDir: dir, StartedAt: runStarted.UTC()}); err != nil {
 			log.Printf("usages: ERROR token refresh %s/%s: cannot journal that the CLI started: %s", tool, p.Name, errString(err))
+			telemetry.ReportCause(ctx, "credentials", "token refresh: cannot journal that the CLI started")
 		}
 	}
 	run, runErr := runRefreshExecutor(runCtx, r.executors[tool], dir, flag, onStart)
@@ -864,6 +878,7 @@ func (r *TargetRefresher) commitRotated(p StoredProfile, start, rotated []byte, 
 		// Without the rescue file the commit has only the in-memory copy below;
 		// still try it, but shout: a crash now would lose the new credentials.
 		log.Printf("usages: ERROR token refresh %s: cannot persist the rotated credentials first: %v", key, cleanDetail(err.Error()))
+		telemetry.ReportCause(context.Background(), "credentials", "token refresh: cannot persist the rotated credentials first (a crash now loses the new login)")
 		atRisk = true
 	}
 	r.holdPending(tool, hash, rotated)
@@ -873,6 +888,7 @@ func (r *TargetRefresher) commitRotated(p StoredProfile, start, rotated []byte, 
 	}
 	if err := store.setJournal(entry); err != nil {
 		log.Printf("usages: ERROR token refresh %s: cannot journal the rotated credentials: %v", key, cleanDetail(err.Error()))
+		telemetry.ReportCause(context.Background(), "credentials", "token refresh: cannot journal the rotated credentials")
 		atRisk = true
 	}
 	if atRisk && keepTemp != nil {

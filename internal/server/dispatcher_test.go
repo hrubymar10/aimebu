@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 func TestDispatcherBackoffAndStaleSpecialFlight(t *testing.T) {
@@ -247,4 +250,110 @@ func TestFakeDispatcherWakesHumanRoomAndTargetedAgent(t *testing.T) {
 	waitDone(agents[0].ID, stopped)
 	cancel()
 	<-done
+}
+
+// A pass that fails says so to the caller and to Sentry (area `dispatcher`), once per cause although the pass repeats every few milliseconds. Not parallel:
+// the reporter is process-wide.
+func TestDispatcherRunReportsAFailingPassOnce(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := &captureTransport{}
+	tel, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test", Release: "v1", TracesSampleRate: 1}, transport)
+	if err != nil || tel == nil {
+		t.Fatalf("telemetry.Init: %v %v", tel, err)
+	}
+	t.Cleanup(tel.Close)
+	f := newFixture(t)
+	if err := f.db.Close(); err != nil { // every pass now fails the same way
+		t.Fatal(err)
+	}
+	var said int
+	var mu sync.Mutex
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	NewDispatcher(f.srv).Run(ctx, 5*time.Millisecond, func(error) { mu.Lock(); said++; mu.Unlock() })
+	mu.Lock()
+	heard := said
+	mu.Unlock()
+	if heard < 2 {
+		t.Fatalf("the caller should hear of every failed pass, heard %d", heard)
+	}
+	telemetry.Current().Flush(time.Second)
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	var found int
+	for _, event := range transport.events {
+		if len(event.Exception) > 0 && event.Tags["area"] == "dispatcher" {
+			found++
+		}
+	}
+	if found < 1 || found > 2 { // the startup sweep and the passes may fail for two different reasons, never once per pass
+		t.Fatalf("want one report per cause (1 or 2), got %d of %d passes", found, heard)
+	}
+}
+
+// The credential alerts go to Sentry by kind alone (their detail names accounts and paths): what failed is an error, what needs a person a warning, and the
+// information (expiring soon, a login imported, another refresher present) nothing. Not parallel: the reporter is process-wide.
+func TestCredentialAlertsReachSentryByKindOnly(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := &captureTransport{}
+	tel, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test", Release: "v1", TracesSampleRate: 1}, transport)
+	if err != nil || tel == nil {
+		t.Fatalf("telemetry.Init: %v %v", tel, err)
+	}
+	t.Cleanup(tel.Close)
+	f := newFixture(t)
+	sink := f.srv.credentialAlertSink(false)
+	sink("commit_failed", "claude/main: could not write /Users/alice/.claude/.credentials.json")
+	sink("commit_failed", "codex/bkp: another detail") // the same kind again
+	sink("reauth_required", "claude/main: sign in again")
+	for _, quiet := range []string{"expiring", "login_imported", "refresher_conflict"} {
+		sink(quiet, "claude/main: fine")
+	}
+	telemetry.Current().Flush(time.Second)
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	var got []string
+	for _, event := range transport.events {
+		if len(event.Exception) == 0 || event.Tags["area"] != "credentials" {
+			continue
+		}
+		if strings.Contains(event.Exception[0].Value, "alice") || strings.Contains(event.Exception[0].Value, "claude/main") {
+			t.Fatalf("the detail must not leave: %q", event.Exception[0].Value)
+		}
+		got = append(got, string(event.Level)+": "+event.Exception[0].Value)
+	}
+	want := []string{"error: credential alert: commit_failed", "warning: credential alert: reauth_required"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// The quota package reports through the hook the server gives it: an error or a warning, once per cause, with the path of a failing file left out. Not parallel:
+// the reporter is process-wide.
+func TestQuotaReportsReachSentry(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := &captureTransport{}
+	tel, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test", Release: "v1", TracesSampleRate: 1}, transport)
+	if err != nil || tel == nil {
+		t.Fatalf("telemetry.Init: %v %v", tel, err)
+	}
+	t.Cleanup(tel.Close)
+	reportQuota("automatic account switch failed", false)
+	reportQuota("automatic account switch failed", false) // the same cause
+	reportQuota("the stored limit guard is unreadable; using the defaults", true)
+	telemetry.Current().Flush(time.Second)
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	var levels []string
+	for _, event := range transport.events {
+		if len(event.Exception) > 0 && event.Tags["area"] == "quota" {
+			if event.Exception[0].Value != "automatic account switch failed" && event.Exception[0].Value != "the stored limit guard is unreadable; using the defaults" {
+				t.Fatalf("more than the fixed phrase went out: %q", event.Exception[0].Value)
+			}
+			levels = append(levels, string(event.Level))
+		}
+	}
+	if len(levels) != 2 || levels[0] != "error" || levels[1] != "warning" {
+		t.Fatalf("levels = %v", levels)
+	}
 }

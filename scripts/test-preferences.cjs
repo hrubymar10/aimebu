@@ -7,6 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'preferences.js'), 'utf8')
+  .replace(/^import \{ captureError \}.*$/gm, 'const captureError = () => false;')
   .replace(/^import .*$/gm, 'const request = () => { throw new Error("no network in this test"); }; let currentUser = "user1";').replace(/^export /gm, '');
 const context = { Object, Promise, String, Map };
 vm.createContext(context);

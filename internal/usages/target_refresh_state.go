@@ -1,6 +1,7 @@
 package usages
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // refreshStateFileName lives beside the rescue files under the switcher root.
@@ -185,10 +187,12 @@ func (s *refreshStateStore) quarantineLocked(reason error) string {
 	}
 	if err := os.Rename(s.path, target); err != nil {
 		log.Printf("usages: ERROR refresh state %s is %v and could not be set aside: %v", s.path, reason, err)
+		telemetry.ReportCause(context.Background(), "credentials", "the refresh state file is unreadable and could not be set aside")
 		return ""
 	}
 	detail := fmt.Sprintf("the refresh state file was %v; it was set aside as %s and the state starts empty, so tokens spent before this point may be tried again", reason, filepath.Base(target))
 	log.Printf("usages: ERROR refresh state: %s", detail)
+	telemetry.ReportCause(context.Background(), "credentials", "the refresh state file was unreadable and was set aside; tokens spent before may be tried again")
 	s.notices = append(s.notices, stateNotice{Kind: "state_quarantined", Detail: detail})
 	return target
 }

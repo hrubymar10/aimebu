@@ -1,6 +1,7 @@
 package usages
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 const maxRemovedProfiles = 50
@@ -66,6 +68,7 @@ func RecordRemovedProfile(root, tool, name string, credentials []byte) error {
 			return err
 		}
 		log.Printf("ERROR switcher: %s/%s: read removed.json: %v; replacing corrupt tombstones", tool, name, err)
+		telemetry.WarnCause(context.Background(), "credentials", "removed.json is corrupt; replacing its tombstones")
 		file = removedProfilesFile{}
 	}
 	file.Entries = append(file.Entries, removedProfile{

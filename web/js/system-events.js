@@ -2,6 +2,7 @@ import { applyChatPreferences } from './chat-preferences.js';
 import { focusPopover, returnFocus } from './popover-focus.js';
 import { request } from './api.js';
 import { relativeTime } from './time.js';
+import { captureError } from './telemetry.js';
 
 function node(tag, className = '', text = '') { const item = document.createElement(tag); if (className) item.className = className; if (text) item.textContent = text; return item; }
 
@@ -136,7 +137,7 @@ export class SystemEvents {
       const known = new Set(this.events.map(event => event.id));
       this.events = [...this.events, ...(data.events || []).filter(event => !known.has(event.id))].sort((a, b) => b.seq - a.seq).slice(0, keep);
       this.renderList();
-    } catch { /* The feed is optional; the live stream still fills it. */ }
+    } catch (error) { captureError(error, 'system-events.load'); /* The feed is optional; the live stream still fills it. */ }
   }
 
   onEvent(event) {

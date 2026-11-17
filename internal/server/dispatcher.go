@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // Dispatcher makes one serial pass. Machine delivery can fail after durable
@@ -84,6 +86,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 	}
 	for _, failure := range failures {
 		log.Printf("room close %s: %v", failure.RoomID, failure.Err)
+		telemetry.ReportError(ctx, "dispatcher", fmt.Errorf("room close: %w", failure.Err))
 	}
 	d.Server.sendRoomControls(ctx, controls)
 	d.scheduleCleanup(ctx)
@@ -100,6 +103,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
 				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
 					log.Printf("team flow migration spawn %s: %v", card.ID, err)
+					telemetry.ReportError(ctx, "dispatcher", fmt.Errorf("team flow migration spawn: %w", err))
 				}
 			}
 		}
@@ -117,6 +121,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
 				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
 					log.Printf("agent switch spawn %s: %v", card.ID, err)
+					telemetry.ReportError(ctx, "dispatcher", fmt.Errorf("agent switch spawn: %w", err))
 				}
 			}
 		}
@@ -178,6 +183,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 				pending, err := d.Server.Store.AgentForkPending(ctx, id)
 				if err != nil {
 					log.Printf("dispatch: is %s a copy of a session still unnamed: %v", id, err)
+					telemetry.ReportWarning(ctx, "dispatcher", fmt.Errorf("dispatch hold check: is an agent a copy of a session still unnamed: %w", err))
 					continue
 				}
 				if pending {
@@ -188,6 +194,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 				pending, err := d.Server.Store.AgentLaunchPathPending(ctx, id)
 				if err != nil {
 					log.Printf("dispatch: does %s need a launch spelling: %v", id, err)
+					telemetry.ReportWarning(ctx, "dispatcher", fmt.Errorf("dispatch hold check: does an agent need a launch spelling: %w", err))
 					continue
 				}
 				if pending {
@@ -198,6 +205,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 				pending, err := d.Server.Store.AgentProviderPending(ctx, id)
 				if err != nil {
 					log.Printf("dispatch: does %s run on a custom provider: %v", id, err)
+					telemetry.ReportWarning(ctx, "dispatcher", fmt.Errorf("dispatch hold check: does an agent run on a custom provider: %w", err))
 					continue
 				}
 				if pending {
@@ -208,6 +216,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 				pending, err := d.Server.Store.AgentLegacyCopyPending(ctx, id)
 				if err != nil {
 					log.Printf("dispatch: does %s need an imported session copy: %v", id, err)
+					telemetry.ReportWarning(ctx, "dispatcher", fmt.Errorf("dispatch hold check: does an agent need an imported session copy: %w", err))
 					continue
 				}
 				if pending {
@@ -218,6 +227,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 				if d.forkHeld[id] != machine {
 					if err := d.Server.Store.NoteSessionHeld(ctx, id, why); err != nil {
 						log.Printf("dispatch: saying why %s is held: %v", id, err)
+						telemetry.ReportWarning(ctx, "dispatcher", fmt.Errorf("dispatch: saying why an agent is held: %w", err))
 						continue
 					}
 					d.forkHeld[id] = machine
@@ -232,6 +242,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 		if err != nil {
 			// Held, not sent: with the setting on, an agent whose launcher cannot be read may be a native one. Said once in its rooms, logged on every pass.
 			log.Printf("dispatch: is %s on a native launcher: %v", id, err)
+			telemetry.ReportWarning(ctx, "dispatcher", fmt.Errorf("dispatch: is an agent on a native launcher: %w", err))
 			if on, onErr := d.Server.dockerOnly(ctx); onErr == nil && on {
 				if !d.dockerUnchecked[id] {
 					if noteErr := d.Server.Store.NoteDockerOnlyUnchecked(ctx, id); noteErr != nil {
@@ -317,6 +328,7 @@ func (d *Dispatcher) scheduleCleanup(ctx context.Context) {
 	d.lastCleanup = time.Now()
 	d.cleanupMu.Unlock()
 	go func() {
+		defer telemetry.Recover(ctx)
 		defer func() {
 			d.cleanupMu.Lock()
 			d.cleanupRunning = false
@@ -334,18 +346,26 @@ func (d *Dispatcher) scheduleCleanup(ctx context.Context) {
 		defer cancelScheduled()
 		if err := d.Server.scheduledCleanup(scheduledCtx); err != nil {
 			log.Printf("scheduled cleanup: %v", err)
+			telemetry.ReportError(ctx, "dispatcher", fmt.Errorf("scheduled cleanup: %w", err))
 		}
 	}()
 }
 
-func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, onError func(error)) {
-	if err := d.Server.Store.SweepStagedAttachments(ctx); err != nil && onError != nil {
+func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, caller func(error)) {
+	// Every failure of a pass is said to the caller (a line on stderr) and to Sentry, once per cause: the pass runs every 100ms, so a failing one repeats at once.
+	onError := func(err error) {
+		telemetry.ReportError(ctx, "dispatcher", err)
+		if caller != nil {
+			caller(err)
+		}
+	}
+	if err := d.Server.Store.SweepStagedAttachments(ctx); err != nil {
 		onError(err)
 	}
 	for {
 		if _, err := d.Server.Store.SweepUndispatchedNormalTurns(ctx); err == nil {
 			break
-		} else if onError != nil && ctx.Err() == nil {
+		} else if ctx.Err() == nil {
 			onError(err)
 		}
 		select {
@@ -367,13 +387,13 @@ func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, onError fu
 				d.Server.maintenanceMu.RUnlock()
 				continue
 			}
-			if err := d.Server.Store.SweepStagedAttachments(ctx); err != nil && ctx.Err() == nil && onError != nil {
+			if err := d.Server.Store.SweepStagedAttachments(ctx); err != nil && ctx.Err() == nil {
 				onError(err)
 			}
 			d.Server.maintenanceMu.RUnlock()
 			lastAttachmentSweep = time.Now()
 		}
-		if _, err := d.Pass(ctx); err != nil && ctx.Err() == nil && onError != nil {
+		if _, err := d.Pass(ctx); err != nil && ctx.Err() == nil {
 			onError(err)
 		}
 		select {

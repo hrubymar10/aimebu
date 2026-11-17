@@ -482,38 +482,38 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	path := filepath.Join(dir, "aimebu.sqlite")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		failStartup(stderr, err)
 		return 1
 	}
 	if err := file.Close(); err != nil {
-		fmt.Fprintln(stderr, err)
+		failStartup(stderr, err)
 		return 1
 	}
 	if err := os.Chmod(path, 0600); err != nil {
-		fmt.Fprintln(stderr, err)
+		failStartup(stderr, err)
 		return 1
 	}
 	db, err := store.Open(context.Background(), path, store.Options{})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		failStartup(stderr, err)
 		return 1
 	}
 	defer db.Close()
 	keyPath := filepath.Join(dir, "host-machine.key")
 	users, err := db.UserCount(context.Background())
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		failStartup(stderr, err)
 		return 1
 	}
 	if users == 0 {
 		if err := reserveV1History(context.Background(), db, config.root, stderr); err != nil {
-			fmt.Fprintln(stderr, err)
+			failStartup(stderr, err)
 			return 1
 		}
 		if _, err := os.Lstat(keyPath); err == nil {
 			machines, err := db.MachineCount(context.Background())
 			if err != nil {
-				fmt.Fprintln(stderr, err)
+				failStartup(stderr, err)
 				return 1
 			}
 			if machines == 0 {
@@ -521,13 +521,13 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 				return 1
 			}
 		} else if !os.IsNotExist(err) {
-			fmt.Fprintln(stderr, err)
+			failStartup(stderr, err)
 			return 1
 		}
 	}
 	host, err := os.Hostname()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		failStartup(stderr, err)
 		return 1
 	}
 	createOwner := func(ctx context.Context, login, password string) (string, bool, error) {
@@ -573,16 +573,16 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			// The embedded supervisor needs the host machine key that setup just wrote. It starts in the background: reading each
 			// tool's version and opening its journal take seconds, and the person is waiting for the next screen.
 			if err == nil && startEmbedded != nil {
-				go func() {
+				telemetry.Go(ctx, func() {
 					if serr := startEmbedded(); serr != nil {
 						fmt.Fprintln(stderr, "supervisor:", serr)
 					}
-				}()
+				})
 			}
 			return ownerID, err
 		})
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			failStartup(stderr, err)
 			return 1
 		}
 		defer ownerSetup.Close()
@@ -596,7 +596,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			}
 		}
 		if _, _, err := createOwner(context.Background(), ownerLogin, ownerPassword); err != nil {
-			fmt.Fprintln(stderr, err)
+			failStartup(stderr, err)
 			return 1
 		}
 		// An owner now exists, so a token left by an earlier start without one is dead weight.
@@ -607,7 +607,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	if embeddedEnabled {
 		turnLimits, err = supervisor.TurnLimitsFromEnv(os.Getenv)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			failStartup(stderr, err)
 			return 1
 		}
 	}
@@ -639,7 +639,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	switcherRoot := filepath.Join(config.root, "switcher")
 	service.Switcher, err = switcher.New(switcherRoot)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		failStartup(stderr, err)
 		return 1
 	}
 	service.Allow = config.allow
@@ -669,7 +669,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		go usageReader.Run(ctx)
+		telemetry.Go(ctx, func() { usageReader.Run(ctx) })
 	}
 	// After the usage reader exists (the refresher reads its model-flag setting)
 	// and before the handler serves, so the Switch hook is in place for every request.
@@ -693,10 +693,10 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	dispatchCtx, stopDispatch := context.WithCancel(context.Background())
 	dispatchDone := make(chan struct{})
-	go func() {
+	telemetry.Go(ctx, func() {
 		defer close(dispatchDone)
 		server.NewDispatcher(service).Run(dispatchCtx, 100*time.Millisecond, func(err error) { fmt.Fprintln(stderr, "dispatch:", err) })
-	}()
+	})
 	var embedded *supervisor.Client
 	var journal *supervisor.Journal
 	var stopEmbedded context.CancelFunc
@@ -735,7 +735,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		embeddedStarts.Add(1)
 		embeddedCtx, stopEmbedded = context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- client.Run(embeddedCtx) }()
+		telemetry.Go(ctx, func() { done <- client.Run(embeddedCtx) })
 		embedded, journal, embeddedDone = client, opened, done
 		return nil
 	}
@@ -775,7 +775,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	serveDone := make(chan error, 2)
 	go func() { serveDone <- httpServer.Serve(listener) }()
 	if startSupervisorAfterServe {
-		go func() {
+		telemetry.Go(ctx, func() {
 			if hook := embeddedStartHook.Load(); hook != nil {
 				(*hook)()
 			}
@@ -785,7 +785,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			if hook := embeddedStartFinished.Load(); hook != nil {
 				(*hook)()
 			}
-		}()
+		})
 	}
 	remaining := 1
 	if httpsServer != nil {
@@ -1073,4 +1073,11 @@ func setupLink(publicURL, bind string, port int, tlsConfig *serverTLSConfig, tok
 		base = scheme + "://" + net.JoinHostPort(host, strconv.Itoa(p))
 	}
 	return base + "/setup?token=" + token
+}
+
+// failStartup is how the server says it cannot start: to stderr, and to Sentry. It flushes: the process is about to exit, and an event still queued is lost.
+func failStartup(stderr io.Writer, err error) {
+	fmt.Fprintln(stderr, err)
+	telemetry.ReportError(context.Background(), "startup", err)
+	telemetry.Current().Flush(2 * time.Second)
 }

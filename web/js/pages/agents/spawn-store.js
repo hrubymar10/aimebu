@@ -4,6 +4,7 @@ import { ClaudeSessionPicker } from '../../claude-sessions.js';
 import { chooseModel, hintParts, historyNote, modelChangeWarning, NEW_ROOM, REOPEN_PREFIX, resumeBanner, resumeToolChoice, sessionEntryState, sortModelOptions, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption } from '../../spawn-model.js';
 import { relativeTime } from '../../time.js';
 import { MachineStore } from './machine-store.js';
+import { captureError } from '../../telemetry.js';
 
 // The Spawn dialog: one opening at a time. Each opening, catalog read, name read and spawn carries a number and says nothing once a newer
 // one started or the dialog is gone, so an answer meant for an earlier opening fills nothing.
@@ -201,7 +202,7 @@ export class SpawnStore {
         this.rebuildModels();
         if (this.models.peek().some(option => option.value === choice.model)) this.model.value = choice.model;
       }
-    } catch { /* The ordinary first-available choice remains usable. */ }
+    } catch (error) { captureError(error, 'spawn.choice'); /* The ordinary first-available choice remains usable. */ }
   }
 
   async loadCatalog() {

@@ -2,6 +2,7 @@ package switcher
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"github.com/goccy/go-json"
 
 	"github.com/hrubymar10/aimebu/internal/credtarget"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
@@ -284,6 +286,7 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force 
 			defer func() {
 				if release() {
 					log.Printf("switcher: %s: the storage-write lock lost its heartbeat during the switch; the swap itself completed", tool)
+					telemetry.WarnCause(context.Background(), "switcher", "the storage-write lock lost its heartbeat during a switch; the swap itself completed")
 				}
 			}()
 		}
@@ -486,10 +489,13 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force 
 	// re-captures anyway.
 	if data, readErr := os.ReadFile(targetCredPath); readErr != nil {
 		log.Printf("switcher: %s/%s: read stored credentials for link backup: %v; leaving a plain copy", tool, name, readErr)
+		telemetry.WarnCause(context.Background(), "switcher", "reading stored credentials for the link backup; leaving a plain copy")
 	} else if backupErr := m.writeUniqueBackup(tool, name, data); backupErr != nil {
 		log.Printf("switcher: %s/%s: back up stored credentials before linking: %v; leaving a plain copy", tool, name, backupErr)
+		telemetry.WarnCause(context.Background(), "switcher", "backing up stored credentials before linking; leaving a plain copy")
 	} else if linkErr := m.linkStoredToLive(tool, name, livePath); linkErr != nil {
 		log.Printf("switcher: %s/%s: link stored credentials to live: %v; leaving a plain copy", tool, name, linkErr)
+		telemetry.WarnCause(context.Background(), "switcher", "linking stored credentials to live; leaving a plain copy")
 	}
 
 	m.markIncomingStale(tool, name, liveEmail)
@@ -650,6 +656,7 @@ func (m *Manager) relinkAfterFailedSwitch(tool, name, livePath string, liveData 
 	}
 	if err := m.linkStoredToLive(tool, name, livePath); err != nil {
 		log.Printf("switcher: %s/%s: re-link after failed switch: %v; keeping the regular snapshot", tool, name, err)
+		telemetry.ReportCause(context.Background(), "switcher", "re-link after a failed switch; keeping the regular snapshot")
 	}
 }
 
@@ -697,6 +704,7 @@ func (m *Manager) backupActiveLiveAs(tool, name string) {
 	}
 	if err := m.writeUniqueBackup(tool, name, data); err != nil {
 		log.Printf("switcher: %s/%s: back up live credentials: %v", tool, name, err)
+		telemetry.ReportCause(context.Background(), "switcher", "backing up live credentials")
 	}
 }
 
@@ -710,6 +718,7 @@ func (m *Manager) carryMCPLogins(tool, name string, incoming, live []byte) ([]by
 	res, err := credtarget.MergeClaudeMCPOAuth(incoming, live)
 	if err != nil {
 		log.Printf("switcher: %s/%s: MCP logins not carried over: %v", tool, name, err)
+		telemetry.WarnCause(context.Background(), "switcher", "MCP logins not carried over")
 		return incoming, nil
 	}
 	if bytes.Equal(res.Merged, incoming) {
@@ -717,6 +726,7 @@ func (m *Manager) carryMCPLogins(tool, name string, incoming, live []byte) ([]by
 	}
 	if !json.Valid(res.Merged) {
 		log.Printf("switcher: %s/%s: MCP logins not carried over: merged credentials are not valid JSON", tool, name)
+		telemetry.WarnCause(context.Background(), "switcher", "MCP logins not carried over: merged credentials are not valid JSON")
 		return incoming, nil
 	}
 	if res.LosesIncoming() {
@@ -725,8 +735,10 @@ func (m *Manager) carryMCPLogins(tool, name string, incoming, live []byte) ([]by
 		}
 		if len(res.Conflicts) > 0 {
 			log.Printf("switcher: %s/%s: the active MCP login replaced the profile's for server(s) %s; the profile's copy is in its backups", tool, name, strings.Join(res.Conflicts, ", "))
+			telemetry.WarnCause(context.Background(), "switcher", "the active MCP login replaced the profile's for some servers; the profile's copy is in its backups")
 		} else {
 			log.Printf("switcher: %s/%s: the profile's MCP login section was unreadable and was replaced by the active one; the profile's copy is in its backups", tool, name)
+			telemetry.WarnCause(context.Background(), "switcher", "the profile's MCP login section was unreadable and was replaced by the active one")
 		}
 	}
 	return res.Merged, nil

@@ -20,6 +20,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/answer"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 var ErrMachineUnavailable = errors.New("machine unavailable")
@@ -226,6 +227,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	agents, err := s.Store.AgentsForMachine(ctx, machineID)
 	if err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: machine state error: %w", err))
 		conn.Close(websocket.StatusInternalError, "machine state error")
 		return
 	}
@@ -263,6 +265,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.Store.RecordMachineHello(ctx, machineID, hello.SupervisorVersion); err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: recording the hello: %w", err))
 		conn.Close(websocket.StatusInternalError, "machine state error")
 		return
 	}
@@ -279,6 +282,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	records, err := s.Store.ReconcileMachineHello(ctx, machineID, hello.JournalID, capabilities, open)
 	if err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: reconciliation error: %w", err))
 		conn.Close(websocket.StatusInternalError, "reconciliation error")
 		return
 	}
@@ -289,11 +293,13 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	settings, err := s.Store.HarnessSettings(ctx, machineID)
 	if err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: harness state error: %w", err))
 		conn.Close(websocket.StatusInternalError, "harness state error")
 		return
 	}
 	launchers, err := s.Store.MachineLaunchers(ctx, machineID)
 	if err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: launcher state error: %w", err))
 		conn.Close(websocket.StatusInternalError, "launcher state error")
 		return
 	}
@@ -303,6 +309,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	probeDirs, err := s.Store.MachineProbeFolders(ctx, machineID, maxProbeFolders)
 	if err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: machine folder error: %w", err))
 		conn.Close(websocket.StatusInternalError, "machine folder error")
 		return
 	}
@@ -312,6 +319,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(hello.Harnesses) > 0 {
 		if err := s.Store.RecordMachineHarnesses(ctx, machineID, hello.Harnesses); err != nil {
+			telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: recording the harnesses: %w", err))
 			conn.Close(websocket.StatusInternalError, "harness state error")
 			return
 		}
@@ -336,7 +344,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		s.machineMu.Unlock()
 	}()
-	go s.machineWriter(ctx, c)
+	telemetry.Go(ctx, func() { s.machineWriter(ctx, c) })
 	desired := make([]protocol.DesiredAgent, 0, len(agents))
 	for _, agent := range agents {
 		if agent.Revoked {
@@ -356,6 +364,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	grants, err := s.grantAgentKeys(ctx, c, hello.HeldKeys)
 	if err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: agent key error: %w", err))
 		conn.Close(websocket.StatusInternalError, "agent key error")
 		return
 	}
@@ -367,9 +376,9 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	s.maintenanceMu.RUnlock()
 	handshakeLocked = false
-	go s.machinePinger(ctx, c)
-	go s.watchKeepAlivePause(ctx, c)
-	go s.replayPendingStops(ctx, c)
+	telemetry.Go(ctx, func() { s.machinePinger(ctx, c) })
+	telemetry.Go(ctx, func() { s.watchKeepAlivePause(ctx, c) })
+	telemetry.Go(ctx, func() { s.replayPendingStops(ctx, c) })
 	for {
 		frame, err := readMachineFrame(ctx, conn)
 		if err != nil {
@@ -385,7 +394,9 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if frame.Type == protocol.Ping || frame.Type == protocol.Pong {
-			_ = s.Store.TouchMachine(ctx, machineID)
+			if err := s.Store.TouchMachine(ctx, machineID); err != nil {
+				telemetry.ReportWarning(ctx, "machine", fmt.Errorf("recording that the machine is alive: %w", err))
+			}
 			if frame.Type == protocol.Ping {
 				_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Pong, MachineID: machineID})
 			}
@@ -396,13 +407,17 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 				c.harnessMu.Lock()
 				c.harnesses = frame.Harnesses
 				c.harnessMu.Unlock()
-				_ = s.Store.RecordMachineHarnesses(ctx, machineID, frame.Harnesses)
+				if err := s.Store.RecordMachineHarnesses(ctx, machineID, frame.Harnesses); err != nil {
+					telemetry.ReportError(ctx, "machine", fmt.Errorf("recording the machine's harnesses: %w", err))
+				}
 			}
 			if len(frame.Capabilities) > 0 {
 				c.harnessMu.Lock()
 				c.capabilities = frame.Capabilities
 				c.harnessMu.Unlock()
-				_ = s.Store.RecordMachineCapabilities(ctx, machineID, frame.Capabilities)
+				if err := s.Store.RecordMachineCapabilities(ctx, machineID, frame.Capabilities); err != nil {
+					telemetry.ReportError(ctx, "machine", fmt.Errorf("recording the machine's capabilities: %w", err))
+				}
 			}
 			continue
 		}
@@ -492,6 +507,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		if code := s.authorizeAgentFrame(ctx, c, frame); code != "" {
 			log.Printf("machine %s: agent frame rejected: type=%s agent_id=%s code=%s", c.id, frame.Type, frame.AgentID, code)
+			telemetry.ReportWarning(ctx, "machine", fmt.Errorf("agent frame rejected: type=%s code=%s", frame.Type, code))
 			_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: frame.AgentID, TurnID: frame.TurnID, Code: code, Message: "agent frame rejected"})
 			continue
 		}
@@ -505,6 +521,9 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 				code = "stale_generation"
 			} else if errors.Is(err, store.ErrInvalidTransition) {
 				code = "invalid_transition"
+			} else {
+				// Not one of the classified refusals: a store or logic failure that the supervisor is told about as "invalid_request" and nobody else sees.
+				telemetry.ReportError(ctx, "machine", fmt.Errorf("agent frame %s failed: %w", frame.Type, err))
 			}
 			_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: frame.AgentID, TurnID: frame.TurnID, Code: code, Message: err.Error()})
 		}

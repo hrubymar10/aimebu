@@ -1,6 +1,7 @@
 package usages
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // UsageAlert is a global inbox notice. It contains no credentials or email.
@@ -86,8 +88,10 @@ func (t *AlertTracker) recoverCorrupt(reason error) {
 	backup := fmt.Sprintf("%s.corrupt-%d", t.path, time.Now().UTC().UnixNano())
 	if err := os.Rename(t.path, backup); err != nil {
 		log.Printf("usage alerts: corrupt state (%v); could not move aside: %v", reason, err)
+		telemetry.ReportCause(context.Background(), "credentials", "usage alerts: the corrupt state file could not be moved aside")
 	} else {
 		log.Printf("usage alerts: corrupt state (%v); moved aside to %s", reason, backup)
+		telemetry.WarnCause(context.Background(), "credentials", "usage alerts: the corrupt state file was moved aside")
 	}
 	t.state = alertState{Windows: map[string]alertWindow{}, Alerts: map[string]UsageAlert{}}
 }

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
@@ -130,6 +131,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 		}
 		if err := r.Pass(ctx); err != nil {
 			log.Printf("credtarget: reconcile pass: %v", err)
+			telemetry.ReportCause(ctx, "credentials", "credential reconcile pass")
 		}
 		timer.Reset(interval)
 	}

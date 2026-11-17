@@ -7,6 +7,7 @@ import { SpawnForm } from './spawn-dialog.js';
 import { SpawnStore } from './spawn-store.js';
 import { SwitchForm } from './switch-form.js';
 import { SwitchStore } from './switch-store.js';
+import { captureError } from '../../telemetry.js';
 
 // How long after a read of the room's agents the next one may start (events that come in the meantime ask for one more, together).
 const RESYNC_MS = 500;
@@ -140,7 +141,7 @@ export class AgentsPanel {
         if (generation !== this.generation) return;
         if (!agent.switch || agent.switch.state === 'started' || agent.switch.state === 'failed') continue;
         try { await this.source.switchProgress(agent.id); }
-        catch { /* A transient progress read leaves the card's last known state visible. */ }
+        catch (error) { captureError(error, 'agents.switch-progress'); /* A transient progress read leaves the card's last known state visible. */ }
       }
     } finally { this.switchPollBusy = false; }
   }

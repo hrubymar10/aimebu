@@ -1,6 +1,7 @@
 package usages
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // ErrMaintenanceBusy is returned by HoldMaintenance when a maintenance run
@@ -127,6 +130,7 @@ func HoldMaintenance(root, tool, name, credPath string, timeout time.Duration) (
 		release, err := tryMaintenanceLock(root, identity)
 		if err != nil {
 			log.Printf("usages: ERROR cannot take the maintenance lock for %s/%s, refusing the switch: %v", tool, name, err)
+			telemetry.ReportCause(context.Background(), "credentials", "cannot take the maintenance lock, refusing the switch")
 			return nil, fmt.Errorf("account lock unavailable: %w", err)
 		}
 		if release != nil {

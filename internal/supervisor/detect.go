@@ -22,6 +22,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"github.com/hrubymar10/aimebu/internal/vibeconfig"
 )
 
@@ -132,6 +133,7 @@ func detectModelsInRunWith(ctx context.Context, family, command string, args []s
 	if remove != nil {
 		if cleanupErr := remove(dir); cleanupErr != nil {
 			log.Printf("model detection: remove run folder %s: %v", dir, cleanupErr)
+			telemetry.ReportWarning(ctx, "supervisor", fmt.Errorf("model detection: remove run folder: %w", cleanupErr))
 		}
 	}
 	return models, err
@@ -304,6 +306,7 @@ func pruneStaleDetectRuns(base string, now time.Time) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		log.Printf("model detection: list stale run folders in %s: %v", base, err)
+		telemetry.ReportWarning(context.Background(), "supervisor", fmt.Errorf("model detection: list stale run folders: %w", err))
 		return
 	}
 	cutoff := now.Add(-detectStaleRunAge)
@@ -319,6 +322,7 @@ func pruneStaleDetectRuns(base string, now time.Time) {
 		info, err := entry.Info()
 		if err != nil {
 			log.Printf("model detection: inspect run folder %s: %v", path, err)
+			telemetry.ReportWarning(context.Background(), "supervisor", fmt.Errorf("model detection: inspect run folder: %w", err))
 			continue
 		}
 		if !info.ModTime().Before(cutoff) {
@@ -326,6 +330,7 @@ func pruneStaleDetectRuns(base string, now time.Time) {
 		}
 		if err := os.RemoveAll(path); err != nil {
 			log.Printf("model detection: remove stale run folder %s: %v", path, err)
+			telemetry.ReportWarning(context.Background(), "supervisor", fmt.Errorf("model detection: remove stale run folder: %w", err))
 		}
 	}
 }

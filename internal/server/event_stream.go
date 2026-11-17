@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/hrubymar10/aimebu/internal/auth"
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"modernc.org/sqlite"
 )
 
@@ -94,6 +96,7 @@ func (s *Server) socketSessionFailure(ctx context.Context, token string) *stream
 	if errors.Is(err, auth.ErrInvalidSession) {
 		return &streamFailure{websocket.StatusPolicyViolation, "session expired or revoked"}
 	}
+	telemetry.ReportError(ctx, "event-stream", fmt.Errorf("session check failed: %w", err))
 	return &streamFailure{websocket.StatusInternalError, "session check failed; reconnect"}
 }
 
@@ -104,6 +107,7 @@ func (s *Server) streamEvents(ctx context.Context, conn *websocket.Conn, user, t
 	}
 	initial, err := retryBusy(ctx, bounds)
 	if err != nil {
+		telemetry.ReportError(ctx, "event-stream", fmt.Errorf("event replay failed: bounds: %w", err))
 		conn.Close(websocket.StatusInternalError, "event replay failed; reconnect")
 		return
 	}
@@ -142,6 +146,7 @@ func (s *Server) streamEvents(ctx context.Context, conn *websocket.Conn, user, t
 		}
 		batch, err := s.batch(ctx, user, cursor, initial.max)
 		if err != nil {
+			telemetry.ReportError(ctx, "event-stream", fmt.Errorf("event replay failed: batch: %w", err))
 			conn.Close(websocket.StatusInternalError, "event replay failed; reconnect")
 			return
 		}
@@ -191,6 +196,7 @@ func (s *Server) streamEvents(ctx context.Context, conn *websocket.Conn, user, t
 		}
 	}
 	go func() {
+		defer telemetry.Recover(ctx)
 		poll := time.NewTicker(interval)
 		defer poll.Stop()
 		session := time.NewTicker(checkInterval)
@@ -208,6 +214,7 @@ func (s *Server) streamEvents(ctx context.Context, conn *websocket.Conn, user, t
 			case <-poll.C:
 				current, err := retryBusy(ctx, bounds)
 				if err != nil {
+					telemetry.ReportError(ctx, "event-stream", fmt.Errorf("event poll failed: bounds: %w", err))
 					fail(websocket.StatusInternalError, "event poll failed; reconnect")
 					return
 				}
@@ -217,6 +224,7 @@ func (s *Server) streamEvents(ctx context.Context, conn *websocket.Conn, user, t
 				for cursor < current.max {
 					batch, err := s.batch(ctx, user, cursor, current.max)
 					if err != nil {
+						telemetry.ReportError(ctx, "event-stream", fmt.Errorf("event poll failed: batch: %w", err))
 						fail(websocket.StatusInternalError, "event poll failed; reconnect")
 						return
 					}

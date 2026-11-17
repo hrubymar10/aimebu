@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
@@ -21,6 +22,7 @@ func (s *Server) StartUsageAlerts(ctx context.Context, root string) error {
 	s.usageAlertWake = make(chan struct{}, 1)
 	s.Usages.SetUpdateHook(s.usagesChanged)
 	go func() {
+		defer telemetry.Recover(ctx)
 		for {
 			select {
 			case <-ctx.Done():
@@ -30,16 +32,19 @@ func (s *Server) StartUsageAlerts(ctx context.Context, root string) error {
 				if s.Switcher != nil {
 					if err := s.Switcher.EnsureUsageAlertIdentities(); err != nil {
 						log.Printf("usage alert account identities: %v", err)
+						telemetry.ReportCause(context.Background(), "usages", "usage alert account identities")
 						continue
 					}
 					if err := s.Switcher.OverlayUsages(&snapshot); err != nil {
 						log.Printf("usage alert account overlay: %v", err)
+						telemetry.ReportCause(context.Background(), "usages", "usage alert account overlay")
 						continue
 					}
 				}
 				changed, err := tracker.Observe(snapshot)
 				if err != nil {
 					log.Printf("usage alerts: %v", err)
+					telemetry.ReportCause(context.Background(), "usages", "usage alerts")
 				} else if changed {
 					s.usageAlertRevision.Add(1)
 					s.nudgeUsageWatchers()

@@ -1,5 +1,6 @@
 import { effect, html, signal, useLayoutEffect, useRef } from '../../ui.js';
 import { mountPreactPage } from '../mount-page.js';
+import { captureError } from '../../telemetry.js';
 
 const FINISH_MS = 2900;
 const STARTS = [[-46, -9], [-40, 0], [-46, 9], [46, -9], [40, 0], [46, 9]];
@@ -38,7 +39,7 @@ export class WelcomeStore {
   async proceed() {
     if (this.closed.value || !this.alive) return;
     this.closed.value = true; this.flush();
-    try { await this.onContinue?.(); } catch { /* the welcome would come back next sign-in; nothing to block on */ }
+    try { await this.onContinue?.(); } catch (error) { captureError(error, 'welcome.continue'); /* the welcome would come back next sign-in; nothing to block on */ }
     if (this.alive) this.onDone();
   }
 

@@ -1138,6 +1138,7 @@ html[data-debug-inspector="on"] dt.room-fact-debug, html[data-debug-inspector="o
 .health-limit-tick-soft { background: var(--orange); }
 .health-limit-tick-hard { background: var(--red); top: -4px; bottom: -4px; }
 .health-limit-tick-hard.is-near { margin-left: 4px; }
+.health-limit-tick-hard.is-near-left { margin-left: -6px; } /* a bar drawn as percent left runs the other way: the hard mark is to the left of the soft one */
 html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-debug-inspector="on"]) .inbox-raw { display: none; }
 
 

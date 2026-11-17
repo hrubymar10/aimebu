@@ -18,6 +18,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 var launcherEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -235,6 +236,7 @@ func (c *Client) startLauncherReprobe(ctx context.Context) {
 		interval = time.Minute
 	}
 	go func() {
+		defer telemetry.Recover(context.Background())
 		defer func() {
 			c.mu.Lock()
 			c.reprobeRunning = false
@@ -511,6 +513,7 @@ func (c *Client) maybeReprobeCodexHome(row protocol.LauncherRow) {
 	c.mu.Unlock()
 
 	go func() {
+		defer telemetry.Recover(context.Background())
 		fresh := protocol.LauncherRow{LauncherDefinition: row.LauncherDefinition}
 		probeLauncherFeatures(&fresh, row.LauncherDefinition, row.ResolvedCommand, checkout)
 		if fresh.CodexHome == "" {

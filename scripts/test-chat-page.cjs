@@ -583,6 +583,12 @@ async function main() {
       const dialog = row.querySelector('dialog'), body = dialog.querySelector('.system-message-dialog-body');
       return [dialog.open, body.querySelector('h2')?.textContent, body.querySelector('li strong')?.textContent, body.querySelector('pre code')?.textContent, body.querySelector('.mention[role=button]')?.textContent, getComputedStyle(body).textAlign];
     }), [true, 'Instructions', 'Review', 'Hand off active work.', '@tess', 'left']);
+    // The dialog is in the top layer, so it is centred in the window whatever the list around it is: the list is a size container (for the toolbar's query), and a
+    // container's layout containment must not become the dialog's containing block, with the list scrolled to its end or not.
+    for (const atEnd of [false, true]) {
+      await page.evaluate(end => { const list = document.querySelector('#messages'); list.scrollTop = end ? list.scrollHeight : 0; }, atEnd);
+      assert.deepEqual(await page.evaluate(() => { const box = document.querySelector('[data-message-id=rm_a_long_system] dialog').getBoundingClientRect(); return [Math.abs(box.left + box.width / 2 - innerWidth / 2) < 2, box.top >= 0, box.bottom <= innerHeight, box.width > 200]; }), [true, true, true, true], `the open notice dialog is centred in the window (list scrolled ${atEnd ? 'to its end' : 'to its start'})`);
+    }
     await page.evaluate(() => window.__chat.setRaw(true)); await settle(page);
     assert.deepEqual(await page.$eval('[data-message-id=rm_a_long_system] dialog .system-message-dialog-body', body => [body.classList.contains('md-rendered'), body.textContent.includes('## Instructions'), !!body.querySelector('h2'), !!body.querySelector('.mention'), getComputedStyle(body).whiteSpace]),
       [false, true, false, false, 'pre-wrap'], 'raw mode preserves source line breaks in the open dialog');

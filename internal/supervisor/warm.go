@@ -246,7 +246,7 @@ func (c *Client) endWarm(entry *warmEntry, reason string, grace time.Duration) b
 		err = entry.session.Kill()
 	}
 	if err != nil {
-		c.report(fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err))
+		c.report("a warm process is not confirmed gone", fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err))
 		return false
 	}
 	if c.Journal != nil && pid > 0 {
@@ -270,6 +270,7 @@ func (c *Client) noteWarmEnded(agentID, reason string) {
 		return
 	}
 	go func() {
+		defer telemetry.Recover(context.Background())
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmEndedFrame, AgentID: agentID, Message: reason})
@@ -379,6 +380,7 @@ func (c *Client) RetireWarmTool(tool, reason string) bool {
 	for _, slot := range pool.existing() {
 		wait.Add(1)
 		go func() {
+			defer telemetry.Recover(context.Background())
 			defer wait.Done()
 			slot.mu.Lock()
 			defer slot.mu.Unlock()
@@ -470,7 +472,7 @@ func (c *Client) reportWarmRefusal(spec adapter.TurnSpec, cred credentials, acti
 	c.warmWarnings[spec.Agent.ID] = key
 	c.mu.Unlock()
 	c.warmChanged()
-	c.report(fmt.Errorf("agent %s: %s: %w; the turn runs cold", spec.Agent.ID, action, err))
+	c.reportLocal(fmt.Errorf("agent %s: %s: %w; the turn runs cold", spec.Agent.ID, action, err)) // its Sentry report is the classified warning above
 }
 
 var warmRefusalNamedKey = regexp.MustCompile(`(?:host config key|host feature) "([A-Za-z_][A-Za-z0-9_-]*)"`)
@@ -516,6 +518,7 @@ func (c *Client) retireAll(reason string, grace time.Duration) bool {
 	for _, slot := range pool.existing() {
 		wait.Add(1)
 		go func() {
+			defer telemetry.Recover(context.Background())
 			defer wait.Done()
 			slot.mu.Lock()
 			defer slot.mu.Unlock()
@@ -535,6 +538,7 @@ var warmRetryEvery = 2 * time.Second
 // drop): they do not happen while a process of the agent may still be alive.
 func (c *Client) stopWarmUntilGone(agentID string, then func()) {
 	go func() {
+		defer telemetry.Recover(context.Background())
 		for {
 			time.Sleep(warmRetryEvery)
 			c.mu.Lock()
@@ -833,14 +837,14 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		// what a later supervisor ends it by.
 		identity := c.identityOf(session.Pid())
 		if c.Journal == nil || session.Pid() <= 0 || identity == "" {
-			c.report(fmt.Errorf("agent %s: a warm process cannot be tracked (no start time); the turn runs cold", spec.Agent.ID))
+			c.degraded("a warm process cannot be tracked; the turn runs cold", fmt.Errorf("agent %s: a warm process cannot be tracked (no start time); the turn runs cold", spec.Agent.ID))
 			if !c.finish(slot, entry, "it cannot be tracked", 0) {
 				return nil, errWarmUnconfirmed
 			}
 			return c.Adapter.Start(ctx, spec)
 		}
 		if err := c.Journal.RecordWarmProcess(context.Background(), WarmProcess{PID: session.Pid(), AgentID: spec.Agent.ID, Started: identity}); err != nil {
-			c.report(fmt.Errorf("agent %s: noting a warm process: %w; the turn runs cold", spec.Agent.ID, err))
+			c.degraded("noting a warm process failed; the turn runs cold", fmt.Errorf("agent %s: noting a warm process: %w; the turn runs cold", spec.Agent.ID, err))
 			if !c.finish(slot, entry, "it could not be noted", 0) {
 				return nil, errWarmUnconfirmed
 			}
@@ -856,7 +860,7 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 	turn, err := entry.session.Run(spec)
 	if err != nil {
 		// Still as it was reported (kept idle): its end is reported with this reason, because no turn of its own is going to say it.
-		c.report(fmt.Errorf("agent %s: handing the turn to its warm process: %w; the turn runs cold", spec.Agent.ID, err))
+		c.degraded("handing the turn to its warm process failed; the turn runs cold", fmt.Errorf("agent %s: handing the turn to its warm process: %w; the turn runs cold", spec.Agent.ID, err))
 		if !c.finish(slot, entry, "it could not take the turn", 0) {
 			return nil, errWarmUnconfirmed
 		}
@@ -931,7 +935,7 @@ func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) (kept b
 			reason = loginChangedReason
 		}
 		if claimErr != nil {
-			c.report(fmt.Errorf("agent %s: its warm process is not kept: %w", entry.agentID, claimErr))
+			c.degraded("a warm process is not kept", fmt.Errorf("agent %s: its warm process is not kept: %w", entry.agentID, claimErr))
 			reason = "the server did not confirm that it is kept"
 		}
 		c.finish(slot, entry, reason, 0)
@@ -946,7 +950,8 @@ func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) (kept b
 	entry.idleStop = make(chan struct{})
 	entry.timer = pool.after(cfg.Idle, func() { c.expireWarm(entry, gen) })
 	slot.idle = entry
-	go c.watchIdle(slot, entry, entry.idleStop)
+	stop := entry.idleStop // read here, under the slot's lock, as the go statement's arguments always were
+	telemetry.Go(context.Background(), func() { c.watchIdle(slot, entry, stop) })
 	c.warmChanged()
 	return true
 }
@@ -1039,7 +1044,7 @@ func (c *Client) watchIdle(slot *warmSlot, entry *warmEntry, stop <-chan struct{
 			tail = tail[len(tail)-2000:]
 		}
 	}
-	c.report(fmt.Errorf("agent %s: its idle warm process ended by itself; the next turn starts a new one%s", entry.agentID, tailNote(tail)))
+	c.degraded("an idle warm process ended by itself", fmt.Errorf("agent %s: its idle warm process ended by itself; the next turn starts a new one%s", entry.agentID, tailNote(tail)))
 	c.finish(slot, entry, "it ended while idle", 0) // already gone: this only notes that it is
 }
 
@@ -1268,7 +1273,7 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 	}
 	processes, err := c.Journal.WarmProcesses(ctx)
 	if err != nil {
-		c.report(err)
+		c.report("the journal could not list the warm processes", err)
 		return
 	}
 	for _, process := range processes {
@@ -1363,7 +1368,7 @@ func (c *Client) sendWarmReports(ctx context.Context) {
 		case <-c.warmReports:
 			report := c.WarmReport()
 			if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmStateFrame, Warm: &report}); err != nil && ctx.Err() == nil {
-				c.report(err)
+				c.report("the warm state could not be sent to the server", err)
 			}
 		}
 	}

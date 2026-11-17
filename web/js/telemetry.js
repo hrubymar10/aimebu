@@ -180,5 +180,32 @@ export function setTelemetryUser(id, Sentry = globalThis.Sentry) {
   Sentry.setUser(typeof id === 'string' && id ? { id } : null);
 }
 
+// The errors the page catches and carries on from (a read that failed, a render that threw inside a page's boundary) were lost: nothing but the console
+// saw them, and the SDK's global handlers only see what nobody caught. `tag` is a fixed name of the place ("render", "startup"), never built from an id
+// or a name: it is the Sentry tag `source` and, with the error's name and status, the fingerprint, so one cause is one issue. What is reported is
+// what a server fault or a bug is: not a person's expired session (marked `unauthorized`), not a request that got no answer (marked `network`; the
+// server being restarted is no defect of the page), not a cancelled one, and not an answer below 500 (a 4xx is the server refusing, which the
+// page shows). Each cause goes out once per page load. Nothing happens while reporting is not running, and this never throws; the event goes through
+// the same scrubber as every other (beforeSend).
+const reported = new Set();
+const MAX_REPORTED = 100;
+export function captureError(error, tag, Sentry = globalThis.Sentry) {
+  if (!started || typeof Sentry?.captureException !== 'function' || !error || typeof tag !== 'string' || !tag) return false;
+  if (error.unauthorized || error.network || error.name === 'AbortError' || (Number.isFinite(error.status) && error.status < 500)) return false;
+  const name = String(error.name || 'Error'), status = Number.isFinite(error.status) ? String(error.status) : '';
+  const key = `${tag}|${name}|${status}|${scrubText(String(error.message || ''))}`;
+  if (reported.has(key) || reported.size >= MAX_REPORTED) return false;
+  reported.add(key);
+  try {
+    Sentry.withScope(scope => {
+      scope.setTag('source', tag);
+      scope.setFingerprint([tag, name, status]);
+      scope.setLevel('error');
+      Sentry.captureException(error);
+    });
+    return true;
+  } catch { return false; }
+}
+
 // Test seam: lets a test start again.
-export function resetTelemetryForTest() { started = false; }
+export function resetTelemetryForTest() { started = false; reported.clear(); }

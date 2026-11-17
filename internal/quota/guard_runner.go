@@ -124,6 +124,7 @@ func (g *Guard) Config(ctx context.Context, tool string) (GuardConfig, bool, err
 	if err := json.Unmarshal([]byte(doc), &cfg); err != nil {
 		// A damaged document must not switch the guard off silently or break the switcher.
 		log.Printf("quota: stored %s limit guard: %v; using the defaults", tool, err)
+		report("the stored limit guard is unreadable; using the defaults", true)
 		return DefaultGuard(tool), false, nil
 	}
 	cfg.Normalize()
@@ -136,6 +137,7 @@ func (g *Guard) ConfigOrDefault(ctx context.Context, tool string) GuardConfig {
 	cfg, _, err := g.Config(ctx, tool)
 	if err != nil {
 		log.Printf("quota: read %s limit guard: %v", tool, err)
+		report("reading the limit guard", false)
 		return DefaultGuard(tool)
 	}
 	return cfg
@@ -211,6 +213,7 @@ func (g *Guard) evaluateAll(ctx context.Context) {
 	for _, tool := range Tools() {
 		if err := g.evaluateTool(ctx, tool); err != nil && ctx.Err() == nil {
 			log.Printf("quota: limit guard %s: %v", tool, err)
+			report("limit guard pass", false)
 		}
 	}
 }
