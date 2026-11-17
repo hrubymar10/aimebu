@@ -5,10 +5,11 @@ import { teamFlowSource } from '../../team-flow-source.js';
 // belongs to a project and selection generation, so a late preview cannot
 // overwrite the one the person is looking at now.
 export class TeamFlowStore {
-  constructor({ source = teamFlowSource, onApplied = null, canPreview = () => true } = {}) {
+  constructor({ source = teamFlowSource, onApplied = null, canPreview = () => true, retainSelection = () => true } = {}) {
     this.source = source;
     this.onApplied = onApplied;
     this.canPreview = canPreview;
+    this.retainSelection = retainSelection;
     this.projectID = '';
     this.roomID = '';
     this.templates = signal([]);
@@ -38,7 +39,7 @@ export class TeamFlowStore {
 
   async load(projectID) {
     if (!this.alive) return;
-    const retainedSelection = this.projectID === projectID ? this.selected.peek() : '';
+    const retainedSelection = this.projectID === projectID && this.retainSelection() ? this.selected.peek() : '';
     this.reset();
     if (!projectID) return;
     this.projectID = projectID;

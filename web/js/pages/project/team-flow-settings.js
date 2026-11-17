@@ -8,7 +8,7 @@ const conflictName = item => `${item.slug || item.agent_id} (${item.role_label |
 export function TeamFlowSettings({ flow, canEdit, project }) {
   const state = flow.state.value, templates = flow.templates.value;
   const [open, setOpen] = useState(false);
-  const dialog = useRef(null), settings = useRef(null), openedProject = useRef('');
+  const dialog = useRef(null), settings = useRef(null), openedProject = useRef(''), restoreSettings = useRef(false);
   if (!dialog.current) {
     dialog.current = document.createElement('dialog');
     dialog.current.id = 'team-flow-modal';
@@ -25,7 +25,7 @@ export function TeamFlowSettings({ flow, canEdit, project }) {
     let current = true;
     Promise.resolve(flow.source.migration?.(id)).then(answer => {
       const running = answer?.migration || answer;
-      if (current && running?.id && !MIGRATION_TERMINAL.includes(running.state)) show();
+      if (current && running?.id && !MIGRATION_TERMINAL.includes(running.state) && document.querySelector('#room-info-dialog')?.open) show();
     }, () => {});
     return () => { current = false; };
   }, [flow.projectID, canEdit, state?.key]);
@@ -33,14 +33,16 @@ export function TeamFlowSettings({ flow, canEdit, project }) {
     if (open) return;
     settings.current = document.querySelector('#room-info-dialog');
     openedProject.current = flow.projectID;
-    if (settings.current?.open) settings.current.close();
+    restoreSettings.current = !!settings.current?.open;
+    if (restoreSettings.current) settings.current.close();
     setOpen(true);
   };
   const close = () => {
     setOpen(false);
     if (state?.key) void flow.select(state.key);
-    if (settings.current && openedProject.current === flow.projectID && !settings.current.open) settings.current.showModal();
+    if (restoreSettings.current && settings.current && openedProject.current === flow.projectID && !settings.current.open) settings.current.showModal();
     settings.current = null;
+    restoreSettings.current = false;
   };
   const dismiss = () => dialog.current?.close();
   dialog.current.onclose = close;

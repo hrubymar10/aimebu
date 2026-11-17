@@ -292,6 +292,34 @@ async function main() {
       assert.deepEqual(errors.splice(0), [], 'rendering the wizard without a flow state throws nothing');
       await page.close();
     }
+    // A background refresh must not pull a running migration over the main page or reopen settings.
+    {
+      const running = { id: 'mg-background', state: 'draining', can_cancel: true, agents: [] };
+      const auto = base(); auto['GET /api/projects/p1/team-flow/migration'] = { migration: running };
+      const page = await mount({ auto, load: false });
+      await page.evaluate(() => { document.querySelector('#room-info-dialog').close(); void window.__project.load('p1'); });
+      await ready(page); await settle(page); await settle(page);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#room-info-dialog').open, document.querySelector('#team-flow-modal')?.open]), [false, false], 'a background migration leaves both dialogs closed');
+      await page.close();
+    }
+    // A same-project refresh retains an in-progress wizard choice only while the wizard is open.
+    {
+      const page = await mount();
+      const selections = await page.evaluate(async () => {
+        const { TeamFlowStore } = await import('/js/pages/project/team-flow-store.js');
+        let wizardOpen = true;
+        const source = { templates: async () => ({ templates: [{ key: 'current' }, { key: 'draft' }] }), get: async () => ({ key: 'current' }), preview: async () => ({}) };
+        const flow = new TeamFlowStore({ source, retainSelection: () => wizardOpen });
+        await flow.load('p1'); await flow.select('draft'); await flow.load('p1');
+        const whileOpen = flow.selected.peek();
+        wizardOpen = false; await flow.load('p1');
+        const afterClose = flow.selected.peek();
+        flow.destroy();
+        return [whileOpen, afterClose];
+      });
+      assert.deepEqual(selections, ['draft', 'current']);
+      await page.close();
+    }
     // A completed change keeps its per-agent summary visible until the person closes it; a project already changing shows progress on opening.
     {
       const running = { id: 'mg2', state: 'applying', can_cancel: false, agents: [{ agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'notice', state: 'running' }] };

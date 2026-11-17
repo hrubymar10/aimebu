@@ -55,6 +55,10 @@ transport inside a test binary.
   shown as `~`), the request **method and route pattern** (for example `GET /api/projects/{id}`), the status code. A panic is reported
   and then raised again, so the process behaves exactly as it would without telemetry.
 - Panics at the entry points of the subcommands (server, supervisor, CLI).
+- A classified warm-process refusal and an unrecognized Docker Codex host
+  config key are warnings. `CaptureWarning` and `CaptureOnce` send each stable
+  reason key once per process with a key-only fingerprint; values, paths, and
+  agent IDs are excluded from the event and fingerprint.
 - Traces: one transaction per HTTP request (method, route, status, duration), with one span per SQLite statement made while serving it:
   the SQL text **with its `?` placeholders**, the duration and the number of rows. Never an argument value. The span's description is that statement
   normalized (white space collapsed, any literal written into the text replaced by `?`, cut at 1000 characters), so one query can be told from another in Sentry. The files of the app (the ~240 scripts, styles and icons one page load fetches) are not

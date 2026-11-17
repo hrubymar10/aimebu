@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // Warm agents. After a turn the supervisor can keep the agent's harness process up for a short idle window, so a message that arrives in it
@@ -434,6 +436,15 @@ func (c *Client) reportWarmRefusal(spec adapter.TurnSpec, cred credentials, acti
 	if errors.Is(err, adapter.ErrNoWarm) && err.Error() == adapter.ErrNoWarm.Error() {
 		return // ordinary cold-only turns have no refusal reason to report
 	}
+	if errors.Is(err, adapter.ErrNoWarm) {
+		class := warmRefusalClass(err)
+		tool := spec.Agent.Tool
+		if tool != "claude" && tool != "codex" {
+			tool = "other"
+		}
+		telemetry.CaptureWarning(context.Background(), "warm-refusal:"+tool+":"+class,
+			fmt.Errorf("%s warm refused: %s", tool, class))
+	}
 	key := strings.Join([]string{action, err.Error(), cred.stamp, spec.Agent.Model, spec.Agent.LauncherID}, "\x00")
 	c.mu.Lock()
 	if errors.Is(err, adapter.ErrNoWarm) {
@@ -460,6 +471,27 @@ func (c *Client) reportWarmRefusal(spec adapter.TurnSpec, cred credentials, acti
 	c.mu.Unlock()
 	c.warmChanged()
 	c.report(fmt.Errorf("agent %s: %s: %w; the turn runs cold", spec.Agent.ID, action, err))
+}
+
+var warmRefusalNamedKey = regexp.MustCompile(`(?:host config key|host feature) "([A-Za-z_][A-Za-z0-9_-]*)"`)
+
+func warmRefusalClass(err error) string {
+	reason := err.Error()
+	if match := warmRefusalNamedKey.FindStringSubmatch(reason); len(match) == 2 {
+		return match[1]
+	}
+	switch {
+	case strings.Contains(reason, "token-only credentials"):
+		return "credentials"
+	case strings.Contains(reason, "Docker Codex home"):
+		return "docker-home"
+	case strings.Contains(reason, "plugin"):
+		return "plugins"
+	case strings.Contains(reason, "MCP"):
+		return "mcp-servers"
+	default:
+		return "other"
+	}
 }
 
 func (c *Client) clearWarmRefusal(agentID string) {

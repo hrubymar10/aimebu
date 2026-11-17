@@ -1,21 +1,54 @@
 package codex
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
+	"sync"
 
 	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
-// These settings do not change an agent turn. The model is supplied again at
-// thread and turn start; MCP servers are handled by dockerOverrides below.
-var warmDockerInertKeys = map[string]bool{"model": true, "mcp_servers": true, "projects": true, "notice": true, "tui": true, "history": true, "file_opener": true, "desktop": true}
+// Known settings outside the denylist can remain in the host config. In
+// Codex 0.169, personality is deprecated: friendly and pragmatic no longer
+// select a style. The model is supplied again at thread and turn start.
+var warmDockerKnownAllowedKeys = map[string]bool{"model": true, "mcp_servers": true, "projects": true, "notice": true, "tui": true, "history": true, "file_opener": true, "desktop": true, "personality": true, "marketplaces": true}
+
+var warmDockerDenyKeys = map[string]bool{
+	"model_provider": true, "model_providers": true, "profile": true, "profiles": true, "chatgpt_base_url": true,
+	"approval_policy": true, "sandbox_mode": true, "sandbox_workspace_write": true, "shell_environment_policy": true,
+	"analytics": true, "approvals_reviewer": true, "browser_use": true, "client_search_provider": true,
+	"compact_prompt": true, "computer_use": true, "developer_instructions": true, "forced_chatgpt_workspace_id": true,
+	"forced_login_method": true, "instructions": true, "model_auto_compact_token_limit": true,
+	"model_auto_compact_token_limit_scope": true, "model_context_window": true, "model_reasoning_summary": true,
+	"model_verbosity": true, "review_model": true, "service_tier": true, "tools": true, "web_search": true,
+	"notify": true, "otel": true, "hide_agent_reasoning": true, "instructions_file": true,
+	"project_doc_fallback_filenames": true, "project_doc_max_bytes": true,
+}
+
+var warmDockerUnknownSaid sync.Map // agent ID + key -> struct{}
+
+func warmDockerUnknown(spec adapter.TurnSpec, key string) {
+	if spec.StderrSink != nil {
+		if _, seen := warmDockerUnknownSaid.LoadOrStore(spec.Agent.ID+"\x00"+key, struct{}{}); !seen {
+			fmt.Fprintf(spec.StderrSink, "Codex Docker warm allowed unrecognized host config key %q\n", key)
+		}
+	}
+	class := key
+	if !bareKey.MatchString(class) {
+		class = "other"
+	}
+	telemetry.CaptureWarning(context.Background(), "codex-warm-unknown:"+class,
+		fmt.Errorf("Codex Docker warm allowed unrecognized host config key %q", class))
+}
 
 // Codex may use the keyring for these stores, but a Docker warm process only
 // has the mounted file credentials used by the cold exec path.
@@ -43,11 +76,11 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, nil, adapter.ErrNoWarm
+		return nil, nil, fmt.Errorf("%w: cannot read Codex host config", adapter.ErrNoWarm)
 	}
 	var doc map[string]any
 	if err := toml.Unmarshal(data, &doc); err != nil {
-		return nil, nil, adapter.ErrNoWarm
+		return nil, nil, fmt.Errorf("%w: invalid Codex host config", adapter.ErrNoWarm)
 	}
 	keys := make([]string, 0, len(doc))
 	for key := range doc {
@@ -56,7 +89,7 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 	sort.Strings(keys)
 	var neutral []string
 	for _, key := range keys {
-		if warmDockerInertKeys[key] {
+		if warmDockerKnownAllowedKeys[key] {
 			continue
 		}
 		if warmDockerFileStores[key] {
@@ -71,8 +104,6 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 				return nil, nil, fmt.Errorf("%w: Codex host config key %q is not a reasoning effort", adapter.ErrNoWarm, key)
 			}
 			// The app-server's model/list default is sent on every turn/start.
-		case "personality":
-			return nil, nil, fmt.Errorf("%w: Codex host config key %q cannot be neutralized to the cold default personality", adapter.ErrNoWarm, key)
 		case "features":
 			features, ok := doc[key].(map[string]any)
 			if !ok {
@@ -127,19 +158,16 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 				}
 				neutral = append(neutral, "plugins."+id+".enabled=false")
 			}
-		case "marketplaces":
-			// Marketplace entries only define sources. Runtime loading reads
-			// configured plugin IDs, all of which are disabled above.
-			if _, ok := doc[key].(map[string]any); !ok {
-				return nil, nil, fmt.Errorf("%w: Codex host config key %q is not a table", adapter.ErrNoWarm, key)
-			}
 		default:
-			return nil, nil, fmt.Errorf("%w: Codex host config key %q overrides provider/profile or other turn settings", adapter.ErrNoWarm, key)
+			if warmDockerDenyKeys[key] || strings.HasPrefix(key, "experimental_") || strings.HasSuffix(key, "_instructions_file") || strings.HasPrefix(key, "output_") || strings.HasPrefix(key, "response_") {
+				return nil, nil, fmt.Errorf("%w: Codex host config key %q changes turn behavior or isolation", adapter.ErrNoWarm, key)
+			}
+			warmDockerUnknown(spec, key)
 		}
 	}
 	overrides, skipped, err := dockerOverrides(string(data))
 	if err != nil {
-		return nil, nil, adapter.ErrNoWarm
+		return nil, nil, fmt.Errorf("%w: Codex host MCP servers cannot be neutralized", adapter.ErrNoWarm)
 	}
 	names := make([]string, 0, len(skipped))
 	for name := range skipped {
@@ -148,7 +176,7 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		if !bareKey.MatchString(name) || name == "aimebu_docker" {
-			return nil, nil, adapter.ErrNoWarm
+			return nil, nil, fmt.Errorf("%w: Codex host MCP server name cannot be safely overridden", adapter.ErrNoWarm)
 		}
 		overrides = append(overrides, "mcp_servers."+name+".enabled=false")
 	}

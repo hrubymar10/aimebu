@@ -65,6 +65,20 @@ func lookup(values map[string]string) func(string) (string, bool) {
 	return func(name string) (string, bool) { value, ok := values[name]; return value, ok }
 }
 
+func TestCaptureWarningOnceUsesKeyFingerprint(t *testing.T) {
+	_, transport := startTest(t)
+	key := "codex-warm-test-key"
+	CaptureWarning(context.Background(), key, errors.New("first detail"))
+	CaptureWarning(context.Background(), key, errors.New("second detail"))
+	events := transport.sent()
+	if len(events) != 1 || events[0].Level != sentry.LevelWarning || len(events[0].Fingerprint) != 1 || events[0].Fingerprint[0] != key {
+		t.Fatalf("warning events = %+v", events)
+	}
+	if strings.Contains(marshal(t, events[0]), "second detail") {
+		t.Fatal("duplicate warning was captured")
+	}
+}
+
 func TestFromEnv(t *testing.T) {
 	off, err := FromEnv(lookup(nil), "aimebu v2")
 	if err != nil || off.Enabled() || off.EnvSet || off.Environment != "dev" {

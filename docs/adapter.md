@@ -230,8 +230,8 @@ keys (`cli_auth_credentials_store`, `mcp_oauth_credentials_store`) are allowed
 only when set to `file`. App-server `model/list` supplies the model's default
 reasoning effort; every `turn/start` sends it explicitly. If that default is
 absent, both native and Docker warm mode fall back cold and name the missing
-default in the refusal. Warm starts leave personality unset to preserve the
-cold default. The known `js_repl`, `plugins`, and `remote_plugin` features are
+default in the refusal. Host `personality` can remain because Codex 0.169 no
+longer uses its former styles. The known `js_repl`, `plugins`, and `remote_plugin` features are
 reset to their cold defaults (`false`, `true`, and `true`). Host plugin entries
 are disabled individually with `plugins.<id>.enabled=false` overrides,
 preserving plugin loading and the cold path's account-installed plugins.
@@ -239,10 +239,22 @@ Codex's `-c` parser treats quoted path segments as literal key names, so IDs
 containing dots or other unsafe characters force a cold turn. Marketplace
 tables only define plugin sources and can remain in the host config. Malformed
 plugin tables also force a cold turn.
-Host `personality` also forces a cold turn because it cannot be neutralized to
-an unset personality. Provider, profile,
-instruction, unknown feature, and unknown top-level settings likewise force
-a cold turn with a reason naming the key. The
+Codex 0.169 deprecates `personality`: its former styles no longer select a
+style, so the host key can remain during a warm turn. Docker warm is allowed
+by default for other host settings, including unknown future top-level keys;
+each unknown key is logged once per agent and reported once as a warning.
+Provider/account (`model_provider`, `model_providers`, `profile`, `profiles`,
+`chatgpt_base_url`, and non-file credential stores), permission
+(`approval_policy`, `sandbox_mode`, `sandbox_workspace_write`,
+`shell_environment_policy`), instruction and prompt settings
+(`developer_instructions`, `instructions`, instruction files, compaction),
+tool settings (`tools`, `web_search`, `notify`, `features.*`, `experimental_*`),
+output settings, and telemetry settings (`analytics`, `otel`) are checked
+explicitly. The Codex 0.169 app-server `Config` schema's top-level keys are
+pinned and classified in a test. MCP servers and
+plugins are disabled or reset when safe; settings that cannot be overridden
+force a cold turn with a reason naming the key. Each classified warm refusal
+is reported once per tool and reason class as a warning. The
 latest classified warm refusal appears in the agent card's cold tooltip.
 The generated private config bytes (or Docker host config bytes) are part of the warm
 fingerprint, so a change retires the old process before reuse. A token-only auth callback can receive a newer access token only

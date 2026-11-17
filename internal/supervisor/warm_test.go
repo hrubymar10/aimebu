@@ -15,11 +15,43 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/codex"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
+
+type warmWarningTransport struct{ events []*sentry.Event }
+
+func (*warmWarningTransport) Configure(sentry.ClientOptions)        {}
+func (*warmWarningTransport) Flush(time.Duration) bool              { return true }
+func (*warmWarningTransport) FlushWithContext(context.Context) bool { return true }
+func (*warmWarningTransport) Close()                                {}
+func (t *warmWarningTransport) SendEvent(event *sentry.Event)       { t.events = append(t.events, event) }
+
+func TestWarmRefusalReportsOneClassifiedWarning(t *testing.T) {
+	transport := &warmWarningTransport{}
+	reporter, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test"}, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reporter.Close)
+	c := &Client{}
+	spec := adapter.TurnSpec{Agent: adapter.AgentSpec{ID: "first-agent", Tool: "codex"}}
+	refusal := fmt.Errorf("%w: Codex host config key %q changes provider, permissions, or tools", adapter.ErrNoWarm, "sandbox_mode")
+	c.reportWarmRefusal(spec, credentials{}, "warm unavailable", refusal)
+	spec.Agent.ID = "second-agent"
+	c.reportWarmRefusal(spec, credentials{}, "warm unavailable", refusal)
+	if len(transport.events) != 1 || transport.events[0].Level != sentry.LevelWarning ||
+		len(transport.events[0].Fingerprint) != 1 || transport.events[0].Fingerprint[0] != "warm-refusal:codex:sandbox_mode" {
+		t.Fatalf("warning events = %+v", transport.events)
+	}
+	if strings.Contains(fmt.Sprint(transport.events[0]), "first-agent") {
+		t.Fatal("agent ID leaked into the warning")
+	}
+}
 
 var adapterContainerUnconfirmed = errors.New("the process in the container is not confirmed gone")
 
