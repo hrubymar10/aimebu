@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/configroot"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
@@ -78,15 +79,12 @@ func importV1Command(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 	root := *targetRoot
 	if root == "" {
-		root = os.Getenv("AIMEBU2_CONFIG_DIR")
-	}
-	if root == "" {
-		home, err := os.UserHomeDir()
+		var err error
+		root, err = configroot.FromEnv()
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		root = filepath.Join(home, ".aimebu2")
 	}
 	mapping, err := store.ReadV1ImportMap(*mapPath)
 	if err != nil {

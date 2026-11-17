@@ -244,7 +244,8 @@ only after the server check got the 401 an aimebu server answers (any other
 answer from that port, such as another program's 200, ends the live checks
 before the key leaves the process).
 Doctor reads the same environment as `aimebu server`: `AIMEBU2_CONFIG_DIR`
-(default `~/.aimebu2`), `AIMEBU2_BIND`, `AIMEBU2_PORT`, `AIMEBU2_ALLOW`,
+(default `~/.aimebu2`; an override must be absolute or begin with `~`),
+`AIMEBU2_BIND`, `AIMEBU2_PORT`, `AIMEBU2_ALLOW`,
 `AIMEBU2_TRUSTED_PROXIES`, `AIMEBU2_PUBLIC_URL`,
 `AIMEBU2_TLS_CERT`/`AIMEBU2_TLS_KEY`, and `AIMEBU2_TLS_PORT`. An invalid
 value is reported on stderr and exits 1.

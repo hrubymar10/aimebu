@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/configroot"
 	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
@@ -89,13 +90,9 @@ type Manager struct {
 // DefaultRoot resolves the switcher root from AIMEBU2_CONFIG_DIR (or the default
 // home-based path) and returns <config>/switcher.
 func DefaultRoot() (string, error) {
-	dir := os.Getenv("AIMEBU2_CONFIG_DIR")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(home, ".aimebu2")
+	dir, err := configroot.FromEnv()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(dir, "switcher"), nil
 }

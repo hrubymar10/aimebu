@@ -16,7 +16,7 @@ type envVar struct {
 }
 
 var environment = []envVar{
-	{[]string{"AIMEBU2_CONFIG_DIR"}, []string{"Config root directory (default: ~/.aimebu2)"}},
+	{[]string{"AIMEBU2_CONFIG_DIR"}, []string{"Absolute config root directory (default: ~/.aimebu2; leading ~ expands to home)"}},
 	{[]string{"AIMEBU2_BIND"}, []string{"Server bind address (default: 127.0.0.1)"}},
 	{[]string{"AIMEBU2_PORT"}, []string{"Server listen port"}},
 	{[]string{"AIMEBU2_ALLOW"}, []string{"Comma-separated IPs/CIDRs allowed to connect"}},

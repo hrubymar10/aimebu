@@ -29,6 +29,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter/vibe"
 	"github.com/hrubymar10/aimebu/internal/agenttools"
 	"github.com/hrubymar10/aimebu/internal/auth"
+	"github.com/hrubymar10/aimebu/internal/configroot"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/server"
 	"github.com/hrubymar10/aimebu/internal/store"
@@ -876,13 +877,9 @@ type serverConfig struct {
 }
 
 func resolveServerConfig() (serverConfig, error) {
-	root := os.Getenv("AIMEBU2_CONFIG_DIR")
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return serverConfig{}, err
-		}
-		root = filepath.Join(home, ".aimebu2")
+	root, err := configroot.FromEnv()
+	if err != nil {
+		return serverConfig{}, err
 	}
 	bind := os.Getenv("AIMEBU2_BIND")
 	if bind == "" {

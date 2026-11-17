@@ -242,7 +242,9 @@ For a headless start set `AIMEBU2_OWNER_LOGIN` and `AIMEBU2_OWNER_PASSWORD`
 before the first run instead. Either way the server writes the host machine key to `server/host-machine.key` (0600) and
 prints that path. Its database defaults to
 `~/.aimebu2/server/aimebu.sqlite`; `AIMEBU2_CONFIG_DIR` selects another
-root. The development build keeps this separate root and listens on
+absolute root. A leading `~` or `~/` expands to the home directory; relative
+paths are rejected before the server opens data. The development build keeps
+this separate root and listens on
 `127.0.0.1:9897` after bootstrap until release cutover. Set
 `AIMEBU2_BIND` to an IP literal and `AIMEBU2_PORT` to a TCP port to change the
 listener. `AIMEBU2_ALLOW` limits client source IPs to comma-separated IPs or

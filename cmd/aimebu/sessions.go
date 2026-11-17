@@ -15,6 +15,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/configroot"
 	"github.com/hrubymar10/aimebu/internal/sqliteutil"
 )
 
@@ -57,14 +58,7 @@ func sessionsCommand(ctx context.Context, args []string, stdout, stderr io.Write
 }
 
 func sessionsConfigRoot() (string, error) {
-	if root := os.Getenv("AIMEBU2_CONFIG_DIR"); root != "" {
-		return root, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".aimebu2"), nil
+	return configroot.FromEnv()
 }
 
 // Open the two databases independently and read-only. Neither the server store
