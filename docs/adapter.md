@@ -54,8 +54,8 @@ the stderr pipe from being read.
 Normal turns carry `AgentTools` (`adapter.AgentToolsAccess`): the server address, the agent's own id and `aak_` key, the path of the `aimebu`
 executable and the rest of the bridge's environment (telemetry). It is built per turn from the supervisor's memory, never journaled (`json:"-"`) and
 never written to a file, and it holds no other agent's key. An adapter gives the key to the harness through the harness's **environment**
-(`AIMEBU2_AGENT_KEY`), never through its argument list (`ps` shows that to every local user): Claude gets an inline stdio MCP entry whose key is
-`${AIMEBU2_AGENT_KEY}`, Codex's private config names the variable (`env_vars`), Pi's header is `Bearer ${AIMEBU2_AGENT_KEY}`, and the Docker variants build
+(`AIMEBU_AGENT_KEY`), never through its argument list (`ps` shows that to every local user): Claude gets an inline stdio MCP entry whose key is
+`${AIMEBU_AGENT_KEY}`, Codex's private config names the variable (`env_vars`), Pi's header is `Bearer ${AIMEBU_AGENT_KEY}`, and the Docker variants build
 their HTTP endpoint from the same access and forward the variable by name (`HARNESS_DOCKER_FORWARD_ENV`). `adapter.BridgeEntry`, `NativeMCP` and
 `DockerMCPAt` validate the access (the agent id must match the turn's) and build those entries. No key-bearing file is written in the checkout:
 agents homed in the same task room share a checkout, and a co-tenant Docker agent running as the same container user could read another agent's
@@ -188,7 +188,7 @@ agent. Diagnostic turns pass `--strict-mcp-config` with the narrow read-only too
 context-window, cost, and confirmed-cancel support; it does not claim
 verified no-action or read-only modes. The normal test suite uses a scripted
 `claude` binary.
-Set `AIMEBU2_LIVE_CC=1` to opt into the separately gated live canary.
+Set `AIMEBU_LIVE_CC=1` to opt into the separately gated live canary.
 
 ### Warm mode (adapter side)
 
@@ -300,7 +300,7 @@ model, missing input/output, or inconsistent token shares leave cost unknown.
 
 Its private per-agent `CODEX_HOME` holds the structured-output schema and a
 translated MCP config. Only the private config contains the agent key; the
-inherited process environment excludes `AIMEBU2_*`. A native normal turn also
+inherited process environment excludes `AIMEBU_*`. A native normal turn also
 carries the person's own MCP servers: the `mcp_servers` of the `config.toml` next to their
 `auth.json` are read with a TOML parser (so a server counts however TOML writes it: tables
 and sub-tables, dotted keys, an inline table, spaces or quotes in a header) and written into the
@@ -347,7 +347,7 @@ approved action-enabled CLI mode; correction and diagnostic turns request
 read-only sandboxing and omit the toolbox. Container sandbox verification
 failed during the spike, so Codex does not claim `readonly_verified` or
 `no_action_mode`. Capabilities tested against Codex CLI 0.162.1 on Linux are
-not carried to a new version or OS. Set `AIMEBU2_LIVE_CODEX=1` to run the
+not carried to a new version or OS. Set `AIMEBU_LIVE_CODEX=1` to run the
 opt-in two-turn native resume canary.
 
 A v2 turn continues an existing harness session when the agent's session row
@@ -408,7 +408,7 @@ agent remains a member; a saved transcript cannot fetch files after the turn.
 No long-lived agent key is written in the checkout. The
 owner lists the models of a Pi harness in Settings → Harnesses (Auto-detect models
 runs `pi --offline --list-models` on the machine; ids are `provider/model`). Set
-`AIMEBU2_LIVE_PI=1` or `AIMEBU2_LIVE_PI_DOCKER=1` to run the respective
+`AIMEBU_LIVE_PI=1` or `AIMEBU_LIVE_PI_DOCKER=1` to run the respective
 two-turn nonce-recall canary.
 
 ## OpenCode native adapter
@@ -429,7 +429,7 @@ parts of the last step, joined as they arrive; narration in earlier steps
 (before a tool call) is ignored. Usage sums the turn's steps
 (tokens, cost, and the last step's prompt as context used). A finished tool
 call is reported once and is activity, so a long silent tool call can trip the
-idle deadline: raise `AIMEBU2_TURN_IDLE` for such work. Provider failures are
+idle deadline: raise `AIMEBU_TURN_IDLE` for such work. Provider failures are
 retried by OpenCode for about 70 seconds without events and then end with one
 `error` event; it goes into the exit evidence as `OpenCode error: APIError
 (HTTP 429): …`, and wording such as `usage limit`, `usage_limit` or a
@@ -495,11 +495,11 @@ as the key and an endpoint of their choosing as its URL, so the key would be sen
 a launcher's command and environment references, which is why saving providers belongs to the owner, never to an admin or a project role.
 A supervisor that does not say `supports_providers` in its hello is never given such a turn: it is held
 with a note in the room (see `docs/contract.md`).
-The opt-in canary `AIMEBU2_LIVE_OPENCODE_PROVIDER=1 go test ./internal/adapter/opencode` runs the same two
+The opt-in canary `AIMEBU_LIVE_OPENCODE_PROVIDER=1 go test ./internal/adapter/opencode` runs the same two
 real turns (a nonce, then a resumed turn that must return it) on a custom provider the person names with
-`AIMEBU2_LIVE_OPENCODE_PROVIDER_URL`, `AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL` and the key in the variable named by
-`AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV` (default `LIVE_OPENCODE_PROVIDER_KEY`; a name the harness uses itself is refused; unset: the endpoint takes
-no key), natively or, with `AIMEBU2_LIVE_OPENCODE_PROVIDER_DOCKER=1`, through `opencode-docker`. It spends a little on the
+`AIMEBU_LIVE_OPENCODE_PROVIDER_URL`, `AIMEBU_LIVE_OPENCODE_PROVIDER_MODEL` and the key in the variable named by
+`AIMEBU_LIVE_OPENCODE_PROVIDER_KEY_ENV` (default `LIVE_OPENCODE_PROVIDER_KEY`; a name the harness uses itself is refused; unset: the endpoint takes
+no key), natively or, with `AIMEBU_LIVE_OPENCODE_PROVIDER_DOCKER=1`, through `opencode-docker`. It spends a little on the
 endpoint and is never part of the gate. The config shape and the `{env:NAME}` key were also checked offline
 against opencode 1.19.5 and a local stand-in for an OpenAI-compatible endpoint: the request carried the key from
 the environment, the provider's model id and a streamed answer, and the turn ended with its final answer.
@@ -538,10 +538,10 @@ when it inspects such a launcher in a project folder of the machine and reports 
 launcher and clears once a later probe finds the home. `GET /api/machines/{id}/launchers` passes the field on and
 `aimebu doctor --live` reads it. The row stays available; preflight refuses a turn only when a required feature is
 missing. The opt-in live canary
-(`AIMEBU2_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode`) runs two real turns through the
+(`AIMEBU_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode`) runs two real turns through the
 launcher (a nonce, then a `-s` resume that must give it back) and checks the session id and the usage of
 each. The provider key comes from the environment (`OLLAMA_API_KEY` for the default model
-`ollama-cloud/gemma4:31b`; `AIMEBU2_LIVE_OPENCODE_MODEL` names another `provider/model` whose key is among
+`ollama-cloud/gemma4:31b`; `AIMEBU_LIVE_OPENCODE_MODEL` names another `provider/model` whose key is among
 the forwarded variables), never from the person's home. The Docker variant still claims no capabilities:
 read-only turns, cancel and cost inside a container are not verified by it.
 
@@ -573,7 +573,7 @@ process exited 0, that prompt was seen, an answer followed, no `<vibe_stop_event
 turn, and the session ID stayed the same. A stop event (a turn, price or token limit) is evidence
 (`Vibe stopped the turn: …`), never an answer, and aimebu sets none of those limits. An `effect` is
 reported once it has finished, so a long silent tool call can trip the idle deadline: raise
-`AIMEBU2_TURN_IDLE` for such work. API and configuration failures come on stderr as `Error: …` with exit
+`AIMEBU_TURN_IDLE` for such work. API and configuration failures come on stderr as `Error: …` with exit
 status 1; the last such line goes into the exit evidence as `Vibe error: …`, and wording such as
 `usage limit` or a weekly, hourly, daily or monthly limit (never a plain `rate limit`) routes into the
 provider-limit gate.
@@ -625,8 +625,8 @@ container, so an agent on it could never reach its model. Add such a model by ha
 reaches the provider some other way. The adapter's capabilities are
 pinned to the verified release, 2.25.0 on Linux, and claim cost and cancel confirmation only: no-action
 mode is not claimed until a live canary has shown that a read-only turn loads none of the person's MCP
-servers. `AIMEBU2_LIVE_VIBE=1` is reserved for that opt-in canary, which has not been written or run.
-The `recorded_*` fixtures in the tests follow the keys and values of real `vibe -p --output streaming` runs and their `meta.json` files (ids and prompt text trimmed); the other fixtures are shaped from the Vibe 2.25.0 sources. (The two-turn Docker canary below, `AIMEBU2_LIVE_VIBE_DOCKER=1`, is a different test from the reserved no-action canary above.)
+servers. `AIMEBU_LIVE_VIBE=1` is reserved for that opt-in canary, which has not been written or run.
+The `recorded_*` fixtures in the tests follow the keys and values of real `vibe -p --output streaming` runs and their `meta.json` files (ids and prompt text trimmed); the other fixtures are shaped from the Vibe 2.25.0 sources. (The two-turn Docker canary below, `AIMEBU_LIVE_VIBE_DOCKER=1`, is a different test from the reserved no-action canary above.)
 
 ### Mistral Vibe in Docker
 
@@ -652,10 +652,10 @@ when Vibe reports a missing key, the exit evidence says the key reaches the cont
 `MISTRAL_API_KEY` on the host avoids the question. `PYTHONUNBUFFERED=1` is forwarded as natively, so the
 streamed entries arrive as they are written. The MCP endpoint is the same
 `/api/agent/mcp` as for the other Docker harnesses, with `localhost` mapped to `host.docker.internal`.
-The opt-in live canary (`AIMEBU2_LIVE_VIBE_DOCKER=1 go test ./internal/adapter/vibe`) runs two real turns
+The opt-in live canary (`AIMEBU_LIVE_VIBE_DOCKER=1 go test ./internal/adapter/vibe`) runs two real turns
 through the launcher (a nonce, then a `--resume` that must give it back) and checks the session id and the
 usage of each. It reads `MISTRAL_API_KEY` from the environment only (the test home is a temporary one, so
-`~/.vibe/.env` is not consulted) and takes the model alias from `AIMEBU2_LIVE_VIBE_MODEL` (default
+`~/.vibe/.env` is not consulted) and takes the model alias from `AIMEBU_LIVE_VIBE_MODEL` (default
 `mistral-medium-3.5`). The Docker variant still claims no capabilities: read-only turns, cancel and cost inside
 a container are not verified by it.
 
@@ -678,7 +678,7 @@ machine has none.
 Claude and Codex Docker turns connect to the server's `/api/agent/mcp` HTTP endpoint using the
 supervisor's private agent key. Localhost URLs are mapped to
 `host.docker.internal` for the container, so the server must listen on a
-non-loopback IP with `AIMEBU2_BIND`, and `AIMEBU2_ALLOW` must admit the Docker
+non-loopback IP with `AIMEBU_BIND`, and `AIMEBU_ALLOW` must admit the Docker
 network source. Pi Docker needs the same network access for turn attachments.
 A loopback-only bind makes Docker catalog entries unavailable and blocks direct
 spawn, switch, and reactivation requests.
@@ -697,8 +697,8 @@ for a normal turn is aimebu's HTTP endpoint. Claude Docker is not strict
 last stdout `error` or `turn.failed` event is included with the stderr tail in
 recovery evidence after redaction. Docker capabilities
 do not claim confirmed cancellation until container-session teardown can be
-verified. Set `AIMEBU2_LIVE_CC_DOCKER=1` or
-`AIMEBU2_LIVE_CODEX_DOCKER=1` to run the respective two-turn Docker canary;
+verified. Set `AIMEBU_LIVE_CC_DOCKER=1` or
+`AIMEBU_LIVE_CODEX_DOCKER=1` to run the respective two-turn Docker canary;
 the canary checkout is created below this repository's ignored `tmp/`.
 
 `claude-docker` does not forward `CLAUDE_CONFIG_DIR` (it is not among the variables the Claude Docker turn lists in
@@ -709,8 +709,8 @@ can therefore continue or copy a session made on the host, and the server allows
 containerized launcher is refused for both `resume_mode`s (409 `needs_native`, with the reason). The fork canary below runs
 native, because it needs a temporary Claude home that the container would not use.
 
-`AIMEBU2_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude` runs the fork canary: a real first turn on a throwaway
+`AIMEBU_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude` runs the fork canary: a real first turn on a throwaway
 session, then a second that resumes it with `--fork-session`. The copy must report a session id of its own and recall what
 the first turn was told, and the original transcript must be byte for byte unchanged. Claude Code runs with the test's
 temporary `CLAUDE_CONFIG_DIR`; its login is `ANTHROPIC_API_KEY`, or a copy of the file named by
-`AIMEBU2_LIVE_CLAUDE_CREDENTIALS` (refused when it holds a refresh token, so that a copy cannot rotate the real login).
+`AIMEBU_LIVE_CLAUDE_CREDENTIALS` (refused when it holds a refresh token, so that a copy cannot rotate the real login).

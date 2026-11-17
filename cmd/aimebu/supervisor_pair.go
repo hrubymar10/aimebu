@@ -19,7 +19,7 @@ import (
 
 func pairSupervisorCommand(ctx context.Context, serverURL, token string, insecure bool, stderr io.Writer) int {
 	if tlsclient.InsecureSkipVerify() {
-		fmt.Fprintln(stderr, "WARNING: AIMEBU2_INSECURE_SKIP_VERIFY disables server certificate verification")
+		fmt.Fprintln(stderr, "WARNING: AIMEBU_INSECURE_SKIP_VERIFY disables server certificate verification")
 	}
 	parsed, err := url.Parse(serverURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {

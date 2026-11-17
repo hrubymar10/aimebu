@@ -30,12 +30,12 @@ func TestHarnessOverrideValidationWithoutNativeEnvGate(t *testing.T) {
 			t.Fatalf("accepted %q", bad)
 		}
 	}
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "")
 	row, err := inspectHarness(protocol.HarnessSetting{Tool: "codex", Variant: "native", Enabled: true, OverridePath: path})
 	if err != nil || row.PolicyDisabled || !row.Available || row.Source != "user" {
 		t.Fatalf("native row=%+v err=%v", row, err)
 	}
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	row, err = inspectHarness(protocol.HarnessSetting{Tool: "codex", Variant: "native", Enabled: true, OverridePath: path})
 	if err != nil || !row.Available || row.LauncherPath != path || row.Version == "" {
 		t.Fatalf("available row=%+v err=%v", row, err)

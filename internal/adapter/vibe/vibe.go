@@ -188,11 +188,11 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			return nil, err
 		}
 		// The toolbox is injected through the environment: the bearer travels in its own variable, never in argv or a file.
-		servers, err := json.Marshal([]map[string]any{{"name": "aimebu", "transport": "streamable-http", "url": endpoint, "api_key_env": "AIMEBU2_AGENT_KEY"}})
+		servers, err := json.Marshal([]map[string]any{{"name": "aimebu", "transport": "streamable-http", "url": endpoint, "api_key_env": "AIMEBU_AGENT_KEY"}})
 		if err != nil {
 			return nil, err
 		}
-		protected = append(protected, "VIBE_MCP_SERVERS="+string(servers), "AIMEBU2_AGENT_KEY="+strings.TrimPrefix(authorization, "Bearer "))
+		protected = append(protected, "VIBE_MCP_SERVERS="+string(servers), "AIMEBU_AGENT_KEY="+strings.TrimPrefix(authorization, "Bearer "))
 		// --trust makes Vibe load the checkout's own configuration (a .vibe or .agents folder, and AGENTS.md), as the other harnesses read
 		// theirs; the agent already runs with every tool approved here.
 		args = append(args, "--trust", "--yolo")
@@ -273,7 +273,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 }
 
 // protectedEnv names the variables the adapter sets itself; an owner's environment reference to one of them is ignored.
-var protectedEnv = map[string]bool{"VIBE_HOME": true, "VIBE_ACTIVE_MODEL": true, "VIBE_SESSION_LOGGING__SAVE_DIR": true, "VIBE_MCP_SERVERS": true, "AIMEBU2_AGENT_KEY": true,
+var protectedEnv = map[string]bool{"VIBE_HOME": true, "VIBE_ACTIVE_MODEL": true, "VIBE_SESSION_LOGGING__SAVE_DIR": true, "VIBE_MCP_SERVERS": true, "AIMEBU_AGENT_KEY": true,
 	"VIBE_LAUNCH_FLAGS": true, "HARNESS_DOCKER_FORWARD_ENV": true, "HARNESS_DOCKER_PRINT_FEATURES": true}
 
 // launcherRefs drops an owner's references to the variables the adapter sets and, for a container, to the ones it forwards: a reference to

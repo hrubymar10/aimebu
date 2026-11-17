@@ -9,7 +9,7 @@ Sentry SDK file.
 
 Reporting is decided in this order:
 
-1. **`AIMEBU2_SENTRY_DSN` in the server's environment wins.** A DSN turns reporting on with that project; `off` (or an empty value)
+1. **`AIMEBU_SENTRY_DSN` in the server's environment wins.** A DSN turns reporting on with that project; `off` (or an empty value)
    turns it off. When it is set, Settings cannot change it and no popup is shown.
 2. Otherwise **Settings → Telemetry** decides. It is one card: the master switch **"Send telemetry"** first (it applies at once, with no Save),
    then the Sentry DSN field, then the person's own identity (see below). The DSN field is always filled with the effective DSN: the one you chose,
@@ -26,25 +26,25 @@ Reporting is decided in this order:
    (and, with the switch ticked and reports on, also sets it for the owner's account, as `PUT /api/me/telemetry` with `send_name`; if that call fails the popup comes back with the reason and what was chosen, up to three times); **Not
    now** (or Escape) turns reports off and changes nothing else. Either way it is not asked again.
 
-This build ships the maintainers' DSN as the default (`internal/telemetry/default_dsn.go`, EU ingest host `ingest.de.sentry.io`), so the popup's toggle starts on with it filled in. Deleting that one file gives a build with no default, which is off until a DSN comes from the environment or Settings. Set `AIMEBU2_SENTRY_DSN=off` to opt out for a whole server.
+This build ships the maintainers' DSN as the default (`internal/telemetry/default_dsn.go`, EU ingest host `ingest.de.sentry.io`), so the popup's toggle starts on with it filled in. Deleting that one file gives a build with no default, which is off until a DSN comes from the environment or Settings. Set `AIMEBU_SENTRY_DSN=off` to opt out for a whole server.
 
 Other variables (all optional):
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `AIMEBU2_SENTRY_DSN` | A DSN, or `off`/empty to disable; overrides Settings. | unset |
-| `AIMEBU2_SENTRY_ENV` | The Sentry environment name. | `dev` |
-| `AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (server) and of page loads traced (browser), 0 to 1. Settings → Telemetry shows the value in effect. | `1` |
+| `AIMEBU_SENTRY_DSN` | A DSN, or `off`/empty to disable; overrides Settings. | unset |
+| `AIMEBU_SENTRY_ENV` | The Sentry environment name. | `dev` |
+| `AIMEBU_SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (server) and of page loads traced (browser), 0 to 1. Settings → Telemetry shows the value in effect. | `1` |
 
 A DSN must be https (http only for a Sentry on this machine: localhost, 127.x, ::1); anything else is refused. A rate outside 0 to 1 (or not a number) is reported on stderr and the process runs with telemetry **off**; it never refuses to start
 over it. The server says `telemetry on: ...` at startup when it is on. The release is the build's version (`aimebu version`, the same
 string the page header shows, with spaces and slashes replaced by `_`).
 
 `aimebu supervisor`, `aimebu agent-tools` and the other subcommands read the environment variables, so a crash in them is reported too
-when `AIMEBU2_SENTRY_DSN` is set (they do not read Settings, which live in the server's database).
+when `AIMEBU_SENTRY_DSN` is set (they do not read Settings, which live in the server's database).
 
 **Tests never send.** The test environment (`internal/testenv`, `scripts/scratch-server.cjs`, `scripts/test-ui.cjs`) sets
-`AIMEBU2_SENTRY_DSN=off`, `testenv.Check` refuses an environment where it is not, and `telemetry.Init` refuses the real network
+`AIMEBU_SENTRY_DSN=off`, `testenv.Check` refuses an environment where it is not, and `telemetry.Init` refuses the real network
 transport inside a test binary.
 
 ## What is sent
@@ -89,7 +89,7 @@ transport inside a test binary.
     or state that could not be saved, an unreadable guard configuration). The quota package may import nothing of the program: it reports through
     `quota.Report`, which the server wires to `reportQuota`.
   - `startup`: a server that cannot start (the database file, `store.Open`, the host key, the owner, the listeners), reported and flushed before the process
-    exits. The reporter is the one configured by `AIMEBU2_SENTRY_DSN`: telemetry turned on only in Settings is applied once the store is open, so a failure before
+    exits. The reporter is the one configured by `AIMEBU_SENTRY_DSN`: telemetry turned on only in Settings is applied once the store is open, so a failure before
     that is reported only when the variable is set. `store`: a pre-migration backup that could not be rotated (a warning).
 - Traces: one transaction per HTTP request (method, route, status, duration), with one span per SQLite statement made while serving it:
   the SQL text **with its `?` placeholders**, the duration and the number of rows. Never an argument value. The span's description is that statement
@@ -134,7 +134,7 @@ API: `GET`/`PUT /api/me/telemetry` (`{send_name}`) and `POST /api/me/telemetry/f
 ## Volume
 
 The free Sentry plan counts spans (5 million a month), so the number of spans per use is bounded by what is traced, not by how many requests: every request and page load is traced by
-default (`AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` lowers the share), a request carries at most 50 database spans, a sampled page load is a handful of spans, and the files of the app are not traced at all. Settings → Telemetry
+default (`AIMEBU_SENTRY_TRACES_SAMPLE_RATE` lowers the share), a request carries at most 50 database spans, a sampled page load is a handful of spans, and the files of the app are not traced at all. Settings → Telemetry
 shows these numbers read-only (`GET /api/telemetry/settings` carries `traces_sample_rate` and `max_db_spans`); the rate is the server's environment's to change.
 - **No Session Replay.** The vendored browser bundle is the tracing-only one and contains no Replay code, so it cannot be turned on by a setting. A
   recording of the screen would carry link targets, names in attributes and page URLs that the SDK offers no hook to scrub, so it is left out until
@@ -175,11 +175,11 @@ A standalone supervisor reports the way the server's settings say. When it conne
 the effective configuration: whether reporting is on, the DSN, the environment name and the trace sample rate, with no identity of a person (see
 [the contract](contract.md)). The supervisor starts, replaces or stops its own reporting by it; its events carry no user, no host name and no IP address,
 like the server's. The `aimebu agent-tools` bridge that a harness starts for an agent gets the same through the environment of its MCP config entry
-(`AIMEBU2_SENTRY_DSN`, `AIMEBU2_SENTRY_ENV`, `AIMEBU2_SENTRY_TRACES_SAMPLE_RATE`; `AIMEBU2_SENTRY_DSN=off` when reporting is off), never through its
+(`AIMEBU_SENTRY_DSN`, `AIMEBU_SENTRY_ENV`, `AIMEBU_SENTRY_TRACES_SAMPLE_RATE`; `AIMEBU_SENTRY_DSN=off` when reporting is off), never through its
 arguments; the next turn of any agent builds its entry with the current settings, so the next bridge an agent starts has them, and one that is already running keeps what it
 started with.
 
-A DSN in the supervisor machine's own environment (`AIMEBU2_SENTRY_DSN`, a DSN or `off`) wins over the server's settings, for the supervisor and for its
+A DSN in the supervisor machine's own environment (`AIMEBU_SENTRY_DSN`, a DSN or `off`) wins over the server's settings, for the supervisor and for its
 bridges. A supervisor that predates this ignores the settings (and is not sent the frame); the server's own embedded supervisor is the server's process and
 reports through it.
 

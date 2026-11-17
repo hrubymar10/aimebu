@@ -47,7 +47,7 @@ import (
 //
 // Without an override, resolveVersion appends the VCS revision the Go
 // toolchain embeds in the binary.
-var version = "aimebu v2 (development)"
+var version = "aimebu v2"
 
 // reserveV1History runs at the first start, before the owner exists and before any setup event is
 // written: it raises the sequence counter to the highest v1 message number so that history keeps
@@ -88,7 +88,7 @@ func runReporting(ctx context.Context, args []string) int {
 	return runWithContext(ctx, args, os.Stdout, os.Stderr)
 }
 
-// startTelemetry turns on error and performance reporting when AIMEBU2_SENTRY_DSN is set (see docs/telemetry.md); without it nothing is
+// startTelemetry turns on error and performance reporting when AIMEBU_SENTRY_DSN is set (see docs/telemetry.md); without it nothing is
 // created. A bad setting is said on stderr and the process runs with telemetry off, never refusing to start for it.
 func startTelemetry(lookup func(string) (string, bool), stderr io.Writer) *telemetry.Telemetry {
 	config, err := telemetry.FromEnv(lookup, resolveVersion())
@@ -109,6 +109,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	warnLegacyEnvironment(stderr)
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: aimebu <server|supervisor|agent-tools|switcher|prune|doctor|sessions|usages|fe|version|help>")
 		return 2
@@ -126,7 +127,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	case "prune":
 		return pruneCommand(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "import-v1":
-		if os.Getenv("AIMEBU2_DEV_IMPORT_V1") != "1" {
+		if os.Getenv("AIMEBU_DEV_IMPORT_V1") != "1" {
 			fmt.Fprintln(stderr, "import-v1 is available only in development tests")
 			return 2
 		}
@@ -172,11 +173,11 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 			fmt.Fprintln(stderr, "usage: aimebu agent-tools")
 			return 2
 		}
-		if os.Getenv("AIMEBU2_URL") == "" || os.Getenv("AIMEBU2_AGENT_KEY") == "" {
-			fmt.Fprintln(stderr, "agent-tools requires AIMEBU2_URL and AIMEBU2_AGENT_KEY")
+		if os.Getenv("AIMEBU_URL") == "" || os.Getenv("AIMEBU_AGENT_KEY") == "" {
+			fmt.Fprintln(stderr, "agent-tools requires AIMEBU_URL and AIMEBU_AGENT_KEY")
 			return 1
 		}
-		if err := (agenttools.Server{URL: os.Getenv("AIMEBU2_URL"), Key: os.Getenv("AIMEBU2_AGENT_KEY"), Client: tlsclient.NewHTTPClient(0)}).Serve(ctx, os.Stdin, stdout); err != nil {
+		if err := (agenttools.Server{URL: os.Getenv("AIMEBU_URL"), Key: os.Getenv("AIMEBU_AGENT_KEY"), Client: tlsclient.NewHTTPClient(0)}).Serve(ctx, os.Stdin, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -191,7 +192,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 // stamping (go build inside a checkout), the short revision, commit time and a
 // dirty marker. A -ldflags override of version is returned unchanged.
 func resolveVersion() string {
-	const defaultVersion = "aimebu v2 (development)"
+	const defaultVersion = "aimebu v2"
 	if version != defaultVersion {
 		return version
 	}
@@ -228,7 +229,7 @@ func resolveVersion() string {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, `aimebu v2 — AI Message Bus
+	fmt.Fprint(w, `aimebu — AI Message Bus
 
 Usage: aimebu <command> [args]
 
@@ -236,7 +237,7 @@ Server:
   server                              Run the server in the foreground (embedded supervisor)
   server start|stop|status            Run the server in the background (pid file, log in server/aimebu.log)
   supervisor [--insecure] [--pair <url> <token>]   Run a standalone host supervisor, or pair it with a server (plain http to another machine needs --insecure)
-  agent-tools                         Managed agent toolbox over stdio (needs AIMEBU2_URL, AIMEBU2_AGENT_KEY)
+  agent-tools                         Managed agent toolbox over stdio (needs AIMEBU_URL, AIMEBU_AGENT_KEY)
 
 Utilities:
   doctor [flags]                      Run read-only health checks (--json --strict --live --machine)
@@ -273,7 +274,7 @@ func withoutFlag(args []string, flag string) ([]string, bool) {
 
 func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int {
 	if tlsclient.InsecureSkipVerify() {
-		fmt.Fprintln(stderr, "WARNING: AIMEBU2_INSECURE_SKIP_VERIFY disables server certificate verification")
+		fmt.Fprintln(stderr, "WARNING: AIMEBU_INSECURE_SKIP_VERIFY disables server certificate verification")
 	}
 	config, err := resolveServerConfig()
 	if err != nil {
@@ -299,7 +300,7 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 		return 1
 	}
 	defer journal.Close()
-	serverURL := os.Getenv("AIMEBU2_URL")
+	serverURL := os.Getenv("AIMEBU_URL")
 	if serverURL == "" {
 		serverURL = credential.ServerURL
 		if serverURL == "" {
@@ -332,7 +333,7 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 	client.AllowPlainHTTP = insecure
 	client.TurnLimits = turnLimits
 	client.ConfigDir = config.root
-	// A standalone supervisor reports the way the server tells it to (unless its own AIMEBU2_SENTRY_DSN says otherwise); the embedded one is the
+	// A standalone supervisor reports the way the server tells it to (unless its own AIMEBU_SENTRY_DSN says otherwise); the embedded one is the
 	// server's process and does not take the settings.
 	client.OnTelemetry = func(settings protocol.TelemetrySettings) {
 		applySupervisorTelemetry(settings, resolveVersion(), os.LookupEnv, client, nil, stderr)
@@ -551,7 +552,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		}
 		return ownerID, created, nil
 	}
-	ownerLogin, ownerPassword := os.Getenv("AIMEBU2_OWNER_LOGIN"), os.Getenv("AIMEBU2_OWNER_PASSWORD")
+	ownerLogin, ownerPassword := os.Getenv("AIMEBU_OWNER_LOGIN"), os.Getenv("AIMEBU_OWNER_PASSWORD")
 	var ownerSetup *auth.OwnerSetup
 	// startEmbedded is set below; web setup calls it once the host machine and its key exist.
 	var startEmbedded func() error
@@ -591,7 +592,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	} else {
 		if users == 0 {
 			if err := auth.ValidateOwnerCredentials(ownerLogin, ownerPassword); err != nil {
-				fmt.Fprintf(stderr, "AIMEBU2_OWNER_LOGIN / AIMEBU2_OWNER_PASSWORD: %v\n", err)
+				fmt.Fprintf(stderr, "AIMEBU_OWNER_LOGIN / AIMEBU_OWNER_PASSWORD: %v\n", err)
 				return 1
 			}
 		}
@@ -602,7 +603,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		// An owner now exists, so a token left by an earlier start without one is dead weight.
 		_ = os.Remove(setupPath)
 	}
-	embeddedEnabled := ctx.Err() == nil && os.Getenv("AIMEBU2_EMBEDDED_SUPERVISOR") != "0"
+	embeddedEnabled := ctx.Err() == nil && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0"
 	var turnLimits supervisor.TurnLimitOverrides
 	if embeddedEnabled {
 		turnLimits, err = supervisor.TurnLimitsFromEnv(os.Getenv)
@@ -644,9 +645,9 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	service.Allow = config.allow
 	service.TrustedProxies = config.trusted
-	allowedHosts, err := server.ResolveAllowedHosts(os.Getenv("AIMEBU2_ALLOWED_HOSTS"))
+	allowedHosts, err := server.ResolveAllowedHosts(os.Getenv("AIMEBU_ALLOWED_HOSTS"))
 	if err != nil {
-		fmt.Fprintln(stderr, "AIMEBU2_ALLOWED_HOSTS:", err)
+		fmt.Fprintln(stderr, "AIMEBU_ALLOWED_HOSTS:", err)
 		return 1
 	}
 	service.AllowedHosts = allowedHosts
@@ -655,7 +656,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	if tlsListener != nil {
 		fmt.Fprintf(stderr, "HTTPS listening on %s\n", tlsListener.Addr())
 	}
-	if os.Getenv("AIMEBU2_USAGES") != "0" {
+	if os.Getenv("AIMEBU_USAGES") != "0" {
 		usageReader, err := usages.New(filepath.Join(config.root, "usages"))
 		if err != nil {
 			listener.Close()
@@ -897,42 +898,42 @@ func resolveServerConfig() (serverConfig, error) {
 	if err != nil {
 		return serverConfig{}, err
 	}
-	bind := os.Getenv("AIMEBU2_BIND")
+	bind := os.Getenv("AIMEBU_BIND")
 	if bind == "" {
 		bind = "127.0.0.1"
 	}
 	if net.ParseIP(bind) == nil {
-		return serverConfig{}, fmt.Errorf("AIMEBU2_BIND must be an IP address")
+		return serverConfig{}, fmt.Errorf("AIMEBU_BIND must be an IP address")
 	}
 	port := 9997
-	if raw := os.Getenv("AIMEBU2_PORT"); raw != "" {
+	if raw := os.Getenv("AIMEBU_PORT"); raw != "" {
 		n, e := strconv.Atoi(raw)
 		if e != nil || n < 1 || n > 65535 {
-			return serverConfig{}, fmt.Errorf("AIMEBU2_PORT must be a TCP port")
+			return serverConfig{}, fmt.Errorf("AIMEBU_PORT must be a TCP port")
 		}
 		port = n
 	}
-	allowRaw := os.Getenv("AIMEBU2_ALLOW")
+	allowRaw := os.Getenv("AIMEBU_ALLOW")
 	allow, err := server.ResolveAllow(allowRaw)
 	if err != nil {
 		return serverConfig{}, err
 	}
-	trusted, err := server.ResolveTrustedProxies(os.Getenv("AIMEBU2_TRUSTED_PROXIES"))
+	trusted, err := server.ResolveTrustedProxies(os.Getenv("AIMEBU_TRUSTED_PROXIES"))
 	if err != nil {
 		return serverConfig{}, err
 	}
 	return serverConfig{root: root, bind: bind, port: port, allow: allow, allowDefault: allowRaw == "", trusted: trusted}, nil
 }
 
-// resolvePublicURL reads AIMEBU2_PUBLIC_URL as a bare origin; empty when unset.
+// resolvePublicURL reads AIMEBU_PUBLIC_URL as a bare origin; empty when unset.
 func resolvePublicURL() (string, error) {
-	raw := os.Getenv("AIMEBU2_PUBLIC_URL")
+	raw := os.Getenv("AIMEBU_PUBLIC_URL")
 	if raw == "" {
 		return "", nil
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return "", errors.New("AIMEBU2_PUBLIC_URL must be an HTTP or HTTPS origin without a path, credentials, query, or fragment")
+		return "", errors.New("AIMEBU_PUBLIC_URL must be an HTTP or HTTPS origin without a path, credentials, query, or fragment")
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
 }
@@ -944,7 +945,7 @@ func proxyThrottleWarning(publicURL string, trusted []netip.Prefix) string {
 	if publicURL == "" || len(trusted) > 0 {
 		return ""
 	}
-	return "AIMEBU2_PUBLIC_URL is set but AIMEBU2_TRUSTED_PROXIES is empty; if a reverse proxy forwards to this server, all proxied clients share the proxy's IP as one throttle identity, so one client's failed logins can delay everyone's. Set AIMEBU2_TRUSTED_PROXIES to the proxy's IPs or CIDRs."
+	return "AIMEBU_PUBLIC_URL is set but AIMEBU_TRUSTED_PROXIES is empty; if a reverse proxy forwards to this server, all proxied clients share the proxy's IP as one throttle identity, so one client's failed logins can delay everyone's. Set AIMEBU_TRUSTED_PROXIES to the proxy's IPs or CIDRs."
 }
 
 func logProxyStartup(w io.Writer, publicURL string, trusted []netip.Prefix) {
@@ -958,16 +959,16 @@ func logAllowStartup(w io.Writer, config serverConfig, address string) {
 	for i, prefix := range config.allow {
 		entries[i] = prefix.String()
 	}
-	fmt.Fprintf(w, "Listening on %s; AIMEBU2_ALLOW=%s\n", address, strings.Join(entries, ","))
+	fmt.Fprintf(w, "Listening on %s; AIMEBU_ALLOW=%s\n", address, strings.Join(entries, ","))
 	if config.allowDefault && !net.ParseIP(config.bind).IsLoopback() {
-		fmt.Fprintln(w, "WARNING: AIMEBU2_BIND is non-loopback but AIMEBU2_ALLOW defaults to loopback (plus the embedded supervisor); remote clients will receive 403. Set AIMEBU2_ALLOW to include their IPs or CIDRs.")
+		fmt.Fprintln(w, "WARNING: AIMEBU_BIND is non-loopback but AIMEBU_ALLOW defaults to loopback (plus the embedded supervisor); remote clients will receive 403. Set AIMEBU_ALLOW to include their IPs or CIDRs.")
 	}
 }
 
 // The embedded supervisor must reach its own listener even when remote peers
 // are excluded by the configured allowlist.
 // newEmbeddedSupervisor is the supervisor the server runs for its own machine. It dials the address the server itself listens on, which may be
-// a LAN or VPN address (AIMEBU2_BIND) and not loopback, so plain http is allowed for it: nothing it sends leaves this machine, which is what
+// a LAN or VPN address (AIMEBU_BIND) and not loopback, so plain http is allowed for it: nothing it sends leaves this machine, which is what
 // the refusal of plain http to another machine is about.
 func newEmbeddedSupervisor(machineID, key, address string, port int, journal *supervisor.Journal, harnesses adapter.Adapter) *supervisor.Client {
 	client := supervisor.NewClient(machineID, key, "http://"+net.JoinHostPort(address, strconv.Itoa(port)), journal, harnesses)
@@ -1032,7 +1033,7 @@ func writeHostMachineKey(path, machineID, key string) error {
 // suspect on 9997 but not the only one, so it is named as a possibility rather than as the cause.
 func listenError(bind string, port int, err error) string {
 	if errors.Is(err, syscall.EADDRINUSE) {
-		return fmt.Sprintf("cannot listen on %s: port %d is already in use by another process (%v). If it is the v1 aimebu server, stop it and start v2 again; otherwise stop that process or choose another port with AIMEBU2_PORT.", net.JoinHostPort(bind, strconv.Itoa(port)), port, err)
+		return fmt.Sprintf("cannot listen on %s: port %d is already in use by another process (%v). If it is the v1 aimebu server, stop it and start v2 again; otherwise stop that process or choose another port with AIMEBU_PORT.", net.JoinHostPort(bind, strconv.Itoa(port)), port, err)
 	}
 	return fmt.Sprintf("cannot listen on %s: %v", net.JoinHostPort(bind, strconv.Itoa(port)), err)
 }

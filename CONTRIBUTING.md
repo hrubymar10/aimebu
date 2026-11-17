@@ -40,7 +40,7 @@ every session its own:
 T=$(mktemp -d)
 mkdir -p "$T/home"
 export HOME="$T/home" CODEX_HOME="$T/codex" CLAUDE_CONFIG_DIR="$T/claude" \
-       AIMEBU2_CONFIG_DIR="$T/cfg" AIMEBU2_PORT=9885
+       AIMEBU_CONFIG_DIR="$T/cfg" AIMEBU_PORT=9885
 make dev
 ```
 
@@ -55,14 +55,14 @@ process ID, never with `pkill -f`: that pattern also matches your own shell.
 The build carries the checkout's `git describe` as its version, which the page header shows
 (`GET /api/buildinfo`), so you can tell which build you are looking at.
 
-Pick a free port with `AIMEBU2_PORT` so you do not collide with another
-instance. `AIMEBU2_BIND` (default `127.0.0.1`) and `AIMEBU2_ALLOW` control who
-can connect; `aimebu help` lists every `AIMEBU2_*` variable.
+Pick a free port with `AIMEBU_PORT` so you do not collide with another
+instance. `AIMEBU_BIND` (default `127.0.0.1`) and `AIMEBU_ALLOW` control who
+can connect; `aimebu help` lists every `AIMEBU_*` variable.
 
 ### First run: the setup token
 
 A fresh config directory has no owner. Unless you set both
-`AIMEBU2_OWNER_LOGIN` and `AIMEBU2_OWNER_PASSWORD`, the server prints a
+`AIMEBU_OWNER_LOGIN` and `AIMEBU_OWNER_PASSWORD`, the server prints a
 single-use setup token, a shortcut link and the token file's path:
 
 ```
@@ -76,7 +76,7 @@ Shortcut that fills the token in for you:
 Open the shortcut (or open `http://127.0.0.1:9885/`, paste the token), then
 create the owner with a login and a password of at least 12 characters. The
 token is valid until the server restarts. To skip the page in a scratch
-environment, start with `AIMEBU2_OWNER_LOGIN` and `AIMEBU2_OWNER_PASSWORD`
+environment, start with `AIMEBU_OWNER_LOGIN` and `AIMEBU_OWNER_PASSWORD`
 set. See [docs/auth.md](docs/auth.md).
 
 For UI work without agents, the web app has mock switches such as
@@ -239,7 +239,7 @@ rebuilds and restarts the binary when a web file changes) gets a fresh one with
 it. The modules are still served as files, with a content version on every
 relative import (`./x.js`, `../x.js`) and on the import map, so each module has
 exactly one URL. To debug in a browser against the separate modules, start the
-server with `AIMEBU2_WEB_BUNDLE=off`; the page then starts from `/js/app.js`
+server with `AIMEBU_WEB_BUNDLE=off`; the page then starts from `/js/app.js`
 with `modulepreload` hints, as it did before the bundle. The bundle is an
 optimisation, so when it cannot be made (a file imports something that is not
 there) the server logs a WARNING, reports it to Sentry when telemetry is on, and

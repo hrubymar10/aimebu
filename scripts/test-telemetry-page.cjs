@@ -1,4 +1,4 @@
-// Sentry reporting end to end, in Chromium against a scratch server. Without AIMEBU2_SENTRY_DSN the page never requests the vendored SDK and
+// Sentry reporting end to end, in Chromium against a scratch server. Without AIMEBU_SENTRY_DSN the page never requests the vendored SDK and
 // /api/buildinfo carries no `sentry`; with a DSN (pointing at a local stand-in for Sentry) the SDK loads, an error reaches the stand-in, and
 // nothing in what it receives holds a query string, a token or a message body. Part of `make test-ui`.
 'use strict';
@@ -18,7 +18,7 @@ async function visit(server, page, requests) {
   await page.waitForSelector('#login-view:not([hidden])');
   await server.signIn(page);
   await page.goto(server.origin);
-  await page.waitForFunction(() => document.querySelector('#build-version')?.textContent !== 'v2 development', { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector('#build-version')?.textContent !== 'v2', { timeout: 30000 });
 }
 
 async function off() {
@@ -46,7 +46,7 @@ async function on() {
   });
   await new Promise(resolve => sentry.listen(0, '127.0.0.1', resolve));
   const dsn = `http://publickey@127.0.0.1:${sentry.address().port}/7`;
-  const server = await scratch({ env: { AIMEBU2_SENTRY_DSN: dsn, AIMEBU2_SENTRY_ENV: 'page-test', AIMEBU2_SENTRY_TRACES_SAMPLE_RATE: '1' } });
+  const server = await scratch({ env: { AIMEBU_SENTRY_DSN: dsn, AIMEBU_SENTRY_ENV: 'page-test', AIMEBU_SENTRY_TRACES_SAMPLE_RATE: '1' } });
   try {
     const page = await server.open();
     const requests = [];
@@ -173,7 +173,7 @@ async function on() {
 
 // The consent popup: shown to the owner once after the welcome, answered with Save, then the same two fields in Settings -> General.
 async function popup() {
-  const server = await scratch({ env: { AIMEBU2_SENTRY_DSN: null } }); // the variable is unset: Settings decide, and nothing is reported before the popup is answered
+  const server = await scratch({ env: { AIMEBU_SENTRY_DSN: null } }); // the variable is unset: Settings decide, and nothing is reported before the popup is answered
   try {
     const page = await server.open();
     await page.goto(server.origin);
@@ -355,7 +355,7 @@ async function popup() {
 
 // A member who is neither the owner nor an admin: Settings -> Telemetry is theirs for their own fingerprint, and holds nothing that is the owner's.
 async function member() {
-  const server = await scratch({ env: { AIMEBU2_SENTRY_DSN: null } });
+  const server = await scratch({ env: { AIMEBU_SENTRY_DSN: null } });
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'aimebu-tel-member-'));
   try {
     const call = await server.ownerClient();

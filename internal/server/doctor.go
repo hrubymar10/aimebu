@@ -81,7 +81,7 @@ var doctorCapabilities = []struct {
 }
 
 // sameHostPeer says whether a connection comes from the machine the server runs on: from a loopback address, or from the very address it
-// was accepted on. The second case is what `aimebu doctor --live` looks like when AIMEBU2_BIND is a VPN or LAN address, because the CLI
+// was accepted on. The second case is what `aimebu doctor --live` looks like when AIMEBU_BIND is a VPN or LAN address, because the CLI
 // dials that address and the kernel then uses it as the source too. A remote host cannot fake it: a TCP connection needs the handshake's
 // reply, which goes to the source address, so a peer address equal to the server's own local address is always this host.
 func sameHostPeer(peer, local netip.Addr) bool {

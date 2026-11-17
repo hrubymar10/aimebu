@@ -26,14 +26,14 @@ func decodeTelemetry(t *testing.T, f *fixture, method string, body any) (int, te
 // The environment variable is "off" in tests (testenv); a test about Settings takes it away for its length.
 func withoutEnvDSN(t *testing.T) {
 	t.Helper()
-	previous, had := os.LookupEnv("AIMEBU2_SENTRY_DSN")
-	if err := os.Unsetenv("AIMEBU2_SENTRY_DSN"); err != nil {
+	previous, had := os.LookupEnv("AIMEBU_SENTRY_DSN")
+	if err := os.Unsetenv("AIMEBU_SENTRY_DSN"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		telemetry.Init(telemetry.Config{}, nil) //nolint:errcheck // stops a reporter the test started
 		if had {
-			os.Setenv("AIMEBU2_SENTRY_DSN", previous)
+			os.Setenv("AIMEBU_SENTRY_DSN", previous)
 		}
 	})
 }
@@ -102,7 +102,7 @@ func TestErrorReportsSettingsAndTheConsentPopup(t *testing.T) {
 		t.Fatalf("an empty field means the default: %+v", view)
 	}
 	// The environment wins, and says so.
-	os.Setenv("AIMEBU2_SENTRY_DSN", "off")
+	os.Setenv("AIMEBU_SENTRY_DSN", "off")
 	if _, view, _ = decodeTelemetry(t, f, "PUT", map[string]any{"enabled": true}); view.Active || !view.EnvLocked {
 		t.Fatalf("env off must win: %+v", view)
 	}

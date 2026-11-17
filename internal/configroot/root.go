@@ -11,7 +11,7 @@ import (
 // FromEnv expands a leading tilde and refuses paths relative to the caller's
 // working directory. The default is the shared data root at ~/.aimebu.
 func FromEnv() (string, error) {
-	return Resolve(os.Getenv("AIMEBU2_CONFIG_DIR"))
+	return Resolve(os.Getenv("AIMEBU_CONFIG_DIR"))
 }
 
 // Resolve applies the same path rules to a raw config-root value.
@@ -29,7 +29,7 @@ func Resolve(raw string) (string, error) {
 		raw = filepath.Join(home, raw[2:])
 	}
 	if !filepath.IsAbs(raw) {
-		return "", fmt.Errorf("AIMEBU2_CONFIG_DIR must be an absolute path")
+		return "", fmt.Errorf("AIMEBU_CONFIG_DIR must be an absolute path")
 	}
 	return filepath.Clean(raw), nil
 }

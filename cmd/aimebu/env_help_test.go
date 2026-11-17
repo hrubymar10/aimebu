@@ -13,7 +13,7 @@ import (
 // TestEnvironmentHelpMatchesSourceAndDocs keeps three things in step: the
 // variables the non-test sources name, the `aimebu help` table, and the guides.
 func TestEnvironmentHelpMatchesSourceAndDocs(t *testing.T) {
-	literal := regexp.MustCompile(`"(AIMEBU2?_[A-Z0-9_]+)"`)
+	literal := regexp.MustCompile(`"(AIMEBU_[A-Z0-9_]+)"`)
 	inSource := map[string]string{}
 	for _, root := range []string{"../../cmd", "../../internal"} {
 		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
@@ -38,6 +38,14 @@ func TestEnvironmentHelpMatchesSourceAndDocs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+	devRunner := "../../scripts/dev-run.sh"
+	devSource, err := os.ReadFile(devRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, match := range regexp.MustCompile(`\b(AIMEBU_DEV_[A-Z0-9_]+)`).FindAllSubmatch(devSource, -1) {
+		inSource[string(match[1])] = devRunner
 	}
 	inTable := map[string]bool{}
 	for _, entry := range environment {

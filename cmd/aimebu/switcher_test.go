@@ -17,7 +17,7 @@ func TestSwitcherCLIUsesOnlyV2TemporaryRoot(t *testing.T) {
 	t.Setenv("HOME", root)
 	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
-	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(root, ".aimebu2"))
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(root, ".aimebu2"))
 	call := func(args ...string) string {
 		t.Helper()
 		var out, errs bytes.Buffer
@@ -45,8 +45,7 @@ func TestSwitcherCLIUsesV1TreeInPlaceAtCutover(t *testing.T) {
 	home := t.TempDir()
 	config := filepath.Join(home, ".aimebu")
 	t.Setenv("HOME", home)
-	t.Setenv("AIMEBU2_CONFIG_DIR", config)
-	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(home, "unused-v1-override"))
+	t.Setenv("AIMEBU_CONFIG_DIR", config)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	root := filepath.Join(config, "switcher")
@@ -141,7 +140,7 @@ func switcherEnv(t *testing.T) (home string, call func(stdin string, args ...str
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
-	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
 	call = func(stdin string, args ...string) (string, string, int) {
 		t.Helper()
 		var out, errs bytes.Buffer
@@ -354,7 +353,7 @@ func TestSwitcherCLIMigrateCopiesThenUse(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
-	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
 	expiry := time.Now().Add(6 * time.Hour).UnixMilli()
 	cred := func(access, refresh string) string {
 		return `{"claudeAiOauth":{"accessToken":"` + access + `","refreshToken":"` + refresh + `","expiresAt":` + fmt.Sprint(expiry) + `}}`

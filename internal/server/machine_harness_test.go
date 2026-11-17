@@ -15,7 +15,7 @@ import (
 )
 
 func TestMachineHarnessSettingsValidateOnSupervisorAndAudit(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	f := newFixture(t)
 	url := "/api/machines/" + f.machineID + "/harnesses"
 	resp := f.request(http.MethodPut, url+"/codex/native", map[string]any{"enabled": true, "override_path": "/bin/echo"}, true)

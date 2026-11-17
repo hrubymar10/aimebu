@@ -83,7 +83,7 @@ func (c *Client) forgetAgentKey(agentID string) {
 	}
 }
 
-// SetTelemetryEnv sets the environment the agent-tools bridge is started with for error and performance reporting (AIMEBU2_SENTRY_DSN, ...; an empty
+// SetTelemetryEnv sets the environment the agent-tools bridge is started with for error and performance reporting (AIMEBU_SENTRY_DSN, ...; an empty
 // map means none, and the bridge then reports nothing unless its own environment says otherwise). It reaches the bridge through the environment of
 // its MCP entry, never its arguments, and applies to the next turn of any agent; a bridge that is already running keeps what it started with.
 func (c *Client) SetTelemetryEnv(env map[string]string) {
@@ -109,7 +109,7 @@ func (c *Client) agentToolsAccess(agentID string) (*adapter.AgentToolsAccess, er
 		return nil, nil
 	}
 	if tlsclient.InsecureSkipVerify() {
-		env["AIMEBU2_INSECURE_SKIP_VERIFY"] = "1"
+		env["AIMEBU_INSECURE_SKIP_VERIFY"] = "1"
 	}
 	return &adapter.AgentToolsAccess{AgentID: agentID, ServerURL: c.ServerURL, Key: key, Command: command, Env: env}, nil
 }

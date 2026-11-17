@@ -1,14 +1,14 @@
 # HTTPS
 
 V2 can serve HTTPS with a certificate and key you supply. HTTP stays on
-`AIMEBU2_PORT` (default `9997`); HTTPS uses `AIMEBU2_TLS_PORT` (default `9996`).
-Both listeners use the same `AIMEBU2_BIND` address and `AIMEBU2_ALLOW`
+`AIMEBU_PORT` (default `9997`); HTTPS uses `AIMEBU_TLS_PORT` (default `9996`).
+Both listeners use the same `AIMEBU_BIND` address and `AIMEBU_ALLOW`
 allowlist. The embedded supervisor continues to use HTTP on loopback.
 
 ```bash
-export AIMEBU2_TLS_CERT=/path/to/cert.pem
-export AIMEBU2_TLS_KEY=/path/to/key.pem
-export AIMEBU2_TLS_PORT=9996
+export AIMEBU_TLS_CERT=/path/to/cert.pem
+export AIMEBU_TLS_KEY=/path/to/key.pem
+export AIMEBU_TLS_PORT=9996
 aimebu server
 ```
 
@@ -16,13 +16,13 @@ Set both certificate variables or neither. Startup fails if only one is set,
 either file is missing or unreadable, the pair cannot be loaded, the TLS port
 is invalid, or it equals the HTTP port. With neither set, the server uses HTTP
 only. Sessions set the `Secure` cookie attribute on HTTPS requests, and on
-plain-HTTP requests addressed to the host of an `https` `AIMEBU2_PUBLIC_URL`.
+plain-HTTP requests addressed to the host of an `https` `AIMEBU_PUBLIC_URL`.
 The HTTPS listener negotiates HTTP/2. The web UI is one bundled script (the
 server bundles its ~240 modules when it starts), so a cold load is about 50
 requests and 0.7 MB rather than about 290 and 1.9 MB: with a 100 ms round trip
 the app is shown after about 0.5 s over plain HTTP/1.1, where the separate modules
 took about 5 s (about 2 s over HTTP/2, 1.3 s with `modulepreload` hints; those are
-what `AIMEBU2_WEB_BUNDLE=off` serves, for debugging). A load from the browser's cache
+what `AIMEBU_WEB_BUNDLE=off` serves, for debugging). A load from the browser's cache
 is not affected. HTTP/2 still helps the API and the remaining files, so use HTTPS
 when the UI is reached across a network.
 Open the
@@ -32,7 +32,7 @@ notification permission button.
 ## Plain HTTP next to HTTPS
 
 With a certificate configured, the plain-HTTP listener answers a request from
-another machine with a `308` redirect to the same address on `AIMEBU2_TLS_PORT`
+another machine with a `308` redirect to the same address on `AIMEBU_TLS_PORT`
 (the method and the whole path and query are kept), so nothing a person types or
 a supervisor sends crosses the network in the clear by default. A request from
 this machine itself, from a loopback address or from the address the connection was
@@ -44,10 +44,10 @@ from any peer the allowlist admits, never redirected: a Docker agent on a Linux
 bridge reaches the server as `host.docker.internal` from a bridge address that is
 neither loopback nor the server's own, and nothing says a certificate covers that
 name; those callers authenticate with their key, and a remote supervisor refuses plain http to
-another machine by itself unless told otherwise. A peer that `AIMEBU2_ALLOW`
+another machine by itself unless told otherwise. A peer that `AIMEBU_ALLOW`
 does not admit gets the same 403 as anywhere else, before any redirect. The redirect goes only to a host this server
 answers to (see below); another `Host` gets `421`. A response served over HTTPS
-on the standard port (443), or by a proxy for an `https` `AIMEBU2_PUBLIC_URL`,
+on the standard port (443), or by a proxy for an `https` `AIMEBU_PUBLIC_URL`,
 carries `Strict-Transport-Security: max-age=31536000`, so a browser goes to
 HTTPS first afterwards. It is not sent on another TLS port (a browser keeps the
 port when it upgrades, so a later `http://name:<plain port>` would become a TLS
@@ -59,13 +59,13 @@ A page on another site can make a browser send requests under the page's own nam
 after pointing that name at this server's address (DNS rebinding). The routes
 that need no login (sign-in, the first-run setup, invites, machine pairing) therefore answer
 only a request whose `Host` is one this server expects: `localhost` (and
-`*.localhost`), any IP address, the host of `AIMEBU2_PUBLIC_URL`, and the names in
-`AIMEBU2_ALLOWED_HOSTS` (comma-separated host names, no scheme, port or path). Any
+`*.localhost`), any IP address, the host of `AIMEBU_PUBLIC_URL`, and the names in
+`AIMEBU_ALLOWED_HOSTS` (comma-separated host names, no scheme, port or path). Any
 other `Host` gets `421 unexpected_host`, with the message naming the variable.
 If you reach the server by a LAN name such as `studio.local`, list it there:
 
 ```bash
-export AIMEBU2_ALLOWED_HOSTS=studio.local
+export AIMEBU_ALLOWED_HOSTS=studio.local
 ```
 
 ## Content-Security-Policy
@@ -86,24 +86,24 @@ to (see [telemetry](telemetry.md)); the event socket's own origin is named only 
 ```bash
 mkcert -install
 mkcert -cert-file aimebu.pem -key-file aimebu-key.pem localhost 127.0.0.1 ::1
-export AIMEBU2_TLS_CERT="$PWD/aimebu.pem"
-export AIMEBU2_TLS_KEY="$PWD/aimebu-key.pem"
+export AIMEBU_TLS_CERT="$PWD/aimebu.pem"
+export AIMEBU_TLS_KEY="$PWD/aimebu-key.pem"
 aimebu server
 ```
 
 Open `https://localhost:9996/`. Add the host name or IP used by remote
-clients to the certificate, and widen both `AIMEBU2_BIND` and `AIMEBU2_ALLOW`
+clients to the certificate, and widen both `AIMEBU_BIND` and `AIMEBU_ALLOW`
 when remote peers need access.
 
 For a standalone supervisor using a self-signed certificate that its host
-does not trust, set `AIMEBU2_INSECURE_SKIP_VERIFY=1` before pairing or running
+does not trust, set `AIMEBU_INSECURE_SKIP_VERIFY=1` before pairing or running
 it. The same setting applies to its WebSocket, approval checks, and attachment
 downloads. It disables certificate verification;
 use a trusted certificate for ordinary remote deployments.
 
 ```bash
-export AIMEBU2_INSECURE_SKIP_VERIFY=1
-export AIMEBU2_URL=https://server.example:9996
+export AIMEBU_INSECURE_SKIP_VERIFY=1
+export AIMEBU_URL=https://server.example:9996
 aimebu supervisor
 ```
 
@@ -123,16 +123,16 @@ machine pairing command use the proxy address instead of the loopback
 listener. Include a port when it is not the default HTTPS port:
 
 ```bash
-export AIMEBU2_PUBLIC_URL=https://aimebu.example.com
+export AIMEBU_PUBLIC_URL=https://aimebu.example.com
 ```
 
-`AIMEBU2_PUBLIC_URL` must be an HTTP or HTTPS origin without credentials,
+`AIMEBU_PUBLIC_URL` must be an HTTP or HTTPS origin without credentials,
 path, query, or fragment. When unset, direct TLS deployments generate HTTPS
-links using `AIMEBU2_TLS_PORT`; HTTP-only loopback deployments generate HTTP
+links using `AIMEBU_TLS_PORT`; HTTP-only loopback deployments generate HTTP
 links. Proxy headers are not used to choose the link scheme.
 
 The public origin also governs browser sessions behind the proxy. The event
-WebSocket accepts an `Origin` equal to `AIMEBU2_PUBLIC_URL` (default ports
+WebSocket accepts an `Origin` equal to `AIMEBU_PUBLIC_URL` (default ports
 may be omitted) as well as the listener's own origin; any other origin is
 still rejected. With an `https` public URL, session cookies get the `Secure`
 attribute when the forwarded `Host` is the public host, even though the proxy
@@ -148,20 +148,20 @@ the proxy's direct source IP and does not trust `X-Forwarded-For`.
 Behind a proxy every request arrives from the proxy's address, so login,
 invitation and pairing throttles would otherwise treat all clients as one IP:
 one client's failed guesses could hold everyone's sign-in in backoff. Name
-the proxy in `AIMEBU2_TRUSTED_PROXIES` (comma-separated IPs or CIDRs, default
-empty) to tell clients apart. While `AIMEBU2_PUBLIC_URL` is set and this
+the proxy in `AIMEBU_TRUSTED_PROXIES` (comma-separated IPs or CIDRs, default
+empty) to tell clients apart. While `AIMEBU_PUBLIC_URL` is set and this
 list is empty, `aimebu server` logs a startup warning and `aimebu doctor`
 warns:
 
 ```bash
-export AIMEBU2_TRUSTED_PROXIES=127.0.0.1
+export AIMEBU_TRUSTED_PROXIES=127.0.0.1
 ```
 
 Only when the direct peer is in that list does aimebu read
 `X-Forwarded-For`, and then it uses the right-most entry that is not itself a
 trusted proxy; entries further left are client-supplied and ignored. An
 unparseable hop falls back to the peer address. This affects throttling only:
-`AIMEBU2_ALLOW` still checks the direct peer and never reads forwarded
+`AIMEBU_ALLOW` still checks the direct peer and never reads forwarded
 headers. (Separately, the first-run setup page shows the full path of the setup
 token file only to a loopback connection that carries no forwarding header: a
 proxy on this machine connects from loopback too, so a request with
@@ -169,7 +169,7 @@ proxy on this machine connects from loopback too, so a request with
 treated as remote. A proxy that relays none of these cannot be told from a local
 browser, so keep the setup page off the internet until the owner exists.) List only proxies that overwrite or append to `X-Forwarded-For`
 (Caddy and nginx with `$proxy_add_x_forwarded_for` do). Trusting a
-loopback address such as `AIMEBU2_TRUSTED_PROXIES=127.0.0.1` lets any local
+loopback address such as `AIMEBU_TRUSTED_PROXIES=127.0.0.1` lets any local
 process that connects over loopback pick its own throttle IP through
 `X-Forwarded-For`, so it can escape the per-IP backoff; the per-login and
 per-token throttles still apply to it.

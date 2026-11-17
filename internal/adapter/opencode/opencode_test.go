@@ -47,7 +47,7 @@ func script(t *testing.T, root, body string) (path, record string) {
 	record = filepath.Join(root, "record")
 	source := "#!/bin/sh\n" +
 		"{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
-		" for v in XDG_CONFIG_HOME XDG_DATA_HOME OPENCODE_DB OPENCODE_CONFIG_CONTENT OPENCODE_DISABLE_AUTOUPDATE OPENCODE_DISABLE_PROJECT_CONFIG OPENCODE_DISABLE_CLAUDE_CODE OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME CLAUDE_CONFIG_DIR AIMEBU2_AGENT_KEY; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
+		" for v in XDG_CONFIG_HOME XDG_DATA_HOME OPENCODE_DB OPENCODE_CONFIG_CONTENT OPENCODE_DISABLE_AUTOUPDATE OPENCODE_DISABLE_PROJECT_CONFIG OPENCODE_DISABLE_CLAUDE_CODE OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME CLAUDE_CONFIG_DIR AIMEBU_AGENT_KEY; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"prompt=$(cat)\nprintf 'PROMPT:%s\\n' \"$prompt\" >> " + record + "\n" + body
 	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestArgsEnvironmentAndIsolation(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "ghp_must_not_leak")
 	t.Setenv("CODEX_HOME", "/must/not/leak")
 	t.Setenv("CLAUDE_CONFIG_DIR", "/must/not/leak")
-	t.Setenv("AIMEBU2_AGENT_KEY", "aak_must_not_leak")
+	t.Setenv("AIMEBU_AGENT_KEY", "aak_must_not_leak")
 	t.Setenv("XDG_DATA_HOME", "/real/xdg/data")
 	runtimeRoot := filepath.Join(root, "runtime")
 	sum := sha256.Sum256([]byte("agt_test"))

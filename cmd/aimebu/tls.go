@@ -14,14 +14,14 @@ type serverTLSConfig struct {
 }
 
 func resolveServerTLSConfig(httpPort int) (*serverTLSConfig, error) {
-	certPath, keyPath := os.Getenv("AIMEBU2_TLS_CERT"), os.Getenv("AIMEBU2_TLS_KEY")
+	certPath, keyPath := os.Getenv("AIMEBU_TLS_CERT"), os.Getenv("AIMEBU_TLS_KEY")
 	if certPath == "" && keyPath == "" {
 		return nil, nil
 	}
 	if certPath == "" || keyPath == "" {
-		return nil, fmt.Errorf("AIMEBU2_TLS_CERT and AIMEBU2_TLS_KEY must be set together")
+		return nil, fmt.Errorf("AIMEBU_TLS_CERT and AIMEBU_TLS_KEY must be set together")
 	}
-	for _, item := range []struct{ name, path string }{{"AIMEBU2_TLS_CERT", certPath}, {"AIMEBU2_TLS_KEY", keyPath}} {
+	for _, item := range []struct{ name, path string }{{"AIMEBU_TLS_CERT", certPath}, {"AIMEBU_TLS_KEY", keyPath}} {
 		info, err := os.Stat(item.path)
 		if err != nil {
 			return nil, fmt.Errorf("%s=%q: %w", item.name, item.path, err)
@@ -37,17 +37,17 @@ func resolveServerTLSConfig(httpPort int) (*serverTLSConfig, error) {
 	}
 	certificate, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("AIMEBU2_TLS_CERT/AIMEBU2_TLS_KEY are not a usable certificate pair: %w", err)
+		return nil, fmt.Errorf("AIMEBU_TLS_CERT/AIMEBU_TLS_KEY are not a usable certificate pair: %w", err)
 	}
 	port := 9996
-	if raw := os.Getenv("AIMEBU2_TLS_PORT"); raw != "" {
+	if raw := os.Getenv("AIMEBU_TLS_PORT"); raw != "" {
 		port, err = strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {
-			return nil, fmt.Errorf("AIMEBU2_TLS_PORT must be a TCP port")
+			return nil, fmt.Errorf("AIMEBU_TLS_PORT must be a TCP port")
 		}
 	}
 	if port == httpPort {
-		return nil, fmt.Errorf("AIMEBU2_TLS_PORT must differ from AIMEBU2_PORT")
+		return nil, fmt.Errorf("AIMEBU_TLS_PORT must differ from AIMEBU_PORT")
 	}
 	return &serverTLSConfig{certificate: certificate, port: port}, nil
 }

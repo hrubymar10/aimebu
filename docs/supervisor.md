@@ -6,7 +6,7 @@ It auto-provisions the approved host machine and its private key, opens
 WebSocket used by standalone supervisors. It starts once the server is
 listening (reading each tool's version takes seconds, and the web UI does not
 wait for it), and in first-run setup right after the owner is created. Set
-`AIMEBU2_EMBEDDED_SUPERVISOR=0` to disable it for remote-only setups or
+`AIMEBU_EMBEDDED_SUPERVISOR=0` to disable it for remote-only setups or
 tests. On shutdown, the server stops dispatch, closes its HTTP listener,
 interrupts active local turns, waits up to 40 seconds for their journal
 writes, then closes the journal and server store. A timeout logs the turn IDs
@@ -16,7 +16,7 @@ file (0600) holds an exclusive process lock and its owner's PID. Opening the
 same journal from a second supervisor fails with a message naming that PID.
 Two live processes cannot safely share its turn records because each has a
 different in-memory process-liveness map. When testing standalone mode on the same
-host, set `AIMEBU2_EMBEDDED_SUPERVISOR=0` on the server first.
+host, set `AIMEBU_EMBEDDED_SUPERVISOR=0` on the server first.
 
 The owner pairs a remote machine from the browser's **Add machine** action.
 It issues a one-use token valid for ten minutes and shows a command to paste
@@ -26,7 +26,7 @@ on the remote host:
 aimebu supervisor --pair 'https://vpn-server.example:9997' 'amp_...'
 ```
 
-The command's server URL is `AIMEBU2_PUBLIC_URL` when set (for a server
+The command's server URL is `AIMEBU_PUBLIC_URL` when set (for a server
 behind a reverse proxy; see [HTTPS](tls.md#reverse-proxy)), otherwise the
 scheme and host the browser used to reach the server.
 
@@ -37,7 +37,7 @@ risk with `aimebu supervisor --insecure --pair '<url>' '<token>'` (and `--insecu
 **Add machine** dialog says so, and its command carries `--insecure`, when the server was reached over plain http at such an address.
 
 A remote supervisor that already runs against a plain-`http` server (paired before this check) stops with that message after the
-upgrade. Either move the server to HTTPS and re-pair (or edit the saved URL, `supervisor/machine.key`, or set `AIMEBU2_URL`), or
+upgrade. Either move the server to HTTPS and re-pair (or edit the saved URL, `supervisor/machine.key`, or set `AIMEBU_URL`), or
 start it with `--insecure`. The pairing request and the approval wait re-check the transport on every redirect they are sent along, so a
 redirect from https to plain http on another host is refused too. The server's own embedded supervisor is exempt: it dials the address
 the server itself listens on, so nothing it sends leaves the machine.
@@ -49,19 +49,19 @@ server stores only a hash of the token and machine key. The machine stays
 pending until the owner approves it; the CLI waits and then connects.
 Later `aimebu supervisor` runs reuse this credential and URL. On the server
 host, standalone mode still reads `server/host-machine.key` when no remote
-credential exists. Set `AIMEBU2_URL` to override the saved origin if needed.
+credential exists. Set `AIMEBU_URL` to override the saved origin if needed.
 The supervisor opens `supervisor/journal.sqlite`, uses one WebSocket per
 machine, and reconnects after a disconnect. Revocation invalidates the key,
 closes its current socket immediately, and rejects subsequent frames.
 
 For remote supervisors over a VPN, bind the server to its VPN IP with
-`AIMEBU2_BIND` and include the supervisor's VPN source IP or CIDR in
-`AIMEBU2_ALLOW`. The allowlist checks the direct peer address, including
+`AIMEBU_BIND` and include the supervisor's VPN source IP or CIDR in
+`AIMEBU_ALLOW`. The allowlist checks the direct peer address, including
 pairing, approval checks, and the machine socket. Use an HTTPS server URL
 when crossing an untrusted network so the pairing token and machine key are
 protected in transit. V2 can serve HTTPS directly from caller-supplied
 certificate files; see [HTTPS setup](tls.md). A standalone supervisor may set
-`AIMEBU2_INSECURE_SKIP_VERIFY=1` for a self-signed development server, which
+`AIMEBU_INSECURE_SKIP_VERIFY=1` for a self-signed development server, which
 disables certificate verification for pairing and subsequent connections.
 Each project needs a folder mapping for the remote
 machine before it can receive a spawn; that folder must exist on that host
@@ -80,7 +80,7 @@ harness named `harness-docker`. The supervisor also answers two read-only
 questions on its own machine, each a `detect` frame (see the contract): which
 harness executables are installed (PATH plus `~/.local/bin`, `/usr/local/bin`,
 `/opt/homebrew/bin`, `~/.npm-global/bin`, `~/.bun/bin`, `~/.opencode/bin` and the
-global npm prefix, once per real file, with `--version`; the test helpers set `AIMEBU2_TEST_RESTRICT_PATH=1`, which limits the search to `PATH` so a test never finds the developer's own CLIs), and which models a Pi,
+global npm prefix, once per real file, with `--version`; the test helpers set `AIMEBU_TEST_RESTRICT_PATH=1`, which limits the search to `PATH` so a test never finds the developer's own CLIs), and which models a Pi,
 OpenCode, Codex or Vibe harness lists, native or containerized (run with the harness's
 own arguments first, a 20-second limit and an 8 MiB output limit). That command
 runs in a fresh private `detect/run-*` subfolder of the supervisor's aimebu
@@ -102,7 +102,7 @@ one second; a successful version command remains valid when a child leaves a
 pipe open. Spawn also rejects a launcher that has become unavailable when
 restarting or replaying a pending agent.
 Existing machines keep the launchers that were enabled or in use. Migration 28
-enabled host native presets only when `AIMEBU2_ALLOW_NATIVE=1` was set as it
+enabled host native presets only when `AIMEBU_ALLOW_NATIVE=1` was set as it
 ran, and afterwards the variable has no effect; migration 69 deleted the seeded
 launchers that were disabled and unused, and logged them (back up `aimebu.sqlite` before
 upgrading). It adds a model an agent already uses to its harness's list, never as the default, so
@@ -129,16 +129,16 @@ is an existing directory on this machine, then holds that agent's `aak_` key **i
 no file under the supervisor's or an adapter's directory has it, so an agent that reads those
 directories finds no key, its own or another's. A turn is handed its own agent's key and no other's
 (`adapter.AgentToolsAccess`, built from memory per turn; it is never journaled), and the adapter gives
-the harness the key in the harness's environment (`AIMEBU2_AGENT_KEY`), never in its argument list
+the harness the key in the harness's environment (`AIMEBU_AGENT_KEY`), never in its argument list
 (`ps` shows that to every local user):
 
-The bridge (`aimebu agent-tools`) reads `AIMEBU2_URL`, `AIMEBU2_AGENT_ID` and `AIMEBU2_AGENT_KEY` from the environment it is started with; the first two
+The bridge (`aimebu agent-tools`) reads `AIMEBU_URL`, `AIMEBU_AGENT_ID` and `AIMEBU_AGENT_KEY` from the environment it is started with; the first two
 are in its MCP entry, the key is the variable the harness fills from its own environment:
 
 - Claude: the `aimebu` MCP entry is inline (`--mcp-config <json>`), a stdio entry for `aimebu agent-tools`
-  whose environment says `AIMEBU2_AGENT_KEY=${AIMEBU2_AGENT_KEY}`, which Claude expands from its own environment.
-- Codex: the private `config.toml` names the bridge with `env_vars = ["AIMEBU2_AGENT_KEY"]`; the key is only in Codex's environment.
-- Pi: the private `mcp.json` has `Authorization: Bearer ${AIMEBU2_AGENT_KEY}`, which Pi expands.
+  whose environment says `AIMEBU_AGENT_KEY=${AIMEBU_AGENT_KEY}`, which Claude expands from its own environment.
+- Codex: the private `config.toml` names the bridge with `env_vars = ["AIMEBU_AGENT_KEY"]`; the key is only in Codex's environment.
+- Pi: the private `mcp.json` has `Authorization: Bearer ${AIMEBU_AGENT_KEY}`, which Pi expands.
 - OpenCode and Vibe: as before, the bearer is in the harness's environment or inline configuration for the turn, never in a file.
 
 **What this does and does not protect.** The key is in no file, but while a turn runs it is in the harness process's environment, so a native agent
@@ -163,7 +163,7 @@ say so (an older one, which keeps keys on disk) is sent none.
 
 Claude and Codex Docker adapters build the HTTP toolbox entry from the same in-memory access; nothing is copied into the shared checkout. The key is not in the harness's
 argument list: the MCP entry names a variable
-(`Authorization: Bearer ${AIMEBU2_AGENT_KEY}` for Claude, `bearer_token_env_var` for
+(`Authorization: Bearer ${AIMEBU_AGENT_KEY}` for Claude, `bearer_token_env_var` for
 Codex) and the launcher hands the variable over by name through `HARNESS_DOCKER_FORWARD_ENV`, so a Docker
 launcher without that feature (`forward_env`) is refused with the way out. The HTTP endpoint uses the
 same agent-key authorization and scope as the stdio toolbox's API calls.
@@ -585,9 +585,9 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
 *Instance setting.* The window is set by the owner in Settings → General → Agents ("Keep agents warm
 (minutes)", 5 until the owner saves another, 0 is off, at most 1440; `GET`/`PUT /api/agent-isolation`,
 `warm_idle_minutes` with `warm_idle_saved`, owner only to change). The order is **the owner's saved value, then
-`AIMEBU2_WARM_IDLE` on the supervisor, then 5 minutes**: the server puts a window on a delivery and on an
+`AIMEBU_WARM_IDLE` on the supervisor, then 5 minutes**: the server puts a window on a delivery and on an
 `agent_settings` frame (`warm_idle_seconds`) only when the owner has saved one (a saved 0 is sent and means
-off); with none saved the field is absent and the supervisor works to its own (`AIMEBU2_WARM_IDLE`, a Go
+off); with none saved the field is absent and the supervisor works to its own (`AIMEBU_WARM_IDLE`, a Go
 duration, 0 is off, unset or unreadable is 5 minutes). A supervisor applies a window before the turn, and
 turning it off ends every idle process at once. Codex app-server warm mode
 also needs the owner's `codex_warm_enabled` opt-in (off by default); turning that
@@ -596,7 +596,7 @@ continue. It says the window it works to in its `warm_state` report
 (`idle_seconds`), and a card's warm or sleeping follows that and nothing else: a live idle process is "warm"; no
 process is "sleeping" only when the supervisor says it works to a window above 0; before its first report the card stays cold, while a report
 without `idle_seconds` is unknown (the card's `warm.state` is `unknown`) and the card says neither warm nor sleeping. So a supervisor started with
-`AIMEBU2_WARM_IDLE=0` shows no "Sleeping".
+`AIMEBU_WARM_IDLE=0` shows no "Sleeping".
 
 *Mixed versions.* The server of the build before this one sent `warm_idle_seconds: 0` on every delivery when the
 owner had saved nothing, so a **new supervisor under that older server stays cold** (it reads the 0 as a saved off)
@@ -759,9 +759,9 @@ processes are never on one session.
   so there are never two processes on one session.
 - **Never fails a turn.** A process that cannot be started, noted in the journal or handed the
   turn is reported and the turn runs cold.
-- **Limits.** `AIMEBU2_WARM_MAX_LIFETIME` (default 1h): a process that old is not reused and is
+- **Limits.** `AIMEBU_WARM_MAX_LIFETIME` (default 1h): a process that old is not reused and is
   not kept idle (nothing refreshes credentials inside one). The memory guard
-  (`AIMEBU2_WARM_MIN_FREE_MB`, default 1536, and `AIMEBU2_WARM_MIN_FREE_PERCENT`, default 10)
+  (`AIMEBU_WARM_MIN_FREE_MB`, default 1536, and `AIMEBU_WARM_MIN_FREE_PERCENT`, default 10)
   ends the longest-idle process, one per ten seconds, while free memory is under either; there
   is no cap on how many agents are warm. With a Docker warm process the guard also asks Docker
   (`docker info` for the Docker host's memory, `docker stats` for what the containers use), because
@@ -802,13 +802,13 @@ processes are never on one session.
 - Output the process writes to stderr goes to the log of the turn that is running.
 
 A running turn is bounded by two stall deadlines, ported from v1's pi
-watchdog. `AIMEBU2_TURN_IDLE` fires when the harness writes no output at all
+watchdog. `AIMEBU_TURN_IDLE` fires when the harness writes no output at all
 for that long (any stdout line counts, including streamed partial output,
 not only the events the adapter forwards); it is suspended while a tool execution is in flight, since a long
 command is legitimately silent. The supervisor counts a tool as in flight
 from pi's `tool_execution_start`/`_end`, Codex's `item.started`/
 `item.completed` for commands, MCP calls, file changes and searches, and
-Claude Code's `tool_use` / `tool_result` blocks. `AIMEBU2_TURN_MAX` is a
+Claude Code's `tool_use` / `tool_result` blocks. `AIMEBU_TURN_MAX` is a
 wall-clock cap for the whole turn, tools included. Defaults depend on the
 harness: pi gets 600s idle and a 30m cap (as in v1); every other harness
 (Claude Code, Codex, OpenCode and Vibe), which had no bound before and
@@ -816,7 +816,7 @@ routinely run long turns, gets 600s idle and no cap. Setting either variable ove
 durations, `0` disables a deadline, and an invalid value fails startup. The
 deadlines apply to the embedded and standalone supervisors alike and stop
 counting once the final answer has been received. A tool that never reports
-its end keeps the idle deadline suspended, so set `AIMEBU2_TURN_MAX` if a
+its end keeps the idle deadline suspended, so set `AIMEBU_TURN_MAX` if a
 hung tool on Claude Code or Codex must also be bounded. On expiry the
 supervisor logs the stall, kills the harness process group, and reports the
 exit as a failure (not an owner cancel) whose evidence names the deadline.

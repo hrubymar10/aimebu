@@ -1,5 +1,5 @@
 // Package telemetry is the error and performance reporting to Sentry (or a self-hosted Sentry). It reports only while a DSN is in
-// effect (from AIMEBU2_SENTRY_DSN or Settings, and not before the owner answered the consent popup); with none, nothing is initialized,
+// effect (from AIMEBU_SENTRY_DSN or Settings, and not before the owner answered the consent popup); with none, nothing is initialized,
 // nothing is sent, and the browser SDK is never loaded. What may leave the machine is decided in
 // scrub.go, on both the Go side and (web/js/telemetry.js) the browser side; docs/telemetry.md lists it.
 package telemetry
@@ -19,7 +19,7 @@ import (
 // from default_dsn.go, a separate file so that removing it leaves a build that is off until a DSN comes from the environment or Settings.
 var DefaultDSN string
 
-// DefaultTracesSampleRate is the share of requests (and of page loads) that are traced when AIMEBU2_SENTRY_TRACES_SAMPLE_RATE does not say: all of
+// DefaultTracesSampleRate is the share of requests (and of page loads) that are traced when AIMEBU_SENTRY_TRACES_SAMPLE_RATE does not say: all of
 // them. What keeps the volume down is what is traced, not how many: the files of the app are not, a request has at most MaxDBSpans database spans,
 // and a sampled page load is a handful of spans. The same number serves the server and the browser.
 const DefaultTracesSampleRate float64 = 1
@@ -27,7 +27,7 @@ const DefaultTracesSampleRate float64 = 1
 // Config is what the environment and Settings say. The zero value (no DSN) is "telemetry off".
 type Config struct {
 	DSN         string
-	EnvSet      bool   // AIMEBU2_SENTRY_DSN is set (to a DSN, to "off", or to empty): it wins over Settings
+	EnvSet      bool   // AIMEBU_SENTRY_DSN is set (to a DSN, to "off", or to empty): it wins over Settings
 	Source      string // where DSN came from: "env", "settings" or "pending" (Settings not answered yet); for the status line and the API
 	Environment string
 	Release     string
@@ -74,7 +74,7 @@ func (s Stored) DSNOrDefault() string {
 	return DefaultDSN
 }
 
-// Resolve settles the DSN. AIMEBU2_SENTRY_DSN wins (a DSN; "off" or empty disables). Otherwise Settings decide, but nothing is reported
+// Resolve settles the DSN. AIMEBU_SENTRY_DSN wins (a DSN; "off" or empty disables). Otherwise Settings decide, but nothing is reported
 // until the owner has answered the consent popup (Prompted): a fresh or updated install does not send before it has asked.
 func (c Config) Resolve(stored Stored) Config {
 	if c.EnvSet {
@@ -116,13 +116,13 @@ func loopbackHost(host string) bool {
 	return err == nil && addr.Unmap().IsLoopback()
 }
 
-// FromEnv reads AIMEBU2_SENTRY_DSN ("off" or empty disables), AIMEBU2_SENTRY_ENV (default "dev"), AIMEBU2_SENTRY_TRACES_SAMPLE_RATE (default DefaultTracesSampleRate). A bad rate is an error:
+// FromEnv reads AIMEBU_SENTRY_DSN ("off" or empty disables), AIMEBU_SENTRY_ENV (default "dev"), AIMEBU_SENTRY_TRACES_SAMPLE_RATE (default DefaultTracesSampleRate). A bad rate is an error:
 // the caller says so and runs with telemetry off, rather than guessing.
 func FromEnv(lookup func(string) (string, bool), version string) (Config, error) {
 	getenv := func(name string) string { value, _ := lookup(name); return value }
-	config := Config{Environment: strings.TrimSpace(getenv("AIMEBU2_SENTRY_ENV")), Release: ReleaseName(version),
+	config := Config{Environment: strings.TrimSpace(getenv("AIMEBU_SENTRY_ENV")), Release: ReleaseName(version),
 		TracesSampleRate: DefaultTracesSampleRate}
-	if value, set := lookup("AIMEBU2_SENTRY_DSN"); set {
+	if value, set := lookup("AIMEBU_SENTRY_DSN"); set {
 		config.EnvSet = true
 		if value = strings.TrimSpace(value); !strings.EqualFold(value, "off") {
 			config.DSN = value
@@ -135,7 +135,7 @@ func FromEnv(lookup func(string) (string, bool), version string) (Config, error)
 		name string
 		into *float64
 	}{
-		{"AIMEBU2_SENTRY_TRACES_SAMPLE_RATE", &config.TracesSampleRate},
+		{"AIMEBU_SENTRY_TRACES_SAMPLE_RATE", &config.TracesSampleRate},
 	} {
 		raw := strings.TrimSpace(getenv(rate.name))
 		if raw == "" {

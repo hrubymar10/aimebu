@@ -9,10 +9,10 @@ const path = require('node:path');
 const { startServer, bindFailed } = require('./server-start.cjs');
 
 const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'server-start-test-'));
-// A stand-in `aimebu server` (run as `node fake`, so no executable file is needed): reads the port from AIMEBU2_PORT, and acts as FAKE_MODE says.
+// A stand-in `aimebu server` (run as `node fake`, so no executable file is needed): reads the port from AIMEBU_PORT, and acts as FAKE_MODE says.
 const fake = path.join(work, 'fake-aimebu');
 fs.writeFileSync(fake, `const http = require('node:http'), fs = require('node:fs');
-const port = Number(process.env.AIMEBU2_PORT), mode = process.env.FAKE_MODE;
+const port = Number(process.env.AIMEBU_PORT), mode = process.env.FAKE_MODE;
 const count = process.env.FAKE_COUNT ? Number(fs.readFileSync(process.env.FAKE_COUNT, 'utf8') || 0) + 1 : 0;
 if (process.env.FAKE_COUNT) fs.writeFileSync(process.env.FAKE_COUNT, String(count));
 if (mode === 'crash') { console.error('something else broke'); process.exit(1); }
@@ -23,7 +23,7 @@ const server = http.createServer((req, res) => { res.end('ok'); });
 server.on('error', error => { console.error(String(error)); process.exit(1); });
 server.listen(port, '127.0.0.1');
 `);
-const env = port => ({ ...process.env, AIMEBU2_PORT: String(port) });
+const env = port => ({ ...process.env, AIMEBU_PORT: String(port) });
 
 (async () => {
   assert.ok(bindFailed('cannot listen on 127.0.0.1:9997: port 9997 is already in use by another process (listen tcp: bind: address already in use)'));

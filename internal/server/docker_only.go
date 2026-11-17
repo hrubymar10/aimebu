@@ -151,7 +151,7 @@ func (s *Server) warmIdleSetting(ctx context.Context) (seconds int, saved bool, 
 }
 
 // warmIdleSeconds is the instance's warm window in seconds as the server knows it: the owner's saved value, else the default (0 is off). A supervisor
-// started with its own AIMEBU2_WARM_IDLE may work to another when nothing is saved; it says which in its warm report.
+// started with its own AIMEBU_WARM_IDLE may work to another when nothing is saved; it says which in its warm report.
 func (s *Server) warmIdleSeconds(ctx context.Context) (int, error) {
 	seconds, saved, err := s.warmIdleSetting(ctx)
 	if err != nil {

@@ -16,19 +16,19 @@ import (
 
 // TestLiveForkCanary runs a real first turn on a throwaway session, then a second that resumes it with --fork-session. The copy must get a
 // session id of its own, know what the first turn was told, and leave the original transcript byte for byte as it was. It is opt-in
-// (AIMEBU2_LIVE_CLAUDE_FORK=1), native only (it needs a temporary Claude home, which a container would not use), and spends a little on the
+// (AIMEBU_LIVE_CLAUDE_FORK=1), native only (it needs a temporary Claude home, which a container would not use), and spends a little on the
 // model. Claude Code runs with the test's temporary CLAUDE_CONFIG_DIR, so the person's own
-// sessions are never read or written. Its login is ANTHROPIC_API_KEY, or else a copy of the file named by AIMEBU2_LIVE_CLAUDE_CREDENTIALS
+// sessions are never read or written. Its login is ANTHROPIC_API_KEY, or else a copy of the file named by AIMEBU_LIVE_CLAUDE_CREDENTIALS
 // (a login file without a refresh token, so that the copy cannot rotate the real one); the file itself is only read.
 func TestLiveForkCanary(t *testing.T) {
-	if os.Getenv("AIMEBU2_LIVE_CLAUDE_FORK") != "1" {
-		t.Skip("set AIMEBU2_LIVE_CLAUDE_FORK=1 for the Claude Code fork canary")
+	if os.Getenv("AIMEBU_LIVE_CLAUDE_FORK") != "1" {
+		t.Skip("set AIMEBU_LIVE_CLAUDE_FORK=1 for the Claude Code fork canary")
 	}
 	config := os.Getenv("CLAUDE_CONFIG_DIR")
 	if !strings.Contains(config, "aimebu-v2-test-home-") {
 		t.Fatalf("CLAUDE_CONFIG_DIR %q is not the test's temporary one", config)
 	}
-	if source := os.Getenv("AIMEBU2_LIVE_CLAUDE_CREDENTIALS"); source != "" {
+	if source := os.Getenv("AIMEBU_LIVE_CLAUDE_CREDENTIALS"); source != "" {
 		login, err := os.ReadFile(source)
 		if err != nil {
 			t.Fatal(err)
@@ -51,11 +51,11 @@ func TestLiveForkCanary(t *testing.T) {
 			t.Fatal(err)
 		}
 	} else if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		t.Skip("set ANTHROPIC_API_KEY or AIMEBU2_LIVE_CLAUDE_CREDENTIALS")
+		t.Skip("set ANTHROPIC_API_KEY or AIMEBU_LIVE_CLAUDE_CREDENTIALS")
 	}
 	root := t.TempDir()
 	tools := &adapter.AgentToolsAccess{AgentID: "agt_live_fork", ServerURL: "http://127.0.0.1:9897", Key: "aak_canary", Command: "/usr/bin/aimebu"}
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	implementation := New()
 	implementation.AllowNative = true
 	implementation.MaxBudgetUSD = "0.25"

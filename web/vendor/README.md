@@ -72,7 +72,7 @@ Vendored frontend dependency:
   `currentColor`. The bell marks the room's Notifications settings; the disabled bell marks a muted room in the room list.
 - `preact/` is the component runtime: Preact **11.0.1** (MIT; `preact.mjs` and `hooks.mjs`) and htm **3.1.1**
   (Apache-2.0; `htm.mjs`), byte-for-byte copies from the npm registry tarballs, loaded through the import map in
-  `web/index.html` and imported only by `web/js/ui.js`. The owner approved both on 2026-10-21 (AMB-70). Sources,
+  `web/index.html` and imported only by `web/js/ui.js`. The owner approved both on 2026-10-21. Sources,
   integrity hashes, maintenance notes and how to update are in `preact/README.md`; `preact/SHA256SUMS` lists every file
   (`preact.mjs` is `3a3201e9ccef7d30ef1273427f1b17ef8323e464b2c8d73b4fd5636af730433e`, `hooks.mjs`
   `6cb79fe9959ad185b8b86134aff47c12fd20216b24837597b19be59a133d9947`, `htm.mjs`
@@ -86,7 +86,7 @@ Vendored frontend dependency:
   `https://browser.sentry-cdn.com/11.11.0/bundle.tracing.min.js` (header: "@sentry/browser (Performance Monitoring) 11.11.0 (eadbabb)"). SHA-256:
   `143375024988ceab2b9425d41c1f4c0ea42e3fd8744e76a304890f12066e721b`. The tracing-only bundle is used on purpose: it contains no Session Replay code
   (the `replayIntegration` it exports is a stub that only warns), so Replay cannot be switched on by a setting until its recording can be scrubbed.
-  It is loaded by `web/js/telemetry.js` only while the server has reporting on (`AIMEBU2_SENTRY_DSN` or Settings -> General -> Error reports);
+  It is loaded by `web/js/telemetry.js` only while the server has reporting on (`AIMEBU_SENTRY_DSN` or Settings -> General -> Error reports);
   otherwise the page never requests it (docs/telemetry.md). Added with the owner's approval of 2026-11-06 (bus #39710), together with the Go modules
   `sentry-go`, `sentry-go/otel` and the OpenTelemetry API and SDK. To update, download the new version's file from the same URL pattern and `LICENSE`
   from the npm package, replace both, and update the version and the hash here.

@@ -83,13 +83,13 @@ func waitServerStatus(t *testing.T, url string, client *http.Client, wantStatus 
 func useFreePort(t *testing.T) { holdPort(t) }
 
 func TestCommandRouting(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(t.TempDir(), "config"))
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "")
-	t.Setenv("AIMEBU2_URL", "")
-	t.Setenv("AIMEBU2_AGENT_KEY", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("AIMEBU_OWNER_LOGIN", "")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "")
+	t.Setenv("AIMEBU_URL", "")
+	t.Setenv("AIMEBU_AGENT_KEY", "")
 	tests := []struct {
 		name       string
 		args       []string
@@ -102,7 +102,7 @@ func TestCommandRouting(t *testing.T) {
 		{"sessions bad flag", []string{"sessions", "--bogus"}, 2, "", "usage: aimebu sessions\n"},
 		{"sessions empty", []string{"sessions"}, 0, "No agent sessions found.\n", ""},
 		{"doctor bad flag", []string{"doctor", "--bogus"}, 2, "", "usage: aimebu doctor [--json] [--strict] [--live | --machine]\n"},
-		{"agent tools needs env", []string{"agent-tools"}, 1, "", "agent-tools requires AIMEBU2_URL and AIMEBU2_AGENT_KEY\n"},
+		{"agent tools needs env", []string{"agent-tools"}, 1, "", "agent-tools requires AIMEBU_URL and AIMEBU_AGENT_KEY\n"},
 		{"unknown command", []string{"bogus"}, 2, "", "unknown command \"bogus\"\n"},
 	}
 	for _, tt := range tests {
@@ -117,7 +117,7 @@ func TestCommandRouting(t *testing.T) {
 }
 
 func TestSupervisorRequiresHostKey(t *testing.T) {
-	t.Setenv("AIMEBU2_CONFIG_DIR", t.TempDir())
+	t.Setenv("AIMEBU_CONFIG_DIR", t.TempDir())
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"supervisor"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "host-machine.key") {
 		t.Fatalf("supervisor without key: code=%d stderr=%q", code, stderr.String())
@@ -125,12 +125,12 @@ func TestSupervisorRequiresHostKey(t *testing.T) {
 }
 
 func TestServerBootstrapOnce(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	var stdout, stderr bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -165,23 +165,23 @@ func TestServerBootstrapOnce(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "")
 	// The first run was several seconds ago on a loaded machine: pick a fresh port rather than hope the earlier one
 	// is still free, which another process can take in between.
 	useFreePort(t)
-	if code := serverCommand(ctx, &stdout, &stderr); code != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "AIMEBU2_ALLOW=127.0.0.0/8,::1/128") {
+	if code := serverCommand(ctx, &stdout, &stderr); code != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "AIMEBU_ALLOW=127.0.0.0/8,::1/128") {
 		t.Fatalf("repeat server run = %d, %q, %q", code, stdout.String(), stderr.String())
 	}
 }
 
 func TestServerBootstrapRejectsExistingHostKeyWithoutOwner(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	dir := filepath.Join(root, "server")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestServerBootstrapRejectsExistingHostKeyWithoutOwner(t *testing.T) {
 }
 
 func TestServerCommandServesHTTP(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
@@ -225,8 +225,8 @@ func TestServerCommandServesHTTP(t *testing.T) {
 	}
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -276,12 +276,12 @@ func TestServerCommandServesHTTP(t *testing.T) {
 }
 
 func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
-	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
 	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
@@ -299,11 +299,11 @@ func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
 }
 
 func TestEmbeddedSupervisorReconcilesCrashedTurn(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	holdPort(t)
 	var stdout, stderr bytes.Buffer
 	stopped, stop := context.WithCancel(context.Background())
@@ -429,8 +429,8 @@ func TestEmbeddedSupervisorReconcilesCrashedTurn(t *testing.T) {
 	}
 }
 
-func TestV2DefaultsAndExplicitDevelopmentRootIgnoreV1Environment(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+func TestExplicitDevelopmentRootPreservesV1Data(t *testing.T) {
+	t.Setenv("AIMEBU_USAGES", "0")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	legacy := filepath.Join(home, ".aimebu")
@@ -442,18 +442,12 @@ func TestV2DefaultsAndExplicitDevelopmentRootIgnoreV1Environment(t *testing.T) {
 	if err := os.WriteFile(legacyDB, sentinel, 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AIMEBU_CONFIG_DIR", legacy)
-	t.Setenv("AIMEBU_BIND", "not-an-ip")
-	t.Setenv("AIMEBU_PORT", "1")
-	t.Setenv("AIMEBU_ALLOW", "not-an-ip")
-	t.Setenv("AIMEBU_OWNER_LOGIN", "v1-owner")
-	t.Setenv("AIMEBU_OWNER_PASSWORD", "v1-password")
-	t.Setenv("AIMEBU2_CONFIG_DIR", "")
-	t.Setenv("AIMEBU2_BIND", "")
-	t.Setenv("AIMEBU2_PORT", "")
-	t.Setenv("AIMEBU2_ALLOW", "")
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "v2-owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "v2-password-long")
+	t.Setenv("AIMEBU_CONFIG_DIR", "")
+	t.Setenv("AIMEBU_BIND", "")
+	t.Setenv("AIMEBU_PORT", "")
+	t.Setenv("AIMEBU_ALLOW", "")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "v2-owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "v2-password-long")
 	config, err := resolveServerConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -461,7 +455,7 @@ func TestV2DefaultsAndExplicitDevelopmentRootIgnoreV1Environment(t *testing.T) {
 	if config.root != legacy || config.bind != "127.0.0.1" || config.port != 9997 {
 		t.Fatalf("v2 defaults: %+v", config)
 	}
-	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
 	holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -487,29 +481,45 @@ func TestV2DefaultsAndExplicitDevelopmentRootIgnoreV1Environment(t *testing.T) {
 	}
 }
 
+func TestLegacyEnvironmentWarning(t *testing.T) {
+	var stderr bytes.Buffer
+	var once sync.Once
+	environ := []string{"AIMEBU2_URL=secret-value", "AIMEBU2_PORT=9876", "AIMEBU_PORT=9897"}
+	warnLegacyEnvironmentOnce(environ, &stderr, &once)
+	want := "aimebu: ignoring AIMEBU2_* environment variables (renamed to AIMEBU_*): AIMEBU2_PORT, AIMEBU2_URL\n"
+	if got := stderr.String(); got != want || strings.Contains(got, "secret-value") {
+		t.Fatalf("warning=%q, want %q", got, want)
+	}
+	stderr.Reset()
+	warnLegacyEnvironmentOnce(environ, &stderr, &once)
+	if stderr.Len() != 0 {
+		t.Fatalf("warning repeated: %q", stderr.String())
+	}
+}
+
 func TestResolveServerConfigAllowAndStartupWarning(t *testing.T) {
-	t.Setenv("AIMEBU2_BIND", "0.0.0.0")
-	t.Setenv("AIMEBU2_ALLOW", "")
+	t.Setenv("AIMEBU_BIND", "0.0.0.0")
+	t.Setenv("AIMEBU_ALLOW", "")
 	config, err := resolveServerConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
 	logAllowStartup(&output, config, "0.0.0.0:9897")
-	if !strings.Contains(output.String(), "AIMEBU2_ALLOW=127.0.0.0/8,::1/128") || !strings.Contains(output.String(), "remote clients will receive 403") {
+	if !strings.Contains(output.String(), "AIMEBU_ALLOW=127.0.0.0/8,::1/128") || !strings.Contains(output.String(), "remote clients will receive 403") {
 		t.Fatalf("default allowlist startup log: %q", output.String())
 	}
-	t.Setenv("AIMEBU2_ALLOW", "127.0.0.1,172.28.47.0/24")
+	t.Setenv("AIMEBU_ALLOW", "127.0.0.1,172.28.47.0/24")
 	config, err = resolveServerConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
 	output.Reset()
 	logAllowStartup(&output, config, "0.0.0.0:9897")
-	if !strings.Contains(output.String(), "AIMEBU2_ALLOW=127.0.0.1/32,172.28.47.0/24") || strings.Contains(output.String(), "WARNING") {
+	if !strings.Contains(output.String(), "AIMEBU_ALLOW=127.0.0.1/32,172.28.47.0/24") || strings.Contains(output.String(), "WARNING") {
 		t.Fatalf("custom allowlist startup log: %q", output.String())
 	}
-	t.Setenv("AIMEBU2_ALLOW", "localhost")
+	t.Setenv("AIMEBU_ALLOW", "localhost")
 	if _, err := resolveServerConfig(); err == nil {
 		t.Fatal("accepted hostname allowlist")
 	}
@@ -524,8 +534,8 @@ func TestAllowEmbeddedSupervisorAtItsDialAddress(t *testing.T) {
 		{"192.0.2.10", "192.0.2.10"},
 	} {
 		t.Run(test.bind, func(t *testing.T) {
-			t.Setenv("AIMEBU2_BIND", test.bind)
-			t.Setenv("AIMEBU2_ALLOW", "127.0.0.0/8,::1/128")
+			t.Setenv("AIMEBU_BIND", test.bind)
+			t.Setenv("AIMEBU_ALLOW", "127.0.0.0/8,::1/128")
 			config, err := resolveServerConfig()
 			if err != nil {
 				t.Fatal(err)
@@ -551,7 +561,7 @@ func TestHelpListsEveryCommand(t *testing.T) {
 		if code := run([]string{arg}, &stdout, &stderr); code != 0 || stderr.Len() != 0 {
 			t.Fatalf("run(%s) = (%d, %q)", arg, code, stderr.String())
 		}
-		for _, command := range []string{"server", "supervisor", "agent-tools", "doctor", "sessions", "usages", "switcher", "prune", "version", "help", "AIMEBU2_CONFIG_DIR"} {
+		for _, command := range []string{"server", "supervisor", "agent-tools", "doctor", "sessions", "usages", "switcher", "prune", "version", "help", "AIMEBU_CONFIG_DIR"} {
 			if !strings.Contains(stdout.String(), command) {
 				t.Fatalf("help (%s) lacks %q:\n%s", arg, command, stdout.String())
 			}
@@ -575,7 +585,7 @@ func TestResolveVersionKeepsLdflagsOverride(t *testing.T) {
 // A start that fails after the token-copy goroutines began must still cancel and join them: the early returns used to
 // leave them running, with their claims, behind a process that was exiting.
 func TestAFailedStartJoinsTheTokenCopyGoroutines(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
@@ -586,8 +596,8 @@ func TestAFailedStartJoinsTheTokenCopyGoroutines(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	useMigratedConfigDir(t, root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	// The embedded supervisor's journal cannot be opened under a regular file: the start fails after the server wiring.
 	if err := os.WriteFile(filepath.Join(root, "supervisor"), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
@@ -608,7 +618,7 @@ func TestAFailedStartJoinsTheTokenCopyGoroutines(t *testing.T) {
 func TestListenErrorDoesNotBlameV1ForAnyBusyPort(t *testing.T) {
 	t.Parallel()
 	busy := listenError("127.0.0.1", 9997, &net.OpError{Op: "listen", Err: &os.SyscallError{Syscall: "bind", Err: syscall.EADDRINUSE}})
-	for _, want := range []string{"port 9997 is already in use by another process", "If it is the v1 aimebu server", "AIMEBU2_PORT"} {
+	for _, want := range []string{"port 9997 is already in use by another process", "If it is the v1 aimebu server", "AIMEBU_PORT"} {
 		if !strings.Contains(busy, want) {
 			t.Errorf("busy-port message %q lacks %q", busy, want)
 		}
@@ -622,7 +632,7 @@ func TestListenErrorDoesNotBlameV1ForAnyBusyPort(t *testing.T) {
 	}
 }
 
-// With AIMEBU2_BIND set to a LAN or VPN address the embedded supervisor dials that address, which is not loopback: it is still this machine,
+// With AIMEBU_BIND set to a LAN or VPN address the embedded supervisor dials that address, which is not loopback: it is still this machine,
 // so the refusal of plain http to another machine must not apply to it, or the host machine stays offline.
 func TestEmbeddedSupervisorMayUsePlainHTTPOnItsOwnNonLoopbackAddress(t *testing.T) {
 	client := newEmbeddedSupervisor("machine", "key", "192.168.1.20", 9897, nil, adapter.NewFake())

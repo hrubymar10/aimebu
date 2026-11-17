@@ -11,7 +11,7 @@ import (
 // the server's address after the page has loaded (DNS rebinding). The browser then treats them as the same origin, and the page reads
 // the answers. What it cannot change is the Host header: it carries the attacker's name. So the routes that need no login (signing in, the
 // first-run setup, an invite, a machine's pairing) answer only a request whose Host is one this server expects: localhost, an IP address
-// (a name is what rebinding needs), the host of AIMEBU2_PUBLIC_URL, and the names listed in AIMEBU2_ALLOWED_HOSTS.
+// (a name is what rebinding needs), the host of AIMEBU_PUBLIC_URL, and the names listed in AIMEBU_ALLOWED_HOSTS.
 
 // ResolveAllowedHosts reads a comma-separated list of host names (no scheme, port or path), lowercased.
 func ResolveAllowedHosts(raw string) ([]string, error) {
@@ -76,7 +76,7 @@ func parsePublicHost(public string) (string, error) {
 func (s *Server) hostChecked(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.hostAllowed(r) {
-			apiError(w, http.StatusMisdirectedRequest, "unexpected_host", "this server does not answer to the host name "+requestHostName(r)+"; reach it by localhost, an IP address, or its public URL, or list the name in AIMEBU2_ALLOWED_HOSTS")
+			apiError(w, http.StatusMisdirectedRequest, "unexpected_host", "this server does not answer to the host name "+requestHostName(r)+"; reach it by localhost, an IP address, or its public URL, or list the name in AIMEBU_ALLOWED_HOSTS")
 			return
 		}
 		next(w, r)

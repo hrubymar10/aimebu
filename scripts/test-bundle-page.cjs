@@ -1,6 +1,6 @@
 // The real app from its bundle, in Chromium, on a scratch server: the page fetches one script and no module of the app, the bundle comes gzipped with
 // the version in its name, and the app works from it (sign in, a room, a message, the Settings, Room settings and Spawn dialogs) without a page error.
-// A second server with AIMEBU2_WEB_BUNDLE=off proves the switch: its page loads the modules and not the bundle. The tests of the app's own modules
+// A second server with AIMEBU_WEB_BUNDLE=off proves the switch: its page loads the modules and not the bundle. The tests of the app's own modules
 // (test-ui, the fixture page tests) run on modules, because they reach into module instances a bundle does not have.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

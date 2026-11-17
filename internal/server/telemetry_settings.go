@@ -57,10 +57,10 @@ type telemetryView struct {
 	DSN        string `json:"dsn"`         // the field: what was chosen, else the default
 	DefaultDSN string `json:"default_dsn"` // what a build ships; empty when none
 	Prompted   bool   `json:"prompted"`    // the owner has answered the consent popup
-	EnvLocked  bool   `json:"env_locked"`  // AIMEBU2_SENTRY_DSN is set, so it wins over these fields
+	EnvLocked  bool   `json:"env_locked"`  // AIMEBU_SENTRY_DSN is set, so it wins over these fields
 	Active     bool   `json:"active"`      // reports are being sent right now
 	// What bounds the volume, shown read-only: the share of requests (server) and page loads (browser) that are traced, which
-	// AIMEBU2_SENTRY_TRACES_SAMPLE_RATE overrides, and how many database statements of one request get a span.
+	// AIMEBU_SENTRY_TRACES_SAMPLE_RATE overrides, and how many database statements of one request get a span.
 	TracesSampleRate float64 `json:"traces_sample_rate"`
 	MaxDBSpans       int     `json:"max_db_spans"`
 }
@@ -70,7 +70,7 @@ func (s *Server) telemetryView(ctx context.Context) (telemetryView, error) {
 	if err != nil {
 		return telemetryView{}, err
 	}
-	_, envSet := os.LookupEnv("AIMEBU2_SENTRY_DSN")
+	_, envSet := os.LookupEnv("AIMEBU_SENTRY_DSN")
 	rate := telemetry.DefaultTracesSampleRate
 	if config, err := telemetry.FromEnv(os.LookupEnv, s.Version); err == nil { // a bad rate runs with telemetry off; the page shows the default then
 		rate = config.TracesSampleRate
@@ -158,9 +158,9 @@ func (s *Server) telemetrySettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // telemetryPrompt says whether the consent popup is still to be shown to this user: only the owner, only until it was answered, and not
-// when AIMEBU2_SENTRY_DSN is set (whoever runs the server has already decided, and Settings cannot change it).
+// when AIMEBU_SENTRY_DSN is set (whoever runs the server has already decided, and Settings cannot change it).
 func (s *Server) telemetryPrompt(ctx context.Context, owner bool) (bool, error) {
-	if _, envSet := os.LookupEnv("AIMEBU2_SENTRY_DSN"); !owner || envSet {
+	if _, envSet := os.LookupEnv("AIMEBU_SENTRY_DSN"); !owner || envSet {
 		return false, nil
 	}
 	stored, err := s.storedTelemetry(ctx)

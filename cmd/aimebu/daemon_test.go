@@ -22,11 +22,11 @@ import (
 
 // daemonHelperEnv makes this test binary behave as `aimebu` (see TestMain): `server start` runs os.Executable, which in a test is the test
 // binary, so the detached server in these tests is a real server process.
-const daemonHelperEnv = "AIMEBU2_TEST_RUN_AS_AIMEBU"
+const daemonHelperEnv = "AIMEBU_TEST_RUN_AS_AIMEBU"
 
 // daemonWatchEnv names the pid of the test process that started the detached server: the server exits when that process is gone, so a test
 // run that is killed leaves nothing behind (see TestMain).
-const daemonWatchEnv = "AIMEBU2_TEST_WATCH_PID"
+const daemonWatchEnv = "AIMEBU_TEST_WATCH_PID"
 
 var (
 	aimebuCopyOnce sync.Once
@@ -81,20 +81,20 @@ func daemonFixture(t *testing.T) (root string, port int) {
 	previous := daemonExecutable
 	daemonExecutable = func() (string, error) { return copyPath, nil }
 	t.Cleanup(func() { daemonExecutable = previous })
-	t.Setenv("AIMEBU2_USAGES", "0")
-	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_USAGES", "0")
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	root = t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_BIND", "127.0.0.1")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_BIND", "127.0.0.1")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	port = listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
-	t.Setenv("AIMEBU2_PORT", strconv.Itoa(port))
+	t.Setenv("AIMEBU_PORT", strconv.Itoa(port))
 	// Whatever a test leaves running is killed by pid, whether it passed, failed or never got a pid file written: every server `start`
 	// launches is recorded as it is spawned, and the pid file is looked at too. If the test binary itself dies (a timeout, a signal), no
 	// cleanup runs, so the detached server also watches the test process and exits when it is gone.
@@ -199,7 +199,7 @@ func TestServerDaemonStartReportsAServerThatCannotStart(t *testing.T) {
 func TestServerDaemonRefusesWhatForegroundShouldDo(t *testing.T) {
 	// v1's files are moved by the first start, with notices a detached process would hide in a log.
 	root := makeV1Root(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	code, _, errOut := runServerAction("start")
 	if code != 1 || !strings.Contains(errOut, "foreground") || !strings.Contains(errOut, "v1") {
 		t.Fatalf("start over v1 data: %d %q", code, errOut)
@@ -212,9 +212,9 @@ func TestServerDaemonRefusesWhatForegroundShouldDo(t *testing.T) {
 	}
 
 	// A configuration the server would refuse is refused before anything is started.
-	t.Setenv("AIMEBU2_CONFIG_DIR", t.TempDir())
-	t.Setenv("AIMEBU2_TLS_CERT", filepath.Join(t.TempDir(), "only-a-cert.pem"))
-	t.Setenv("AIMEBU2_TLS_KEY", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", t.TempDir())
+	t.Setenv("AIMEBU_TLS_CERT", filepath.Join(t.TempDir(), "only-a-cert.pem"))
+	t.Setenv("AIMEBU_TLS_KEY", "")
 	if code, _, errOut := runServerAction("start"); code != 1 || errOut == "" {
 		t.Fatalf("start with half a TLS configuration: %d %q", code, errOut)
 	}
@@ -225,10 +225,10 @@ func TestServerDaemonRefusesWhatForegroundShouldDo(t *testing.T) {
 }
 
 func TestServerDaemonSeesAForegroundServerAndLeavesItAlone(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
-	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_USAGES", "0")
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
 	port := holdPort(t)
@@ -331,7 +331,7 @@ func holdServerLock(t *testing.T, root string) {
 // must never get the process it names killed.
 func TestServerStopNeverSignalsAnUnrelatedProcess(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	holdServerLock(t, root)
 	bystander := exec.Command("sleep", "120")
 	if err := bystander.Start(); err != nil {
@@ -456,7 +456,7 @@ func TestServerConcurrentStartsRunOneServer(t *testing.T) {
 // be taken back, so the message says what to do by hand instead.
 func TestServerStopSignalsNothingItCannotVerify(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	holdServerLock(t, root)
 	bystander := exec.Command("sleep", "120")
 	if err := bystander.Start(); err != nil {
@@ -497,7 +497,7 @@ func TestProcessInfoFallsBackToProc(t *testing.T) {
 // status and stop never touch a config directory that still holds v1's data: v1 keeps its own pid file in the same place.
 func TestServerDaemonLeavesV1sPidFileAlone(t *testing.T) {
 	root := makeV1Root(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	v1PID := filepath.Join(root, "server", pidFileName)
 	if err := os.WriteFile(v1PID, []byte("2147483646\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -605,7 +605,7 @@ func TestServerLockOutlastsAProbeButNotAServer(t *testing.T) {
 // stop go by its lock and do not ask whether the root is v1's.
 func TestServerDaemonAsksAboutAStartingServerByItsLock(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	if err := os.MkdirAll(filepath.Join(root, "server"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +619,7 @@ func TestServerDaemonAsksAboutAStartingServerByItsLock(t *testing.T) {
 	}
 	// And a status question does not give a v1 root a lock file.
 	v1 := makeV1Root(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", v1)
+	t.Setenv("AIMEBU_CONFIG_DIR", v1)
 	if code, out, _ := runServerAction("status"); code != 1 || !strings.Contains(out, "still holds v1's data") {
 		t.Fatalf("status over v1 data: %d %q", code, out)
 	}

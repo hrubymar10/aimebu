@@ -19,7 +19,7 @@ import (
 )
 
 // Variables names every environment variable a command takes a home or a data directory from.
-var Variables = []string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "VIBE_HOME", "AIMEBU_CONFIG_DIR", "AIMEBU2_CONFIG_DIR", "XDG_CONFIG_HOME", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG"}
+var Variables = []string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "VIBE_HOME", "AIMEBU_CONFIG_DIR", "XDG_CONFIG_HOME", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG"}
 
 // Isolate points HOME and the tool and server data directories at a new temporary root, so every default that starts at the home directory
 // lands there, and returns the root and the function that removes it. Go's own caches stay where they were: a test that runs the go tool
@@ -41,19 +41,25 @@ func Isolate() (root string, cleanup func()) {
 	if err != nil {
 		panic(fmt.Errorf("resolve test home: %w", err))
 	}
+	// Do not inherit runtime settings from a real installation. In particular,
+	// the host's AIMEBU_URL may point at a live bus on another machine.
+	for _, name := range []string{"AIMEBU_URL", "AIMEBU_PORT", "AIMEBU_TLS_PORT", "AIMEBU_BIND", "AIMEBU_ALLOW", "AIMEBU_ALLOWED_HOSTS", "AIMEBU_TLS_CERT", "AIMEBU_TLS_KEY", "AIMEBU_PUBLIC_URL", "AIMEBU_AGENT_DEBUG", "AIMEBU_FORCE_BUILD", "AIMEBU_UPDATE_RESTARTED", "AIMEBU_OWNER_LOGIN", "AIMEBU_OWNER_PASSWORD"} {
+		if err := os.Unsetenv(name); err != nil {
+			panic(err)
+		}
+	}
 	for name, value := range map[string]string{
-		"HOME":                      root,
-		"CODEX_HOME":                filepath.Join(root, ".codex"),
-		"CLAUDE_CONFIG_DIR":         filepath.Join(root, ".claude"),
-		"VIBE_HOME":                 filepath.Join(root, ".vibe"),
-		"XDG_CONFIG_HOME":           filepath.Join(root, ".config"),
-		"PI_CODING_AGENT_DIR":       filepath.Join(root, ".pi", "agent"),
-		"OPENCODE_CONFIG":           filepath.Join(root, ".config", "opencode", "opencode.json"),
-		"AIMEBU_CONFIG_DIR":         filepath.Join(root, ".aimebu"),
-		"AIMEBU2_CONFIG_DIR":        filepath.Join(root, ".aimebu2"),
-		"AIMEBU2_DEV_SKIP_V1_PROBE": "1",
+		"HOME":                     root,
+		"CODEX_HOME":               filepath.Join(root, ".codex"),
+		"CLAUDE_CONFIG_DIR":        filepath.Join(root, ".claude"),
+		"VIBE_HOME":                filepath.Join(root, ".vibe"),
+		"XDG_CONFIG_HOME":          filepath.Join(root, ".config"),
+		"PI_CODING_AGENT_DIR":      filepath.Join(root, ".pi", "agent"),
+		"OPENCODE_CONFIG":          filepath.Join(root, ".config", "opencode", "opencode.json"),
+		"AIMEBU_CONFIG_DIR":        filepath.Join(root, ".aimebu"),
+		"AIMEBU_DEV_SKIP_V1_PROBE": "1",
 		// Error reporting is forced off: a test must never send anything to Sentry, whatever DSN the machine or a default ships.
-		"AIMEBU2_SENTRY_DSN": "off",
+		"AIMEBU_SENTRY_DSN": "off",
 	} {
 		if err := os.Setenv(name, value); err != nil {
 			panic(err)
@@ -98,8 +104,11 @@ func Main(m *testing.M) {
 
 // Check reports an environment in which the home directory, or a data directory that is set, is outside the temporary directory.
 func Check() error {
-	if got := os.Getenv("AIMEBU2_SENTRY_DSN"); got != "off" {
-		return fmt.Errorf("AIMEBU2_SENTRY_DSN is %q in the test environment, want \"off\": a test must never send error reports", got)
+	if got := os.Getenv("AIMEBU_URL"); got != "" {
+		return fmt.Errorf("AIMEBU_URL is set in the test environment: a test must never contact a configured server")
+	}
+	if got := os.Getenv("AIMEBU_SENTRY_DSN"); got != "off" {
+		return fmt.Errorf("AIMEBU_SENTRY_DSN is %q in the test environment, want \"off\": a test must never send error reports", got)
 	}
 	temp, err := resolve(os.TempDir())
 	if err != nil {
@@ -178,7 +187,7 @@ func RestrictPATH(root string, tools ...string) {
 	if err := os.Setenv("PATH", bin); err != nil {
 		panic(err)
 	}
-	if err := os.Setenv("AIMEBU2_TEST_RESTRICT_PATH", "1"); err != nil {
+	if err := os.Setenv("AIMEBU_TEST_RESTRICT_PATH", "1"); err != nil {
 		panic(err)
 	}
 }

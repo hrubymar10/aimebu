@@ -89,7 +89,7 @@ func TestPlainListenerRefusesAPeerOutsideTheAllowlistBeforeRedirecting(t *testin
 	s := transportServer()
 	handler := s.RedirectPlainToHTTPS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	req := httptest.NewRequest(http.MethodGet, "http://mac.lan:9897/", nil)
-	req.RemoteAddr = "198.51.100.9:5000" // not in AIMEBU2_ALLOW
+	req.RemoteAddr = "198.51.100.9:5000" // not in AIMEBU_ALLOW
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden || rec.Header().Get("Location") != "" {

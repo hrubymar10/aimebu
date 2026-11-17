@@ -45,7 +45,7 @@ func (f *fixture) spawnRequest(t *testing.T, key, role string) (int, store.Agent
 }
 
 func TestListedAdapter(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	f := newFixture(t)
 	listedAdapter := func(req spawnRequest) bool {
 		ok, err := f.srv.listedAdapter(context.Background(), req)
@@ -98,7 +98,7 @@ func TestLauncherSelectionErrorKeepsMissingAndStoreFailureSeparate(t *testing.T)
 }
 
 func TestNativeCatalogDoesNotUseLegacyEnvGate(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "")
 	f := newFixture(t)
 	if ok, err := f.srv.listedAdapter(context.Background(), spawnRequest{Tool: "claude", Variant: "native", Model: "haiku"}); err != nil || !ok {
 		t.Fatal("native Claude disappeared from the server-approved model list")
@@ -119,7 +119,7 @@ func TestNativeCatalogDoesNotUseLegacyEnvGate(t *testing.T) {
 }
 
 func TestAgentSwitchEndpointIdempotencyAndCatalog(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	f := newFixture(t)
 	f.seed()
 	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{},
@@ -440,7 +440,7 @@ func TestPiDockerRequiresReachableBindForCatalogSpawnSwitchAndReactivate(t *test
 		return resp.StatusCode, result
 	}
 	pi := map[string]any{"role_key": "worker", "tool": "pi", "variant": "docker", "model": "ollama-cloud/gemma4:31b"}
-	t.Setenv("AIMEBU2_BIND", "")
+	t.Setenv("AIMEBU_BIND", "")
 	resp := f.request(http.MethodGet, "/api/spawn-catalog", nil, false)
 	var catalog struct {
 		Tools []spawnCatalogTool `json:"tools"`
@@ -464,7 +464,7 @@ func TestPiDockerRequiresReachableBindForCatalogSpawnSwitchAndReactivate(t *test
 	}
 	// Create a Pi Docker agent while the bind is reachable, then restore the
 	// default and ensure a direct reactivation request cannot bypass the gate.
-	t.Setenv("AIMEBU2_BIND", "0.0.0.0")
+	t.Setenv("AIMEBU_BIND", "0.0.0.0")
 	status, created := post("/api/rooms/"+f.room.ID+"/agents", "pi-reachable", pi)
 	if status != 201 {
 		t.Fatalf("reachable spawn: %d %+v", status, created)
@@ -478,7 +478,7 @@ func TestPiDockerRequiresReachableBindForCatalogSpawnSwitchAndReactivate(t *test
 	if status != 200 {
 		t.Fatalf("stop: %d %+v", status, stopped)
 	}
-	t.Setenv("AIMEBU2_BIND", "")
+	t.Setenv("AIMEBU_BIND", "")
 	status, blocked := post("/api/agents/"+piID+"/control", "", map[string]any{"desired": "active", "rev": int64(stopped["desired_rev"].(float64))})
 	if status != 409 || blocked["message"] != dockerBindUnavailableMessage {
 		t.Fatalf("reactivate: %d %+v", status, blocked)
@@ -1059,7 +1059,7 @@ func TestHarnessModelsOwnerEditDrivesCatalogAndSpawnChecks(t *testing.T) {
 }
 
 func TestRemovedModelKeepsKeyedSpawnReplayButRejectsNewRequests(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	f := newFixture(t)
 	f.seed()
 	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{},

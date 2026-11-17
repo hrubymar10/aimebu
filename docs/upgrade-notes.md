@@ -6,11 +6,11 @@ Each item names the document that describes the behaviour in full.
 ## Sign-in, setup, invites and pairing answer only expected host names
 
 Sign-in, the first-run setup, invites and machine pairing now answer `421 unexpected_host` for a `Host` that is not `localhost` (or
-`*.localhost`), an IP address, the host of `AIMEBU2_PUBLIC_URL`, or a name listed in `AIMEBU2_ALLOWED_HOSTS`. If you reach the server by a
+`*.localhost`), an IP address, the host of `AIMEBU_PUBLIC_URL`, or a name listed in `AIMEBU_ALLOWED_HOSTS`. If you reach the server by a
 LAN or VPN **name** (`studio.local`, a MagicDNS name), sign-in stops working until you list it:
 
 ```bash
-export AIMEBU2_ALLOWED_HOSTS=studio.local
+export AIMEBU_ALLOWED_HOSTS=studio.local
 ```
 
 A server reached by IP address, by `localhost` or through its public URL is not affected. See [HTTPS](tls.md#host-names).
@@ -18,7 +18,7 @@ A server reached by IP address, by `localhost` or through its public URL is not 
 ## Remote supervisors paired over plain http
 
 A supervisor on another machine that is paired against a plain-`http` server (not loopback) now refuses to run, and so does
-`aimebu supervisor --pair` against one. Either serve the server over HTTPS and re-pair (or set `AIMEBU2_URL` to the https address), or accept
+`aimebu supervisor --pair` against one. Either serve the server over HTTPS and re-pair (or set `AIMEBU_URL` to the https address), or accept
 the risk with `--insecure` (on the pairing command and on every later `aimebu supervisor`). The **Add machine** dialog shows a warning and the
 `--insecure` command when the server is reached over plain http at such an address. The server's own embedded supervisor is not affected.
 See [Supervisor](supervisor.md).
@@ -45,7 +45,7 @@ Sessions that exist at the upgrade start their 30 days then (migration 94). Sign
 ## Login throttling is per source
 
 Wrong passwords are counted per (login, client) and per client, where a client is one IPv4 address or one IPv6 /64, so a guesser at one
-address no longer locks the owner out from another. Behind a reverse proxy, set `AIMEBU2_TRUSTED_PROXIES` so clients stay apart. See
+address no longer locks the owner out from another. Behind a reverse proxy, set `AIMEBU_TRUSTED_PROXIES` so clients stay apart. See
 [Auth](auth.md) and [HTTPS](tls.md#reverse-proxy).
 
 ## TLS: plain http redirects, and HSTS

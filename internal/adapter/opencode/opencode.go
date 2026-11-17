@@ -91,7 +91,7 @@ func (a *Adapter) Catalog() []adapter.CatalogEntry {
 }
 
 // Capabilities claims nothing for the Docker variant: what the native adapter was verified for (read-only turns, cancel, cost) is not
-// carried to a container until the opt-in live canary, AIMEBU2_LIVE_OPENCODE_DOCKER=1, has shown it.
+// carried to a container until the opt-in live canary, AIMEBU_LIVE_OPENCODE_DOCKER=1, has shown it.
 func (a *Adapter) Capabilities(version string, environment adapter.Environment) adapter.Capabilities {
 	if version != SupportedVersion || environment.Variant != "native" || environment.OS != "linux" || a.variant() != "native" {
 		return adapter.Capabilities{}

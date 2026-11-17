@@ -237,9 +237,9 @@ func TestCheckTLS(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("AIMEBU2_TLS_CERT", tt.certEnv)
-			t.Setenv("AIMEBU2_TLS_KEY", tt.keyEnv)
-			t.Setenv("AIMEBU2_TLS_PORT", "")
+			t.Setenv("AIMEBU_TLS_CERT", tt.certEnv)
+			t.Setenv("AIMEBU_TLS_KEY", tt.keyEnv)
+			t.Setenv("AIMEBU_TLS_PORT", "")
 			check := checkTLS(9897)
 			if check.Status != tt.want {
 				t.Fatalf("status = %q (%s), want %q", check.Status, check.Description, tt.want)
@@ -264,11 +264,11 @@ func TestCheckBindAllow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.tlsEnv {
-				t.Setenv("AIMEBU2_TLS_CERT", "/nonexistent/cert.pem")
-				t.Setenv("AIMEBU2_TLS_KEY", "/nonexistent/key.pem")
+				t.Setenv("AIMEBU_TLS_CERT", "/nonexistent/cert.pem")
+				t.Setenv("AIMEBU_TLS_KEY", "/nonexistent/key.pem")
 			} else {
-				t.Setenv("AIMEBU2_TLS_CERT", "")
-				t.Setenv("AIMEBU2_TLS_KEY", "")
+				t.Setenv("AIMEBU_TLS_CERT", "")
+				t.Setenv("AIMEBU_TLS_KEY", "")
 			}
 			check := checkBindAllow(tt.config)
 			if check.Status != tt.want {
@@ -294,7 +294,7 @@ func testServerPort(t *testing.T, rawURL string) int {
 func TestOldDevelopmentRootNotice(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("AIMEBU2_CONFIG_DIR", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", "")
 	oldRoot := filepath.Join(home, ".aimebu2")
 	if err := os.MkdirAll(filepath.Join(oldRoot, "server"), 0700); err != nil {
 		t.Fatal(err)
@@ -305,7 +305,7 @@ func TestOldDevelopmentRootNotice(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(oldRoot, "server", "aimebu.sqlite"), []byte("v2"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got := oldDevelopmentRootNotice(); !strings.Contains(got, "v2 data found") || !strings.Contains(got, "AIMEBU2_CONFIG_DIR=") {
+	if got := oldDevelopmentRootNotice(); !strings.Contains(got, "v2 data found") || !strings.Contains(got, "AIMEBU_CONFIG_DIR=") {
 		t.Fatalf("old v2 state has no clear notice: %q", got)
 	}
 	if got := run([]string{"doctor", "--json"}, io.Discard, io.Discard); got != 1 {
@@ -319,14 +319,14 @@ func TestOldDevelopmentRootNotice(t *testing.T) {
 	}
 	found := false
 	for _, check := range result.Checks {
-		if check.Name == "older v2 data" && check.Status == statusWarn && strings.Contains(check.Description, "AIMEBU2_CONFIG_DIR=") {
+		if check.Name == "older v2 data" && check.Status == statusWarn && strings.Contains(check.Description, "AIMEBU_CONFIG_DIR=") {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("doctor omitted old v2 root warning: %+v", result.Checks)
 	}
-	t.Setenv("AIMEBU2_CONFIG_DIR", oldRoot)
+	t.Setenv("AIMEBU_CONFIG_DIR", oldRoot)
 	if got := oldDevelopmentRootNotice(); got != "" {
 		t.Fatalf("explicit old root still warned: %q", got)
 	}
@@ -367,16 +367,16 @@ func TestDoctorCommand(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("AIMEBU2_CONFIG_DIR", tt.root)
-			t.Setenv("AIMEBU2_BIND", "127.0.0.1")
+			t.Setenv("AIMEBU_CONFIG_DIR", tt.root)
+			t.Setenv("AIMEBU_BIND", "127.0.0.1")
 			if tt.serverUp {
-				t.Setenv("AIMEBU2_PORT", strconv.Itoa(upPort))
+				t.Setenv("AIMEBU_PORT", strconv.Itoa(upPort))
 			} else {
-				t.Setenv("AIMEBU2_PORT", strconv.Itoa(downPort()))
+				t.Setenv("AIMEBU_PORT", strconv.Itoa(downPort()))
 			}
-			t.Setenv("AIMEBU2_ALLOW", "")
-			t.Setenv("AIMEBU2_TLS_CERT", "")
-			t.Setenv("AIMEBU2_TLS_KEY", "")
+			t.Setenv("AIMEBU_ALLOW", "")
+			t.Setenv("AIMEBU_TLS_CERT", "")
+			t.Setenv("AIMEBU_TLS_KEY", "")
 
 			var stdout, stderr bytes.Buffer
 			args := []string{}
@@ -420,7 +420,7 @@ func TestCheckSwitcher(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
-	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
 	root := filepath.Join(home, ".aimebu2", "switcher")
 	byName := func() map[string]doctorCheck {
 		t.Helper()
@@ -504,7 +504,7 @@ func TestProxyThrottleWarningAtStartupAndInDoctor(t *testing.T) {
 	trusted := []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
 	var output bytes.Buffer
 	logProxyStartup(&output, "https://aimebu.example.com", nil)
-	if !strings.Contains(output.String(), "WARNING") || !strings.Contains(output.String(), "AIMEBU2_TRUSTED_PROXIES") ||
+	if !strings.Contains(output.String(), "WARNING") || !strings.Contains(output.String(), "AIMEBU_TRUSTED_PROXIES") ||
 		!strings.Contains(output.String(), "one throttle identity") {
 		t.Fatalf("startup warning=%q", output.String())
 	}
@@ -519,19 +519,19 @@ func TestProxyThrottleWarningAtStartupAndInDoctor(t *testing.T) {
 		}
 	}
 
-	t.Setenv("AIMEBU2_PUBLIC_URL", "")
+	t.Setenv("AIMEBU_PUBLIC_URL", "")
 	if _, shown := checkProxyThrottle(serverConfig{}); shown {
 		t.Fatal("proxy check shown without a public URL")
 	}
-	t.Setenv("AIMEBU2_PUBLIC_URL", "https://aimebu.example.com")
+	t.Setenv("AIMEBU_PUBLIC_URL", "https://aimebu.example.com")
 	if check, shown := checkProxyThrottle(serverConfig{}); !shown || check.Status != statusWarn ||
-		!strings.Contains(check.Description, "AIMEBU2_TRUSTED_PROXIES") {
+		!strings.Contains(check.Description, "AIMEBU_TRUSTED_PROXIES") {
 		t.Fatalf("untrusted proxy check=%+v shown=%v", check, shown)
 	}
 	if check, shown := checkProxyThrottle(serverConfig{trusted: trusted}); !shown || check.Status != statusOK {
 		t.Fatalf("trusted proxy check=%+v shown=%v", check, shown)
 	}
-	t.Setenv("AIMEBU2_PUBLIC_URL", "https://aimebu.example.com/app")
+	t.Setenv("AIMEBU_PUBLIC_URL", "https://aimebu.example.com/app")
 	if check, shown := checkProxyThrottle(serverConfig{}); !shown || check.Status != statusFail {
 		t.Fatalf("invalid public URL check=%+v shown=%v", check, shown)
 	}

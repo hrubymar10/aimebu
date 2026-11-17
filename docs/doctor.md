@@ -35,7 +35,7 @@ server) or `machine` (a supervisor host).
   world-writable; fail when missing or unreadable.
 - **older v2 data** — warns when the default root is selected and a previous
   development install has data under `~/.aimebu2`. Set
-  `AIMEBU2_CONFIG_DIR=~/.aimebu2` to keep using it, or move that data into the
+  `AIMEBU_CONFIG_DIR=~/.aimebu2` to keep using it, or move that data into the
   default root. The warning also appears on stderr for ordinary CLI commands.
 - **sqlite database** — opened read-only, then `PRAGMA integrity_check` and
   the stored schema version compared against the newest migration this binary
@@ -78,19 +78,19 @@ server) or `machine` (a supervisor host).
   passed its integrity check; an empty or new install answers ok or warn, never
   fail.
 - **server** — ok when `GET /api/me` answers 401 at the configured
-  `AIMEBU2_BIND`:`AIMEBU2_PORT`; any other HTTP answer warns; a refused
+  `AIMEBU_BIND`:`AIMEBU_PORT`; any other HTTP answer warns; a refused
   connection or timeout fails. The plain-HTTP listener stays up when TLS is
   enabled, so HTTP is always the right probe.
 - **tls** — uses the same resolution as `aimebu server`: both
-  `AIMEBU2_TLS_CERT` and `AIMEBU2_TLS_KEY` must be set, readable, and form a
-  parseable pair, and `AIMEBU2_TLS_PORT` must differ from `AIMEBU2_PORT`.
+  `AIMEBU_TLS_CERT` and `AIMEBU_TLS_KEY` must be set, readable, and form a
+  parseable pair, and `AIMEBU_TLS_PORT` must differ from `AIMEBU_PORT`.
   Not configured is ok; a certificate expiring in less than 14 days warns;
   an expired or broken pair fails.
 - **bind/allow** — reports the effective bind address and allowlist (already
   validated while resolving the config) and warns when the bind is
   non-loopback without TLS.
-- **proxy** — shown only when `AIMEBU2_PUBLIC_URL` is set. A value the
-  server would refuse fails. It warns when `AIMEBU2_TRUSTED_PROXIES` is
+- **proxy** — shown only when `AIMEBU_PUBLIC_URL` is set. A value the
+  server would refuse fails. It warns when `AIMEBU_TRUSTED_PROXIES` is
   empty: every client behind the proxy then shares the proxy's IP as one
   login, invitation and pairing throttle identity, so one client's failures
   can delay everyone's sign-in.
@@ -180,7 +180,7 @@ its lock is only tested, not taken.
   runs in, so a supervisor started by a service manager may have another environment: the
   Settings → Harnesses key status shows what the running supervisor sees. Only whether a variable is
   set is reported, never a value.
-- **paired server** — asks the paired server (`AIMEBU2_URL`, else the URL in
+- **paired server** — asks the paired server (`AIMEBU_URL`, else the URL in
   the credential) whether it knows this machine and has approved it, with the
   machine's own key as the bearer token, exactly as the supervisor does at
   start. Fails when the server is unreachable or rejects the key (revoked, or
@@ -200,7 +200,7 @@ and accepts it as `Authorization: Bearer <key>` only from a same-host connection
 that carries no forwarding header (`X-Forwarded-For`, `Forwarded`, `Via` and
 the like), so a reverse proxy on the same host cannot relay it. Same-host means
 the peer address is loopback, or is the very address the connection was
-accepted on: with `AIMEBU2_BIND` set to a VPN or LAN address the CLI dials that
+accepted on: with `AIMEBU_BIND` set to a VPN or LAN address the CLI dials that
 address and the kernel uses it as the source too, and a remote host cannot fake
 it (the handshake's reply goes to the source address). Anything else gets 403. Doctor reads the file only when it is a regular file, owned by the
 running user, with no group or other permission bits; being able to read the
@@ -242,14 +242,14 @@ environment or launcher arguments.
 
 ## Configuration
 
-`--live` talks to `AIMEBU2_BIND`:`AIMEBU2_PORT` over plain HTTP, never through
+`--live` talks to `AIMEBU_BIND`:`AIMEBU_PORT` over plain HTTP, never through
 a proxy from the environment and without following redirects, and sends the key
 only after the server check got the 401 an aimebu server answers (any other
 answer from that port, such as another program's 200, ends the live checks
 before the key leaves the process).
-Doctor reads the same environment as `aimebu server`: `AIMEBU2_CONFIG_DIR`
+Doctor reads the same environment as `aimebu server`: `AIMEBU_CONFIG_DIR`
 (default `~/.aimebu`; an override must be absolute or begin with `~`),
-`AIMEBU2_BIND`, `AIMEBU2_PORT`, `AIMEBU2_ALLOW`,
-`AIMEBU2_TRUSTED_PROXIES`, `AIMEBU2_PUBLIC_URL`,
-`AIMEBU2_TLS_CERT`/`AIMEBU2_TLS_KEY`, and `AIMEBU2_TLS_PORT`. An invalid
+`AIMEBU_BIND`, `AIMEBU_PORT`, `AIMEBU_ALLOW`,
+`AIMEBU_TRUSTED_PROXIES`, `AIMEBU_PUBLIC_URL`,
+`AIMEBU_TLS_CERT`/`AIMEBU_TLS_KEY`, and `AIMEBU_TLS_PORT`. An invalid
 value is reported on stderr and exits 1.

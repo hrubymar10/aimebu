@@ -105,7 +105,7 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	keyPath := filepath.Join(root, "key")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s' \"${PI_CODING_AGENT_DIR:-}\" > " + envPath + "\nprintf '%s' \"${AIMEBU2_AGENT_KEY:-}\" > " + keyPath + "\ncat " + fixture + "\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s' \"${PI_CODING_AGENT_DIR:-}\" > " + envPath + "\nprintf '%s' \"${AIMEBU_AGENT_KEY:-}\" > " + keyPath + "\ncat " + fixture + "\n"
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 					t.Fatalf("private Pi endpoint=%q err=%v", data, err)
 				}
 				// The key is not in the file, nor in the arguments: the header names the variable Pi expands, and the key is in Pi's environment.
-				if strings.Contains(string(data), config.Key) || !strings.Contains(string(data), "Bearer ${AIMEBU2_AGENT_KEY}") || strings.Contains(string(args), config.Key) {
+				if strings.Contains(string(data), config.Key) || !strings.Contains(string(data), "Bearer ${AIMEBU_AGENT_KEY}") || strings.Contains(string(args), config.Key) {
 					t.Fatalf("the key must not be in the private Pi config or the arguments: %s / %q", data, args)
 				}
 				if key, err := os.ReadFile(keyPath); err != nil || string(key) != config.Key {
@@ -322,9 +322,9 @@ func TestCompactUsesRPC(t *testing.T) {
 }
 
 func TestLiveCanary(t *testing.T) {
-	docker := os.Getenv("AIMEBU2_LIVE_PI_DOCKER") == "1"
-	if !docker && os.Getenv("AIMEBU2_LIVE_PI") != "1" {
-		t.Skip("set AIMEBU2_LIVE_PI=1 or AIMEBU2_LIVE_PI_DOCKER=1 for the two-turn Pi canary")
+	docker := os.Getenv("AIMEBU_LIVE_PI_DOCKER") == "1"
+	if !docker && os.Getenv("AIMEBU_LIVE_PI") != "1" {
+		t.Skip("set AIMEBU_LIVE_PI=1 or AIMEBU_LIVE_PI_DOCKER=1 for the two-turn Pi canary")
 	}
 	checkout := t.TempDir()
 	a := New(filepath.Join(t.TempDir(), "runtime"))

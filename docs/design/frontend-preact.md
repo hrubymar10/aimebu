@@ -1,8 +1,7 @@
 # Frontend: moving `web/` to Preact
 
-Status: plan approved by the owner on 2026-10-21 (AMB-70). Since 2026-10-27 pages replace their legacy module directly (section 5):
-Settings → Harnesses, including its onboarding step, is the first one moved. Each later step is its own change, with its own approval. Authors: the AMB-70 task room (three independent plans,
-consolidated). Related: AMB-69 (contributor onboarding), which builds on the `web/` layout described here and in
+Status: plan approved by the owner on 2026-10-21. Since 2026-10-27 pages replace their legacy module directly (section 5):
+Settings → Harnesses, including its onboarding step, is the first one moved. Each later step is its own change, with its own approval. Authors: three independent plans, consolidated. Contributor onboarding builds on the `web/` layout described here and in
 [../../CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## 1. Why
@@ -294,7 +293,7 @@ Preact pages are not clearly simpler, stop there and keep the islands that exist
 Each step is its own ticket and change, with the gates in section 6. Since 2026-10-27 a step replaces its legacy modules in the
 same change (section 5); the experiment, default-flip and removal steps described below were not used.
 
-### Step 1: runtime and Settings → Harnesses (AMB-70, done)
+### Step 1: runtime and Settings → Harnesses (done)
 
 - Scope: vendor Preact and htm; the import map; `ui.js`; the first shared components (`IconButton`, `SettingsRow`,
   `SettingsGroup`) and `useAlive`; asset versioning for `../` imports and the import map; Settings → Harnesses rebuilt in

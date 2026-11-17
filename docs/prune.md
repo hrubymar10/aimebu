@@ -1,6 +1,6 @@
 # Pruning v2 state
 
-`aimebu prune` uses `AIMEBU2_CONFIG_DIR` (default `~/.aimebu`). It asks for
+`aimebu prune` uses `AIMEBU_CONFIG_DIR` (default `~/.aimebu`). It asks for
 confirmation; `-y` skips the prompt. Stop the server and any standalone
 supervisor first. Prune creates and takes their file locks even if their data
 directories did not exist, and refuses to run while either is active. Plain
@@ -50,6 +50,6 @@ conversations, unlike the server's own log.
 Both modes preserve `server/backups/`, `switcher/` (stored logins and backups), `usages/`
 (provider secrets, settings, and cache), and unknown files directly under the
 config root. They never walk project checkout paths, so harness session files
-outside `AIMEBU2_CONFIG_DIR` are untouched. Symlinked config roots, ancestors,
+outside `AIMEBU_CONFIG_DIR` are untouched. Symlinked config roots, ancestors,
 or `server/` and `supervisor/` directories are refused; symlinks within those
 directories are removed as links in the all-data mode.

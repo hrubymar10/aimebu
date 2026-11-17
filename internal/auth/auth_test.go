@@ -506,7 +506,7 @@ func TestWebSocketOriginBehindReverseProxy(t *testing.T) {
 		return r
 	}
 	if service.CheckWSOrigin(request("https://aimebu.example.com")) {
-		t.Fatal("public origin accepted without AIMEBU2_PUBLIC_URL")
+		t.Fatal("public origin accepted without AIMEBU_PUBLIC_URL")
 	}
 	if service.SecureRequest(request("https://aimebu.example.com")) {
 		t.Fatal("plain HTTP treated as secure without a public HTTPS URL")

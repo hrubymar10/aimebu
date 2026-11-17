@@ -60,7 +60,7 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 			if pid == "" {
 				pid = "unknown"
 			}
-			return nil, fmt.Errorf("%w by pid %s; is the server's embedded supervisor running? set AIMEBU2_EMBEDDED_SUPERVISOR=0 on the server", ErrJournalInUse, pid)
+			return nil, fmt.Errorf("%w by pid %s; is the server's embedded supervisor running? set AIMEBU_EMBEDDED_SUPERVISOR=0 on the server", ErrJournalInUse, pid)
 		}
 		return nil, err
 	}

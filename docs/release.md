@@ -7,12 +7,12 @@ marked **open**. Nothing here adds a dependency or changes code.
 
 Where the version lives today:
 
-- `cmd/aimebu/main.go`: `var version = "aimebu v2 (development)"`, a plain
+- `cmd/aimebu/main.go`: `var version = "aimebu v2"`, a plain
   string overridden at build time with `-ldflags "-X main.version=..."`.
 - `aimebu version` prints `resolveVersion()`. With an override it prints the
   string unchanged. Without one it appends the short VCS revision, commit time
   and `dirty` from `runtime/debug` build info (a `go build` inside a checkout
-  prints `aimebu v2 (development) 7fce1dbcb00c 2026-10-20T15:34:02Z`).
+  prints `aimebu v2 7fce1dbcb00c 2026-10-20T15:34:02Z`).
 - Little else reads it. The page header shows the build's version string
   (`GET /api/buildinfo`, for a signed-in account). The embedded web assets are
   cache-busted by a content hash (`internal/server/static_assets.go`) and the
@@ -124,11 +124,10 @@ quarantine problem does not arise for a locally built binary.
   `exec`s it (`/aimebu-*` is in `.gitignore`).
 - `AIMEBU_FORCE_BUILD=1` rebuilds into a per-run temp binary that is removed on
   exit, and forwards INT/TERM; any other value leaves the cache alone. The
-  name does not clash with the dev `AIMEBU2_*` variables and fits the final
-  `AIMEBU_*` names (decision B1), so it can stay.
+  name does not clash with the other `AIMEBU_*` variables, so it can stay.
 - It passes `-X 'main.version=aimebu $(git describe --tags --always --dirty)'`
   when git metadata exists, since v2's `version` is a full string
-  (`aimebu v2 (development)`) that `resolveVersion` compares with its default;
+  (`aimebu v2`) that `resolveVersion` compares with its default;
   without git metadata it keeps the default so the VCS suffix still appears.
 - It needs a Go toolchain at least as new as `go.mod` (`go 1.26.1`); with the
   default `GOTOOLCHAIN=auto` an older Go downloads the right one. The README
@@ -136,11 +135,11 @@ quarantine problem does not arise for a locally built binary.
 - It resolves symlinks to its own location, so `bin/aimebu` can be symlinked
   onto PATH or its `bin/` directory added to PATH.
 - It updates its own clone: an interactive run offers to fast-forward the
-  remote's default branch and rebuild (once per `AIMEBU2_UPDATE_INTERVAL_HOURS`,
+  remote's default branch and rebuild (once per `AIMEBU_UPDATE_INTERVAL_HOURS`,
   skipped for machine-readable and non-terminal runs), and `aimebu update
   [--check]` does it on demand. It never touches a dirty checkout or a
   non-default branch, builds beside the cache and swaps it in only on success,
-  and `AIMEBU2_UPDATE_CHECK=0` disables it. Its git calls never prompt. README Install has the full list;
+  and `AIMEBU_UPDATE_CHECK=0` disables it. Its git calls never prompt. README Install has the full list;
   the update tests in `cmd/aimebu/binwrapper_test.go` use a local bare remote.
 
 README Install section: Manual (clone, add `bin/` to PATH, `aimebu
@@ -150,7 +149,7 @@ version`) first, with the Go toolchain requirement.
 
 A service manager wants the process in the foreground and does its own restarts, so it runs `aimebu server`, not `server start`
 (which detaches). The server writes `server/aimebu.log` itself, so the manager's output can go to its own journal as well. Both
-definitions below are examples, not verified here: set the path to the binary and the environment (`AIMEBU2_CONFIG_DIR`, the
+definitions below are examples, not verified here: set the path to the binary and the environment (`AIMEBU_CONFIG_DIR`, the
 owner variables for a first start, bind and allowlist) to the installation's own, and move a root that still holds v1's files
 with a foreground `aimebu server` first.
 
@@ -162,7 +161,7 @@ launchd (`~/Library/LaunchAgents/dev.aimebu.server.plist`, loaded with `launchct
 <plist version="1.0"><dict>
   <key>Label</key><string>dev.aimebu.server</string>
   <key>ProgramArguments</key><array><string>/usr/local/bin/aimebu</string><string>server</string></array>
-  <key>EnvironmentVariables</key><dict><key>AIMEBU2_CONFIG_DIR</key><string>/Users/me/.aimebu</string></dict>
+  <key>EnvironmentVariables</key><dict><key>AIMEBU_CONFIG_DIR</key><string>/Users/me/.aimebu</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ExitTimeOut</key><integer>60</integer>
@@ -177,7 +176,7 @@ Description=aimebu v2 server
 
 [Service]
 ExecStart=/usr/local/bin/aimebu server
-Environment=AIMEBU2_CONFIG_DIR=%h/.aimebu
+Environment=AIMEBU_CONFIG_DIR=%h/.aimebu
 Restart=on-failure
 TimeoutStopSec=60
 
@@ -200,7 +199,7 @@ Secondary options, none required for 2.0.0 and none verified here:
   path without `/v2` is not a valid module version. `@latest` therefore likely
   resolves to the old `v0.0.0` commit, not v2. Check it before keeping the line
   in the README, or document `@master` instead. Binaries from `go install` print
-  the VCS-stamped development version, not `v2.0.0`.
+  the VCS-stamped default version, not `v2.0.0`.
 - **Prebuilt binaries on GitHub Releases** (section 2): at most an option. They
   would need the `xattr -d com.apple.quarantine ./aimebu` workaround on macOS
   because binaries stay unsigned and signing/notarization is not a goal. If
@@ -235,8 +234,8 @@ class Aimebu < Formula
   service do
     run [opt_bin/"aimebu", "server"]
     keep_alive true
-    environment_variables AIMEBU2_BIND: "127.0.0.1",
-                          AIMEBU2_PORT: "9997"
+    environment_variables AIMEBU_BIND: "127.0.0.1",
+                          AIMEBU_PORT: "9997"
   end
 
   test do
@@ -245,11 +244,10 @@ class Aimebu < Formula
 end
 ```
 
-The `AIMEBU2_*` names and port 9997 match the current build. It
+The `AIMEBU_*` names and port 9997 match the current build. It
 uses the default `~/.aimebu` data root and browser owner setup; no owner
-password belongs in a formula. Before publishing the tap, apply B1's final
-environment-variable names to this draft. Keep the
-service command as `aimebu server` after that rename. A service that must
+password belongs in a formula. Keep the service command as `aimebu server`.
+A service that must
 reach harness CLIs outside Homebrew's service `PATH` needs that path configured
 on the host.
 
@@ -290,8 +288,7 @@ Points the release notes must state plainly:
    so a v1 install with **Auto-refresh tokens** on needs the idle-journal check
    from section 0 before cutover.
 4. Port and folder defaults: v2 now uses `~/.aimebu` and port 9997, so it
-   takes over v1's folder and port in place. The `AIMEBU2_*` environment names
-   still await the release rename (blocker B1 below).
+   takes over v1's folder and port in place. The environment names use the `AIMEBU_*` prefix.
 
 ## 5. Release notes
 
@@ -330,18 +327,15 @@ Release blockers that can be checked in the tree:
 Blockers that are decided but not done (all in the plan only; no code changed
 by this document):
 
-- **B1 Rename environment variables before stable.** Folder and port defaults
-  now use `~/.aimebu` and 9997. The remaining release rename changes the
-  `AIMEBU2_*` environment variables to `AIMEBU_*` and updates the examples.
-  A development instance using `~/.aimebu2` remains separate through an
-  explicit `AIMEBU2_CONFIG_DIR`; moving its data to the default root needs a
-  deliberate one-time migration. The CLI and doctor now warn when old v2 data
-  is found there while the new default root is selected. This ticket blocks
-  2.0.0.
+- **B1 Environment variable rename: done.** Runtime settings use `AIMEBU_*` names,
+  with no compatibility aliases for `AIMEBU2_*`. The latter produce one names-only
+  startup warning. `make dev` uses an isolated root and ports unless overridden.
+  An older development instance at `~/.aimebu2` remains separate through an
+  explicit `AIMEBU_CONFIG_DIR`; moving its data is a deliberate migration.
 - **B2 Public repo cutover** (section 3): tag the last v1 commit, squash or
   rebase `v2` into `hrubymar10/aimebu`, and check the published history.
-- **B3 The README says "development"** in several places and the version string
-  is `aimebu v2 (development)`; both must read as a release at tag time.
+- **B3 Release wording: done.** The README, CLI version and web header no longer
+  label this build as a development preview. Untagged builds retain VCS stamping.
 - **B4 `bin/aimebu` and the README Install section** (section 3): done; the
   wrapper, the README Install section and the wrapper smoke tests exist.
 
@@ -351,7 +345,7 @@ optional prebuilt binaries.
 
 Not blockers (can ship after 2.0.0):
 
-- README wording that still says "development" is covered by B3; other docs
+- README release wording is covered by B3; other docs
   polish can follow the tag.
 - Larger features and rewrites, and automatic worktree cleanup.
 
@@ -362,8 +356,8 @@ Not blockers (can ship after 2.0.0):
 2. On `v2`, clean tree: `make test-full` green (`fmt-check`, `vet`, `test-race`,
    `test-web`); `make test-ui` green.
 3. The cutover runbook rehearsed on a copy of real v1 data.
-4. Docs read as release docs: no "development build", "until cutover" or
-   `AIMEBU2_*` wording left, and `docs/migrating-from-v1.md` matches the final
+4. Docs read as release docs: no stale "development build" or "until cutover"
+   wording, and `docs/migrating-from-v1.md` matches the final
    defaults. The README Install section is the clone + `bin/aimebu` path.
 5. From a fresh clone on macOS and on Linux: `bin/aimebu version` builds and
    prints `aimebu v2.0.0` at the tag, a second run reuses the cache,

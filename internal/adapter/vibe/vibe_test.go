@@ -64,7 +64,7 @@ func script(t *testing.T, root, body string) (path, record string) {
 	record = filepath.Join(root, "record")
 	source := "#!/bin/sh\n" +
 		"{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
-		" for v in VIBE_HOME VIBE_ACTIVE_MODEL VIBE_SESSION_LOGGING__SAVE_DIR VIBE_MCP_SERVERS AIMEBU2_AGENT_KEY MISTRAL_API_KEY ACME_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME CLAUDE_CONFIG_DIR PYTHONUNBUFFERED; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
+		" for v in VIBE_HOME VIBE_ACTIVE_MODEL VIBE_SESSION_LOGGING__SAVE_DIR VIBE_MCP_SERVERS AIMEBU_AGENT_KEY MISTRAL_API_KEY ACME_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME CLAUDE_CONFIG_DIR PYTHONUNBUFFERED; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"prompt=$(cat)\nprintf 'PROMPT:%s\\n' \"$prompt\" >> " + record + "\n" + body
 	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
@@ -172,7 +172,7 @@ func TestArgsEnvironmentAndIsolation(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "ghp_must_not_leak")
 	t.Setenv("CODEX_HOME", "/must/not/leak")
 	t.Setenv("CLAUDE_CONFIG_DIR", "/must/not/leak")
-	t.Setenv("AIMEBU2_AGENT_KEY", "aak_must_not_leak")
+	t.Setenv("AIMEBU_AGENT_KEY", "aak_must_not_leak")
 	a, userHome := adapterFor(t, root, path)
 	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte("[[providers]]\nname = \"acme\"\napi_key_env_var = \"ACME_API_KEY\"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func TestArgsEnvironmentAndIsolation(t *testing.T) {
 				}
 			}
 			if !tc.mcp {
-				if line != "<unset>" || strings.Contains(child, "AIMEBU2_AGENT_KEY=aak_") {
+				if line != "<unset>" || strings.Contains(child, "AIMEBU_AGENT_KEY=aak_") {
 					t.Fatalf("a read-only turn carries no toolbox:\n%s", child)
 				}
 				return
@@ -255,10 +255,10 @@ func TestArgsEnvironmentAndIsolation(t *testing.T) {
 				t.Fatalf("VIBE_MCP_SERVERS %q: %v", line, err)
 			}
 			server := servers[0]
-			if server["name"] != "aimebu" || server["transport"] != "streamable-http" || !strings.HasPrefix(fmt.Sprint(server["url"]), "http://127.0.0.1:9897") || server["api_key_env"] != "AIMEBU2_AGENT_KEY" {
+			if server["name"] != "aimebu" || server["transport"] != "streamable-http" || !strings.HasPrefix(fmt.Sprint(server["url"]), "http://127.0.0.1:9897") || server["api_key_env"] != "AIMEBU_AGENT_KEY" {
 				t.Fatalf("toolbox config: %+v", server)
 			}
-			if strings.Contains(line, "aak_") || !strings.Contains(child, "AIMEBU2_AGENT_KEY=aak_test\n") {
+			if strings.Contains(line, "aak_") || !strings.Contains(child, "AIMEBU_AGENT_KEY=aak_test\n") {
 				t.Fatalf("the bearer is in its own variable, bare, and not in the config: %s", child)
 			}
 		})
@@ -715,7 +715,7 @@ func TestOwnerEnvironmentReferencesCannotOverrideTheIsolation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			turnSpec := spec(t, t.TempDir())
 			turnSpec.Mode = mode
-			turnSpec.LauncherEnvRefs = map[string]string{"VIBE_HOME": "OWNER_HOME", "VIBE_MCP_SERVERS": "OWNER_SERVERS", "AIMEBU2_AGENT_KEY": "OWNER_KEY",
+			turnSpec.LauncherEnvRefs = map[string]string{"VIBE_HOME": "OWNER_HOME", "VIBE_MCP_SERVERS": "OWNER_SERVERS", "AIMEBU_AGENT_KEY": "OWNER_KEY",
 				"VIBE_ACTIVE_MODEL": "OWNER_HOME", "VIBE_SESSION_LOGGING__SAVE_DIR": "OWNER_HOME", "ACME_API_KEY": "OWNER_OTHER"}
 			turn, err := a.Start(context.Background(), turnSpec)
 			if err != nil {

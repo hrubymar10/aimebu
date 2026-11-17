@@ -22,11 +22,11 @@ import (
 // install is reached) a cold load cost about five seconds at 100 ms of latency, nearly all of it round trips. The server bundles the embedded
 // sources itself, when it starts, with esbuild used as a library: there is no build step, no generated file to commit or embed, no node, and
 // `make dev` (which rebuilds the binary when a web file changes) gets a new bundle with it. The result is kept in memory and served minified with
-// an external source map; the modules stay served as they were, which is what AIMEBU2_WEB_BUNDLE=off serves the page from (for debugging, and for
+// an external source map; the modules stay served as they were, which is what AIMEBU_WEB_BUNDLE=off serves the page from (for debugging, and for
 // the tests that reach into the app's own module instances).
 
 // webBundleEnv turns the bundle off: "off", "0", "false" or "no" serve the page from its modules.
-const webBundleEnv = "AIMEBU2_WEB_BUNDLE"
+const webBundleEnv = "AIMEBU_WEB_BUNDLE"
 
 // webBundleEnabled says whether the page is served from the bundle (it is, unless the environment says otherwise).
 func webBundleEnabled() bool {

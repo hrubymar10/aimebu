@@ -28,7 +28,7 @@ const v1BackupName = ".old-v1-bkp"
 
 // Development builds can point at a v1 root while still listening on their
 // separate v2 port. Check the v1 listener too before moving its database.
-// AIMEBU2_DEV_SKIP_V1_PROBE=1 skips only this listener probe, so a dev instance
+// AIMEBU_DEV_SKIP_V1_PROBE=1 skips only this listener probe, so a dev instance
 // can rehearse the cutover on a copy of v1 data while the real v1 keeps
 // serving; checkV1Daemon and the backup's SQLite write lock still apply.
 func checkV1CutoverPort(root string, boundPort, legacyPort int, stderr io.Writer) error {
@@ -50,8 +50,8 @@ func checkV1CutoverPort(root string, boundPort, legacyPort int, stderr io.Writer
 	if partialErr != nil && !os.IsNotExist(partialErr) {
 		return partialErr
 	}
-	if os.Getenv("AIMEBU2_DEV_SKIP_V1_PROBE") == "1" {
-		fmt.Fprintf(stderr, "warning: v1 listener probe on port %d skipped by the AIMEBU2_DEV_SKIP_V1_PROBE=1 dev escape hatch; never use it in production\n", legacyPort)
+	if os.Getenv("AIMEBU_DEV_SKIP_V1_PROBE") == "1" {
+		fmt.Fprintf(stderr, "warning: v1 listener probe on port %d skipped by the AIMEBU_DEV_SKIP_V1_PROBE=1 dev escape hatch; never use it in production\n", legacyPort)
 		return nil
 	}
 	hosts := map[string]bool{"127.0.0.1": true, "::1": true}
@@ -196,10 +196,10 @@ func preflightV1Cutover(root string, getenv func(string) string) error {
 		untouched = "the interrupted move was not continued; v1's files are in " + v1BackupName + ".partial"
 	}
 	// Neither owner variable means first-run setup in the web UI; exactly one is a mistake that would fail after the move.
-	if (strings.TrimSpace(getenv("AIMEBU2_OWNER_LOGIN")) == "") != (getenv("AIMEBU2_OWNER_PASSWORD") == "") {
-		return fmt.Errorf("set both AIMEBU2_OWNER_LOGIN and AIMEBU2_OWNER_PASSWORD, or neither to create the owner in the browser (%s)", untouched)
+	if (strings.TrimSpace(getenv("AIMEBU_OWNER_LOGIN")) == "") != (getenv("AIMEBU_OWNER_PASSWORD") == "") {
+		return fmt.Errorf("set both AIMEBU_OWNER_LOGIN and AIMEBU_OWNER_PASSWORD, or neither to create the owner in the browser (%s)", untouched)
 	}
-	if getenv("AIMEBU2_EMBEDDED_SUPERVISOR") != "0" {
+	if getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0" {
 		if _, err := supervisor.TurnLimitsFromEnv(getenv); err != nil {
 			return fmt.Errorf("%w (%s)", err, untouched)
 		}

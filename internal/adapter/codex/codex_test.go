@@ -37,7 +37,7 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 	path := filepath.Join(root, "codex-docker")
 	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CODEX_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\"}'\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CODEX_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\"}'\n"
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"mcp_servers.aimebu_docker=", "host.docker.internal:9897/api/agent/mcp", `bearer_token_env_var="AIMEBU2_AGENT_KEY"`, "-C\n/workspace/project\n", "exec\n--ignore-user-config\n", "--output-schema\n/workspace/project/.aimebu/codex-schemas/"} {
+	for _, want := range []string{"mcp_servers.aimebu_docker=", "host.docker.internal:9897/api/agent/mcp", `bearer_token_env_var="AIMEBU_AGENT_KEY"`, "-C\n/workspace/project\n", "exec\n--ignore-user-config\n", "--output-schema\n/workspace/project/.aimebu/codex-schemas/"} {
 		if !strings.Contains(string(args), want) {
 			t.Fatalf("missing %q in %q", want, args)
 		}
@@ -65,7 +65,7 @@ func TestDockerLauncherReceivesInlineMCPAndMirroredSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(env) != "aak_secret\nAIMEBU2_AGENT_KEY\n" {
+	if string(env) != "aak_secret\nAIMEBU_AGENT_KEY\n" {
 		t.Fatalf("the key must reach the harness through the forwarded variable, got %q", env)
 	}
 	if strings.Contains(string(args), "aak_secret") {
@@ -142,7 +142,7 @@ exit 1
 }
 
 func TestConformance(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture")
 	}
@@ -187,7 +187,7 @@ esac
 }
 
 func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	root := t.TempDir()
 	a := New(filepath.Join(root, "runtime"))
 	a.AuthPath = filepath.Join(root, "auth.json")
@@ -196,12 +196,12 @@ func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
 	}
 	capture := filepath.Join(root, "args")
 	script := filepath.Join(root, "codex")
-	body := "#!/bin/sh\nprintf '%s' \"$*\" > " + capture + "\nprintf '%s' \"$AIMEBU2_AGENT_KEY\" > " + capture + ".key\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"turn.started\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}" + "\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}'\n"
+	body := "#!/bin/sh\nprintf '%s' \"$*\" > " + capture + "\nprintf '%s' \"$AIMEBU_AGENT_KEY\" > " + capture + ".key\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"turn.started\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}" + "\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}'\n"
 	if err := testenv.WriteExecutable(script, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	a.Command = script
-	toolConfig := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu", Env: map[string]string{"AIMEBU2_INSECURE_SKIP_VERIFY": "1"}}
+	toolConfig := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu", Env: map[string]string{"AIMEBU_INSECURE_SKIP_VERIFY": "1"}}
 	spec := adapter.TurnSpec{TurnID: "resume", Agent: adapter.AgentSpec{ID: "agt_test", Model: "gpt-6-luna"}, Mode: adapter.ModeNormal, CheckoutPath: root, NativeSessionStarted: true, NativeSessionHandle: "thread-1", AgentTools: toolConfig, NotesJSON: json.RawMessage(`[]`)}
 	turn, err := a.Start(context.Background(), spec)
 	if err != nil {
@@ -229,13 +229,13 @@ func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(stored), "aak_secret") || !strings.Contains(string(stored), `env_vars = ["AIMEBU2_AGENT_KEY"]`) {
+	if strings.Contains(string(stored), "aak_secret") || !strings.Contains(string(stored), `env_vars = ["AIMEBU_AGENT_KEY"]`) {
 		t.Fatalf("the private MCP config must name the key variable and never hold the key:\n%s", stored)
 	}
 	if key, err := os.ReadFile(capture + ".key"); err != nil || string(key) != "aak_secret" {
 		t.Fatalf("the key reaches Codex only in its environment: %q err=%v", key, err)
 	}
-	if !strings.Contains(string(stored), "AIMEBU2_INSECURE_SKIP_VERIFY = \"1\"") {
+	if !strings.Contains(string(stored), "AIMEBU_INSECURE_SKIP_VERIFY = \"1\"") {
 		t.Fatal("private MCP config did not propagate TLS verification opt-in")
 	}
 	info, err := os.Stat(filepath.Join(runtimeDir, "config.toml"))
@@ -258,7 +258,7 @@ func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
 }
 
 func TestRejectsChangingThreadID(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	root := t.TempDir()
 	script := filepath.Join(root, "codex")
 	body := `#!/bin/sh
@@ -294,11 +294,11 @@ func findConfig(t *testing.T, root string) string {
 }
 
 func TestChildEnvExcludesBusSecrets(t *testing.T) {
-	t.Setenv("AIMEBU2_AGENT_KEY", "secret")
+	t.Setenv("AIMEBU_AGENT_KEY", "secret")
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	items := childEnv("/tmp/private-codex")
 	joined := strings.Join(items, "\n")
-	if strings.Contains(joined, "AIMEBU2_") || !strings.Contains(joined, "CODEX_HOME=/tmp/private-codex") || !strings.Contains(joined, "OPENAI_API_KEY=test-key") {
+	if strings.Contains(joined, "AIMEBU_") || !strings.Contains(joined, "CODEX_HOME=/tmp/private-codex") || !strings.Contains(joined, "OPENAI_API_KEY=test-key") {
 		t.Fatalf("child env selection=%q", joined)
 	}
 }
@@ -323,9 +323,9 @@ func TestCatalogDetectsCLIVersion(t *testing.T) {
 }
 
 func TestLiveCanary(t *testing.T) {
-	docker := os.Getenv("AIMEBU2_LIVE_CODEX_DOCKER") == "1"
-	if !docker && os.Getenv("AIMEBU2_LIVE_CODEX") != "1" {
-		t.Skip("set AIMEBU2_LIVE_CODEX=1 or AIMEBU2_LIVE_CODEX_DOCKER=1 for the two-turn Codex canary")
+	docker := os.Getenv("AIMEBU_LIVE_CODEX_DOCKER") == "1"
+	if !docker && os.Getenv("AIMEBU_LIVE_CODEX") != "1" {
+		t.Skip("set AIMEBU_LIVE_CODEX=1 or AIMEBU_LIVE_CODEX_DOCKER=1 for the two-turn Codex canary")
 	}
 	checkout := t.TempDir()
 	if docker {
@@ -354,7 +354,7 @@ func TestLiveCanary(t *testing.T) {
 		variant = "docker"
 		config = &adapter.AgentToolsAccess{AgentID: "agt_live_codex", ServerURL: "http://127.0.0.1:9897", Key: "aak_canary", Command: "/usr/bin/aimebu"}
 	} else {
-		t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+		t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 		a.AllowNative = true
 	}
 	var stderr bytes.Buffer

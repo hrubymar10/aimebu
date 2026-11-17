@@ -5,7 +5,7 @@ Copilot, Mistral, and Ollama Cloud. The owner can enable providers, change
 their order, set the refresh interval (default 120 seconds, minimum 15),
 choose percent left or used, and refresh snapshots on demand. The cards are visible to the
 owner and, redacted, to global admins; account details are visible only to the owner. Disabled providers keep their credentials until the
-owner explicitly clears them. `AIMEBU2_USAGES=0` disables local credential
+owner explicitly clears them. `AIMEBU_USAGES=0` disables local credential
 reads and usage requests, and `/api/usages` returns 503.
 
 ## Remaining-quota alerts
@@ -288,7 +288,7 @@ polling is not affected.
 cached (provider, profile, status, plan, windows with pace, credits); with
 `--json` it prints the same shape as `GET /api/usages`. It reads
 `usages/cache.json`, the saved `usages/config.json` (enablement, order) and the
-switcher profiles straight from `AIMEBU2_CONFIG_DIR`, the way `aimebu sessions`
+switcher profiles straight from `AIMEBU_CONFIG_DIR`, the way `aimebu sessions`
 reads SQLite, rather than calling the API (which needs a login session and CSRF
 token). It makes no network requests and writes nothing: the switcher is
 opened read-only, so even the account-email note that the server records beside

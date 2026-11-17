@@ -84,7 +84,7 @@ func startupEnv(t *testing.T, left time.Duration) (f *fixture, m *switcher.Manag
 	t.Setenv("HOME", root)
 	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
-	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(root, ".aimebu2"))
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(root, ".aimebu2"))
 	f = newFixture(t)
 	m, err := switcher.New(filepath.Join(root, ".aimebu2", "switcher"))
 	if err != nil {

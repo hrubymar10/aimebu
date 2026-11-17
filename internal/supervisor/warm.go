@@ -54,25 +54,25 @@ const (
 )
 
 // DefaultWarmIdle is how long an agent's process is kept up after a turn when nobody has said otherwise: the owner's saved setting wins, then
-// AIMEBU2_WARM_IDLE, then this.
+// AIMEBU_WARM_IDLE, then this.
 const DefaultWarmIdle = 5 * time.Minute
 
-// WarmConfigFromEnv reads the settings: AIMEBU2_WARM_IDLE (a duration such as 10m; 0 is off; unset or unreadable is DefaultWarmIdle),
-// AIMEBU2_WARM_MAX_LIFETIME (default 1h), AIMEBU2_WARM_MIN_FREE_MB (default 1536) and AIMEBU2_WARM_MIN_FREE_PERCENT (default 10).
+// WarmConfigFromEnv reads the settings: AIMEBU_WARM_IDLE (a duration such as 10m; 0 is off; unset or unreadable is DefaultWarmIdle),
+// AIMEBU_WARM_MAX_LIFETIME (default 1h), AIMEBU_WARM_MIN_FREE_MB (default 1536) and AIMEBU_WARM_MIN_FREE_PERCENT (default 10).
 func WarmConfigFromEnv() WarmConfig {
 	config := WarmConfig{Idle: DefaultWarmIdle, MinFreeBytes: 1536 << 20, MinFreePercent: 10}
-	if value := strings.TrimSpace(os.Getenv("AIMEBU2_WARM_IDLE")); value != "" {
+	if value := strings.TrimSpace(os.Getenv("AIMEBU_WARM_IDLE")); value != "" {
 		if d, err := time.ParseDuration(value); err == nil && d >= 0 {
 			config.Idle = d
 		}
 	}
-	if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv("AIMEBU2_WARM_MAX_LIFETIME"))); err == nil && d > 0 {
+	if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv("AIMEBU_WARM_MAX_LIFETIME"))); err == nil && d > 0 {
 		config.MaxLifetime = d
 	}
-	if n, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("AIMEBU2_WARM_MIN_FREE_MB")), 10, 64); err == nil && n >= 0 {
+	if n, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("AIMEBU_WARM_MIN_FREE_MB")), 10, 64); err == nil && n >= 0 {
 		config.MinFreeBytes = n << 20
 	}
-	if f, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("AIMEBU2_WARM_MIN_FREE_PERCENT")), 64); err == nil && f >= 0 {
+	if f, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("AIMEBU_WARM_MIN_FREE_PERCENT")), 64); err == nil && f >= 0 {
 		config.MinFreePercent = f
 	}
 	return config
@@ -1283,7 +1283,7 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 	}
 }
 
-// applyWarmIdle takes the instance's warm window from a delivery (nil: the owner has not saved one, and the supervisor's own stays: AIMEBU2_WARM_IDLE,
+// applyWarmIdle takes the instance's warm window from a delivery (nil: the owner has not saved one, and the supervisor's own stays: AIMEBU_WARM_IDLE,
 // else DefaultWarmIdle). Turning it
 // off ends every idle process at once.
 func (c *Client) applyWarmIdle(seconds *int) {

@@ -15,7 +15,8 @@ const OWNER = { login: 'owner', password: 'test-password-123' };
 async function scratch({ owner = OWNER, env: extraEnv = {}, prepare } = {}) {
   const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'aimebu-auth-'));
   const home = path.join(tmp, 'home'); fs.mkdirSync(home, { recursive: true });
-  const env = { ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp, TMPDIR: tmp };
+  const env = { ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: tmp, TMPDIR: tmp };
+for (const name of ['AIMEBU_URL', 'AIMEBU_BIND', 'AIMEBU_ALLOW', 'AIMEBU_ALLOWED_HOSTS', 'AIMEBU_TLS_CERT', 'AIMEBU_TLS_KEY', 'AIMEBU_TLS_PORT', 'AIMEBU_OWNER_LOGIN', 'AIMEBU_OWNER_PASSWORD']) delete env[name];
   if (prepare) prepare(tmp); // lays files into the config dir before the server first starts (a v1 backup to import, say)
   let binary = process.env.AUTH_BINARY;
   if (!binary) {
@@ -25,9 +26,9 @@ async function scratch({ owner = OWNER, env: extraEnv = {}, prepare } = {}) {
   }
   // A start whose port was taken between picking it and binding it is tried again on another (see server-start.cjs).
   const { child: server, origin, logs: serverLogs } = await startServer(binary, port => {
-    const serverEnv = { ...env, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_SENTRY_DSN: 'off', ...extraEnv }; // error reports are off in every test server; a test can pass its own DSN, or null to leave it unset
+    const serverEnv = { ...env, AIMEBU_USAGES: '0', AIMEBU_EMBEDDED_SUPERVISOR: '0', AIMEBU_PORT: String(port), AIMEBU_SENTRY_DSN: 'off', ...extraEnv }; // error reports are off in every test server; a test can pass its own DSN, or null to leave it unset
     for (const [name, value] of Object.entries(extraEnv)) if (value === null) delete serverEnv[name];
-    if (owner) { serverEnv.AIMEBU2_OWNER_LOGIN = owner.login; serverEnv.AIMEBU2_OWNER_PASSWORD = owner.password; }
+    if (owner) { serverEnv.AIMEBU_OWNER_LOGIN = owner.login; serverEnv.AIMEBU_OWNER_PASSWORD = owner.password; }
     return serverEnv;
   });
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
@@ -80,9 +81,9 @@ async function scratch({ owner = OWNER, env: extraEnv = {}, prepare } = {}) {
   return { origin, tmp, browser, open, api, signIn, ownerClient, context, stop, errors, logs: serverLogs, OWNER };
 }
 
-// The app is served as one bundle by default (AIMEBU2_WEB_BUNDLE). A test that reaches into the app's own modules (import('/js/chat.js'), the
+// The app is served as one bundle by default (AIMEBU_WEB_BUNDLE). A test that reaches into the app's own modules (import('/js/chat.js'), the
 // dialogs, a page's class) needs them served as modules, because the bundle has no module URLs and a second copy of a module would be a second instance:
 // it starts its server with `env: MODULES`. The ones that only drive the page run on the bundle, which is what people get.
-const MODULES = { AIMEBU2_WEB_BUNDLE: 'off' };
+const MODULES = { AIMEBU_WEB_BUNDLE: 'off' };
 
 module.exports = { scratch, OWNER, freePort, MODULES };

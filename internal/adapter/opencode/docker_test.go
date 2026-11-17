@@ -31,7 +31,7 @@ func dockerLauncher(t *testing.T, root string, probe bool, body string) (path, r
 		source += "case \"$1$2$3\" in *--version*) echo 1.19.0; exit 0;; esac\n"
 	}
 	source += "{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
-		" for v in HARNESS_DOCKER_FORWARD_ENV OPENCODE_LAUNCH_FLAGS XDG_CONFIG_HOME OPENCODE_DB OPENCODE_CONFIG_CONTENT OPENCODE_DISABLE_AUTOUPDATE OPENCODE_DISABLE_PROJECT_CONFIG OPENCODE_DISABLE_CLAUDE_CODE OLLAMA_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME AIMEBU2_AGENT_KEY DOCKER_HOST OWNER_OVERRIDE; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
+		" for v in HARNESS_DOCKER_FORWARD_ENV OPENCODE_LAUNCH_FLAGS XDG_CONFIG_HOME OPENCODE_DB OPENCODE_CONFIG_CONTENT OPENCODE_DISABLE_AUTOUPDATE OPENCODE_DISABLE_PROJECT_CONFIG OPENCODE_DISABLE_CLAUDE_CODE OLLAMA_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME AIMEBU_AGENT_KEY DOCKER_HOST OWNER_OVERRIDE; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"prompt=$(cat)\nprintf 'PROMPT:%s\\n' \"$prompt\" >> " + record + "\n" + body
 	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestDockerTurnForwardsItsConfigurationByNameAndKeepsItOutOfArgv(t *testing.
 	t.Setenv("GITHUB_TOKEN", "ghp_must_not_leak")
 	t.Setenv("CODEX_HOME", "/must/not/leak")
 	t.Setenv("DOCKER_HOST", "unix:///the/docker.sock")
-	t.Setenv("AIMEBU2_AGENT_KEY", "aak_must_not_leak")
+	t.Setenv("AIMEBU_AGENT_KEY", "aak_must_not_leak")
 	checkout := t.TempDir()
 	state := filepath.Join(checkout, ".aimebu", "opencode", agentHash("agt_test"))
 	a := &Adapter{Command: path, Variant: "docker"}

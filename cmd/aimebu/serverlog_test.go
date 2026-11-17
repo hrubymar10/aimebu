@@ -102,12 +102,12 @@ func TestAttachServerLogRunsWithoutALogFileItCannotMake(t *testing.T) {
 }
 
 func TestServerWritesItsLogAndKeepsItAcrossPrune(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
-	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
 	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
@@ -167,10 +167,10 @@ func TestServerLogRotatesOnlyOnceTheServerOwnsIt(t *testing.T) {
 
 // The one-time setup token and link are for the person at the terminal: they are on the terminal and in the token file, never in the log.
 func TestSetupTokenIsNotWrittenToTheLog(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
-	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "")
+	t.Setenv("AIMEBU_USAGES", "0")
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "")
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
 	port := holdPort(t)

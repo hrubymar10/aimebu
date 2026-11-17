@@ -14,7 +14,7 @@ import (
 )
 
 func InsecureSkipVerify() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("AIMEBU2_INSECURE_SKIP_VERIFY"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AIMEBU_INSECURE_SKIP_VERIFY"))) {
 	case "1", "true", "yes", "y", "on":
 		return true
 	}

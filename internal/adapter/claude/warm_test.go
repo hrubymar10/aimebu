@@ -293,7 +293,7 @@ func TestWarmProcessIsStartedForStreamInput(t *testing.T) {
 	argsPath, envPath, ready := filepath.Join(root, "args"), filepath.Join(root, "env"), filepath.Join(root, "ready")
 	path := filepath.Join(root, "claude")
 	// The script says it has written both files by creating a third after them; the test reads them only then (a fixed wait raced a slow start).
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" > " + envPath + "\n: > " + ready + "\ncat >/dev/null\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' \"$AIMEBU_AGENT_KEY\" > " + envPath + "\n: > " + ready + "\ncat >/dev/null\n"
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

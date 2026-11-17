@@ -57,11 +57,11 @@ func holdFreePorts(t *testing.T, n int) []int {
 	return ports
 }
 
-// holdPort holds one port, makes it the server's port (AIMEBU2_PORT) and returns it.
+// holdPort holds one port, makes it the server's port (AIMEBU_PORT) and returns it.
 func holdPort(t *testing.T) int {
 	t.Helper()
 	port := holdFreePorts(t, 1)[0]
-	t.Setenv("AIMEBU2_PORT", strconv.Itoa(port))
+	t.Setenv("AIMEBU_PORT", strconv.Itoa(port))
 	return port
 }
 

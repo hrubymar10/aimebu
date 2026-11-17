@@ -171,7 +171,7 @@ func TestBackupV1LayoutPreservesWALSource(t *testing.T) {
 }
 
 func TestPortCollisionLeavesV1RootUntouched(t *testing.T) {
-	t.Setenv("AIMEBU2_DEV_SKIP_V1_PROBE", "")
+	t.Setenv("AIMEBU_DEV_SKIP_V1_PROBE", "")
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "server"), 0700); err != nil {
 		t.Fatal(err)
@@ -192,9 +192,9 @@ func TestPortCollisionLeavesV1RootUntouched(t *testing.T) {
 	}
 	defer listener.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_PORT", strconv.Itoa(port))
-	t.Setenv("AIMEBU2_BIND", "127.0.0.1")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_PORT", strconv.Itoa(port))
+	t.Setenv("AIMEBU_BIND", "127.0.0.1")
 	var stdout, stderr bytes.Buffer
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 {
 		t.Fatalf("collision code=%d stderr=%s", code, stderr.String())
@@ -228,7 +228,7 @@ func TestPortCollisionLeavesV1RootUntouched(t *testing.T) {
 }
 
 func TestV1CutoverDetectsWildcardListener(t *testing.T) {
-	t.Setenv("AIMEBU2_DEV_SKIP_V1_PROBE", "")
+	t.Setenv("AIMEBU_DEV_SKIP_V1_PROBE", "")
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "server"), 0700); err != nil {
 		t.Fatal(err)
@@ -254,7 +254,7 @@ func TestV1CutoverDetectsWildcardListener(t *testing.T) {
 	}
 }
 
-// AIMEBU2_DEV_SKIP_V1_PROBE=1, and only that exact value, lets a dev instance
+// AIMEBU_DEV_SKIP_V1_PROBE=1, and only that exact value, lets a dev instance
 // rehearse the cutover on a copy of v1 data while a real v1 keeps listening.
 func TestV1CutoverDevSkipProbeEscapeHatch(t *testing.T) {
 	root := makeV1Root(t)
@@ -266,21 +266,21 @@ func TestV1CutoverDevSkipProbeEscapeHatch(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	t.Setenv("AIMEBU_BIND", "")
 	for _, value := range []string{"", "0", "true", " 1"} {
-		t.Setenv("AIMEBU2_DEV_SKIP_V1_PROBE", value)
+		t.Setenv("AIMEBU_DEV_SKIP_V1_PROBE", value)
 		var stderr bytes.Buffer
 		if err := checkV1CutoverPort(root, port+1, port, &stderr); err == nil {
-			t.Fatalf("AIMEBU2_DEV_SKIP_V1_PROBE=%q skipped the v1 listener probe", value)
+			t.Fatalf("AIMEBU_DEV_SKIP_V1_PROBE=%q skipped the v1 listener probe", value)
 		}
 		if stderr.Len() != 0 {
-			t.Fatalf("AIMEBU2_DEV_SKIP_V1_PROBE=%q warned: %s", value, stderr.String())
+			t.Fatalf("AIMEBU_DEV_SKIP_V1_PROBE=%q warned: %s", value, stderr.String())
 		}
 	}
-	t.Setenv("AIMEBU2_DEV_SKIP_V1_PROBE", "1")
+	t.Setenv("AIMEBU_DEV_SKIP_V1_PROBE", "1")
 	var stderr bytes.Buffer
 	if err := checkV1CutoverPort(root, port+1, port, &stderr); err != nil {
 		t.Fatalf("escape hatch did not skip the probe: %v", err)
 	}
-	if got := stderr.String(); strings.Count(got, "\n") != 1 || !strings.Contains(got, "AIMEBU2_DEV_SKIP_V1_PROBE") || !strings.Contains(got, "skipped") {
+	if got := stderr.String(); strings.Count(got, "\n") != 1 || !strings.Contains(got, "AIMEBU_DEV_SKIP_V1_PROBE") || !strings.Contains(got, "skipped") {
 		t.Fatalf("missing single warning line: %q", got)
 	}
 }
@@ -310,7 +310,7 @@ func makeV1Root(t *testing.T) string {
 
 func TestNonServerWritersRefuseLiveV1Root(t *testing.T) {
 	root := makeV1Root(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	var out, errOut bytes.Buffer
 	for _, run := range []struct {
 		name string
@@ -333,7 +333,7 @@ func TestNonServerWritersRefuseLiveV1Root(t *testing.T) {
 		if got := run.call(); got != 1 || !strings.Contains(errOut.String(), "v1 data") {
 			t.Errorf("%s = %d, stderr=%q", run.name, got, errOut.String())
 		}
-		if strings.HasPrefix(run.name, "supervisor") && !strings.Contains(errOut.String(), "AIMEBU2_CONFIG_DIR") {
+		if strings.HasPrefix(run.name, "supervisor") && !strings.Contains(errOut.String(), "AIMEBU_CONFIG_DIR") {
 			t.Errorf("%s did not explain the separate supervisor root: %q", run.name, errOut.String())
 		}
 	}
@@ -355,17 +355,17 @@ func TestNonServerWriterRefusesInterruptedV1Move(t *testing.T) {
 // B1: a first start that is certain to fail (no owner login) must not move v1's files first. It used to move them,
 // then fail, and a v1 restarted on the empty-looking folder wrote its tables into the v2 database.
 func TestFirstStartWithoutOwnerLeavesV1RootUntouched(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
 	root := makeV1Root(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "")
 	var stdout, stderr bytes.Buffer
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "AIMEBU2_OWNER_PASSWORD") || !strings.Contains(stderr.String(), "nothing has been moved") {
+	if !strings.Contains(stderr.String(), "AIMEBU_OWNER_PASSWORD") || !strings.Contains(stderr.String(), "nothing has been moved") {
 		t.Fatalf("the failure does not explain itself: %q", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, v1BackupName)); !os.IsNotExist(err) {
@@ -378,15 +378,15 @@ func TestFirstStartWithoutOwnerLeavesV1RootUntouched(t *testing.T) {
 		t.Fatalf("the moved notice is printed although nothing moved: %q", stderr.String())
 	}
 	// A blank login with a password refuses too, and a bad turn limit does, all before the move.
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	stderr.Reset()
-	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "AIMEBU2_OWNER_LOGIN") {
+	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "AIMEBU_OWNER_LOGIN") {
 		t.Fatalf("missing login: code=%d %q", code, stderr.String())
 	}
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
-	t.Setenv("AIMEBU2_TURN_IDLE", "not-a-duration")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_TURN_IDLE", "not-a-duration")
 	stderr.Reset()
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "nothing has been moved") {
 		t.Fatalf("bad turn limit: code=%d %q", code, stderr.String())
@@ -417,7 +417,7 @@ func TestPreflightIsOnlyForTheMoveItProtects(t *testing.T) {
 		}
 		defer os.Chmod(readOnly, 0700)
 		err := preflightV1Cutover(readOnly, func(name string) string {
-			return map[string]string{"AIMEBU2_OWNER_LOGIN": "o", "AIMEBU2_OWNER_PASSWORD": "p"}[name]
+			return map[string]string{"AIMEBU_OWNER_LOGIN": "o", "AIMEBU_OWNER_PASSWORD": "p"}[name]
 		})
 		if err == nil || !strings.Contains(err.Error(), "not writable") {
 			t.Fatalf("a read-only root passed the preflight: %v", err)
@@ -433,9 +433,9 @@ func TestFailedStartAfterTheMoveNamesTheBackup(t *testing.T) {
 	original := afterV1Move
 	afterV1Move = func(string) error { return failure }
 	defer func() { afterV1Move = original }()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	var stdout, stderr bytes.Buffer
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
@@ -453,15 +453,15 @@ func TestFailedStartAfterTheMoveNamesTheBackup(t *testing.T) {
 // The registry of external credential targets is carried over after the move; a registry that cannot be carried is
 // refused before it.
 func TestPreflightRefusesAnUncarriableCredentialRegistry(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
 	root := makeV1Root(t)
 	if err := os.Mkdir(filepath.Join(root, "server", credentialTargetsFile), 0700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	var stdout, stderr bytes.Buffer
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "nothing has been moved") {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
@@ -558,7 +558,7 @@ func TestV1DaemonOnAnotherPortBlocksTheMove(t *testing.T) {
 
 func TestPreflightRequiresTheRefresherToolchainForTokenOnlyInstalls(t *testing.T) {
 	root := makeV1Root(t)
-	env := map[string]string{"AIMEBU2_OWNER_LOGIN": "owner", "AIMEBU2_OWNER_PASSWORD": "pw"}
+	env := map[string]string{"AIMEBU_OWNER_LOGIN": "owner", "AIMEBU_OWNER_PASSWORD": "pw"}
 	getenv := func(k string) string { return env[k] }
 	if err := preflightV1Cutover(root, getenv); err != nil {
 		t.Fatalf("a link-based install needs no docker: %v", err)
@@ -609,20 +609,20 @@ func makeInterruptedV1Root(t *testing.T) string {
 // Finishing an interrupted move still moves v1's files, so it gets the same preflight and, when the start fails
 // afterwards, the same notice: it used to skip both because only a root with no backup at all counted as moving.
 func TestResumingAnInterruptedMoveRunsThePreflightAndTheNotice(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
 	root := makeInterruptedV1Root(t)
 	if pending, err := v1MovePending(root); err != nil || !pending {
 		t.Fatalf("an interrupted move is still pending: pending=%v err=%v", pending, err)
 	}
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "only-a-password-123")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "only-a-password-123")
 	var stdout, stderr bytes.Buffer
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "AIMEBU2_OWNER_LOGIN") || !strings.Contains(stderr.String(), "was not continued") || strings.Contains(stderr.String(), "nothing has been moved") {
+	if !strings.Contains(stderr.String(), "AIMEBU_OWNER_LOGIN") || !strings.Contains(stderr.String(), "was not continued") || strings.Contains(stderr.String(), "nothing has been moved") {
 		t.Fatalf("the resumed start skipped the preflight or described it wrongly: %q", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "agents")); err != nil {
@@ -633,8 +633,8 @@ func TestResumingAnInterruptedMoveRunsThePreflightAndTheNotice(t *testing.T) {
 	original := afterV1Move
 	afterV1Move = func(string) error { return failure }
 	defer func() { afterV1Move = original }()
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	stderr.Reset()
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
@@ -652,7 +652,7 @@ func TestResumingAnInterruptedMoveRunsThePreflightAndTheNotice(t *testing.T) {
 // A resume that fails after files were already moved (here the manifest's source key no longer matches the database)
 // still tells the person where v1's files are: the notice used to be printed only when the whole backup call succeeded.
 func TestAResumeThatFailsAfterFilesMovedPrintsTheNotice(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
 	root := makeInterruptedV1Root(t)
 	manifest := filepath.Join(root, v1BackupName+".partial", "manifest.json")
@@ -660,9 +660,9 @@ func TestAResumeThatFailsAfterFilesMovedPrintsTheNotice(t *testing.T) {
 	if err := os.WriteFile(manifest, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	var stdout, stderr bytes.Buffer
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
@@ -674,8 +674,8 @@ func TestAResumeThatFailsAfterFilesMovedPrintsTheNotice(t *testing.T) {
 	}
 	// A failure before anything was moved (nothing in any backup folder) must not claim a move.
 	fresh := makeV1Root(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", fresh)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", fresh)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "")
 	stderr.Reset()
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 || strings.Contains(stderr.String(), "moved your v1 files") || strings.Contains(stderr.String(), "started moving") {
 		t.Fatalf("a refused start that moved nothing printed a moved notice: code=%d %q", code, stderr.String())

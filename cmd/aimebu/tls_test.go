@@ -25,11 +25,11 @@ import (
 )
 
 func TestServerRejectsPublicURLWithPath(t *testing.T) {
-	t.Setenv("AIMEBU2_CONFIG_DIR", t.TempDir())
+	t.Setenv("AIMEBU_CONFIG_DIR", t.TempDir())
 	useFreePort(t)
-	t.Setenv("AIMEBU2_PUBLIC_URL", "https://example.test/app")
+	t.Setenv("AIMEBU_PUBLIC_URL", "https://example.test/app")
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"server"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "AIMEBU2_PUBLIC_URL") {
+	if code := run([]string{"server"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "AIMEBU_PUBLIC_URL") {
 		t.Fatalf("invalid public URL: code=%d stderr=%q", code, stderr.String())
 	}
 }
@@ -83,28 +83,28 @@ func TestFreeTCPPortsAreDistinct(t *testing.T) {
 
 func TestResolveServerTLSConfig(t *testing.T) {
 	cert, key := testCertificate(t)
-	t.Setenv("AIMEBU2_TLS_CERT", "")
-	t.Setenv("AIMEBU2_TLS_KEY", "")
-	t.Setenv("AIMEBU2_TLS_PORT", "")
+	t.Setenv("AIMEBU_TLS_CERT", "")
+	t.Setenv("AIMEBU_TLS_KEY", "")
+	t.Setenv("AIMEBU_TLS_PORT", "")
 	if config, err := resolveServerTLSConfig(9897); err != nil || config != nil {
 		t.Fatalf("TLS off = (%v, %v)", config, err)
 	}
-	t.Setenv("AIMEBU2_TLS_CERT", cert)
+	t.Setenv("AIMEBU_TLS_CERT", cert)
 	if _, err := resolveServerTLSConfig(9897); err == nil {
 		t.Fatal("accepted certificate without key")
 	}
-	t.Setenv("AIMEBU2_TLS_KEY", key)
+	t.Setenv("AIMEBU_TLS_KEY", key)
 	if config, err := resolveServerTLSConfig(9897); err != nil || config.port != 9996 {
 		t.Fatalf("TLS default = (%v, %v)", config, err)
 	}
 	for _, value := range []string{"0", "65536", "invalid", "9897"} {
-		t.Setenv("AIMEBU2_TLS_PORT", value)
+		t.Setenv("AIMEBU_TLS_PORT", value)
 		if _, err := resolveServerTLSConfig(9897); err == nil {
 			t.Fatalf("accepted TLS port %q", value)
 		}
 	}
-	t.Setenv("AIMEBU2_TLS_PORT", "")
-	t.Setenv("AIMEBU2_TLS_KEY", filepath.Join(t.TempDir(), "missing.pem"))
+	t.Setenv("AIMEBU_TLS_PORT", "")
+	t.Setenv("AIMEBU_TLS_KEY", filepath.Join(t.TempDir(), "missing.pem"))
 	if _, err := resolveServerTLSConfig(9897); err == nil {
 		t.Fatal("accepted missing key file")
 	}
@@ -112,7 +112,7 @@ func TestResolveServerTLSConfig(t *testing.T) {
 	if err := os.WriteFile(invalid, []byte("not a key"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AIMEBU2_TLS_KEY", invalid)
+	t.Setenv("AIMEBU_TLS_KEY", invalid)
 	if _, err := resolveServerTLSConfig(9897); err == nil {
 		t.Fatal("accepted invalid certificate pair")
 	}
@@ -120,13 +120,13 @@ func TestResolveServerTLSConfig(t *testing.T) {
 
 func TestServerServesHTTPAndHTTPSWithSameAllowlist(t *testing.T) {
 	cert, key := testCertificate(t)
-	t.Setenv("AIMEBU2_TLS_CERT", cert)
-	t.Setenv("AIMEBU2_TLS_KEY", key)
-	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
-	t.Setenv("AIMEBU2_USAGES", "0")
-	t.Setenv("AIMEBU2_INSECURE_SKIP_VERIFY", "1")
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "test-password-123")
+	t.Setenv("AIMEBU_TLS_CERT", cert)
+	t.Setenv("AIMEBU_TLS_KEY", key)
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
+	t.Setenv("AIMEBU_INSECURE_SKIP_VERIFY", "1")
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "test-password-123")
 	for _, tc := range []struct {
 		name, allow string
 		status      int
@@ -138,9 +138,9 @@ func TestServerServesHTTPAndHTTPSWithSameAllowlist(t *testing.T) {
 			ports := freeTCPPorts(t, 2)
 			httpPort, httpsPort := ports[0], ports[1]
 			useMigratedConfigDir(t, t.TempDir())
-			t.Setenv("AIMEBU2_PORT", fmt.Sprint(httpPort))
-			t.Setenv("AIMEBU2_TLS_PORT", fmt.Sprint(httpsPort))
-			t.Setenv("AIMEBU2_ALLOW", tc.allow)
+			t.Setenv("AIMEBU_PORT", fmt.Sprint(httpPort))
+			t.Setenv("AIMEBU_TLS_PORT", fmt.Sprint(httpsPort))
+			t.Setenv("AIMEBU_ALLOW", tc.allow)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan int, 1)
@@ -154,12 +154,12 @@ func TestServerServesHTTPAndHTTPSWithSameAllowlist(t *testing.T) {
 			}
 			if tc.name == "allowed" {
 				// A self-signed server is accepted only under the explicit escape hatch.
-				t.Setenv("AIMEBU2_INSECURE_SKIP_VERIFY", "")
+				t.Setenv("AIMEBU_INSECURE_SKIP_VERIFY", "")
 				if response, err := tlsclient.NewHTTPClient(2 * time.Second).Get(origins[1] + "/api/me"); err == nil {
 					response.Body.Close()
 					t.Fatal("trusted client accepted a self-signed server")
 				}
-				t.Setenv("AIMEBU2_INSECURE_SKIP_VERIFY", "1")
+				t.Setenv("AIMEBU_INSECURE_SKIP_VERIFY", "1")
 				// Password verification is intentionally expensive. Give the one
 				// login request time to finish under the race detector and host load.
 				loginClient := tlsclient.NewHTTPClient(30 * time.Second)

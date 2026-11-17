@@ -17,7 +17,8 @@ const shots = process.env.SHOTS_DIR || '';
 async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aimebu-harnesses-'));
   const home = path.join(tmp, 'home'); fs.mkdirSync(home, { recursive: true });
-  const env = { ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp, TMPDIR: tmp };
+  const env = { ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: tmp, TMPDIR: tmp };
+for (const name of ['AIMEBU_URL', 'AIMEBU_BIND', 'AIMEBU_ALLOW', 'AIMEBU_ALLOWED_HOSTS', 'AIMEBU_TLS_CERT', 'AIMEBU_TLS_KEY', 'AIMEBU_TLS_PORT', 'AIMEBU_OWNER_LOGIN', 'AIMEBU_OWNER_PASSWORD']) delete env[name];
   // `make test-ui` passes the binary it already built, so the smoke does not build a second one.
   let binary = process.env.HARNESS_BINARY;
   if (!binary) {
@@ -26,7 +27,7 @@ async function main() {
     if (build.status !== 0) throw new Error('go build failed');
   }
   // A start whose port was taken between picking it and binding it is tried again on another (see server-start.cjs).
-  const { child: server, origin, logs: serverLogs } = await startServer(binary, port => ({ ...env, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }), { label: 'harness server' });
+  const { child: server, origin, logs: serverLogs } = await startServer(binary, port => ({ ...env, AIMEBU_USAGES: '0', AIMEBU_SENTRY_DSN: 'off', AIMEBU_EMBEDDED_SUPERVISOR: '0', AIMEBU_PORT: String(port), AIMEBU_OWNER_LOGIN: 'owner', AIMEBU_OWNER_PASSWORD: 'test-password-123' }), { label: 'harness server' });
   let supervisor, browser, page;
   const roleSaves = [], unavailable = [], consoleErrors = [], pageErrors = [];
   const cleanup = async () => {
@@ -36,7 +37,7 @@ async function main() {
     fs.rmSync(tmp, { recursive: true, force: true });
   };
   try {
-    supervisor = spawn(binary, ['supervisor'], { env: { ...env, AIMEBU2_URL: origin }, stdio: ['ignore', 'ignore', 'ignore'] });
+    supervisor = spawn(binary, ['supervisor'], { env: { ...env, AIMEBU_URL: origin }, stdio: ['ignore', 'ignore', 'ignore'] });
     browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
     page = await browser.newPage(); page.setDefaultTimeout(60000);
     await page.evaluateOnNewDocument(() => { try { Object.defineProperty(Notification, 'permission', { configurable: true, get: () => 'denied' }); localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch { /* not available */ } });

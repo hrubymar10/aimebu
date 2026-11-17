@@ -15,18 +15,18 @@ import (
 )
 
 // TestLiveDockerCanary runs two real turns through the vibe-docker launcher: the first hands the agent a nonce, the second resumes the
-// session and must give it back. It is opt-in (AIMEBU2_LIVE_VIBE_DOCKER=1), spends a little on a real provider, and needs the launcher on PATH with a running
+// session and must give it back. It is opt-in (AIMEBU_LIVE_VIBE_DOCKER=1), spends a little on a real provider, and needs the launcher on PATH with a running
 // harness container that mounts this repository. The provider key comes from the environment alone (the test home is a temporary one, so
-// nothing is read from the person's own home), and the model from AIMEBU2_LIVE_VIBE_MODEL (default mistral-medium-3.5). The canary checkout is below this
+// nothing is read from the person's own home), and the model from AIMEBU_LIVE_VIBE_MODEL (default mistral-medium-3.5). The canary checkout is below this
 // repository's ignored tmp/. The toolbox endpoint is a dummy: no tool call is made.
 func TestLiveDockerCanary(t *testing.T) {
-	if os.Getenv("AIMEBU2_LIVE_VIBE_DOCKER") != "1" {
-		t.Skip("set AIMEBU2_LIVE_VIBE_DOCKER=1 for the two-turn vibe Docker canary")
+	if os.Getenv("AIMEBU_LIVE_VIBE_DOCKER") != "1" {
+		t.Skip("set AIMEBU_LIVE_VIBE_DOCKER=1 for the two-turn vibe Docker canary")
 	}
 	if os.Getenv("MISTRAL_API_KEY") == "" {
 		t.Skip("set MISTRAL_API_KEY: the canary reads no key from the person's Vibe home")
 	}
-	model := os.Getenv("AIMEBU2_LIVE_VIBE_MODEL")
+	model := os.Getenv("AIMEBU_LIVE_VIBE_MODEL")
 	if model == "" {
 		model = "mistral-medium-3.5"
 	}

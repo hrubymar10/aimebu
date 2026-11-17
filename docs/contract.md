@@ -503,7 +503,7 @@ Machines and workspace
   harness. Migration 69 deleted the seeded launchers that were disabled and
   unused, cleared `preset`, set labels and copied the old per-tool model list
   into each kept harness; migration 28 had carried forward Docker choices and
-  sampled `AIMEBU2_ALLOW_NATIVE=1` once. `docker` is a reserved name (an alias
+  sampled `AIMEBU_ALLOW_NATIVE=1` once. `docker` is a reserved name (an alias
   for `harness-docker` in older API requests). Active or stopping agents
   (including revoked agents) and in-flight switch targets block edits and
   removal until their stop or switch is observed.
@@ -696,7 +696,7 @@ opens the Review → Check → Import wizard when a backup has rooms. The owner
 imports during setup or chooses Skip import forever. A durable
 `import_v1_choice` row closes preview, dry run, and commit after either choice;
 there is no Settings or normal CLI entry. The old CLI path is available only
-with `AIMEBU2_DEV_IMPORT_V1=1` for development tests.
+with `AIMEBU_DEV_IMPORT_V1=1` for development tests.
 
 The mapping assigns rooms to projects, v1 humans to v2 users or historical
 names, and memory scopes. The dry run is a rolled-back transaction and
@@ -1060,7 +1060,7 @@ the journal, for debugging (retention 14 d): see "Agent output" in
 same versioned machine WebSocket and `supervisor/journal.sqlite` as the
 standalone `aimebu supervisor` process, so reconnect and crash recovery use
 one path. The server provisions an approved local machine and private key on
-first start; the key file is mode 0600. `AIMEBU2_EMBEDDED_SUPERVISOR=0`
+first start; the key file is mode 0600. `AIMEBU_EMBEDDED_SUPERVISOR=0`
 disables the local instance for tests and remote-only installations.
 Shutdown stops new dispatch and HTTP requests, interrupts local turns, waits
 up to 40 seconds for their journal writes, closes the journal, then closes
@@ -1090,7 +1090,7 @@ it never silently reruns a turn with uncertain effects.
   in `hello` when it takes them, and only then is it sent the frame (an older supervisor does not know the frame type; it ignores the `hello_ack`
   field); the server's own embedded supervisor does not announce it, being the server's process. The supervisor starts, replaces or stops its own reporting
   by it, and sets the environment of the `agent-tools` bridge it spawns (see [Telemetry](telemetry.md#supervisors)). A DSN in the supervisor machine's own
-  environment (`AIMEBU2_SENTRY_DSN`, a DSN or `off`) wins over it.
+  environment (`AIMEBU_SENTRY_DSN`, a DSN or `off`) wins over it.
 - `hello_ack` also carries `agent_keys[{agent_id, generation, key}]`: a new `aak_` key for each agent the supervisor should run and, per its
   `held_keys`, holds no key for (it keeps keys in memory only, so a restarted one holds none). Issuing one replaces the agent's stored key hash, so the
   key the old process held stops authenticating. Only a supervisor that announced `supports_agent_keys=true` is sent any. `spawn` and `deliver`

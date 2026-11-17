@@ -156,7 +156,7 @@ func TestDetectHarnessesFindsWhatIsInstalled(t *testing.T) {
 func TestRestrictedPathDoesNotSearchMachineInstallDirs(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
-	t.Setenv("AIMEBU2_TEST_RESTRICT_PATH", "1")
+	t.Setenv("AIMEBU_TEST_RESTRICT_PATH", "1")
 	got := searchDirs(t.Context())
 	if len(got) != 1 || got[0] != dir {
 		t.Fatalf("restricted search dirs = %v, want only %s", got, dir)

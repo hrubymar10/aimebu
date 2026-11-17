@@ -5,7 +5,7 @@
 1. The server runs its local supervisor in the same process by default. It
    connects through the same machine WebSocket and durable journal as a
    standalone supervisor. `aimebu supervisor` remains available for remote
-   machines; `AIMEBU2_EMBEDDED_SUPERVISOR=0` disables the local instance.
+   machines; `AIMEBU_EMBEDDED_SUPERVISOR=0` disables the local instance.
 2. Relational SQLite store + transactional append-only event/outbox table.
    Not event-sourced. Store startup retries temporary SQLite BUSY/LOCKED
    contention during connection setup or migrations for up to 15 seconds;
@@ -158,7 +158,7 @@ ran the harness, read back on demand for owners and admins (see
 **Frontend** — modular from day one, patch live lists in place (no innerHTML
 rebuilds); tests for stable message identity, draft preservation, scroll
 under live updates. Moving to Preact + htm, vendored and without a build step
-(owner approval 2026-10-21, AMB-70; plan in `docs/design/frontend-preact.md`):
+(owner approval 2026-10-21; plan in `docs/design/frontend-preact.md`):
 pages move one at a time, each replacing its legacy module in the same
 change (Settings → Harnesses and its onboarding step are done). One rendering
 owner per DOM subtree: a container is either Preact's or hand-written code's,

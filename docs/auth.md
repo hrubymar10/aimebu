@@ -4,8 +4,8 @@
 
 A first `aimebu server` run with no owner can create one two ways.
 
-**In the browser (default).** With neither `AIMEBU2_OWNER_LOGIN` nor
-`AIMEBU2_OWNER_PASSWORD` set, the server starts and prints a setup token to
+**In the browser (default).** With neither `AIMEBU_OWNER_LOGIN` nor
+`AIMEBU_OWNER_PASSWORD` set, the server starts and prints a setup token to
 stderr (and the log):
 
 ```
@@ -16,9 +16,9 @@ Shortcut that fills the token in for you:
   http://127.0.0.1:9997/setup?token=setup_…
 ```
 
-The same token is written to `$AIMEBU2_CONFIG_DIR/.setup_token` (0600) and the
+The same token is written to `$AIMEBU_CONFIG_DIR/.setup_token` (0600) and the
 file is deleted once the owner exists. The shortcut link uses
-`AIMEBU2_PUBLIC_URL` when set, otherwise the listen address (HTTPS when TLS is
+`AIMEBU_PUBLIC_URL` when set, otherwise the listen address (HTTPS when TLS is
 on). Opening the server's plain address (or `/setup`) shows the welcome, then
 **Enter the setup token to continue**: an input and Continue, with the hint
 "find it in the output of the server, or in the file `<full path>`" (the path
@@ -66,11 +66,11 @@ address further attempts, even with the right token, answer 429 with
 `Retry-After` and back off exponentially (per IP). A
 rejected login or password does not use the token up, so a typo does not lock
 you out. Anyone who can read the log or `.setup_token` can create the
-owner, so keep the server on loopback or behind `AIMEBU2_ALLOW` until it is
+owner, so keep the server on loopback or behind `AIMEBU_ALLOW` until it is
 done.
 
-**From the environment (headless).** Set `AIMEBU2_OWNER_LOGIN` and
-`AIMEBU2_OWNER_PASSWORD` before the first run (set both or neither; one alone
+**From the environment (headless).** Set `AIMEBU_OWNER_LOGIN` and
+`AIMEBU_OWNER_PASSWORD` before the first run (set both or neither; one alone
 is refused). The same login and password rules apply (a login or password that fails them
 stops the start with a message naming the rule). The command creates the owner and an approved host
 machine in one transaction, writes the host machine key before that transaction
@@ -81,7 +81,7 @@ HTTP server. Later runs leave those rows alone.
 If a crash leaves the key file behind but the database has no owner or machine,
 startup explains that the orphaned key is safe to delete before retrying.
 The default database is `~/.aimebu/server/aimebu.sqlite` (mode 0600);
-`AIMEBU2_CONFIG_DIR` selects another root. V2 keeps its `AIMEBU2_*` environment
+`AIMEBU_CONFIG_DIR` selects another root. V2 keeps its `AIMEBU_*` environment
 settings separate from v1's `AIMEBU_*` settings while using the same default
 data directory.
 
@@ -95,7 +95,7 @@ exceed [NIST SP 800-63B's salt minimum](https://pages.nist.gov/800-63-4/sp800-63
 Sessions use 256-bit random bearer tokens. SQLite stores only SHA-256 token
 hashes. Session cookies are HttpOnly and SameSite=Strict, with Secure set on
 TLS requests and on proxied requests whose `Host` is the host of an HTTPS
-`AIMEBU2_PUBLIC_URL`. The default lifetime is seven days and slides on
+`AIMEBU_PUBLIC_URL`. The default lifetime is seven days and slides on
 authenticated HTTP requests, but the stored expiry is moved only once it lags
 the new one by more than a tenth of the lifetime (at least five minutes, at most
 half the lifetime), so a page load's parallel requests do not each write. The
@@ -107,10 +107,10 @@ in again starts a new one. Sessions that existed when this was added start their
 30 days at that migration. An open event socket checks session validity every 30 seconds
 without renewing its expiry. Unsafe HTTP methods require `X-CSRF-Token`; WebSocket upgrades need
 a valid session cookie and a same-origin `Origin`; behind a reverse proxy the
-configured `AIMEBU2_PUBLIC_URL` origin also counts as same-origin. Failed logins are throttled
+configured `AIMEBU_PUBLIC_URL` origin also counts as same-origin. Failed logins are throttled
 per (login, client) and per client, with exponential backoff, so someone guessing at a login from
 one address cannot lock the person out of it from another (behind a proxy listed in
-`AIMEBU2_TRUSTED_PROXIES`, the remote IP comes from `X-Forwarded-For`; see
+`AIMEBU_TRUSTED_PROXIES`, the remote IP comes from `X-Forwarded-For`; see
 [HTTPS](tls.md#reverse-proxy)), with the same invalid-login
 error for unknown users and wrong passwords. Password verification pads older
 hash policies to the strongest stored or current iteration count, including

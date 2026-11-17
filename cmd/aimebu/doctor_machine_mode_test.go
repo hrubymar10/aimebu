@@ -304,9 +304,9 @@ func TestDoctorMachineMode(t *testing.T) {
 	}))
 	defer server.Close()
 	writeMachineKey(t, root, "supervisor/machine.key", 0o600, hostMachineCredential{MachineID: "mch_1", Key: "k", ServerURL: server.URL})
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_PORT", strconv.Itoa(testServerPort(t, server.URL)))
-	t.Setenv("AIMEBU2_URL", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_PORT", strconv.Itoa(testServerPort(t, server.URL)))
+	t.Setenv("AIMEBU_URL", "")
 	originalDetect, originalDocker := doctorDetectHarnesses, dockerReachable
 	t.Cleanup(func() { doctorDetectHarnesses, dockerReachable = originalDetect, originalDocker })
 	doctorDetectHarnesses = func(context.Context) []protocol.HarnessCandidate {

@@ -1798,7 +1798,7 @@ func TestWarmClaimDoesNotHoldTheSlotWhileWaiting(t *testing.T) {
 	}
 }
 
-// The warm window: the owner's saved value (a delivery or an agent_settings frame carries it), else AIMEBU2_WARM_IDLE, else five minutes. Unset and
+// The warm window: the owner's saved value (a delivery or an agent_settings frame carries it), else AIMEBU_WARM_IDLE, else five minutes. Unset and
 // unreadable are the default, 0 is off, and a delivery that carries nothing (the owner saved none, or an older server) leaves the supervisor's own.
 func TestWarmWindowOrderIsOwnerThenEnvThenFiveMinutes(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -1812,16 +1812,16 @@ func TestWarmWindowOrderIsOwnerThenEnvThenFiveMinutes(t *testing.T) {
 		"negative":    {"-5m", DefaultWarmIdle},
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("AIMEBU2_WARM_IDLE", tc.env)
+			t.Setenv("AIMEBU_WARM_IDLE", tc.env)
 			if got := WarmConfigFromEnv().Idle; got != tc.want {
-				t.Fatalf("AIMEBU2_WARM_IDLE=%q: %v, want %v", tc.env, got, tc.want)
+				t.Fatalf("AIMEBU_WARM_IDLE=%q: %v, want %v", tc.env, got, tc.want)
 			}
 		})
 	}
 	if DefaultWarmIdle != 5*time.Minute {
 		t.Fatalf("the default window is five minutes: %v", DefaultWarmIdle)
 	}
-	t.Setenv("AIMEBU2_WARM_IDLE", "10m")
+	t.Setenv("AIMEBU_WARM_IDLE", "10m")
 	h := newWarmHarness(t)
 	h.c.Warm = WarmConfigFromEnv()
 	h.c.applyWarmIdle(nil) // nothing saved by the owner: the env stays
@@ -1844,7 +1844,7 @@ func TestWarmWindowOrderIsOwnerThenEnvThenFiveMinutes(t *testing.T) {
 // the earlier build sends 0 when nothing is saved: that is a saved off as far as the supervisor can tell, and the agents stay cold until the server is
 // updated or the owner saves a window.)
 func TestWarmDefaultKeepsAnAgentWarmWithoutAnOwnerValue(t *testing.T) {
-	t.Setenv("AIMEBU2_WARM_IDLE", "")
+	t.Setenv("AIMEBU_WARM_IDLE", "")
 	h := newWarmHarness(t)
 	h.c.Warm = WarmConfigFromEnv()
 	h.c.applyWarmIdle(nil) // the delivery carries no window: the owner saved none

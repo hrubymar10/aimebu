@@ -99,26 +99,26 @@ func TestTelemetryEnvReachesTheBridgeThroughItsEnvironment(t *testing.T) {
 	if err := c.setAgentKey("agt_old", key); err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{"AIMEBU2_SENTRY_DSN": "https://key@o1.ingest.example/1", "AIMEBU2_SENTRY_ENV": "dev", "AIMEBU2_SENTRY_TRACES_SAMPLE_RATE": "0.5"}
+	env := map[string]string{"AIMEBU_SENTRY_DSN": "https://key@o1.ingest.example/1", "AIMEBU_SENTRY_ENV": "dev", "AIMEBU_SENTRY_TRACES_SAMPLE_RATE": "0.5"}
 	c.SetTelemetryEnv(env)
 	access, err := c.agentToolsAccess("agt_old")
 	if err != nil || access == nil {
 		t.Fatalf("access=%+v err=%v", access, err)
 	}
-	if access.Env["AIMEBU2_SENTRY_DSN"] != env["AIMEBU2_SENTRY_DSN"] || access.Env["AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"] != "0.5" || access.Key != key {
+	if access.Env["AIMEBU_SENTRY_DSN"] != env["AIMEBU_SENTRY_DSN"] || access.Env["AIMEBU_SENTRY_TRACES_SAMPLE_RATE"] != "0.5" || access.Key != key {
 		t.Fatalf("an existing agent's next turn: %+v", access)
 	}
-	if _, held := access.Env["AIMEBU2_AGENT_KEY"]; held {
+	if _, held := access.Env["AIMEBU_AGENT_KEY"]; held {
 		t.Fatalf("the key is not part of the bridge's extra environment: %v", access.Env)
 	}
 	if err := c.setAgentKey("agt_new", "aak_"+strings.Repeat("n", 43)); err != nil {
 		t.Fatal(err)
 	}
-	if fresh, _ := c.agentToolsAccess("agt_new"); fresh == nil || fresh.Env["AIMEBU2_SENTRY_DSN"] != env["AIMEBU2_SENTRY_DSN"] {
+	if fresh, _ := c.agentToolsAccess("agt_new"); fresh == nil || fresh.Env["AIMEBU_SENTRY_DSN"] != env["AIMEBU_SENTRY_DSN"] {
 		t.Fatalf("an agent started afterwards: %+v", fresh)
 	}
 	c.SetTelemetryEnv(nil)
-	if after, _ := c.agentToolsAccess("agt_old"); after == nil || after.Env["AIMEBU2_SENTRY_DSN"] != "" || after.Key != key {
+	if after, _ := c.agentToolsAccess("agt_old"); after == nil || after.Env["AIMEBU_SENTRY_DSN"] != "" || after.Key != key {
 		t.Fatalf("after an empty set: %+v", after)
 	}
 }

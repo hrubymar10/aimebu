@@ -66,7 +66,7 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	configCheck := checkConfigDir(config.root)
 	var oldRootChecks []doctorCheck
 	if notice := oldDevelopmentRootNotice(); notice != "" {
-		oldRootChecks = append(oldRootChecks, doctorCheck{"older v2 data", statusWarn, notice, "Set AIMEBU2_CONFIG_DIR to that root, or move its v2 data into the default root.", ""})
+		oldRootChecks = append(oldRootChecks, doctorCheck{"older v2 data", statusWarn, notice, "Set AIMEBU_CONFIG_DIR to that root, or move its v2 data into the default root.", ""})
 	}
 	if machineMode {
 		result := doctorResult{Version: resolveVersion(), GeneratedAt: now.UTC().Format(time.RFC3339), Checks: scopeAll([]doctorCheck{configCheck}, scopeMachine)}
@@ -265,9 +265,9 @@ func checkServerHealth(ctx context.Context, bind string, port int) doctorCheck {
 }
 
 // checkTLS reports the TLS situation using the same resolution the server
-// uses, so doctor agrees with `aimebu server`: both AIMEBU2_TLS_CERT and
-// AIMEBU2_TLS_KEY must be set, must name readable regular files, must form a
-// parseable pair, and AIMEBU2_TLS_PORT must differ from AIMEBU2_PORT. A
+// uses, so doctor agrees with `aimebu server`: both AIMEBU_TLS_CERT and
+// AIMEBU_TLS_KEY must be set, must name readable regular files, must form a
+// parseable pair, and AIMEBU_TLS_PORT must differ from AIMEBU_PORT. A
 // certificate expiring in less than 14 days warns.
 func checkTLS(httpPort int) doctorCheck {
 	const name = "tls"
@@ -309,18 +309,18 @@ func checkBindAllow(config serverConfig) doctorCheck {
 	if config.allowDefault {
 		allowSummary += " (default)"
 	}
-	if !bindIP.IsLoopback() && !(os.Getenv("AIMEBU2_TLS_CERT") != "" && os.Getenv("AIMEBU2_TLS_KEY") != "") {
+	if !bindIP.IsLoopback() && !(os.Getenv("AIMEBU_TLS_CERT") != "" && os.Getenv("AIMEBU_TLS_KEY") != "") {
 		return doctorCheck{name, statusWarn, fmt.Sprintf("bind %s is non-loopback without TLS; allow %s", config.bind, allowSummary), "", ""}
 	}
 	return doctorCheck{name, statusOK, fmt.Sprintf("bind %s; allow %s", config.bind, allowSummary), "", ""}
 }
 
-// checkProxyThrottle is shown only when AIMEBU2_PUBLIC_URL is set. It fails
+// checkProxyThrottle is shown only when AIMEBU_PUBLIC_URL is set. It fails
 // on a value the server would refuse and warns when no proxy is trusted, since
 // every proxied client then shares one throttle identity.
 func checkProxyThrottle(config serverConfig) (doctorCheck, bool) {
 	const name = "proxy"
-	if os.Getenv("AIMEBU2_PUBLIC_URL") == "" {
+	if os.Getenv("AIMEBU_PUBLIC_URL") == "" {
 		return doctorCheck{}, false
 	}
 	publicURL, err := resolvePublicURL()

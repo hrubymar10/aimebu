@@ -338,11 +338,11 @@ func TestWarmFingerprintTracksProcessInputsButNotSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch.key = "AIMEBU2_AGENT_KEY=one"
+	launch.key = "AIMEBU_AGENT_KEY=one"
 	launch.env = append(launch.env, launch.key)
 	keyOne := launch.fingerprint()
-	launch.env[len(launch.env)-1] = "AIMEBU2_AGENT_KEY=two"
-	launch.key = "AIMEBU2_AGENT_KEY=two"
+	launch.env[len(launch.env)-1] = "AIMEBU_AGENT_KEY=two"
+	launch.key = "AIMEBU_AGENT_KEY=two"
 	if launch.fingerprint() == keyOne {
 		t.Fatal("agent key did not change fingerprint")
 	}

@@ -122,13 +122,13 @@ func TestOverlappingActivityIsReportedNotRenumbered(t *testing.T) {
 // The real first start (serverCommand) reserves v1's numbers before it creates the owner, so every setup
 // event lands above the history.
 func TestServerCommandReservesV1NumbersBeforeTheOwnerExists(t *testing.T) {
-	t.Setenv("AIMEBU2_USAGES", "0")
+	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
 	root := t.TempDir()
 	v1BackupWithMessage(t, root, 700)
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
-	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	var stdout, stderr bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

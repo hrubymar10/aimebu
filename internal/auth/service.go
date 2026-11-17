@@ -20,7 +20,7 @@ var (
 	ErrRateLimited        = errors.New("login temporarily limited")
 	ErrInvalidSession     = errors.New("invalid session")
 	ErrInvalidKey         = errors.New("invalid key")
-	ErrBootstrapRequired  = errors.New("set AIMEBU2_OWNER_LOGIN and AIMEBU2_OWNER_PASSWORD to initialize the owner")
+	ErrBootstrapRequired  = errors.New("set AIMEBU_OWNER_LOGIN and AIMEBU_OWNER_PASSWORD to initialize the owner")
 )
 
 const sessionTimeFormat = "2006-01-02T15:04:05.000000000Z"
@@ -39,7 +39,7 @@ type Service struct {
 	PairThrottle  *Throttler
 	Now           func() time.Time
 	// PublicURL is the HTTP(S) origin browsers use when a reverse proxy
-	// fronts the server (AIMEBU2_PUBLIC_URL); empty when unset.
+	// fronts the server (AIMEBU_PUBLIC_URL); empty when unset.
 	PublicURL string
 }
 

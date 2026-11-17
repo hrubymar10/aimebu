@@ -31,7 +31,7 @@ func refuseV1RootWrite(root string) error {
 
 func reportSupervisorRootError(root string, err error) error {
 	if errors.Is(err, errV1RootWrite) {
-		return fmt.Errorf("this machine has aimebu v1 data in %s; set AIMEBU2_CONFIG_DIR to a separate v2 root for the supervisor: %w", root, err)
+		return fmt.Errorf("this machine has aimebu v1 data in %s; set AIMEBU_CONFIG_DIR to a separate v2 root for the supervisor: %w", root, err)
 	}
 	return err
 }
@@ -39,7 +39,7 @@ func reportSupervisorRootError(root string, err error) error {
 // oldDevelopmentRoot reports an earlier v2 install only while the caller uses
 // the new default root. An empty legacy directory is not evidence of state.
 func oldDevelopmentRoot() (string, bool) {
-	if os.Getenv("AIMEBU2_CONFIG_DIR") != "" {
+	if os.Getenv("AIMEBU_CONFIG_DIR") != "" {
 		return "", false
 	}
 	home, err := os.UserHomeDir()
@@ -57,7 +57,7 @@ func oldDevelopmentRoot() (string, bool) {
 
 func oldDevelopmentRootNotice() string {
 	if root, ok := oldDevelopmentRoot(); ok {
-		return fmt.Sprintf("v2 data found in %s; set AIMEBU2_CONFIG_DIR=%s or move it", root, root)
+		return fmt.Sprintf("v2 data found in %s; set AIMEBU_CONFIG_DIR=%s or move it", root, root)
 	}
 	return ""
 }

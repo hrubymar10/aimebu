@@ -73,11 +73,11 @@ func TestStuckThresholdConfiguration(t *testing.T) {
 	if got := stuckAfter().Minutes(); got != 10 {
 		t.Fatalf("default threshold=%v", got)
 	}
-	t.Setenv("AIMEBU2_STUCK_MINUTES", "3")
+	t.Setenv("AIMEBU_STUCK_MINUTES", "3")
 	if got := stuckAfter().Minutes(); got != 3 {
 		t.Fatalf("configured threshold=%v", got)
 	}
-	t.Setenv("AIMEBU2_STUCK_MINUTES", "0")
+	t.Setenv("AIMEBU_STUCK_MINUTES", "0")
 	if got := stuckAfter().Minutes(); got != 10 {
 		t.Fatalf("invalid threshold=%v", got)
 	}

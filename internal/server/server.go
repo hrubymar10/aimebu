@@ -45,7 +45,7 @@ type Server struct {
 	sockets         map[*websocket.Conn]struct{}
 	socketForceWait time.Duration // tests shorten the post-deadline join; zero uses five seconds
 	codexWarmOn     atomic.Bool
-	// NoWebBundle serves the page from its modules instead of the bundle (a test sets it; AIMEBU2_WEB_BUNDLE=off does the same for a whole process).
+	// NoWebBundle serves the page from its modules instead of the bundle (a test sets it; AIMEBU_WEB_BUNDLE=off does the same for a whole process).
 	NoWebBundle bool
 	// legacyAttr caches which Claude Code session a v1 sender's work is in (see resolveLegacyStart), so opening a profile and then starting the
 	// agent from it reads the transcripts once.
@@ -118,8 +118,8 @@ type Server struct {
 	SessionCheckQuery    func(context.Context, string) error
 	threadCountsQuery    func(context.Context, string, []store.Message) (map[string]int, error)
 	Allow                []netip.Prefix
-	TrustedProxies       []netip.Prefix // AIMEBU2_TRUSTED_PROXIES; see clientIP
-	AllowedHosts         []string       // AIMEBU2_ALLOWED_HOSTS: host names, besides localhost, IPs and the public URL's, the routes that need no login answer to
+	TrustedProxies       []netip.Prefix // AIMEBU_TRUSTED_PROXIES; see clientIP
+	AllowedHosts         []string       // AIMEBU_ALLOWED_HOSTS: host names, besides localhost, IPs and the public URL's, the routes that need no login answer to
 	doctorKey            string         // set by EnableDoctorKey; empty keeps GET /api/doctor closed
 	machineMu            sync.Mutex
 	kaScopeMu            sync.Mutex                                         // guards kaScope

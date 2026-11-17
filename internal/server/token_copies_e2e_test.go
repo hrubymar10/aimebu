@@ -152,7 +152,7 @@ func e2eHome(t *testing.T) (m *switcher.Manager, home string) {
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
-	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
 	m, err := switcher.New(filepath.Join(home, ".aimebu2", "switcher"))
 	if err != nil {
 		t.Fatal(err)

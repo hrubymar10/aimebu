@@ -16,16 +16,16 @@ func ResolveAllow(raw string) ([]netip.Prefix, error) {
 	if raw == "" {
 		raw = DefaultAllowList
 	}
-	return parsePrefixList("AIMEBU2_ALLOW", raw)
+	return parsePrefixList("AIMEBU_ALLOW", raw)
 }
 
-// ResolveTrustedProxies parses AIMEBU2_TRUSTED_PROXIES. The empty value trusts
+// ResolveTrustedProxies parses AIMEBU_TRUSTED_PROXIES. The empty value trusts
 // no proxy, so X-Forwarded-For is ignored entirely.
 func ResolveTrustedProxies(raw string) ([]netip.Prefix, error) {
 	if raw == "" {
 		return nil, nil
 	}
-	return parsePrefixList("AIMEBU2_TRUSTED_PROXIES", raw)
+	return parsePrefixList("AIMEBU_TRUSTED_PROXIES", raw)
 }
 
 func parsePrefixList(name, raw string) ([]netip.Prefix, error) {
@@ -77,7 +77,7 @@ func prefixesContain(prefixes []netip.Prefix, address netip.Addr) bool {
 
 // clientIP identifies a caller for login, invite and pairing throttling only.
 // It is the direct peer address unless that peer is a trusted proxy
-// (AIMEBU2_TRUSTED_PROXIES); then it is the right-most X-Forwarded-For entry
+// (AIMEBU_TRUSTED_PROXIES); then it is the right-most X-Forwarded-For entry
 // that is not itself a trusted proxy. Entries left of it are client-supplied
 // and never trusted. The allowlist never consults X-Forwarded-For.
 func (s *Server) clientIP(r *http.Request) string {
@@ -132,7 +132,7 @@ func allowMiddleware(next http.Handler, allow []netip.Prefix) http.Handler {
 				return
 			}
 		}
-		log.Printf("WARN: blocked %s — not in AIMEBU2_ALLOW", ip)
+		log.Printf("WARN: blocked %s — not in AIMEBU_ALLOW", ip)
 		http.Error(w, "forbidden", http.StatusForbidden)
 	})
 }

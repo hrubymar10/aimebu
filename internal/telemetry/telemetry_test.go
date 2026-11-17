@@ -84,7 +84,7 @@ func TestFromEnv(t *testing.T) {
 	if err != nil || off.Enabled() || off.EnvSet || off.Environment != "dev" {
 		t.Fatalf("nothing set: %+v %v", off, err)
 	}
-	on, err := FromEnv(lookup(map[string]string{"AIMEBU2_SENTRY_DSN": " https://k@h/1 ", "AIMEBU2_SENTRY_ENV": "prod", "AIMEBU2_SENTRY_TRACES_SAMPLE_RATE": "0.5"}), "aimebu v2.0.0-3-gabc/x y")
+	on, err := FromEnv(lookup(map[string]string{"AIMEBU_SENTRY_DSN": " https://k@h/1 ", "AIMEBU_SENTRY_ENV": "prod", "AIMEBU_SENTRY_TRACES_SAMPLE_RATE": "0.5"}), "aimebu v2.0.0-3-gabc/x y")
 	if err != nil || !on.Enabled() || !on.EnvSet || on.DSN != "https://k@h/1" || on.Environment != "prod" || on.TracesSampleRate != 0.5 || on.Release != "v2.0.0-3-gabc_x_y" {
 		t.Fatalf("%+v %v", on, err)
 	}
@@ -92,13 +92,13 @@ func TestFromEnv(t *testing.T) {
 		t.Fatalf("the sample rate defaults to all of the requests: %v", off.TracesSampleRate)
 	}
 	for _, disabled := range []string{"off", "OFF", "", "  "} {
-		config, err := FromEnv(lookup(map[string]string{"AIMEBU2_SENTRY_DSN": disabled}), "v")
+		config, err := FromEnv(lookup(map[string]string{"AIMEBU_SENTRY_DSN": disabled}), "v")
 		if err != nil || config.Enabled() || !config.EnvSet {
 			t.Errorf("DSN %q must disable and still count as set: %+v %v", disabled, config, err)
 		}
 	}
 	for _, bad := range []string{"2", "-1", "abc"} {
-		if _, err := FromEnv(lookup(map[string]string{"AIMEBU2_SENTRY_TRACES_SAMPLE_RATE": bad}), "v"); err == nil {
+		if _, err := FromEnv(lookup(map[string]string{"AIMEBU_SENTRY_TRACES_SAMPLE_RATE": bad}), "v"); err == nil {
 			t.Errorf("rate %q must be rejected", bad)
 		}
 	}
@@ -125,10 +125,10 @@ func TestResolvePrecedence(t *testing.T) {
 		"answered, own DSN":                    {shipped, nil, Stored{Prompted: true, DSN: mine}, mine, "settings"},
 		"answered, no default, toggle on only": {"", nil, Stored{Prompted: true, Enabled: &yes}, "", "settings"},
 		"answered, no default, own DSN on":     {"", nil, Stored{Prompted: true, Enabled: &yes, DSN: mine}, mine, "settings"},
-		"env DSN wins over everything":         {shipped, map[string]string{"AIMEBU2_SENTRY_DSN": mine}, Stored{Prompted: true, Enabled: &no}, mine, "env"},
-		"env DSN needs no popup":               {shipped, map[string]string{"AIMEBU2_SENTRY_DSN": mine}, Stored{}, mine, "env"},
-		"env off wins over a default":          {shipped, map[string]string{"AIMEBU2_SENTRY_DSN": "off"}, Stored{Prompted: true}, "", "env"},
-		"env empty wins over a default":        {shipped, map[string]string{"AIMEBU2_SENTRY_DSN": ""}, Stored{Prompted: true, DSN: mine}, "", "env"},
+		"env DSN wins over everything":         {shipped, map[string]string{"AIMEBU_SENTRY_DSN": mine}, Stored{Prompted: true, Enabled: &no}, mine, "env"},
+		"env DSN needs no popup":               {shipped, map[string]string{"AIMEBU_SENTRY_DSN": mine}, Stored{}, mine, "env"},
+		"env off wins over a default":          {shipped, map[string]string{"AIMEBU_SENTRY_DSN": "off"}, Stored{Prompted: true}, "", "env"},
+		"env empty wins over a default":        {shipped, map[string]string{"AIMEBU_SENTRY_DSN": ""}, Stored{Prompted: true, DSN: mine}, "", "env"},
 	} {
 		DefaultDSN = tc.def
 		got := env(tc.env).Resolve(tc.stored)

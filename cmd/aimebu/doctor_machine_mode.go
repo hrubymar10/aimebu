@@ -59,7 +59,7 @@ func checkMachineMode(ctx context.Context, config serverConfig) []doctorCheck {
 	checks = append(checks, checkDockerForLaunchers(candidates)...)
 	checks = append(checks, checkDockerLauncherFeatures(ctx, candidates)...)
 	if credential != nil {
-		serverURL := os.Getenv("AIMEBU2_URL")
+		serverURL := os.Getenv("AIMEBU_URL")
 		if serverURL == "" {
 			serverURL = credential.ServerURL
 		}
@@ -303,7 +303,7 @@ func checkPairedServer(ctx context.Context, serverURL string, credential hostMac
 	resp, err := tlsclient.NewHTTPClient(machineProbeTimeout).Do(req)
 	if err != nil {
 		return doctorCheck{Name: name, Status: statusFail, Description: fmt.Sprintf("%s unreachable: %v", serverURL, err),
-			Hint: "Check the server is running and reachable from this machine, and that AIMEBU2_URL (or the paired URL) is right."}
+			Hint: "Check the server is running and reachable from this machine, and that AIMEBU_URL (or the paired URL) is right."}
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {

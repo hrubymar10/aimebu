@@ -125,7 +125,7 @@ func checkDiskSpace(root string) doctorCheck {
 	}
 	dbPath := filepath.Join(root, "server", "aimebu.sqlite")
 	detail := fmt.Sprintf("%s free; database %s, wal %s", humanBytes(free), humanBytes(fileSize(dbPath)), humanBytes(fileSize(dbPath+"-wal")))
-	hint := "Free disk space on the volume holding the config root, or move AIMEBU2_CONFIG_DIR to a larger one."
+	hint := "Free disk space on the volume holding the config root, or move AIMEBU_CONFIG_DIR to a larger one."
 	switch {
 	case free < diskFailBytes:
 		return doctorCheck{Name: name, Status: statusFail, Description: detail + " (under 200 MiB: SQLite writes will start failing)", Hint: hint}

@@ -61,11 +61,11 @@ func binWrapperRepo(t *testing.T, tag string) (repo string, env []string) {
 }
 
 // cleanBinWrapperEnv is the current environment without the update settings, so a
-// developer's exported AIMEBU2_UPDATE_* or git prompt settings cannot change the tests.
+// developer's exported AIMEBU_UPDATE_* or git prompt settings cannot change the tests.
 func cleanBinWrapperEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "AIMEBU2_UPDATE_") || strings.HasPrefix(kv, "GIT_SSH_COMMAND=") {
+		if strings.HasPrefix(kv, "AIMEBU_UPDATE_") || strings.HasPrefix(kv, "GIT_SSH_COMMAND=") {
 			continue
 		}
 		env = append(env, kv)
@@ -311,7 +311,7 @@ func runBinWrapperStatus(t *testing.T, script string, env []string, args ...stri
 func TestBinWrapperUpdateBehindPullsAndRebuilds(t *testing.T) {
 	repo, env, script, publish := binWrapperWithRemote(t)
 	publish("two")
-	apply := append(env, "AIMEBU2_UPDATE_CHECK=apply")
+	apply := append(env, "AIMEBU_UPDATE_CHECK=apply")
 
 	out, errs := runBinWrapper(t, script, apply, "x")
 	if !strings.HasPrefix(out, "two aimebu v9.9.9-1-g") || !strings.HasSuffix(out, "[x]") {
@@ -328,7 +328,7 @@ func TestBinWrapperUpdateBehindPullsAndRebuilds(t *testing.T) {
 	}
 	// The next run is current: no notice, no rebuild (a fresh interval would re-check, and
 	// there is nothing to do).
-	out, errs = runBinWrapper(t, script, append(apply, "AIMEBU2_UPDATE_INTERVAL_HOURS=0"), "run")
+	out, errs = runBinWrapper(t, script, append(apply, "AIMEBU_UPDATE_INTERVAL_HOURS=0"), "run")
 	if !strings.HasPrefix(out, "two ") || errs != "" {
 		t.Fatalf("current run: out=%q stderr=%q", out, errs)
 	}
@@ -336,7 +336,7 @@ func TestBinWrapperUpdateBehindPullsAndRebuilds(t *testing.T) {
 
 func TestBinWrapperUpdateRunsOnlyOncePerInterval(t *testing.T) {
 	_, env, script, publish := binWrapperWithRemote(t)
-	apply := append(env, "AIMEBU2_UPDATE_CHECK=apply")
+	apply := append(env, "AIMEBU_UPDATE_CHECK=apply")
 	publish("two")
 	if out, _ := runBinWrapper(t, script, apply, "run"); !strings.HasPrefix(out, "two ") {
 		t.Fatalf("first check did not update: %q", out)
@@ -345,7 +345,7 @@ func TestBinWrapperUpdateRunsOnlyOncePerInterval(t *testing.T) {
 	if out, errs := runBinWrapper(t, script, apply, "run"); !strings.HasPrefix(out, "two ") || errs != "" {
 		t.Fatalf("a second check inside the interval ran: out=%q stderr=%q", out, errs)
 	}
-	if out, _ := runBinWrapper(t, script, append(apply, "AIMEBU2_UPDATE_INTERVAL_HOURS=0"), "run"); !strings.HasPrefix(out, "three ") {
+	if out, _ := runBinWrapper(t, script, append(apply, "AIMEBU_UPDATE_INTERVAL_HOURS=0"), "run"); !strings.HasPrefix(out, "three ") {
 		t.Fatalf("a zero interval did not check again: %q", out)
 	}
 }
@@ -358,12 +358,12 @@ func TestBinWrapperUpdateCheckNeedsATerminalOrApply(t *testing.T) {
 	if out, errs := runBinWrapper(t, script, env, "run"); out != "one aimebu v9.9.9 [run]" || errs != "" {
 		t.Fatalf("default mode without a terminal: out=%q stderr=%q", out, errs)
 	}
-	// AIMEBU2_UPDATE_CHECK=0 beats apply's sibling modes and leaves everything alone.
-	if out, errs := runBinWrapper(t, script, append(env, "AIMEBU2_UPDATE_CHECK=0"), "run"); out != "one aimebu v9.9.9 [run]" || errs != "" {
+	// AIMEBU_UPDATE_CHECK=0 beats apply's sibling modes and leaves everything alone.
+	if out, errs := runBinWrapper(t, script, append(env, "AIMEBU_UPDATE_CHECK=0"), "run"); out != "one aimebu v9.9.9 [run]" || errs != "" {
 		t.Fatalf("disabled check: out=%q stderr=%q", out, errs)
 	}
 	// Machine-readable and informational commands skip the check even in apply mode.
-	apply := append(env, "AIMEBU2_UPDATE_CHECK=apply")
+	apply := append(env, "AIMEBU_UPDATE_CHECK=apply")
 	for _, args := range [][]string{{"version"}, {"help"}, {"doctor", "--json"}, {"doctor", "--machine"}} {
 		if _, errs := runBinWrapper(t, script, apply, args...); errs != "" {
 			t.Fatalf("%v printed to stderr: %q", args, errs)
@@ -383,7 +383,7 @@ func TestBinWrapperUpdateLeavesADirtyCheckoutAlone(t *testing.T) {
 	publish("two")
 	setBinWrapperSource(t, repo, "local-edit")
 	before := gitIn(t, repo, env, "rev-parse", "HEAD")
-	out, errs := runBinWrapper(t, script, append(env, "AIMEBU2_UPDATE_CHECK=apply"), "run")
+	out, errs := runBinWrapper(t, script, append(env, "AIMEBU_UPDATE_CHECK=apply"), "run")
 	if out != "one aimebu v9.9.9 [run]" || !strings.Contains(errs, "update check skipped: checkout is dirty") {
 		t.Fatalf("dirty checkout: out=%q stderr=%q", out, errs)
 	}
@@ -400,7 +400,7 @@ func TestBinWrapperUpdateLeavesANonDefaultBranchAlone(t *testing.T) {
 	publish("two")
 	gitIn(t, repo, env, "checkout", "-q", "-b", "feature")
 	before := gitIn(t, repo, env, "rev-parse", "HEAD")
-	out, errs := runBinWrapper(t, script, append(env, "AIMEBU2_UPDATE_CHECK=apply"), "run")
+	out, errs := runBinWrapper(t, script, append(env, "AIMEBU_UPDATE_CHECK=apply"), "run")
 	if out != "one aimebu v9.9.9 [run]" || !strings.Contains(errs, "checkout is on 'feature', not default branch 'trunk'") {
 		t.Fatalf("non-default branch: out=%q stderr=%q", out, errs)
 	}
@@ -412,7 +412,7 @@ func TestBinWrapperUpdateLeavesANonDefaultBranchAlone(t *testing.T) {
 func TestBinWrapperUpdateIsFastAndSilentWhenTheRemoteIsUnreachable(t *testing.T) {
 	repo, env, script, publish := binWrapperWithRemote(t)
 	publish("two")
-	apply := append(env, "AIMEBU2_UPDATE_CHECK=apply")
+	apply := append(env, "AIMEBU_UPDATE_CHECK=apply")
 
 	gitIn(t, repo, env, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing.git"))
 	if out, errs := runBinWrapper(t, script, apply, "run"); out != "one aimebu v9.9.9 [run]" || errs != "" {
@@ -421,7 +421,7 @@ func TestBinWrapperUpdateIsFastAndSilentWhenTheRemoteIsUnreachable(t *testing.T)
 
 	// A remote that hangs is cut off by the time limit.
 	gitIn(t, repo, env, "remote", "set-url", "origin", "ext::sleep 20")
-	hang := append(apply, "GIT_ALLOW_PROTOCOL=ext", "AIMEBU2_UPDATE_TIMEOUT_SECONDS=1", "AIMEBU2_UPDATE_INTERVAL_HOURS=0")
+	hang := append(apply, "GIT_ALLOW_PROTOCOL=ext", "AIMEBU_UPDATE_TIMEOUT_SECONDS=1", "AIMEBU_UPDATE_INTERVAL_HOURS=0")
 	started := time.Now()
 	out, errs := runBinWrapper(t, script, hang, "run")
 	if took := time.Since(started); took > 10*time.Second {
@@ -480,7 +480,7 @@ func TestBinWrapperUpdateKeepsThePreviousVersionWhenTheNewSourceDoesNotBuild(t *
 	gitIn(t, broken, env, "push", "-q", "origin", "trunk")
 
 	before := gitIn(t, repo, env, "rev-parse", "HEAD")
-	out, errs := runBinWrapper(t, script, append(env, "AIMEBU2_UPDATE_CHECK=apply"), "run")
+	out, errs := runBinWrapper(t, script, append(env, "AIMEBU_UPDATE_CHECK=apply"), "run")
 	if out != "one aimebu v9.9.9 [run]" || !strings.Contains(errs, "automatic update failed: the updated source did not build; continuing on the previous version") {
 		t.Fatalf("failed update: out=%q stderr=%q", out, errs)
 	}

@@ -498,7 +498,7 @@ func TestSpawnResumeModeRefusals(t *testing.T) {
 // A containerized launcher that does not say its Claude home is the host's keeps its own sessions, so a session the machine has is neither
 // continued nor copied through it: the fork needs the native launcher too.
 func TestSpawnResumeThroughADockerLauncherNeedsNative(t *testing.T) {
-	t.Setenv("AIMEBU2_BIND", "0.0.0.0") // a loopback bind refuses Docker before anything else is looked at
+	t.Setenv("AIMEBU_BIND", "0.0.0.0") // a loopback bind refuses Docker before anything else is looked at
 	f := newFixture(t)
 	f.seed()
 	f.connectSupervisor(t, true, candidate(sessionA, f.project.Folder, "x"))
@@ -517,7 +517,7 @@ func TestSpawnResumeThroughADockerLauncherNeedsNative(t *testing.T) {
 // to continue through it. Tests using it cannot run in parallel: a loopback bind refuses Docker before anything else is looked at.
 func dockerClaude(t *testing.T, features []string, refs map[string]string) (*fixture, store.Launcher) {
 	t.Helper()
-	t.Setenv("AIMEBU2_BIND", "0.0.0.0")
+	t.Setenv("AIMEBU_BIND", "0.0.0.0")
 	f := newFixture(t)
 	f.seed()
 	fake := f.connectSupervisor(t, true, candidate(sessionA, f.project.Folder, "Shared home"))

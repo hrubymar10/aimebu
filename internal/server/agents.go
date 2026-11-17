@@ -255,7 +255,7 @@ func (s *Server) spawnCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"machine_id": machineID, "tools": items, "supervisor_update_needed": machine != nil && !machine.supportsLaunchers})
 }
 
-const dockerBindUnavailableMessage = "AIMEBU2_BIND is loopback-only; Docker needs a non-loopback bind and AIMEBU2_ALLOW entry"
+const dockerBindUnavailableMessage = "AIMEBU_BIND is loopback-only; Docker needs a non-loopback bind and AIMEBU_ALLOW entry"
 
 var errDockerBindUnavailable = errors.New(dockerBindUnavailableMessage)
 
@@ -264,7 +264,7 @@ func dockerNeedsReachableBind(tool, variant string) bool {
 }
 
 func dockerBindIsLoopback() bool {
-	bind := os.Getenv("AIMEBU2_BIND")
+	bind := os.Getenv("AIMEBU_BIND")
 	if bind == "" {
 		bind = "127.0.0.1"
 	}

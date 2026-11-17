@@ -8,7 +8,7 @@
 #
 # Updates: an interactive run checks the clone's default branch at most once a day and
 # offers to update and rebuild; "aimebu update [--check]" does it on demand. See the
-# "Install" section of the README for AIMEBU2_UPDATE_CHECK and its companions.
+# "Install" section of the README for AIMEBU_UPDATE_CHECK and its companions.
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ SCRIPT_DIR="$(resolve_script_dir "${BASH_SOURCE[0]}")"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BINARY="$REPO_DIR/aimebu-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
 CACHE_BINARY="$BINARY"
-UPDATE_REMOTE="${AIMEBU2_UPDATE_REMOTE:-origin}"
+UPDATE_REMOTE="${AIMEBU_UPDATE_REMOTE:-origin}"
 FORCE_BUILD="${AIMEBU_FORCE_BUILD:-}"
 TEMP_BINARY=""
 pid=""
@@ -107,7 +107,7 @@ update_short_oid() { printf '%.12s' "$1"; }
 remote_default_target() {
     local output value name ref="" oid=""
     output="$(mktemp "${TMPDIR:-/tmp}/aimebu-update-check.XXXXXX")"
-    if ! update_git "$(update_seconds AIMEBU2_UPDATE_TIMEOUT_SECONDS 5)" "$output" ls-remote --symref "$UPDATE_REMOTE" HEAD; then
+    if ! update_git "$(update_seconds AIMEBU_UPDATE_TIMEOUT_SECONDS 5)" "$output" ls-remote --symref "$UPDATE_REMOTE" HEAD; then
         rm -f "$output"
         return 1
     fi
@@ -206,8 +206,8 @@ apply_update() {
     shift
     original_oid="$(git -C "$REPO_DIR" rev-parse HEAD)" || { echo "Error: cannot resolve current checkout revision" >&2; exit 1; }
     original_ref="$(git -C "$REPO_DIR" symbolic-ref --quiet HEAD 2>/dev/null || true)"
-    if ! update_git "$(update_seconds AIMEBU2_UPDATE_FETCH_TIMEOUT_SECONDS 60)" /dev/null fetch --no-tags "$UPDATE_REMOTE" "$UPDATE_DEFAULT_REF"; then
-        update_failure "$automatic" "could not fetch the advertised default-branch tip within the time limit (AIMEBU2_UPDATE_FETCH_TIMEOUT_SECONDS)" "$original_oid" "$original_ref" "$moved_oid"
+    if ! update_git "$(update_seconds AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS 60)" /dev/null fetch --no-tags "$UPDATE_REMOTE" "$UPDATE_DEFAULT_REF"; then
+        update_failure "$automatic" "could not fetch the advertised default-branch tip within the time limit (AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS)" "$original_oid" "$original_ref" "$moved_oid"
         return 0
     fi
     fetched_oid="$(git -C "$REPO_DIR" rev-parse FETCH_HEAD 2>/dev/null || true)"
@@ -239,9 +239,9 @@ apply_update() {
 }
 
 # update_due is true when the last automatic check is older than
-# AIMEBU2_UPDATE_INTERVAL_HOURS (default 24; 0 checks every run).
+# AIMEBU_UPDATE_INTERVAL_HOURS (default 24; 0 checks every run).
 update_due() {
-    local hours="${AIMEBU2_UPDATE_INTERVAL_HOURS:-24}" stamp
+    local hours="${AIMEBU_UPDATE_INTERVAL_HOURS:-24}" stamp
     case "$hours" in ''|*[!0-9]*) hours=24 ;; esac
     stamp="$(git -C "$REPO_DIR" rev-parse --absolute-git-dir 2>/dev/null)/aimebu-update-check" || return 1
     UPDATE_STAMP="$stamp"
@@ -252,10 +252,10 @@ update_due() {
 # passive_update_check [args...] is the automatic check run before a command. It stays
 # out of the way: only interactive runs (stdin, stdout and stderr are terminals) of
 # real commands are checked, never machine-readable ones, and at most once per interval.
-# AIMEBU2_UPDATE_CHECK=0 turns it off; =apply updates without asking and without needing
+# AIMEBU_UPDATE_CHECK=0 turns it off; =apply updates without asking and without needing
 # a terminal (still once per interval).
 passive_update_check() {
-    local mode="${AIMEBU2_UPDATE_CHECK:-}" arg answer
+    local mode="${AIMEBU_UPDATE_CHECK:-}" arg answer
     if [ -n "${AIMEBU_UPDATE_RESTARTED:-}" ]; then
         unset AIMEBU_UPDATE_RESTARTED
         return 0

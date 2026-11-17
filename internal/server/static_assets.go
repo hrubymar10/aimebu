@@ -28,7 +28,7 @@ type webAssets struct {
 	version string
 	index   []byte
 	scripts map[string][]byte
-	// bundle is the page's modules as one file (nil when AIMEBU2_WEB_BUNDLE turns it off, and then the page loads the modules themselves).
+	// bundle is the page's modules as one file (nil when AIMEBU_WEB_BUNDLE turns it off, and then the page loads the modules themselves).
 	bundle *webBundle
 	// scriptHashes are the 'sha256-…' sources of the page's inline scripts (the theme script and the import map), which its Content-Security-Policy allows
 	// by hash because it allows no inline script otherwise.

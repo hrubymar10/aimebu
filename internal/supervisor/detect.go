@@ -191,7 +191,7 @@ func searchDirs(ctx context.Context) []string {
 	}
 	// TestMain restricts PATH to fixture tools. Do not bypass it with the
 	// normal machine-wide install directories or an npm prefix probe.
-	if os.Getenv("AIMEBU2_TEST_RESTRICT_PATH") == "1" {
+	if os.Getenv("AIMEBU_TEST_RESTRICT_PATH") == "1" {
 		return dirs
 	}
 	dirs = append(dirs, "/usr/local/bin", "/opt/homebrew/bin")

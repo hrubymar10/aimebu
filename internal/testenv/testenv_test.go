@@ -21,7 +21,7 @@ func TestTheEnvironmentIsolateSetsUpPassesCheck(t *testing.T) {
 	if err := Check(); err != nil {
 		t.Fatal(err)
 	}
-	if got := os.Getenv("AIMEBU2_DEV_SKIP_V1_PROBE"); got != "1" {
+	if got := os.Getenv("AIMEBU_DEV_SKIP_V1_PROBE"); got != "1" {
 		t.Errorf("test v1 listener probe setting = %q, want 1", got)
 	}
 	home, err := os.UserHomeDir()
@@ -32,6 +32,13 @@ func TestTheEnvironmentIsolateSetsUpPassesCheck(t *testing.T) {
 		if name != "HOME" && !strings.HasPrefix(os.Getenv(name), home) {
 			t.Errorf("%s = %q, want it under HOME %q", name, os.Getenv(name), home)
 		}
+	}
+}
+
+func TestCheckRefusesConfiguredServerURL(t *testing.T) {
+	t.Setenv("AIMEBU_URL", "http://127.0.0.1:9997")
+	if err := Check(); err == nil || !strings.Contains(err.Error(), "AIMEBU_URL") {
+		t.Fatalf("Check accepted a configured server URL: %v", err)
 	}
 }
 
@@ -88,13 +95,13 @@ func TestPinGoCacheEnvUsesEffectiveGoSettings(t *testing.T) {
 
 func TestRestrictPATHMarksHarnessDiscoveryAsRestricted(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_TEST_RESTRICT_PATH", "")
+	t.Setenv("AIMEBU_TEST_RESTRICT_PATH", "")
 	t.Setenv("PATH", os.Getenv("PATH")) // RestrictPATH sets PATH itself; this registers its restore
 	RestrictPATH(root, "go")
 	if got := os.Getenv("PATH"); got != filepath.Join(root, "bin") {
 		t.Fatalf("restricted PATH = %q", got)
 	}
-	if got := os.Getenv("AIMEBU2_TEST_RESTRICT_PATH"); got != "1" {
+	if got := os.Getenv("AIMEBU_TEST_RESTRICT_PATH"); got != "1" {
 		t.Fatalf("restricted harness discovery = %q", got)
 	}
 }
@@ -316,10 +323,10 @@ func declaresIsolatingTestMain(t *testing.T, files []string) bool {
 }
 
 func TestIsolateForcesErrorReportingOff(t *testing.T) {
-	if got := os.Getenv("AIMEBU2_SENTRY_DSN"); got != "off" {
-		t.Fatalf("the test environment must force AIMEBU2_SENTRY_DSN=off, got %q", got)
+	if got := os.Getenv("AIMEBU_SENTRY_DSN"); got != "off" {
+		t.Fatalf("the test environment must force AIMEBU_SENTRY_DSN=off, got %q", got)
 	}
-	t.Setenv("AIMEBU2_SENTRY_DSN", "https://k@h.example/1")
+	t.Setenv("AIMEBU_SENTRY_DSN", "https://k@h.example/1")
 	if Check() == nil {
 		t.Fatal("Check must refuse a test environment where error reporting is not off")
 	}

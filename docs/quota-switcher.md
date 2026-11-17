@@ -9,7 +9,7 @@ design and its reasoning are in
 [design/quota-switcher.md](design/quota-switcher.md).
 
 It needs the account switcher enabled and the usage reader running
-(`AIMEBU2_USAGES` not `0`). It is **off by default**; enabling it starts in
+(`AIMEBU_USAGES` not `0`). It is **off by default**; enabling it starts in
 **dry run**, which computes and records every decision and switches nothing.
 
 ## What "usable" means

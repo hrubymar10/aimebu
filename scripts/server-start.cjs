@@ -15,7 +15,7 @@ const BIND_SETTLE_MS = 600;
 // True when the server's output says it could not bind its port (listenError in cmd/aimebu/main.go: "port N is already in use by another process").
 const bindFailed = logs => /already in use|address already in use|EADDRINUSE/i.test(logs);
 
-// Starts `binary server` and waits for it to answer. `envFor(port)` gives the environment of one attempt (AIMEBU2_PORT among it). `label` names the
+// Starts `binary server` and waits for it to answer. `envFor(port)` gives the environment of one attempt (AIMEBU_PORT among it). `label` names the
 // server in an error; `args` is what follows the binary (a test passes a stand-in script). Returns { child, port, origin, logs() } where logs() is what the server printed so far.
 async function startServer(binary, envFor, { label = 'server', attempts = 5, args = ['server'], cwd, stdio = ['ignore', 'pipe', 'pipe'], waitMs = 30000 } = {}) {
   let last = '';

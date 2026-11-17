@@ -9,7 +9,7 @@ import (
 func TestDefaultSwitcherRootUsesSharedDataFolder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("AIMEBU2_CONFIG_DIR", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", "")
 	got, err := DefaultRoot()
 	if want := filepath.Join(home, ".aimebu", "switcher"); err != nil || got != want {
 		t.Fatalf("default switcher root = %q, %v; want %q", got, err, want)

@@ -16,67 +16,69 @@ type envVar struct {
 }
 
 var environment = []envVar{
-	{[]string{"AIMEBU2_CONFIG_DIR"}, []string{"Absolute config root directory (default: ~/.aimebu; leading ~ expands to home)"}},
-	{[]string{"AIMEBU2_BIND"}, []string{"Server bind address (default: 127.0.0.1)"}},
-	{[]string{"AIMEBU2_PORT"}, []string{"Server listen port (default: 9997)"}},
-	{[]string{"AIMEBU2_ALLOW"}, []string{"Comma-separated IPs/CIDRs allowed to connect"}},
-	{[]string{"AIMEBU2_TLS_CERT"}, []string{"TLS certificate PEM path; set with AIMEBU2_TLS_KEY for HTTPS"}},
-	{[]string{"AIMEBU2_TLS_KEY"}, []string{"TLS private key PEM path; set with AIMEBU2_TLS_CERT for HTTPS"}},
-	{[]string{"AIMEBU2_TLS_PORT"}, []string{"HTTPS listen port when TLS is configured (default: 9996)"}},
-	{[]string{"AIMEBU2_TRUSTED_PROXIES"}, []string{
+	{[]string{"AIMEBU_CONFIG_DIR"}, []string{"Absolute config root directory (default: ~/.aimebu; leading ~ expands to home)"}},
+	{[]string{"AIMEBU_BIND"}, []string{"Server bind address (default: 127.0.0.1); also probed for a running v1 server before import"}},
+	{[]string{"AIMEBU_PORT"}, []string{"Server listen port (default: 9997)"}},
+	{[]string{"AIMEBU_ALLOW"}, []string{"Comma-separated IPs/CIDRs allowed to connect"}},
+	{[]string{"AIMEBU_TLS_CERT"}, []string{"TLS certificate PEM path; set with AIMEBU_TLS_KEY for HTTPS"}},
+	{[]string{"AIMEBU_TLS_KEY"}, []string{"TLS private key PEM path; set with AIMEBU_TLS_CERT for HTTPS"}},
+	{[]string{"AIMEBU_TLS_PORT"}, []string{"HTTPS listen port when TLS is configured (default: 9996)"}},
+	{[]string{"AIMEBU_TRUSTED_PROXIES"}, []string{
 		"Comma-separated proxy IPs/CIDRs whose X-Forwarded-For separates clients",
 		"for login throttling only (default: none)"}},
-	{[]string{"AIMEBU2_ALLOWED_HOSTS"}, []string{
+	{[]string{"AIMEBU_ALLOWED_HOSTS"}, []string{
 		"Comma-separated host names (besides localhost, IP addresses and the public",
 		"URL's host) that sign-in, setup, invite and pairing answer to (default: none)"}},
-	{[]string{"AIMEBU2_PUBLIC_URL"}, []string{"HTTP(S) origin the server advertises when it sits behind a proxy"}},
-	{[]string{"AIMEBU2_URL"}, []string{"Server URL for the supervisor and agent-tools"}},
-	{[]string{"AIMEBU2_AGENT_ID", "AIMEBU2_AGENT_KEY"}, []string{
+	{[]string{"AIMEBU_PUBLIC_URL"}, []string{"HTTP(S) origin the server advertises when it sits behind a proxy"}},
+	{[]string{"AIMEBU_URL"}, []string{"Server URL for the supervisor and agent-tools"}},
+	{[]string{"AIMEBU_AGENT_ID", "AIMEBU_AGENT_KEY"}, []string{
 		"A managed agent's identity and key for agent-tools; the supervisor sets",
 		"them in the agent's MCP config, you normally never do"}},
-	{[]string{"AIMEBU2_OWNER_LOGIN", "AIMEBU2_OWNER_PASSWORD"}, []string{"Bootstrap the owner account on first start (set both; without them the server prints a one-time setup token)"}},
-	{[]string{"AIMEBU2_EMBEDDED_SUPERVISOR"}, []string{"Set to 0 to run the server without its local supervisor (remote-only)"}},
-	{[]string{"AIMEBU2_ALLOW_NATIVE"}, []string{
+	{[]string{"AIMEBU_OWNER_LOGIN", "AIMEBU_OWNER_PASSWORD"}, []string{"Bootstrap the owner account on first start (set both; without them the server prints a one-time setup token)"}},
+	{[]string{"AIMEBU_EMBEDDED_SUPERVISOR"}, []string{"Set to 0 to run the server without its local supervisor (remote-only)"}},
+	{[]string{"AIMEBU_ALLOW_NATIVE"}, []string{
 		"Set to 1 when migrating a database to enable host-native launchers; has no",
 		"effect afterwards"}},
-	{[]string{"AIMEBU2_SENTRY_DSN"}, []string{
+	{[]string{"AIMEBU_SENTRY_DSN"}, []string{
 		"Sentry DSN for error and performance reports (server and web UI); \"off\" or",
 		"empty disables, and either overrides Settings. See docs/telemetry.md"}},
-	{[]string{"AIMEBU2_SENTRY_ENV"}, []string{"Sentry environment name (default: dev)"}},
-	{[]string{"AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"}, []string{"Share of requests and page loads traced, 0 to 1 (default: 1)"}},
-	{[]string{"AIMEBU2_USAGES"}, []string{"Set to 0 to disable credential reads and provider usage requests"}},
-	{[]string{"AIMEBU2_WEB_BUNDLE"}, []string{
+	{[]string{"AIMEBU_SENTRY_ENV"}, []string{"Sentry environment name (default: dev)"}},
+	{[]string{"AIMEBU_SENTRY_TRACES_SAMPLE_RATE"}, []string{"Share of requests and page loads traced, 0 to 1 (default: 1)"}},
+	{[]string{"AIMEBU_USAGES"}, []string{"Set to 0 to disable credential reads and provider usage requests"}},
+	{[]string{"AIMEBU_WEB_BUNDLE"}, []string{
 		"Set to off to serve the web UI from its ~240 separate modules instead of the one",
 		"bundle the server builds when it starts (for debugging in a browser)"}},
 	{[]string{"AIMEBU_TOKEN_LEAD_CLAUDE", "AIMEBU_TOKEN_LEAD_CODEX"}, []string{
 		"How long before expiry the token refresher renews a profile (Go durations,",
 		"10m to 14d; defaults 60m Claude, 24h Codex); only with the token-copy model"}},
-	{[]string{"AIMEBU2_DEV_IMPORT_V1"}, []string{
+	{[]string{"AIMEBU_DEV_IMPORT_V1"}, []string{
 		"Set to 1 to enable the offline `import-v1` command for development tests;",
 		"normal imports happen only in the first-run wizard"}},
-	{[]string{"AIMEBU2_DEV_SKIP_V1_PROBE"}, []string{
+	{[]string{"AIMEBU_DEV_SKIP_V1_PROBE"}, []string{
 		"Set to 1 to skip the v1 port 9997 listener probe so a dev instance can",
 		"rehearse the cutover on a copy of v1 data; never in production, the v1",
 		"daemon pid-file check still runs"}},
-	{[]string{"AIMEBU2_STUCK_MINUTES"}, []string{"Minutes of silence (1-1440, default 10) before a running turn counts as stuck"}},
-	{[]string{"AIMEBU2_TURN_IDLE", "AIMEBU2_TURN_MAX"}, []string{
+	{[]string{"AIMEBU_DEV_CONFIG_DIR", "AIMEBU_DEV_PORT", "AIMEBU_DEV_TLS_PORT", "AIMEBU_DEV_SENTRY_ENV"}, []string{
+		"Overrides for make dev only: config root, HTTP port, HTTPS port, and",
+		"telemetry environment. Any AIMEBU_DEV_<name> becomes AIMEBU_<name>",
+		"for the dev server (for example BIND, ALLOW, TLS_CERT, or TLS_KEY).",
+		"Inherited production AIMEBU_* settings are cleared first."}},
+	{[]string{"AIMEBU_STUCK_MINUTES"}, []string{"Minutes of silence (1-1440, default 10) before a running turn counts as stuck"}},
+	{[]string{"AIMEBU_TURN_IDLE", "AIMEBU_TURN_MAX"}, []string{
 		"Supervisor stall deadlines per turn: silence with no tool running, and",
 		"wall-clock cap (Go durations, 0 disables; defaults depend on the harness)"}},
-	{[]string{"AIMEBU2_WARM_IDLE", "AIMEBU2_WARM_MAX_LIFETIME", "AIMEBU2_WARM_MIN_FREE_MB", "AIMEBU2_WARM_MIN_FREE_PERCENT"}, []string{
-		"Warm agents (on by default, 5 minutes): AIMEBU2_WARM_IDLE (a Go duration such as 10m) keeps an",
+	{[]string{"AIMEBU_WARM_IDLE", "AIMEBU_WARM_MAX_LIFETIME", "AIMEBU_WARM_MIN_FREE_MB", "AIMEBU_WARM_MIN_FREE_PERCENT"}, []string{
+		"Warm agents (on by default, 5 minutes): AIMEBU_WARM_IDLE (a Go duration such as 10m) keeps an",
 		"agent's harness process up that long after a turn so the next message skips the start; 0 is",
 		"off, unset is 5m, and the owner's setting in Settings -> General wins over it when one is saved.",
-		"AIMEBU2_WARM_MAX_LIFETIME (default 1h) ends a process that old at the end of its turn;",
-		"AIMEBU2_WARM_MIN_FREE_MB (default 1536) and AIMEBU2_WARM_MIN_FREE_PERCENT (default 10) end",
+		"AIMEBU_WARM_MAX_LIFETIME (default 1h) ends a process that old at the end of its turn;",
+		"AIMEBU_WARM_MIN_FREE_MB (default 1536) and AIMEBU_WARM_MIN_FREE_PERCENT (default 10) end",
 		"the longest-idle process while free memory is below either"}},
-	{[]string{"AIMEBU2_TEST_RESTRICT_PATH"}, []string{
+	{[]string{"AIMEBU_TEST_RESTRICT_PATH"}, []string{
 		"Set to 1 by the test helpers: harness discovery then reads PATH only, not the",
 		"machine-wide install directories, so a test never finds the developer's CLIs;",
 		"never set it in production"}},
-	{[]string{"AIMEBU2_INSECURE_SKIP_VERIFY"}, []string{"Disable client TLS verification for development self-signed certificates"}},
-	{[]string{"AIMEBU_BIND"}, []string{
-		"v1's bind address; probed for a running v1 server before the first start",
-		"over a v1 data directory"}},
+	{[]string{"AIMEBU_INSECURE_SKIP_VERIFY"}, []string{"Disable client TLS verification for development self-signed certificates"}},
 }
 
 const envNameColumn = 22

@@ -2944,8 +2944,8 @@ async function main() {
       {
         const setupTmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-setup-'));
         const { child: setupServer, origin: setupOrigin, logs: setupLogs } = await startServer(binary, port => {
-          const setupEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: setupTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_PORT: String(port) };
-          delete setupEnv.AIMEBU2_OWNER_LOGIN; delete setupEnv.AIMEBU2_OWNER_PASSWORD;
+          const setupEnv = { ...isolatedEnv, AIMEBU_CONFIG_DIR: setupTmp, AIMEBU_EMBEDDED_SUPERVISOR: '0', AIMEBU_USAGES: '0', AIMEBU_SENTRY_DSN: 'off', AIMEBU_PORT: String(port) };
+          delete setupEnv.AIMEBU_OWNER_LOGIN; delete setupEnv.AIMEBU_OWNER_PASSWORD;
           return setupEnv;
         }, { label: 'setup server' });
         const setupContext = await browser.createBrowserContext();
@@ -3247,8 +3247,8 @@ async function main() {
       // reload, and a second forced refresh inside the cooldown tells the owner to wait.
       const liveTmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-usages-'));
       const { child: liveServer, origin: liveOrigin, logs: liveLogs } = await startServer(binary, port => {
-        const liveEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: liveTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' };
-        delete liveEnv.AIMEBU2_USAGES;
+        const liveEnv = { ...isolatedEnv, AIMEBU_CONFIG_DIR: liveTmp, AIMEBU_EMBEDDED_SUPERVISOR: '0', AIMEBU_PORT: String(port), AIMEBU_OWNER_LOGIN: 'owner', AIMEBU_OWNER_PASSWORD: 'test-password-123' };
+        delete liveEnv.AIMEBU_USAGES;
         return liveEnv;
       }, { label: 'usages server' });
       const liveContexts = [];

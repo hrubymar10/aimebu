@@ -24,7 +24,7 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	config := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 	path := filepath.Join(root, "claude-docker")
 	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU2_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CLAUDE_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$AIMEBU_AGENT_KEY\" \"$HARNESS_DOCKER_FORWARD_ENV\" > " + envPath + "\nprintf '%s\\n' \"$CLAUDE_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--resume\nsession-1", "--mcp-config\n", "host.docker.internal:9897/api/agent/mcp", "Bearer ${AIMEBU2_AGENT_KEY}"} {
+	for _, want := range []string{"--resume\nsession-1", "--mcp-config\n", "host.docker.internal:9897/api/agent/mcp", "Bearer ${AIMEBU_AGENT_KEY}"} {
 		if !strings.Contains(string(args), want) {
 			t.Fatalf("missing %q in %q", want, args)
 		}
@@ -52,7 +52,7 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(env) != "aak_secret\nAIMEBU2_AGENT_KEY\n" {
+	if string(env) != "aak_secret\nAIMEBU_AGENT_KEY\n" {
 		t.Fatalf("the key must reach the harness through the forwarded variable, got %q", env)
 	}
 	if strings.Contains(string(args), "aak_secret") {
@@ -182,7 +182,7 @@ func TestFailedClaudeResultKeepsRedactedLimitEvidence(t *testing.T) {
 }
 
 func TestConformance(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {
 		t.Skip("script fixture")
 	}
@@ -256,7 +256,7 @@ printf '%s\n' '{"type":"assistant","message":{"usage":{"input_tokens":11,"cache_
 }
 
 func TestResumeAndRawCandidate(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {
 		t.Skip("script fixture")
 	}
@@ -294,7 +294,7 @@ func TestResumeAndRawCandidate(t *testing.T) {
 }
 
 func TestNewSessionReportsServerIssuedHandle(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {
 		t.Skip("script fixture")
 	}
@@ -331,7 +331,7 @@ func TestNewSessionReportsServerIssuedHandle(t *testing.T) {
 // A forked turn resumes the original with --fork-session; Claude saves the copy under a new id, which the turn reports once and which is
 // what the later turns resume. The original's id (a stray line carrying it) is never reported as the copy.
 func TestForkedTurnReportsTheCopyOfTheSession(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {
 		t.Skip("script fixture")
 	}
@@ -391,7 +391,7 @@ func TestForkedTurnReportsTheCopyOfTheSession(t *testing.T) {
 }
 
 func TestFailedFirstSessionDoesNotReportStarted(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {
 		t.Skip("script fixture")
 	}
@@ -426,9 +426,9 @@ func contains(s, part string) bool {
 }
 
 func TestLiveCanary(t *testing.T) {
-	docker := os.Getenv("AIMEBU2_LIVE_CC_DOCKER") == "1"
-	if !docker && os.Getenv("AIMEBU2_LIVE_CC") != "1" {
-		t.Skip("set AIMEBU2_LIVE_CC=1 or AIMEBU2_LIVE_CC_DOCKER=1 to run Claude Code canary")
+	docker := os.Getenv("AIMEBU_LIVE_CC_DOCKER") == "1"
+	if !docker && os.Getenv("AIMEBU_LIVE_CC") != "1" {
+		t.Skip("set AIMEBU_LIVE_CC=1 or AIMEBU_LIVE_CC_DOCKER=1 to run Claude Code canary")
 	}
 	root := t.TempDir()
 	if docker {
@@ -456,7 +456,7 @@ func TestLiveCanary(t *testing.T) {
 		implementation.stderrCapture = &stderr
 		variant = "docker"
 	} else {
-		t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+		t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 		implementation.AllowNative = true
 	}
 	implementation.MaxBudgetUSD = "0.25"
@@ -570,7 +570,7 @@ func TestOversizedStdoutLineKillsProcessGroupBeforeWait(t *testing.T) {
 // Claude keys its sessions by the folder it is started in, as spelled. A turn with a LaunchPath starts it there (Go sets PWD to Dir), so a
 // session saved under a link to the folder is found; without one it starts in the canonical checkout.
 func TestLaunchPathIsTheFolderTheHarnessStartsIn(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {
 		t.Skip("script fixture")
 	}
@@ -673,17 +673,17 @@ func TestClaudeErrorResultIsADefiniteFailureOnlyWhenTheTurnDidNothing(t *testing
 // A native turn hands the bridge's entry inline, with the key as a reference Claude expands from its own environment: the key is in the harness's
 // environment, in no argument and in no file under the checkout.
 func TestNativeTurnKeyIsInTheEnvironmentOnly(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	root := t.TempDir()
 	captures := t.TempDir() // outside the tree that is searched for the key
 	path := filepath.Join(root, "claude")
 	argsPath, envPath := filepath.Join(captures, "args"), filepath.Join(captures, "env")
-	script := "#!/bin/sh\nprintf '%s' \"$AIMEBU2_AGENT_KEY\" > " + envPath + "\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	script := "#!/bin/sh\nprintf '%s' \"$AIMEBU_AGENT_KEY\" > " + envPath + "\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	const key = "aak_native_claude_key"
-	access := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: key, Command: "/usr/bin/aimebu", Env: map[string]string{"AIMEBU2_SENTRY_DSN": "off"}}
+	access := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: key, Command: "/usr/bin/aimebu", Env: map[string]string{"AIMEBU_SENTRY_DSN": "off"}}
 	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "native", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeNormal, AgentTools: access, NativeSessionHandle: "4c014434-9712-45a7-9d2e-a7866ef8f8dc", NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
@@ -718,7 +718,7 @@ func TestNativeTurnKeyIsInTheEnvironmentOnly(t *testing.T) {
 		t.Fatalf("the MCP entry is not inline JSON: %q: %v", inline, err)
 	}
 	server := config.Servers["aimebu"]
-	if server.Command != "/usr/bin/aimebu" || len(server.Args) != 1 || server.Args[0] != "agent-tools" || server.Env["AIMEBU2_AGENT_KEY"] != "${AIMEBU2_AGENT_KEY}" || server.Env["AIMEBU2_AGENT_ID"] != "agt_test" || server.Env["AIMEBU2_URL"] != "http://127.0.0.1:9897" || server.Env["AIMEBU2_SENTRY_DSN"] != "off" {
+	if server.Command != "/usr/bin/aimebu" || len(server.Args) != 1 || server.Args[0] != "agent-tools" || server.Env["AIMEBU_AGENT_KEY"] != "${AIMEBU_AGENT_KEY}" || server.Env["AIMEBU_AGENT_ID"] != "agt_test" || server.Env["AIMEBU_URL"] != "http://127.0.0.1:9897" || server.Env["AIMEBU_SENTRY_DSN"] != "off" {
 		t.Fatalf("bridge entry: %+v", server)
 	}
 	if err := filepath.WalkDir(root, func(p string, entry os.DirEntry, err error) error {

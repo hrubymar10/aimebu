@@ -19,17 +19,17 @@ func TestWebURLFollowsTheServerConfiguration(t *testing.T) {
 		{"a public origin wins", "0.0.0.0", "9911", "https://bus.example.test", "https://bus.example.test"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("AIMEBU2_BIND", tc.bind)
-			t.Setenv("AIMEBU2_PORT", tc.port)
-			t.Setenv("AIMEBU2_PUBLIC_URL", tc.public)
+			t.Setenv("AIMEBU_BIND", tc.bind)
+			t.Setenv("AIMEBU_PORT", tc.port)
+			t.Setenv("AIMEBU_PUBLIC_URL", tc.public)
 			got, err := webURL()
 			if err != nil || got != tc.want {
 				t.Fatalf("webURL = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}
-	t.Setenv("AIMEBU2_BIND", "not-an-ip")
-	t.Setenv("AIMEBU2_PUBLIC_URL", "")
+	t.Setenv("AIMEBU_BIND", "not-an-ip")
+	t.Setenv("AIMEBU_PUBLIC_URL", "")
 	if _, err := webURL(); err == nil {
 		t.Fatal("a bad bind address was accepted")
 	}
@@ -63,9 +63,9 @@ func TestBrowserCommandOnlyWhereSomeoneCanSeeIt(t *testing.T) {
 }
 
 func TestFeOpensTheBrowserOrPrintsTheAddress(t *testing.T) {
-	t.Setenv("AIMEBU2_BIND", "")
-	t.Setenv("AIMEBU2_PORT", "9912")
-	t.Setenv("AIMEBU2_PUBLIC_URL", "")
+	t.Setenv("AIMEBU_BIND", "")
+	t.Setenv("AIMEBU_PORT", "9912")
+	t.Setenv("AIMEBU_PUBLIC_URL", "")
 	t.Setenv("SSH_CONNECTION", "")
 	t.Setenv("SSH_TTY", "")
 	t.Setenv("DISPLAY", ":0")
@@ -100,7 +100,7 @@ func TestFeOpensTheBrowserOrPrintsTheAddress(t *testing.T) {
 	if code := run([]string{"fe", "extra"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("fe with an argument = %d", code)
 	}
-	t.Setenv("AIMEBU2_BIND", "not-an-ip")
+	t.Setenv("AIMEBU_BIND", "not-an-ip")
 	if code := run([]string{"fe"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("fe with a bad configuration = %d", code)
 	}

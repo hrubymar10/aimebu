@@ -30,7 +30,8 @@ for (const args of [['add', 'README.md'], ['commit', '-qm', 'base']]) {
 }
 const testHome = path.join(tmp, 'home');
 fs.mkdirSync(testHome, { recursive: true });
-const isolatedEnv = { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, '.codex'), CLAUDE_CONFIG_DIR: path.join(testHome, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp, AIMEBU2_SENTRY_DSN: 'off' };
+const isolatedEnv = { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, '.codex'), CLAUDE_CONFIG_DIR: path.join(testHome, '.claude'), AIMEBU_CONFIG_DIR: tmp, AIMEBU_SENTRY_DSN: 'off' };
+for (const name of ['AIMEBU_URL', 'AIMEBU_BIND', 'AIMEBU_ALLOW', 'AIMEBU_ALLOWED_HOSTS', 'AIMEBU_TLS_CERT', 'AIMEBU_TLS_KEY', 'AIMEBU_TLS_PORT', 'AIMEBU_OWNER_LOGIN', 'AIMEBU_OWNER_PASSWORD']) delete isolatedEnv[name];
 const binary = path.join(tmp, 'aimebu');
 const build = spawnSync('go', ['build', '-o', binary, './cmd/aimebu'], { stdio: 'inherit' });
 if (build.status !== 0) process.exit(build.status || 1);
@@ -105,7 +106,7 @@ const installFixtureChat = page => page.evaluate(async () => {
 
 async function start() {
   // A start whose port was taken between picking it and binding it is tried again on another (see server-start.cjs).
-  const { child, port, origin, logs: serverLogs } = await startServer(binary, port => ({ ...isolatedEnv, AIMEBU2_USAGES: '0', AIMEBU2_SENTRY_DSN: 'off', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_WEB_BUNDLE: 'off', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }), { label: 'smoke server' });
+  const { child, port, origin, logs: serverLogs } = await startServer(binary, port => ({ ...isolatedEnv, AIMEBU_USAGES: '0', AIMEBU_SENTRY_DSN: 'off', AIMEBU_EMBEDDED_SUPERVISOR: '0', AIMEBU_WEB_BUNDLE: 'off', AIMEBU_PORT: String(port), AIMEBU_OWNER_LOGIN: 'owner', AIMEBU_OWNER_PASSWORD: 'test-password-123' }), { label: 'smoke server' });
   let browser, supervisor, preserveFailure = false, browserClosing = false;
   const close = async failed => {
     browserClosing = true;
@@ -114,7 +115,7 @@ async function start() {
     if (!preserveFailure) fs.rmSync(tmp, { recursive: true, force: true });
   };
   try {
-    supervisor = spawn(binary, ['supervisor'], { env: { ...isolatedEnv, AIMEBU2_URL: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
+    supervisor = spawn(binary, ['supervisor'], { env: { ...isolatedEnv, AIMEBU_URL: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
     let supervisorLogs = ''; supervisor.stderr.on('data', data => supervisorLogs += data);
     browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
     // A page wait that dies with "frame got detached" and no step in its trace means Chromium itself went away; say so.

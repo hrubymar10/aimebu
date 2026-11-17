@@ -1,11 +1,11 @@
 # Account switcher
 
 The v2 account switcher stores named Claude Code and Codex credential profiles
-under `<AIMEBU2_CONFIG_DIR>/switcher/` (default `~/.aimebu/switcher/`). It
+under `<AIMEBU_CONFIG_DIR>/switcher/` (default `~/.aimebu/switcher/`). It
 starts disabled in a fresh root and keeps the existing enabled flag at
 cutover. It uses credential files only; it never accesses the macOS
 Keychain. A development instance can use a separate root with
-`AIMEBU2_CONFIG_DIR`. Both versions swap the same live credential files, so
+`AIMEBU_CONFIG_DIR`. Both versions swap the same live credential files, so
 when v1's `~/.aimebu/switcher/.lock` exists and is a different file from v2's
 own lock, v2 takes the v1 lock first and then its own `switcher/.lock`. With a
 separate root it never creates the v1 lock or changes v1 profiles or state.

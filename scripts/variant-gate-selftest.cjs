@@ -79,8 +79,10 @@ async function main() {
   const aimebu = path.join(tmp, 'aimebu');
   const build = spawnSync('go', ['build', '-o', aimebu, './cmd/aimebu'], { cwd: root, stdio: 'inherit' });
   if (build.status !== 0) throw new Error('go build failed');
-  const { child: server, origin, logs: serverLogs } = await startServer(aimebu, port => ({ ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU2_CONFIG_DIR: path.join(tmp, 'config'),
-    PATH: `${bin}${path.delimiter}${process.env.PATH}`, AIMEBU2_ALLOW_NATIVE: '1', AIMEBU2_USAGES: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'selftest-password-123' }), { label: 'variant-gate server', cwd: tmp });
+  const inheritedEnv = { ...process.env };
+  for (const name of ['AIMEBU_URL', 'AIMEBU_BIND', 'AIMEBU_ALLOW', 'AIMEBU_ALLOWED_HOSTS', 'AIMEBU_TLS_CERT', 'AIMEBU_TLS_KEY', 'AIMEBU_TLS_PORT', 'AIMEBU_OWNER_LOGIN', 'AIMEBU_OWNER_PASSWORD']) delete inheritedEnv[name];
+  const { child: server, origin, logs: serverLogs } = await startServer(aimebu, port => ({ ...inheritedEnv, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'config'),
+    PATH: `${bin}${path.delimiter}${process.env.PATH}`, AIMEBU_ALLOW_NATIVE: '1', AIMEBU_USAGES: '0', AIMEBU_PORT: String(port), AIMEBU_OWNER_LOGIN: 'owner', AIMEBU_OWNER_PASSWORD: 'selftest-password-123' }), { label: 'variant-gate server', cwd: tmp });
   try {
     // Nothing is seeded: add the four native harnesses the fakes stand in for, each with its cheap model, as an owner would.
     const api = new Client(origin);

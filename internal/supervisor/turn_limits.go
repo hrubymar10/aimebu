@@ -11,9 +11,9 @@ import (
 const (
 	// TurnIdleEnv bounds silence from a running harness turn: no adapter
 	// event, and no tool call in flight, for this long.
-	TurnIdleEnv = "AIMEBU2_TURN_IDLE"
+	TurnIdleEnv = "AIMEBU_TURN_IDLE"
 	// TurnMaxEnv is the wall-clock cap for one turn, tools included.
-	TurnMaxEnv = "AIMEBU2_TURN_MAX"
+	TurnMaxEnv = "AIMEBU_TURN_MAX"
 
 	defaultTurnIdle = 600 * time.Second
 	defaultTurnMax  = 30 * time.Minute
@@ -37,7 +37,7 @@ func DefaultTurnLimits(tool string) TurnLimits {
 	return TurnLimits{Idle: defaultTurnIdle}
 }
 
-// TurnLimitOverrides are the owner's AIMEBU2_TURN_* settings. A nil field
+// TurnLimitOverrides are the owner's AIMEBU_TURN_* settings. A nil field
 // leaves that deadline at its per-harness default.
 type TurnLimitOverrides struct {
 	Idle *time.Duration
@@ -56,7 +56,7 @@ func (o TurnLimitOverrides) For(tool string) TurnLimits {
 	return limits
 }
 
-// TurnLimitsFromEnv reads AIMEBU2_TURN_IDLE / AIMEBU2_TURN_MAX. Values are
+// TurnLimitsFromEnv reads AIMEBU_TURN_IDLE / AIMEBU_TURN_MAX. Values are
 // non-negative Go durations; "0" disables that deadline for every harness.
 func TurnLimitsFromEnv(lookup func(string) string) (TurnLimitOverrides, error) {
 	var overrides TurnLimitOverrides

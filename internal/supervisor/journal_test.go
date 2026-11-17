@@ -188,7 +188,7 @@ func TestJournalRejectsConcurrentSupervisorOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenJournal(ctx, path); !errors.Is(err, ErrJournalInUse) || !strings.Contains(err.Error(), "pid ") || !strings.Contains(err.Error(), "AIMEBU2_EMBEDDED_SUPERVISOR=0") {
+	if _, err := OpenJournal(ctx, path); !errors.Is(err, ErrJournalInUse) || !strings.Contains(err.Error(), "pid ") || !strings.Contains(err.Error(), "AIMEBU_EMBEDDED_SUPERVISOR=0") {
 		t.Fatalf("second supervisor opened same journal: %v", err)
 	}
 	if info, err := os.Stat(path + ".lock"); err != nil || info.Mode().Perm() != 0600 {

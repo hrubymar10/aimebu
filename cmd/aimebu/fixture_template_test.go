@@ -94,7 +94,7 @@ func openFixtureStore(t *testing.T, path string) *store.Store {
 // that is about the first creation of the database (or about its absence) sets the variable itself.
 func useMigratedConfigDir(t *testing.T, dir string) {
 	t.Helper()
-	t.Setenv("AIMEBU2_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
 	path := filepath.Join(dir, "server", "aimebu.sqlite")
 	if _, err := os.Stat(path); err == nil {
 		return

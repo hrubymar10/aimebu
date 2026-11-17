@@ -68,7 +68,7 @@ func TestValidateHarnessProviders(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"PATH", "HOME", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "XDG_CONFIG_HOME", "LC_ALL", "NODE_OPTIONS", "HTTPS_PROXY", "SSL_CERT_FILE",
-		"HARNESS_DOCKER_FORWARD_ENV", "OPENCODE_CONFIG_CONTENT", "OPENCODE_DB", "AIMEBU2_CONFIG_DIR", "AIMEBU_X", "DOCKER_HOST", "NPM_CONFIG_REGISTRY",
+		"HARNESS_DOCKER_FORWARD_ENV", "OPENCODE_CONFIG_CONTENT", "OPENCODE_DB", "AIMEBU_CONFIG_DIR", "AIMEBU_X", "DOCKER_HOST", "NPM_CONFIG_REGISTRY",
 		// The keys of OpenCode's own providers: the host's value of one would be sent to the custom provider's base URL.
 		"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY"} {
 		if err := ValidateHarnessProviders("opencode", with(func(p *HarnessProvider) { p.KeyEnv = name })); err == nil {

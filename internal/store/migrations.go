@@ -1970,7 +1970,7 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 			err = seedDefaultMacros(ctx, tx)
 		}
 		if err == nil {
-			if m.version == 28 && os.Getenv("AIMEBU2_ALLOW_NATIVE") == "1" {
+			if m.version == 28 && os.Getenv("AIMEBU_ALLOW_NATIVE") == "1" {
 				_, err = tx.ExecContext(ctx, `UPDATE machine_launcher SET enabled=COALESCE((SELECT enabled FROM machine_harness_setting h WHERE h.machine_id=machine_launcher.machine_id AND h.tool=machine_launcher.tool AND h.variant='native'),1) WHERE name='native' AND machine_id IN (SELECT id FROM machine WHERE is_host=1)`)
 			}
 		}

@@ -87,7 +87,7 @@ type Manager struct {
 	beforeStorageLock func()
 }
 
-// DefaultRoot resolves the switcher root from AIMEBU2_CONFIG_DIR (or the default
+// DefaultRoot resolves the switcher root from AIMEBU_CONFIG_DIR (or the default
 // home-based path) and returns <config>/switcher.
 func DefaultRoot() (string, error) {
 	dir, err := configroot.FromEnv()

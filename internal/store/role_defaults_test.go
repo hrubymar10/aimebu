@@ -59,12 +59,16 @@ func roleDatabaseBefore(t *testing.T, stop int) (*sql.DB, string) {
 	return db, path
 }
 
+// shippedPriorRoleSafety is the literal migration 32 installed; do not derive
+// fixtures for migration 35 from the code that migration itself uses.
+const shippedPriorRoleSafety = `Read the project instructions and relevant docs before editing. Work only in your assigned checkout or worktree; never modify another agent's worktree. Run tests with isolated temporary HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, and AIMEBU2_CONFIG_DIR, preserving the Go cache paths. Hold the shared flock gate for the full test command so concurrent gates cannot interfere. Report the exact command, result, branch, commit SHA, and parent SHA; never invent a test result or source. Use a shell heredoc for a substantive commit message, with a conventional subject and a body explaining why. Check added lines and the commit message against the project's prohibited substring list before committing. Do not add dependencies without approval. Keep code and docs in the same commit when behavior or instructions change. Do not defer in-scope work just because it is difficult; state a concrete blocker or implement its mitigation.`
+
 func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
 	db, path := roleDatabaseBefore(t, 35)
-	prior := func(body string) string { return strings.Replace(body, roleSafety, priorRoleSafety, 1) }
+	prior := func(body string) string { return strings.Replace(body, roleSafety, shippedPriorRoleSafety, 1) }
 	oldReviewer := prior(strings.Replace(reviewerRoleBody, reviewerStart, priorReviewerStart, 1))
 	oldBodies := map[string]string{
-		"role_lead_default":     strings.Replace(priorLeadRoleBody, frozenRoleSafety, priorRoleSafety, 1),
+		"role_lead_default":     strings.Replace(priorLeadRoleBody, frozenRoleSafety, shippedPriorRoleSafety, 1),
 		"role_worker_default":   prior(strings.Replace(workerRoleBody, workerStart, priorWorkerStart, 1)),
 		"role_reviewer_default": oldReviewer,
 	}
@@ -136,7 +140,7 @@ func TestRoleDefaultsFreshAndUpgradeMatch(t *testing.T) {
 		t.Fatalf("fresh global role count = %d, want 8", len(want))
 	}
 	for key, body := range want {
-		for _, local := range []string{"AIMEBU2_CONFIG_DIR", "flock", "prohibited substring"} {
+		for _, local := range []string{"AIMEBU_CONFIG_DIR", "flock", "prohibited substring"} {
 			if strings.Contains(body, local) {
 				t.Errorf("global %s role contains local rule %q", key, local)
 			}
@@ -340,6 +344,9 @@ func TestRoomMentionMigrationUpdatesOnlyUneditedBuiltins(t *testing.T) {
 const goldenLeadBodySHA256 = "32f1e33a3ed607db94b3c1df2ca751fc138e78351ff8a0db1e2b47e75f5e4d7b"
 
 func TestFrozenLeadBody(t *testing.T) {
+	if priorRoleSafety != shippedPriorRoleSafety {
+		t.Fatal("priorRoleSafety changed from the text shipped by migration 32")
+	}
 	t.Parallel()
 	sum := sha256.Sum256([]byte(priorLeadRoleBody))
 	if got := hex.EncodeToString(sum[:]); got != goldenLeadBodySHA256 {
@@ -359,7 +366,7 @@ func TestFrozenLeadBodyIsWhatTheEarlierMigrationsWrite(t *testing.T) {
 	for name, test := range map[string]struct {
 		before, migration string
 	}{
-		"migration 35": {strings.Replace(priorLeadRoleBody, frozenRoleSafety, priorRoleSafety, 1), roleFollowupMigration()},
+		"migration 35": {strings.Replace(priorLeadRoleBody, frozenRoleSafety, shippedPriorRoleSafety, 1), roleFollowupMigration()},
 		"migration 62": {strings.Replace(priorLeadRoleBody, frozenLeadSpawnParagraph, priorLeadSpawnParagraph, 1), roleTeamlessLeadMigration()},
 	} {
 		t.Run(name, func(t *testing.T) {

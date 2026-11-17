@@ -36,7 +36,7 @@ func telemetryClient(t *testing.T) *supervisor.Client {
 	return supervisor.NewClient("mch_test", "key", "http://127.0.0.1:9897", journal, adapter.NewFake())
 }
 
-// A supervisor reports the way the server's settings say: they start it, replace it and stop it; the machine's own AIMEBU2_SENTRY_DSN, a DSN or
+// A supervisor reports the way the server's settings say: they start it, replace it and stop it; the machine's own AIMEBU_SENTRY_DSN, a DSN or
 // "off", wins over them, and the bridge is told the same through its environment. (Tests never send: the transport here is a discard one.)
 func TestSupervisorReportsByTheServersSettingsUnlessItsOwnEnvironmentSaysOtherwise(t *testing.T) {
 	t.Cleanup(func() { telemetry.Init(telemetry.Config{}, nil) }) //nolint:errcheck // stops what the test started
@@ -69,14 +69,14 @@ func TestSupervisorReportsByTheServersSettingsUnlessItsOwnEnvironmentSaysOtherwi
 	}
 
 	// The machine's own setting wins: off stays off, a DSN of its own is not replaced.
-	applySupervisorTelemetry(on(first, 0.5), "aimebu v9", telemetryLookup(map[string]string{"AIMEBU2_SENTRY_DSN": "off"}), client, discardSentryTransport{}, &stderr)
+	applySupervisorTelemetry(on(first, 0.5), "aimebu v9", telemetryLookup(map[string]string{"AIMEBU_SENTRY_DSN": "off"}), client, discardSentryTransport{}, &stderr)
 	if telemetry.Current() != nil {
-		t.Fatalf("AIMEBU2_SENTRY_DSN=off on the machine lost to the server: %v", telemetry.Current().BrowserConfig())
+		t.Fatalf("AIMEBU_SENTRY_DSN=off on the machine lost to the server: %v", telemetry.Current().BrowserConfig())
 	}
 	if _, err := telemetry.Init(telemetry.Config{DSN: "https://own@o9.ingest.example/9", Environment: "mine", TracesSampleRate: 1}, discardSentryTransport{}); err != nil {
 		t.Fatal(err)
 	}
-	applySupervisorTelemetry(on(first, 0.5), "aimebu v9", telemetryLookup(map[string]string{"AIMEBU2_SENTRY_DSN": "https://own@o9.ingest.example/9"}), client, discardSentryTransport{}, &stderr)
+	applySupervisorTelemetry(on(first, 0.5), "aimebu v9", telemetryLookup(map[string]string{"AIMEBU_SENTRY_DSN": "https://own@o9.ingest.example/9"}), client, discardSentryTransport{}, &stderr)
 	if dsnNow() != "https://own@o9.ingest.example/9" {
 		t.Fatalf("the machine's own DSN was replaced by the server's: %s", dsnNow())
 	}
@@ -89,14 +89,14 @@ func TestSupervisorReportsByTheServersSettingsUnlessItsOwnEnvironmentSaysOtherwi
 func TestTelemetryEnvOfIsWhatTheBridgeReads(t *testing.T) {
 	config := telemetry.Config{DSN: "https://k@o1.ingest.example/1", Environment: "prod", TracesSampleRate: 0.5}
 	got := telemetryEnvOf(config)
-	if got["AIMEBU2_SENTRY_DSN"] != config.DSN || got["AIMEBU2_SENTRY_ENV"] != "prod" || got["AIMEBU2_SENTRY_TRACES_SAMPLE_RATE"] != "0.5" {
+	if got["AIMEBU_SENTRY_DSN"] != config.DSN || got["AIMEBU_SENTRY_ENV"] != "prod" || got["AIMEBU_SENTRY_TRACES_SAMPLE_RATE"] != "0.5" {
 		t.Fatalf("on: %v", got)
 	}
 	parsed, err := telemetry.FromEnv(telemetryLookup(got), "aimebu v9")
 	if err != nil || parsed.DSN != config.DSN || parsed.Environment != "prod" || parsed.TracesSampleRate != 0.5 {
 		t.Fatalf("the bridge reads %+v from it: %v", parsed, err)
 	}
-	if off := telemetryEnvOf(telemetry.Config{}); len(off) != 1 || off["AIMEBU2_SENTRY_DSN"] != "off" {
+	if off := telemetryEnvOf(telemetry.Config{}); len(off) != 1 || off["AIMEBU_SENTRY_DSN"] != "off" {
 		t.Fatalf("off: %v", off)
 	}
 }

@@ -11,7 +11,7 @@ import (
 )
 
 func stuckAfter() time.Duration {
-	minutes, err := strconv.Atoi(os.Getenv("AIMEBU2_STUCK_MINUTES"))
+	minutes, err := strconv.Atoi(os.Getenv("AIMEBU_STUCK_MINUTES"))
 	if err != nil || minutes < 1 || minutes > 1440 {
 		minutes = 10
 	}

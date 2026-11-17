@@ -16,7 +16,7 @@ import (
 // usageOf runs a stand-in codex that prints the given turn.completed line and returns the usage event the adapter produced.
 func usageOf(t *testing.T, completed string) *adapter.Usage {
 	t.Helper()
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture")
 	}

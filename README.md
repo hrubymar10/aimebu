@@ -127,12 +127,12 @@ terminal (so `aimebu agent-tools`, pipes and services never check).
 
 | Variable | Effect |
 | --- | --- |
-| `AIMEBU2_UPDATE_CHECK=0` | turn the automatic check off (`aimebu update` still works) |
-| `AIMEBU2_UPDATE_CHECK=apply` | update without asking, and without needing a terminal (still once per interval, never on a dirty or non-default checkout) |
-| `AIMEBU2_UPDATE_INTERVAL_HOURS` | hours between automatic checks, default `24`; `0` checks on every run. The last check is the mtime of `aimebu-update-check` in the clone's git directory |
-| `AIMEBU2_UPDATE_TIMEOUT_SECONDS` | time limit for the remote lookup, default `5` |
-| `AIMEBU2_UPDATE_FETCH_TIMEOUT_SECONDS` | time limit for the fetch once an update is accepted, default `60` |
-| `AIMEBU2_UPDATE_REMOTE` | the git remote to follow, default `origin` |
+| `AIMEBU_UPDATE_CHECK=0` | turn the automatic check off (`aimebu update` still works) |
+| `AIMEBU_UPDATE_CHECK=apply` | update without asking, and without needing a terminal (still once per interval, never on a dirty or non-default checkout) |
+| `AIMEBU_UPDATE_INTERVAL_HOURS` | hours between automatic checks, default `24`; `0` checks on every run. The last check is the mtime of `aimebu-update-check` in the clone's git directory |
+| `AIMEBU_UPDATE_TIMEOUT_SECONDS` | time limit for the remote lookup, default `5` |
+| `AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS` | time limit for the fetch once an update is accepted, default `60` |
+| `AIMEBU_UPDATE_REMOTE` | the git remote to follow, default `origin` |
 
 This branch is the v2 rewrite. The server, embedded and standalone
 supervisors, web UI, and managed adapters are implemented.
@@ -142,6 +142,19 @@ in CI; its web unit tests run in a pinned Docker image, so it needs Docker (or
 [CONTRIBUTING.md](CONTRIBUTING.md#the-web-tests-in-docker)). New contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md)
 (prerequisites, an isolated `make dev`, the test commands, the web UI layout
 and conventions).
+
+For local development, `make dev` defaults to `~/.aimebu-dev`, HTTP port
+9897, HTTPS port 9896, and telemetry environment `development`. Set
+`AIMEBU_DEV_CONFIG_DIR`, `AIMEBU_DEV_PORT`, `AIMEBU_DEV_TLS_PORT`, or
+`AIMEBU_DEV_SENTRY_ENV` to override them. The dev runner ignores inherited
+production `AIMEBU_*` settings except `AIMEBU_FORCE_BUILD` and
+`AIMEBU_AGENT_DEBUG`. Any `AIMEBU_DEV_<name>` maps to `AIMEBU_<name>` for the
+dev server, so `AIMEBU_DEV_BIND`, `AIMEBU_DEV_ALLOW`, and
+`AIMEBU_DEV_TLS_CERT` / `AIMEBU_DEV_TLS_KEY` can select different network
+settings. Without those overrides, dev binds loopback, allows loopback, and
+has no TLS listener. It sets `AIMEBU_DEV_SKIP_V1_PROBE=1` by default.
+A normal `bin/aimebu server` run and the Homebrew service use the release
+defaults (`~/.aimebu`, HTTP port 9997, HTTPS port 9996).
 
 The `aimebu doctor` command runs read-only health checks on the installation:
 the config directory, the SQLite database (integrity and schema version),
@@ -160,7 +173,7 @@ See [docs/doctor.md](docs/doctor.md).
 `aimebu version` prints the version plus the VCS revision, commit time and a
 `dirty` marker when the binary was built inside a checkout (a
 `-ldflags "-X main.version=..."` override is printed unchanged). `aimebu help`
-lists every command and the `AIMEBU2_*` environment variables.
+lists every command and the `AIMEBU_*` environment variables.
 
 `aimebu usages [provider] [--json|--plain]` prints the usage snapshots the server last
 cached, read straight from the config root (no login, no network, works with
@@ -175,13 +188,13 @@ hints include the checkout's session directory, OpenCode hints name its
 private session database, and Vibe hints name its private home and session directory. Remote Pi sessions and Codex,
 OpenCode and Vibe sessions on remote or containerized launchers have runtime paths that cannot
 be determined locally, so no command is guessed for them. Set
-`AIMEBU2_CONFIG_DIR` to inspect another v2 data root; unrelated server bind
+`AIMEBU_CONFIG_DIR` to inspect another v2 data root; unrelated server bind
 settings do not affect this command.
 
 `aimebu prune` clears agent runtime state after confirmation; add `-y` to
 skip the prompt. `aimebu prune -a` also clears all server and supervisor data.
 Both modes require the server and supervisor to be stopped, and both preserve
-`switcher/` and `usages/` under `AIMEBU2_CONFIG_DIR`. See
+`switcher/` and `usages/` under `AIMEBU_CONFIG_DIR`. See
 [pruning](docs/prune.md) for the exact paths and retention effects. The server also cleans up after itself, safely (old attachment files after 90 days by default, orphaned uploads, a bloated database; never a message, a room or a worktree) and shows disk usage in Health: see [cleanup](docs/cleanup.md).
 
 Old messages are never deleted to save space; **message expiry** only keeps old
@@ -201,17 +214,17 @@ variant through task, pause, kill, and recovery on a real server; see
 [the variant gate](docs/variant-gate.md).
 
 Error and performance reporting to Sentry is **on by default, once the owner has answered a one-time popup** (its toggle starts on, with the maintainers' DSN filled in; "Not now" turns it off). Set
-`AIMEBU2_SENTRY_DSN=off` (or another DSN), or use Settings → Telemetry, to stop or redirect the sending of crashes, 5xx answers and traces from the server and
-the web UI to a Sentry project (the maintainers', yours, or a self-hosted one); `AIMEBU2_SENTRY_ENV` and
-`AIMEBU2_SENTRY_TRACES_SAMPLE_RATE` tune it (the trace sample rate defaults to `1`: every request and page load). There is no Session Replay.
+`AIMEBU_SENTRY_DSN=off` (or another DSN), or use Settings → Telemetry, to stop or redirect the sending of crashes, 5xx answers and traces from the server and
+the web UI to a Sentry project (the maintainers', yours, or a self-hosted one); `AIMEBU_SENTRY_ENV` and
+`AIMEBU_SENTRY_TRACES_SAMPLE_RATE` tune it (the trace sample rate defaults to `1`: every request and page load). There is no Session Replay.
 Message bodies, prompts, attachments, tokens, cookies, headers, environment values and query strings are never sent: see
 [telemetry](docs/telemetry.md) for exactly what is and how to self-host.
 
 See [the architecture](docs/architecture.md) for component decisions and
 [the contract](docs/contract.md) for the data and protocol contract.
 
-`aimebu fe` opens the web UI of the configured server in the browser (`AIMEBU2_PUBLIC_URL` when set, otherwise the
-address from `AIMEBU2_BIND` and `AIMEBU2_PORT`); over SSH or with no display it only prints the address.
+`aimebu fe` opens the web UI of the configured server in the browser (`AIMEBU_PUBLIC_URL` when set, otherwise the
+address from `AIMEBU_BIND` and `AIMEBU_PORT`); over SSH or with no display it only prints the address.
 
 The server writes `server/aimebu.log`: what it prints (each line stamped with its UTC time) and what the rest of the process logs, but not
 the one-time setup token and link (those go to the terminal only). The file is capped by rotation at 10 MiB, with the three newest older
@@ -238,25 +251,25 @@ Owner and host-machine bootstrap is available through `aimebu server`. With
 no owner yet, the server prints a one-time setup token (and writes it to
 `.setup_token` in the config directory); open the server's address and enter it to
 create the owner in the browser ([owner setup](docs/auth.md#first-run-owner-setup)).
-For a headless start set `AIMEBU2_OWNER_LOGIN` and `AIMEBU2_OWNER_PASSWORD`
+For a headless start set `AIMEBU_OWNER_LOGIN` and `AIMEBU_OWNER_PASSWORD`
 before the first run instead. Either way the server writes the host machine key to `server/host-machine.key` (0600) and
 prints that path. Its database defaults to
-`~/.aimebu/server/aimebu.sqlite`; `AIMEBU2_CONFIG_DIR` selects another
+`~/.aimebu/server/aimebu.sqlite`; `AIMEBU_CONFIG_DIR` selects another
 absolute root. A leading `~` or `~/` expands to the home directory; relative
 paths are rejected before the server opens data. The server listens on `127.0.0.1:9997` after bootstrap. Set
-`AIMEBU2_BIND` to an IP literal and `AIMEBU2_PORT` to a TCP port to change the
-listener. `AIMEBU2_ALLOW` limits client source IPs to comma-separated IPs or
+`AIMEBU_BIND` to an IP literal and `AIMEBU_PORT` to a TCP port to change the
+listener. `AIMEBU_ALLOW` limits client source IPs to comma-separated IPs or
 CIDRs; its default is `127.0.0.0/8,::1/128`. When binding to a non-loopback
 address, include the remote network explicitly, for example
-`AIMEBU2_BIND=0.0.0.0 AIMEBU2_ALLOW=127.0.0.0/8,::1/128,192.168.1.0/24`.
-Set `AIMEBU2_TLS_CERT` and `AIMEBU2_TLS_KEY` together to add HTTPS on
-`AIMEBU2_TLS_PORT` (default `9996`) while retaining HTTP; the HTTP listener then
+`AIMEBU_BIND=0.0.0.0 AIMEBU_ALLOW=127.0.0.0/8,::1/128,192.168.1.0/24`.
+Set `AIMEBU_TLS_CERT` and `AIMEBU_TLS_KEY` together to add HTTPS on
+`AIMEBU_TLS_PORT` (default `9996`) while retaining HTTP; the HTTP listener then
 redirects other machines to HTTPS. Both listeners use the same bind and allowlist.
 Sign-in, setup, invites and pairing answer only a `Host` of `localhost`, an IP address,
-the public URL's host or a name in `AIMEBU2_ALLOWED_HOSTS` (comma-separated), which
+the public URL's host or a name in `AIMEBU_ALLOWED_HOSTS` (comma-separated), which
 you set when you reach the server by a LAN name; when upgrading, read the [upgrade notes](docs/upgrade-notes.md). See [HTTPS setup](docs/tls.md) for certificates,
 remote supervisors, and a Caddy example. Behind such a proxy, set
-`AIMEBU2_TRUSTED_PROXIES` to the proxy's IPs or CIDRs (default empty) so login
+`AIMEBU_TRUSTED_PROXIES` to the proxy's IPs or CIDRs (default empty) so login
 throttling tells clients apart by `X-Forwarded-For`; the allowlist never
 reads that header.
 Startup logs the effective allowlist and warns when a non-loopback bind still
@@ -403,10 +416,10 @@ or how it signs in). See
 without an incoming refresh when an expired account needs a new login.
 Its files use the v1 switcher format under the selected config root. The
 default `~/.aimebu` root uses existing profiles in place; an explicit
-`AIMEBU2_CONFIG_DIR` can keep a development root separate.
-Set `AIMEBU2_USAGES=0` to disable credential reads and usage requests. The web UI is served as one script the server bundles when it starts (esbuild as a Go library, no node); `AIMEBU2_WEB_BUNDLE=off` serves its ~240 separate modules instead, for debugging in a browser. The server starts its local supervisor automatically; set
-`AIMEBU2_EMBEDDED_SUPERVISOR=0` for a remote-only server.
-Set `AIMEBU2_STUCK_MINUTES` to a whole number from 1 to 1440 to change the
+`AIMEBU_CONFIG_DIR` selects another root when needed.
+Set `AIMEBU_USAGES=0` to disable credential reads and usage requests. The web UI is served as one script the server bundles when it starts (esbuild as a Go library, no node); `AIMEBU_WEB_BUNDLE=off` serves its ~240 separate modules instead, for debugging in a browser. The server starts its local supervisor automatically; set
+`AIMEBU_EMBEDDED_SUPERVISOR=0` for a remote-only server.
+Set `AIMEBU_STUCK_MINUTES` to a whole number from 1 to 1440 to change the
 stuck-turn threshold (default 10 minutes). The server compares the running
 turn's latest activity or usage event with that threshold.
 
@@ -805,7 +818,7 @@ to the peer but only a project owner or operator can decide it, since the
 recovery block affects the agent across all rooms.
 
 The v2 binary remains `aimebu` and now defaults to v1's directory and port.
-Stop v1 before starting v2; use `AIMEBU2_CONFIG_DIR` and `AIMEBU2_PORT` only
+Stop v1 before starting v2; use `AIMEBU_CONFIG_DIR` and `AIMEBU_PORT` only
 if v1 used custom values. Startup backs up the v1 layout under
 `.old-v1-bkp/` with crash recovery, then first owner sign-in opens a Review → Check
 → Import wizard. This is the only import opportunity; Skip import closes it permanently. The wizard
@@ -875,9 +888,9 @@ keep credentials in a file rather than the macOS Keychain.
 
 The native live canaries are opt-in:
 
-`AIMEBU2_LIVE_CC=1 go test ./internal/adapter/claude` and
-`AIMEBU2_LIVE_CODEX=1 go test ./internal/adapter/codex` and
-`AIMEBU2_LIVE_PI=1 go test ./internal/adapter/pi`. See
+`AIMEBU_LIVE_CC=1 go test ./internal/adapter/claude` and
+`AIMEBU_LIVE_CODEX=1 go test ./internal/adapter/codex` and
+`AIMEBU_LIVE_PI=1 go test ./internal/adapter/pi`. See
 [the adapter guide](docs/adapter.md).
 Docker variants launch `claude-docker`, `codex-docker`, and `pi-docker` when
 those commands are on the supervisor's `PATH`. They require a mirrored
@@ -885,16 +898,16 @@ checkout. All Docker variants need a server bind/allowlist reachable from
 the container: Claude and Codex use it for their toolbox, and Pi Docker uses
 it to fetch delivered attachments. Pi Docker currently has no toolbox. Their
 two-turn canaries are
-`AIMEBU2_LIVE_CC_DOCKER=1 go test ./internal/adapter/claude` and
-`AIMEBU2_LIVE_CODEX_DOCKER=1 go test ./internal/adapter/codex` and
-`AIMEBU2_LIVE_PI_DOCKER=1 go test ./internal/adapter/pi`; OpenCode and Vibe have
-`AIMEBU2_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode` (and, for a custom
-OpenCode provider, `AIMEBU2_LIVE_OPENCODE_PROVIDER=1` with `AIMEBU2_LIVE_OPENCODE_PROVIDER_URL`,
-`AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL` and the key in the variable named by
-`AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV`, default `LIVE_OPENCODE_PROVIDER_KEY`; add
-`AIMEBU2_LIVE_OPENCODE_PROVIDER_DOCKER=1` for the Docker launcher) and
-`AIMEBU2_LIVE_VIBE_DOCKER=1 go test ./internal/adapter/vibe`, and the Claude Code
-fork canary is `AIMEBU2_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude`.
+`AIMEBU_LIVE_CC_DOCKER=1 go test ./internal/adapter/claude` and
+`AIMEBU_LIVE_CODEX_DOCKER=1 go test ./internal/adapter/codex` and
+`AIMEBU_LIVE_PI_DOCKER=1 go test ./internal/adapter/pi`; OpenCode and Vibe have
+`AIMEBU_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode` (and, for a custom
+OpenCode provider, `AIMEBU_LIVE_OPENCODE_PROVIDER=1` with `AIMEBU_LIVE_OPENCODE_PROVIDER_URL`,
+`AIMEBU_LIVE_OPENCODE_PROVIDER_MODEL` and the key in the variable named by
+`AIMEBU_LIVE_OPENCODE_PROVIDER_KEY_ENV`, default `LIVE_OPENCODE_PROVIDER_KEY`; add
+`AIMEBU_LIVE_OPENCODE_PROVIDER_DOCKER=1` for the Docker launcher) and
+`AIMEBU_LIVE_VIBE_DOCKER=1 go test ./internal/adapter/vibe`, and the Claude Code
+fork canary is `AIMEBU_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude`.
 
 The owner can add a remote machine in Settings → Machines. Add machine
 shows a short-lived, single-use pairing command to copy and run on that
@@ -925,7 +938,7 @@ icon reloads and saves the models the harness currently offers in one click. Rel
 it lists) on the machine itself, native or containerized alike (for Mistral Vibe, which has no listing
 command, it reads the `[[models]]` of the machine's Vibe config by alias and adds Vibe's built-in default): the harness's own arguments come
 first, and the command runs in a fresh private `detect/run-*` subfolder of that machine's aimebu config
-directory (`AIMEBU2_CONFIG_DIR`, by default `~/.aimebu`). The supervisor removes the run folder after
+directory (`AIMEBU_CONFIG_DIR`, by default `~/.aimebu`). The supervisor removes the run folder after
 detection, even when the command fails; a failed removal is logged without hiding a successful model list.
 Before the next detection with the default folder, it also removes its own marked `run-*`
 folders older than one hour; owner-chosen folders, even under `detect/run-*`, and recent runs

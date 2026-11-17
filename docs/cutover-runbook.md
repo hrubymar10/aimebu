@@ -62,7 +62,8 @@ this page is the operational order and rollback path.
 
 1. Confirm every v1 server is stopped, including one on a custom port. Start
    the **v2** executable on its default root and port, which match v1. Set
-   `AIMEBU2_CONFIG_DIR` and `AIMEBU2_PORT` only if v1 used custom values.
+   `AIMEBU_CONFIG_DIR` and `AIMEBU_PORT` only if v1 used custom values.
+   Those names are shared by v1 and v2; set the values for the v2 process.
    v2 checks listeners, a recorded v1 daemon,
    and the v1 database write lock before moving files. An idle terminal-run v1
    on an unusual port can evade those checks; stop it yourself. Startup
@@ -258,13 +259,12 @@ rm -f "$rehearsal_root/v1/server/credential-targets.json" "$rehearsal_root/v2/se
 export HOME="$rehearsal_root/home"
 export CODEX_HOME="$rehearsal_root/home/.codex"
 export CLAUDE_CONFIG_DIR="$rehearsal_root/home/.claude"
-export AIMEBU_CONFIG_DIR="$rehearsal_root/v1"
-export AIMEBU2_CONFIG_DIR="$rehearsal_root/v2"
-export AIMEBU2_BIND=127.0.0.1
-export AIMEBU2_PORT=9985 # any free port; this one may be taken
+export AIMEBU_CONFIG_DIR="$rehearsal_root/v2"
+export AIMEBU_BIND=127.0.0.1
+export AIMEBU_PORT=9985 # any free port; this one may be taken
 export HTTPS_PROXY=http://127.0.0.1:9
 export HTTP_PROXY=http://127.0.0.1:9
-export AIMEBU2_DEV_SKIP_V1_PROBE=1
+export AIMEBU_DEV_SKIP_V1_PROBE=1
 /path/to/v2/aimebu server
 ```
 

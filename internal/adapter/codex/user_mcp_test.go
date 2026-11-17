@@ -198,7 +198,7 @@ func TestAConfigThatIsNotValidTOMLCarriesNothing(t *testing.T) {
 // A native turn: the private config.toml has exactly one aimebu table, the person's own servers and none of the v1 buses, the variables their
 // servers name reach Codex (but never CODEX_HOME, which would point it at the person's whole config), and a read-only turn gets none of it.
 func TestNativeTurnCarriesThePersonsOwnServersNextToAimebu(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	t.Setenv("DOCS_TOKEN", "tok")
 	t.Setenv("UNRELATED", "no")
 	root := t.TempDir()
@@ -255,7 +255,7 @@ func TestNativeTurnCarriesThePersonsOwnServersNextToAimebu(t *testing.T) {
 
 // A person's config that cannot be carried over never breaks the turn: it runs with aimebu's entry alone.
 func TestAMalformedUserConfigIsLeftOutAndTheTurnRuns(t *testing.T) {
-	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 	root := t.TempDir()
 	userHome := filepath.Join(root, "user-codex")
 	if err := os.MkdirAll(userHome, 0700); err != nil {

@@ -97,7 +97,7 @@ const (
 
 // TelemetrySettings is what the server tells a supervisor about error and performance reporting: whether it is on, where reports go and how many
 // requests are traced. It carries no identity of a person. The supervisor reports as the machine it is (and not under a host name); a DSN set in
-// the supervisor's own environment (AIMEBU2_SENTRY_DSN, a DSN or "off") wins over it.
+// the supervisor's own environment (AIMEBU_SENTRY_DSN, a DSN or "off") wins over it.
 type TelemetrySettings struct {
 	Enabled          bool    `json:"enabled"`
 	DSN              string  `json:"dsn,omitempty"`
@@ -207,7 +207,7 @@ type Frame struct {
 	// containerized. An older supervisor ignores the field, which is why the server refuses it too.
 	DockerOnly bool `json:"docker_only,omitempty"`
 	// WarmIdleSeconds, on a delivery, is the owner's saved setting for how long a supervisor keeps an agent's harness process up after a turn (0 is
-	// off). It is sent only when the owner has saved one: without it the supervisor uses its own (AIMEBU2_WARM_IDLE, else five minutes). A supervisor
+	// off). It is sent only when the owner has saved one: without it the supervisor uses its own (AIMEBU_WARM_IDLE, else five minutes). A supervisor
 	// that does not know the field ignores it.
 	WarmIdleSeconds *int `json:"warm_idle_seconds,omitempty"`
 	// CodexWarmEnabled is the owner's explicit opt-in for Codex app-server warm mode.
@@ -602,7 +602,7 @@ type WarmReport struct {
 	Seq       uint64 `json:"seq,omitempty"`
 	Processes int    `json:"processes,omitempty"`
 	// IdleSeconds is the warm window the supervisor is working to (0 is off): the owner's setting when one is saved, else the supervisor's own default
-	// (AIMEBU2_WARM_IDLE, else five minutes). Absent from an older supervisor.
+	// (AIMEBU_WARM_IDLE, else five minutes). Absent from an older supervisor.
 	IdleSeconds *int `json:"idle_seconds,omitempty"`
 	// PingsActive counts cache keep-alive pings that run or are not confirmed gone yet (a ping in a container held in quarantine counts until its end
 	// is confirmed or the quarantine is over). They are processes on the login too, though they are not warm slots: the server counts them with the

@@ -16,10 +16,10 @@ import (
 
 func TestSessionsMergesLocalAndServerViews(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
-	t.Setenv("AIMEBU2_BIND", "not-an-ip")
-	t.Setenv("AIMEBU2_PORT", "not-a-port")
-	t.Setenv("AIMEBU2_ALLOW", "bad-cidr")
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_BIND", "not-an-ip")
+	t.Setenv("AIMEBU_PORT", "not-a-port")
+	t.Setenv("AIMEBU_ALLOW", "bad-cidr")
 	for _, dir := range []string{"supervisor", "server"} {
 		if err := os.Mkdir(filepath.Join(root, dir), 0700); err != nil {
 			t.Fatal(err)

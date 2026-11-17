@@ -178,7 +178,7 @@ func TestDoctorAuthorizedUsesTheConnectionsLocalAddress(t *testing.T) {
 		}
 		return req
 	}
-	// AIMEBU2_BIND set to a VPN address: the CLI dials it, so peer and local address are the same.
+	// AIMEBU_BIND set to a VPN address: the CLI dials it, so peer and local address are the same.
 	if !f.srv.doctorAuthorized(request("10.8.0.1:51000", "10.8.0.1")) {
 		t.Error("a peer that connected from the server's own bind address was refused")
 	}
@@ -222,7 +222,7 @@ type addressConn struct {
 func (c addressConn) LocalAddr() net.Addr  { return c.local }
 func (c addressConn) RemoteAddr() net.Addr { return c.remote }
 
-// A server bound to a non-loopback address of this machine, called through that address, as `doctor --live` does with AIMEBU2_BIND set to
+// A server bound to a non-loopback address of this machine, called through that address, as `doctor --live` does with AIMEBU_BIND set to
 // a VPN address: the request's peer is the server's own address, and the doctor key then decides. The address is made up (a documentation
 // range), so the test needs no network and runs in a container without one.
 func TestDoctorLiveOverANonLoopbackBind(t *testing.T) {
@@ -231,7 +231,7 @@ func TestDoctorLiveOverANonLoopbackBind(t *testing.T) {
 	if _, err := f.srv.EnableDoctorKey(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	// Binding to such an address needs AIMEBU2_ALLOW to let it in, as the setup docs say; the allowlist is a separate gate from the key.
+	// Binding to such an address needs AIMEBU_ALLOW to let it in, as the setup docs say; the allowlist is a separate gate from the key.
 	f.srv.Allow = append(f.srv.Allow, netip.PrefixFrom(address, 32))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

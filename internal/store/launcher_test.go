@@ -91,9 +91,9 @@ func TestMigrationTwentyEightPreservesExistingLauncherChoices(t *testing.T) {
 	for _, nativeAllowed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "native-off", true: "native-on"}[nativeAllowed], func(t *testing.T) {
 			if nativeAllowed {
-				t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+				t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 			} else {
-				t.Setenv("AIMEBU2_ALLOW_NATIVE", "")
+				t.Setenv("AIMEBU_ALLOW_NATIVE", "")
 			}
 			db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "from-26.sqlite")))
 			if err != nil {
@@ -151,9 +151,9 @@ func TestMigrationTwentyEightPreservesExistingLauncherChoices(t *testing.T) {
 				t.Fatalf("migration created reserved custom launchers=%d err=%v", reservedCustom, err)
 			}
 			if nativeAllowed {
-				t.Setenv("AIMEBU2_ALLOW_NATIVE", "")
+				t.Setenv("AIMEBU_ALLOW_NATIVE", "")
 			} else {
-				t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+				t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
 			}
 			if err := migrateUpTo(context.Background(), db, 68); err != nil {
 				t.Fatal(err)

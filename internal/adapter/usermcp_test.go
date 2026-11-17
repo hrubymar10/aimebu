@@ -7,7 +7,7 @@ import (
 
 func TestUserEnvNamesRefusesWhatWouldUndoTheIsolation(t *testing.T) {
 	t.Parallel()
-	got := UserEnvNames([]string{"DOCS_TOKEN", "codex_home", "CODEX_HOME", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "VIBE_HOME", "AIMEBU2_AGENT_KEY",
+	got := UserEnvNames([]string{"DOCS_TOKEN", "codex_home", "CODEX_HOME", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "VIBE_HOME", "AIMEBU_AGENT_KEY",
 		"AIMEBU_URL", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_DIRS", "HOME", "LD_PRELOAD", "NODE_OPTIONS", "NODE_PATH", "SSH_AUTH_SOCK", "GIT_SSH_COMMAND", "GIT_DIR", "PYTHONPATH",
 		"PYTHONSTARTUP", "PERL5LIB", "RUBYOPT", "JAVA_TOOL_OPTIONS", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "bad name", "", "1X", "GITHUB_TOKEN", "DOCS_TOKEN"})
 	if want := []string{"DOCS_TOKEN", "GITHUB_TOKEN"}; !reflect.DeepEqual(got, want) {

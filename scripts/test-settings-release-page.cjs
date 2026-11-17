@@ -7,7 +7,7 @@ const { scratch, OWNER } = require('./scratch-server.cjs');
 const SECTIONS = ['general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'telemetry', 'machines', 'harnesses'];
 
 async function main() {
-  const server = await scratch({ env: { AIMEBU2_EMBEDDED_SUPERVISOR: '1' } });
+  const server = await scratch({ env: { AIMEBU_EMBEDDED_SUPERVISOR: '1' } });
   try {
     const page = await server.open({ width: 1280, height: 900, context: await server.context() });
     await page.goto(server.origin);

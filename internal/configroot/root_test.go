@@ -31,7 +31,7 @@ func TestResolve(t *testing.T) {
 }
 
 func TestFromEnv(t *testing.T) {
-	t.Setenv("AIMEBU2_CONFIG_DIR", "~/data")
+	t.Setenv("AIMEBU_CONFIG_DIR", "~/data")
 	want, err := Resolve("~/data")
 	if err != nil {
 		t.Fatal(err)

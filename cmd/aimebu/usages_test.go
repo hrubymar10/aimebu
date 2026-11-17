@@ -24,7 +24,7 @@ func writeUsagesCache(t *testing.T, root string) {
 
 func TestUsagesCommandPrintsCachedSnapshots(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	t.Setenv("HOME", t.TempDir())
 	writeUsagesCache(t, root)
 	var stdout, stderr bytes.Buffer
@@ -41,7 +41,7 @@ func TestUsagesCommandPrintsCachedSnapshots(t *testing.T) {
 
 func TestUsagesPlainShowsEveryWindowAndFollowsSavedOrder(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	t.Setenv("HOME", t.TempDir())
 	dir := filepath.Join(root, "usages")
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -71,7 +71,7 @@ func TestUsagesPlainShowsEveryWindowAndFollowsSavedOrder(t *testing.T) {
 
 func TestUsagesCommandJSONAndProviderFilter(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	t.Setenv("HOME", t.TempDir())
 	writeUsagesCache(t, root)
 	var stdout, stderr bytes.Buffer
@@ -92,7 +92,7 @@ func TestUsagesCommandJSONAndProviderFilter(t *testing.T) {
 }
 
 func TestUsagesCommandArgumentErrors(t *testing.T) {
-	t.Setenv("AIMEBU2_CONFIG_DIR", t.TempDir())
+	t.Setenv("AIMEBU_CONFIG_DIR", t.TempDir())
 	for name, args := range map[string][]string{
 		"unknown flag":     {"usages", "--bogus"},
 		"both formats":     {"usages", "--json", "--plain"},
@@ -108,7 +108,7 @@ func TestUsagesCommandArgumentErrors(t *testing.T) {
 
 func TestUsagesCommandWithoutCacheSaysSo(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	t.Setenv("HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"usages"}, &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "no usage snapshot cached") {

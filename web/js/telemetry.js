@@ -1,5 +1,5 @@
 // Error and performance reporting to Sentry. Nothing here runs unless the server says it is on: GET /api/buildinfo carries a `sentry`
-// object only while reporting is on (a DSN from AIMEBU2_SENTRY_DSN or Settings, after the owner answered the popup), and only then is the
+// object only while reporting is on (a DSN from AIMEBU_SENTRY_DSN or Settings, after the owner answered the popup), and only then is the
 // vendored SDK (web/vendor/sentry/) fetched. Otherwise the page never requests the file and never opens a connection to Sentry. docs/telemetry.md lists what is sent.
 //
 // What may leave the browser is decided here, in the scrub functions below, and they run on every event, transaction and breadcrumb

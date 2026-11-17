@@ -11,7 +11,7 @@ import (
 
 func TestPruneRefusesLiveV1RootBeforeConfirmationOrWrite(t *testing.T) {
 	root := makeV1Root(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	path := filepath.Join(root, "server", "aimebu.sqlite")
 	before, err := os.ReadFile(path)
 	if err != nil {
@@ -33,7 +33,7 @@ func TestPruneRefusesLiveV1RootBeforeConfirmationOrWrite(t *testing.T) {
 
 func TestPlainPruneKeepsServerDataAndMachineKeys(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	serverDir := filepath.Join(root, "server")
 	if err := os.MkdirAll(serverDir, 0700); err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestPlainPruneKeepsServerDataAndMachineKeys(t *testing.T) {
 func TestPruneAllPreservesCredentialsAndOutsidePaths(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "config")
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	outside := filepath.Join(parent, "outside")
 	writePruneFixture(t, outside, "outside")
 	writePruneFixture(t, filepath.Join(root, "switcher", "state.json"), "switcher")
@@ -110,7 +110,7 @@ func TestPruneAllPreservesCredentialsAndOutsidePaths(t *testing.T) {
 
 func TestPruneRequiresConfirmationAndRefusesLiveLocks(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	path := filepath.Join(root, "server", "marker")
 	writePruneFixture(t, path, "keep")
 	var out, errOut bytes.Buffer
@@ -137,7 +137,7 @@ func TestPruneRequiresConfirmationAndRefusesLiveLocks(t *testing.T) {
 
 func TestPruneRefusesLiveSupervisor(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	path := filepath.Join(root, "supervisor", "journal.sqlite")
 	writePruneFixture(t, path, "journal")
 	lock, err := pruneLock(filepath.Join(root, "supervisor", "journal.sqlite.lock"), "supervisor")
@@ -162,7 +162,7 @@ func TestPruneRejectsSymlinkRootAndDataDir(t *testing.T) {
 	if err := os.Symlink(outside, root); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	var out, errOut bytes.Buffer
 	if got := pruneCommand(context.Background(), []string{"-a", "-y"}, strings.NewReader(""), &out, &errOut); got != 1 {
 		t.Fatalf("symlink root prune = %d", got)
@@ -177,7 +177,7 @@ func TestPruneRejectsSymlinkRootAndDataDir(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "server")); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	if got := pruneCommand(context.Background(), []string{"-a", "-y"}, strings.NewReader(""), &out, &errOut); got != 1 {
 		t.Fatalf("symlink data dir prune = %d", got)
 	}

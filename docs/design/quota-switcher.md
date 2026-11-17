@@ -219,7 +219,7 @@ Retries after an action error (`409`, busy, refresh failed) back off 30 s, 1 min
   agree except for the documented differences (quiescence, dwell). Retire the script
   only after a week of agreement.
 - Disabled when the switcher is disabled, when the usage reader is off
-  (`AIMEBU2_USAGES=0`), and while the server is in maintenance mode.
+  (`AIMEBU_USAGES=0`), and while the server is in maintenance mode.
 - Only the owner can read or change any of it; there is no per-project scope.
 
 ## 9. Settings UI

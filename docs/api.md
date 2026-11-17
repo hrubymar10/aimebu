@@ -2,11 +2,11 @@
 
 Run `aimebu server`. On a first run it prints a one-time owner setup token
 (also in `.setup_token`, with a `/setup?token=…` shortcut, see [auth](auth.md#first-run-owner-setup)), or bootstraps
-the owner from `AIMEBU2_OWNER_LOGIN` and `AIMEBU2_OWNER_PASSWORD` when both are set. The listener defaults to
-`127.0.0.1:9997`; `AIMEBU2_BIND` must be an IP literal and `AIMEBU2_PORT` a
-TCP port. The default data root is `~/.aimebu`; use `AIMEBU2_CONFIG_DIR` to
+the owner from `AIMEBU_OWNER_LOGIN` and `AIMEBU_OWNER_PASSWORD` when both are set. The listener defaults to
+`127.0.0.1:9997`; `AIMEBU_BIND` must be an IP literal and `AIMEBU_PORT` a
+TCP port. The default data root is `~/.aimebu`; use `AIMEBU_CONFIG_DIR` to
 choose another. The v2 server ignores v1's `AIMEBU_*` environment settings.
-`AIMEBU2_ALLOW` accepts comma-separated IPs and CIDRs and defaults to
+`AIMEBU_ALLOW` accepts comma-separated IPs and CIDRs and defaults to
 `127.0.0.0/8,::1/128`. Bare addresses become `/32` (IPv4) or `/128` (IPv6).
 IPv4-mapped CIDRs are rejected; use their IPv4 form instead. The embedded
 supervisor's own dial address is added to the effective list when necessary,
@@ -15,11 +15,11 @@ The allowlist gates every route, including the `/api/machine` WebSocket;
 unlisted sources receive HTTP 403 before authentication. It checks the direct
 peer address (including IPv4-mapped IPv6 addresses) and ignores
 `X-Forwarded-For`. Invalid entries fail startup. Startup logs the effective
-allowlist and warns if `AIMEBU2_BIND` is non-loopback while the default
+allowlist and warns if `AIMEBU_BIND` is non-loopback while the default
 loopback-only allowlist is active. For remote access, set both the bind and
 the allowed source network.
-When `AIMEBU2_TLS_CERT` and `AIMEBU2_TLS_KEY` are both set, the server also
-listens with HTTPS on `AIMEBU2_TLS_PORT` (default `9996`). HTTP remains on its
+When `AIMEBU_TLS_CERT` and `AIMEBU_TLS_KEY` are both set, the server also
+listens with HTTPS on `AIMEBU_TLS_PORT` (default `9996`). HTTP remains on its
 configured port; both listeners apply the same allowlist. A missing or invalid
 certificate pair fails startup. See [HTTPS setup](tls.md).
 The host machine credential is written to `server/host-machine.key` with
@@ -63,7 +63,7 @@ and reconnects the event stream from its last seen `seq`.
 | POST | `/api/login` | `{login,password}` | user ID, CSRF token, expiry, `first_run`, `owner`/`admin` and, for those two, `host_home` (see `/api/me`) |
 | POST | `/api/logout` | — | 204; revokes session |
 | GET | `/api/session` | — | no session needed: what `/api/me` returns for a signed-in account, and `{signed_in:false}` (status 200) otherwise; the page asks this on load so the sign-in screen costs no 401 |
-| GET | `/api/me` | — | user ID, login, `telemetry_prompt` (true for the owner until the telemetry popup was answered; never when `AIMEBU2_SENTRY_DSN` is set), CSRF token, `owner` and `admin` (what the account may do instance-wide: the web turns off New project and the owner/admin settings tabs for anyone else), `host_home` (only for the owner and admins, who create projects: the absolute home folder of the user the server runs as, which an empty "Workspace folder" field starts at; nobody else is told a path of the host), and `first_run`: true only for the instance owner and only until they press Continue on the first-run welcome (a database that already had people when the welcome migration ran counts as seen, and one made later, including by the v1 import, does not), so the web app shows the welcome once, between sign-in and the app |
+| GET | `/api/me` | — | user ID, login, `telemetry_prompt` (true for the owner until the telemetry popup was answered; never when `AIMEBU_SENTRY_DSN` is set), CSRF token, `owner` and `admin` (what the account may do instance-wide: the web turns off New project and the owner/admin settings tabs for anyone else), `host_home` (only for the owner and admins, who create projects: the absolute home folder of the user the server runs as, which an empty "Workspace folder" field starts at; nobody else is told a path of the host), and `first_run`: true only for the instance owner and only until they press Continue on the first-run welcome (a database that already had people when the welcome migration ran counts as seen, and one made later, including by the v1 import, does not), so the web app shows the welcome once, between sign-in and the app |
 | GET | `/api/me/telemetry` | — | the account's own telemetry identity `{fingerprint, send_name, login, report_id}`: a random per-account fingerprint (generated on first read), whether reports carry the login instead of it, and the one id reports carry now (see [telemetry](telemetry.md#who-a-report-is-about)) |
 | PUT | `/api/me/telemetry` | `{send_name}` | the account's own switch "send my user name instead of a fingerprint"; answers the same object |
 | POST | `/api/me/telemetry/fingerprint` | `{}` | replaces the account's fingerprint with a new random one and turns `send_name` off; answers the same object |
@@ -482,8 +482,8 @@ An unresolved lost turn on a home agent can keep a room in `closing` until
 reconciliation; the server emits one `room_close_blocked` event per blocked
 agent with `reason:agent_stop_invalid_transition`.
 
-The usage endpoint (the owner's whole snapshot, an admin's redacted one) reads the v2 cache under `AIMEBU2_CONFIG_DIR/usages/`.
-Set `AIMEBU2_USAGES=0` to disable credential reads and background requests;
+The usage endpoint (the owner's whole snapshot, an admin's redacted one) reads the v2 cache under `AIMEBU_CONFIG_DIR/usages/`.
+Set `AIMEBU_USAGES=0` to disable credential reads and background requests;
 `/api/usages` then returns 503. Enabled providers refresh in the background
 on the stored interval (120 seconds by default, minimum 15). The response
 contains ordered, normalized profiles for Codex, Claude Code, GitHub Copilot,
@@ -565,7 +565,7 @@ flags for every agent in a room visible to the caller, with `room_ids` for
 room badges and one entry per agent for the overall count. Machine offline
 uses the server's current supervisor connection, not its last heartbeat.
 An agent is stuck when a running turn has no server-recorded activity or
-usage for longer than `AIMEBU2_STUCK_MINUTES` (default 10). The UI refreshes
+usage for longer than `AIMEBU_STUCK_MINUTES` (default 10). The UI refreshes
 time-derived flags every 30 seconds. It reads limit guard state once at sign-in,
 on guard events, and every 30 seconds while the Health panel is open. The top-bar health list shows one plain
 sentence per flag ("Ada looks stuck", "An answer to Bert could not be delivered",
@@ -832,7 +832,7 @@ author, an excerpt, `yours`), and the prompt asks the agent to set `reply_to`
 when its message answers one (see docs/contract.md §4.4).
 
 `/api/events` requires a same-origin `Origin` header (or the configured
-`AIMEBU2_PUBLIC_URL` origin) and a valid session.
+`AIMEBU_PUBLIC_URL` origin) and a valid session.
 The web UI reads the authenticated `/api/events/cursor` before its HTTP
 snapshots, then opens the stream after that `seq`. Events committed during
 the snapshot are caught without scanning older history. What the client does

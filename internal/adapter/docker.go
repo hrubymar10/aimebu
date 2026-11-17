@@ -81,7 +81,7 @@ func DockerNeedsForwardEnv(tool string) bool {
 
 // AgentKeyEnv is the variable that carries an agent's key into a Docker harness. The key never appears in an argument list (ps shows those
 // to every local user): the harness's MCP entry names this variable, and the launcher hands it over by name (HARNESS_DOCKER_FORWARD_ENV).
-const AgentKeyEnv = "AIMEBU2_AGENT_KEY"
+const AgentKeyEnv = "AIMEBU_AGENT_KEY"
 
 // DockerAgentKeyEnv is what a Docker turn adds to the launcher's environment so the harness can read the agent's key from AgentKeyEnv: the
 // variable itself and the forwarding list that names it. They are set last, so an owner's environment reference cannot replace either.
@@ -255,11 +255,11 @@ func agentHTTPMCP(access *AgentToolsAccess, agentID string, docker bool) (endpoi
 	if access == nil {
 		return "", "", errors.New("normal turn requires agent tools access")
 	}
-	env := map[string]string{"AIMEBU2_URL": access.ServerURL, "AIMEBU2_AGENT_ID": access.AgentID, AgentKeyEnv: access.Key}
-	if env["AIMEBU2_AGENT_ID"] != agentID || !strings.HasPrefix(env[AgentKeyEnv], "aak_") {
+	env := map[string]string{"AIMEBU_URL": access.ServerURL, "AIMEBU_AGENT_ID": access.AgentID, AgentKeyEnv: access.Key}
+	if env["AIMEBU_AGENT_ID"] != agentID || !strings.HasPrefix(env[AgentKeyEnv], "aak_") {
 		return "", "", errors.New("invalid agent tools access")
 	}
-	u, err := url.Parse(env["AIMEBU2_URL"])
+	u, err := url.Parse(env["AIMEBU_URL"])
 	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Hostname() == "" {
 		return "", "", errors.New("invalid aimebu server URL")
 	}
@@ -289,7 +289,7 @@ func BridgeEntry(access *AgentToolsAccess, agentID, namedKey string) (command st
 	if !filepath.IsAbs(access.Command) {
 		return "", nil, nil, errors.New("invalid agent tools access")
 	}
-	env = map[string]string{"AIMEBU2_URL": access.ServerURL, "AIMEBU2_AGENT_ID": access.AgentID}
+	env = map[string]string{"AIMEBU_URL": access.ServerURL, "AIMEBU_AGENT_ID": access.AgentID}
 	for name, value := range access.Env {
 		env[name] = value
 	}

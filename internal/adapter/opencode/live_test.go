@@ -15,18 +15,18 @@ import (
 )
 
 // TestLiveDockerCanary runs two real turns through the opencode-docker launcher: the first hands the agent a nonce, the second resumes the
-// session and must give it back. It is opt-in (AIMEBU2_LIVE_OPENCODE_DOCKER=1), spends a little on a real provider, and needs the launcher on PATH with a running
+// session and must give it back. It is opt-in (AIMEBU_LIVE_OPENCODE_DOCKER=1), spends a little on a real provider, and needs the launcher on PATH with a running
 // harness container that mounts this repository. The provider key comes from the environment alone (the test home is a temporary one, so
-// nothing is read from the person's own home), and the model from AIMEBU2_LIVE_OPENCODE_MODEL (default ollama-cloud/gemma4:31b). The canary checkout is below this
+// nothing is read from the person's own home), and the model from AIMEBU_LIVE_OPENCODE_MODEL (default ollama-cloud/gemma4:31b). The canary checkout is below this
 // repository's ignored tmp/. The toolbox endpoint is a dummy: no tool call is made.
 func TestLiveDockerCanary(t *testing.T) {
-	if os.Getenv("AIMEBU2_LIVE_OPENCODE_DOCKER") != "1" {
-		t.Skip("set AIMEBU2_LIVE_OPENCODE_DOCKER=1 for the two-turn opencode Docker canary")
+	if os.Getenv("AIMEBU_LIVE_OPENCODE_DOCKER") != "1" {
+		t.Skip("set AIMEBU_LIVE_OPENCODE_DOCKER=1 for the two-turn opencode Docker canary")
 	}
-	if os.Getenv("OLLAMA_API_KEY") == "" && os.Getenv("AIMEBU2_LIVE_OPENCODE_MODEL") == "" {
-		t.Skip("set OLLAMA_API_KEY, or AIMEBU2_LIVE_OPENCODE_MODEL with the key of its provider")
+	if os.Getenv("OLLAMA_API_KEY") == "" && os.Getenv("AIMEBU_LIVE_OPENCODE_MODEL") == "" {
+		t.Skip("set OLLAMA_API_KEY, or AIMEBU_LIVE_OPENCODE_MODEL with the key of its provider")
 	}
-	model := os.Getenv("AIMEBU2_LIVE_OPENCODE_MODEL")
+	model := os.Getenv("AIMEBU_LIVE_OPENCODE_MODEL")
 	if model == "" {
 		model = "ollama-cloud/gemma4:31b"
 	}
@@ -99,25 +99,25 @@ func runLiveCanary(t *testing.T, a *Adapter, variant, model string, providers []
 }
 
 // TestLiveCustomProviderCanary is the two-turn canary for a custom provider: the turns carry an OpenAI-compatible endpoint the person names,
-// run natively (or through the opencode-docker launcher with AIMEBU2_LIVE_OPENCODE_PROVIDER_DOCKER=1), and the key reaches OpenCode only
-// through its environment variable. It is opt-in (AIMEBU2_LIVE_OPENCODE_PROVIDER=1), never part of the gate, and spends a little on the
-// endpoint. AIMEBU2_LIVE_OPENCODE_PROVIDER_URL is the base URL, AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL the model id at that endpoint,
-// AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV the name of the variable holding the key (default LIVE_OPENCODE_PROVIDER_KEY; a name the harness uses itself,
+// run natively (or through the opencode-docker launcher with AIMEBU_LIVE_OPENCODE_PROVIDER_DOCKER=1), and the key reaches OpenCode only
+// through its environment variable. It is opt-in (AIMEBU_LIVE_OPENCODE_PROVIDER=1), never part of the gate, and spends a little on the
+// endpoint. AIMEBU_LIVE_OPENCODE_PROVIDER_URL is the base URL, AIMEBU_LIVE_OPENCODE_PROVIDER_MODEL the model id at that endpoint,
+// AIMEBU_LIVE_OPENCODE_PROVIDER_KEY_ENV the name of the variable holding the key (default LIVE_OPENCODE_PROVIDER_KEY; a name the harness uses itself,
 // such as anything starting with AIMEBU or OPENCODE_, is refused; unset variable: the endpoint takes no key). Natively the OpenCode on PATH is used, with a temporary private home.
 func TestLiveCustomProviderCanary(t *testing.T) {
-	if os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER") != "1" {
-		t.Skip("set AIMEBU2_LIVE_OPENCODE_PROVIDER=1 for the two-turn custom provider canary")
+	if os.Getenv("AIMEBU_LIVE_OPENCODE_PROVIDER") != "1" {
+		t.Skip("set AIMEBU_LIVE_OPENCODE_PROVIDER=1 for the two-turn custom provider canary")
 	}
-	baseURL, modelID := os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER_URL"), os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL")
+	baseURL, modelID := os.Getenv("AIMEBU_LIVE_OPENCODE_PROVIDER_URL"), os.Getenv("AIMEBU_LIVE_OPENCODE_PROVIDER_MODEL")
 	if baseURL == "" || modelID == "" {
-		t.Skip("set AIMEBU2_LIVE_OPENCODE_PROVIDER_URL and AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL")
+		t.Skip("set AIMEBU_LIVE_OPENCODE_PROVIDER_URL and AIMEBU_LIVE_OPENCODE_PROVIDER_MODEL")
 	}
-	keyEnv := os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV")
+	keyEnv := os.Getenv("AIMEBU_LIVE_OPENCODE_PROVIDER_KEY_ENV")
 	if keyEnv == "" {
 		keyEnv = "LIVE_OPENCODE_PROVIDER_KEY"
 	}
 	if adapter.ProtectedKeyEnv(keyEnv) {
-		t.Fatalf("AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV=%s names a variable the harness uses itself, which a provider's key cannot be read from: pick another name", keyEnv)
+		t.Fatalf("AIMEBU_LIVE_OPENCODE_PROVIDER_KEY_ENV=%s names a variable the harness uses itself, which a provider's key cannot be read from: pick another name", keyEnv)
 	}
 	if os.Getenv(keyEnv) == "" {
 		keyEnv = "" // the endpoint takes no key
@@ -125,7 +125,7 @@ func TestLiveCustomProviderCanary(t *testing.T) {
 	provider := adapter.CustomProvider{ID: "canary-llm", Name: "Canary provider", NPM: adapter.CustomProviderNPM, BaseURL: baseURL, KeyEnv: keyEnv,
 		Models: []adapter.CustomProviderModel{{ID: modelID, Name: modelID}}}
 	a, variant := New(t.TempDir()), "native"
-	if os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER_DOCKER") == "1" {
+	if os.Getenv("AIMEBU_LIVE_OPENCODE_PROVIDER_DOCKER") == "1" {
 		a, variant = NewDocker(), "docker"
 	}
 	runLiveCanary(t, a, variant, "canary-llm/"+modelID, []adapter.CustomProvider{provider})

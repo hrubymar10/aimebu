@@ -363,7 +363,7 @@ func TestSpawnRejectsCheckoutAliasBeforeWritingAgentKey(t *testing.T) {
 // A key is in the supervisor's memory and in no file: not the journal, not the supervisor's directory, and a turn's access carries it only in
 // memory (it is not part of the journaled spec).
 func TestAgentKeyIsInMemoryOnlyAndInNoFile(t *testing.T) {
-	t.Setenv("AIMEBU2_INSECURE_SKIP_VERIFY", "1")
+	t.Setenv("AIMEBU_INSECURE_SKIP_VERIFY", "1")
 	root := t.TempDir()
 	path := filepath.Join(root, "journal.sqlite")
 	j, err := OpenJournal(context.Background(), path)
@@ -377,7 +377,7 @@ func TestAgentKeyIsInMemoryOnlyAndInNoFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	access, err := c.agentToolsAccess("agt_test")
-	if err != nil || access == nil || access.Key != key || access.AgentID != "agt_test" || access.ServerURL != "http://127.0.0.1:9897" || !filepath.IsAbs(access.Command) || access.Env["AIMEBU2_INSECURE_SKIP_VERIFY"] != "1" {
+	if err != nil || access == nil || access.Key != key || access.AgentID != "agt_test" || access.ServerURL != "http://127.0.0.1:9897" || !filepath.IsAbs(access.Command) || access.Env["AIMEBU_INSECURE_SKIP_VERIFY"] != "1" {
 		t.Fatalf("access=%+v err=%v", access, err)
 	}
 	if other, err := c.agentToolsAccess("agt_other"); err != nil || other != nil {

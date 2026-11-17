@@ -39,7 +39,7 @@ override the configured Git author.
 For concurrent agent work, use only your assigned worktree. Run test commands
 under the shared workspace `flock` gate for their full duration. Use an
 isolated temporary `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and
-`AIMEBU2_CONFIG_DIR` so tests cannot alter real credentials or bus state;
+`AIMEBU_CONFIG_DIR` so tests cannot alter real credentials or bus state;
 preserve `GOPATH`, `GOCACHE`, and `GOMODCACHE` from the host environment.
 Write substantive commit messages through a shell heredoc. Before committing,
 check added lines and the message against the workspace prohibited-substring
@@ -51,6 +51,6 @@ SHA in the handoff.
 `make dev` runs `go tool air`. It rebuilds `./tmp/aimebu` on Go or web changes and
 restarts `scripts/dev-run.sh`, which runs `aimebu server` with its embedded
 local supervisor. Environment variables
-(`AIMEBU2_BIND`, `AIMEBU2_OWNER_LOGIN`, …) pass through from the shell.
+(`AIMEBU_BIND`, `AIMEBU_OWNER_LOGIN`, …) pass through from the shell.
 Point it at a deploy worktree that only moves when a reviewed commit is
 checked out, never at a worktree with work in progress.

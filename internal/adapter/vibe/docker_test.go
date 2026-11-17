@@ -29,7 +29,7 @@ func dockerLauncher(t *testing.T, root string, probe bool, body string) (path, r
 		source += "case \"$1$2$3\" in *--version*) echo 'vibe 2.25.0'; exit 0;; esac\n"
 	}
 	source += "{ printf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n';" +
-		" for v in HARNESS_DOCKER_FORWARD_ENV VIBE_LAUNCH_FLAGS VIBE_HOME VIBE_ACTIVE_MODEL VIBE_SESSION_LOGGING__SAVE_DIR VIBE_MCP_SERVERS AIMEBU2_AGENT_KEY MISTRAL_API_KEY ACME_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME DOCKER_HOST PYTHONUNBUFFERED; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
+		" for v in HARNESS_DOCKER_FORWARD_ENV VIBE_LAUNCH_FLAGS VIBE_HOME VIBE_ACTIVE_MODEL VIBE_SESSION_LOGGING__SAVE_DIR VIBE_MCP_SERVERS AIMEBU_AGENT_KEY MISTRAL_API_KEY ACME_API_KEY OPENAI_API_KEY GITHUB_TOKEN CODEX_HOME DOCKER_HOST PYTHONUNBUFFERED; do eval \"printf '%s=%s\\n' $v \\\"\\${$v-<unset>}\\\"\"; done; } > " + record + "\n" +
 		"prompt=$(cat)\nprintf 'PROMPT:%s\\n' \"$prompt\" >> " + record + "\n" + body
 	if err := testenv.WriteExecutable(path, []byte(source), 0700); err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestDockerTurnForwardsItsConfigurationByNameAndKeepsItOutOfArgv(t *testing.
 	t.Setenv("GITHUB_TOKEN", "ghp_must_not_leak")
 	t.Setenv("CODEX_HOME", "/must/not/leak")
 	t.Setenv("DOCKER_HOST", "unix:///the/docker.sock")
-	t.Setenv("AIMEBU2_AGENT_KEY", "aak_must_not_leak")
+	t.Setenv("AIMEBU_AGENT_KEY", "aak_must_not_leak")
 	a, userHome := dockerAdapter(t, root, path)
 	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte("[[providers]]\nname = \"acme\"\napi_key_env_var = \"ACME_API_KEY\"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestDockerTurnForwardsItsConfigurationByNameAndKeepsItOutOfArgv(t *testing.
 			child := strings.Split(got, "PROMPT:")[0]
 			names := "VIBE_HOME,VIBE_ACTIVE_MODEL,VIBE_SESSION_LOGGING__SAVE_DIR"
 			if tc.mcp {
-				names += ",VIBE_MCP_SERVERS,AIMEBU2_AGENT_KEY"
+				names += ",VIBE_MCP_SERVERS,AIMEBU_AGENT_KEY"
 			}
 			names += ",PYTHONUNBUFFERED,MISTRAL_API_KEY,ACME_API_KEY"
 			for _, want := range []string{"HARNESS_DOCKER_FORWARD_ENV=" + names + "\n", "VIBE_LAUNCH_FLAGS=\n", "VIBE_HOME=" + filepath.Join(privateHome, "home") + "\n",
@@ -178,7 +178,7 @@ func TestDockerTurnForwardsItsConfigurationByNameAndKeepsItOutOfArgv(t *testing.
 				if err := json.Unmarshal([]byte(line), &servers); err != nil || len(servers) != 1 || !strings.HasPrefix(servers[0]["url"].(string), "http://host.docker.internal:9897") {
 					t.Fatalf("the toolbox as the container reaches the server: %q %v", line, err)
 				}
-				if strings.Contains(line, "aak_") || !strings.Contains(child, "AIMEBU2_AGENT_KEY=aak_test\n") {
+				if strings.Contains(line, "aak_") || !strings.Contains(child, "AIMEBU_AGENT_KEY=aak_test\n") {
 					t.Fatalf("the bearer is bare, in its own variable, and not in the config:\n%s", child)
 				}
 			} else if !strings.Contains(child, "VIBE_MCP_SERVERS=<unset>") {
@@ -250,7 +250,7 @@ func TestDockerOwnerEnvironmentReferencesCannotReplaceTheAgentsConfiguration(t *
 	t.Setenv("OWNER_DOCKER", "unix:///owner/docker.sock")
 	a, _ := dockerAdapter(t, root, path)
 	turnSpec := dockerSpec(t, t.TempDir())
-	turnSpec.LauncherEnvRefs = map[string]string{"VIBE_HOME": "OWNER_VALUE", "VIBE_MCP_SERVERS": "OWNER_VALUE", "AIMEBU2_AGENT_KEY": "OWNER_VALUE", "VIBE_LAUNCH_FLAGS": "OWNER_VALUE",
+	turnSpec.LauncherEnvRefs = map[string]string{"VIBE_HOME": "OWNER_VALUE", "VIBE_MCP_SERVERS": "OWNER_VALUE", "AIMEBU_AGENT_KEY": "OWNER_VALUE", "VIBE_LAUNCH_FLAGS": "OWNER_VALUE",
 		"HARNESS_DOCKER_FORWARD_ENV": "OWNER_VALUE", "VIBE_ACTIVE_MODEL": "OWNER_VALUE", "DOCKER_HOST": "OWNER_DOCKER"}
 	turn, err := a.Start(context.Background(), turnSpec)
 	if err != nil {

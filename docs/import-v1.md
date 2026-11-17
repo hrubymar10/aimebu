@@ -5,9 +5,9 @@
 The server defaults to `~/.aimebu` and port 9997, so a normal cutover
 uses the v1 root and port directly. Stop v1 before starting v2. The v2 server binds its HTTP and HTTPS
 listeners before touching the root, so a running v1 server produces a clear
-stop-and-retry error without modifying its files. If the development build
+stop-and-retry error without modifying its files. If the v2 server
 listens on a separate port while pointed at a v1 root, it probes v1's default
-port 9997 and the configured v1 bind address (`AIMEBU_BIND`) before moving any
+port 9997 and the configured bind address (`AIMEBU_BIND`, shared by v1 and v2) before moving any
 files. The
 backup acquires a SQLite write lock before hashing the source and writing its
 manifest, then holds that lock while renaming the source entries. Stop any
@@ -178,7 +178,7 @@ choice changes a parent so a link would loop or run too deep, that role is
 flattened and listed in the report's `flattened_roles`. Already imported roles are marked and their conflict selectors
 are hidden after a saved choice. v1 fleets are not imported: v2 has no saved teams, so a fleet's rows are listed under **Not
 carried over** and stay in the v1 backup on disk. The command `aimebu import-v1 --from <dir> --map <file> [--to <v2-config-dir>] [--dry-run]`
-(`--to` defaults to `AIMEBU2_CONFIG_DIR`, else `~/.aimebu`; it needs the v2 server
+(`--to` defaults to `AIMEBU_CONFIG_DIR`, else `~/.aimebu`; it needs the v2 server
 stopped and an existing v2 database) prints
 its report as JSON and exits 3 with a warning when the map left rooms with no project, which are not imported.
 The preview lists command options
@@ -252,10 +252,10 @@ access gaps, skipped records, and source fields that v2 does not carry.
 The wizard imports from the read-only `.old-v1-bkp/` copy made during startup.
 Keep its `server/aimebu.sqlite`, WAL and SHM files when present, and
 `server/attachments/` together until import finishes. The development test
-escape hatch `AIMEBU2_DEV_IMPORT_V1=1` enables the old CLI command against a
+escape hatch `AIMEBU_DEV_IMPORT_V1=1` enables the old CLI command against a
 copied source; it is outside the normal first-run flow.
 
-A second development-only escape hatch, `AIMEBU2_DEV_SKIP_V1_PROBE=1`, skips
+A second development-only escape hatch, `AIMEBU_DEV_SKIP_V1_PROBE=1`, skips
 the v1 listener probe on port 9997 (loopback, `AIMEBU_BIND`, and every
 interface address) so a dev instance can rehearse first setup and import over
 a copy of v1 data while the real v1 server keeps serving on 9997. Only the
