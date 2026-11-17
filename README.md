@@ -297,7 +297,9 @@ reviewer cannot be spawned or assigned to another agent; existing reviewers
 keep running. The setup wizard and Spawn dialog omit reviewer choices while
 the effective setting is off.
 Project settings → Team flow shows the current flow and a **Change team flow**
-button that opens the same wizard the home room uses. For a project that
+button that opens the same wizard the home room uses in a wide dialog above
+settings (full screen on a phone). Closing the wizard returns to settings;
+applying a change closes it. For a project that
 already has a flow the wizard is a migration: the leader is the only constant,
 and every other agent is kept, added, or handed off and stopped. After you pick
 a flow the server returns a plan, and each role of the new flow gets a step
@@ -647,7 +649,7 @@ collapsed. Open room rows show `#name`, their member count and an unread badge;
 archived rooms keep their history without an unread badge. Rows also show a
 project chip when there are several projects (left off a home room that only
 repeats the project name); the
-row's `+` shows on hover or keyboard focus, and always on touch screens; a project's home row has a ☰ button next to it (same visibility; no arrows), whose menu holds New room (as the `+` does) and, in the manual sort, Move up and Move down (and, in that sort, the button is also the drag handle). The last message is
+row's `+` shows on hover or keyboard focus, and always on touch screens; in manual sort a project's home row has a ☰ button next to it (same visibility; no arrows), whose menu holds New room (as the `+` does), Move up and Move down, and the button is also the drag handle. In other sorts the `+` is the row's only action. The last message is
 previewed only under the open room, and one Direct messages section covers every project and
 always comes last. The box on top only filters the list as you type (Enter does nothing); rooms
 are created with a row's `+` or a project's ☰ menu. A project's tree ends with an

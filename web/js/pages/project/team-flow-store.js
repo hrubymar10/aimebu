@@ -38,6 +38,7 @@ export class TeamFlowStore {
 
   async load(projectID) {
     if (!this.alive) return;
+    const retainedSelection = this.projectID === projectID ? this.selected.peek() : '';
     this.reset();
     if (!projectID) return;
     this.projectID = projectID;
@@ -47,7 +48,7 @@ export class TeamFlowStore {
       const [catalog, state] = await Promise.all([this.source.templates(), this.source.get(projectID)]);
       if (!this.alive || generation !== this.generation) return;
       const templates = catalog.templates || [];
-      const selected = state.key || templates[0]?.key || '';
+      const selected = templates.some(item => item.key === retainedSelection) ? retainedSelection : state.key || templates[0]?.key || '';
       batch(() => { this.templates.value = templates; this.state.value = state; this.selected.value = selected; this.loading.value = false; });
       if (selected && this.canPreview(projectID)) await this.select(selected);
     } catch (error) {

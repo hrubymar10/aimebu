@@ -859,6 +859,12 @@ async function main() {
     await page.$eval('#rooms-sort', node => node.click());
     await page.$eval('.sort-item[data-sort=activity]', node => node.click());
     assert.deepEqual(await projectsInOrder(), ['rm_ah', 'rm_bh'], 'by latest activity the project with the newer room leads');
+    assert.deepEqual(await page.evaluate(() => ['rm_ah', 'rm_bh'].map(id => {
+      const row = document.querySelector(`[data-room-id=${id}] > .room-item`);
+      return [!!row.querySelector('.project-menu-btn'), !!row.querySelector('.add-room:not([hidden])')];
+    })), [[false, true], [false, true]], 'recent sort shows only the new-room action on project rows');
+    await page.focus('[data-room-id=rm_ah] .room-item-name'); await page.keyboard.press('Tab');
+    assert.deepEqual(await page.evaluate(() => [document.activeElement.classList.contains('add-room'), document.activeElement.getAttribute('aria-label')]), [true, 'New task room under Alpha'], 'keyboard focus reaches the new-room action without a menu button');
     await page.close();
   }
 

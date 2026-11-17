@@ -8947,7 +8947,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await setSort('name');
       assert.deepEqual(await projectOrder(), ['Second project', 'UI smoke'], 'by name');
       assert.deepEqual(await roomOrder(), ['Alpha list', 'Beta list'], 'rooms by name');
-      // The ☰ button is on every project row whatever the order; its menu offers the moves only in the manual order.
+      // The ☰ button is only present when manual sorting allows moving projects.
       const menuOf = async id => {
         await listPage.focus(`[data-room-id="${id}"] > .room-item .room-item-name`);
         await domClick(listPage, `[data-room-id="${id}"] > .room-item .project-menu-btn`);
@@ -8956,7 +8956,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
         await listPage.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-item .project-menu-list`), {}, id);
         return items;
       };
-      assert.deepEqual(await menuOf((await homeIDs())[0]), ['New room'], 'the menu offers the moves only in the manual order');
+      assert.equal(await listPage.$$eval('.project-menu-btn', nodes => nodes.length), 0, 'non-manual sorting hides project move menus');
       await setSort('activity');
       await listPage.waitForFunction(() => document.querySelector('#projects > .room-group .room-item-name')?.textContent.includes('UI smoke'));
       assert.deepEqual(await projectOrder(), ['UI smoke', 'Second project'], 'by latest activity the project with the newest message leads');

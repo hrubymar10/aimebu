@@ -412,8 +412,17 @@ async function main() {
   // leaves an open dialog alone.
   {
     const page = await mount();
-    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn', role_emoji: '🔧', role_label: 'Craft lead' }), agent('a2', 'bert')]);
+    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn', role_emoji: '🔧', role_label: 'Craft lead' }), agent('a2', 'bert', { role_emoji: '✦' })]);
     assert.equal(await page.$eval('[data-agent-id=a1] .agent-emoji', node => node.title), 'Craft lead', 'hovering the role emoji names the role');
+    const alignment = () => page.$eval('[data-agent-id=a1]', card => {
+      const center = selector => { const box = card.querySelector(selector).getBoundingClientRect(); return box.top + box.height / 2; };
+      return Math.abs(center('.agent-emoji') - center('.agent-name'));
+    });
+    assert.ok(await alignment() <= 1, 'the role emoji is vertically centered with the name in the card');
+    assert.ok(await page.$eval('[data-agent-id=a2]', card => {
+      const center = selector => { const box = card.querySelector(selector).getBoundingClientRect(); return box.top + box.height / 2; };
+      return Math.abs(center('.agent-emoji') - center('.agent-name'));
+    }) <= 1, 'a text role glyph is centered with the name too');
     const state = () => page.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, closeHidden: document.querySelector('#agent-profile-close').hidden, open: document.querySelector('#agents-panel').classList.contains('profile-open'),
       expanded: [...document.querySelectorAll('[data-agent-id]')].map(card => [card.dataset.agentId, card.classList.contains('expanded'), card.querySelector('.agent-expand')?.getAttribute('aria-expanded') ?? null, card.querySelector('.agent-expand')?.getAttribute('aria-label') ?? null]),
       facts: [...document.querySelectorAll('[data-agent-id=a1] .profile-fact')].map(row => [row.querySelector('.profile-fact-label').textContent, row.querySelector('.profile-fact-value').textContent]) }));
@@ -421,6 +430,7 @@ async function main() {
     assert.deepEqual([closed.title, closed.closeHidden, closed.open], ['Members', true, false]);
     assert.deepEqual(closed.facts, []);
     await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    assert.ok(await alignment() <= 1, 'the role emoji remains centered in the expanded profile header');
     const profile = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
     const opened = await state();
     assert.deepEqual([opened.title, opened.closeHidden, opened.open], ['Agent profile', false, true]);

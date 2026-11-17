@@ -232,10 +232,15 @@ reasoning effort; every `turn/start` sends it explicitly. If that default is
 absent, both native and Docker warm mode fall back cold and name the missing
 default in the refusal. Warm starts leave personality unset to preserve the
 cold default. The known `js_repl`, `plugins`, and `remote_plugin` features are
-reset to their cold defaults (`false`, `true`, and `true`). Host `personality`,
-plugin, or marketplace tables force a cold Docker turn: the first cannot be
-neutralized to an unset personality, and disabling plugin loading could also
-remove account-installed plugins available to cold exec. Provider, profile,
+reset to their cold defaults (`false`, `true`, and `true`). Host plugin entries
+are disabled individually with `plugins.<id>.enabled=false` overrides,
+preserving plugin loading and the cold path's account-installed plugins.
+Codex's `-c` parser treats quoted path segments as literal key names, so IDs
+containing dots or other unsafe characters force a cold turn. Marketplace
+tables only define plugin sources and can remain in the host config. Malformed
+plugin tables also force a cold turn.
+Host `personality` also forces a cold turn because it cannot be neutralized to
+an unset personality. Provider, profile,
 instruction, unknown feature, and unknown top-level settings likewise force
 a cold turn with a reason naming the key. The
 latest classified warm refusal appears in the agent card's cold tooltip.

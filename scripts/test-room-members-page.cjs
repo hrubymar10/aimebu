@@ -88,6 +88,11 @@ async function main() {
       ['gus', 'Worker', 'Interrupt requested · Working'], ['ivy', 'Worker', 'Interrupt requested · Interrupting'], ['old', 'Worker', 'Revoked']]);
     assert.deepEqual(singletons, ['One-holder roles (3)', 'One-holder roles', [['room-member-emoji:🧭', 'room-member-name:Leader', 'room-member-state:held by zeno'], ['room-member-name:reviewer', 'room-member-state:held by rex (another room)'], ['room-member-name:Tester', 'room-member-state:vacant']]]);
     assert.equal(await page.$eval('#room-member-list .room-member-emoji', node => node.getAttribute('aria-hidden')), 'true');
+    assert.ok(await page.$eval('#room-member-list .room-member-emoji', emoji => {
+      const name = emoji.parentElement.querySelector('.room-member-name');
+      const center = node => { const box = node.getBoundingClientRect(); return box.top + box.height / 2; };
+      return Math.abs(center(emoji) - center(name));
+    }) <= 1, 'the role emoji is centered with the member name');
     await page.close();
   }
 

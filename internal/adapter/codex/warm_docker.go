@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -23,6 +24,10 @@ var warmDockerFileStores = map[string]bool{"cli_auth_credentials_store": true, "
 // These are the 0.169 cold defaults with user config ignored. Plugin features
 // remain enabled even when no user plugin table is loaded.
 var warmDockerFeatureDefaults = map[string]bool{"js_repl": false, "plugins": true, "remote_plugin": true}
+
+// Codex's -c parser splits paths on dots and treats quotes as literal key
+// characters. Only IDs with bare path segments can be disabled reliably.
+var warmDockerPluginID = regexp.MustCompile(`^[A-Za-z0-9_-]+@[A-Za-z0-9_-]+$`)
 
 // warmDockerConfig closes the gap left by app-server having no exec's
 // --ignore-user-config flag. Every host MCP server the cold Docker path would
@@ -88,11 +93,46 @@ func warmDockerConfig(spec adapter.TurnSpec) ([]byte, []string, error) {
 				}
 				neutral = append(neutral, fmt.Sprintf("features.%s=%t", name, defaultValue))
 			}
-		case "plugins", "marketplaces":
-			// Disabling this feature would also remove account-installed
-			// plugins that cold exec can load. Dotted overrides cannot clear a
-			// table, so use the cold path for this turn.
-			return nil, nil, fmt.Errorf("%w: Codex host config key %q cannot be neutralized without changing cold plugin loading", adapter.ErrNoWarm, key)
+		case "plugins":
+			plugins, ok := doc[key].(map[string]any)
+			if !ok {
+				return nil, nil, fmt.Errorf("%w: Codex host config key %q is not a table", adapter.ErrNoWarm, key)
+			}
+			ids := make([]string, 0, len(plugins))
+			for id := range plugins {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			for _, id := range ids {
+				entry, ok := plugins[id].(map[string]any)
+				if !ok {
+					return nil, nil, fmt.Errorf("%w: Codex host plugin %q is not a table", adapter.ErrNoWarm, id)
+				}
+				if enabled, present := entry["enabled"]; present {
+					if _, ok := enabled.(bool); !ok {
+						return nil, nil, fmt.Errorf("%w: Codex host plugin %q has a non-boolean enabled value", adapter.ErrNoWarm, id)
+					}
+				}
+				if id == "_default" {
+					// Cold exec has no host default override. Other fields could
+					// change plugin behavior and have no verified cold value.
+					if _, present := entry["enabled"]; len(entry) != 1 || !present {
+						return nil, nil, fmt.Errorf("%w: Codex host plugin default has unknown settings", adapter.ErrNoWarm)
+					}
+					neutral = append(neutral, "plugins._default.enabled=true")
+					continue
+				}
+				if !warmDockerPluginID.MatchString(id) {
+					return nil, nil, fmt.Errorf("%w: Codex host plugin ID %q cannot be safely overridden", adapter.ErrNoWarm, id)
+				}
+				neutral = append(neutral, "plugins."+id+".enabled=false")
+			}
+		case "marketplaces":
+			// Marketplace entries only define sources. Runtime loading reads
+			// configured plugin IDs, all of which are disabled above.
+			if _, ok := doc[key].(map[string]any); !ok {
+				return nil, nil, fmt.Errorf("%w: Codex host config key %q is not a table", adapter.ErrNoWarm, key)
+			}
 		default:
 			return nil, nil, fmt.Errorf("%w: Codex host config key %q overrides provider/profile or other turn settings", adapter.ErrNoWarm, key)
 		}

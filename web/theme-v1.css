@@ -137,8 +137,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .room-members-status { color: var(--text-secondary); font-size: 13px; margin: 8px 0; overflow-wrap: anywhere; }
 .room-members-heading { margin: 10px 0 4px; font-size: 12px; color: var(--text-secondary); font-weight: 600; }
 .room-members-list { list-style: none; margin: 0; padding: 0; }
-.room-member { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 3px 0; font-size: 13px; overflow-wrap: anywhere; }
-.room-member-emoji { flex: 0 0 auto; }
+.room-member { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 3px 0; font-size: 13px; overflow-wrap: anywhere; }
+.room-member-emoji { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; height: 1.5em; line-height: 1; transform: translateY(-1px); }
 .room-member-name { font-weight: 600; }
 .room-member-role, .room-member-state, .room-members-empty { color: var(--text-secondary); font-size: 12px; }
 .room-member-badge { border: 1px solid var(--border); border-radius: 9px; padding: 0 6px; color: var(--text-secondary); font-size: 11px; }
@@ -657,7 +657,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .agent-card.expanded .agent-state { flex: 1 0 100%; order: 5; }
 .agent-card.expanded .agent-role { order: 6; }
 .agent-card.expanded .agent-role-update { display: block; }
-.agent-emoji { flex: 0 0 auto; font-size: 13px; line-height: 1; }
+.agent-emoji { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; height: 1.5em; font-size: 13px; line-height: 1; transform: translateY(-1px); }
 .agent-emoji:empty { display: none; }
 .agent-card-actions { display: flex; gap: 2px; }
 .agent-card.expanded .agent-card-actions { top: 3px; right: 4px; transform: none; opacity: 1; pointer-events: auto; }

@@ -48,8 +48,8 @@ function arm(event, store) {
   for (const done of ['pointerup', 'pointercancel']) document.addEventListener(done, release, true);
 }
 
-// A project's home row keeps one control, the ☰ button: it opens a menu with the project's actions (a new room; moving it up or down in the manual
-// order) and, in the manual order, is also the handle the row is dragged by. The menu is a real menu: Escape or a click elsewhere closes it, the arrows
+// In manual sort, a project's home row has a ☰ button for its actions (a new room; moving it up or down) and as the handle the row is dragged by.
+// The menu is a real menu: Escape or a click elsewhere closes it, the arrows
 // move between its items, and it is reachable by keyboard and touch because the button is always on the row's tab order while the row is hovered/focused.
 function ProjectMenu({ project, room, controls, manual, store, onAdd, disabled }) {
   const [open, setOpen] = useState(false), box = useRef(null);
@@ -106,7 +106,7 @@ function Row({ view, store, ctx, preview, onToggle }) {
     <div class="room-item-info"><div class="room-item-top">
     <button type="button" class="row-btn room-item-name" aria-current=${isActive ? 'true' : undefined} title=${`${room.title} · ${members} ${members === 1 ? 'member' : 'members'}`} onClick=${select}>${room.title}</button>
     ${room.restricted && html`<span class="room-restricted" role="img" aria-label="Restricted room" title="Restricted room"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg></span>`}
-    <span class="room-item-actions-slot"><span class="room-item-actions">${controls && html`<${ProjectMenu} project=${project} room=${room} controls=${controls} manual=${manual} store=${store} onAdd=${add} disabled=${archivedProject || (!!room.lifecycle && room.lifecycle !== 'open')} />`}
+    <span class="room-item-actions-slot"><span class="room-item-actions">${controls && manual && html`<${ProjectMenu} project=${project} room=${room} controls=${controls} manual=${manual} store=${store} onAdd=${add} disabled=${archivedProject || (!!room.lifecycle && room.lifecycle !== 'open')} />`}
     <${GlyphButton} name="plus" label=${`New task room under ${room.title}`} className="row-btn add-room" disabled=${(!!room.lifecycle && room.lifecycle !== 'open') || archivedProject} hidden=${room.kind === 'dm' || room.lifecycle === 'closed' || archivedProject} onClick=${add} /></span></span>
     ${view.chip && projectName && !(room.kind === 'home' && room.title.trim().toLowerCase() === projectName.trim().toLowerCase()) && html`<span class=${ctx.filtering ? 'room-project room-project-needed' : 'room-project'} title=${`Project ${projectName}`}>${projectName}</span>`}
     ${(affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`}

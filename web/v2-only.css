@@ -689,6 +689,12 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .chat:has(#team-flow-home .team-setup-wizard) > .messages { display: none; }
 .team-flow-home-card, .team-flow-settings { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); padding: 18px; }
 .team-flow-home-card { width: 100%; min-height: 100%; }
+.team-flow-modal { box-sizing: border-box; width: min(96vw, 960px); max-width: none; max-height: calc(100dvh - 40px); padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-primary); color: var(--text-primary); font: inherit; overflow-y: auto; }
+.team-flow-modal::backdrop { background: rgba(0, 0, 0, .7); }
+.team-flow-modal-header { position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
+.team-flow-modal-status { padding: 18px; }
+.team-flow-modal .team-setup-wizard { box-sizing: border-box; padding: 18px; }
+@media (max-width: 700px) { .team-flow-modal { width: 100vw; height: 100dvh; max-height: none; margin: 0; border: 0; border-radius: 0; } }
 .team-flow-heading small { color: var(--accent-text); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .team-flow-heading h2 { margin: 4px 0 6px; font-size: 20px; }
 .team-flow-heading p, .team-flow-current { margin: 0 0 14px; color: var(--text-secondary); }
