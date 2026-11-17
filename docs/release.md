@@ -186,7 +186,7 @@ WantedBy=default.target
 ```
 
 Stop such a service with its manager (`launchctl bootout`, `systemctl --user stop`), not with `aimebu server stop`, which would only
-have the manager start it again. Both give a clean shutdown a minute (the server stops its agents and closes the database before it exits). A Homebrew formula's
+have the manager start it again. Both give a clean shutdown a minute (the server stops its agents, closes event and machine WebSockets with 1001, waits for their handlers, and then closes the database before it exits). A Homebrew formula's
 `service` block takes the same `aimebu server` command.
 
 Secondary options, none required for 2.0.0 and none verified here:

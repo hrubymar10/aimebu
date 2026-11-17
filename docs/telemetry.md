@@ -74,7 +74,8 @@ transport inside a test binary.
     harness's own words, a path, a name) stays in the local log.
   - `machine`, `event-stream`: a failure while a supervisor connects (machine state, reconciliation, harness and launcher state, agent keys), an agent frame
     that fails for a reason that is not a classified refusal, a refused frame (a warning, with its code), a write the server used to ignore (that the machine is
-    alive, its harnesses, capabilities and last warm report), a failed event replay or poll.
+    alive, its harnesses, capabilities and last warm report), a failed event replay or poll. A normal restart closes WebSockets with 1001 before the database;
+    event-stream cancellation during shutdown does not report an error.
   - `dispatcher`: any failure of a pass (it runs every 100ms), a room that failed to close, a team-flow migration or agent switch whose spawn could not be sent,
     the checks that hold an agent's turn, the scheduled cleanup.
   - `credentials` (the credential alerts, the refresher, the reconcile pass and the corrupt state files; fixed phrases): a credential alert goes by its kind

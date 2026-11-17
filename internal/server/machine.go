@@ -33,6 +33,7 @@ type machineConn struct {
 	sendQueue                  chan protocol.Frame
 	done                       chan struct{}
 	stopOnce                   sync.Once
+	workers                    sync.WaitGroup // helpers may read the store after the socket handler exits
 	bound                      map[string]int
 	boundMu                    sync.RWMutex
 	controlMu                  sync.Mutex
@@ -208,7 +209,11 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(protocol.MaxMachineFrameBytes)
-	ctx := r.Context()
+	ctx, release, ok := s.trackSocket(r.Context(), conn)
+	if !ok {
+		return
+	}
+	defer release()
 	hello, err := readMachineFrame(ctx, conn)
 	if err != nil || hello.V != protocol.Version || hello.Type != protocol.Hello || hello.MachineID != machineID || hello.JournalID == "" {
 		conn.Close(websocket.StatusPolicyViolation, "invalid hello")
@@ -338,13 +343,15 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		c.stop()
+		c.workers.Wait()
 		s.machineMu.Lock()
 		if s.machines[machineID] == c {
 			delete(s.machines, machineID)
 		}
 		s.machineMu.Unlock()
 	}()
-	telemetry.Go(ctx, func() { s.machineWriter(ctx, c) })
+	c.workers.Add(1)
+	telemetry.Go(ctx, func() { defer c.workers.Done(); s.machineWriter(ctx, c) })
 	desired := make([]protocol.DesiredAgent, 0, len(agents))
 	for _, agent := range agents {
 		if agent.Revoked {
@@ -376,9 +383,10 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	s.maintenanceMu.RUnlock()
 	handshakeLocked = false
-	telemetry.Go(ctx, func() { s.machinePinger(ctx, c) })
-	telemetry.Go(ctx, func() { s.watchKeepAlivePause(ctx, c) })
-	telemetry.Go(ctx, func() { s.replayPendingStops(ctx, c) })
+	c.workers.Add(3)
+	telemetry.Go(ctx, func() { defer c.workers.Done(); s.machinePinger(ctx, c) })
+	telemetry.Go(ctx, func() { defer c.workers.Done(); s.watchKeepAlivePause(ctx, c) })
+	telemetry.Go(ctx, func() { defer c.workers.Done(); s.replayPendingStops(ctx, c) })
 	for {
 		frame, err := readMachineFrame(ctx, conn)
 		if err != nil {

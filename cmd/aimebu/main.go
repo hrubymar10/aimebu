@@ -828,10 +828,6 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	finalClient, finalJournal, finalStop, finalDone := embedded, journal, stopEmbedded, embeddedDone
 	unusedJournal := preparedJournal
 	embeddedMu.Unlock()
-	if finalClient == nil && unusedJournal != nil {
-		// Shut down before the supervisor started: the journal opened for it still has to be closed.
-		_ = unusedJournal.Close()
-	}
 	if finalClient != nil {
 		drainCtx, cancelDrain := context.WithTimeout(context.Background(), 40*time.Second)
 		if err := finalClient.StopAcceptingAndDrain(drainCtx); err != nil {
@@ -840,6 +836,17 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		cancelDrain()
 		finalStop()
 		<-finalDone
+	}
+	socketShutdownCtx, cancelSocketShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := service.ShutdownSockets(socketShutdownCtx); err != nil {
+		fmt.Fprintln(stderr, "websocket shutdown:", err)
+	}
+	cancelSocketShutdown()
+	if finalClient == nil && unusedJournal != nil {
+		// Shut down before the supervisor started: the journal opened for it still has to be closed.
+		_ = unusedJournal.Close()
+	}
+	if finalClient != nil {
 		if err := finalJournal.Close(); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
