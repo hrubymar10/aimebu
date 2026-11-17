@@ -176,6 +176,7 @@ assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: tr
   assert.equal(dot({ ...idle, warm: { state: 'unknown' } }).kind, 'unknown', 'a warm state that is not known is orange, not cold');
   assert.match(dot({ ...idle, warm: { state: 'unknown' } }).title, /^State unknown/);
   assert.equal(dot({ desired: 'active', observed: 'in_turn', tool: 'claude' }).kind, 'working', 'a working agent is online');
+  assert.deepEqual(dot({ desired: 'active', observed: 'in_turn', tool: 'claude', warm: { state: 'working' } }), { kind: 'warm', title: 'Online \u00b7 warm \u00b7 working\nWorking on a turn.' }, 'a live warm process remains warm during its turn');
   assert.deepEqual([dot({ desired: 'stopped', observed: 'stopped' }).kind, dot({ desired: 'active', observed: 'lost' }).kind], ['offline', 'offline']);
   assert.match(dot({ desired: 'stopped', observed: 'stopped' }).title, /^Offline/);
   assert.deepEqual([dot({ desired: 'not_accepting', observed: 'idle' }).kind, dot({ desired: 'active', observed: 'idle', boundary_pending: true }).kind], ['unknown', 'unknown'], 'paused or waiting for a decision: orange');

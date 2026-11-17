@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -99,5 +100,70 @@ func TestMachineSocketShutdownSendsGoingAway(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSocketShutdownDeadlineDoesNotWaitForeverForHandler(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	transport := &captureTransport{}
+	if _, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test", Release: "shutdown", TracesSampleRate: 0}, transport); err != nil {
+		t.Fatal(err)
+	}
+	defer telemetry.Current().Close()
+	f.srv.socketForceWait = 30 * time.Millisecond
+	_, high, err := f.db.EventBounds(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := f.dial(t, high, f.http.URL)
+	defer conn.CloseNow()
+	readFrame(t, conn)
+	entered, release := make(chan struct{}), make(chan struct{})
+	releasePoll := sync.OnceFunc(func() { close(release) })
+	defer releasePoll()
+	f.srv.EventBatchQuery = func(context.Context, string, int64, int64, int) ([]store.Event, error) {
+		select {
+		case <-entered:
+		default:
+			close(entered)
+		}
+		<-release // a handler that ignores cancellation and forced socket close
+		return nil, sql.ErrConnDone
+	}
+	response := f.request("POST", "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "wake poll"}, true)
+	response.Body.Close()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("event poll did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := f.srv.ShutdownSockets(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("bounded shutdown = %v, want deadline exceeded", err)
+	}
+	telemetry.Current().Flush(time.Second)
+	transport.mu.Lock()
+	warned := false
+	for _, event := range transport.events {
+		warned = warned || event.Level == "warning"
+	}
+	transport.mu.Unlock()
+	if !warned {
+		t.Fatal("a handler that outlives forced close must report a warning")
+	}
+	select {
+	case <-release:
+		t.Fatal("test handler was released before shutdown returned")
+	default:
+	}
+	releasePoll()
+	joined := make(chan struct{})
+	go func() { f.srv.socketWG.Wait(); close(joined) }()
+	select {
+	case <-joined:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not finish after test released it")
 	}
 }

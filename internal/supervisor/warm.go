@@ -1224,10 +1224,9 @@ func (c *Client) sendFinalWarmState() {
 	if !c.warmCapable() {
 		return
 	}
-	report := c.WarmReport()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmStateFrame, Warm: &report})
+	_ = c.sendWarmReport(ctx)
 }
 
 // identityOf is the system's record of when a process started (tests replace it).
@@ -1366,12 +1365,20 @@ func (c *Client) sendWarmReports(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-c.warmReports:
-			report := c.WarmReport()
-			if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmStateFrame, Warm: &report}); err != nil && ctx.Err() == nil {
+			if err := c.sendWarmReport(ctx); err != nil && ctx.Err() == nil {
 				c.report("the warm state could not be sent to the server", err)
 			}
 		}
 	}
+}
+
+// sendWarmReport numbers, builds and sends one report under a single lock so
+// an older asynchronous report cannot arrive after a turn's settled report.
+func (c *Client) sendWarmReport(ctx context.Context) error {
+	c.warmReportMu.Lock()
+	defer c.warmReportMu.Unlock()
+	report := c.WarmReport()
+	return c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.WarmStateFrame, Warm: &report})
 }
 
 // keepAliveForgetAll ends every agent's keep-alive (the supervisor is stopping).

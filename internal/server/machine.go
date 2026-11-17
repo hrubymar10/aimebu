@@ -483,9 +483,11 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		if frame.Type == protocol.WarmStateFrame {
 			if frame.Warm != nil {
 				c.warmMu.Lock()
+				previous := c.warm
 				c.warm = frame.Warm
 				c.warmMu.Unlock()
 				s.applyWarmCount(c, frame.Warm.Seq, max(len(frame.Warm.Agents), frame.Warm.Processes)+frame.Warm.PingsActive, false)
+				s.notifyWarmWorking(ctx, c, previous, frame.Warm)
 			}
 			continue
 		}
@@ -867,6 +869,35 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 
 // maxProbeFolders bounds how many of a machine's project folders are handed to its supervisor to ask a container launcher from.
 const maxProbeFolders = 8
+
+// notifyWarmWorking refreshes agent cards when a live warm process starts a
+// turn. The settled idle report precedes the process event, which refreshes
+// the card at the other edge of the turn.
+func (s *Server) notifyWarmWorking(ctx context.Context, c *machineConn, previous, current *protocol.WarmReport) {
+	wasBusy := make(map[string]bool)
+	if previous != nil {
+		for _, agent := range previous.Agents {
+			if agent.State == "busy" {
+				wasBusy[agent.AgentID] = true
+			}
+		}
+	}
+	for _, agent := range current.Agents {
+		if agent.State != "busy" || wasBusy[agent.AgentID] {
+			continue
+		}
+		runtime, err := s.Store.AgentRuntimeByID(ctx, agent.AgentID)
+		if err != nil || runtime.MachineID != c.id {
+			continue
+		}
+		if err := s.Store.Tx(ctx, func(tx *store.Tx) error {
+			_, err := tx.AppendEvent(store.Event{Kind: "agent_warm_working", ProjectID: runtime.ProjectID, AgentID: runtime.ID})
+			return err
+		}); err != nil {
+			telemetry.ReportWarning(ctx, "machine", fmt.Errorf("recording a warm process starting a turn: %w", err))
+		}
+	}
+}
 
 func (s *Server) machineForID(id string) (*machineConn, error) {
 	s.machineMu.Lock()

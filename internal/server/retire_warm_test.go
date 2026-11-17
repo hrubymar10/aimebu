@@ -151,7 +151,19 @@ func TestAgentCardWarmState(t *testing.T) {
 	busy := card
 	busy.ID, busy.Observed = "agt_b", "in_turn"
 	if got := f.srv.agentWarmState(busy); got != nil {
-		t.Fatalf("an agent in a turn says nothing: %+v", got)
+		t.Fatalf("an unreported process in a turn says nothing: %+v", got)
+	}
+	report(&five, protocol.WarmAgent{AgentID: busy.ID, State: "busy"})
+	if got := f.srv.agentWarmState(busy); got == nil || got.State != "working" {
+		t.Fatalf("a reported warm process in a turn stays warm: %+v", got)
+	}
+	report(&five, protocol.WarmAgent{AgentID: card.ID, State: "idle", SleepsAt: "2026-11-08T17:00:00Z"})
+	for _, observed := range []string{"interrupting", "lost"} {
+		otherState := card
+		otherState.Observed = observed
+		if got := f.srv.agentWarmState(otherState); got != nil {
+			t.Fatalf("%s does not show a warm state: %+v", observed, got)
+		}
 	}
 	other := card
 	other.Tool = "codex"
@@ -260,6 +272,36 @@ func TestWarmStateFrameIsKept(t *testing.T) {
 	apply(protocol.WarmReport{Agents: []protocol.WarmAgent{}, IdleSeconds: &five})
 	if got := f.srv.agentWarmState(card); got == nil || got.State != "sleeping" {
 		t.Fatalf("after the next report: %+v", got)
+	}
+}
+
+func TestWarmWorkingRefreshesAgentCardOnce(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	machine := connectHost(t, f, true)
+	agent, _ := f.createToolAgent(t, "role_worker_default")
+	runtime, err := f.db.AgentRuntimeByID(t.Context(), agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine.id = runtime.MachineID
+	idle := &protocol.WarmReport{Agents: []protocol.WarmAgent{{AgentID: agent.ID, State: "idle"}}}
+	busy := &protocol.WarmReport{Agents: []protocol.WarmAgent{{AgentID: agent.ID, State: "busy"}}}
+	f.srv.notifyWarmWorking(t.Context(), machine, idle, busy)
+	f.srv.notifyWarmWorking(t.Context(), machine, busy, busy)
+	all, err := f.db.EventsAfter(t.Context(), f.room.CreatedBy, 0, 1<<62)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range all {
+		if event.Kind == "agent_warm_working" && event.AgentID == agent.ID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("one refresh when a warm process starts working, got %d", count)
 	}
 }
 

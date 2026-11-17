@@ -64,7 +64,7 @@ export function warmOf(agent, now = Date.now()) {
 }
 
 // The one status dot of a card: it says whether the agent is online and, for an idle one, whether its process is warm (and is the only place the card says so).
-// `kind` is what the dot looks like: `cold` (green), `warm` (green with a ring that pulses), `working` (green: the process is alive, whether it was warm is not told), `unknown`
+// `kind` is what the dot looks like: `cold` (green), `warm` (green with a ring that pulses), `working` (green when no warm process is reported), `unknown`
 // (orange: a paused or waiting agent, which says so in its own words, or a Claude agent whose warm state is not known) or `offline` (red: stopped, lost or gone). `title` is the sentence for the tooltip and for
 // a screen reader. `state` is stateOf(agent); `now` is a parameter so the text is a function of the data and the time.
 export function dotOf(agent, state, now = Date.now()) {
@@ -74,7 +74,9 @@ export function dotOf(agent, state, now = Date.now()) {
   // Paused or waiting for a decision is a known state, with its own words, and the dot is orange all the same; only a kind this does not know is "State unknown".
   if (dot === 'stale') return { kind: 'unknown', title: state.title || state.name };
   if (dot === 'offline') return { kind: 'unknown', title: `State unknown${detail}` };
-  if (state.kind === 'working') return { kind: 'working', title: `Online \u00b7 working${detail}` };
+  if (state.kind === 'working') return agent.warm?.state === 'working'
+    ? { kind: 'warm', title: `Online \u00b7 warm \u00b7 working${detail}` }
+    : { kind: 'working', title: `Online \u00b7 working${detail}` };
   if (agent.warm?.state === 'na') return { kind: 'na', title: "Online \u00b7 warm n/a: this harness doesn't keep its process warm" };
   if (agent.warm?.state === 'unknown') return { kind: 'unknown', title: 'State unknown \u00b7 whether its process is kept warm is not known (an older supervisor)' };
   if (agent.warm?.state === 'warm') {

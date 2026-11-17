@@ -93,6 +93,7 @@ type Client struct {
 	ProcessStart    func(pid int) string
 	warmPool        *warmPool
 	warmReports     chan struct{} // a change of the warm picture, to be reported
+	warmReportMu    sync.Mutex    // build and send warm reports in sequence, including turn-end reports
 	kaMu            sync.Mutex
 	ka              map[string]*keepAliveEntry               // each agent's cache keep-alive (see keepalive.go)
 	kaPause         keepAlivePause                           // what the server says to hold pings back for
@@ -1360,6 +1361,13 @@ events:
 	// delivery admitted next finds it in the pool or finds it gone; then local admission is freed so an immediate follow-up delivery is not
 	// rejected.
 	exit.ProcessAlive = c.warmTurnEnded(turn, exit) // a kept warm process outlives its turn: the server is told the turn finished, not that a process exited
+	// The turn-finished frame refreshes the agent card. Publish the settled
+	// process state first so that refresh sees its idle warm process immediately.
+	if _, warmTurn := turn.(*warmTurn); warmTurn {
+		if err := c.sendWarmReport(ctx); err != nil {
+			c.report("the warm state after a turn could not be sent to the server", err)
+		}
+	}
 	if delivery.Mode == adapter.ModeNormal {
 		c.keepAliveTurnEnded(delivery.AgentID, exit)
 	}

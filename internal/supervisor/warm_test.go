@@ -1608,6 +1608,41 @@ func TestWarmReportAndChangeNotices(t *testing.T) {
 	}
 }
 
+func TestWarmTurnReportsIdleBeforeProcessExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	peer := newMachinePeer(t, func(protocol.Frame) protocol.Frame {
+		return protocol.Frame{V: protocol.Version, Type: protocol.HelloAck}
+	})
+	h := newWarmHarness(t)
+	h.c.ServerURL = peer.server.URL
+	h.spawn("agt_a")
+	done := make(chan error, 1)
+	go func() { done <- h.c.RunOnce(ctx) }()
+	<-peer.hellos
+	peer.next(t, protocol.WarmStateFrame) // initial snapshot
+	h.run("agt_a", nil)
+	var lastWarm *protocol.WarmReport
+	for {
+		select {
+		case frame := <-peer.in:
+			switch frame.Type {
+			case protocol.WarmStateFrame:
+				lastWarm = frame.Warm
+			case protocol.Process:
+				if !frame.Exit.ProcessAlive || lastWarm == nil || len(lastWarm.Agents) != 1 || lastWarm.Agents[0].AgentID != "agt_a" || lastWarm.Agents[0].State != "idle" {
+					t.Fatalf("process exit preceded its settled warm report: exit=%+v report=%+v", frame.Exit, lastWarm)
+				}
+				cancel()
+				<-done
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal("no process exit after warm turn")
+		}
+	}
+}
+
 // timerList is a copy of the timers armed so far.
 func (h *warmHarness) timerList() []*fakeTimer {
 	h.tmu.Lock()

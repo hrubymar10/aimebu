@@ -581,16 +581,24 @@ func (s *Server) agentWarmState(card store.AgentCard) *agentWarm {
 	// What the supervisor itself says decides, never the server's guess: a live idle process is warm; no process is sleeping only when the supervisor says
 	// it works to a window (idle_seconds above 0). Before the first report, the card stays cold. A report without idle_seconds (an older supervisor,
 	// whose own default may be off) is unknown; a reported zero window means warm mode is off.
-	if card.Observed == "in_turn" {
-		return nil
-	}
 	if report == nil {
 		return nil
 	}
+	if card.Observed != "idle" && card.Observed != "in_turn" {
+		return nil
+	}
 	for _, agent := range report.Agents {
-		if agent.AgentID == card.ID && agent.State == "idle" {
-			return &agentWarm{State: "warm", SleepsAt: agent.SleepsAt}
+		if agent.AgentID == card.ID {
+			if agent.State == "busy" && card.Observed == "in_turn" {
+				return &agentWarm{State: "working"}
+			}
+			if agent.State == "idle" && card.Observed == "idle" {
+				return &agentWarm{State: "warm", SleepsAt: agent.SleepsAt}
+			}
 		}
+	}
+	if card.Observed == "in_turn" {
+		return nil
 	}
 	if report.IdleSeconds == nil {
 		return &agentWarm{State: "unknown"}

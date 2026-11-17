@@ -36,14 +36,15 @@ import (
 )
 
 type Server struct {
-	Store         *store.Store
-	socketMu      sync.Mutex
-	socketClosing bool
-	socketCtx     context.Context
-	socketCancel  context.CancelFunc
-	socketWG      sync.WaitGroup
-	sockets       map[*websocket.Conn]struct{}
-	codexWarmOn   atomic.Bool
+	Store           *store.Store
+	socketMu        sync.Mutex
+	socketClosing   bool
+	socketCtx       context.Context
+	socketCancel    context.CancelFunc
+	socketWG        sync.WaitGroup
+	sockets         map[*websocket.Conn]struct{}
+	socketForceWait time.Duration // tests shorten the post-deadline join; zero uses five seconds
+	codexWarmOn     atomic.Bool
 	// NoWebBundle serves the page from its modules instead of the bundle (a test sets it; AIMEBU2_WEB_BUNDLE=off does the same for a whole process).
 	NoWebBundle bool
 	// legacyAttr caches which Claude Code session a v1 sender's work is in (see resolveLegacyStart), so opening a profile and then starting the

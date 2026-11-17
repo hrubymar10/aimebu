@@ -580,9 +580,9 @@ paused, stopped, lost or waiting on a recovery decision does not. A `hold` with 
 (`recovery_block`) or has a `hold` as an orange dot with the state "needs decision" or "held: claude session 95%" and the reason on
 the card, instead of the green "idle" of an agent that is free; a lost process stays red.
 Listed room agent cards also carry an optional `warm` (`{state, sleeps_at, reason?}`) for an active Claude agent or opted-in Codex agent on a machine that keeps processes warm: `state` is `warm` (with
-`sleeps_at`, RFC 3339, when its process goes to sleep) while the supervisor reports a live idle process for it, `sleeping` when there is none and the supervisor says it works to a
+`sleeps_at`, RFC 3339, when its process goes to sleep) while the supervisor reports a live idle process for it, `working` while its live warm process runs a turn, `sleeping` when there is none and the supervisor says it works to a
 warm window above 0, and `unknown` when a report lacks `idle_seconds` from an older supervisor, which a card
-shows as neither warm nor sleeping. A `sleeping` card may carry `reason` when the last turn could not run warm; project owners and operators see the supervisor's classified configuration reason, while viewers see a generic configuration message. The reason clears on the next turn and when the agent stops. Active agents on harnesses without a warm process (every harness except Claude and opted-in Codex) carry `warm.state: "na"`; their idle cards say “Warm n/a” with a neutral dot. Before the first supervisor report the field is absent and the card stays cold. The field is also absent while the agent is in a turn and when warm mode is off (the window the supervisor reports is 0). The machine rows of `GET /api/machines` carry an optional `warm` (`{idle, busy, started, reused,
+shows as neither warm nor sleeping. A `sleeping` card may carry `reason` when the last turn could not run warm; project owners and operators see the supervisor's classified configuration reason, while viewers see a generic configuration message. The reason clears on the next turn and when the agent stops. Active agents on harnesses without a warm process (every harness except Claude and opted-in Codex) carry `warm.state: "na"`; their idle cards say “Warm n/a” with a neutral dot. Before the first supervisor report the field is absent and the card stays cold. While an agent is in a turn, the field is absent unless the supervisor reports its live warm process as `working`; it is also absent while the observed state is `interrupting`, `lost`, or any state other than `idle` or `in_turn`, and when warm mode is off (the window the supervisor reports is 0). The machine rows of `GET /api/machines` carry an optional `warm` (`{idle, busy, started, reused,
 rss_bytes, container_wide_bytes, unconfirmed_ping_ends?}`; `unconfirmed_ping_ends` counts keep-alive pings in a container whose end was never confirmed
 and whose quarantine ran out, present only when above 0) for a connected machine whose supervisor keeps processes warm; the memory is not per agent
 (`rss_bytes` is the processes the supervisor runs itself, `container_wide_bytes` everything running in containers).
@@ -873,8 +873,9 @@ logout, expiry, or revocation. Database errors during a session check close
 the socket with an internal-error code so clients reconnect.
 
 The separate supervisor uses `GET /api/machine` as a WebSocket endpoint.
-Server shutdown closes it with 1001 (server restarting) after active turns
-drain; the supervisor reconnects to the next server process.
+Server shutdown closes it with 1001 (server restarting); an external
+supervisor reconnects to the next server process. The embedded supervisor's
+active turns drain before its machine socket is closed.
 Attachment bytes stay in the server's storage; the supervisor never stages
 them in a checkout. Uploads are bound to a room immediately and one message
 on send; up to four files allow a file-only message. Unbound uploads expire

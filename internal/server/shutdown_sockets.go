@@ -2,8 +2,12 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"time"
 
 	"github.com/coder/websocket"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 // trackSocket joins an upgraded connection to the server's shutdown. HTTP
@@ -47,7 +51,8 @@ func (s *Server) socketsClosing() bool {
 
 // ShutdownSockets closes WebSockets with 1001 and joins their handlers before
 // the caller closes the store or an embedded supervisor's journal. If the
-// deadline expires, force the remaining sockets shut and still join handlers.
+// deadline expires, it force closes sockets and gives handlers one final
+// bounded interval; a stuck handler is reported and the caller can proceed.
 func (s *Server) ShutdownSockets(ctx context.Context) error {
 	s.socketMu.Lock()
 	if !s.socketClosing {
@@ -66,7 +71,20 @@ func (s *Server) ShutdownSockets(ctx context.Context) error {
 			_ = conn.CloseNow()
 		}
 		s.socketMu.Unlock()
-		<-done
-		return ctx.Err()
+		wait := s.socketForceWait
+		if wait <= 0 {
+			wait = 5 * time.Second
+		}
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-done:
+			return ctx.Err()
+		case <-timer.C:
+			err := fmt.Errorf("websocket handlers did not stop after forced close: %w", ctx.Err())
+			log.Print(err)
+			telemetry.ReportWarning(context.Background(), "server", err)
+			return err
+		}
 	}
 }
