@@ -3,10 +3,9 @@
 Run `aimebu server`. On a first run it prints a one-time owner setup token
 (also in `.setup_token`, with a `/setup?token=…` shortcut, see [auth](auth.md#first-run-owner-setup)), or bootstraps
 the owner from `AIMEBU2_OWNER_LOGIN` and `AIMEBU2_OWNER_PASSWORD` when both are set. The listener defaults to
-`127.0.0.1:9897`; `AIMEBU2_BIND` must be an IP literal and `AIMEBU2_PORT` a
-TCP port. Use `AIMEBU2_CONFIG_DIR` to choose the data root. These v2 defaults
-and overrides are a temporary side-by-side setup that ignores v1's
-`AIMEBU_*` environment settings.
+`127.0.0.1:9997`; `AIMEBU2_BIND` must be an IP literal and `AIMEBU2_PORT` a
+TCP port. The default data root is `~/.aimebu`; use `AIMEBU2_CONFIG_DIR` to
+choose another. The v2 server ignores v1's `AIMEBU_*` environment settings.
 `AIMEBU2_ALLOW` accepts comma-separated IPs and CIDRs and defaults to
 `127.0.0.0/8,::1/128`. Bare addresses become `/32` (IPv4) or `/128` (IPv6).
 IPv4-mapped CIDRs are rejected; use their IPv4 form instead. The embedded
@@ -20,7 +19,7 @@ allowlist and warns if `AIMEBU2_BIND` is non-loopback while the default
 loopback-only allowlist is active. For remote access, set both the bind and
 the allowed source network.
 When `AIMEBU2_TLS_CERT` and `AIMEBU2_TLS_KEY` are both set, the server also
-listens with HTTPS on `AIMEBU2_TLS_PORT` (default `9896`). HTTP remains on its
+listens with HTTPS on `AIMEBU2_TLS_PORT` (default `9996`). HTTP remains on its
 configured port; both listeners apply the same allowlist. A missing or invalid
 certificate pair fails startup. See [HTTPS setup](tls.md).
 The host machine credential is written to `server/host-machine.key` with

@@ -1043,7 +1043,8 @@ the journal, for debugging (retention 14 d): see "Agent output" in
 ## 3c. Provider accounts
 
 - The host switcher stores named Claude Code and Codex file profiles under
-  `~/.aimebu2/switcher/`, separate from the v1 switcher state. Account scope
+  `~/.aimebu/switcher/` by default, sharing the existing v1 switcher tree
+  after cutover. Account scope
   is host-machine-wide per tool across projects. Remote machines have no
   switcher profile set in this slice.
 - Host-machine switching requires owner and shows the agents using the tool.

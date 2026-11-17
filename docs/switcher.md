@@ -1,16 +1,18 @@
 # Account switcher
 
 The v2 account switcher stores named Claude Code and Codex credential profiles
-under `<AIMEBU2_CONFIG_DIR>/switcher/` (default `~/.aimebu2/switcher/`). It
+under `<AIMEBU2_CONFIG_DIR>/switcher/` (default `~/.aimebu/switcher/`). It
 starts disabled in a fresh root and keeps the existing enabled flag at
 cutover. It uses credential files only; it never accesses the macOS
-Keychain. Development v2 keeps its profiles under its separate root. Both versions swap
-the same live credential files, so when v1's `~/.aimebu/switcher/.lock` exists
-and is a different file from v2's own lock, v2 takes the v1 lock first and then
-its own `switcher/.lock`. It never creates the v1 lock and never changes v1
-profiles or state. At cutover, point `AIMEBU2_CONFIG_DIR` at `~/.aimebu`: v2
-then uses the existing v1 switcher tree in place, and both versions share the
-same version-1 `state.json`, profile layout, active symlinks, backups, and
+Keychain. A development instance can use a separate root with
+`AIMEBU2_CONFIG_DIR`. Both versions swap the same live credential files, so
+when v1's `~/.aimebu/switcher/.lock` exists and is a different file from v2's
+own lock, v2 takes the v1 lock first and then its own `switcher/.lock`. With a
+separate root it never creates the v1 lock or changes v1 profiles or state.
+With the default root, v2 uses the existing v1 switcher tree in place after
+the server has finished cutover. The v2 switcher CLI refuses to operate on an
+unmigrated v1 root or an interrupted move. Both
+versions share the version-1 `state.json`, profile layout, active symlinks, backups, and
 single `switcher/.lock` flock (the same file, so only one lock is taken). An
 unsupported state version fails loudly;
 there is no automatic profile conversion or merge between roots.

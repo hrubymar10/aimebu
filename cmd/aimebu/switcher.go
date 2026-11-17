@@ -57,6 +57,14 @@ func switcherCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) i
 		switcherUsage(stderr)
 		return 2
 	}
+	root, err := sessionsConfigRoot()
+	if err == nil {
+		err = refuseV1RootWrite(root)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: switcher: %v\n", err)
+		return 1
+	}
 	if sub == "migrate-copies" {
 		return switcherMigrateCopies(stdout, stderr, rest)
 	}

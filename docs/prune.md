@@ -1,11 +1,13 @@
 # Pruning v2 state
 
-`aimebu prune` uses `AIMEBU2_CONFIG_DIR` (default `~/.aimebu2`). It asks for
+`aimebu prune` uses `AIMEBU2_CONFIG_DIR` (default `~/.aimebu`). It asks for
 confirmation; `-y` skips the prompt. Stop the server and any standalone
 supervisor first. Prune creates and takes their file locks even if their data
 directories did not exist, and refuses to run while either is active. Plain
 prune also refuses while an approved remote supervisor has a heartbeat from
 the last two minutes. It works locally while the HTTP server is offline.
+Both modes refuse an unmigrated v1 root or an interrupted v1 move, even with
+`-y`. Start the v2 server to finish cutover before pruning shared data.
 
 Plain `aimebu prune` marks agents stopped, invalidates their toolbox keys,
 closes their sessions, settles unfinished or lost turns as cancelled, aborts

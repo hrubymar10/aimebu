@@ -40,6 +40,10 @@ func pruneCommand(ctx context.Context, args []string, stdin io.Reader, stdout, s
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if err := refuseV1RootWrite(root); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if !*yes {
 		mode := "agent runtime state"
 		if *all {
@@ -101,6 +105,9 @@ func pruneRoot(ctx context.Context, root string, all bool) error {
 	if _, err := safePruneRoot(root); err != nil {
 		return err
 	}
+	if err := refuseV1RootWrite(root); err != nil {
+		return err
+	}
 	if _, err := os.Lstat(root); os.IsNotExist(err) {
 		if err := os.Mkdir(root, 0700); err != nil {
 			return err
@@ -140,6 +147,10 @@ func pruneRoot(ctx context.Context, root string, all bool) error {
 		return err
 	}
 	defer unlockServerDirectory(supervisorLock)
+	// Recheck after taking the locks in case the root changed while they were acquired.
+	if err := refuseV1RootWrite(root); err != nil {
+		return err
+	}
 	if all {
 		if err := removeChildrenExcept(serverDir, append([]string{".writer.lock", "backups"}, keptServerLogs()...)...); err != nil {
 			return err

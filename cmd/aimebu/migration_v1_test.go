@@ -308,6 +308,50 @@ func makeV1Root(t *testing.T) string {
 	return root
 }
 
+func TestNonServerWritersRefuseLiveV1Root(t *testing.T) {
+	root := makeV1Root(t)
+	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	var out, errOut bytes.Buffer
+	for _, run := range []struct {
+		name string
+		call func() int
+	}{
+		{"switcher add", func() int {
+			return switcherCommand([]string{"add", "codex", "test"}, strings.NewReader(""), &out, &errOut)
+		}},
+		{"switcher migrate", func() int { return switcherCommand([]string{"migrate-copies"}, strings.NewReader(""), &out, &errOut) }},
+		{"supervisor", func() int { return supervisorCommand(context.Background(), false, &errOut) }},
+		{"supervisor pair", func() int {
+			return pairSupervisorCommand(context.Background(), "http://127.0.0.1:9997", "test", false, &errOut)
+		}},
+		{"import-v1", func() int {
+			return importV1Command(context.Background(), []string{"--from", root, "--map", filepath.Join(root, "missing.json"), "--to", root}, &out, &errOut)
+		}},
+	} {
+		out.Reset()
+		errOut.Reset()
+		if got := run.call(); got != 1 || !strings.Contains(errOut.String(), "v1 data") {
+			t.Errorf("%s = %d, stderr=%q", run.name, got, errOut.String())
+		}
+		if strings.HasPrefix(run.name, "supervisor") && !strings.Contains(errOut.String(), "AIMEBU2_CONFIG_DIR") {
+			t.Errorf("%s did not explain the separate supervisor root: %q", run.name, errOut.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "server", "marker.txt")); err != nil {
+		t.Fatal("v1 marker changed:", err)
+	}
+}
+
+func TestNonServerWriterRefusesInterruptedV1Move(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, v1BackupName+".partial"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseV1RootWrite(root); err == nil || !strings.Contains(err.Error(), "interrupted v1 move") {
+		t.Fatalf("partial v1 move accepted: %v", err)
+	}
+}
+
 // B1: a first start that is certain to fail (no owner login) must not move v1's files first. It used to move them,
 // then fail, and a v1 restarted on the empty-looking folder wrote its tables into the v2 database.
 func TestFirstStartWithoutOwnerLeavesV1RootUntouched(t *testing.T) {

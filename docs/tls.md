@@ -1,14 +1,14 @@
 # HTTPS
 
 V2 can serve HTTPS with a certificate and key you supply. HTTP stays on
-`AIMEBU2_PORT` (default `9897`); HTTPS uses `AIMEBU2_TLS_PORT` (default `9896`).
+`AIMEBU2_PORT` (default `9997`); HTTPS uses `AIMEBU2_TLS_PORT` (default `9996`).
 Both listeners use the same `AIMEBU2_BIND` address and `AIMEBU2_ALLOW`
 allowlist. The embedded supervisor continues to use HTTP on loopback.
 
 ```bash
 export AIMEBU2_TLS_CERT=/path/to/cert.pem
 export AIMEBU2_TLS_KEY=/path/to/key.pem
-export AIMEBU2_TLS_PORT=9896
+export AIMEBU2_TLS_PORT=9996
 aimebu server
 ```
 
@@ -91,7 +91,7 @@ export AIMEBU2_TLS_KEY="$PWD/aimebu-key.pem"
 aimebu server
 ```
 
-Open `https://localhost:9896/`. Add the host name or IP used by remote
+Open `https://localhost:9996/`. Add the host name or IP used by remote
 clients to the certificate, and widen both `AIMEBU2_BIND` and `AIMEBU2_ALLOW`
 when remote peers need access.
 
@@ -103,7 +103,7 @@ use a trusted certificate for ordinary remote deployments.
 
 ```bash
 export AIMEBU2_INSECURE_SKIP_VERIFY=1
-export AIMEBU2_URL=https://server.example:9896
+export AIMEBU2_URL=https://server.example:9996
 aimebu supervisor
 ```
 
@@ -114,7 +114,7 @@ For example, Caddy handles both HTTP requests and WebSocket upgrades:
 
 ```caddyfile
 aimebu.example.com {
-	reverse_proxy 127.0.0.1:9897
+	reverse_proxy 127.0.0.1:9997
 }
 ```
 

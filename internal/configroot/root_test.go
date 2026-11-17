@@ -13,7 +13,7 @@ func TestResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ input, want string }{
-		{"", filepath.Join(home, ".aimebu2")},
+		{"", filepath.Join(home, ".aimebu")},
 		{"~", home},
 		{"~/x", filepath.Join(home, "x")},
 		{filepath.Join(home, "data"), filepath.Join(home, "data")},

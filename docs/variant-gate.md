@@ -7,7 +7,7 @@ does the core task, control, and recovery path work on the real server? It runs
 instance owner.
 
 ```bash
-VG_LOGIN=owner VG_PASSWORD=... node scripts/variant-gate.cjs --server http://host:9897 --yes
+VG_LOGIN=owner VG_PASSWORD=... node scripts/variant-gate.cjs --server http://host:9997 --yes
 ```
 
 It spends real model money, so it needs `--yes`, and it has no default server:
@@ -26,8 +26,8 @@ instead run as a throwaway account that the owner invites:
 2. The run redeems it, once, within the hour:
 
    ```bash
-   node scripts/variant-gate.cjs --server http://host:9897 --yes \
-     --invite 'https://host:9897/#invite=...' --project variant-gate
+   node scripts/variant-gate.cjs --server http://host:9997 --yes \
+     --invite 'https://host:9997/#invite=...' --project variant-gate
    ```
 
 The script names the account `variant-gate-<random>`, gives it a random password

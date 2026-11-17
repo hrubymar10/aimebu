@@ -223,7 +223,7 @@ func profileCredFilename(tool string) string {
 	}
 }
 
-// Root returns the switcher root directory (e.g. ~/.aimebu2/switcher).
+// Root returns the switcher root directory (e.g. ~/.aimebu/switcher).
 func (m *Manager) Root() string { return m.root }
 
 // StoredCredPath returns the path to the credential file for a stored profile.

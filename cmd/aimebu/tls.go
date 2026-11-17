@@ -39,7 +39,7 @@ func resolveServerTLSConfig(httpPort int) (*serverTLSConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("AIMEBU2_TLS_CERT/AIMEBU2_TLS_KEY are not a usable certificate pair: %w", err)
 	}
-	port := 9896
+	port := 9996
 	if raw := os.Getenv("AIMEBU2_TLS_PORT"); raw != "" {
 		port, err = strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {

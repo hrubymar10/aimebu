@@ -429,7 +429,7 @@ func TestEmbeddedSupervisorReconcilesCrashedTurn(t *testing.T) {
 	}
 }
 
-func TestV2DefaultsIgnoreV1EnvironmentAndData(t *testing.T) {
+func TestV2DefaultsAndExplicitDevelopmentRootIgnoreV1Environment(t *testing.T) {
 	t.Setenv("AIMEBU2_USAGES", "0")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -458,9 +458,10 @@ func TestV2DefaultsIgnoreV1EnvironmentAndData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.root != filepath.Join(home, ".aimebu2") || config.bind != "127.0.0.1" || config.port != 9897 {
+	if config.root != legacy || config.bind != "127.0.0.1" || config.port != 9997 {
 		t.Fatalf("v2 defaults: %+v", config)
 	}
+	t.Setenv("AIMEBU2_CONFIG_DIR", filepath.Join(home, ".aimebu2"))
 	holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

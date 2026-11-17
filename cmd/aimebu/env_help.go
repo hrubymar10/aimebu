@@ -16,13 +16,13 @@ type envVar struct {
 }
 
 var environment = []envVar{
-	{[]string{"AIMEBU2_CONFIG_DIR"}, []string{"Absolute config root directory (default: ~/.aimebu2; leading ~ expands to home)"}},
+	{[]string{"AIMEBU2_CONFIG_DIR"}, []string{"Absolute config root directory (default: ~/.aimebu; leading ~ expands to home)"}},
 	{[]string{"AIMEBU2_BIND"}, []string{"Server bind address (default: 127.0.0.1)"}},
-	{[]string{"AIMEBU2_PORT"}, []string{"Server listen port"}},
+	{[]string{"AIMEBU2_PORT"}, []string{"Server listen port (default: 9997)"}},
 	{[]string{"AIMEBU2_ALLOW"}, []string{"Comma-separated IPs/CIDRs allowed to connect"}},
 	{[]string{"AIMEBU2_TLS_CERT"}, []string{"TLS certificate PEM path; set with AIMEBU2_TLS_KEY for HTTPS"}},
 	{[]string{"AIMEBU2_TLS_KEY"}, []string{"TLS private key PEM path; set with AIMEBU2_TLS_CERT for HTTPS"}},
-	{[]string{"AIMEBU2_TLS_PORT"}, []string{"HTTPS listen port when TLS is configured"}},
+	{[]string{"AIMEBU2_TLS_PORT"}, []string{"HTTPS listen port when TLS is configured (default: 9996)"}},
 	{[]string{"AIMEBU2_TRUSTED_PROXIES"}, []string{
 		"Comma-separated proxy IPs/CIDRs whose X-Forwarded-For separates clients",
 		"for login throttling only (default: none)"}},

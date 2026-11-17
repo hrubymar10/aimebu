@@ -2,9 +2,8 @@
 
 ## Guided import in the web UI
 
-The development build still defaults to `~/.aimebu2` and port 9897. For a
-same-root cutover, point `AIMEBU2_CONFIG_DIR` at the v1 root and use the v1
-port. Stop v1 before starting v2. The v2 server binds its HTTP and HTTPS
+The server defaults to `~/.aimebu` and port 9997, so a normal cutover
+uses the v1 root and port directly. Stop v1 before starting v2. The v2 server binds its HTTP and HTTPS
 listeners before touching the root, so a running v1 server produces a clear
 stop-and-retry error without modifying its files. If the development build
 listens on a separate port while pointed at a v1 root, it probes v1's default
@@ -13,6 +12,9 @@ files. The
 backup acquires a SQLite write lock before hashing the source and writing its
 manifest, then holds that lock while renaming the source entries. Stop any
 v1 server using a custom port.
+Before that cutover, v2 CLI commands that write the shared root (including
+prune, switcher, and standalone supervisor commands) refuse the v1 data or
+an interrupted move. Start the v2 server to complete cutover first.
 
 On first startup over a v1 schema-1 root, v2 locks the root and moves the
 v1-owned entries into `.old-v1-bkp.partial/` with same-filesystem renames. A
@@ -176,7 +178,7 @@ choice changes a parent so a link would loop or run too deep, that role is
 flattened and listed in the report's `flattened_roles`. Already imported roles are marked and their conflict selectors
 are hidden after a saved choice. v1 fleets are not imported: v2 has no saved teams, so a fleet's rows are listed under **Not
 carried over** and stay in the v1 backup on disk. The command `aimebu import-v1 --from <dir> --map <file> [--to <v2-config-dir>] [--dry-run]`
-(`--to` defaults to `AIMEBU2_CONFIG_DIR`, else `~/.aimebu2`; it needs the v2 server
+(`--to` defaults to `AIMEBU2_CONFIG_DIR`, else `~/.aimebu`; it needs the v2 server
 stopped and an existing v2 database) prints
 its report as JSON and exits 3 with a warning when the map left rooms with no project, which are not imported.
 The preview lists command options

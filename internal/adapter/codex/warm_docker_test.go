@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -33,14 +32,22 @@ func (t *dockerWarningTransport) SendEvent(event *sentry.Event)       { t.events
 // surface. Every field that can affect a turn must be denied or overridden;
 // new fields remain warm-compatible at runtime but produce an unknown warning.
 func TestWarmDockerSchemaConfigKeysClassified(t *testing.T) {
-	expected := []string{
-		"analytics", "approval_policy", "approvals_reviewer", "browser_use", "client_search_provider",
-		"compact_prompt", "computer_use", "desktop", "developer_instructions", "forced_chatgpt_workspace_id",
-		"forced_login_method", "instructions", "model", "model_auto_compact_token_limit",
-		"model_auto_compact_token_limit_scope", "model_context_window", "model_provider", "model_reasoning_effort",
-		"model_reasoning_summary", "model_verbosity", "review_model", "sandbox_mode", "sandbox_workspace_write",
-		"service_tier", "tools", "web_search",
+	data, err := os.ReadFile(filepath.Join("testdata", "config-read-0.169.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	var fixture struct {
+		Version string   `json:"codex_version"`
+		Schema  string   `json:"schema"`
+		Keys    []string `json:"keys"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.Version != "0.169.0" || fixture.Schema != "ConfigReadResponse.Config" || len(fixture.Keys) == 0 {
+		t.Fatalf("invalid pinned Codex schema fixture: %+v", fixture)
+	}
+	expected := fixture.Keys
 	for _, key := range expected {
 		if !warmDockerKnownAllowedKeys[key] && !warmDockerDenyKeys[key] && key != "model_reasoning_effort" {
 			t.Errorf("Codex schema key %q has no warm classification", key)
@@ -48,7 +55,7 @@ func TestWarmDockerSchemaConfigKeysClassified(t *testing.T) {
 	}
 	bin, err := exec.LookPath("codex")
 	if err != nil {
-		t.Skip("Codex CLI is not installed")
+		return // the pinned fixture was still checked above
 	}
 	home := t.TempDir()
 	out := filepath.Join(t.TempDir(), "schema")
@@ -57,7 +64,7 @@ func TestWarmDockerSchemaConfigKeysClassified(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("generate Codex schema: %v: %s", err, output)
 	}
-	data, err := os.ReadFile(filepath.Join(out, "v2", "ConfigReadResponse.json"))
+	data, err = os.ReadFile(filepath.Join(out, "v2", "ConfigReadResponse.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,8 +81,63 @@ func TestWarmDockerSchemaConfigKeysClassified(t *testing.T) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	if !reflect.DeepEqual(keys, expected) {
-		t.Fatalf("Codex Config schema keys changed; classify new keys before updating this pinned list:\n got %q\nwant %q", keys, expected)
+	pinned := make(map[string]bool, len(expected))
+	for _, key := range expected {
+		pinned[key] = true
+	}
+	for _, key := range keys {
+		if !warmDockerKnownAllowedKeys[key] && !warmDockerDenyKeys[key] && !warmDockerFileStores[key] && key != "model_reasoning_effort" && key != "features" && key != "plugins" && key != "mcp_servers" {
+			t.Errorf("Codex schema added an unclassified key %q", key)
+		}
+		delete(pinned, key)
+	}
+	if len(pinned) > 0 {
+		t.Logf("installed Codex omits %d keys from the 0.169 schema: %v", len(pinned), pinned)
+	}
+}
+
+func TestWarmDockerOtherKnownConfigKeysStayCold(t *testing.T) {
+	for _, key := range []string{"openai_base_url", "default_permissions", "permissions", "agents", "skills", "hooks", "include_environment_context", "include_apps_instructions", "model_catalog_json", "plan_mode_reasoning_effort", "show_raw_agent_reasoning", "tool_output_token_limit"} {
+		t.Run(key, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(key+" = true\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := warmDockerConfig(adapter.TurnSpec{LauncherCodexHome: home}); !errors.Is(err, adapter.ErrNoWarm) {
+				t.Fatalf("host key %q must keep the Docker turn cold: %v", key, err)
+			}
+		})
+	}
+}
+
+// The app-server ConfigReadResponse omits many config.toml inputs. This
+// snapshot of ConfigToml fields from the Codex source keeps those inputs out
+// of the unknown-key path, without requiring a particular installed version.
+func TestWarmDockerConfigTomlFieldsClassified(t *testing.T) {
+	for _, key := range strings.Fields(`
+model daybreak review_model model_provider model_context_window model_auto_compact_token_limit
+model_auto_compact_token_limit_scope model_post_turn_compact_threshold_percent approval_policy
+approvals_reviewer auto_review browser_use computer_use shell_environment_policy allow_login_shell
+allow_symlinked_codex_home sandbox_mode sandbox_workspace_write default_permissions permissions notify
+instructions developer_instructions include_permissions_instructions include_apps_instructions
+include_collaboration_mode_instructions include_environment_context include_environment_context_time
+model_instructions_file compact_prompt forced_chatgpt_workspace_id forced_login_method
+cli_auth_credentials_store mcp_servers mcp_enterprise_managed_auth mcp_oauth_credentials_store
+mcp_oauth_callback_port mcp_oauth_callback_url mcp_optional_startup_grace_ms model_providers
+project_doc_max_bytes project_doc_fallback_filenames tool_output_token_limit
+background_terminal_max_timeout thread_unload_delay_secs js_repl_node_path js_repl_node_module_dirs
+profile profiles history rollout_trace sqlite_home log_dir file_opener tui hide_agent_reasoning
+show_raw_agent_reasoning model_reasoning_effort plan_mode_reasoning_effort model_reasoning_summary
+model_verbosity model_catalog_json personality service_tier chatgpt_base_url apps_mcp_product_sku
+responses responses_api_metadata orchestrator cloud openai_base_url audio
+experimental_realtime_ws_base_url experimental_realtime_webrtc_call_base_url
+experimental_realtime_ws_model realtime experimental_realtime_ws_backend_prompt
+experimental_realtime_ws_startup_context experimental_realtime_start_instructions
+experimental_thread_store_endpoint experimental_thread_store projects web_search tools
+`) {
+		if !warmDockerKnownAllowedKeys[key] && !warmDockerDenyKeys[key] && !warmDockerFileStores[key] && key != "model_reasoning_effort" && key != "features" && key != "plugins" && key != "mcp_servers" && !strings.HasPrefix(key, "experimental_") {
+			t.Errorf("Codex ConfigToml field %q has no warm classification", key)
+		}
 	}
 }
 
@@ -394,10 +456,12 @@ func TestWarmDockerPluginOverridesReachCodexConfig(t *testing.T) {
 		args = append(args, "-c", override)
 	}
 	args = append(args, "app-server")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+home, "HOME="+t.TempDir())
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -410,10 +474,12 @@ func TestWarmDockerPluginOverridesReachCodexConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
-	if _, err := fmt.Fprint(stdin, "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"probe\",\"title\":\"probe\",\"version\":\"1\"},\"capabilities\":{\"experimentalApi\":false}}}\n{\"method\":\"initialized\",\"params\":{}}\n{\"id\":2,\"method\":\"config/read\",\"params\":{}}\n"); err != nil {
+	if _, err := fmt.Fprint(stdin, "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"probe\",\"title\":\"probe\",\"version\":\"1\"},\"capabilities\":{\"experimentalApi\":false}}}\n"); err != nil {
 		t.Fatal(err)
 	}
-	for scanner := bufio.NewScanner(stdout); scanner.Scan(); {
+	scanner := bufio.NewScanner(stdout)
+	initialized := false
+	for scanner.Scan() {
 		line := scanner.Text()
 		var frame struct {
 			ID    int `json:"id"`
@@ -429,11 +495,21 @@ func TestWarmDockerPluginOverridesReachCodexConfig(t *testing.T) {
 				} `json:"config"`
 			} `json:"result"`
 		}
-		if json.Unmarshal([]byte(line), &frame) != nil || frame.ID != 2 {
+		if json.Unmarshal([]byte(line), &frame) != nil {
 			continue
 		}
 		if frame.Error != nil {
-			t.Fatalf("Codex config/read returned JSON-RPC error %d: %s", frame.Error.Code, frame.Error.Message)
+			t.Fatalf("Codex app-server request %d returned JSON-RPC error %d: %s", frame.ID, frame.Error.Code, frame.Error.Message)
+		}
+		if frame.ID == 1 && !initialized {
+			initialized = true
+			if _, err := fmt.Fprint(stdin, "{\"method\":\"initialized\",\"params\":{}}\n{\"id\":2,\"method\":\"config/read\",\"params\":{}}\n"); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if frame.ID != 2 {
+			continue
 		}
 		if len(frame.Result.Config.Plugins) != len(ids) {
 			t.Fatalf("Codex parsed phantom plugin keys: %#v", frame.Result.Config.Plugins)
@@ -446,7 +522,10 @@ func TestWarmDockerPluginOverridesReachCodexConfig(t *testing.T) {
 		}
 		return
 	}
-	t.Fatal("Codex app-server omitted config/read response")
+	scanErr := scanner.Err()
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	t.Fatalf("Codex app-server omitted config/read response (initialized=%t, deadline=%v, scan=%v, stderr=%q)", initialized, ctx.Err(), scanErr, stderr.String())
 }
 
 func TestWarmDockerResetsPluginDefault(t *testing.T) {

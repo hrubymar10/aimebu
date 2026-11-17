@@ -43,7 +43,7 @@ this page is the operational order and rollback path.
    online database snapshot can be made while the server runs:
 
    ```sh
-   sqlite3 "$HOME/.aimebu2/server/aimebu.sqlite" ".backup '$HOME/aimebu2-before-upgrade.sqlite'"
+   sqlite3 "$HOME/.aimebu/server/aimebu.sqlite" ".backup '$HOME/aimebu-before-upgrade.sqlite'"
    ```
 
    When the existing database has pending schema migrations, startup also
@@ -61,8 +61,9 @@ this page is the operational order and rollback path.
 ## 2. Move the live root and import
 
 1. Confirm every v1 server is stopped, including one on a custom port. Start
-   the **v2** executable with `AIMEBU2_CONFIG_DIR` set to the old root and
-   `AIMEBU2_PORT` set to its port. v2 checks listeners, a recorded v1 daemon,
+   the **v2** executable on its default root and port, which match v1. Set
+   `AIMEBU2_CONFIG_DIR` and `AIMEBU2_PORT` only if v1 used custom values.
+   v2 checks listeners, a recorded v1 daemon,
    and the v1 database write lock before moving files. An idle terminal-run v1
    on an unusual port can evade those checks; stop it yourself. Startup
    reserves the highest v1 message number before owner setup writes events.
@@ -70,8 +71,6 @@ this page is the operational order and rollback path.
    and [`reserveV1History`](../cmd/aimebu/main.go).
 
    ```sh
-   export AIMEBU2_CONFIG_DIR="$HOME/.aimebu"
-   export AIMEBU2_PORT=9997
    /path/to/v2/aimebu server
    ```
 

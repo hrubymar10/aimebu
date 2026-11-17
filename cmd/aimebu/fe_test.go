@@ -11,7 +11,7 @@ func TestWebURLFollowsTheServerConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		name, bind, port, public, want string
 	}{
-		{"defaults", "", "", "", "http://127.0.0.1:9897"},
+		{"defaults", "", "", "", "http://127.0.0.1:9997"},
 		{"port", "", "9911", "", "http://127.0.0.1:9911"},
 		{"all interfaces are reached as localhost", "0.0.0.0", "9911", "", "http://localhost:9911"},
 		{"ipv6 loopback", "::1", "9911", "", "http://[::1]:9911"},

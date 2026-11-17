@@ -86,6 +86,10 @@ func importV1Command(ctx context.Context, args []string, stdout, stderr io.Write
 			return 1
 		}
 	}
+	if err := refuseV1RootWrite(root); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	mapping, err := store.ReadV1ImportMap(*mapPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)

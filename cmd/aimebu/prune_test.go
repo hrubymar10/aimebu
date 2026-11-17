@@ -9,6 +9,28 @@ import (
 	"testing"
 )
 
+func TestPruneRefusesLiveV1RootBeforeConfirmationOrWrite(t *testing.T) {
+	root := makeV1Root(t)
+	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	path := filepath.Join(root, "server", "aimebu.sqlite")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{}, {"-y"}, {"-a", "-y"}} {
+		var out, errOut bytes.Buffer
+		if got := pruneCommand(context.Background(), args, strings.NewReader("y\n"), &out, &errOut); got != 1 || !strings.Contains(errOut.String(), "v1 data") || out.Len() != 0 {
+			t.Fatalf("prune %v = %d, stdout=%q, stderr=%q", args, got, out.String(), errOut.String())
+		}
+		if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, before) {
+			t.Fatalf("prune %v changed the v1 database: %v", args, err)
+		}
+	}
+	if err := pruneRoot(context.Background(), root, true); err == nil || !strings.Contains(err.Error(), "v1 data") {
+		t.Fatalf("direct pruneRoot accepted v1 data: %v", err)
+	}
+}
+
 func TestPlainPruneKeepsServerDataAndMachineKeys(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AIMEBU2_CONFIG_DIR", root)
@@ -52,7 +74,10 @@ func TestPruneAllPreservesCredentialsAndOutsidePaths(t *testing.T) {
 	writePruneFixture(t, filepath.Join(root, "switcher", "state.json"), "switcher")
 	writePruneFixture(t, filepath.Join(root, "usages", "config.json"), "usages")
 	writePruneFixture(t, filepath.Join(root, "server", "backups", "aimebu-pre-migrate-1-to-2-20261020T000000.000000000Z.sqlite"), "backup")
-	writePruneFixture(t, filepath.Join(root, "server", "aimebu.sqlite"), "server")
+	db := openFixtureStore(t, filepath.Join(root, "server", "aimebu.sqlite"))
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 	writePruneFixture(t, filepath.Join(root, "server", "aimebu.log"), "log")
 	writePruneFixture(t, filepath.Join(root, "server", "aimebu.log.1"), "older log")
 	writePruneFixture(t, filepath.Join(root, "supervisor", "machine.key"), "machine")

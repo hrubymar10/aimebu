@@ -9,7 +9,7 @@ import (
 )
 
 // FromEnv expands a leading tilde and refuses paths relative to the caller's
-// working directory. The default remains the development data root.
+// working directory. The default is the shared data root at ~/.aimebu.
 func FromEnv() (string, error) {
 	return Resolve(os.Getenv("AIMEBU2_CONFIG_DIR"))
 }
@@ -21,7 +21,7 @@ func Resolve(raw string) (string, error) {
 		return "", err
 	}
 	if raw == "" {
-		return filepath.Join(home, ".aimebu2"), nil
+		return filepath.Join(home, ".aimebu"), nil
 	}
 	if raw == "~" {
 		raw = home

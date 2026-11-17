@@ -64,8 +64,13 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 
 	now := time.Now()
 	configCheck := checkConfigDir(config.root)
+	var oldRootChecks []doctorCheck
+	if notice := oldDevelopmentRootNotice(); notice != "" {
+		oldRootChecks = append(oldRootChecks, doctorCheck{"older v2 data", statusWarn, notice, "Set AIMEBU2_CONFIG_DIR to that root, or move its v2 data into the default root.", ""})
+	}
 	if machineMode {
 		result := doctorResult{Version: resolveVersion(), GeneratedAt: now.UTC().Format(time.RFC3339), Checks: scopeAll([]doctorCheck{configCheck}, scopeMachine)}
+		result.Checks = append(result.Checks, scopeAll(oldRootChecks, scopeMachine)...)
 		if configCheck.Status != statusFail {
 			result.Checks = append(result.Checks, checkMachineMode(ctx, config)...)
 		}
@@ -80,6 +85,7 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		checkTLS(config.port),
 		checkBindAllow(config),
 	}, scopeServer)}
+	result.Checks = append(result.Checks, scopeAll(oldRootChecks, scopeServer)...)
 	if check, ok := checkProxyThrottle(config); ok {
 		result.Checks = append(result.Checks, check)
 	}

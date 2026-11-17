@@ -33,6 +33,10 @@ server) or `machine` (a supervisor host).
 
 - **config dir** — ok when it exists and is not world-writable; warn when
   world-writable; fail when missing or unreadable.
+- **older v2 data** — warns when the default root is selected and a previous
+  development install has data under `~/.aimebu2`. Set
+  `AIMEBU2_CONFIG_DIR=~/.aimebu2` to keep using it, or move that data into the
+  default root. The warning also appears on stderr for ordinary CLI commands.
 - **sqlite database** — opened read-only, then `PRAGMA integrity_check` and
   the stored schema version compared against the newest migration this binary
   applies. A missing or empty database warns (the server may not have started
@@ -244,7 +248,7 @@ only after the server check got the 401 an aimebu server answers (any other
 answer from that port, such as another program's 200, ends the live checks
 before the key leaves the process).
 Doctor reads the same environment as `aimebu server`: `AIMEBU2_CONFIG_DIR`
-(default `~/.aimebu2`; an override must be absolute or begin with `~`),
+(default `~/.aimebu`; an override must be absolute or begin with `~`),
 `AIMEBU2_BIND`, `AIMEBU2_PORT`, `AIMEBU2_ALLOW`,
 `AIMEBU2_TRUSTED_PROXIES`, `AIMEBU2_PUBLIC_URL`,
 `AIMEBU2_TLS_CERT`/`AIMEBU2_TLS_KEY`, and `AIMEBU2_TLS_PORT`. An invalid

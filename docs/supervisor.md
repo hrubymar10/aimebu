@@ -23,7 +23,7 @@ It issues a one-use token valid for ten minutes and shows a command to paste
 on the remote host:
 
 ```sh
-aimebu supervisor --pair 'https://vpn-server.example:9897' 'amp_...'
+aimebu supervisor --pair 'https://vpn-server.example:9997' 'amp_...'
 ```
 
 The command's server URL is `AIMEBU2_PUBLIC_URL` when set (for a server

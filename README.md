@@ -241,18 +241,16 @@ create the owner in the browser ([owner setup](docs/auth.md#first-run-owner-setu
 For a headless start set `AIMEBU2_OWNER_LOGIN` and `AIMEBU2_OWNER_PASSWORD`
 before the first run instead. Either way the server writes the host machine key to `server/host-machine.key` (0600) and
 prints that path. Its database defaults to
-`~/.aimebu2/server/aimebu.sqlite`; `AIMEBU2_CONFIG_DIR` selects another
+`~/.aimebu/server/aimebu.sqlite`; `AIMEBU2_CONFIG_DIR` selects another
 absolute root. A leading `~` or `~/` expands to the home directory; relative
-paths are rejected before the server opens data. The development build keeps
-this separate root and listens on
-`127.0.0.1:9897` after bootstrap until release cutover. Set
+paths are rejected before the server opens data. The server listens on `127.0.0.1:9997` after bootstrap. Set
 `AIMEBU2_BIND` to an IP literal and `AIMEBU2_PORT` to a TCP port to change the
 listener. `AIMEBU2_ALLOW` limits client source IPs to comma-separated IPs or
 CIDRs; its default is `127.0.0.0/8,::1/128`. When binding to a non-loopback
 address, include the remote network explicitly, for example
 `AIMEBU2_BIND=0.0.0.0 AIMEBU2_ALLOW=127.0.0.0/8,::1/128,192.168.1.0/24`.
 Set `AIMEBU2_TLS_CERT` and `AIMEBU2_TLS_KEY` together to add HTTPS on
-`AIMEBU2_TLS_PORT` (default `9896`) while retaining HTTP; the HTTP listener then
+`AIMEBU2_TLS_PORT` (default `9996`) while retaining HTTP; the HTTP listener then
 redirects other machines to HTTPS. Both listeners use the same bind and allowlist.
 Sign-in, setup, invites and pairing answer only a `Host` of `localhost`, an IP address,
 the public URL's host or a name in `AIMEBU2_ALLOWED_HOSTS` (comma-separated), which
@@ -401,16 +399,16 @@ or how it signs in). See
 [account switching](docs/switcher.md). An explicit
 `aimebu switcher use <tool> <profile> --force` installs stored credentials
 without an incoming refresh when an expired account needs a new login.
-Its files use the v1 switcher format under the selected v2 config root:
-development remains under `~/.aimebu2`, while cutover to `~/.aimebu` uses
-the existing profiles in place.
+Its files use the v1 switcher format under the selected config root. The
+default `~/.aimebu` root uses existing profiles in place; an explicit
+`AIMEBU2_CONFIG_DIR` can keep a development root separate.
 Set `AIMEBU2_USAGES=0` to disable credential reads and usage requests. The web UI is served as one script the server bundles when it starts (esbuild as a Go library, no node); `AIMEBU2_WEB_BUNDLE=off` serves its ~240 separate modules instead, for debugging in a browser. The server starts its local supervisor automatically; set
 `AIMEBU2_EMBEDDED_SUPERVISOR=0` for a remote-only server.
 Set `AIMEBU2_STUCK_MINUTES` to a whole number from 1 to 1440 to change the
 stuck-turn threshold (default 10 minutes). The server compares the running
 turn's latest activity or usage event with that threshold.
 
-Open `http://127.0.0.1:9897/` for the embedded web UI. It currently supports
+Open `http://127.0.0.1:9997/` for the embedded web UI. It currently supports
 owner sign-in, projects and nested task rooms, chat, replies, reactions, and
 live updates. Message text fills the whole bubble on every screen (there is no line-length cap). Message bodies render a safe Markdown subset, including GFM
 tables with column alignment, inline formatting in cells, and horizontal
@@ -793,10 +791,9 @@ owner may manage any private chat. Recovery from a private turn is visible
 to the peer but only a project owner or operator can decide it, since the
 recovery block affects the agent across all rooms.
 
-This is a temporary side-by-side setup: the v2 binary remains `aimebu`, but
-its development default directory, port, and environment variables are separate
-from v1. For a same-root cutover, stop v1 and point `AIMEBU2_CONFIG_DIR` and
-`AIMEBU2_PORT` at its root and port. Startup backs up the v1 layout under
+The v2 binary remains `aimebu` and now defaults to v1's directory and port.
+Stop v1 before starting v2; use `AIMEBU2_CONFIG_DIR` and `AIMEBU2_PORT` only
+if v1 used custom values. Startup backs up the v1 layout under
 `.old-v1-bkp/` with crash recovery, then first owner sign-in opens a Review → Check
 → Import wizard. This is the only import opportunity; Skip import closes it permanently. The wizard
 offers per-room, person, project, memory, setting, and role
@@ -915,7 +912,7 @@ icon reloads and saves the models the harness currently offers in one click. Rel
 it lists) on the machine itself, native or containerized alike (for Mistral Vibe, which has no listing
 command, it reads the `[[models]]` of the machine's Vibe config by alias and adds Vibe's built-in default): the harness's own arguments come
 first, and the command runs in a fresh private `detect/run-*` subfolder of that machine's aimebu config
-directory (`AIMEBU2_CONFIG_DIR`, by default `~/.aimebu2`). The supervisor removes the run folder after
+directory (`AIMEBU2_CONFIG_DIR`, by default `~/.aimebu`). The supervisor removes the run folder after
 detection, even when the command fails; a failed removal is logged without hiding a successful model list.
 Before the next detection with the default folder, it also removes its own marked `run-*`
 folders older than one hour; owner-chosen folders, even under `detect/run-*`, and recent runs
@@ -974,7 +971,7 @@ project copies; Docker agents use the checkout mount supplied by their
 adapter.
 
 `aimebu supervisor` remains available as a standalone remote-machine mode.
-Both modes use a separate SQLite journal under `~/.aimebu2/supervisor/`,
+Both modes use a separate SQLite journal under `~/.aimebu/supervisor/`,
 authenticate with a private machine key, and maintain the machine WebSocket.
 The server queues wake notes with messages and dispatches
 eligible note batches to connected supervisors. The authenticated agent API

@@ -162,7 +162,7 @@ launchd (`~/Library/LaunchAgents/dev.aimebu.server.plist`, loaded with `launchct
 <plist version="1.0"><dict>
   <key>Label</key><string>dev.aimebu.server</string>
   <key>ProgramArguments</key><array><string>/usr/local/bin/aimebu</string><string>server</string></array>
-  <key>EnvironmentVariables</key><dict><key>AIMEBU2_CONFIG_DIR</key><string>/Users/me/.aimebu2</string></dict>
+  <key>EnvironmentVariables</key><dict><key>AIMEBU2_CONFIG_DIR</key><string>/Users/me/.aimebu</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ExitTimeOut</key><integer>60</integer>
@@ -177,7 +177,7 @@ Description=aimebu v2 server
 
 [Service]
 ExecStart=/usr/local/bin/aimebu server
-Environment=AIMEBU2_CONFIG_DIR=%h/.aimebu2
+Environment=AIMEBU2_CONFIG_DIR=%h/.aimebu
 Restart=on-failure
 TimeoutStopSec=60
 
@@ -236,7 +236,7 @@ class Aimebu < Formula
     run [opt_bin/"aimebu", "server"]
     keep_alive true
     environment_variables AIMEBU2_BIND: "127.0.0.1",
-                          AIMEBU2_PORT: "9897"
+                          AIMEBU2_PORT: "9997"
   end
 
   test do
@@ -245,10 +245,10 @@ class Aimebu < Formula
 end
 ```
 
-The `AIMEBU2_*` names and port 9897 match the current development build. It
-uses the default `~/.aimebu2` data root and browser owner setup; no owner
+The `AIMEBU2_*` names and port 9997 match the current build. It
+uses the default `~/.aimebu` data root and browser owner setup; no owner
 password belongs in a formula. Before publishing the tap, apply B1's final
-environment-variable names, data root and port to this draft. Keep the
+environment-variable names to this draft. Keep the
 service command as `aimebu server` after that rename. A service that must
 reach harness CLIs outside Homebrew's service `PATH` needs that path configured
 on the host.
@@ -289,9 +289,9 @@ Points the release notes must state plainly:
 3. The credential model is the same token-only design as v1's latest release,
    so a v1 install with **Auto-refresh tokens** on needs the idle-journal check
    from section 0 before cutover.
-4. Port and folder defaults: at stable v2 uses `~/.aimebu`, `AIMEBU_*` and port
-   9997 (blocker B1 below), so it takes over v1's folder and port in place. Today
-   the development build defaults to `~/.aimebu2` and port 9897.
+4. Port and folder defaults: v2 now uses `~/.aimebu` and port 9997, so it
+   takes over v1's folder and port in place. The `AIMEBU2_*` environment names
+   still await the release rename (blocker B1 below).
 
 ## 5. Release notes
 
@@ -330,17 +330,14 @@ Release blockers that can be checked in the tree:
 Blockers that are decided but not done (all in the plan only; no code changed
 by this document):
 
-- **B1 Switch the defaults before stable.** Decided: before stable, v2 moves from
-  the development defaults to `~/.aimebu`, `AIMEBU_*` environment variables and
-  port 9997. Today the code still has `~/.aimebu2`, `AIMEBU2_*` and 9897
-  (`cmd/aimebu/sessions.go:60-67`, `env_help.go`, `tls.go`, the server and
-  supervisor), and README, `docs/import-v1.md`, `docs/api.md`, `docs/auth.md`,
-  `docs/doctor.md`, `docs/prune.md` and `docs/contract.md` all name the dev paths.
-  The change must also settle the cutover checks that assume two roots
-  (`aimebu doctor` compares `~/.aimebu` and `~/.aimebu2`; the migration guide
-  says "same-root cutover" with `AIMEBU2_CONFIG_DIR`), and it breaks anyone
-  already running the dev build, who needs a one-time move of their folder.
-  This is a ticket of its own; it blocks 2.0.0.
+- **B1 Rename environment variables before stable.** Folder and port defaults
+  now use `~/.aimebu` and 9997. The remaining release rename changes the
+  `AIMEBU2_*` environment variables to `AIMEBU_*` and updates the examples.
+  A development instance using `~/.aimebu2` remains separate through an
+  explicit `AIMEBU2_CONFIG_DIR`; moving its data to the default root needs a
+  deliberate one-time migration. The CLI and doctor now warn when old v2 data
+  is found there while the new default root is selected. This ticket blocks
+  2.0.0.
 - **B2 Public repo cutover** (section 3): tag the last v1 commit, squash or
   rebase `v2` into `hrubymar10/aimebu`, and check the published history.
 - **B3 The README says "development"** in several places and the version string

@@ -38,6 +38,10 @@ func pairSupervisorCommand(ctx context.Context, serverURL, token string, insecur
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if err := refuseV1RootWrite(config.root); err != nil {
+		fmt.Fprintln(stderr, reportSupervisorRootError(config.root, err))
+		return 1
+	}
 	path := filepath.Join(config.root, "supervisor", "machine.key")
 	if _, err := os.Lstat(path); err == nil {
 		fmt.Fprintln(stderr, "remote machine key already exists; refusing to replace it")

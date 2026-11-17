@@ -113,6 +113,11 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		fmt.Fprintln(stderr, "usage: aimebu <server|supervisor|agent-tools|switcher|prune|doctor|sessions|usages|fe|version|help>")
 		return 2
 	}
+	if args[0] != "help" && args[0] != "-h" && args[0] != "--help" && args[0] != "version" {
+		if notice := oldDevelopmentRootNotice(); notice != "" {
+			fmt.Fprintln(stderr, notice)
+		}
+	}
 
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -273,6 +278,10 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 	config, err := resolveServerConfig()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := refuseV1RootWrite(config.root); err != nil {
+		fmt.Fprintln(stderr, reportSupervisorRootError(config.root, err))
 		return 1
 	}
 	credentialPath := filepath.Join(config.root, "supervisor", "machine.key")
@@ -888,7 +897,7 @@ func resolveServerConfig() (serverConfig, error) {
 	if net.ParseIP(bind) == nil {
 		return serverConfig{}, fmt.Errorf("AIMEBU2_BIND must be an IP address")
 	}
-	port := 9897
+	port := 9997
 	if raw := os.Getenv("AIMEBU2_PORT"); raw != "" {
 		n, e := strconv.Atoi(raw)
 		if e != nil || n < 1 || n > 65535 {

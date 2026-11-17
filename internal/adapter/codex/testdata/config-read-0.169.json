@@ -1,0 +1,32 @@
+{
+  "codex_version": "0.169.0",
+  "schema": "ConfigReadResponse.Config",
+  "keys": [
+    "analytics",
+    "approval_policy",
+    "approvals_reviewer",
+    "browser_use",
+    "client_search_provider",
+    "compact_prompt",
+    "computer_use",
+    "desktop",
+    "developer_instructions",
+    "forced_chatgpt_workspace_id",
+    "forced_login_method",
+    "instructions",
+    "model",
+    "model_auto_compact_token_limit",
+    "model_auto_compact_token_limit_scope",
+    "model_context_window",
+    "model_provider",
+    "model_reasoning_effort",
+    "model_reasoning_summary",
+    "model_verbosity",
+    "review_model",
+    "sandbox_mode",
+    "sandbox_workspace_write",
+    "service_tier",
+    "tools",
+    "web_search"
+  ]
+}

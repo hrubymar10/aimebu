@@ -32,6 +32,22 @@ var warmDockerDenyKeys = map[string]bool{
 	"model_verbosity": true, "review_model": true, "service_tier": true, "tools": true, "web_search": true,
 	"notify": true, "otel": true, "hide_agent_reasoning": true, "instructions_file": true,
 	"project_doc_fallback_filenames": true, "project_doc_max_bytes": true,
+	"openai_base_url": true, "default_permissions": true, "permissions": true,
+	"agents": true, "skills": true, "hooks": true,
+	"include_environment_context": true, "include_apps_instructions": true,
+	"model_catalog_json": true, "plan_mode_reasoning_effort": true,
+	"show_raw_agent_reasoning": true, "tool_output_token_limit": true,
+	"daybreak": true, "model_post_turn_compact_threshold_percent": true, "auto_review": true,
+	"allow_login_shell": true, "allow_symlinked_codex_home": true,
+	"include_permissions_instructions": true, "include_collaboration_mode_instructions": true,
+	"include_environment_context_time": true, "model_instructions_file": true,
+	"mcp_enterprise_managed_auth": true, "mcp_oauth_callback_port": true,
+	"mcp_oauth_callback_url": true, "mcp_optional_startup_grace_ms": true,
+	"background_terminal_max_timeout": true, "thread_unload_delay_secs": true,
+	"js_repl_node_path": true, "js_repl_node_module_dirs": true,
+	"rollout_trace": true, "sqlite_home": true, "log_dir": true,
+	"apps_mcp_product_sku": true, "responses": true, "responses_api_metadata": true,
+	"orchestrator": true, "cloud": true, "audio": true, "realtime": true,
 }
 
 var warmDockerUnknownSaid sync.Map // agent ID + key -> struct{}

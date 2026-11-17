@@ -72,14 +72,15 @@ live v1 still uses would split the data between them.
 
 ## 2. Start v2 with the old data folder
 
-Use the **v2** `aimebu` executable and set the data folder and port in the
-shell that runs the command:
+Use the **v2** `aimebu` executable. Its default data folder and port match
+v1, so the usual cutover starts with:
 
 ```sh
-export AIMEBU2_CONFIG_DIR="$HOME/.aimebu"
-export AIMEBU2_PORT=9997
 aimebu server
 ```
+
+If v1 used a custom data folder or port, set `AIMEBU2_CONFIG_DIR` and
+`AIMEBU2_PORT` to those values before starting v2.
 
 Leave this terminal open. The server prints a one-time setup token and a
 shortcut link, `http://127.0.0.1:9997/setup?token=…` ([owner setup](auth.md#first-run-owner-setup)).

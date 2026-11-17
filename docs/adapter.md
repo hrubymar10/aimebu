@@ -250,8 +250,11 @@ Provider/account (`model_provider`, `model_providers`, `profile`, `profiles`,
 (`developer_instructions`, `instructions`, instruction files, compaction),
 tool settings (`tools`, `web_search`, `notify`, `features.*`, `experimental_*`),
 output settings, and telemetry settings (`analytics`, `otel`) are checked
-explicitly. The Codex 0.169 app-server `Config` schema's top-level keys are
-pinned and classified in a test. MCP servers and
+explicitly. Additional known `config.toml` inputs for agents, skills, hooks,
+environment context, permissions, model catalogs, and output limits also
+force cold turns. A test classifies the Codex source's `ConfigToml` fields;
+the app-server schema test rejects newly added, unclassified keys while
+allowing older installed Codex versions to omit keys. MCP servers and
 plugins are disabled or reset when safe; settings that cannot be overridden
 force a cold turn with a reason naming the key. Each classified warm refusal
 is reported once per tool and reason class as a warning. The
@@ -304,8 +307,9 @@ and sub-tables, dotted keys, an inline table, spaces or quotes in a header) and 
 private config, and the environment variables those servers name (`env_vars`,
 `bearer_token_env_var`, `env_http_headers`) pass through. A server called `aimebu`
 is not copied (nor any server that is aimebu's own bus of v1 under another name: one
-whose command is the aimebu binary with an `mcp` argument, or that points at v1's port
-with an `/mcp` path; a server that only mentions aimebu, such as a filesystem server in
+whose command is the aimebu binary with an `mcp` argument, or that points at
+the `/mcp` route on a loopback-style host; the v2 `/api/agent/mcp` route on
+port 9997 stays available. A server that only mentions aimebu, such as a filesystem server in
 an aimebu checkout, is kept), so a v1 bus
 never reaches an agent: aimebu's own entry is the only one under that name (a merge
 would mix the two, since Codex merges same-named tables). A config that is not valid TOML

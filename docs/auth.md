@@ -11,9 +11,9 @@ stderr (and the log):
 ```
 No owner exists yet. Open the setup page and enter this setup token (single use, valid until the server restarts):
   setup_…
-The token is also in /home/you/.aimebu2/.setup_token
+The token is also in /home/you/.aimebu/.setup_token
 Shortcut that fills the token in for you:
-  http://127.0.0.1:9897/setup?token=setup_…
+  http://127.0.0.1:9997/setup?token=setup_…
 ```
 
 The same token is written to `$AIMEBU2_CONFIG_DIR/.setup_token` (0600) and the
@@ -80,9 +80,10 @@ never replaces an existing key file. The key is stored at
 HTTP server. Later runs leave those rows alone.
 If a crash leaves the key file behind but the database has no owner or machine,
 startup explains that the orphaned key is safe to delete before retrying.
-The default database is `~/.aimebu2/server/aimebu.sqlite` (mode 0600);
-`AIMEBU2_CONFIG_DIR` selects another root. This temporary v2 setup is
-separate from v1's default directory and `AIMEBU_*` settings.
+The default database is `~/.aimebu/server/aimebu.sqlite` (mode 0600);
+`AIMEBU2_CONFIG_DIR` selects another root. V2 keeps its `AIMEBU2_*` environment
+settings separate from v1's `AIMEBU_*` settings while using the same default
+data directory.
 
 Passwords use the standard library's PBKDF2-HMAC-SHA256 with a fresh 16-byte
 salt and 600,000 iterations. The hash and parameters (algorithm, iterations,

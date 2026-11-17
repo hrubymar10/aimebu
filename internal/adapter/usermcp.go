@@ -51,7 +51,7 @@ var (
 	commandValue = regexp.MustCompile(`(?is)\bcommand["']?\s*[:=]\s*(\[[^\]]*\]|"(?:[^"\\]|\\.)*"|'[^']*')`)
 	argsValue    = regexp.MustCompile(`(?is)\bargs["']?\s*[:=]\s*(\[[^\]]*\])`)
 	quotedString = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"|'([^']*)'`)
-	v1Endpoint   = regexp.MustCompile(`:9997/[^\s"']*mcp`)
+	v1Endpoint   = regexp.MustCompile(`https?://[^/\s"']+:9997/mcp/?(?:[?#\s"']|$)`)
 )
 
 // strings reads the quoted strings of a value, in order.
@@ -70,7 +70,7 @@ func quotedStrings(value string) []string {
 // LooksLikeV1Bus says whether an MCP server entry of a person's config is aimebu's own bus of v1, which must never reach a v2 agent: the entry is
 // called aimebu (any case), or its command line, read as words (the command, an array's items and the args, each split at spaces, so a wrapper
 // such as `env` or `sh -c "aimebu mcp"` shows through), has the aimebu binary (a bare name or a path, with or without .exe) followed by an mcp
-// word, or it points at v1's default port with an mcp path. text is the entry as written, header and all. A server that merely mentions aimebu
+// word, or it points at a loopback-style host with v1's /mcp route. text is the entry as written, header and all. A server that merely mentions aimebu
 // (a filesystem server rooted in an aimebu checkout, or aimebu started with other arguments) is not one.
 func LooksLikeV1Bus(name, text string) bool {
 	if strings.EqualFold(strings.TrimSpace(name), "aimebu") {

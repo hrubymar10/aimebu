@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -288,6 +289,47 @@ func testServerPort(t *testing.T, rawURL string) int {
 		t.Fatal(err)
 	}
 	return port
+}
+
+func TestOldDevelopmentRootNotice(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AIMEBU2_CONFIG_DIR", "")
+	oldRoot := filepath.Join(home, ".aimebu2")
+	if err := os.MkdirAll(filepath.Join(oldRoot, "server"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := oldDevelopmentRootNotice(); got != "" {
+		t.Fatalf("empty old root reported as data: %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(oldRoot, "server", "aimebu.sqlite"), []byte("v2"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := oldDevelopmentRootNotice(); !strings.Contains(got, "v2 data found") || !strings.Contains(got, "AIMEBU2_CONFIG_DIR=") {
+		t.Fatalf("old v2 state has no clear notice: %q", got)
+	}
+	if got := run([]string{"doctor", "--json"}, io.Discard, io.Discard); got != 1 {
+		t.Fatalf("doctor exit = %d, want failure for missing default root", got)
+	}
+	var report bytes.Buffer
+	doctorCommand(context.Background(), []string{"--json"}, &report, io.Discard)
+	var result doctorResult
+	if err := json.Unmarshal(report.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, check := range result.Checks {
+		if check.Name == "older v2 data" && check.Status == statusWarn && strings.Contains(check.Description, "AIMEBU2_CONFIG_DIR=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("doctor omitted old v2 root warning: %+v", result.Checks)
+	}
+	t.Setenv("AIMEBU2_CONFIG_DIR", oldRoot)
+	if got := oldDevelopmentRootNotice(); got != "" {
+		t.Fatalf("explicit old root still warned: %q", got)
+	}
 }
 
 func TestDoctorCommand(t *testing.T) {

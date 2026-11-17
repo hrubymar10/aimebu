@@ -94,7 +94,7 @@ func TestResolveServerTLSConfig(t *testing.T) {
 		t.Fatal("accepted certificate without key")
 	}
 	t.Setenv("AIMEBU2_TLS_KEY", key)
-	if config, err := resolveServerTLSConfig(9897); err != nil || config.port != 9896 {
+	if config, err := resolveServerTLSConfig(9897); err != nil || config.port != 9996 {
 		t.Fatalf("TLS default = (%v, %v)", config, err)
 	}
 	for _, value := range []string{"0", "65536", "invalid", "9897"} {
