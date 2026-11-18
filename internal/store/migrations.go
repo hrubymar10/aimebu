@@ -1878,6 +1878,13 @@ CREATE TABLE IF NOT EXISTS agent_context_clear (
   requested_by TEXT NOT NULL REFERENCES user(id),
   requested_at TEXT NOT NULL
 );
+`}, {119, `
+-- The inbox read looks up a turn's diagnostic and correction children once per
+-- open item; without this index each lookup was a full scan of turn, which on
+-- a server with thousands of turns put GET /api/inbox in the hundreds of
+-- milliseconds. Parent lookups elsewhere (recovery, answers) walk the same
+-- column.
+CREATE INDEX IF NOT EXISTS turn_parent_mode ON turn(parent_turn_id, mode);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
