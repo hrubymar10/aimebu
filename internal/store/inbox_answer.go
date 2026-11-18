@@ -28,7 +28,7 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 			Scan(&projectID, &roomID, &askMessage, &requesterKind, &requesterID, &kind, &state, &currentRev); err != nil {
 			return "", err
 		}
-		if state == "resolved" {
+		if state == "resolved" || state == "superseded" {
 			return "", ErrAlreadyResolved
 		}
 		if state == "withdrawn" {
@@ -74,12 +74,16 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 		if lifecycle != "open" {
 			return "", ErrInvalidTransition
 		}
+		// Close the item before writing the answer so that the answer itself cannot supersede its ask.
+		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at=? WHERE id=? AND state='open' AND rev=?`, userID, timestamp(), itemID, rev); err != nil {
+			return "", err
+		}
 		// The answer replies to the ask, so it joins the ask's conversation (its thread_root is derived from that).
 		message, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "user", AuthorID: userID, Body: body, ReplyTo: askMessage.String, OnlyTargets: []string{requesterID}})
 		if err != nil {
 			return "", err
 		}
-		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,answer_message_id=?,resolved_by=?,resolved_at=? WHERE id=? AND state='open' AND rev=?`, message.ID, userID, timestamp(), itemID, rev); err != nil {
+		if _, err := tx.Exec(`UPDATE inbox_item SET answer_message_id=? WHERE id=?`, message.ID, itemID); err != nil {
 			return "", err
 		}
 		if _, err := tx.AppendEvent(Event{Kind: "inbox_item_resolved", ProjectID: projectID, RoomID: roomID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "message_id": message.ID})}); err != nil {

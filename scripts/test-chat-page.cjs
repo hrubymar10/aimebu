@@ -735,6 +735,22 @@ async function main() {
     await page.close();
   }
 
+  // A superseded ask stays visible in the room but offers no answer control.
+  {
+    const page = await mount();
+    await page.evaluate(() => {
+      const messages = window.__data.rooms.rm_a.messages;
+      messages[118] = { ...messages[118], author_kind: 'agent', author_id: 'agt_zed', ask_json: '{"kind":"question","text":"Which?"}', answer_state: 'superseded' };
+      messages[119] = { ...messages[119], author_kind: 'agent', author_id: 'agt_zed', proposed_answers: ['A', 'B'], answer_state: 'superseded' };
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.deepEqual(await page.evaluate(() => ['rm_a_m119', 'rm_a_m120'].map(id => {
+      const row = document.querySelector(`#messages [data-message-id=${id}]`);
+      return [row.querySelector('.answer-done button, .answer-history-status')?.textContent, !!row.querySelector('.answer-done button, .answer-history button')?.disabled, !!row.querySelector('.answer-controls')];
+    })), [['No longer pending', true, false], ['No longer pending', true, false]], 'superseded asks show a disabled history state');
+    await page.close();
+  }
+
   // A reply to a question open for this person that is one of its proposed answers answers it through the Inbox instead of posting a message; a refusal
   // An agent that was removed has no record any more; the server sends the name it had, and its row and its quotes say it is removed.
   {

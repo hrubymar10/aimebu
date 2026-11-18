@@ -616,6 +616,11 @@ chats. In a private chat its human peer may answer either ordinary kind
 regardless of project role. Boundary admission remains owner-only. A repeated
 idempotency key returns the original message; a changed
 answer with that key returns `conflict`. A stale revision returns `stale_rev`.
+An ordinary agent ask is superseded when a later message from a person or the
+asking agent commits in the same room. System messages and messages in other
+rooms leave it open. Superseded asks leave the Inbox, show "No longer pending"
+in chat, and reject answers as closed items do. Existing open asks with such a
+later message are superseded once by migration 117.
 Uncertain-turn recovery items carry Resume, Retry, and Abandon; loop-budget
 items carry Continue and Abandon. A turn that ended with an explicit error result
 before it did anything (Claude Code `is_error` with no tool run and no output, such

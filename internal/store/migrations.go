@@ -1843,6 +1843,34 @@ UPDATE room_member SET auto = 0
 WHERE auto = 1 AND member_kind = 'agent' AND left_at IS NULL
   AND room_id IN (SELECT id FROM room WHERE kind = 'home')
   AND member_id IN (SELECT a.id FROM agent a JOIN role ro ON ro.id = a.role_id WHERE a.revoked_at IS NULL AND ro.cap_is_lead = 1);
+`}, {117, `
+CREATE TABLE inbox_item_new (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES project(id),
+  room_id TEXT NOT NULL REFERENCES room(id),
+  message_id TEXT REFERENCES message(id),
+  turn_id TEXT REFERENCES turn(id),
+  agent_id TEXT REFERENCES agent(id),
+  requester_kind TEXT NOT NULL,
+  requester_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')),
+  options_json TEXT,
+  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','resolved','withdrawn','superseded')),
+  rev INTEGER NOT NULL DEFAULT 0 CHECK (rev >= 0),
+  answer_message_id TEXT REFERENCES message(id),
+  resolved_by TEXT,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL
+);
+INSERT INTO inbox_item_new SELECT * FROM inbox_item;
+DROP TABLE inbox_item;
+ALTER TABLE inbox_item_new RENAME TO inbox_item;
+UPDATE inbox_item AS i SET state='superseded',rev=rev+1,resolved_by='newer message',
+  resolved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE i.state='open' AND i.kind IN ('question','approval') AND i.requester_kind='agent'
+  AND EXISTS (SELECT 1 FROM message ask WHERE ask.id=i.message_id AND ask.ask_json IS NOT NULL
+    AND EXISTS (SELECT 1 FROM message newer WHERE newer.room_id=i.room_id AND newer.seq>ask.seq
+      AND (newer.author_kind='user' OR newer.author_kind='agent' AND newer.author_id=i.requester_id)));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -1929,8 +1957,8 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if limit > 0 && m.version > limit {
 			break
 		}
-		if m.version == 103 {
-			if err := migrateCheckoutPerProject(ctx, db, m); err != nil {
+		if m.version == 103 || m.version == 117 {
+			if err := migrateWithForeignKeysOff(ctx, db, m); err != nil {
 				return fmt.Errorf("migration %d: %w", m.version, err)
 			}
 			continue
@@ -2113,11 +2141,10 @@ func migrateLeaderRole(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	return facts, nil
 }
 
-// SQLite cannot drop the old UNIQUE autoindex in place. Rebuilding checkout
-// requires foreign keys off before the transaction starts because agents
-// reference it; reject new foreign-key violations before committing and
-// restore the connection's prior setting even when the migration fails.
-func migrateCheckoutPerProject(ctx context.Context, db *sql.DB, m migration) (resultErr error) {
+// Rebuilding a referenced table requires foreign keys off before the
+// transaction starts. Reject new violations before committing and restore the
+// connection's prior setting even when a migration fails.
+func migrateWithForeignKeysOff(ctx context.Context, db *sql.DB, m migration) (resultErr error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
@@ -2154,7 +2181,7 @@ func migrateCheckoutPerProject(ctx context.Context, db *sql.DB, m migration) (re
 		return err
 	}
 	if after > before {
-		return fmt.Errorf("checkout rebuild added %d foreign key violations", after-before)
+		return fmt.Errorf("table rebuild added %d foreign key violations", after-before)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_version(version, applied_at) VALUES (?, ?)`, m.version, timestamp()); err != nil {
 		return err

@@ -36,7 +36,7 @@ func (s *Store) DismissInboxItem(ctx context.Context, itemID, userID string, rev
 		if currentRev != rev {
 			return ErrStaleInboxRev
 		}
-		if state == "resolved" {
+		if state == "resolved" || state == "superseded" {
 			return ErrAlreadyResolved
 		}
 		if state == "withdrawn" {

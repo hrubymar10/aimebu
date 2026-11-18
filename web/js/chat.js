@@ -614,7 +614,8 @@ export class Chat {
     // somebody replied to is not "answered".
     const doneOk = Boolean(this.answeredMessages.has(id) || (repliedByOther && message.needs_attention)), area = answerArea(item, message, doneOk);
     if (area === 'history') return { kind: 'history', answered, key: `h:${answered}:${message.answer_body || ''}` };
-    if (area === 'done') return { kind: 'done', answered, key: 'd' };
+    if (message.answer_state === 'superseded') return { kind: 'done', answered: false, key: 'd:superseded', label: 'No longer pending' };
+    if (area === 'done') return { kind: 'done', answered, key: 'd:answered', label: 'Answered' };
     return { kind: 'none', answered, key: '' };
   }
   answer(item, value) { return this.inbox.answer(item, value); }

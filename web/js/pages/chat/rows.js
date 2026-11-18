@@ -92,7 +92,7 @@ export function AnswerSlot({ message, view, host, listed = '' }) {
   const answer = view.answer;
   if (answer.kind === 'controls') return html`<${AnswerControls} key=${answer.key} className=${listed} data-inbox-id=${answer.item.id} data-rev=${String(answer.item.rev)} item=${answer.item} submit=${value => host.answer(answer.item, value)} ...${host.answerOptions(answer.parent)} />`;
   if (answer.kind === 'history') return html`<${AnswerHistory} key=${answer.key} className=${listed} message=${message} answered=${answer.answered} />`;
-  if (answer.kind === 'done') return html`<div key=${answer.key} class=${`answer-done${listed}`}><button type="button" class="btn" disabled>Answered</button></div>`;
+  if (answer.kind === 'done') return html`<div key=${answer.key} class=${`answer-done${listed}`}><button type="button" class="btn" disabled>${answer.label}</button></div>`;
   return null;
 }
 

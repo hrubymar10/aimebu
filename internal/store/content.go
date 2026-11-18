@@ -624,6 +624,9 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 		RoomID: message.RoomID, PayloadJSON: string(created)}); err != nil {
 		return Message{}, err
 	}
+	if err := tx.supersedeAsks(message); err != nil {
+		return Message{}, err
+	}
 	if message.AuthorKind == "user" {
 		// Writing in a room means the author has read up to here, so their
 		// own message never shows as unread on another device. The
@@ -726,7 +729,7 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 func (s *Store) answerStateForMessages(ctx context.Context, messages []Message) error {
 	var ids []any
 	for _, message := range messages {
-		if message.ProposedAnswersJSON != "" || message.OpenQuestionsJSON != "" {
+		if message.AskJSON != "" || message.ProposedAnswersJSON != "" || message.OpenQuestionsJSON != "" {
 			ids = append(ids, message.ID)
 		}
 	}

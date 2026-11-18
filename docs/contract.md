@@ -584,11 +584,17 @@ Inbox, usage, events, settings
 - **inbox_item**(id, project_id, room_id, message_id?, turn_id?,
   agent_id?, requester_kind, requester_id,
   kind[question|approval|recovery|delivery_failed|usage_info|usage_limit],
-  options_json?, state[open|resolved|withdrawn], rev, answer_message_id?,
+  options_json?, state[open|resolved|withdrawn|superseded], rev, answer_message_id?,
   resolved_by?, resolved_at?, created_at) — `assignee` returns in slice 4.
   `usage_alert` is not a stored kind: the inbox listing appends it as a
   virtual row for each open provider usage alert (built in
   `internal/server/inbox.go`, shown to admins), with no table row behind it.
+  An open agent `ask` question or approval becomes `superseded` when a later
+  message from a person or that asking agent commits in the same room; system
+  messages and messages in other rooms do not supersede it. Supersession and
+  the new message commit in one transaction, and a superseded item rejects an
+  inbox answer like any other closed item. Migration 117 applies this rule
+  once to existing open agent asks with a later qualifying room message.
 - **usage_record**(id, source_event_id UNIQUE, turn_id, agent_id, room_id,
   project_id, tokens_in?, tokens_out?, tokens_cache_read?, tokens_cache_write?,
   context_used?, context_window?, cost_est?, cost_total?, model?, partial,
