@@ -20,7 +20,12 @@ A profile is usable when all of these hold:
   warm-up (60 s by default). Time is the usage reader's own: re-reading one old
   snapshot does not warm a profile up, and a reading older than three refresh
   intervals (at least ten minutes) is stale, so a stalled usage poller makes the tool
-  hold instead of acting on old percentages;
+  hold instead of acting on old percentages. One failed poll (the usage endpoint
+  answering an error or timing out, so the poller keeps the previous numbers marked
+  stale) is bridged with the profile's last ok reading while that is no older than the
+  maximum age (at most five minutes): the hiccup neither holds the tool nor restarts the
+  warm-up. A login that is really unusable (credentials missing, token expired) is
+  never bridged;
 - its session usage is below its session limit (a profile that reports no session
   window is not limited by it), and its weekly usage is below its weekly limit (a
   profile with no weekly figure is not usable). Limits are percent used and the
@@ -58,7 +63,12 @@ A profile is usable when all of these hold:
 Every outcome is recorded as a decision with a fixed reason sentence; only changes
 are recorded, not every evaluation. The newest 50 per tool are kept. Each change
 to a hold reason also appears as one `quota_hold` System event, including across
-server restarts; repeated evaluations of the same hold stay quiet. The decision
+server restarts; repeated evaluations of the same hold stay quiet. The exception is a
+hold that is only the data catching up: `active snapshot not ok`, `warming up` and
+`no usage snapshot yet`. Those are still recorded as decisions, but they become a System
+event (so reach the bell) only once such holds, in any mix of the three, have lasted ten
+minutes without a decision in between that is not one of them, and then once per run.
+A usage poller that flaps therefore makes no events; one that stays down does. The decision
 and its System event commit together, so one cannot be stored without the other.
 
 ## What happens around the switch

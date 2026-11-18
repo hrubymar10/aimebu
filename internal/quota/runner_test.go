@@ -193,12 +193,11 @@ func (h *harness) lastReason() (string, string) {
 
 func TestHoldSystemEventOnlyWhenReasonChangesAcrossRestart(t *testing.T) {
 	h := newHarness(t)
-	bad := ob("b", 1, 1)
-	bad.Status = "refreshing"
-	h.observe("b", ob("a", 1, 1), bad)
+	// A real hold (no active profile) is announced on its first decision, once per reason.
+	h.observe("", ob("a", 1, 1), ob("b", 1, 1))
 	h.tick(0)
 	h.tick(time.Minute)
-	if got := h.ev.kinds(); len(got) != 1 || got[0] != "quota_hold" || h.ev.events[0]["reason"] != ReasonActiveNotOK {
+	if got := h.ev.kinds(); len(got) != 1 || got[0] != "quota_hold" || h.ev.events[0]["reason"] != ReasonNoActive {
 		t.Fatalf("unchanged hold events = %v", h.ev.events)
 	}
 	h.r = NewRunner(h.store, h.src, h.act, h.ev)
@@ -207,11 +206,139 @@ func TestHoldSystemEventOnlyWhenReasonChangesAcrossRestart(t *testing.T) {
 	if got := h.ev.kinds(); len(got) != 1 {
 		t.Fatalf("restart repeated a hold event: %v", got)
 	}
-	h.src.set(ToolClaude, Observation{Ready: false, SwitcherEnabled: true})
+	h.src.set(ToolClaude, Observation{Ready: true, SwitcherEnabled: true, Active: "b", Migrated: true, Profiles: []Obs{ob("a", 1, 1), ob("b", 1, 1)}})
+	h.observe("b", ob("a", 1, 1), ob("b", 1, 1))
+	h.tick(time.Minute) // switches: not a hold
+	h.src.set(ToolClaude, Observation{Ready: true, SwitcherEnabled: false})
 	h.tick(time.Minute)
 	h.tick(time.Minute)
-	if got := h.ev.kinds(); len(got) != 2 || got[1] != "quota_hold" || h.ev.events[1]["reason"] != ReasonNoSnapshot {
+	got := h.ev.kinds()
+	if len(got) < 2 || got[len(got)-1] != "quota_hold" || h.ev.events[len(got)-1]["reason"] != ReasonSwitcherOff {
 		t.Fatalf("changed hold events = %v", h.ev.events)
+	}
+}
+
+func holdEvents(h *harness) int {
+	n := 0
+	for _, k := range h.ev.kinds() {
+		if k == "quota_hold" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestTransientHoldsAreNotAnnouncedUntilTheyLastAndFlappingMakesNoEvents(t *testing.T) {
+	h := newHarness(t)
+	cfg := claudeCfg()
+	cfg.MinDwellMinutes = 0 // warm-up 60 s
+	h.save(ToolClaude, cfg)
+	bad := ob("b", 1, 1)
+	bad.Status = "refreshing"
+	// Flapping between "active snapshot not ok" and "warming up" for nine minutes: nothing is announced.
+	for i := 0; i < 18; i++ {
+		if i%2 == 0 {
+			h.observe("b", ob("a", 1, 1), bad)
+		} else {
+			h.observe("b", ob("a", 1, 1), ob("b", 1, 1))
+		}
+		h.tick(30 * time.Second)
+	}
+	if n := holdEvents(h); n != 0 {
+		t.Fatalf("a flapping transient hold made %d events: %v", n, h.ev.events)
+	}
+	if v := h.view(); len(v.Decisions) < 2 {
+		t.Fatalf("the journal still records each change: %d", len(v.Decisions))
+	}
+	// A real hold in between ends the run and is announced at once.
+	h.observe("", ob("a", 1, 1), ob("b", 1, 1))
+	h.tick(time.Second)
+	if n := holdEvents(h); n != 1 {
+		t.Fatalf("a real hold must be announced: %v", h.ev.events)
+	}
+}
+
+func TestALongTransientHoldIsAnnouncedOnceAfterTenMinutes(t *testing.T) {
+	h := newHarness(t)
+	bad := ob("b", 1, 1)
+	bad.Status = "refreshing"
+	h.observe("b", ob("a", 1, 1), bad)
+	h.tick(0)
+	h.tick(9 * time.Minute)
+	if n := holdEvents(h); n != 0 {
+		t.Fatalf("announced after 9 minutes: %v", h.ev.events)
+	}
+	h.tick(time.Minute + time.Second) // the same reason throughout: no decision change, still announced
+	if n := holdEvents(h); n != 1 || h.ev.events[0]["reason"] != ReasonActiveNotOK {
+		t.Fatalf("a 10-minute hold must be announced once: %v", h.ev.events)
+	}
+	h.tick(30 * time.Minute)
+	if n := holdEvents(h); n != 1 {
+		t.Fatalf("announced again within the same run: %v", h.ev.events)
+	}
+	// Recovery ends the run; a new one starts quiet.
+	h.observe("b", ob("a", 1, 1), ob("b", 1, 1))
+	h.tick(time.Minute)
+	h.observe("b", ob("a", 1, 1), bad)
+	h.tick(time.Minute)
+	if n := holdEvents(h); n != 1 {
+		t.Fatalf("a new transient run must start quiet: %v", h.ev.events)
+	}
+}
+
+func TestAFailedPollBetweenOkReadingsDoesNotRestartTheWarmupOrHold(t *testing.T) {
+	h := newHarness(t)
+	cfg := claudeCfg()
+	cfg.MinDwellMinutes = 0 // warm-up 60 s
+	h.save(ToolClaude, cfg)
+	set := func(status string, stale bool) {
+		at := h.now
+		b := withReading(ob("b", 1, 1), at)
+		a := withReading(ob("a", 1, 1), at)
+		if status != "ok" || stale {
+			b.Status, b.Stale = status, stale
+			b.ObservedAt = withReading(ob("b", 1, 1), h.now.Add(-20*time.Second)).ObservedAt
+		}
+		h.src.set(ToolClaude, Observation{Active: "b", Migrated: true, SwitcherEnabled: true, Ready: true, MaxAge: 10 * time.Minute, Profiles: []Obs{a, b, withReading(ob("c", 1, 1), at)}})
+	}
+	set("ok", false)
+	h.tick(0)
+	for i := 0; i < 3; i++ {
+		set("ok", false)
+		h.tick(20 * time.Second)
+	}
+	set("fetch_error", true) // one failed poll while 60 s of ok has not yet passed
+	h.tick(20 * time.Second)
+	if _, reason := h.lastReason(); reason == ReasonActiveNotOK {
+		t.Fatalf("a single failed poll held the tool: %s", reason)
+	}
+	set("ok", false)
+	h.tick(20 * time.Second)
+	if len(h.act.calls) != 1 {
+		t.Fatalf("the warm-up must carry across the failed poll: %v", h.act.calls)
+	}
+	// A login that is really unusable is never bridged.
+	h2 := newHarness(t)
+	h2.save(ToolClaude, cfg)
+	h2.src.set(ToolClaude, Observation{Active: "b", Migrated: true, SwitcherEnabled: true, Ready: true, MaxAge: 10 * time.Minute,
+		Profiles: []Obs{ob("a", 1, 1), ob("b", 1, 1), ob("c", 1, 1)}})
+	h2.tick(0)
+	dead := ob("b", 1, 1)
+	dead.Status = "token_expired"
+	h2.src.set(ToolClaude, Observation{Active: "b", Migrated: true, SwitcherEnabled: true, Ready: true, MaxAge: 10 * time.Minute,
+		Profiles: []Obs{ob("a", 1, 1), dead, ob("c", 1, 1)}})
+	h2.tick(20 * time.Second)
+	if _, reason := h2.lastReason(); reason != ReasonActiveNotOK {
+		t.Fatalf("an unusable login was bridged: %s", reason)
+	}
+	// And a failure that lasts past the bridge holds.
+	h.now = h.now.Add(0)
+	set("fetch_error", true)
+	h.tick(6 * time.Minute)
+	set("fetch_error", true)
+	h.tick(time.Second)
+	if _, reason := h.lastReason(); reason != ReasonActiveNotOK {
+		t.Fatalf("a failure past the bridge must hold: %s", reason)
 	}
 }
 

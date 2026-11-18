@@ -104,6 +104,8 @@ type Runner struct {
 	evalMu  sync.Mutex
 	mu      sync.Mutex
 	okSince map[string]okTrack  // "tool/profile" -> the run of ok readings
+	good    map[string]goodRead // "tool/profile" -> the last ok reading, to bridge a transient read failure
+	quiet   map[string]quietRun // tool -> the run of transient holds, announced only once it lasts
 	last    map[string]Decision // tool -> the decision last recorded
 	mem     map[string]memState // tool -> what is shown but not persisted
 	backoff map[string]backoff
@@ -125,7 +127,7 @@ type backoff struct {
 // NewRunner builds a runner. ev may be nil.
 func NewRunner(store Persistence, src Source, act Actuator, ev Events) *Runner {
 	return &Runner{store: store, src: src, act: act, ev: ev, now: time.Now, trigger: make(chan struct{}, 1),
-		okSince: map[string]okTrack{}, last: map[string]Decision{}, mem: map[string]memState{}, backoff: map[string]backoff{}}
+		okSince: map[string]okTrack{}, good: map[string]goodRead{}, quiet: map[string]quietRun{}, last: map[string]Decision{}, mem: map[string]memState{}, backoff: map[string]backoff{}}
 }
 
 // CanSwitch reports whether the runner could move tool off the active profile of obs right now (see
@@ -227,10 +229,13 @@ func (r *Runner) record(ctx context.Context, d Decision) {
 	if d.Profiles == nil {
 		d.Profiles = map[string]ProfileView{}
 	}
+	if d.Action != ActionHold || !transientReason(d.Reason) {
+		delete(r.quiet, d.Tool)
+	}
 	raw, err := json.Marshal(d)
 	if err == nil {
 		at := d.At.UTC().Format(time.RFC3339Nano)
-		if d.Action == ActionHold && (!known || previous.Action != ActionHold || previous.Reason != d.Reason) {
+		if d.Action == ActionHold && r.announceHold(d, previous, known) {
 			payload := map[string]string{"tool": d.Tool, "reason": d.Reason}
 			if d.From != nil {
 				payload["from"] = *d.From
@@ -249,6 +254,51 @@ func (r *Runner) record(ctx context.Context, d Decision) {
 		return
 	}
 	r.last[d.Tool] = d
+}
+
+// TransientHoldAnnounceAfter is how long a hold for missing, failed or settling data must last before it is
+// announced as an event (and so reaches the bell).
+const TransientHoldAnnounceAfter = 10 * time.Minute
+
+// transientReason says whether a hold reason is only the data catching up: no snapshot yet, a reading that is
+// not ok, a profile still warming up. These come and go with every hiccup of the usage poller.
+func transientReason(reason string) bool {
+	return reason == ReasonActiveNotOK || reason == ReasonWarmingUp || reason == ReasonNoSnapshot
+}
+
+// quietRun is one run of consecutive transient holds of a tool: since is its first decision's time.
+type quietRun struct {
+	since     time.Time
+	announced bool
+}
+
+// longTransient says whether an unchanged transient hold has just crossed the announcement threshold, so it is
+// recorded again once (which announces it) although the decision itself did not change.
+func (r *Runner) longTransient(d Decision) bool {
+	run, ok := r.quiet[d.Tool]
+	return ok && !run.announced && d.Action == ActionHold && transientReason(d.Reason) && d.At.Sub(run.since) >= TransientHoldAnnounceAfter
+}
+
+// announceHold says whether hold decision d is an event. A real hold (tripped, protected, no active...) is one
+// whenever its reason changes. A transient hold is one only once the run of transient holds (any mix of the
+// transient reasons) has lasted TransientHoldAnnounceAfter, and once per run; the run ends with any decision
+// that is not a transient hold.
+func (r *Runner) announceHold(d, previous Decision, known bool) bool {
+	if !transientReason(d.Reason) {
+		return !known || previous.Action != ActionHold || previous.Reason != d.Reason
+	}
+	run, ok := r.quiet[d.Tool]
+	if !ok {
+		run = quietRun{since: d.At}
+		// The run began earlier if the journal's last decision (before a restart) was a transient hold too, but
+		// the restart is not worth carrying: a fresh run is only ever later, never an extra event.
+	}
+	announce := !run.announced && d.At.Sub(run.since) >= TransientHoldAnnounceAfter
+	if announce {
+		run.announced = true
+	}
+	r.quiet[d.Tool] = run
+	return announce
 }
 
 func (r *Runner) event(kind string, payload map[string]string) {
@@ -280,8 +330,50 @@ func (r *Runner) Evaluate(ctx context.Context) {
 // "warmed up".
 type okTrack struct{ since, last time.Time }
 
-// track fills in OKFor for every profile and marks a reading older than maxAge stale.
+// goodRead is the last ok reading of a profile and when the runner saw it (the reading's own time, else the pass's).
+type goodRead struct {
+	obs Obs
+	at  time.Time
+}
+
+// maxBridge caps how long a transient read failure of the usage poller is bridged with the last ok reading.
+const maxBridge = 5 * time.Minute
+
+// transientRead says whether a reading is a failed poll that kept the previous numbers (the usage endpoint
+// answered 429/5xx or timed out, or the stored credentials were briefly unreadable), as opposed to a login
+// that is really unusable (auth_missing, token_expired, reauth...) or a snapshot of a login just swapped in
+// (refreshing), which are never bridged.
+func transientRead(o Obs) bool {
+	switch o.Status {
+	case "fetch_error", "timeout", "backing_off", "read_error", "stale_cache":
+		return true
+	}
+	return o.Status == "ok" && o.Stale
+}
+
+// track fills in OKFor for every profile and marks a reading older than maxAge stale. A single failed poll
+// between two ok readings does not reset the profile's run of ok readings: while the last ok reading is
+// younger than the bridge (the maximum age, at most maxBridge) it stands in for the failed one, so the
+// numbers the policy acts on are never older than that, and the warm-up is not restarted by every hiccup.
 func (r *Runner) track(tool string, profiles []Obs, now time.Time, maxAge time.Duration) {
+	bridge := maxBridge
+	if maxAge > 0 && maxAge < bridge {
+		bridge = maxAge
+	}
+	for i := range profiles {
+		key := tool + "/" + profiles[i].Name
+		if profiles[i].OK() {
+			at := now
+			if profiles[i].ObservedAt != nil {
+				at = *profiles[i].ObservedAt
+			}
+			r.good[key] = goodRead{obs: profiles[i], at: at}
+		} else if g, ok := r.good[key]; ok && transientRead(profiles[i]) && now.Sub(g.at) <= bridge {
+			cur := profiles[i]
+			profiles[i] = g.obs
+			profiles[i].Parked, profiles[i].HasCredentials, profiles[i].TokenExpiresAt = cur.Parked, cur.HasCredentials, cur.TokenExpiresAt
+		}
+	}
 	AgeObs(profiles, now, maxAge)
 	seen := map[string]bool{}
 	for i := range profiles {
@@ -308,6 +400,7 @@ func (r *Runner) track(tool string, profiles []Obs, now time.Time, maxAge time.D
 	for key := range r.okSince {
 		if len(key) > len(tool) && key[:len(tool)+1] == tool+"/" && !seen[key] {
 			delete(r.okSince, key)
+			delete(r.good, key)
 		}
 	}
 }
@@ -345,7 +438,7 @@ func (r *Runner) evaluateTool(ctx context.Context, tool string) error {
 			hold = reason
 		}
 		r.mem[tool] = memState{Hold: hold, EvaluatedAt: &at}
-		if last, ok := r.last[tool]; !ok || !last.Same(d) {
+		if last, ok := r.last[tool]; !ok || !last.Same(d) || r.longTransient(d) {
 			r.record(ctx, d)
 		}
 	}
@@ -376,7 +469,7 @@ func (r *Runner) evaluateTool(ctx context.Context, tool string) error {
 			hold = final.Reason
 		}
 		r.mem[tool] = memState{Hold: hold, EvaluatedAt: &at}
-		if last, ok := r.last[tool]; !ok || !last.Same(final) {
+		if last, ok := r.last[tool]; !ok || !last.Same(final) || r.longTransient(final) {
 			r.record(ctx, final)
 		}
 		if durableChanged(state, np) {
