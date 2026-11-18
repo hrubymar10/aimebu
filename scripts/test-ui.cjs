@@ -3784,10 +3784,11 @@ async function main() {
       await settingsPage.setViewport({ width: 390, height: 780 });
       assert.equal(await settingsPage.$eval('.limit-guard-settings', el => el.scrollWidth <= el.clientWidth + 1), true, 'the limits section overflows a phone viewport');
       await settingsPage.setViewport({ width: 1100, height: 720 });
-      // Health: the held tool is counted and drawn with its thresholds; a tool under the soft line is listed but not counted.
+      // Health: the held tool is counted and drawn with its thresholds; a tool under the soft line has no row there at all (an ok
+      // reading is not a problem, see the Health popover's own test).
       await settingsPage.evaluate(() => document.querySelector('#health-toggle').click());
       await settingsPage.waitForSelector('#health-popover .health-limit[data-tool="claude"][data-state="soft"]');
-      assert.deepEqual(await settingsPage.$$eval('#health-popover .health-limit', els => els.map(el => `${el.dataset.tool}:${el.dataset.state}:${el.querySelectorAll('.health-limit-tick').length}`)), ['claude:soft:2', 'codex:ok:2']);
+      assert.deepEqual(await settingsPage.$$eval('#health-popover .health-limit', els => els.map(el => `${el.dataset.tool}:${el.dataset.state}:${el.querySelectorAll('.health-limit-tick').length}`)), ['claude:soft:2']);
       assert.equal(await settingsPage.$eval('#health-count', el => !el.hidden && el.textContent), '1', 'a tool holding new turns counts toward the badge');
       assert.match(await settingsPage.$eval('#health-popover .health-limit[data-tool="claude"] .health-limit-text', el => el.textContent), /new turns are held/);
       await settingsPage.evaluate(() => document.querySelector('#health-toggle').click());
