@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -30,9 +32,40 @@ type webAssets struct {
 	scripts map[string][]byte
 	// bundle is the page's modules as one file (nil when AIMEBU_WEB_BUNDLE turns it off, and then the page loads the modules themselves).
 	bundle *webBundle
+	// packed holds the large text assets a page load always fetches (the stylesheets and the vendored Sentry SDK), each as its embedded
+	// bytes and as the same bytes gzipped once here, when the assets are prepared — never per request.
+	packed map[string]packedBody
+	// indexGzip is the page itself, packed the same way (the page is the largest text body of a load).
+	indexGzip []byte
 	// scriptHashes are the 'sha256-…' sources of the page's inline scripts (the theme script and the import map), which its Content-Security-Policy allows
 	// by hash because it allows no inline script otherwise.
 	scriptHashes []string
+}
+
+// packedBody is a static text asset as it is served: the body as it was embedded, and the same bytes gzipped once, at start-up.
+type packedBody struct {
+	raw []byte
+	gz  []byte
+}
+
+// precompressedAssets are the embedded files that are packed beside the page: the large text bodies of a page load. A change here is a
+// change of what a page fetches, so the version covers the packed bytes with everything else.
+var precompressedAssets = []string{"v1.css", "style.css", "theme-v1.css", "v2-only.css", "vendor/sentry/bundle.tracing.min.js"}
+
+// gzipBytes packs one body with gzip at the best level, the way the bundle is packed.
+func gzipBytes(data []byte) ([]byte, error) {
+	var packed bytes.Buffer
+	writer, err := gzip.NewWriterLevel(&packed, gzip.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := writer.Write(data); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return packed.Bytes(), nil
 }
 
 // inlineScript is a <script> element with a body of its own (one with a src has none to allow).
@@ -136,11 +169,26 @@ func prepareWebAssets(files fs.FS, bundled bool) (webAssets, error) {
 	if bundle == nil {
 		page = preloadModules(page, raw, version)
 	}
-	assets := webAssets{version: version, index: []byte(page), scripts: make(map[string][]byte), scriptHashes: inlineScriptHashes(page), bundle: bundle}
+	assets := webAssets{version: version, index: []byte(page), scripts: make(map[string][]byte), scriptHashes: inlineScriptHashes(page), bundle: bundle, packed: make(map[string]packedBody)}
 	for name, data := range raw {
 		if strings.HasPrefix(name, "js/") && strings.HasSuffix(name, ".js") {
 			assets.scripts[name] = moduleImport.ReplaceAll(data, []byte("${1}?v="+version+"${2}"))
 		}
+	}
+	// The page and the few large text files it always fetches are packed once here; a request then only picks the body by Accept-Encoding.
+	if assets.indexGzip, err = gzipBytes(assets.index); err != nil {
+		return webAssets{}, err
+	}
+	for _, name := range precompressedAssets {
+		data, ok := raw[name]
+		if !ok {
+			continue
+		}
+		packed, err := gzipBytes(data)
+		if err != nil {
+			return webAssets{}, err
+		}
+		assets.packed[name] = packedBody{raw: data, gz: packed}
 	}
 	return assets, nil
 }

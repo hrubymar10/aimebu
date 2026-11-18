@@ -11,10 +11,12 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -433,6 +435,10 @@ func (s *Server) Handler() http.Handler {
 				http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(script))
 				return
 			}
+			if packed, ok := web.packed[name]; ok {
+				servePacked(w, r, web, name, packed)
+				return
+			}
 			if strings.HasSuffix(name, ".webmanifest") {
 				w.Header().Set("Content-Type", "application/manifest+json")
 			}
@@ -482,6 +488,34 @@ func serveWebBundle(w http.ResponseWriter, r *http.Request, web webAssets, name 
 	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
 }
 
+// servePacked answers for one of the large text assets (a stylesheet, the vendored Sentry SDK): the gzip was computed once when the assets were
+// prepared, so a browser that accepts it gets the packed body, under its own ETag; the cache headers are the ones every file of the app gets.
+func servePacked(w http.ResponseWriter, r *http.Request, web webAssets, name string, body packedBody) {
+	h := w.Header()
+	if r.URL.Query().Get("v") == web.version {
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		h.Set("Cache-Control", "no-cache")
+	}
+	h.Add("Vary", "Accept-Encoding")
+	data, tag := body.raw, `"`+web.version+`"`
+	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		data, tag = body.gz, `"`+web.version+`-gzip"`
+		h.Set("Content-Encoding", "gzip")
+	}
+	h.Set("ETag", tag)
+	h.Set("Content-Type", staticContentType(name))
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+}
+
+// staticContentType is the type of a served file of the app, by its extension: the same type the file server would sniff out of the name.
+func staticContentType(name string) string {
+	if kind := mime.TypeByExtension(path.Ext(name)); kind != "" {
+		return kind
+	}
+	return "application/octet-stream"
+}
+
 // acceptsGzip reads an Accept-Encoding header: gzip is accepted when it is listed with a quality above 0; "gzip;q=0" is a refusal even beside "*", and
 // "*" alone accepts it.
 func acceptsGzip(header string) bool {
@@ -522,7 +556,16 @@ func (s *Server) serveAppPage(w http.ResponseWriter, r *http.Request, web webAss
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
-	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(web.index))
+	// The page is the largest text body of a load and it is packed once with everything else: a browser that accepts gzip gets the packed
+	// one, under its own ETag (the page is no-cache, so the ETag only makes a revalidation a 304).
+	h.Add("Vary", "Accept-Encoding")
+	body, tag := web.index, `"`+web.version+`"`
+	if web.indexGzip != nil && acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		body, tag = web.indexGzip, `"`+web.version+`-gzip"`
+		h.Set("Content-Encoding", "gzip")
+	}
+	h.Set("ETag", tag)
+	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(body))
 }
 
 // cspConnectExtra lists the origins besides this server that the page may send requests to: the error-report ingest origin (the scheme and host

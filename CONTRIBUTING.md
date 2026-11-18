@@ -236,7 +236,11 @@ a year under its version, with a source map beside it) instead of 240 modules,
 which is about 290 requests and 1.9 MB down to about 50 and 0.7 MB. The bundle
 is made in memory in about 60 ms, once per process, so `make dev` (which
 rebuilds and restarts the binary when a web file changes) gets a fresh one with
-it. The modules are still served as files, with a content version on every
+it. The page itself and the few large text files a load always fetches (the
+stylesheets and the vendored Sentry SDK) are gzipped once at start-up too, and
+served by `Accept-Encoding`, each encoding under its own ETag with
+`Vary: Accept-Encoding`. The modules are still served as files, with a content
+version on every
 relative import (`./x.js`, `../x.js`) and on the import map, so each module has
 exactly one URL. To debug in a browser against the separate modules, start the
 server with `AIMEBU_WEB_BUNDLE=off`; the page then starts from `/js/app.js`

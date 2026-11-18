@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -186,18 +185,9 @@ func runEsbuild(raw map[string][]byte) (webBundle, error) {
 	if len(bundle.js) == 0 {
 		return webBundle{}, fmt.Errorf("bundling the web modules produced no output")
 	}
-	var packed bytes.Buffer
-	writer, err := gzip.NewWriterLevel(&packed, gzip.BestCompression)
-	if err != nil {
+	if bundle.jsGzip, err = gzipBytes(bundle.js); err != nil {
 		return webBundle{}, err
 	}
-	if _, err := writer.Write(bundle.js); err != nil {
-		return webBundle{}, err
-	}
-	if err := writer.Close(); err != nil {
-		return webBundle{}, err
-	}
-	bundle.jsGzip = packed.Bytes()
 	return bundle, nil
 }
 
