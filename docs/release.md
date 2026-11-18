@@ -139,7 +139,7 @@ quarantine problem does not arise for a locally built binary.
   skipped for machine-readable and non-terminal runs), and `aimebu update
   [--check]` does it on demand. It never touches a dirty checkout or a
   non-default branch, builds beside the cache and swaps it in only on success,
-  and `AIMEBU_UPDATE_CHECK=0` disables it. Its git calls never prompt. README Install has the full list;
+  and `AIMEBU_UPDATE_CHECK=0` disables it. Its git calls never prompt. docs/reference.md has the full list of variables;
   the update tests in `cmd/aimebu/binwrapper_test.go` use a local bare remote.
 
 README Install section: Manual (clone, add `bin/` to PATH, `aimebu

@@ -2,7 +2,7 @@
 
 This guide gets you from a fresh clone to a running, tested change, starting
 with the web UI. It is about workflow; behaviour and APIs live in
-[README.md](README.md), [AGENTS.md](AGENTS.md) (the rules for agents working
+[README.md](README.md), [docs/reference.md](docs/reference.md), [AGENTS.md](AGENTS.md) (the rules for agents working
 in this repo, which apply to people too) and [docs/](docs/). If a command here
 stops working, fix this file in the same commit as the change that broke it.
 

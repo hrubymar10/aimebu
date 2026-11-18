@@ -8,7 +8,8 @@
 #
 # Updates: an interactive run checks the clone's default branch at most once a day and
 # offers to update and rebuild; "aimebu update [--check]" does it on demand. See the
-# "Install" section of the README for AIMEBU_UPDATE_CHECK and its companions.
+# "Installing, building and updating the wrapper" section of docs/reference.md for
+# AIMEBU_UPDATE_CHECK and its companions.
 
 set -euo pipefail
 
