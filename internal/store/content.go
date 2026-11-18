@@ -405,6 +405,18 @@ func (tx *Tx) addMemberOnly(roomID, kind, memberID string, auto bool) error {
 	autoValue := 0
 	if auto {
 		autoValue = 1
+		// The project lead is a full member of home: an unaddressed human message there is the lead's to read and answer. The join is still
+		// quiet (below); only the auto mark, which silences wakes, is left off.
+		if kind == "agent" {
+			var homeLead bool
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room r JOIN agent a ON a.id=? JOIN role ro ON ro.id=a.role_id
+				WHERE r.id=? AND r.kind='home' AND ro.cap_is_lead=1)`, memberID, roomID).Scan(&homeLead); err != nil {
+				return err
+			}
+			if homeLead {
+				autoValue = 0
+			}
+		}
 	}
 	if _, err := tx.tx.ExecContext(tx.ctx, `INSERT INTO room_member
 		(room_id, member_kind, member_id, joined_at, auto) VALUES (?, ?, ?, ?, ?)`,

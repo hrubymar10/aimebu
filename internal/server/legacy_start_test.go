@@ -398,6 +398,43 @@ func TestStartAsV2AgentInALeadOnlyHomeRoomNeedsALeadRole(t *testing.T) {
 	}
 }
 
+// A v1 leader whose leader room became the project's home is started there with the lead role, and is then a full member of home: an
+// unaddressed message from a person in home wakes it (an auto member would only read the room).
+func TestStartAsV2LeaderInHomeIsAFullMember(t *testing.T) {
+	f := newLegacyFixture(t)
+	task := f.room
+	resp := f.request(http.MethodGet, "/api/projects/"+f.project.ID+"/rooms", nil, false)
+	var rooms []store.Room
+	_ = json.NewDecoder(resp.Body).Decode(&rooms)
+	resp.Body.Close()
+	for _, room := range rooms {
+		if room.Kind == "home" {
+			f.room = room
+		}
+	}
+	if f.room.ID == task.ID {
+		t.Fatal("the project has no home room")
+	}
+	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_legacy_home',999998,?,'agent','sage@old','from the past, at home','[]','2026-10-02T09:30:00.000000000Z')`, f.room.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`DELETE FROM message WHERE id='msg_legacy'`); err != nil {
+		t.Fatal(err)
+	}
+	status, created := f.start(t, "home-leader", map[string]any{"role_key": "leader"})
+	if status != 201 {
+		t.Fatalf("leader into home: %d %+v", status, created)
+	}
+	agentID, _ := created["id"].(string)
+	message, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: f.ownerUserID(t), Body: "anyone home?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.NoteForAgentMessage(t.Context(), agentID, message.ID); err != nil {
+		t.Fatalf("the leader started in home was not woken by an unaddressed message: %v", err)
+	}
+}
+
 // A v1 agent's Claude Code session can also be worked on as a copy: the first turn forks it, the original stays as it is, v1 may still have
 // it open, and the agent is linked to its v1 name like any other start.
 func TestStartAsV2AgentCanWorkOnACopyOfTheV1Session(t *testing.T) {

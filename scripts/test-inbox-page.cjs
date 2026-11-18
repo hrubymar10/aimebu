@@ -302,10 +302,11 @@ async function main() {
     }
     // Dismissing one, and every resolved delivery failure of an archived room at once.
     {
-      const failures = [{ ...base, id: 'd1', kind: 'delivery_failed', room_lifecycle: 'closed', question: 'First', held_reason: 'room_closed' }, { ...base, id: 'd2', kind: 'delivery_failed', room_lifecycle: 'closing', question: 'Second', held_reason: 'room_closed' }, { ...base, id: 'd3', kind: 'delivery_failed', room_lifecycle: 'open', question: 'Third', held_reason: 'x' }];
+      const failures = [{ ...base, id: 'd1', kind: 'delivery_failed', room_lifecycle: 'closed', question: 'First', held_reason: 'room_closed' }, { ...base, id: 'd2', kind: 'delivery_failed', room_lifecycle: 'closing', question: 'Second', held_reason: 'room_closed' }, { ...base, id: 'd3', kind: 'delivery_failed', room_lifecycle: 'open', question: 'Third', held_reason: 'correction_unavailable', delivery_error: 'invalid_answer: message 0 needs at least two proposed answers' }];
       const page = await mount({ list: [...failures, items()[11]] });
       await waitList(page);
       assert.deepEqual(await page.evaluate(() => { const b = document.querySelector('.inbox-dismiss-resolved'); return [b.hidden, b.title, b.querySelector('.inbox-dismiss-count').textContent, b.getAttribute('aria-label')]; }), [false, 'Dismiss all resolved (2): the delivery failures of archived rooms', '2', 'Dismiss all resolved (2)']);
+      assert.match(await page.$eval('[data-inbox-id=d3]', el => el.textContent), /Reason: invalid_answer: message 0 needs at least two proposed answers/, 'the card says why the reply was held');
       await page.$eval('[data-inbox-id=d3] .btn-icon:not(.inbox-raw-toggle):not(.inbox-jump)', el => el.click());
       await page.waitForFunction(() => !document.querySelector('[data-inbox-id=d3]'));
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'dismiss').slice(1, 3)), ['d3', 1]);

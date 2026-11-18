@@ -75,7 +75,7 @@ async function main() {
       window.__panel.showRoom = target => { window.__calls.push(['showRoom', target.id]); };
       window.__panel.showRoomByID = async (project, id) => { window.__calls.push(['showRoomByID', project, id]); };
       window.__panel.projectName = () => 'Alpha';
-      window.__panel.projectRooms = () => [{ id: 'r1', kind: 'task', lifecycle: 'open', title: 'one', depth: 1 }, { id: 'r2', kind: 'task', lifecycle: 'open', title: 'general', depth: 0 }, { id: 'r3', kind: 'task', lifecycle: 'closed', title: 'old', depth: 1 }, { id: 'r4', kind: 'task', lifecycle: 'closing', title: 'busy', depth: 1 }];
+      window.__panel.projectRooms = () => [{ id: 'r1', kind: 'task', lifecycle: 'open', title: 'one', depth: 1 }, { id: 'r2', kind: 'task', lifecycle: 'open', title: 'general', depth: 0 }, { id: 'r3', kind: 'task', lifecycle: 'closed', title: 'old', depth: 1 }, { id: 'r4', kind: 'task', lifecycle: 'closing', title: 'busy', depth: 1 }, { id: 'h1', kind: 'home', lifecycle: 'open', title: 'Alpha', depth: 0 }];
       if (withCard) await window.__panel.setRoom(current); else window.__panel.setRoomFacts(current);
     }, { module: PANEL, admin, current, withCard });
     return page;
@@ -341,6 +341,17 @@ async function main() {
     assert.equal(state.value, 'r2', 'a home room is not offered: general stays the default');
     assert.match(state.notes, /project's home room, which only a lead role can start in/);
     await home.close();
+    // A v1 leader whose leader room became the home room: with the Leader role Start in offers the home room (and starts there); another role does not.
+    const lead = await mount();
+    await open(lead, { resume: { ...base, role_key: 'leader', history_room: { id: 'h1', title: 'Alpha', kind: 'home', lifecycle: 'open' } } }); await ready(lead);
+    state = await startIn(lead);
+    assert.equal(state.value, 'h1', 'a leader whose history is in home starts in home');
+    assert.ok(state.options.includes('Alpha'), `home is offered to a lead role: ${state.options}`);
+    await lead.evaluate(() => { const f = document.querySelector('#spawn-form').elements.role; f.value = 'worker'; f.dispatchEvent(new Event('change', { bubbles: true })); });
+    await settle(lead);
+    state = await startIn(lead);
+    assert.ok(!state.options.includes('Alpha') && state.value === 'r2', `a role that is not a lead role is not offered home: ${state.options} ${state.value}`);
+    await lead.close();
     const archived = await mount();
     await open(archived, { resume: { ...base, history_room: { id: 'r3', title: 'old', kind: 'task', lifecycle: 'closed' } } }); await ready(archived);
     state = await startIn(archived);
@@ -374,7 +385,7 @@ async function main() {
       mode: !document.querySelector('#spawn-resume-mode').hidden, rooms: [...document.querySelector('#spawn-form').elements.start_room.options].map(o => o.textContent), room: document.querySelector('#spawn-form').elements.start_room.selectedOptions[0].textContent }));
     assert.equal(banner.text, 'This continues the v1 session of old-bot, working in /work/old.');
     assert.match(banner.notes, /outside the project folder.*v1 saw this agent a moment ago/);
-    assert.deepEqual([banner.confirm, banner.mode, banner.rooms, banner.room], [true, false, ['Alpha › one', 'Alpha › general'], 'Alpha › general']);
+    assert.deepEqual([banner.confirm, banner.mode, banner.rooms, banner.room], [true, false, ['Alpha', 'Alpha › one', 'Alpha › general'], 'Alpha › general']);
     await page.$eval('#spawn-form button[type=submit]', node => node.click());
     assert.equal(await page.$eval('#spawn-resume-notes', node => node.textContent), 'Confirm that v1 is not running this session any more.');
     assert.equal(await count(page, 'POST', '/api/rooms/r2/agents'), 0);

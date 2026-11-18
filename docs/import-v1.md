@@ -375,14 +375,16 @@ agent's imported messages (`history_room` in the profile's start info) when that
 room, otherwise `general`. The dialog says where the history is in every case. When it is an
 archived room the picker also offers "Reopen … and start there", which reopens it (the room
 menu's reopen) and then starts the agent in it; when it is the project's home room, which
-only a lead role can start in, it only says so. The agent
+only a lead role can start in, the picker offers it (named by the project) once the role is a
+lead role such as `leader`, and the agent started there is a full member of home, so an
+unaddressed message from a person in home wakes it. For other roles it only says so. The agent
 is started in the room picked there, not necessarily the room whose profile was
 opened. The lookup is **per project**: an agent that wrote in any room of the
 project can be started, so a worker whose v1 history is only in a home room
 with **Home room: lead only** is started in `general`. An agent that wrote only
 in another project is never found (404 `not_found`). Every check of the
 chosen room still applies (permissions, limits, `v1_may_be_active`, and the
-lead-only home room, which the picker does not offer; the server refuses a
+lead-only home room, which the picker offers only for a lead role; the server refuses a
 non-lead role posted to it with 409 `home_is_lead_only`). The role is the
 agent's own: the dialog lists every role and keeps the one v1 gave. A project
 with no open task room cannot start it (Start stays off and the dialog says

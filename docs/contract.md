@@ -788,7 +788,16 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   rows, → `superseded`); else, or if the
   correction is invalid too → all rows `held` + `delivery_failed` inbox item
   with a bounded, redacted candidate preview. An open originating room also
-  receives a system notice for answers held during validation.
+  receives a system notice for answers held during validation. When the answer
+  was held because no correction could be requested (`no_action_mode` false),
+  the author also gets a system note "Your previous reply was held: <reason>"
+  (`OnlyTargets` the author; parser errors that quote the agent's text are
+  described, not echoed). The note is written once per held receipt (a replay
+  of the same digest returns the stored receipt). It wakes the author, so a turn
+  that was itself woken by such a note and is held again gets no second note:
+  a repeating invalid reply ends in the delivery-failed card, not a loop. A
+  committed reply clears the author's earlier open delivery failures only for
+  its own parent turn and for the rooms it actually posted a message to.
 - `room_closed` / `not_member` targets are authorisation/lifecycle
   failures, not formatting errors: never re-asked (the model must not
   reroute content); the whole batch is `held` with the reason and raises a
@@ -1374,7 +1383,9 @@ CC/Codex, prompt-only on pi):
 "order":0?}]?,"appendix_pages":[{"title":"…"?,"body":"…"}]?}],
 "reconciliation":{"status":"clean|uncertain","findings":["…"]}?}`
 - A message may use `proposed_answers` or `open_questions`, but not both.
-  Neither may be combined with `ask`.
+  An `ask` implies attention: `needs_attention`, `proposed_answers` and
+  `open_questions` sent with it are dropped, with a receipt warning, instead of
+  invalidating the reply.
 - One concept, the reply: a message that answers a delivered note sets
   `reply_to` to it (its `no` or message ID) and so joins that message's
   conversation; `thread_root` is derived, not part of the answer (one still
@@ -1511,7 +1522,8 @@ Computed in the message-insert transaction; every decision → note or
 "not woken because …" event:
 - human message → every AI member of the room, unless it addresses specific
   members (then only those). The exception is a lead whose membership is
-  `auto` (below): it is not woken by an unaddressed human message
+  `auto` (below; never in the home room, where the project lead is a full member
+  and migration 116 cleared the mark of existing leads): it is not woken by an unaddressed human message
   (`message_not_woken` reason `auto_member`), only when addressed by name,
   role, group tag, reply or handoff;
 - AI message → resolved targets (mentions, addressed role), the human peer in

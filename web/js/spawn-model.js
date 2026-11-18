@@ -157,16 +157,20 @@ export function startRoomLabel(room, rooms, projectName = '') {
   return [projectName, ...trail, room.title].filter(Boolean).join(' › ');
 }
 
-export function startRoomChoices(rooms, resume, currentRoomID, projectName = '') {
+// A lead starts in the project's home room too: a v1 leader's room became the home room, so its history is there and only a lead may
+// start there. The home room is named by the project alone (`project › project` would say the same twice).
+export function startRoomChoices(rooms, resume, currentRoomID, projectName = '', lead = false) {
   if (!resume) return { options: [], value: '' };
   const open = rooms.filter(room => room.kind === 'task' && room.lifecycle === 'open');
+  const home = lead ? rooms.find(room => room.kind === 'home' && room.lifecycle === 'open') : null;
   const options = open.map(room => ({ value: room.id, label: startRoomLabel(room, rooms, projectName) }));
+  if (home) options.unshift({ value: home.id, label: projectName || home.title });
   const continuing = resume.kind === 'claude_session';
   if (continuing) options.unshift({ value: NEW_ROOM, label: 'A new room for this session' });
   // An agent started from v1 history goes where that history is, when that is an open task room; otherwise general is the project's shared
   // task room; otherwise the open room if it is one, else the first.
   const history = !continuing && resume.history_room ? rooms.find(room => room.id === resume.history_room.id) : null;
-  const historyOpen = history && history.kind === 'task' && history.lifecycle === 'open' ? history : null;
+  const historyOpen = history && (history.kind === 'task' || history === home) && history.lifecycle === 'open' ? history : null;
   // The room that holds the history is archived: offered, never chosen for the person.
   if (history && history.kind === 'task' && history.lifecycle === 'closed') options.push({ value: REOPEN_PREFIX + history.id, label: `Reopen ${startRoomLabel(history, rooms, projectName)} and start there` });
   const preferred = historyOpen || open.filter(room => room.title === 'general').sort((a, b) => a.depth - b.depth)[0] || open.find(room => room.id === currentRoomID) || open[0];
@@ -179,7 +183,7 @@ export function historyNote(resume, rooms, projectName = '') {
   if (!info || resume.kind === 'claude_session') return '';
   const room = rooms.find(item => item.id === info.id) || info;
   const where = `"${startRoomLabel(room, rooms, projectName)}"`;
-  if (room.kind === 'home') return `Its v1 history is in ${where}, the project's home room, which only a lead role can start in: start a lead there from the room itself, or start this agent in a task room.`;
+  if (room.kind === 'home') return `Its v1 history is in ${where}, the project's home room, which only a lead role can start in: pick the Leader role to start there, or start this agent in a task room.`;
   if (room.lifecycle === 'closed') return `Its v1 history is in ${where}, an archived room: pick "Reopen … and start there" under Start in to put it back in that room.`;
   if (room.lifecycle !== 'open') return `Its v1 history is in ${where}, which is changing state: start there once it has settled.`;
   return `Its v1 history is in ${where}.`;

@@ -113,7 +113,14 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 		}
 		if message.Ask != nil {
 			if message.NeedsAttention || len(message.ProposedAnswers) > 0 || len(message.OpenQuestions) > 0 {
-				return candidate, fmt.Errorf("%w: message %d cannot combine ask with attention controls", ErrInvalid, i)
+				// An ask already puts the message in the person's inbox, so
+				// the attention controls are redundant: drop them and warn
+				// instead of rejecting the whole reply.
+				candidate.Warnings = append(candidate.Warnings, fmt.Sprintf("message %d: ask implies attention; needs_attention, proposed_answers and open_questions were dropped", i))
+				candidate.Messages[i].NeedsAttention = false
+				candidate.Messages[i].ProposedAnswers = nil
+				candidate.Messages[i].OpenQuestions = nil
+				message = candidate.Messages[i]
 			}
 			if message.Ask.Kind != "question" && message.Ask.Kind != "approval" {
 				return candidate, fmt.Errorf("%w: invalid ask kind", ErrInvalid)

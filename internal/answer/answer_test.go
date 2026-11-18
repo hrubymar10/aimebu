@@ -97,7 +97,6 @@ func TestAttentionControls(t *testing.T) {
 		t.Fatalf("parsed=%+v err=%v", parsed, err)
 	}
 	for _, raw := range [][]byte{
-		[]byte(`{"messages":[{"room":"r","body":"x","ask":{"kind":"question","text":"x"},"needs_attention":true}]}`),
 		[]byte(`{"messages":[{"room":"r","body":"x","proposed_answers":["Only one"]}]}`),
 		[]byte(`{"messages":[{"room":"r","body":"x","open_questions":[{"question":"x","options":["One"]}]}]}`),
 		[]byte(`{"messages":[{"room":"r","body":"x","proposed_answers":["Yes","No"],"open_questions":[{"question":"x","options":["One","Two"]}]}]}`),
@@ -255,5 +254,17 @@ func TestStripLeadingReasoningIsLinear(t *testing.T) {
 	parsed, err := Parse(raw, false)
 	if elapsed := time.Since(started); err != nil || len(parsed.Messages) != 1 || elapsed > 2*time.Second {
 		t.Fatalf("parsed=%d messages err=%v after %s", len(parsed.Messages), err, elapsed)
+	}
+}
+
+func TestAskDropsAttentionControlsWithAWarning(t *testing.T) {
+	raw := `{"messages":[{"room":"r","body":"b","ask":{"kind":"question","text":"?"},"needs_attention":true,"proposed_answers":["a","b"],"open_questions":[{"question":"q","options":["a","b"]}]}]}`
+	got, err := Parse([]byte(raw), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := got.Messages[0]
+	if m.NeedsAttention || m.ProposedAnswers != nil || m.OpenQuestions != nil || m.Ask == nil || len(got.Warnings) != 1 {
+		t.Fatalf("message=%+v warnings=%v", m, got.Warnings)
 	}
 }

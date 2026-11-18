@@ -73,8 +73,8 @@ gate (paused) at room and project level, inherited by spawned/moved agents.
 
 **Wake rules** — human message wakes every AI member of the room unless
 addressed elsewhere (a lead that is in the room only because leads are put into
-every project room, see `room_member.auto` in the contract, is woken only when
-addressed: by name, role, group tag, a reply to it, or a handoff); AI message wakes explicit mentions, DM peers, addressed
+every project room other than home, see `room_member.auto` in the contract, is woken only when
+addressed: by name, role, group tag, a reply to it, or a handoff; in the home room the lead is a full member and is woken like any other); AI message wakes explicit mentions, DM peers, addressed
 roles, and the lead on task-result handoffs; an AI message that names nobody and
 answers nothing is a broadcast that wakes every other agent in the room as an FYI
 (the note is marked `fyi` and the agent answers only if it has to act); what an agent

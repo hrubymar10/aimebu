@@ -1836,6 +1836,13 @@ CREATE TABLE IF NOT EXISTS team_flow_migration_agent (
 ALTER TABLE team_flow_migration ADD COLUMN drain_errors INTEGER NOT NULL DEFAULT 0;
 `}, {115, `
 ALTER TABLE settings_project ADD COLUMN reviewer_agents TEXT NOT NULL DEFAULT 'inherit' CHECK (reviewer_agents IN ('inherit','on','off'));
+`}, {116, `
+-- The project lead is a full member of its home room: an unaddressed human message there wakes it. Migration 72 and the lead's later joins
+-- made that membership auto (read-only for wakes), so the lead never woke in home. Only active leads' home memberships are touched (any lifecycle; only the auto mark changes).
+UPDATE room_member SET auto = 0
+WHERE auto = 1 AND member_kind = 'agent' AND left_at IS NULL
+  AND room_id IN (SELECT id FROM room WHERE kind = 'home')
+  AND member_id IN (SELECT a.id FROM agent a JOIN role ro ON ro.id = a.role_id WHERE a.revoked_at IS NULL AND ro.cap_is_lead = 1);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

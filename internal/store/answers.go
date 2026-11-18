@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/answer"
@@ -89,7 +90,7 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 			}
 			return tx.insertAnswerReceipt(receipt, input.Candidate)
 		}
-		missedMentionHeld := false
+		missedMentionHeld, invalidHeld := false, false
 		if turn.mode == "diagnostic" {
 			if input.ParseError != "" || input.Parsed == nil {
 				detail := input.ParseError
@@ -135,6 +136,9 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 					receipt.HeldReason = "invalid_after_correction"
 				} else {
 					receipt.HeldReason = "correction_unavailable"
+					// Nobody asks this agent to repair the reply, so tell it
+					// why the reply was held on its next turn.
+					invalidHeld = turn.mode == "normal"
 				}
 			}
 			if receipt.Result != "committed" {
@@ -160,7 +164,7 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 			return err
 		}
 		if receipt.Result == "committed" {
-			if err := tx.resolveDeliveryFailures(turn.agentID, parent.id); err != nil {
+			if err := tx.resolveDeliveryFailures(turn.agentID, parent.id, committedRooms(input)...); err != nil {
 				return err
 			}
 		}
@@ -175,6 +179,9 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 				err = tx.missedMentionNote(parent, input, receipt.Error)
 			} else {
 				err = tx.deliveryFailedInbox(parent)
+				if err == nil && invalidHeld {
+					err = tx.invalidReplyNote(parent, receipt.Error)
+				}
 			}
 			if err != nil {
 				return err
@@ -377,6 +384,42 @@ func (tx *Tx) missedAnswerMention(roomID, projectID, authorID, body string) (mis
 	// A room both agents can use would already have carried a pointer above.
 	// Do not suggest rooms the author cannot post in.
 	return fmt.Sprintf("@%s refers to agent %s, who is not in the target room; use dm_agent or retry with force:true", missing.token, missing.id), "", nil
+}
+
+// committedRooms lists the rooms a committed reply actually posted into: a reply
+// with no messages posted nowhere, so it clears no earlier failure by room.
+func committedRooms(input AnswerInput) []string {
+	var rooms []string
+	if input.Parsed != nil {
+		for _, message := range input.Parsed.Messages {
+			if message.Room != "" {
+				rooms = append(rooms, message.Room)
+			}
+		}
+	}
+	return rooms
+}
+
+const heldReplyNotePrefix = "Your previous reply was held: "
+
+// invalidReplyNote tells an agent that cannot be asked for a correction why its
+// previous reply was held, as a system turn note only it can see.
+func (tx *Tx) invalidReplyNote(turn answerTurn, detail string) error {
+	// The note wakes the agent. A turn that was itself woken by such a note and held again gets none, so a repeating
+	// invalid shape ends in the delivery-failed card instead of a loop of notes and turns.
+	var woken bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
+		WHERE tn.turn_id=? AND m.author_kind='system' AND m.body LIKE ?)`, turn.id, heldReplyNotePrefix+"%").Scan(&woken); err != nil || woken {
+		return err
+	}
+	// A parser error quotes what the agent wrote (a field name, a character); the room can read this note, so only the fixed
+	// validation texts go in as they are and a quoting one is described instead.
+	if strings.ContainsAny(detail, `"'`) || strings.Contains(detail, "json:") {
+		detail = "it was not one valid JSON answer object (malformed JSON, an unknown or misplaced field, or text around the object)"
+	}
+	body := heldReplyNotePrefix + detail
+	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
+	return err
 }
 
 func (tx *Tx) missedMentionNote(turn answerTurn, input AnswerInput, detail string) error {

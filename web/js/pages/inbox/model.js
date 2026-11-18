@@ -90,10 +90,14 @@ export function deliveryEvidence(item) {
     correction_unavailable: 'The agent could not repair its reply, which did not pass validation.',
     invalid_after_correction: 'The revised reply still did not pass validation.',
   };
-  if (known[item.held_reason]) return known[item.held_reason];
-  const reason = item.held_reason?.replaceAll('_', ' ');
   const error = item.delivery_error && /^[{[]/.test(item.delivery_error.trim())
     ? 'The reply did not pass validation.' : item.delivery_error;
+  // A validation failure carries the actual reason, so the person can see what to fix; a closed room needs none.
+  if (item.held_reason === 'correction_unavailable' || item.held_reason === 'invalid_after_correction') {
+    return [known[item.held_reason], error && error !== 'The reply did not pass validation.' ? `Reason: ${error}` : ''].filter(Boolean).join(' ');
+  }
+  if (known[item.held_reason]) return known[item.held_reason];
+  const reason = item.held_reason?.replaceAll('_', ' ');
   return [reason, error].filter(Boolean).join(' ') || 'The reply was held; view the room for context.';
 }
 

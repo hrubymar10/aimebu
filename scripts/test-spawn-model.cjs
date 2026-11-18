@@ -154,6 +154,12 @@ assert.equal(startRoomChoices(rooms.filter(room => room.id !== 'r2'), { slug: 'o
 assert.deepEqual(plain(startRoomChoices(rooms, { kind: 'claude_session' }, 'r1')).options[0], { value: NEW_ROOM, label: 'A new room for this session' });
 assert.equal(startRoomChoices(rooms, { kind: 'claude_session' }, 'r1').value, NEW_ROOM);
 assert.deepEqual(plain(startRoomChoices([], { slug: 'old' }, 'r1')), { options: [], value: '' });
+// A lead is also offered the project's home room (named by the project), and is started there when that is where its history is.
+assert.deepEqual(plain(startRoomChoices(rooms, { slug: 'old' }, 'r1', 'Alpha', false)).options.map(option => option.value), ['r1', 'r2']);
+assert.deepEqual(plain(startRoomChoices(rooms, { slug: 'old' }, 'r1', 'Alpha', true)).options[0], { value: 'h', label: 'Alpha' });
+assert.equal(startRoomChoices(rooms, { slug: 'old' }, 'r1', 'Alpha', true).value, 'r2', 'without history in home the general room is still preferred');
+assert.equal(startRoomChoices(rooms, { slug: 'old', history_room: { id: 'h' } }, 'r1', 'Alpha', true).value, 'h');
+assert.equal(startRoomChoices(rooms, { slug: 'old', history_room: { id: 'h' } }, 'r1', 'Alpha', false).value, 'r2', 'a role that is not a lead never gets home');
 
 // The banner of a start from history.
 const relative = value => `rel(${value})`;

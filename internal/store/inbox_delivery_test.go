@@ -41,8 +41,8 @@ func TestUnavailableCorrectionCreatesVisibleDeliveryFailureOnce(t *testing.T) {
 		t.Fatalf("delivery failure=%+v err=%v", items, err)
 	}
 	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
-	if err != nil || len(messages) != 2 || !strings.Contains(messages[1].Body, "correction_unavailable") ||
-		strings.Contains(messages[1].Body, "cedar lake") || strings.Contains(messages[1].Body, "invalid") {
+	if err != nil || len(messages) != 3 || !strings.Contains(messages[1].Body, "correction_unavailable") ||
+		strings.Contains(messages[1].Body, "cedar lake") || strings.Contains(messages[1].Body, "invalid") || strings.Contains(messages[2].Body, "cedar lake") {
 		t.Fatalf("system notice=%+v err=%v", messages, err)
 	}
 	if _, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil {
@@ -53,7 +53,7 @@ func TestUnavailableCorrectionCreatesVisibleDeliveryFailureOnce(t *testing.T) {
 		t.Fatalf("replayed inbox=%+v err=%v", items, err)
 	}
 	messages, err = s.ListMessagesAfter(ctx, f.room.ID, 0)
-	if err != nil || len(messages) != 2 {
+	if err != nil || len(messages) != 3 {
 		t.Fatalf("replayed notices=%+v err=%v", messages, err)
 	}
 }
@@ -103,8 +103,8 @@ func TestDeliveryFailureNoticeOmitsPrivateParserField(t *testing.T) {
 		t.Fatalf("private parser detail absent from Inbox: %+v err=%v", items, err)
 	}
 	messages, err := s.ListMessagesAfter(context.Background(), f.room.ID, 0)
-	if err != nil || len(messages) != 2 || strings.Contains(messages[1].Body, "private cedar lake") ||
-		!strings.Contains(messages[1].Body, "correction_unavailable") {
+	if err != nil || len(messages) != 3 || strings.Contains(messages[1].Body, "private cedar lake") || strings.Contains(messages[2].Body, "private cedar lake") ||
+		!strings.Contains(messages[1].Body, "correction_unavailable") || !strings.Contains(messages[2].Body, "Your previous reply was held") {
 		t.Fatalf("room notice disclosed parser field: %+v err=%v", messages, err)
 	}
 }

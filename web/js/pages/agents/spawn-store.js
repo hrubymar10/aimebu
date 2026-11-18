@@ -89,13 +89,17 @@ export class SpawnStore {
     this.roomTick.value++;
   }
 
-  renderStartRooms() {
+  renderStartRooms({ keep = false } = {}) {
     const resume = this.resume.peek(), room = this.room;
     this.startRooms = new Map();
     if (!resume || !room) { batch(() => { this.startOptions.value = []; this.startRoom.value = ''; this.historyNote.value = ''; }); return; }
     const rooms = this.host.projectRooms?.(room.project_id) || [];
-    const choices = startRoomChoices(rooms, resume, room.id, this.host.projectName?.(room.project_id) || '');
-    for (const item of rooms) if (item.kind === 'task' && item.lifecycle === 'open') this.startRooms.set(item.id, item);
+    const lead = !!this.allRoles?.find(role => role.role_key === this.role.peek())?.cap_is_lead;
+    const choices = startRoomChoices(rooms, resume, room.id, this.host.projectName?.(room.project_id) || '', lead);
+    // A pick that is still on offer after the role changed stays picked.
+    const kept = this.startRoom.peek();
+    if (keep && kept && choices.options.some(option => option.value === kept)) choices.value = kept;
+    for (const item of rooms) if ((item.kind === 'task' || lead && item.kind === 'home') && item.lifecycle === 'open') this.startRooms.set(item.id, item);
     // The archived room that holds the agent's history, offered as "Reopen … and start there": it is reopened when the start is sent.
     for (const option of choices.options) if (option.value.startsWith(REOPEN_PREFIX)) { const archived = rooms.find(item => item.id === option.value.slice(REOPEN_PREFIX.length)); if (archived) this.startRooms.set(option.value, archived); }
     batch(() => { this.startOptions.value = choices.options; this.startRoom.value = choices.value; this.historyNote.value = historyNote(resume, rooms, this.host.projectName?.(room.project_id) || ''); });
@@ -159,6 +163,7 @@ export class SpawnStore {
       this.leadHint.value = !!leadOnly;
       this.role.value = resume?.role_key || '';
       this.filterRoles();
+      if (resume) this.renderStartRooms();
       if (!resume) await this.prefillRoleDefault();
     } catch (error) {
       if (!current()) return;
@@ -262,7 +267,12 @@ export class SpawnStore {
     batch(() => { this.model.value = value; this.notesOverride.value = ''; });
   }
 
-  pickRole(value) { this.role.value = value; return this.prefillRoleDefault(); }
+  pickRole(value) {
+    this.role.value = value;
+    // Only a lead may start in the home room, so the choice of rooms follows the role.
+    if (this.resume.peek()) { this.renderStartRooms({ keep: true }); this.roomTick.value++; this.syncWorktree(); }
+    return this.prefillRoleDefault();
+  }
 
   pickStartRoom(value) { this.startRoom.value = value; this.roomTick.value++; this.syncWorktree(); if (this.allRoles) this.filterRoles(); }
 

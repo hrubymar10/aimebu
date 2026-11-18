@@ -44,6 +44,8 @@ assert.equal(m.readableReport({}), 'No diagnostic details available.');
 assert.equal(m.deliveryEvidence({ held_reason: 'room_closed' }), 'The room was archived before this reply could be posted.');
 assert.equal(m.deliveryEvidence({ held_reason: 'some_reason', delivery_error: '{"x":1}' }), 'some reason The reply did not pass validation.');
 assert.equal(m.deliveryEvidence({ held_reason: 'other', delivery_error: 'Boom' }), 'other Boom');
+assert.equal(m.deliveryEvidence({ held_reason: 'correction_unavailable', delivery_error: 'invalid_answer: message 0 cannot combine ask with attention controls' }), 'The agent could not repair its reply, which did not pass validation. Reason: invalid_answer: message 0 cannot combine ask with attention controls');
+assert.equal(m.deliveryEvidence({ held_reason: 'invalid_after_correction', delivery_error: '{"x":1}' }), 'The revised reply still did not pass validation.');
 assert.equal(m.deliveryEvidence({}), 'The reply was held; view the room for context.');
 
 const item = (patch = {}) => ({ id: 'i', kind: 'question', project_id: 'p', room_id: 'r', rev: 1, ...patch });

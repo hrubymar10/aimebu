@@ -405,12 +405,12 @@ func TestAttentionWithoutChoicesStillCreatesFreeTextInbox(t *testing.T) {
 	}
 }
 
-func TestAskAndAttentionControlsProduceClearReceiptError(t *testing.T) {
+func TestAskAndAttentionControlsAreReducedToTheAsk(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Choose","ask":{"kind":"question","text":"Choose"},"proposed_answers":["A","B"]}]}`, f.room.ID)
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
-	if err != nil || receipt.Result != "held" || !strings.Contains(receipt.Error, "cannot combine ask with attention controls") {
+	if err != nil || receipt.Result != "committed" || len(receipt.Warnings) != 1 || !strings.Contains(receipt.Warnings[0], "ask implies attention") {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 }
@@ -465,6 +465,7 @@ func TestCommittedAnswerResolvesPriorDeliveryFailure(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT state FROM inbox_item WHERE id='inb_prior_failure'`).Scan(&state); err != nil || state != "resolved" {
 		t.Fatalf("state=%q %v", state, err)
 	}
+	// A reply that posts nothing clears only its own turn's failure: the earlier one's content never reached anyone.
 	if err := s.db.QueryRow(`SELECT state FROM inbox_item WHERE id='inb_unrelated_failure'`).Scan(&state); err != nil || state != "open" {
 		t.Fatalf("unrelated state=%q %v", state, err)
 	}
@@ -595,7 +596,7 @@ func TestStructuredAnswerHoldsUnavailableClosedAndCrossRoom(t *testing.T) {
 			messages, err := s.ListMessagesAfter(context.Background(), f.room.ID, 0)
 			wantMessages := 1
 			if test.reason == "correction_unavailable" {
-				wantMessages = 2
+				wantMessages = 3 // the room notice, and the author's own note saying why
 			}
 			if err != nil || len(messages) != wantMessages {
 				t.Fatalf("unexpected message commit=%+v %v", messages, err)
@@ -806,5 +807,125 @@ func TestSingleAnswerToTheWakingPersonDefaultsItsReply(t *testing.T) {
 	})
 	if got := replyOf(t, s, receipt.MessageIDs[0]); got != earlier.ID {
 		t.Fatalf("explicit reply_to=%q, want %q", got, earlier.ID)
+	}
+}
+
+func TestAskWithAttentionControlsIsCommittedWithAWarning(t *testing.T) {
+	t.Parallel()
+	for name, controls := range map[string]string{
+		"proposed answers": `"proposed_answers":["A","B"]`,
+		"needs attention":  `"needs_attention":true`,
+		"open questions":   `"open_questions":[{"question":"Scope?","options":["a","b"]}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := answerFixture(t, false)
+			raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Choose","ask":{"kind":"question","text":"Choose","options":["X","Y"]},%s}]}`, f.room.ID, controls)
+			receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+			if err != nil || receipt.Result != "committed" || len(receipt.Warnings) != 1 || !strings.Contains(receipt.Warnings[0], "ask implies attention") {
+				t.Fatalf("receipt=%+v err=%v", receipt, err)
+			}
+			items, err := s.InboxForUser(context.Background(), "usr_answers")
+			if err != nil || len(items) != 1 {
+				t.Fatalf("items=%+v err=%v", items, err)
+			}
+		})
+	}
+}
+
+func TestInvalidReplyWithoutCorrectionTellsTheAgentWhy(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	ctx := context.Background()
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
+	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+	if err != nil || receipt.Result != "held" || receipt.HeldReason != "correction_unavailable" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
+	if err != nil || len(messages) != 3 || messages[2].AuthorKind != "system" || !strings.Contains(messages[2].Body, "Your previous reply was held: ") || !strings.Contains(messages[2].Body, "at least two proposed answers") {
+		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+	if _, err := s.NoteForAgentMessage(ctx, f.agent.ID, messages[2].ID); err != nil {
+		t.Fatalf("author was not woken: %v", err)
+	}
+	replay, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+	again, _ := s.ListMessagesAfter(ctx, f.room.ID, 0)
+	if err != nil || replay.Result != "held" || len(again) != len(messages) {
+		t.Fatalf("replay=%+v err=%v messages=%+v", replay, err, again)
+	}
+}
+
+// A committed reply of the same agent in the same room closes its earlier delivery failures, whichever turn they belong to.
+func TestCommittedReplyResolvesEarlierDeliveryFailuresInTheRoom(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	ctx := context.Background()
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	open := func() int {
+		var n int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE agent_id=? AND kind='delivery_failed' AND state='open'`, f.agent.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if open() != 1 {
+		t.Fatalf("open failures=%d, want 1", open())
+	}
+	// Another room, another turn: not this failure.
+	if err := s.Tx(ctx, func(tx *Tx) error { return tx.resolveDeliveryFailures(f.agent.ID, "trn_other", "room_other") }); err != nil || open() != 1 {
+		t.Fatalf("an unrelated commit resolved the failure: open=%d err=%v", open(), err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error { return tx.resolveDeliveryFailures(f.agent.ID, "trn_other", f.room.ID) }); err != nil || open() != 0 {
+		t.Fatalf("a commit in the room left the failure open: open=%d err=%v", open(), err)
+	}
+}
+
+// The note wakes the agent; if the turn it woke is held again, that does not make a second note (no chain), and the person still has the card.
+func TestHeldReplyNoteDoesNotChain(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	ctx := context.Background()
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
+	if err != nil || len(messages) != 3 {
+		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+	note, err := s.NoteForAgentMessage(ctx, f.agent.ID, messages[2].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE turn SET exec='exited' WHERE id=?`, f.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := s.RecordTurn(ctx, Turn{AgentID: f.agent.ID, SessionID: "ses_test", Generation: 0, RoomID: f.room.ID, Attempt: 1, Mode: "normal", Exec: "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, turn.ID, note.ID); err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := json.Marshal(TurnPolicy{Capabilities: adapter.Capabilities{NoActionMode: false}})
+	if _, err := s.db.Exec(`UPDATE turn SET policy_json=? WHERE id=?`, string(policy), turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	other := fmt.Sprintf(`{"messages":[{"room":%q,"body":"y","proposed_answers":["still one"]}]}`, f.room.ID)
+	if receipt, err := applyCandidate(t, s, turn, f.agent.ID, 0, other); err != nil || receipt.Result != "held" {
+		t.Fatalf("second receipt=%+v err=%v", receipt, err)
+	}
+	again, _ := s.ListMessagesAfter(ctx, f.room.ID, 0)
+	notes := 0
+	for _, m := range again {
+		if strings.HasPrefix(m.Body, heldReplyNotePrefix) {
+			notes++
+		}
+	}
+	if notes != 1 {
+		t.Fatalf("held reply notes=%d, want 1 (no chain): %+v", notes, again)
 	}
 }

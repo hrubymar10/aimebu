@@ -20,7 +20,12 @@ wire retains the exact raw candidate, including any fence. A normal candidate ha
 missed-agent-mention guard for that message. `needs_attention` creates a free-text human question;
 `proposed_answers` adds two to four quick choices, or `open_questions` adds
 up to ten questions with two to eight options each. The two answer formats
-cannot appear together or with `ask`. `Turn.Wait()` returns exit code,
+cannot appear together. An `ask` already puts the message in the person's
+Inbox, so `needs_attention`, `proposed_answers` and `open_questions` sent with it are dropped
+with a receipt warning instead of rejecting the reply. When a final answer is invalid and the
+harness cannot be asked for a correction (no `no_action_mode`, as for Claude), the reply is held
+and the agent gets a system note that wakes it: "Your previous reply was held: <error>" (quote-bearing parser errors are described, not echoed). A turn woken by such a note and held again gets no further note.
+`Turn.Wait()` returns exit code,
 terminal-event evidence, and cancel intent separately. Exit code zero alone
 does not mean the answer completed.
 Each delivery context includes `you_are` (the current agent's ID, name, role,

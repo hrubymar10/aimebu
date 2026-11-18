@@ -179,8 +179,17 @@ func candidatePreview(raw string) string {
 	return collapsed
 }
 
-func (tx *Tx) resolveDeliveryFailures(agentID, turnID string) error {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id,project_id,room_id FROM inbox_item WHERE agent_id=? AND turn_id=? AND kind='delivery_failed' AND state='open'`, agentID, turnID)
+// resolveDeliveryFailures closes the agent's open delivery failures once it has
+// committed a reply: the failures of the same parent turn, and any earlier ones
+// in the rooms the committed reply posted to.
+func (tx *Tx) resolveDeliveryFailures(agentID, turnID string, roomIDs ...string) error {
+	query := `SELECT id,project_id,room_id FROM inbox_item WHERE agent_id=? AND kind='delivery_failed' AND state='open' AND (turn_id=?`
+	args := []any{agentID, turnID}
+	for _, id := range roomIDs {
+		query += ` OR room_id=?`
+		args = append(args, id)
+	}
+	rows, err := tx.tx.QueryContext(tx.ctx, query+`)`, args...)
 	if err != nil {
 		return err
 	}
