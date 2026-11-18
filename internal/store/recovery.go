@@ -85,6 +85,81 @@ func (tx *Tx) ensureRecoveryPath(turnID string) error {
 	return tx.ensureRecoveryItem(turnID, exec)
 }
 
+// turnLimitContinuationNote is what the agent is told with an automatic continuation turn: the previous turn was killed by the
+// supervisor's turn-limit watchdog, not by a failure of the work.
+const turnLimitContinuationNote = "your previous turn was stopped by the turn limit; check state and continue; keep commands short"
+
+// createLimitContinuation continues once, on its own, a turn the supervisor's turn-limit watchdog killed: the turn's notes are
+// re-queued on a child turn with a note that says why, so a long but legitimate turn does not leave the agent behind a recovery
+// card waiting for a person to click Resume. It reports whether it continued; a turn whose chain already had its one
+// continuation, one that already has a child, or an agent that is not active, falls back to the ordinary recovery path.
+func (tx *Tx) createLimitContinuation(originID, reason string) (bool, error) {
+	var agentID, roomID, projectID, sessionID, desired string
+	var attempt, generation int
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.agent_id,t.room_id,a.project_id,t.session_id,t.attempt,t.generation,a.desired
+		FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, originID).
+		Scan(&agentID, &roomID, &projectID, &sessionID, &attempt, &generation, &desired); err != nil {
+		return false, err
+	}
+	if desired != "active" {
+		return false, nil
+	}
+	var existing int
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE parent_turn_id=? AND mode='normal'`, originID).Scan(&existing); err != nil {
+		return false, err
+	}
+	if existing > 0 {
+		return false, nil
+	}
+	// One continuation per chain of limit kills: the marker event rides the continuation turn itself, so a turn that was born
+	// this way (or descends from one) goes to recovery as before instead of continuing without end.
+	var already bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `WITH RECURSIVE chain(id,parent) AS (
+			SELECT id,parent_turn_id FROM turn WHERE id=?
+			UNION ALL
+			SELECT t.id,t.parent_turn_id FROM turn t JOIN chain c ON t.id=c.parent
+		) SELECT EXISTS(SELECT 1 FROM event e JOIN chain c ON e.turn_id=c.id WHERE e.kind='turn_limit_continuation')`, originID).Scan(&already); err != nil {
+		return false, err
+	}
+	if already {
+		return false, nil
+	}
+	turn, err := tx.RecordTurn(Turn{AgentID: agentID, SessionID: sessionID, Generation: generation,
+		RoomID: roomID, ParentTurnID: originID, Attempt: attempt + 1, Mode: "normal", Exec: "pending"})
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE note SET state='queued' WHERE id IN(SELECT note_id FROM turn_note WHERE turn_id=?) AND state IN ('in_turn','unknown')`, originID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`INSERT INTO turn_note(turn_id,note_id) SELECT ?,note_id FROM turn_note WHERE turn_id=?`, turn.ID, originID); err != nil {
+		return false, err
+	}
+	message, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: turnLimitContinuationNote})
+	if err != nil {
+		return false, err
+	}
+	note, err := tx.InsertNote(Note{AgentID: agentID, MessageID: message.ID, RoomID: roomID, WakeReason: "turn_limit"})
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, turn.ID, note.ID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE agent SET recovery_block=0,observed='idle' WHERE id=?`, agentID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE turn SET settle='settled' WHERE id=? AND settle='pending'`, originID); err != nil {
+		return false, err
+	}
+	_, err = tx.AppendEvent(Event{Kind: "turn_limit_continuation", ProjectID: projectID, RoomID: roomID,
+		AgentID: agentID, TurnID: turn.ID, PayloadJSON: payloadJSON(map[string]string{"origin_turn_id": originID, "reason": reason})})
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (tx *Tx) ensureDiagnosticTurn(originID string) error {
 	var existing int
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE parent_turn_id=? AND mode='diagnostic'`, originID).Scan(&existing); err != nil {

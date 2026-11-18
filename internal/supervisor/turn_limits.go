@@ -15,8 +15,8 @@ const (
 	// TurnMaxEnv is the wall-clock cap for one turn, tools included.
 	TurnMaxEnv = "AIMEBU_TURN_MAX"
 
-	defaultTurnIdle = 600 * time.Second
-	defaultTurnMax  = 30 * time.Minute
+	defaultTurnIdle = 30 * time.Minute
+	defaultTurnMax  = 90 * time.Minute
 )
 
 // TurnLimits are the stall deadlines enforced by Client.runTurn for one turn.
@@ -26,15 +26,13 @@ type TurnLimits struct {
 	Max  time.Duration
 }
 
-// DefaultTurnLimits returns the per-harness defaults. Pi keeps v1's watchdog
-// (600s idle, 30m overall). Claude Code and Codex had no bound before, and a
-// legitimate turn there can run for hours, so only the idle deadline applies
-// by default; it is suspended while a tool call is in flight.
-func DefaultTurnLimits(tool string) TurnLimits {
-	if tool == "pi" {
-		return TurnLimits{Idle: defaultTurnIdle, Max: defaultTurnMax}
-	}
-	return TurnLimits{Idle: defaultTurnIdle}
+// DefaultTurnLimits returns the defaults every harness shares: 30 minutes of
+// silence with no tool running, 90 minutes wall-clock. A limit kill is no
+// longer a dead end (the server continues the turn once on its own), so a
+// bound that catches a hung harness costs less than the unbounded turns it
+// prevents; the idle deadline stays suspended while a tool call is in flight.
+func DefaultTurnLimits(_ string) TurnLimits {
+	return TurnLimits{Idle: defaultTurnIdle, Max: defaultTurnMax}
 }
 
 // TurnLimitOverrides are the owner's AIMEBU_TURN_* settings. A nil field

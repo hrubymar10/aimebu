@@ -144,7 +144,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			r.lifecycle,r.gate,p.gate,EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id) FROM turn t JOIN room r ON r.id=t.room_id JOIN agent ag ON ag.id=t.agent_id JOIN project p ON p.id=ag.project_id
 			WHERE t.agent_id=? AND t.exec='pending' AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested') AND (t.mode IN ('correction','diagnostic')
 			OR EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id)
-			OR (t.mode='normal' AND t.parent_turn_id IS NOT NULL AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='recovery_decision')))
+			OR (t.mode='normal' AND t.parent_turn_id IS NOT NULL AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind IN ('recovery_decision','turn_limit_continuation'))))
 			ORDER BY t.id LIMIT 1`, agentID).
 			Scan(&special.ID, &special.SessionID, &special.Generation, &special.RoomID, &parentID, &special.Attempt, &special.Mode, &special.Exec, &lifecycle, &roomGate, &projectGate, &handoffTurn)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -220,7 +220,8 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			}
 			if special.Mode == "normal" && !handoffTurn {
 				var choice string
-				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.choice') FROM event WHERE turn_id=? AND kind='recovery_decision' ORDER BY seq DESC LIMIT 1`, special.ID).Scan(&choice); err != nil {
+				// A limit continuation has no recovery decision behind it: an absent choice is not an error, it only skips the recovery evidence.
+				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE((SELECT json_extract(payload_json,'$.choice') FROM event WHERE turn_id=? AND kind='recovery_decision' ORDER BY seq DESC LIMIT 1),'')`, special.ID).Scan(&choice); err != nil {
 					return err
 				}
 				rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.no,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,''),n.wake_reason FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=? AND n.state='queued' ORDER BY m.seq`, special.ID)

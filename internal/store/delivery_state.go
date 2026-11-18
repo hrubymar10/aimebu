@@ -441,6 +441,19 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 		}
 		resetAt, providerLimited := providerLimitEvidence(tool, stderr, errorEvent, time.Now())
 		providerLimited = providerLimited && !terminal && !cancel && mode == "normal"
+		// A limit-stall exit is the supervisor's watchdog doing its job (marked by the supervisor, never guessed from the evidence
+		// text): the turn may simply have been long, so it is continued once on its own instead of blocking the agent behind a
+		// recovery card. Only a normal turn continues; a provider limit or a lost thread is classified first, and anything that
+		// cannot continue falls back to the ordinary failure path below.
+		limitStall := info.LimitStall && !terminal && !cancel && mode == "normal"
+		limitContinued := false
+		if limitStall {
+			continued, err := tx.createLimitContinuation(turnID, errorEvent)
+			if err != nil {
+				return err
+			}
+			limitContinued = continued
+		}
 		if providerLimited {
 			var hasReceipt bool
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM receipt WHERE turn_id=?)`, turnID).Scan(&hasReceipt); err != nil {
@@ -476,6 +489,13 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 			}
 		} else if providerLimited {
 			if err := tx.recordProviderLimit(turnID, agentID, projectID, roomID, tool, resetAt); err != nil {
+				return err
+			}
+		} else if limitContinued {
+			if err := TurnOutcomeTransitions.Transition("none", "unknown"); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE turn SET outcome='unknown' WHERE id=?`, turnID); err != nil {
 				return err
 			}
 		} else if !terminal {
@@ -529,7 +549,9 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 				return err
 			}
 		}
-		if !terminal && !providerLimited && !threadMissing {
+		if limitContinued {
+			// The continuation turn carries the notes and the recovery path is not taken: there is no card to resolve.
+		} else if !terminal && !providerLimited && !threadMissing {
 			if err := tx.ensureRecoveryPath(turnID); err != nil {
 				return err
 			}

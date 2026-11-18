@@ -811,23 +811,32 @@ not only the events the adapter forwards); it is suspended while a tool executio
 command is legitimately silent. The supervisor counts a tool as in flight
 from pi's `tool_execution_start`/`_end`, Codex's `item.started`/
 `item.completed` for commands, MCP calls, file changes and searches, and
-Claude Code's `tool_use` / `tool_result` blocks. `AIMEBU_TURN_MAX` is a
-wall-clock cap for the whole turn, tools included. Defaults depend on the
-harness: pi gets 600s idle and a 30m cap (as in v1); every other harness
-(Claude Code, Codex, OpenCode and Vibe), which had no bound before and
-routinely run long turns, gets 600s idle and no cap. Setting either variable overrides it for every harness; both are Go
+Claude Code's `tool_use` / `tool_result` blocks. OpenCode and Vibe report a
+tool call only once it has finished, so there the idle deadline is not
+suspended and a long silent command waits for `AIMEBU_TURN_IDLE`.
+`AIMEBU_TURN_MAX` is a
+wall-clock cap for the whole turn, tools included. The defaults are the same
+for every harness: 30 minutes idle and a 90-minute cap. Setting either
+variable overrides it for every harness; both are Go
 durations, `0` disables a deadline, and an invalid value fails startup. The
 deadlines apply to the embedded and standalone supervisors alike and stop
 counting once the final answer has been received. A tool that never reports
-its end keeps the idle deadline suspended, so set `AIMEBU_TURN_MAX` if a
-hung tool on Claude Code or Codex must also be bounded. On expiry the
-supervisor logs the stall, kills the harness process group, and reports the
+its end keeps the idle deadline suspended, so only `AIMEBU_TURN_MAX` bounds
+a hung tool. On expiry the
+supervisor logs the stall (as a warning, not an error), kills the harness
+process group, and reports the
 exit as a failure (not an owner cancel) whose evidence names the deadline.
-The server then treats it like any other non-terminal exit: the turn's notes
-become `unknown`, the agent is recovery-blocked, and a recovery inbox item
+The server then continues the turn once on its own: the turn's notes are
+re-queued on a continuation turn with a note that says the previous turn was
+stopped by the turn limit, and the room gets a system event saying so, so a
+long but legitimate turn does not wait for a person. Only when that
+continuation turn is limit-killed too does the agent fall back to the
+ordinary failure path: the turn's notes become `unknown`, the agent is
+recovery-blocked, and a recovery inbox item
 carries the evidence, so the delivery is not lost and the owner can continue
 it. A failed journal write for a turn's event or final answer is handled the
-same way: the supervisor stops forwarding that turn's events, kills the
+same way (without the automatic continuation): the supervisor stops
+forwarding that turn's events, kills the
 harness process group, waits for it to exit, and reports a non-terminal
 failed exit whose evidence names the journal error. A harness therefore
 never keeps running after the supervisor stopped tracking it.

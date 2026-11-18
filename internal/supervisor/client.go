@@ -1272,7 +1272,9 @@ events:
 				continue
 			}
 			stall = reason
-			c.report("a turn stalled; killing harness", fmt.Errorf("agent %s turn %s stalled: %s; killing harness", delivery.AgentID, delivery.TurnID, stall.describe(limits)))
+			// A limit kill is the watchdog doing its job, not a failure to triage: the local log keeps the whole error, and telemetry
+			// gets it as a warning (a degraded state the system recovers from by continuing the turn once on its own).
+			c.degraded("a turn stalled; killing harness", fmt.Errorf("agent %s turn %s stalled: %s; killing harness", delivery.AgentID, delivery.TurnID, stall.describe(limits)))
 			if killer, ok := turn.(interface{ Kill() error }); ok {
 				_ = killer.Kill()
 			} else {
@@ -1337,6 +1339,9 @@ events:
 		}
 		exit.ErrorEvent = reason
 		exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\n" + reason)
+		// Marked, not sniffed out of the evidence text: the server continues a
+		// limit kill once on its own, and must not confuse one with a crash.
+		exit.LimitStall = true
 	}
 	if journalErr != nil {
 		// Like a stall, this kill is ours rather than an owner cancel. Events

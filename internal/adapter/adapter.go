@@ -160,6 +160,9 @@ type ExitInfo struct {
 	// ProcessAlive says the turn ended and its process did not: a warm process that was kept idle for the next turn. The exit then is the turn's end
 	// (a "turn finished"), not the process's; the process's own end is reported when it happens.
 	ProcessAlive bool `json:"process_alive,omitempty"`
+	// LimitStall marks an exit the supervisor's own turn-limit watchdog caused (the idle deadline or the wall-clock cap), not a
+	// harness failure or an owner cancel. The server then continues the turn once on its own instead of asking a person.
+	LimitStall bool `json:"limit_stall,omitempty"`
 }
 
 // ToolEvent marks a tool execution (shell command, MCP call, ...) beginning

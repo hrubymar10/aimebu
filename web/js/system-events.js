@@ -22,6 +22,7 @@ const labels = {
   diagnostic_requested: 'Diagnostic requested', answer_held: 'Answer held',
   recovery_decision: 'Recovery decision', recovery_override: 'Recovery override', recovery_overlap_override: 'Recovery overlap override', recovery_quiescent: 'Recovery quiescent',
   recovery_continuation_cancelled: 'Recovery continuation cancelled', recovery_continuation_requeued: 'Recovery continuation requeued',
+  turn_limit_continuation: 'Turn limit reached: continuing on its own',
   usage_limit_threshold: 'Usage limit threshold reached', usage_limit_reset: 'Usage limit reset', usage_limit_decided: 'Usage limit decision',
   scope_control_requested: 'Scope control requested', notes_dropped: 'Queued notes dropped',
   machine_created: 'Machine added', machine_approved: 'Machine approved', machine_revoked: 'Machine revoked', machine_key_rotated: 'Machine key rotated', machine_pairing_created: 'Machine pairing created',

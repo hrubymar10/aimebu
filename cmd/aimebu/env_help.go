@@ -65,8 +65,8 @@ var environment = []envVar{
 		"Inherited production AIMEBU_* settings are cleared first."}},
 	{[]string{"AIMEBU_STUCK_MINUTES"}, []string{"Minutes of silence (1-1440, default 10) before a running turn counts as stuck"}},
 	{[]string{"AIMEBU_TURN_IDLE", "AIMEBU_TURN_MAX"}, []string{
-		"Supervisor stall deadlines per turn: silence with no tool running, and",
-		"wall-clock cap (Go durations, 0 disables; defaults depend on the harness)"}},
+		"Supervisor stall deadlines per turn: silence with no tool running (default",
+		"30m) and the wall-clock cap (default 90m) (Go durations, 0 disables)"}},
 	{[]string{"AIMEBU_WARM_IDLE", "AIMEBU_WARM_MAX_LIFETIME", "AIMEBU_WARM_MIN_FREE_MB", "AIMEBU_WARM_MIN_FREE_PERCENT"}, []string{
 		"Warm agents (on by default, 5 minutes): AIMEBU_WARM_IDLE (a Go duration such as 10m) keeps an",
 		"agent's harness process up that long after a turn so the next message skips the start; 0 is",

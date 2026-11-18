@@ -23,12 +23,12 @@ func TestTurnLimitsFromEnvAndPerHarnessDefaults(t *testing.T) {
 	if err != nil || none.Idle != nil || none.Max != nil {
 		t.Fatalf("unset: %+v %v", none, err)
 	}
-	// Pi keeps v1's watchdog; claude/codex/fake are idle-only by default.
-	if got := none.For("pi"); got != (TurnLimits{Idle: 600 * time.Second, Max: 30 * time.Minute}) {
+	// Every harness shares the defaults now: 30 minutes idle, 90 minutes overall.
+	if got := none.For("pi"); got != (TurnLimits{Idle: 30 * time.Minute, Max: 90 * time.Minute}) {
 		t.Fatalf("pi defaults: %+v", got)
 	}
-	for _, tool := range []string{"claude", "codex", "fake", ""} {
-		if got := none.For(tool); got != (TurnLimits{Idle: 600 * time.Second}) {
+	for _, tool := range []string{"claude", "codex", "opencode", "vibe", "fake", ""} {
+		if got := none.For(tool); got != (TurnLimits{Idle: 30 * time.Minute, Max: 90 * time.Minute}) {
 			t.Fatalf("%s defaults: %+v", tool, got)
 		}
 	}
@@ -41,9 +41,9 @@ func TestTurnLimitsFromEnvAndPerHarnessDefaults(t *testing.T) {
 			t.Fatalf("%s override: %+v", tool, limits)
 		}
 	}
-	// "0" disables a deadline everywhere, including pi's default cap.
+	// "0" disables a deadline everywhere, including the default cap.
 	got, err = TurnLimitsFromEnv(env(map[string]string{TurnMaxEnv: "0"}))
-	if err != nil || got.For("pi") != (TurnLimits{Idle: 600 * time.Second}) {
+	if err != nil || got.For("pi") != (TurnLimits{Idle: 30 * time.Minute}) {
 		t.Fatalf("max=0: %+v %v", got, err)
 	}
 	for _, bad := range []string{"soon", "-5s"} {
@@ -177,6 +177,10 @@ func TestRunTurnKillsSilentHarness(t *testing.T) {
 	if !strings.Contains(report, "stalled") {
 		t.Fatalf("report=%q", report)
 	}
+	exits, err := journal.PendingExits(context.Background())
+	if err != nil || len(exits) != 1 || !exits[0].Exit.LimitStall {
+		t.Fatalf("a watchdog kill must be marked as a limit stall: %+v %v", exits, err)
+	}
 }
 
 func TestRunTurnWallClockCapKillsChattyHarness(t *testing.T) {
@@ -219,8 +223,8 @@ func TestRunTurnSilentToolSuspendsIdleKill(t *testing.T) {
 	}
 }
 
-func TestRunTurnClaudeAndCodexHaveNoDefaultWallClockCap(t *testing.T) {
-	// Defaults only (no override): a chatty claude turn is never capped.
+func TestRunTurnChattyHarnessFinishesUnderDefaults(t *testing.T) {
+	// Defaults (30m idle, 90m cap): a chatty turn that finishes is never killed.
 	var steps []adapter.Step
 	for i := 0; i < 10; i++ {
 		steps = append(steps,
@@ -233,7 +237,10 @@ func TestRunTurnClaudeAndCodexHaveNoDefaultWallClockCap(t *testing.T) {
 	if err != nil || len(exits) != 1 || exits[0].Exit.ErrorEvent != "" || report != "" {
 		t.Fatalf("exits=%+v report=%q %v", exits, report, err)
 	}
-	if got := (TurnLimitOverrides{}).For("claude").Max; got != 0 {
+	if exits[0].Exit.LimitStall {
+		t.Fatal("a clean exit is not a limit stall")
+	}
+	if got := (TurnLimitOverrides{}).For("claude").Max; got != 90*time.Minute {
 		t.Fatalf("claude max default = %s", got)
 	}
 }
