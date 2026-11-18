@@ -111,6 +111,8 @@ type Client struct {
 	warmClaim       func(ctx context.Context, seq uint64, count int) error // tests replace the server's answer to a warm claim (see claimWarm)
 	warmEnded       func(agentID, reason string)                           // tests see the real end of a kept warm process here (see noteWarmEnded)
 	processSink     func(turnID string, exit adapter.ExitInfo)             // tests see each turn's exit as it is sent to the server
+	commands        *commandRunner                                         // long commands this supervisor runs outside turns (see commands.go)
+	commandSink     func(protocol.CommandExit)                             // tests see each command's end as it is sent to the server
 	kaRenewEvery    time.Duration                                          // tests shorten protocol.KeepAliveScopeRenewEvery here; zero is the default
 	kaWaitTerminate time.Duration                                          // tests shorten keepAliveWaitTerminate here; zero is the default
 	warmNow         func() time.Time
@@ -118,7 +120,7 @@ type Client struct {
 }
 
 func NewClient(machineID, machineKey, serverURL string, journal *Journal, implementation adapter.Adapter) *Client {
-	client := &Client{MachineID: machineID, MachineKey: machineKey, ServerURL: serverURL, HTTPClient: tlsclient.NewHTTPClient(0), SupervisorVersion: "aimebu-v2", Journal: journal, Adapter: implementation, PingInterval: 15 * time.Second, ReconnectDelay: time.Second, launcherReprobeInterval: time.Minute, desired: make(map[string]protocol.DesiredAgent), active: make(map[string]string), running: make(map[string]adapter.Turn)}
+	client := &Client{MachineID: machineID, MachineKey: machineKey, ServerURL: serverURL, HTTPClient: tlsclient.NewHTTPClient(0), SupervisorVersion: "aimebu-v2", Journal: journal, Adapter: implementation, PingInterval: 15 * time.Second, ReconnectDelay: time.Second, launcherReprobeInterval: time.Minute, desired: make(map[string]protocol.DesiredAgent), active: make(map[string]string), running: make(map[string]adapter.Turn), commands: newCommandRunner()}
 	for _, item := range implementation.Catalog() {
 		client.CapabilityReports = append(client.CapabilityReports, protocol.CapabilityReport{Tool: item.Tool, Version: item.Version, Environment: item.Environment, Flags: implementation.Capabilities(item.Version, item.Environment)})
 	}
@@ -287,6 +289,14 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	openCommands, err := c.Journal.OpenCommands(ctx)
+	if err != nil {
+		return err
+	}
+	commandExits, err := c.Journal.PendingCommandExits(ctx)
+	if err != nil {
+		return err
+	}
 	c.mu.Lock()
 	for i := range agents {
 		for j := range agents[i].OpenTurns {
@@ -294,7 +304,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -424,6 +434,15 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	for _, exit := range commandExits {
+		ending := exit
+		if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.CommandEnded, AgentID: exit.AgentID, Generation: exit.Generation, JobID: exit.JobID, CommandExit: &ending}); err != nil {
+			return err
+		}
+	}
+	// The commands of a dead predecessor are watched until their end is known: one still running is not this process's child, so its exit
+	// marker (or its disappearance) is the only proof of an end.
+	c.reconcileCommands(ctx)
 	pending, err := c.Journal.PendingAnswers(ctx)
 	if err != nil {
 		return err
@@ -721,10 +740,39 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				return err
 			}
 		case protocol.Ack:
+			if frame.Level == "command_exit" {
+				if frame.JobID == "" {
+					return fmt.Errorf("unexpected command acknowledgement")
+				}
+				if err := c.Journal.AcknowledgeCommandExit(ctx, frame.JobID); err != nil {
+					return err
+				}
+				continue
+			}
 			if frame.Level != "process" || frame.TurnID == "" {
 				return fmt.Errorf("unexpected acknowledgement %q", frame.Level)
 			}
 			if err := c.Journal.AcknowledgeExit(ctx, frame.TurnID); err != nil {
+				return err
+			}
+		case protocol.CommandRun:
+			if frame.Command == nil {
+				return errors.New("missing command")
+			}
+			result := c.commandStart(ctx, *frame.Command)
+			result.ReqID = frame.ReqID
+			if err := c.send(ctx, conn, result); err != nil {
+				return err
+			}
+		case protocol.CommandCancel:
+			result := c.commandCancel(frame.JobID)
+			result.ReqID = frame.ReqID
+			if err := c.send(ctx, conn, result); err != nil {
+				return err
+			}
+		case protocol.CommandLogRead:
+			result := c.commandLogTail(frame.ReqID, frame.LogPath, frame.LogMaxBytes)
+			if err := c.send(ctx, conn, result); err != nil {
 				return err
 			}
 		case protocol.Error:
@@ -1513,6 +1561,7 @@ func (c *Client) handleControl(frame protocol.Frame) bool {
 	c.mu.Unlock()
 	if frame.DesiredState == "stopped" {
 		c.clearWarmRefusal(frame.AgentID)
+		c.killAgentCommands(frame.AgentID)
 	}
 	if frame.DesiredState == "stopped" && turn == nil {
 		// A warm process is ended and reaped before the ack and before the key goes: nothing is left holding either. If it is not confirmed

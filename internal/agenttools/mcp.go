@@ -51,6 +51,19 @@ var catalog = []tool{
 		"room_id": map[string]string{"type": "string"}, "target_agent_id": map[string]string{"type": "string"}, "target_lead": map[string]string{"type": "boolean"}, "body": map[string]string{"type": "string"}, "kind": map[string]string{"type": "string"}, "timezone": map[string]string{"type": "string"}, "interval_seconds": map[string]string{"type": "integer"}, "local_time": map[string]string{"type": "string"}, "weekday": map[string]string{"type": "integer"}, "at": map[string]string{"type": "string"}, "request_key": map[string]string{"type": "string"},
 	}, "required": []string{"room_id", "body", "kind", "timezone", "request_key"}}},
 	{"usage_left", "Show remaining project agent slots, spawn rate capacity, and available provider quota.", empty},
+	{"run_command", "Start a long command that runs outside your turn, under the supervisor, in your own checkout: the same rights your own Bash has there, and nothing more. It keeps running while no turn runs; when it ends you are woken with a note carrying the exit code, the duration, the last lines of output and the path to the full log. At most two run at a time for you. Cwd stays inside your checkout. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+		"cmd": map[string]string{"type": "string"}, "cwd": map[string]string{"type": "string"},
+		"timeout_seconds": map[string]string{"type": "integer"}, "label": map[string]string{"type": "string"},
+		"room_id":     map[string]string{"type": "string", "description": "Where the completion note goes; defaults to the room your current turn runs in"},
+		"request_key": map[string]string{"type": "string"},
+	}, "required": []string{"cmd", "request_key"}}},
+	{"list_commands", "List the commands you started outside your turn, running and finished: state, exit code, duration and the log path.", empty},
+	{"command_log", "Read a bounded tail of the full log of one of your commands.", map[string]any{"type": "object", "properties": map[string]any{
+		"job_id": map[string]string{"type": "string"}, "lines": map[string]string{"type": "integer"}, "max_bytes": map[string]string{"type": "integer"},
+	}, "required": []string{"job_id"}}},
+	{"cancel_command", "Cancel one of your running commands. Its end still wakes you with a note. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+		"job_id": map[string]string{"type": "string"}, "request_key": map[string]string{"type": "string"},
+	}, "required": []string{"job_id", "request_key"}}},
 	{"create_room", "Active lead only. Create a task room in your project. Omit parent_id to place it under the project home room. Join the room and announce it in the parent room. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"title": map[string]string{"type": "string"}, "parent_id": map[string]string{"type": "string"},
 		"worktree":    map[string]string{"type": "boolean", "description": "Create a Git worktree for this task room"},
@@ -280,6 +293,46 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		body = input
 	case "usage_left":
 		path = "/api/agent/usage-left"
+	case "run_command":
+		method, path = http.MethodPost, "/api/agent/commands"
+		requestKey = getString("request_key")
+		if strings.TrimSpace(getString("cmd")) == "" {
+			return toolResult("cmd is required", true)
+		}
+		var timeout int64
+		if len(args["timeout_seconds"]) > 0 && (json.Unmarshal(args["timeout_seconds"], &timeout) != nil || timeout < 1) {
+			return toolResult("timeout_seconds must be a positive integer", true)
+		}
+		body = map[string]any{"cmd": getString("cmd"), "cwd": getString("cwd"), "timeout_seconds": timeout,
+			"label": getString("label"), "room_id": getString("room_id")}
+	case "list_commands":
+		path = "/api/agent/commands"
+	case "command_log", "cancel_command":
+		jobID := getString("job_id")
+		if !strings.HasPrefix(jobID, "cmd_") || len(jobID) > 100 {
+			return toolResult("invalid job_id", true)
+		}
+		if name == "command_log" {
+			values := url.Values{}
+			for _, field := range []string{"lines", "max_bytes"} {
+				if len(args[field]) == 0 {
+					continue
+				}
+				var number int64
+				if json.Unmarshal(args[field], &number) != nil || number < 1 {
+					return toolResult(field+" must be a positive integer", true)
+				}
+				values.Set(field, fmt.Sprint(number))
+			}
+			path = "/api/agent/commands/" + url.PathEscape(jobID) + "/log"
+			if len(values) > 0 {
+				path += "?" + values.Encode()
+			}
+		} else {
+			method, path = http.MethodPost, "/api/agent/commands/"+url.PathEscape(jobID)+"/cancel"
+			requestKey = getString("request_key")
+			body = map[string]any{}
+		}
 	case "create_room":
 		method, path = http.MethodPost, "/api/agent/rooms"
 		requestKey = getString("request_key")

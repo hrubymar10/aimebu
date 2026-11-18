@@ -876,6 +876,53 @@ adapter provides a short echo for local demos, while installed Claude Code,
 Codex, Pi, OpenCode, and Mistral Vibe CLIs use their native adapters. An unavailable CLI does not
 appear in the supervisor's catalog.
 
+## Commands outside a turn
+
+An agent can start a long command (a test gate, 15–30 minutes) that runs
+outside its turn, so it neither holds the turn nor dies with it: `run_command`
+in the agent toolbox, which records a `command_job` and sends `command_run` to
+the machine (see the contract for the frames). The supervisor runs it in its
+own process group, in the agent's own checkout (`cwd` may not leave it), with
+the same rights that agent's own Bash has there and nothing more: none of the
+agent's keys is in its environment. It is not a turn: no turn row, no usage,
+and the turn limits do not apply to it.
+
+- **Where it runs.** On the machine, for an agent on a native launcher. A
+  containerized launcher runs commands in the agent's container through a
+  `run_command` feature of harness-docker (`HARNESS_DOCKER_PRINT_FEATURES=1
+  <launcher> --version` must print `run_command`); one without it is refused
+  with the update to make, and never falls back to running the command on the
+  host (the container is shared and its paths differ). The contract for that
+  mode is `docs/design/harness-docker-run-command.md`.
+- **Output.** The process's stdout and stderr are captured into the job's log
+  at `<checkout>/.aimebu/commands/<job>.log` — beside the checkout's runtime
+  state, so the path the wake note quotes is one the agent can open from its
+  own Bash, native or in a container. Each line is redacted (agent keys,
+  bearer and basic credentials, cookies, anything named like a key, token,
+  secret or password) before it is written; the log is capped at 10 MiB with a
+  truncation marker, and the note carries only its last 8 KiB.
+- **The wake note.** When the process ends (exit, timeout, cancel, a kill on
+  stop), the supervisor journals the end and reports it; the server writes a
+  system message in the room the command was started from and wakes the agent
+  with it: what ran, the exit code and duration, the tail of the output and
+  the log path. A stopped agent or a closed room gets no note (the event says
+  so), and the result stays in `list_commands`.
+- **Journal and restart.** `command_start` is written once the process
+  exists, `command_exit` when it ends, replayed until the server acknowledges
+  it. The wrapper writes its exit code to `<log>.exit` before it exits, so a
+  supervisor that restarts (and cannot wait for a process it did not start)
+  still learns the real exit code; a job whose process is gone and left no
+  marker is reported `lost`, never guessed at. A process of a dead predecessor
+  that is still running is watched until its marker appears and is never
+  killed by the new supervisor.
+- **Cancellation and limits.** A cancel is SIGTERM to the process group and
+  SIGKILL after 8 seconds; a stop of the agent kills its commands the same
+  way. A Docker cancel is confirmed only as far as the wrapper confirms it, so
+  an unconfirmed end is reported `cancelled_unconfirmed`, never as done. Each
+  job has a timeout (default 1 hour, cap 6); at most two run per agent. The
+  job's log and its `.exit` marker are swept with the checkout's runtime
+  state.
+
 ## Agent output
 
 Each agent's harness writes to stderr while a turn runs (warnings, launcher

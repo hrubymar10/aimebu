@@ -203,6 +203,7 @@ project by a private key that the supervisor sets up; you never configure it.
 | Rooms and people | `list_rooms`, `list_agents`, `room_history`, `message_get`, `react`, `attachment_get` |
 | Talking | `dm_human`, `dm_agent` (a lead may reach another project), `create_room`, `close_room` |
 | Running the team (lead) | `spawn_agent`, `stop_agent`, `set_role`, `usage_left` |
+| Long commands | `run_command`, `list_commands`, `command_log`, `cancel_command` |
 | Planning | `handbook_get`, `handbook_update`, `list_schedules`, `create_schedule`, `list_macros` |
 | Memory | `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall` |
 

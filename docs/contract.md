@@ -568,6 +568,22 @@ Execution
   terminal_event, report_json?, policy_json?, started_at?, ended_at?)
   — at most one turn per agent with exec in (pending, running)
 - **turn_note**(turn_id, note_id)
+- **command_job**(id, agent_id, generation, machine_id, project_id, room_id,
+  label?, cmd, cwd, timeout_seconds,
+  state[queued|running|done|cancelled|cancelled_unconfirmed|timed_out|lost|
+  failed], exit_code?, log_path, visible_log_path?, visible_cwd?, log_bytes,
+  tail_truncated, error?, started_at?, ended_at?, created_at) — one long
+  command an agent starts **outside its turn** (migration 121): it runs under
+  the supervisor in the agent's own checkout, with no turn row, no usage and no
+  turn limit, and its end wakes the agent with a note. The log lives at
+  `<checkout>/.aimebu/commands/<id>.log` (the runtime state no commit carries),
+  so the path the note quotes is one the agent can open from its own Bash. At
+  most 2 per agent (`queued` or `running`); `cwd` stays inside the checkout;
+  `timeout_seconds` defaults to 3600 and is capped at 21600. `failed` is a job
+  the machine refused to start (the tool call itself says why, so nothing
+  wakes); `lost` is one whose end a supervisor restart could not learn;
+  `cancelled_unconfirmed` is a cancel in a container that could not be
+  confirmed gone.
 - **outbox**(id, turn_id, answer_rev, idx, agent_id, room_id, body,
   visual_plan_json?, appendix_pages_json?,
   reply_to?, thread_root?, ask_json?, needs_attention,
@@ -579,18 +595,19 @@ Execution
   UNIQUE (turn_id, answer_rev); the server's durable answer acknowledgement
 - **request_key**(actor_kind, actor_id, kind[spawn|team_spawn|control|
   scope_control|switch|inbox_answer|recovery_decision|room_create|room_close|
-  schedule_create|leaderboard_start|dm_agent|dm_human], key,
+  schedule_create|leaderboard_start|dm_agent|dm_human|command_run], key,
   request_digest, result_json, created_at) —
   UNIQUE (actor_kind, actor_id, kind, key); same key + same digest → original
   result; same key + different digest → `conflict`. The `kind` column has a
   CHECK constraint (migration 52 rebuild, extended with `dm_agent` by migration
-  81 and `dm_human` by migration 87) listing exactly the values above, so a new kind needs a migration. `team_spawn` is reused by keyed team-flow
+  81, `dm_human` by migration 87 and `command_run` by migration 121) listing
+  exactly the values above, so a new kind needs a migration. `team_spawn` is reused by keyed team-flow
   migration requests; `leaderboard_start` is retired (the leaderboard rows
   were deleted by migration 56). The kinds written today are spawn, team_spawn,
   switch, scope_control, control (agent lead tool), room_create, room_close,
   schedule_create, inbox_answer, recovery_decision, dm_agent (a lead's private
-  message to an agent) and dm_human (an agent's private message to a person of
-  its project).
+  message to an agent), dm_human (an agent's private message to a person of
+  its project) and command_run (an agent's long command outside its turn).
 
 Inbox, usage, events, settings
 - **inbox_item**(id, project_id, room_id, message_id?, turn_id?,
@@ -1059,6 +1076,19 @@ Records (all keyed by turn_id + generation):
   its UTF-8 bytes.
 - `receipt{answer_rev, result}` — on terminal receipt; then the answer
   payload may be pruned.
+- `command_start{job_id, agent_id, generation, pid, pid_start, cmd, log_path,
+  started_at}` — one long command outside a turn, written after its process
+  starts and before anything else may claim it; a command with no such record
+  is not running.
+- `command_exit{job_id, exit_code?, timed_out, killed, unconfirmed, lost,
+  started_at, ended_at, log_bytes, tail_truncated, tail, exit_acked}` — how a
+  command ended, replayed until the server acknowledges it (`ack` with
+  `level:"command_exit"`). A job this supervisor finds at startup with no exit
+  record is reconciled from its exit marker (`<log>.exit`, the file the
+  command's own wrapper writes beside the log): the marker's code is reported,
+  or `lost` when the process is gone and left none. A still-running process of
+  a dead predecessor is watched until its marker appears; it is never waited
+  for (it is not this process's child) and never killed.
 The journal stores a random `journal_id` created once at initialization and
 preserved on reopen. A replacement journal gets a different ID.
 Write ordering per turn: turn_start → (spawn) → activity* → process_exit /
@@ -1105,10 +1135,15 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_warm?, held_keys?[agent_id],
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_warm?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
-  digest?}]}]}`
+  digest?}]}], command_open?[{job_id, agent_id, generation, pid, pid_start?,
+  log_path, started_at}], command_exits?[{job_id, agent_id, generation,
+  exit_code?, timed_out?, killed?, unconfirmed?, lost?, started_at, ended_at,
+  log_bytes, tail_truncated?, tail?}]}` — `command_open` and `command_exits`
+  are the long commands outside a turn this supervisor still runs and the ends
+  it has not been acknowledged for.
 - S→M `hello_ack{v, desired[{agent_id, generation, desired, desired_rev}],
   redeliver[...], resend_receipts[...], harness_settings[...],
   harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...], telemetry?}` — the optional probe directories are the
@@ -1299,6 +1334,33 @@ it never silently reruns a turn with uncertain effects.
   bytes in the machine's `supervisor/agent-logs` and how many agents have
   output there; `code` is `no_log` when the machine keeps none. Only the size
   crosses the wire.
+- S→M `command_run{v,req_id,job_id,agent_id,generation,launcher_id?,
+  checkout_path,cmd,cwd,timeout_seconds,log_path}`; M→S
+  `command_started{v,req_id,job_id,agent_id,generation,result[ok|error],
+  message?,log_path?,visible_log_path?,visible_cwd?}`. One long command
+  outside a turn, started by the agent's own toolbox (`run_command`); the
+  server sends it only when the hello advertised `supports_commands`. The
+  supervisor runs it in its own process group in the agent's checkout (`cwd`
+  is relative to it and may not leave it), captures stdout and stderr into the
+  job's log (redacted, capped, in `<checkout>/.aimebu/commands/`), and records
+  `command_start` before anything else may claim it. The wrapper writes its
+  exit code beside the log before it exits. A containerized launcher needs the
+  `run_command` feature (`HARNESS_DOCKER_PRINT_FEATURES=1`); one without it is
+  refused with the update to make (harness-docker), and never falls back to
+  the host. The command gets none of the agent's keys.
+- M→S `command_ended{v, job_id, agent_id, generation, command_exit:{exit_code?,
+  timed_out?, killed?, unconfirmed?, lost?, started_at, ended_at, log_bytes,
+  tail_truncated?, tail?}}`; S→M `ack{v, job_id, level=command_exit}` after the
+  end commits. The end is replayed until it is acknowledged, like a turn's
+  process exit. `tail` is the last lines of the job's output, redacted before
+  it is sent; it is what the wake note shows.
+- S→M `command_cancel{v,req_id,job_id}`; M→S `command_cancel_result{v,req_id,
+  job_id,result[ok|error],message?}` — SIGTERM to the process group, SIGKILL
+  after a grace; the end still arrives as `command_ended`.
+- S→M `command_log_read{v,req_id,log_path,log_max_bytes?}`; M→S
+  `command_log_result{v,req_id,log_path,log?,log_truncated?,result,
+  message?}` — a bounded tail of one job's log (default 64 KiB, never more
+  than 1 MiB), cut at a line start and redacted.
 - M⇄S `ping/pong` every 15 s → `machine.last_seen`; offline after 60 s.
 - S→M `spawn{v, req_id, agent_id, generation, desired_rev,
   agent:{id, tool, variant, launcher_id?, model, provider}, agent_key,
@@ -1580,6 +1642,13 @@ Computed in the message-insert transaction; every decision → note or
   overwritten by the `reply` reason.
   An AI reply to a human still targets that human;
 - inbox answer → the requester;
+- a command that ends (`command_job`) → its agent, reason `command_finished`,
+  with the system message the end writes in the room the command was started
+  from (exit code or how it ended, duration, the tail of its output and the
+  path to the full log). It is ordinary queued work: not an ambient reason, so
+  the hop guard counts it with nothing else and it does not change. An agent
+  that is stopped or gone, or a room that is closed or left, gets no note: the
+  event records `not_woken`, and the result stays in `list_commands`;
 - in a chat between agents (`room.project_id` is the reserved project, `kind=dm`,
   `dm_key` `agents:<id>:<id>`): an agent's message → only the other agent of the
   pair, reason `agent_dm` (mentions, group tags, replies and handoffs are not

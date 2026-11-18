@@ -1063,7 +1063,7 @@ with a short echo of the latest human message for local demos. See
 [the supervisor guide](supervisor.md).
 The supervisor also creates a private per-agent config for `aimebu
 agent-tools`, a stdio MCP server with `list_rooms`, `list_agents`,
-`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `spawn_agent`, `stop_agent`, `set_role`,
+`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `run_command`, `list_commands`, `command_log`, `cancel_command`, `spawn_agent`, `stop_agent`, `set_role`,
 `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall`,
 `attachment_get`, `message_get` and `react`. Its HTTP routes use the agent's key and scope
 reads and mutations to that agent's project; only an active lead can manage
@@ -1083,6 +1083,15 @@ default supplies a reason, recorded in the room. Using a default is recorded
 there too. An explicit choice is required when the role has no available
 default. One agent is started per call; the response identifies a default
 that was used.
+`run_command` starts a long command outside the turn: it runs under the
+supervisor in the agent's own checkout (the same rights its Bash has there,
+with none of its keys), and when it ends the agent is woken with a note — exit
+code, duration, the tail of the output and the path to the full log in
+`<checkout>/.aimebu/commands/`. `list_commands`, `command_log` and
+`cancel_command` list, read and end them; at most two run at a time per agent.
+An agent in Docker needs a launcher whose harness-docker has the `run_command`
+feature, and is refused with the update to make until it does (see
+[the design note](design/harness-docker-run-command.md)).
 See [the API guide](api.md) for the toolbox routes.
 
 ## Agent names, the loop guard and recovery

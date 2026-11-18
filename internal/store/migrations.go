@@ -1891,6 +1891,50 @@ ALTER TABLE settings_project ADD COLUMN worker_recovery_escalate_minutes INTEGER
 ALTER TABLE inbox_item ADD COLUMN lead_due_at TEXT;
 ALTER TABLE inbox_item ADD COLUMN recovery_lead_id TEXT;
 CREATE INDEX inbox_lead_recovery_due ON inbox_item(lead_due_at) WHERE kind='recovery' AND state='open' AND lead_due_at IS NOT NULL;
+`}, {121, `
+-- A long command an agent starts outside its turn: run under the supervisor in the agent's own checkout, its completion wakes the agent with
+-- a note. The row is the job the tools list and cancel; the supervisor's journal holds the process evidence.
+CREATE TABLE IF NOT EXISTS command_job (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL REFERENCES agent(id),
+  generation INTEGER NOT NULL,
+  machine_id TEXT NOT NULL,
+  project_id TEXT NOT NULL REFERENCES project(id),
+  room_id TEXT NOT NULL REFERENCES room(id),
+  label TEXT NOT NULL DEFAULT '',
+  cmd TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  timeout_seconds INTEGER NOT NULL CHECK (timeout_seconds > 0),
+  state TEXT NOT NULL CHECK (state IN
+    ('queued','running','done','cancelled','cancelled_unconfirmed','timed_out','lost','failed')),
+  exit_code INTEGER,
+  log_path TEXT NOT NULL DEFAULT '',
+  visible_log_path TEXT NOT NULL DEFAULT '',
+  visible_cwd TEXT NOT NULL DEFAULT '',
+  log_bytes INTEGER NOT NULL DEFAULT 0 CHECK (log_bytes >= 0),
+  tail_truncated INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  started_at TEXT,
+  ended_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS command_job_agent_state ON command_job(agent_id, state);
+CREATE INDEX IF NOT EXISTS command_job_room ON command_job(room_id, created_at);
+-- run_command carries an Idempotency-Key like the other tools that write, so a retry starts no second command.
+ALTER TABLE request_key RENAME TO request_key_121_old;
+CREATE TABLE request_key (
+  actor_kind TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN
+    ('spawn','team_spawn','control','scope_control','switch','inbox_answer','recovery_decision','room_create','room_close','schedule_create','leaderboard_start','dm_agent','dm_human','command_run')),
+  key TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (actor_kind,actor_id,kind,key)
+);
+INSERT OR IGNORE INTO request_key SELECT * FROM request_key_121_old;
+DROP TABLE request_key_121_old;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

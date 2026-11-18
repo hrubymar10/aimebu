@@ -57,9 +57,20 @@ const (
 	AgentLogResult       = "agent_log_result"
 	AgentLogUsage        = "agent_log_usage"
 	AgentLogUsageResult  = "agent_log_usage_result"
-	SessionScan          = "session_scan"
-	SessionScanResult    = "session_scan_result"
-	TelemetryConfig      = "telemetry_config"
+	// CommandRun asks a supervisor to start one long command outside any turn (Frame.Command), and CommandStarted is its answer (Result "ok"
+	// once the process runs, "error" with Message when it was refused). CommandEnded reports one end (Frame.CommandExit), CommandCancel asks
+	// for one (Frame.JobID), and CommandCancelResult is its answer. CommandLogRead asks for a bounded tail of one job's log and
+	// CommandLogResult carries it.
+	CommandRun          = "command_run"
+	CommandStarted      = "command_started"
+	CommandEnded        = "command_ended"
+	CommandCancel       = "command_cancel"
+	CommandCancelResult = "command_cancel_result"
+	CommandLogRead      = "command_log_read"
+	CommandLogResult    = "command_log_result"
+	SessionScan         = "session_scan"
+	SessionScanResult   = "session_scan_result"
+	TelemetryConfig     = "telemetry_config"
 	// RetireWarm asks a supervisor to end the idle warm processes of one tool (an account switch is about to change the login they hold) and to answer
 	// with RetireWarmResult: Result "ok" once every one is confirmed gone, "error" (with Message) when one is not.
 	RetireWarm       = "retire_warm"
@@ -171,6 +182,11 @@ type Frame struct {
 	// SupportsAgentKeys says the supervisor keeps each agent's key in memory only, tells the server which keys it holds (HeldKeys) and takes new
 	// ones in hello_ack (AgentKeys). The server grants keys only to a supervisor that says so; an older one keeps its keys on disk.
 	SupportsAgentKeys bool `json:"supports_agent_keys,omitempty"`
+	// SupportsCommands says the supervisor runs long commands outside a turn for an agent (CommandRun) and reports their end (CommandEnded).
+	SupportsCommands bool `json:"supports_commands,omitempty"`
+	// CommandOpen and CommandExits, in hello, are the commands this supervisor still runs and the ends it has not been acknowledged for.
+	CommandOpen  []CommandOpen `json:"command_open,omitempty"`
+	CommandExits []CommandExit `json:"command_exits,omitempty"`
 	// HeldKeys, in hello, is the agents whose key the supervisor holds. A restarted supervisor holds none: it lost them with its memory.
 	HeldKeys []string `json:"held_keys,omitempty"`
 	// AgentKeys, in hello_ack, is a new key for each agent the supervisor should run but holds no key for. Granting one revokes the old key.
@@ -282,6 +298,66 @@ type Frame struct {
 	SupportsProviders bool `json:"supports_providers,omitempty"`
 	// Providers: see Delivery.Providers.
 	Providers []adapter.CustomProvider `json:"providers,omitempty"`
+	// Command is the long command a CommandRun frame asks for, and CommandExit the end a CommandEnded frame reports.
+	Command     *CommandSpec `json:"command,omitempty"`
+	CommandExit *CommandExit `json:"command_exit,omitempty"`
+	// JobID names the command a CommandCancel or CommandLogRead frame is about.
+	JobID string `json:"job_id,omitempty"`
+	// LogPath, VisibleLogPath and VisibleCwd name one job's log and working directory: the host spelling and the one the agent's container
+	// sees. Log is the bounded tail a CommandLogResult carries, and LogTruncated says the read was cut.
+	LogPath        string `json:"log_path,omitempty"`
+	VisibleLogPath string `json:"visible_log_path,omitempty"`
+	VisibleCwd     string `json:"visible_cwd,omitempty"`
+	Log            string `json:"log,omitempty"`
+	LogTruncated   bool   `json:"log_truncated,omitempty"`
+}
+
+// CommandSpec is one long command an agent starts outside its turn. It runs under the supervisor in the agent's own checkout: the same
+// rights its own Bash has, and nothing more.
+type CommandSpec struct {
+	JobID      string `json:"job_id"`
+	AgentID    string `json:"agent_id"`
+	Generation int    `json:"generation"`
+	// LauncherID names the agent's launcher: a containerized one runs the command in the agent's container, never on the host.
+	LauncherID     string `json:"launcher_id,omitempty"`
+	CheckoutPath   string `json:"checkout_path"`
+	Cmd            string `json:"cmd"`
+	Cwd            string `json:"cwd"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	LogPath        string `json:"log_path"`
+}
+
+// CommandExit is how one command ended: the exit code when there is one, and how the end was learned.
+type CommandExit struct {
+	JobID      string `json:"job_id"`
+	AgentID    string `json:"agent_id"`
+	Generation int    `json:"generation"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	// TimedOut says the supervisor killed the process at its timeout, Killed that it killed it on a cancel or a stop, and Unconfirmed that
+	// an end in a container could not be confirmed (the process may still be running there). Lost says a restart found neither the process
+	// nor an exit marker: its exit code is unknown.
+	TimedOut      bool   `json:"timed_out,omitempty"`
+	Killed        bool   `json:"killed,omitempty"`
+	Unconfirmed   bool   `json:"unconfirmed,omitempty"`
+	Lost          bool   `json:"lost,omitempty"`
+	StartedAt     string `json:"started_at"`
+	EndedAt       string `json:"ended_at"`
+	LogBytes      int64  `json:"log_bytes"`
+	TailTruncated bool   `json:"tail_truncated,omitempty"`
+	// Tail is the last lines of the job's output, redacted before it is sent: what the wake note shows.
+	Tail string `json:"tail,omitempty"`
+}
+
+// CommandOpen is a command this supervisor runs, reported with hello after a restart.
+type CommandOpen struct {
+	JobID      string `json:"job_id"`
+	AgentID    string `json:"agent_id"`
+	Generation int    `json:"generation"`
+	Pid        int    `json:"pid"`
+	// PidStart is the process's start time, so a pid a restart finds is never confused with one that was never its own.
+	PidStart  string `json:"pid_start,omitempty"`
+	LogPath   string `json:"log_path"`
+	StartedAt string `json:"started_at"`
 }
 
 // SessionAttribution is what a session's aimebu tool results say about whose it was.

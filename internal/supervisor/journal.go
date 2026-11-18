@@ -121,7 +121,15 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 	CREATE TABLE IF NOT EXISTS journal_meta(
 		id INTEGER PRIMARY KEY CHECK(id=1),journal_id TEXT NOT NULL);
 	CREATE TABLE IF NOT EXISTS warm_process(
-		pid INTEGER PRIMARY KEY,agent_id TEXT NOT NULL,started TEXT NOT NULL,recorded_at TEXT NOT NULL);`)
+		pid INTEGER PRIMARY KEY,agent_id TEXT NOT NULL,started TEXT NOT NULL,recorded_at TEXT NOT NULL);
+	CREATE TABLE IF NOT EXISTS command_start(
+		job_id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,generation INTEGER NOT NULL,pid INTEGER NOT NULL,
+		pid_start TEXT NOT NULL,cmd TEXT NOT NULL,log_path TEXT NOT NULL,started_at TEXT NOT NULL);
+	CREATE TABLE IF NOT EXISTS command_exit(
+		job_id TEXT PRIMARY KEY REFERENCES command_start(job_id),exit_code INTEGER,timed_out INTEGER NOT NULL DEFAULT 0,
+		killed INTEGER NOT NULL DEFAULT 0,unconfirmed INTEGER NOT NULL DEFAULT 0,lost INTEGER NOT NULL DEFAULT 0,
+		started_at TEXT NOT NULL,ended_at TEXT NOT NULL,log_bytes INTEGER NOT NULL DEFAULT 0,
+		tail_truncated INTEGER NOT NULL DEFAULT 0,tail TEXT NOT NULL DEFAULT '',exit_acked INTEGER NOT NULL DEFAULT 0);`)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -570,6 +578,127 @@ func (j *Journal) PendingAnswers(ctx context.Context) ([]PendingAnswer, error) {
 }
 
 func timestamp() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") }
+
+// CommandStartRecord is one long command this supervisor started for an agent, written and fsynced before its process exists.
+type CommandStartRecord struct {
+	JobID      string
+	AgentID    string
+	Generation int
+	Pid        int
+	PidStart   string
+	Cmd        string
+	LogPath    string
+	StartedAt  string
+}
+
+func (j *Journal) RecordCommandStart(ctx context.Context, record CommandStartRecord) (already bool, err error) {
+	if record.StartedAt == "" {
+		record.StartedAt = timestamp()
+	}
+	result, err := j.db.ExecContext(ctx, `INSERT OR IGNORE INTO command_start
+		(job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at) VALUES (?,?,?,?,?,?,?,?)`,
+		record.JobID, record.AgentID, record.Generation, record.Pid, record.PidStart, record.Cmd, record.LogPath, record.StartedAt)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+// CommandStart reads the start record of one job (for a restart that must decide what became of it).
+func (j *Journal) CommandStart(ctx context.Context, jobID string) (CommandStartRecord, error) {
+	var record CommandStartRecord
+	err := j.db.QueryRowContext(ctx, `SELECT job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at
+		FROM command_start WHERE job_id=?`, jobID).Scan(&record.JobID, &record.AgentID, &record.Generation,
+		&record.Pid, &record.PidStart, &record.Cmd, &record.LogPath, &record.StartedAt)
+	return record, err
+}
+
+// RecordCommandExit writes how one command ended. It is replayed until the server acknowledges it.
+func (j *Journal) RecordCommandExit(ctx context.Context, exit protocol.CommandExit) error {
+	if exit.EndedAt == "" {
+		exit.EndedAt = timestamp()
+	}
+	result, err := j.db.ExecContext(ctx, `INSERT OR REPLACE INTO command_exit
+		(job_id,exit_code,timed_out,killed,unconfirmed,lost,started_at,ended_at,log_bytes,tail_truncated,tail,exit_acked)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,0)`, exit.JobID, nullableInt(exit.ExitCode), exit.TimedOut, exit.Killed,
+		exit.Unconfirmed, exit.Lost, exit.StartedAt, exit.EndedAt, exit.LogBytes, exit.TailTruncated, exit.Tail)
+	if err != nil {
+		return err
+	}
+	_, err = result.RowsAffected()
+	return err
+}
+
+func (j *Journal) AcknowledgeCommandExit(ctx context.Context, jobID string) error {
+	result, err := j.db.ExecContext(ctx, `UPDATE command_exit SET exit_acked=1 WHERE job_id=?`, jobID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// OpenCommands are the jobs whose process this journal started and has not seen end: what hello reports after a restart.
+func (j *Journal) OpenCommands(ctx context.Context) ([]protocol.CommandOpen, error) {
+	rows, err := j.db.QueryContext(ctx, `SELECT s.job_id,s.agent_id,s.generation,s.pid,s.pid_start,s.log_path,s.started_at
+		FROM command_start s LEFT JOIN command_exit e ON e.job_id=s.job_id WHERE e.job_id IS NULL ORDER BY s.started_at,s.job_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	open := []protocol.CommandOpen{}
+	for rows.Next() {
+		var item protocol.CommandOpen
+		if err := rows.Scan(&item.JobID, &item.AgentID, &item.Generation, &item.Pid, &item.PidStart, &item.LogPath, &item.StartedAt); err != nil {
+			return nil, err
+		}
+		open = append(open, item)
+	}
+	return open, rows.Err()
+}
+
+// PendingCommandExits are the ends the server has not acknowledged yet; they are replayed with every connection.
+func (j *Journal) PendingCommandExits(ctx context.Context) ([]protocol.CommandExit, error) {
+	rows, err := j.db.QueryContext(ctx, `SELECT e.job_id,s.agent_id,s.generation,e.exit_code,e.timed_out,e.killed,e.unconfirmed,e.lost,
+		e.started_at,e.ended_at,e.log_bytes,e.tail_truncated,e.tail FROM command_exit e JOIN command_start s ON s.job_id=e.job_id
+		WHERE e.exit_acked=0 ORDER BY e.ended_at,e.job_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	exits := []protocol.CommandExit{}
+	for rows.Next() {
+		var exit protocol.CommandExit
+		var exitCode sql.NullInt64
+		if err := rows.Scan(&exit.JobID, &exit.AgentID, &exit.Generation, &exitCode, &exit.TimedOut, &exit.Killed,
+			&exit.Unconfirmed, &exit.Lost, &exit.StartedAt, &exit.EndedAt, &exit.LogBytes, &exit.TailTruncated, &exit.Tail); err != nil {
+			return nil, err
+		}
+		if exitCode.Valid {
+			code := int(exitCode.Int64)
+			exit.ExitCode = &code
+		}
+		exits = append(exits, exit)
+	}
+	return exits, rows.Err()
+}
+
+func nullableInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
 
 // WarmProcess is a warm harness process this supervisor started and has not yet seen end: Started is the process's own start time as the
 // system reports it, so a pid that has since been reused is not mistaken for it.
