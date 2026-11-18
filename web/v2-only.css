@@ -950,3 +950,75 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
   :root:root .harness-master { display: none; }
   :root:root :is(#settings-harnesses, #onboarding-harnesses) .settings-control select { height: 44px; min-height: 44px; }
 }
+
+/* Settings as iPad and iPhone have it: a left column of sections and their categories, and on the right the chosen category's head (icon, name, one line), its
+   subcategories as rows with a chevron, and its settings. A phone shows one level at a time, with a back arrow and a centred title (data-view on the dialog).
+   The General page's blocks are shared by several categories, so the shell names the category (data-cat) and the rest of the blocks are hidden. */
+@media (min-width: 701px) { #settings-dialog .settings-pane { width: 900px; } }
+#settings-dialog .settings-nav { width: 240px; padding: 12px 10px 16px; gap: 2px; }
+.settings-nav-section { display: flex; flex-direction: column; gap: 2px; }
+#settings-dialog .settings-nav-item { display: flex; align-items: center; gap: 10px; }
+.settings-nav-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-icon { flex: none; }
+.settings-nav-chevron { display: none; flex: none; color: var(--text-muted); }
+.settings-cat-host { flex: none; }
+.settings-cat-head { display: flex; align-items: center; gap: 14px; padding: 18px 20px 4px; }
+.settings-cat-icon { display: flex; flex: none; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 12px; background: var(--accent-dim); color: var(--accent); }
+.settings-cat-text { min-width: 0; }
+.settings-cat-name { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); }
+.settings-cat-desc { margin: 2px 0 0; font-size: 0.82rem; color: var(--text-secondary); }
+.settings-cat-path { display: none; }
+.settings-subs { display: flex; flex-direction: column; margin: 12px 20px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.settings-sub-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 10px 14px; border: 0; border-bottom: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font: inherit; font-size: 0.85rem; text-align: left; cursor: pointer; }
+.settings-sub-row:last-child { border-bottom: 0; }
+.settings-sub-row:hover { background: var(--bg-hover); }
+.settings-sub-row:focus-visible, .settings-nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-sub-row .settings-icon { color: var(--text-muted); }
+@keyframes settings-flash { from { background: var(--accent-dim); box-shadow: 0 0 0 3px var(--accent); } to { background: transparent; box-shadow: 0 0 0 3px transparent; } }
+.settings-flash { border-radius: var(--radius); animation: settings-flash 1.8s ease-out; }
+@media (prefers-reduced-motion: reduce) { .settings-flash { animation: none; outline: 3px solid var(--accent); } }
+:root:root[data-theme^="high-contrast"] :is(.settings-subs, .settings-sub-row, .settings-cat-icon) { border-color: var(--text-primary); }
+:root:root[data-theme^="high-contrast"] .settings-cat-icon { border: 2px solid var(--accent); }
+#settings-general[data-cat="appearance"] > .settings-subsection:not(#settings-appearance),
+#settings-general[data-cat="chat"] > .settings-subsection:not(#chat-preferences),
+#settings-general[data-cat="storage"] > .settings-subsection:not(#message-retention, #prompt-cache),
+#settings-general[data-cat="isolation"] > .settings-subsection:not(#agent-isolation),
+#settings-general[data-cat="backup"] > .settings-subsection:not(#settings-backup) { display: none; }
+/* Wide: the category head names the category, so the top bar's title is for screen readers and the bar keeps only the close button. */
+@media (min-width: 701px) {
+  #settings-dialog .settings-body-header { justify-content: flex-end; border-bottom: 0; padding-bottom: 0; }
+  #settings-dialog .settings-body-header .settings-section-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+@media (max-width: 700px) {
+  #settings-dialog .settings-nav-chevron { display: inline-block; }
+  #settings-dialog[data-view="list"] .settings-nav { gap: 6px; }
+  .settings-nav-section { gap: 0; margin: 0 0 8px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg-primary); }
+  .settings-nav-section > .settings-nav-title { padding: 10px 14px 6px; background: transparent; }
+  #settings-dialog[data-view="list"] .settings-nav-section .settings-nav-item { border-radius: 0; border-top: 1px solid var(--border); }
+  #settings-dialog .settings-nav-group-title { margin-top: 0; }
+  #settings-dialog .settings-body-header { justify-content: space-between; }
+  #settings-dialog .settings-body-header .settings-section-title { position: static; width: auto; height: auto; clip: auto; flex: 1 1 auto; text-align: center; }
+  #settings-dialog[data-view="section"] .settings-back-btn { margin-right: 0; }
+  /* On the list nothing is open yet, so the category a wide screen would show is not marked. */
+  :root:root #settings-dialog[data-view="list"] .settings-nav-item.active { background: none; color: var(--text-secondary); font-weight: 400; outline: 0; box-shadow: none; }
+  .settings-cat-name { display: none; }
+  .settings-cat-head { padding: 12px 14px 2px; }
+  .settings-subs { margin: 10px 14px 0; }
+}
+
+/* Search: a box over the sections; while it holds words the sections give way to the results, each a name over the path to its setting. */
+.settings-search { position: relative; display: flex; align-items: center; margin: 0 0 8px; color: var(--text-muted); }
+.settings-search > .settings-icon { position: absolute; left: 10px; pointer-events: none; }
+.settings-search-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px 0 32px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 0.85rem; }
+.settings-search-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.settings-results { display: flex; flex-direction: column; gap: 2px; }
+.settings-result { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--radius); background: none; color: var(--text-secondary); font: inherit; text-align: left; cursor: pointer; }
+.settings-result:hover { background: var(--bg-hover); color: var(--text-primary); }
+.settings-result:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-result > .settings-icon { margin-top: 2px; }
+.settings-result-text { display: flex; flex-direction: column; min-width: 0; }
+.settings-result-name { font-size: 0.85rem; color: var(--text-primary); overflow-wrap: anywhere; }
+.settings-result-path { font-size: 0.72rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.settings-results-empty { margin: 8px 6px; font-size: 0.82rem; color: var(--text-muted); }
+:root:root[data-theme^="high-contrast"] :is(.settings-search-input, .settings-result:hover) { border-color: var(--text-primary); outline: 1px solid var(--accent); }
+@media (max-width: 700px), (pointer: coarse) { .settings-search-input { height: 40px; } .settings-result { min-height: 48px; } }

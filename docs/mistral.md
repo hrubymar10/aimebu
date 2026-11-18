@@ -1,7 +1,7 @@
 # Mistral usage
 
 Paste the browser `Cookie` request header from a signed-in
-`console.mistral.ai` request into Settings → Usages → Mistral. It must include
+`console.mistral.ai` request into Settings → Server → Accounts & usage → Mistral. It must include
 `csrftoken` and an `ory_session_*` cookie. The saved header lives only in
 `usages/config.json` (0600); Settings shows a configured flag, never its value.
 Automatic browser or keychain cookie import is not supported.

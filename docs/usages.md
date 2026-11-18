@@ -1,6 +1,6 @@
 # Usage snapshots
 
-Settings → Usages shows five provider cards: Codex, Claude Code, GitHub
+Settings → Server → Accounts & usage shows five provider cards: Codex, Claude Code, GitHub
 Copilot, Mistral, and Ollama Cloud. The owner can enable providers, change
 their order, set the refresh interval (default 120 seconds, minimum 15),
 choose percent left or used, and refresh snapshots on demand. The cards are visible to the
@@ -10,7 +10,7 @@ reads and usage requests, and `/api/usages` returns 503.
 
 ## Remaining-quota alerts
 
-Settings → Usages sets global warning and critical thresholds (20% and 10%
+Settings → Server → Accounts & usage sets global warning and critical thresholds (20% and 10%
 remaining by default; each must be between 1 and 99, with warning above
 critical). Each fresh, successful provider window that reaches a threshold
 opens a global Inbox alert for the owner and global admins. The alert shows
@@ -19,7 +19,7 @@ inline. The owner alone gets an **Open Usages** action; the Usages cards and
 `GET /api/usages` is the owner's whole snapshot; a global admin reads a redacted one (the limits and the profile names, nothing that names an account or how it signs in) and sees the cards read-only, and every change stays owner-only. Inbox alerts omit email and credentials.
 The five-second background scan also notices switcher profiles added, renamed
 or removed by a separate CLI process. It drops removed profile snapshots and
-pushes a transient update so an open Settings → Usages view refetches its
+pushes a transient update so an open Settings → Server → Accounts & usage view refetches its
 switcher list and usage cards.
 They trigger the normal Inbox sound and hidden-tab browser notification.
 
@@ -115,7 +115,7 @@ not lost; a literal `null` is also refused. Fix the field in the file first.
 
 ## Auto-refresh tokens (Account maintenance)
 
-Settings → Usages → Account maintenance has an **Auto-refresh tokens** toggle
+Settings → Server → Accounts & usage → Account maintenance has an **Auto-refresh tokens** toggle
 (`token_auto_refresh` in `usages/config.json`, `POST /api/usages/settings`). It is
 the normal way to move an install to the token-copy model of
 [switcher.md](switcher.md): on, aimebu becomes the only thing that refreshes the
@@ -139,7 +139,7 @@ Codex migration scans for running processes, the server asks the host
 supervisor to retire idle Codex app-server processes. If their end cannot be
 confirmed, migration waits and retries.
   Codex warm mode works with a ChatGPT subscription once token auto-refresh is
-  on (Settings → Usages), or with an API key; otherwise the agent runs cold.
+  on (Settings → Server → Accounts & usage), or with an API key; otherwise the agent runs cold.
   Token-copy migration makes the subscription login eligible by writing a
   token-only target with no refresh token. A full Codex login runs cold even
   when the owner enables warm mode.
@@ -164,7 +164,7 @@ confirmed, migration waits and retries.
 
 ## Scheduled idle-account warmup (Account maintenance)
 
-Settings → Usages → Account maintenance also offers **Warm idle Claude and Codex
+Settings → Server → Accounts & usage → Account maintenance also offers **Warm idle Claude and Codex
 accounts** (`warmup_mode` and `warmup_schedule` in `usages/config.json`). Warmup
 runs only while Auto-refresh tokens is on and at least one tool has completed its
 token-copy migration. `off` is the default. `force` warms every eligible
@@ -207,7 +207,7 @@ never started records no attempt.
 
 ## Automatic account switching (Settings)
 
-Settings → Usages → **Automatic account switching** is the owner's control panel for
+Settings → Server → Accounts & usage → **Automatic account switching** is the owner's control panel for
 the quota switcher (the rules and the runner are described in
 [quota-switcher.md](quota-switcher.md)). It appears only for an owner while the account
 switcher is enabled, and is hidden if the server does not serve it. Per tool (Claude,
@@ -257,7 +257,7 @@ reconnect's `ready` frame, and on the first usage hint after each connection;
 the owner also refreshes the Health hold badge. Stored Inbox items follow their
 own event stream updates;
 the owner also re-reads `GET /api/usages`, so an
-open Settings → Usages panel updates without a reload. While a field in the
+open Settings → Server → Accounts & usage panel updates without a reload. While a field in the
 panel has focus the reload is held so typing is not lost, and it runs once focus
 leaves; a push that arrives during a reload triggers one more reload afterwards.
 The top-bar Usages icon opens the same data (every configured provider and
@@ -272,7 +272,7 @@ in this browser. Each profile shows v1's token-expiry icon (healthy, expiring, e
 the inactive ones that confirms and calls `POST /api/switcher/{tool}/use`.
 
 The top-bar usages column (the owner and global admins; Refresh and Switch are the owner's) follows the same push while it is
-open, and its Refresh button calls the same forced refresh as Settings → Usages
+open, and its Refresh button calls the same forced refresh as Settings → Server → Accounts & usage
 (`POST /api/usages/refresh`), then re-reads the overview. Inside the cooldown it
 keeps what it shows and says how long to wait; the cooldown is shared with
 Settings.
@@ -301,7 +301,7 @@ says so on stderr when no snapshot exists or the cache is older than twice the
 refresh interval. Cached values are shown as written (`stale` as the server
 marked it). `GET /api/usages` stays the source of live data.
 
-In Settings → Usages and in the header popover, a profile whose data is older
+In Settings → Server → Accounts & usage and in the header popover, a profile whose data is older
 than twice the refresh interval (never less than five minutes) is shown as
 stale: its bars and figures are grey, it claims no pace, its reset is the time
 it was due or "Reset passed" instead of a ticking countdown, and a line says
@@ -311,7 +311,7 @@ the age of its oldest profile, so it never claims to be fresher than a card
 below it.
 
 Each window also carries a short history, drawn as a sparkline under its bar
-in Settings → Usages and in the header popover. The server keeps a bounded
+in Settings → Server → Accounts & usage and in the header popover. The server keeps a bounded
 ring per provider, profile and window in `usages/history.json` (mode 0600, not
 in SQLite): one sample of the used percentage at most every 15 minutes, only
 from a fresh successful snapshot (a stale or failed read leaves a gap, not a

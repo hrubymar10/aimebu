@@ -10,6 +10,7 @@ const INSTANCE = new Set(['roles', 'prompts', 'macros', 'machines', 'harnesses']
 export function tabHidden(key, { owner, admin, usagesHidden, users }) {
   if (key === 'usages') return usagesHidden;
   if (key === 'users') return users === 'hidden';
+  if (key === 'backup') return !(owner || admin); // the settings backup: an admin exports, the owner imports
   if (key === 'agents') return !(owner || admin);
   return INSTANCE.has(key) ? !(owner || admin) : false;
 }

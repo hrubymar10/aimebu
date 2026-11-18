@@ -17,7 +17,7 @@ single `switcher/.lock` flock (the same file, so only one lock is taken). An
 unsupported state version fails loudly;
 there is no automatic profile conversion or merge between roots.
 
-For a fresh root, enable the switcher in Settings → Usages, then **Import
+For a fresh root, enable the switcher in Settings → Server → Accounts & usage, then **Import
 current login** before switching. Import adopts the live login as a profile.
 Existing v1 profiles at cutover need no re-import. **Add profile** creates an
 empty destination. Switching to an empty profile clears the live credential
@@ -49,7 +49,7 @@ live login, so the CLI asks `Proceed? [y/N]` first. Pass `-y` / `--yes` to
 skip the prompt; without a terminal on stdin the command refuses and asks for
 `-y`. `aimebu switcher remove <tool> <profile>` deletes an inactive profile
 without a prompt. In the UI, removing an active profile asks for confirmation.
-The open Settings → Usages view refetches after a web removal. The server also
+The open Settings → Server → Accounts & usage view refetches after a web removal. The server also
 detects profile names changed by the CLI on its five-second usage scan and
 notifies open views; a removed profile disappears without reloading the page.
 Only the owner can change profiles through the web API; switcher status and
@@ -60,7 +60,7 @@ them without refreshing the incoming profile. It still uses the normal safe
 swap or token-only fan-out, never clears a credential because it is expired,
 and may leave the selected account needing a fresh login. The CLI asks for
 confirmation; `-y` skips the prompt. The owner can choose **Install anyway**
-on a profile with a `reauth_required` alert in Settings → Usages. The switch
+on a profile with a `reauth_required` alert in Settings → Server → Accounts & usage. The switch
 API accepts `{"name":"<profile>","force":true}`. Ordinary switches still
 refresh due incoming profiles before installing them.
 
@@ -69,7 +69,7 @@ and switching with no active profile points at `aimebu switcher import` first.
 Usage mistakes exit 2; failed operations exit 1.
 
 Renaming a profile (`POST /api/switcher/<tool>/profiles/<name>/rename` with
-`{"name": "<new>"}`, or **Rename** on the profile card in Settings → Usages) is
+`{"name": "<new>"}`, or **Rename** on the profile card in Settings → Server → Accounts & usage) is
 allowed while the profile is active and while agents run: only the stored
 profile moves, never the live credential file. The profile's backups and
 rotated-credential rescue files move with it, and a destination name that

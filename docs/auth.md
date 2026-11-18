@@ -148,7 +148,7 @@ loading password hashes.
 Send the token in `X-CSRF-Token` on mutations. `GET /api/me` returns the
 current user and CSRF token; `POST /api/logout` revokes the session.
 
-Settings → Users lets a project owner issue a single-use invitation for that
+Settings → Server → Users & invites lets a project owner issue a single-use invitation for that
 project, change member roles, or remove members. The first account is the
 global owner and can also list all accounts, issue password-reset links, and
 deactivate accounts. An invitation can grant viewer, operator, or owner access;
@@ -202,7 +202,7 @@ person caused it, an owner of the lead's own project must.
 
 ## Global admins
 
-The owner is the first account. The owner can flag other accounts as **admins** (Settings → Users → Accounts, the *Admin* toggle that only
+The owner is the first account. The owner can flag other accounts as **admins** (Settings → Server → Users & invites → Accounts, the *Admin* toggle that only
 the owner sees; `PUT /api/users/{user}/admin {admin}`, migration adds `user.admin`). An admin has the owner's reach over people, projects
 and global settings, and can read the list of machines and a harness's launchers, but cannot pair, approve or revoke a machine, change what a machine runs (launchers, harness models and providers, a harness's path, detecting a harness's models), nor reach provider logins, the account switcher, the quota switcher or the v1 import. A deactivated account has no reach whatever its flag
 says; taking the flag away ends it at once.
@@ -215,7 +215,7 @@ says; taking the flag away ends it at once.
 | password-reset link, deactivate | any account but the owner can be deactivated | ordinary accounts only | no | no |
 | appoint or remove admins | yes | no | no | no |
 | macros, message expiry, sounds, global memory, global roles/prompts, cleanup and disk report, settings export, the machine list and a harness's launchers (read-only), the usage limits (read-only: no e-mail, host, error text or credential state) | yes | yes | no | no |
-| stop all agents on a machine (`POST /api/machines/{id}/agents/stop`, Settings → Machines): the agents they could stop one by one | yes | yes | no | no |
+| stop all agents on a machine (`POST /api/machines/{id}/agents/stop`, Settings → Agents → Machines): the agents they could stop one by one | yes | yes | no | no |
 | machines (pairing, approval, revoking), what a machine runs (detecting the installed harnesses, saving, changing or removing a launcher; a harness's models, providers and path override; detecting a harness's models, which sends a provider key), account switcher and changing provider usages and credentials, quota switcher and limit guard, v1 import, settings preview/apply | yes | no | no | no |
 | admit a paired machine for a project (`POST /api/projects/{project}/machine-folders/{machine}/admit`) | yes | yes | their own project | no |
 

@@ -151,8 +151,8 @@ async function main() {
     // gap before every section, and on a phone a "Settings" title.
     for (const [width, height] of [[1100, 720], [390, 740]]) {
       await first.setViewport({ width, height });
-      // On a phone Settings opens on its list of sections; the General tab shows the section.
-      if (width < 700) await first.evaluate(() => document.querySelector('#settings-general-tab').click());
+      // The expiry window is in Storage & performance: the tab shows its category (on a phone, from the list).
+      await first.evaluate(() => document.querySelector('#settings-storage-tab').click());
       await first.waitForFunction(() => !document.querySelector('#settings-general').hidden && document.querySelector('#message-expiry-save').getBoundingClientRect().width > 0);
       const general = await first.evaluate(() => {
         const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; };
@@ -163,18 +163,19 @@ async function main() {
         return { saveBesideInput: Math.abs((save.top + save.bottom) / 2 - (input.top + input.bottom) / 2) <= 6 && save.left >= input.right - 1, gaps, caption: getComputedStyle(document.querySelector('#settings-dialog .settings-nav-title')).display !== 'none' };
       });
       assert.ok(general.saveBesideInput, `${width}px: the expiry Save sits beside its input: ${JSON.stringify(general)}`);
-      assert.ok(general.gaps.length >= 3 && Math.max(...general.gaps) - Math.min(...general.gaps) <= 2, `${width}px: the gap before each section is the same: ${JSON.stringify(general.gaps)}`);
+      assert.ok(general.gaps.length >= 1 && Math.max(...general.gaps) - Math.min(...general.gaps) <= 2, `${width}px: the gap before each section is the same: ${JSON.stringify(general.gaps)}`);
       assert.equal(general.caption, true, `${width}px: the nav keeps v1's Settings caption on a phone too`);
       if (width < 700) {
         // The list of sections is the phone's first screen: the caption is seen there, and the back arrow of a section returns to it.
         await first.evaluate(() => document.querySelector('#settings-back').click());
         assert.deepEqual(await first.evaluate(() => [document.querySelector('#settings-dialog .settings-nav-title').getBoundingClientRect().width > 0, getComputedStyle(document.querySelector('#settings-dialog .settings-body')).display]), [true, 'none'], 'the back arrow shows the list of sections');
-        await first.evaluate(() => document.querySelector('#settings-general-tab').click());
+        await first.evaluate(() => document.querySelector('#settings-storage-tab').click());
       }
     }
     await first.setViewport({ width: 1100, height: 720 });
     // Settings backup (owner): Export downloads valid JSON of the instance's settings, and Import previews before it saves anything.
     {
+      await domClick(first, '#settings-backup-tab'); // Backup & restore is its own category
       await first.waitForFunction(() => !document.querySelector('#settings-backup').hidden);
       const exported = await first.evaluate(async () => {
         let blob = null; const make = URL.createObjectURL; URL.createObjectURL = value => { blob = value; return make.call(URL, value); };
@@ -1500,15 +1501,15 @@ async function main() {
     assert.equal(await first.$eval('#usages-toggle', el => el.title), 'Usages');
     assert.equal(await first.$eval('#settings-toggle', el => el.title), 'Settings');
     await openSettings(first);
-    await domClick(first, '#settings-general-tab');
+    await domClick(first, '#settings-appearance-tab');
     assert.deepEqual(await first.$eval('#theme-select', el => { const css = getComputedStyle(el); return [css.paddingTop, css.paddingLeft]; }), ['0px', '8px'], "the theme select is v1's field: no vertical padding to clip its text");
     await first.select('#theme-select', 'high-contrast-dark');
     assert.equal(await first.evaluate(() => document.documentElement.dataset.theme), 'high-contrast-dark');
-    await domClick(first, '#settings-general-tab');
-    await first.waitForFunction(() => document.querySelector('#settings-general-tab')?.classList.contains('active'));
-    await first.waitForFunction(() => getComputedStyle(document.querySelector('#settings-general-tab')).color === 'rgb(255, 255, 255)');
-    await first.waitForFunction(() => /, 0\)$/.test(getComputedStyle(document.querySelector('#settings-general-tab')).backgroundColor)); // v1 fades the tab's tint out in high contrast
-    const hcNavContrast = await first.$eval('#settings-general-tab', el => {
+    await domClick(first, '#settings-appearance-tab');
+    await first.waitForFunction(() => document.querySelector('#settings-appearance-tab')?.classList.contains('active'));
+    await first.waitForFunction(() => getComputedStyle(document.querySelector('#settings-appearance-tab')).color === 'rgb(255, 255, 255)');
+    await first.waitForFunction(() => /, 0\)$/.test(getComputedStyle(document.querySelector('#settings-appearance-tab')).backgroundColor)); // v1 fades the tab's tint out in high contrast
+    const hcNavContrast = await first.$eval('#settings-appearance-tab', el => {
       const rgb = value => value.match(/[\d.]+/g).slice(0, 3).map(Number);
       const lum = value => rgb(value).map(v => { v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
       const style = getComputedStyle(el), behind = getComputedStyle(el.closest('nav')).backgroundColor, a = lum(style.color), b = lum(/, 0\)$/.test(style.backgroundColor) ? behind : style.backgroundColor);
@@ -1516,17 +1517,19 @@ async function main() {
     });
     assert.ok(hcNavContrast.ratio >= 7, `selected HC settings tab contrast ${JSON.stringify(hcNavContrast)}`);
     const settingsSize = await first.$eval('#settings-dialog .settings-pane', el => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, nav: el.querySelector('nav').getBoundingClientRect().width }));
-    assert.equal(Math.round(settingsSize.width), 760);
+    // (the two columns are wider than v1's single list: 900px pane, 240px nav)
+    assert.equal(Math.round(settingsSize.width), 900);
     assert.equal(Math.round(settingsSize.height), 720 - 48, 'the Settings pane is inset 24px from the top and the bottom of the window, not edge to edge');
-    assert.equal(Math.round(settingsSize.nav), 180);
-    for (const section of ['general', 'usages', 'notifications', 'roles', 'machines']) {
-      await first.click(`#settings-${section}-tab`);
+    assert.equal(Math.round(settingsSize.nav), 240);
+    for (const [tab, section] of [['appearance', 'general'], ['usages', 'usages'], ['notifications', 'notifications'], ['roles', 'roles'], ['machines', 'machines']]) {
+      await first.click(`#settings-${tab}-tab`);
       assert.equal(await first.$eval(`#settings-${section}`, el => !el.hidden), true, `${section} settings section visible`);
       assert.equal(await first.$eval(`#settings-${section}`, el => el.scrollWidth <= el.clientWidth + 2), true, `${section} settings fits pane`);
     }
-    await domClick(first, '#settings-general-tab');
+    await domClick(first, '#settings-appearance-tab');
     assert.equal(await first.$eval('.sidebar', el => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
     await domClick(first, '#settings-close');
+    await first.waitForFunction(() => !location.hash.startsWith('#settings')); // closing walks the history back; a reload before that would reopen Settings
     await first.$eval('#spawn-dialog', el => el.showModal());
     const spawnTab = await first.$eval('#spawn-cancel', el => ({ color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor, border: getComputedStyle(el).borderColor }));
     assert.notEqual(spawnTab.color, spawnTab.background);
@@ -1540,7 +1543,7 @@ async function main() {
     assert.equal(await first.evaluate(() => document.documentElement.dataset.theme), 'high-contrast-dark', 'theme was not restored before rendering');
     assert.equal(await first.evaluate(() => window.__themeAtDOMContentLoaded), 'high-contrast-dark', 'theme flashed before DOM ready');
     await openSettings(first);
-    await domClick(first, '#settings-general-tab');
+    await domClick(first, '#settings-appearance-tab');
     assert.equal(await first.$eval('#theme-select', el => el.value), 'high-contrast-dark');
     await first.select('#theme-select', 'dark');
     await domClick(first, '#settings-close');
@@ -3515,12 +3518,14 @@ async function main() {
     for (const tab of await settingsPage.$$eval('#settings-dialog nav .settings-nav-item', els => els.filter(el => !el.hidden).map(el => el.id))) {
       if (tab === 'settings-import-tab') continue;
       await domClick(settingsPage, `#${tab}`);
-      const section = tab.replace(/-tab$/, '');
+      // The category's page (the General page serves several categories, each showing only its own blocks).
+      const section = await settingsPage.evaluate(() => document.querySelector('#settings-dialog .settings-body > section:not([hidden])').id);
       rowAudit.push(await settingsPage.evaluate(id => {
         const root = document.getElementById(id);
         const skip = '.usage-provider, .machine-harness, .user-members, .user-accounts, #machines-list, #harnesses-list, #usages-list, [aria-label="Invitation link"]';
-        const fields = [...root.querySelectorAll('input:not([type=hidden]), select, textarea')].filter(el => !el.closest(skip));
-        const rows = [...root.querySelectorAll('.settings-row')];
+        const blockShown = el => id !== 'settings-general' || getComputedStyle(el.closest('.settings-subsection')).display !== 'none';
+        const fields = [...root.querySelectorAll('input:not([type=hidden]), select, textarea')].filter(el => !el.closest(skip) && blockShown(el));
+        const rows = [...root.querySelectorAll('.settings-row')].filter(blockShown);
         return {
           id, fields: fields.length,
           unrowed: fields.filter(el => !el.closest('.settings-row')).map(el => el.id || el.name || el.tagName),
@@ -3532,7 +3537,7 @@ async function main() {
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
     for (const id of ['settings-general', 'settings-usages', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
-    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-layout', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message layout, the message-expiry window, the reviewer switch, the docker-only and warm-agent settings including the Codex opt-in, the prompt-cache keep-alive settings, and the settings backup, all as rows');
+    assert.deepEqual(rowAudit.filter(item => item.id === 'settings-general').flatMap(item => item.rowIds).sort(), ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-layout', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file'].sort(), 'General holds the theme, the room-preview switch, the two chat switches, the message layout, the message-expiry window, the reviewer switch, the docker-only and warm-agent settings including the Codex opt-in, the prompt-cache keep-alive settings, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
     // edge, and row actions such as move, remove and delete are icon buttons with a tooltip and an accessible name.
@@ -3575,12 +3580,12 @@ async function main() {
         await showList();
         // The owner's full nav in both groups; on a phone the captions are gone but the gap before Machines stays.
         const nav = await settingsNav(settingsPage);
-        assert.deepEqual(nav.items, ['SETTINGS', 'general', 'usages', 'notifications', 'telemetry', 'roles', 'users', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], `Settings nav order at ${width}px`);
+        assert.deepEqual(nav.items, ['SETTINGS', 'PERSONAL', 'appearance', 'chat', 'notifications', 'SERVER', 'users', 'usages', 'telemetry', 'storage', 'backup', 'AGENTS', 'roles', 'prompts', 'macros', 'harnesses', 'machines', 'isolation'], `Settings nav order at ${width}px`);
         assert.ok(!nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS group is set apart at ${width}px: ${JSON.stringify(nav)}`);
         for (const tab of tabs) {
           await showList();
           await domClick(settingsPage, `#${tab}`);
-          const section = tab.replace(/-tab$/, '');
+          const section = await settingsPage.evaluate(() => document.querySelector('#settings-dialog .settings-body > section:not([hidden])').id);
           // Sections fill in as their requests answer; the layout is judged once it has settled.
           let report;
           for (let attempt = 0; attempt < 20; attempt++) {
@@ -3594,7 +3599,7 @@ async function main() {
       await settingsPage.setViewport({ width: 1100, height: 720 });
       assert.equal(await settingsPage.$('#settings-welcome, #settings-welcome-play'), null, 'Settings -> General has no Welcome section');
     }
-    const geometry = await settingsPage.evaluate(() => { document.querySelector('#settings-general-tab').click(); const row = document.querySelector('#settings-general .settings-row'), info = row.querySelector('.settings-row-info').getBoundingClientRect(), control = row.querySelector('.settings-control').getBoundingClientRect(); const label = getComputedStyle(row.querySelector('.settings-label')).fontSize, desc = getComputedStyle(row.querySelector('.settings-desc')).fontSize; return { left: info.left < control.left, label, desc, tall: control.height >= 28 }; }); // v1's field is 28px tall; phones get 40px (v2-only.css)
+    const geometry = await settingsPage.evaluate(() => { document.querySelector('#settings-appearance-tab').click(); const row = document.querySelector('#settings-general .settings-row'), info = row.querySelector('.settings-row-info').getBoundingClientRect(), control = row.querySelector('.settings-control').getBoundingClientRect(); const label = getComputedStyle(row.querySelector('.settings-label')).fontSize, desc = getComputedStyle(row.querySelector('.settings-desc')).fontSize; return { left: info.left < control.left, label, desc, tall: control.height >= 28 }; }); // v1's field is 28px tall; phones get 40px (v2-only.css)
     // v1's own scale: the label is .82rem and the description .75rem (11.48px and 10.5px at v1's 14px root, in step with the root while v2 still has its own).
     const rem = await settingsPage.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), px = value => `${Math.round(value * 100) / 100}px`;
     assert.deepEqual(geometry, { left: true, label: px(.82 * rem), desc: px(.75 * rem), tall: true }, 'label and description sit left of the control, in the v1 type scale');
@@ -5374,7 +5379,7 @@ async function main() {
     await first.setViewport({ width: 1100, height: 720 });
     assert.equal(await first.$eval('.chat-msg:not(.chat-msg-system) .chat-msg-debug-toggle', el => getComputedStyle(el).display), 'none', 'debug button is off by default');
     await openSettings(first);
-    await domClick(first, '#settings-general-tab');
+    await domClick(first, '#settings-chat-tab');
     await setChecked(first, '#pref-debug-inspector', true);
     await domClick(first, '#settings-close');
     assert.notEqual(await first.$eval('.chat-msg:not(.chat-msg-system) .chat-msg-debug-toggle', el => getComputedStyle(el).display), 'none', 'debug button follows the preference');
@@ -5495,13 +5500,13 @@ async function main() {
     assert.equal(traceUI.injectedImages, 0, 'a hostile name must not become markup');
     assert.equal(traceUI.xss, false, 'a hostile name must not run');
     await openSettings(first);
-    await domClick(first, '#settings-general-tab');
+    await domClick(first, '#settings-chat-tab');
     await setChecked(first, '#pref-system-events', false);
     await setChecked(first, '#pref-debug-inspector', false);
     await domClick(first, '#settings-close');
     assert.equal(await first.$eval('#system-events-toggle', el => el.hidden), true, 'bell hides when system events are turned off');
     await openSettings(first);
-    await domClick(first, '#settings-general-tab');
+    await domClick(first, '#settings-chat-tab');
     await setChecked(first, '#pref-system-events', true);
     await domClick(first, '#settings-close');
     // t0-web-small: relative timestamps, notification gate, panel persistence, reactions, drag class.
@@ -5827,7 +5832,7 @@ async function main() {
     await second.waitForFunction(id => !!document.querySelector(`[data-agent-id="${id}"]`), {}, realAgentID);
     await first.waitForFunction(id => document.querySelector(`[data-agent-id="${id}"] .agent-state-label`)?.textContent === 'idle', {}, realAgentID);
     await openSettings(first);
-    await domClick(first, '#settings-general-tab');
+    await domClick(first, '#settings-appearance-tab');
     await first.select('#theme-select', 'high-contrast-dark');
     await domClick(first, '#settings-close');
     await first.waitForFunction(() => document.getAnimations().length === 0); // v1's colour transitions have settled
@@ -5878,7 +5883,7 @@ async function main() {
     };
     await checkHeaderGeometry('High Contrast Dark');
     await openSettings(first);
-    await domClick(first, '#settings-general-tab');
+    await domClick(first, '#settings-appearance-tab');
     await first.select('#theme-select', 'dark');
     await domClick(first, '#settings-close');
     const darkLegacyBackground = await first.evaluate(() => {
@@ -6053,7 +6058,7 @@ async function main() {
     await first.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     const recoverySetting = await first.evaluate(async projectID => (await (await fetch(`/api/projects/${projectID}/settings`)).json()).auto_resume_after_clean_diagnostic, actualProjectID);
     assert.equal(recoverySetting, true, 'project auto-resume setting did not persist');
-    await settingsTab(first, '#settings-general-tab');
+    await settingsTab(first, '#settings-appearance-tab');
     // Settings -> Prompts: the six shared sentences with their shipped text, a global and a project override, a live preview, inline plans.
     {
       await domClick(first, '#settings-prompts-tab');
@@ -7525,7 +7530,7 @@ async function main() {
     assert.deepEqual(await invitedPage.evaluate(() => ({ status: document.querySelector('#startup-status').hidden, text: document.querySelector('#startup-status span').textContent })), { status: true, text: '' }, 'a non-owner sign-in finishes its startup checks');
     assert.deepEqual(pageErrors, [], 'a non-owner sign-in raises no script error');
     await domClick(invitedPage, '#settings-toggle');
-    await invitedPage.waitForFunction(() => document.querySelector('#usages-toggle')?.hidden && document.querySelector('#settings-usages-tab')?.hidden);
+    await invitedPage.waitForFunction(() => document.querySelector('#usages-toggle')?.hidden && !document.querySelector('#settings-usages-tab'));
     await domClick(invitedPage, '#settings-close');
     // A reset link is one card too: it names the account, asks for a password and signs in with it.
     {
@@ -7561,10 +7566,11 @@ async function main() {
       spawn: document.querySelector('#spawn-open').disabled, spawnTitle: document.querySelector('#spawn-open').title, project: document.querySelector('#project-open').disabled, projectTitle: document.querySelector('#project-open').title })),
       { send: true, note: true, spawn: true, spawnTitle: 'Viewers cannot spawn agents', project: true, projectTitle: 'Only the owner or an admin can create projects' }, 'a viewer sees the disabled controls with the reason');
     await domClick(invitedPage, '#settings-toggle');
-    assert.deepEqual(await invitedPage.evaluate(() => ['#settings-roles-tab', '#settings-machines-tab', '#settings-harnesses-tab', '#settings-prompts-tab', '#settings-macros-tab'].map(id => document.querySelector(id)?.hidden ?? 'missing')), [true, true, true, true, true], 'the owner-only settings tabs are gone for a viewer');
-    // With Machines and Harnesses both gone, so is the AGENTS caption and its gap: the viewer's nav is one SETTINGS group.
+    assert.deepEqual(await invitedPage.evaluate(() => ['#settings-roles-tab', '#settings-machines-tab', '#settings-harnesses-tab', '#settings-prompts-tab', '#settings-macros-tab', '#settings-usages-tab', '#settings-backup-tab'].map(id => document.querySelector(id)?.hidden ?? 'missing')), ['missing', 'missing', 'missing', 'missing', 'missing', 'missing', 'missing'], 'the owner-only settings categories are gone for a viewer');
+    // A viewer's nav keeps the personal categories, the ones every account had in General and Telemetry, and Agent isolation (read-only); the instance's Agents are gone.
     const viewerNav = await settingsNav(invitedPage);
-    assert.deepEqual([viewerNav.agentsHidden, viewerNav.gap, viewerNav.items.filter(item => item === item.toUpperCase())], [true, null, ['SETTINGS']], `a viewer's Settings nav has no AGENTS group: ${JSON.stringify(viewerNav)}`);
+    assert.deepEqual(viewerNav.items.filter(item => item === item.toUpperCase()), ['SETTINGS', 'PERSONAL', 'SERVER', 'AGENTS'], `a viewer's Settings sections: ${JSON.stringify(viewerNav)}`);
+    assert.deepEqual(viewerNav.items.filter(item => item !== item.toUpperCase() && !['users'].includes(item)), ['appearance', 'chat', 'notifications', 'telemetry', 'storage', 'isolation'], `a viewer's Settings categories: ${JSON.stringify(viewerNav)}`);
     await domClick(invitedPage, '#settings-close');
     // A viewer sees the home room's Project section with the same locks the owner's form has.
     {
@@ -9146,7 +9152,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       assert.equal(await expiryPage.$eval('#messages > article.expiry-boundary > .expiry-label', el => el.textContent), "Older AI chatter won't reach agents automatically");
       assert.equal(await expiryPage.$eval('#messages > article.expiry-boundary > .expiry-label', el => getComputedStyle(el, '::after').borderTopStyle), 'dashed', 'a rule runs on from the words');
       await openSettings(expiryPage);
-      await domClick(expiryPage, '#settings-general-tab');
+      await domClick(expiryPage, '#settings-storage-tab');
       await expiryPage.waitForSelector('#message-expiry-amount');
       assert.deepEqual(await expiryPage.evaluate(() => [document.querySelector('#message-expiry-amount').value, document.querySelector('#message-expiry-unit').value]), ['6', 'hours'], 'the default window is six hours');
       assert.equal(await expiryPage.$eval('#message-expiry-amount', el => el.disabled), false, 'the owner can edit it');

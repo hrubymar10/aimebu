@@ -12,6 +12,7 @@ import { InboxNotifications } from './inbox-notifications.js';
 import { AgentsPanel } from './pages/agents/page.js';
 import { createAgentSource } from './agent-source.js';
 import { SettingsPanel } from './settings.js';
+import { parsePath } from './pages/shell/registry.js';
 import { TeamFlowHome } from './pages/project/team-flow-home.js';
 import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './pages/topbar/page.js';
@@ -106,7 +107,7 @@ chat.onLatest = room => { if (sidebar.active === room.id) sidebar.markSeen(sideb
 // A room that was open here is closed: no chat or project content, and no room in the address.
 function closeOpenRoom() {
   chat.reset(); teamFlowHome.reset(); knowledge.setRoom(null); handbook.setRoom(null);
-  history.replaceState(null, '', `${location.pathname}${location.search}`);
+  if (!parsePath(location.hash)) history.replaceState(null, '', `${location.pathname}${location.search}`);
 }
 // A removed room is gone for everyone: refresh its project and, if it was open here, go to the project's home room.
 async function roomRemoved(projectID, roomID) {
@@ -253,6 +254,7 @@ agents.showRoom = room => selectRoom(room);
 // A room the server made (a continued Claude Code session's): refresh the project's list so it is there, then open it.
 agents.showRoomByID = async (projectID, roomID) => { await sidebar.refreshProject(projectID); const room = sidebar.rooms.get(roomID); if (room) await selectRoom(room); };
 const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], rooms: [...sidebar.rooms.values()], selectedProjectID: chat.room?.project_id }), notifications);
+settings.currentRoom = () => chat.room?.id || '';
 const teamFlowHome = new TeamFlowHome({
   canEdit: id => ['owner', 'operator'].includes(sidebar.projects.get(id)?.role),
   projectForID: id => sidebar.projects.get(id),
@@ -390,7 +392,7 @@ function setRoomsOpen(open) {
   if (open) agents.setMobileOpen(false);
 }
 // The room the address names, or '' when it names none (or is not a valid escape sequence).
-function roomInAddress() { try { return decodeURIComponent(location.hash.slice(1)); } catch { return ''; } }
+function roomInAddress() { try { const hash = decodeURIComponent(location.hash.slice(1)); return parsePath(hash) ? '' : hash; } catch { return ''; } } // a settings address is not a room
 function rememberedRoom() { try { return localStorage.getItem('aimebu2.lastRoom') || ''; } catch { return ''; } }
 // A person's click on a room (the list, a breadcrumb, a notification). A room that cannot be opened because the server cannot be reached says so on the
 // chat's error line, in words, and the person tries again; left to reject, it would be an unhandled error and no message at all.
@@ -429,7 +431,7 @@ async function openRoom(room, messageID, { listed = false } = {}) {
   // An older agent-list request must not restore spawn controls for the
   // previous room while this room's messages are still loading.
   agents.setRoomFacts(room);
-  history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(room.id)}`);
+  if (!parsePath(location.hash)) history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(room.id)}`); // an open Settings owns the address
   try { localStorage.setItem('aimebu2.lastRoom', room.id); } catch { /* private mode: nothing to remember */ }
   teamFlowHome.setRoom(room);
   try { await chat.open(room); } catch (error) {

@@ -15,7 +15,7 @@ One global window, `messages_considered_expired_after_seconds`:
 - `0` means messages never expire;
 - otherwise 60 to 2592000 (30 days).
 
-Settings → General → Messages shows it to everyone; only the owner or an admin can change it
+Settings → Server → Storage & performance shows it to everyone; only the owner or an admin can change it
 (`GET`/`PUT /api/retention`, see [api.md](api.md)). A message is expired when
 `now - created_at >= window`. This is computed when a message is looked at, never
 stored on the message, so changing the window re-scopes every room at once and

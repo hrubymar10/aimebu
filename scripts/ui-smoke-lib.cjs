@@ -219,20 +219,18 @@ async function start() {
       }
     // puppeteer has no check()/uncheck(); toggle through the element's own click so change handlers run.
     async function setChecked(page, selector, checked) { await page.$eval(selector, (el, want) => { if (el.checked !== want) el.click(); }, checked); }
-    // The Settings nav in two groups: SETTINGS (General ... Macros), then a gap and AGENTS (Machines, Harnesses). `items` lists the shown
-    // entries in DOM order (a caption as its upper-case text, a tab as its section); `gap` is the space between the last tab above the AGENTS
-    // caption and the first one below it, `tabGap` the space between two neighbouring tabs. The AGENTS caption is styled like the SETTINGS
-    // one, and neither caption can take focus.
+    // The Settings nav in three sections: PERSONAL, SERVER, AGENTS, each a caption over its categories. `items` lists the shown entries in DOM order (a caption as its
+    // upper-case text, a category by its id); `gap` is the space between the last category above the AGENTS caption and the first one below it, `tabGap` the space
+    // between two neighbouring categories. The captions are styled alike, and none can take focus.
     const settingsNav = page => page.evaluate(() => {
-      const nav = document.querySelector('#settings-dialog nav'), [settings, agents] = nav.querySelectorAll('.settings-nav-title');
-      const items = [...nav.children].filter(el => !el.hidden).map(el => el.classList.contains('settings-nav-head') ? el.querySelector('.settings-nav-title').textContent.toUpperCase() : el.classList.contains('settings-nav-title') ? el.textContent.toUpperCase() : el.id.replace(/^settings-|-tab$/g, ''));
+      const nav = document.querySelector('#settings-dialog nav'), agents = nav.querySelector('#settings-agents-title'), server = nav.querySelector('#settings-server-title');
+      const items = [...nav.querySelectorAll('.settings-nav-head .settings-nav-title, .settings-nav-section > .settings-nav-title, .settings-nav-item')].filter(el => !el.hidden).map(el => el.classList.contains('settings-nav-title') ? el.textContent.toUpperCase() : el.id.replace(/^settings-|-tab$/g, ''));
       const style = el => { const s = getComputedStyle(el); return [s.color, s.fontSize, s.fontWeight, s.letterSpacing, s.textTransform, s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft, s.display]; };
-      const shownSibling = (el, step) => { do el = el[step]; while (el && el.hidden); return el; };
-      const above = shownSibling(agents, 'previousElementSibling'), below = shownSibling(agents, 'nextElementSibling');
-      const gap = agents.hidden || !above || !below ? null : Math.round(below.getBoundingClientRect().top - above.getBoundingClientRect().bottom);
-      const general = document.querySelector('#settings-general-tab'), usages = document.querySelector('#settings-usages-tab');
-      return { items, agentsHidden: agents.hidden, sameStyle: JSON.stringify(style(settings)) === JSON.stringify(style(agents)), gap, tabGap: Math.round(usages.getBoundingClientRect().top - general.getBoundingClientRect().bottom),
-        focusable: [settings, agents].some(el => el.tabIndex >= 0 || el.getAttribute('aria-hidden') !== 'true') };
+      const above = agents && agents.parentElement.previousElementSibling?.lastElementChild, below = agents && agents.nextElementSibling;
+      const gap = !agents || !above || !below ? null : Math.round(below.getBoundingClientRect().top - above.getBoundingClientRect().bottom);
+      const first = document.querySelector('#settings-appearance-tab'), second = document.querySelector('#settings-chat-tab');
+      return { items, agentsHidden: !agents || agents.hidden, sameStyle: !agents || JSON.stringify(style(server)) === JSON.stringify(style(agents)), gap, tabGap: Math.round(second.getBoundingClientRect().top - first.getBoundingClientRect().bottom),
+        focusable: [...nav.querySelectorAll('.settings-nav-title')].some(el => el.tabIndex >= 0) };
     });
     async function openSettings(page) {
       await domClick(page, '#settings-toggle');
@@ -241,15 +239,15 @@ async function start() {
         dialogs: [...document.querySelectorAll('dialog[open]')].map(dialog => dialog.id),
       }));
       assert.equal(state.open, true, `Settings toggle did not open dialog; open dialogs: ${state.dialogs.join(', ') || 'none'}`);
-      assert.equal(await page.$eval('#settings-general', el => !el.hidden), true, 'Settings opens on General');
+      assert.equal(await page.$eval('#settings-general', el => !el.hidden), true, 'Settings opens on Appearance (the General page, its Appearance block)');
       // v1's layout: a SETTINGS caption over plain nav items, the section name as the content title, a quiet close button.
       assert.deepEqual(await page.evaluate(async () => { await new Promise(resolve => setTimeout(resolve, 400)); const nav = document.querySelector('#settings-dialog nav'), caption = nav.querySelector('.settings-nav-title'), selected = nav.querySelector('.active'), close = document.querySelector('#settings-close'), box = document.querySelector('#settings-dialog').getBoundingClientRect();
         return { caption: caption.textContent, captionFirst: nav.firstElementChild.contains(caption), title: document.querySelector('#settings-title').textContent, selected: selected.textContent, closeGlyph: close.querySelector('.icon-mask-close') ? 'icon' : close.textContent, closeQuiet: getComputedStyle(close).borderTopWidth === '0px', navWidth: Math.round(nav.getBoundingClientRect().width), fullHeight: Math.abs(box.height - innerHeight) < 1, selectedTinted: (() => { const probe = document.createElement('i'); probe.style.background = 'var(--accent-dim)'; document.body.append(probe); const tint = getComputedStyle(probe).backgroundColor; probe.remove(); const highContrast = document.documentElement.dataset.theme === 'high-contrast-dark'; return getComputedStyle(selected).backgroundColor === (highContrast ? 'rgba(0, 0, 0, 0)' : tint); })() }; }),
-        { caption: 'Settings', captionFirst: true, title: 'General', selected: 'General', closeGlyph: 'icon', closeQuiet: true, navWidth: 180, fullHeight: true, selectedTinted: true }, 'the Settings dialog follows v1: the selected tab is tinted with --accent-dim (outlined in high contrast)');
+        { caption: 'Settings', captionFirst: true, title: 'Settings', selected: 'Appearance', closeGlyph: 'icon', closeQuiet: true, navWidth: 240, fullHeight: true, selectedTinted: true }, 'the Settings dialog follows v1: the selected tab is tinted with --accent-dim (outlined in high contrast)');
       const nav = await settingsNav(page);
       if (nav.items.includes('AGENTS')) { // the owner and admins: both groups, the AGENTS caption a group gap below Macros
-        assert.deepEqual(nav.items.filter(item => item !== 'usages' && item !== 'users'), ['SETTINGS', 'general', 'notifications', 'telemetry', 'roles', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], 'Settings nav groups');
-        assert.ok(nav.sameStyle && !nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS caption looks like SETTINGS, takes no focus and opens a gap: ${JSON.stringify(nav)}`);
+        assert.deepEqual(nav.items.filter(item => item !== 'usages' && item !== 'users'), ['SETTINGS', 'PERSONAL', 'appearance', 'chat', 'notifications', 'SERVER', 'telemetry', 'storage', 'backup', 'AGENTS', 'roles', 'prompts', 'macros', 'harnesses', 'machines', 'isolation'], 'Settings nav sections');
+        assert.ok(nav.sameStyle && !nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS caption looks like SERVER, takes no focus and opens a gap: ${JSON.stringify(nav)}`);
       }
     }
     // Closes the room settings if they are open (a deleted project's home room takes its settings with it).

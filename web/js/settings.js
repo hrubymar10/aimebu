@@ -11,6 +11,8 @@ import { HarnessSettings } from './pages/harnesses/page.js';
 import { MacroSettings } from './pages/macros/page.js';
 import { UsersSettings } from './pages/users/page.js';
 import { SettingsShell } from './pages/shell/page.js';
+import { categoryById, categoryPath, parsePath } from './pages/shell/registry.js';
+import { reveal } from './pages/shell/highlight.js';
 import { PromptSettings } from './pages/prompts/page.js';
 import { TelemetrySettings } from './pages/telemetry/page.js';
 import { HttpQuotaSource } from './quota-source.js';
@@ -44,12 +46,18 @@ export class SettingsPanel {
     this.shell = new SettingsShell(this.dialog, {
       general: this.generalSection, usages: this.usagesSection, notifications: this.notificationsSection, roles: this.rolesSection, users: this.usersSettings.section,
       prompts: this.promptSettings.section, macros: this.macroSettings.section, telemetry: this.telemetrySettings.section, machines: this.machinesSection, harnesses: this.harnessSettings.section,
-    }, { users: this.usersSettings.store.tab, onSelect: section => this.selectSection(section), onClose: () => this.requestClose() });
+    }, { users: this.usersSettings.store.tab, onSelect: path => this.navigate(path), onClose: () => this.requestClose(), onBack: () => this.back(), onResult: result => this.openResult(result) });
+    // The address: each level has its own (#settings/<section>/<category>[/<sub>]), so Back, Forward and a copied link work. depth is how many entries Settings put
+    // on the history since it opened (each is marked in its state), trail what each of them showed, deep that Settings was opened by a link, with no room entry behind.
+    this.depth = 0; this.trail = []; this.deep = false; this.path = ''; this.unwinding = this.unwound = this.unwindTimer = null;
+    window.addEventListener('popstate', event => void this.followAddress(event));
     // Each section's page is drawn when the section is selected and taken out of the page when the dialog closes (a page holding unsaved edits keeps
     // them): the sections are about a thousand nodes together, which stay in the page for nothing otherwise.
     this.pages = { general: this.general.page, usages: this.usages.page, notifications: this.notificationSettings.page, roles: this.roleSettings.page, users: this.usersSettings.page,
       prompts: this.promptSettings.page, macros: this.macroSettings.page, telemetry: this.telemetrySettings.page, machines: this.machinesSettings.page, harnesses: this.harnessSettings.page };
-    this.dialog.addEventListener('close', () => this.release());
+    // Closing hands the address back at once (requestClose calls afterClose itself): the close event is a task later, and a Settings opened in between must not be
+    // taken for the one that closed. The event stays for a close that did not come through requestClose.
+    this.dialog.addEventListener('close', () => { if (!this.dialog.open) this.afterClose(); });
     this.dialog.addEventListener('cancel', event => { event.preventDefault(); void this.requestClose(); });
     this.dialog.addEventListener('click', event => { if (event.target === this.dialog) void this.requestClose(); });
     this.release();
@@ -65,9 +73,9 @@ export class SettingsPanel {
   // their harnesses (what a machine runs, and pairing, approving and revoking machines, stay the owner's). For anyone else those tabs are gone instead of opening onto a 403.
   setRights({ owner, admin }) {
     this.general.setRights({ owner, admin });
-    const before = this.shell.store.section.value;
+    const before = this.shell.store.category.value;
     this.shell.store.setRights({ owner, admin });
-    if (this.shell.store.section.value !== before) this.selectSection(this.shell.store.section.value); // the section's tab went: General opens in its place
+    if (this.shell.store.category.value !== before) this.show(this.shell.store.target(this.shell.store.category.value)); // the category's entry went: Appearance opens in its place
     // An admin reads the provider usages (the limits, with no account names); the account switcher and every change are the owner's alone.
     this.usages.setOwner(owner);
     document.querySelector('#usages-toggle').hidden = !(owner || admin);
@@ -75,23 +83,24 @@ export class SettingsPanel {
   setUser(userID) {
     this.userID = userID;
     this.shell.store.setUser();
+    if (parsePath(location.hash) && !this.dialog.open) queueMicrotask(() => { if (this.userID === userID) void this.followAddress(); }); // opened by a link
     document.querySelector('#usages-toggle').hidden = false;
     this.general.setUser(userID);
   }
   // Settings opens on General; the usages column's own Settings button asks for the Usages section.
   async open(section = '', options = {}) {
-    const wanted = section; // a phone shows the list of sections unless a section was asked for
-    section = section || 'general';
-    if (!this.dialog.open) this.dialog.showModal();
     if (options.machineID) this.harnessSettings.wanted = options.machineID; // Harnesses opens on this machine
-    this.selectSection(section); // the dialog shows at once; what the account may do is read again right after
-    if (!wanted) this.shell.store.showList();
+    if (this.unwinding && !this.dialog.open) await this.unwinding; // a close's history walk is still going: opening now would race it
+    const target = this.shell.store.resolve(section);
+    if (!this.dialog.open) { this.dialog.showModal(); this.closed = false; if (!options.fromAddress) this.enterAddress(this.pathOf(target)); }
+    else this.navigate(this.pathOf(target));
+    this.show(target); // the dialog shows at once; what the account may do is read again right after
     this.usages.setError(''); // before the wait: whatever the person does in the meantime may write here, and must not be wiped
     try { await refreshRights(); this.setRights(rights); this.onRights?.(rights); } catch (error) { captureError(error, 'settings.rights'); /* keep what sign-in said */ }
     this.usersSettings.prepare().catch(() => this.usersSettings.settle(true));
     // The default daily limits do not depend on the switcher or the usage snapshots, so they load on their own.
     void this.usages.syncDefault();
-    if (!rights.owner && !rights.admin) { if (!this.usagesSection.hidden) this.selectSection('general'); return; } // nothing of the usages is theirs to load
+    if (!rights.owner && !rights.admin) { if (!this.usagesSection.hidden) this.show(this.shell.store.target('appearance')); return; } // nothing of the usages is theirs to load
     try { await this.usages.load(); }
     catch (error) {
       if (error.status === 403) {
@@ -99,24 +108,31 @@ export class SettingsPanel {
         document.querySelector('#usages-toggle').hidden = true;
         // Fall back to General only while the reader is still looking at the Usages section this open() showed;
         // a tab they picked while the request was in flight must not be taken away.
-        if (!this.usagesSection.hidden) this.selectSection('general');
+        if (!this.usagesSection.hidden) this.show(this.shell.store.target('appearance'));
       } else this.usages.setError(error.message || 'Could not load usage snapshots');
     }
   }
   usagesChanged() { return this.usages.changed(); }
   async requestClose() {
-    if (!this.dialog.open || this.closePending) return;
+    if (!this.dialog.open || this.closePending) return false;
     if (Object.values(this.pages).some(page => page.hasUnsavedChanges())) {
       this.closePending = true;
       try {
         const discard = await confirmDialog('Discard unsaved changes?', { title: 'Discard unsaved changes?', confirm: 'Discard', cancel: 'Keep editing', danger: true });
-        if (!discard || !this.dialog.open) return;
+        if (!discard || !this.dialog.open) return false;
         this.discarding = true;
       } finally {
         this.closePending = false;
       }
     }
     this.dialog.close();
+    this.afterClose();
+    return true;
+  }
+  afterClose() {
+    if (this.closed) return;
+    this.closed = true;
+    this.release(); this.leaveAddress();
   }
   // The session ended: every page is cleared, edits not yet saved included (release() keeps those for the person who made them; the next person must not
   // find them).
@@ -134,9 +150,12 @@ export class SettingsPanel {
     }
     this.discarding = false;
   }
-  selectSection(section) {
-    this.shell.store.select(section);
-    section = this.shell.store.section.value; // a section the account has no tab for is General
+  // What a level looks like in the address.
+  pathOf(target) { return target.category ? categoryPath(categoryById(target.category), target.sub) : target.section ? `settings/${target.section}` : 'settings'; }
+  // Shows a level: the shell follows, and the category's page is drawn and told it was opened. A sub-category scrolls to its place.
+  show(target) {
+    target = this.shell.store.apply(target);
+    const category = categoryById(this.shell.store.category.value), section = category.page;
     this.pages[section]?.show();
     if (section === 'general') this.general.open();
     if (section === 'users') this.usersSettings.open();
@@ -147,5 +166,87 @@ export class SettingsPanel {
     if (section === 'macros') this.macroSettings.open();
     if (section === 'prompts') this.promptSettings.open();
     if (section === 'telemetry') this.telemetrySettings.open();
+    const sub = target.sub && (category.subs || []).find(item => item.id === target.sub);
+    if (sub) void reveal(this.dialog, { anchor: sub.anchor });
+  }
+  // A search result: its category opens (a new entry, as a click in the navigation) and the setting is brought into view and marked; one that never draws
+  // (a page that failed to load) marks the category's head instead.
+  async openResult(result) {
+    this.shell.store.query.value = '';
+    const path = categoryPath(result.category);
+    if (path === this.path) this.show(this.shell.store.resolve(path)); else this.navigate(path);
+    const row = result.setting ? await reveal(this.dialog, result.setting) : null;
+    if (!row) await reveal(this.dialog, { anchor: '', selector: '.settings-cat-head' });
+  }
+  // An old call with a page name.
+  selectSection(section) { this.show(this.shell.store.resolve(section)); }
+  // A click in the navigation: a new entry in the history, and the level shown.
+  navigate(path) {
+    const target = this.shell.store.resolve(path);
+    path = this.pathOf(target);
+    if (path === this.path) return;
+    this.push(path);
+    this.show(target);
+  }
+  push(path) {
+    this.depth += 1;
+    this.trail[this.depth] = path; this.path = path;
+    history.pushState({ aimebuSettings: this.depth }, '', `${location.pathname}${location.search}#${path}`);
+  }
+  // The arrow on a phone: one level up. When the entry behind is the list it is a step back in the history; otherwise the list is a new entry.
+  back() {
+    const list = this.pathOf({ section: this.shell.store.route.value.section, category: '', sub: '' });
+    if (this.depth > 0 && this.trail[this.depth - 1] && !parsePath(this.trail[this.depth - 1]).category) history.back();
+    else this.navigate(list);
+  }
+  // Settings has just been shown: its first entry. Opened by a link the address is already a settings one and is kept (no room behind it); otherwise a new entry.
+  enterAddress(path) {
+    this.depth = 0; this.trail = [path]; this.path = path;
+    if (parsePath(location.hash)) { this.deep = true; history.replaceState({ aimebuSettings: 0 }, '', `${location.pathname}${location.search}#${path}`); return; }
+    this.deep = false;
+    this.push(path);
+  }
+  // Settings closed: the address goes back to the room. Entries it pushed are walked back (so Forward is the way back in); a link that opened it has no
+  // room behind it, so the entry is replaced by the room that is open.
+  leaveAddress() {
+    const depth = this.depth, deep = this.deep;
+    this.depth = 0; this.trail = []; this.path = ''; this.deep = false;
+    if (!parsePath(location.hash)) return; // the Back button already did it
+    const room = this.currentRoom?.() || '';
+    const base = `${location.pathname}${location.search}`;
+    if (deep || depth === 0) history.replaceState(null, '', room ? `${base}#${encodeURIComponent(room)}` : base);
+    else this.unwind(depth);
+  }
+  // history.go is asynchronous: its popstate arrives later, and must neither close a Settings opened in the meantime nor race its first push. The traversal is
+  // tracked (settled by that popstate, or by a timeout when the browser never fires one) and open() waits for it.
+  unwind(depth) {
+    this.settleUnwind();
+    this.unwinding = new Promise(resolve => { this.unwound = resolve; });
+    this.unwindTimer = setTimeout(() => this.settleUnwind(), 1000);
+    history.go(-depth);
+  }
+  settleUnwind() {
+    clearTimeout(this.unwindTimer);
+    const resolve = this.unwound;
+    this.unwinding = this.unwound = null;
+    resolve?.();
+  }
+  // The address changed under Settings (Back, Forward, a typed link): a settings address opens or moves it, any other closes it.
+  async followAddress(event) {
+    if (event && this.unwinding) { this.settleUnwind(); return; } // the popstate of our own close
+    const target = parsePath(location.hash);
+    if (!target) { if (this.dialog.open) { this.depth = 0; await this.closeAsked(); } return; }
+    if (!this.userID) return; // not signed in yet: setUser looks again
+    const state = event?.state?.aimebuSettings;
+    this.depth = Number.isInteger(state) ? state : this.depth;
+    this.path = this.pathOf(target); this.trail[this.depth] = this.path;
+    if (!this.dialog.open) { this.deep = !Number.isInteger(state) || state === 0; void this.open(this.path, { fromAddress: true }); return; }
+    this.show(this.shell.store.resolve(this.path));
+  }
+  // Back with edits unsaved asks like the close button does; keeping them puts the address back.
+  async closeAsked() {
+    const path = this.path || 'settings';
+    if (await this.requestClose()) return;
+    if (this.dialog.open) { this.depth = Math.max(this.depth, 1); history.pushState({ aimebuSettings: this.depth }, '', `${location.pathname}${location.search}#${path}`); }
   }
 }

@@ -21,7 +21,7 @@ way around the login, so there is no password-free owner path. The gate can
 instead run as a throwaway account that the owner invites:
 
 1. In the web UI the owner creates a project for the run (its folder must exist
-   on the supervisor's host) and, in Settings → Users, makes a join invitation
+   on the supervisor's host) and, in Settings → Server → Users & invites, makes a join invitation
    for that project with role owner or operator.
 2. The run redeems it, once, within the hour:
 
@@ -33,7 +33,7 @@ instead run as a throwaway account that the owner invites:
 The script names the account `variant-gate-<random>`, gives it a random password
 that exists only in the running process, signs in, and records the account name
 (never the token) in the report. A project role is enough for every step, so the
-account cannot touch other projects. The owner deactivates it in Settings → Users
+account cannot touch other projects. The owner deactivates it in Settings → Server → Users & invites
 afterwards. With `--invite` the script never creates a project, so `--project`
 is required. The owner's own `VG_LOGIN` and `VG_PASSWORD` also work.
 

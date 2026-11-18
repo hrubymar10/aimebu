@@ -241,9 +241,10 @@ async function popup() {
     assert.equal(await page.evaluate(() => document.querySelector('#settings-telemetry').childElementCount), 0, 'the section is not drawn until it is selected');
     await page.click('#settings-telemetry-tab');
     await page.waitForSelector('#telemetry-dsn');
+    await page.waitForSelector('#telemetry-facts'); // the Volume card is drawn once the settings are read; count the cards only after that, not before
     assert.equal(await page.evaluate(() => document.querySelector('#settings-title').textContent), 'Telemetry');
-    // One card, the master switch first, then what depends on it; no heading of its own repeating the page title.
-    assert.deepEqual(await page.evaluate(() => ({ first: document.querySelector('#settings-telemetry .settings-row input').id, groups: document.querySelectorAll('#settings-telemetry .settings-group').length, headings: document.querySelectorAll('#settings-telemetry h3').length,
+    // One card, the master switch first, then what depends on it (the Volume facts are a card of their own after it); no heading of its own repeating the page title.
+    assert.deepEqual(await page.evaluate(() => ({ first: document.querySelector('#settings-telemetry .settings-row input').id, groups: document.querySelectorAll('#settings-telemetry .settings-group:not(:has(#telemetry-facts))').length, headings: document.querySelectorAll('#settings-telemetry h3').length,
       order: [...document.querySelectorAll('#settings-telemetry .settings-row')].map(row => (row.querySelector('input') || row.querySelector('button')).id) })),
       { first: 'telemetry-enabled', groups: 1, headings: 0, order: ['telemetry-enabled', 'telemetry-dsn', 'telemetry-fingerprint', 'telemetry-send-name'] }, 'the master switch comes first, in one card');
     // What bounds the volume is shown as facts, and they are the server's numbers.

@@ -159,7 +159,7 @@ its lock is only tested, not taken.
 - **agent logs** — the size of the captured agent output in
   `supervisor/agent-logs/` against the daily sweep's 256 MiB cap; warns at 80%.
 - **harnesses** — the native `claude`, `codex`, `pi`, `opencode` and `vibe`
-  executables the supervisor finds (the same search as Settings → Harnesses
+  executables the supervisor finds (the same search as Settings → Agents → Harnesses
   auto-detect), with versions. None warns.
 - **docker** — the Docker CLI and daemon (`docker info`). A missing daemon only
   warns when a `*-docker` launcher is installed.
@@ -178,7 +178,7 @@ its lock is only tested, not taken.
   references) in its approval answer; doctor warns about each that has no value in **its own**
   environment, where a turn on that provider would be refused up front. Doctor sees the shell it
   runs in, so a supervisor started by a service manager may have another environment: the
-  Settings → Harnesses key status shows what the running supervisor sees. Only whether a variable is
+  Settings → Agents → Harnesses key status shows what the running supervisor sees. Only whether a variable is
   set is reported, never a value.
 - **paired server** — asks the paired server (`AIMEBU_URL`, else the URL in
   the credential) whether it knows this machine and has approved it, with the

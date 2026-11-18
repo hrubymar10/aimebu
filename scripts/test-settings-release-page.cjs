@@ -38,6 +38,7 @@ async function main() {
         await open(section);
         assert.ok(await inSections() > 0, `${section} is drawn when selected`);
       }
+      await open('general'); // the category head draws the selected category's icon, so a round ends where the count was taken
       await close();
       assert.equal(await inSections(), 0, `round ${round}: closing Settings takes every section out of the page`);
       assert.equal(await nodes(), base, `round ${round}: the page is back to ${base} nodes`);

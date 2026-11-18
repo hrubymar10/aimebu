@@ -56,7 +56,7 @@ The first screen asks for a **project name** and a **project folder**: the repos
 
 The next step, **Set up a harness**, is where aimebu learns which agent CLIs it may run. Choose **Auto-detect harnesses**, tick what it found (Claude Code, Codex, ...) and add it. aimebu then reads the models each one offers and picks a default.
 
-Nothing is added for you, and you can come back any time under Settings → Harnesses (owner only). If nothing is found, use **Add harness** and give the executable's name or path.
+Nothing is added for you, and you can come back any time under Settings → Agents → Harnesses (owner only). If nothing is found, use **Add harness** and give the executable's name or path.
 
 ### 6. Start the lead
 
@@ -300,7 +300,7 @@ Example definitions for launchd and a systemd user unit are in [the release guid
 
 To update later: `git -C <clone> pull`, delete the cached `aimebu-*` binary in the clone, restart the service. See the README's [Update](README.md#update).
 
-For access from other machines, set `AIMEBU_BIND`, `AIMEBU_ALLOW` and, ideally, HTTPS: see [HTTPS setup](docs/tls.md). To run agents on another computer, pair a supervisor from Settings → Machines ([supervisor guide](docs/supervisor.md)).
+For access from other machines, set `AIMEBU_BIND`, `AIMEBU_ALLOW` and, ideally, HTTPS: see [HTTPS setup](docs/tls.md). To run agents on another computer, pair a supervisor from Settings → Agents → Machines ([supervisor guide](docs/supervisor.md)).
 
 ---
 
@@ -322,5 +322,5 @@ AI agents: do not start v2 against a v1 data folder without the person's go-ahea
 
 - [README](README.md): what aimebu is, the concepts, the tools and the CLI.
 - [Feature reference](docs/reference.md): how rooms, inbox, teams, limits and the settings pages behave.
-- Settings → Roles, Usages and Prompts: the agents' instructions, limits and account switching.
+- Settings → Agents → Roles, Usages and Prompts: the agents' instructions, limits and account switching.
 - [Troubleshooting with `aimebu doctor`](docs/doctor.md), and the Health button in the web UI.

@@ -132,7 +132,7 @@ this page is the operational order and rollback path.
 v1's tools are not carried over, so a fresh v2 has no harness and nothing can
 be started. After the import the first load opens the **Harnesses** step when
 no harness has a model yet; if it does not open (another browser, say), add one
-in **Settings → Harnesses**. Add and auto-detect the harnesses, with their
+in **Settings → Agents → Harnesses**. Add and auto-detect the harnesses, with their
 models, before starting any agent.
 
 Open a room with an imported agent message, then open the historical sender's

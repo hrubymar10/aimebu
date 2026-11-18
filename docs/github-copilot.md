@@ -1,6 +1,6 @@
 # GitHub Copilot usage
 
-In Settings → Usages, select **Sign in with GitHub**, open the displayed
+In Settings → Server → Accounts & usage, select **Sign in with GitHub**, open the displayed
 verification page, and enter the code. The verification address GitHub (or an Enterprise host) returns
 must be `https`: the server refuses a device-code answer with any other, and the page links only an `https` address. The server owns the expiring device
 flow and enforces GitHub's polling interval. Starting a new sign-in keeps the

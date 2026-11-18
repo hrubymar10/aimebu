@@ -16,7 +16,7 @@ When a worker needs a recovery decision, the project lead receives it first;
 unresolved items reach the people's Inbox after 30 minutes by default. Project
 Settings → Recovery controls this routing and interval. A lead's own recovery
 goes straight to the Inbox.
-Settings → Users creates one-hour, single-use links to invite people into a
+Settings → Server → Users & invites creates one-hour, single-use links to invite people into a
 project as viewers, operators, or owners. New people choose a login and
 password; existing users sign in and apply the invitation to their account.
 Project owners can change roles or remove members of their projects. The
@@ -46,7 +46,7 @@ Pending or failed opt-ins can be canceled while the room is open, and failed
 creation can be retried. Removal waits while any active agent uses the
 worktree checkout, including when forced.
 A machine runs harnesses: the Claude Code, Codex, Pi, OpenCode and Mistral Vibe installs the owner sets up
-under Settings → Harnesses (a harness is stored as a named launcher). A new machine has none:
+under Settings → Agents → Harnesses (a harness is stored as a named launcher). A new machine has none:
 nothing is seeded, and nothing is added until the owner adds it by hand or ticks what
 Auto-detect found. Spawn and switch use the selected harness's stable ID. Upgraded machines keep the launchers that were enabled or in use. Migration 69 deletes unused
 seeded ones and logs what it removed and moved.
@@ -58,17 +58,17 @@ continues with the verified new copy. An agent's model that the old list lacked
 is added to its harness
 so no running agent changes model. A tool whose model list was edited keeps
 one disabled harness so the list survives. After the first project is created and no machine has a harness with a model, the first run continues with a **Set up a harness** step (the
-Settings → Harnesses component itself: Add, Auto-detect and models) and offers "Spawn your first agent" only once one is ready; "Skip for now" leaves a
+Settings → Agents → Harnesses component itself: Add, Auto-detect and models) and offers "Spawn your first agent" only once one is ready; "Skip for now" leaves a
 "Set up a harness first" hint in place of the spawn button, and someone who cannot change harnesses (anyone but the owner) is told to ask the owner. The same step is offered
 on its own to the owner who signs in while no machine has a harness with a model (after a v1 import, which carries none over, from another browser, or once
 every harness was removed), once per browser session. That comes from the server, not the browser: Skip is stored with the account
 (the `harness_setup_skipped` preference), so no browser asks again, until a harness with a model exists and the app resets it. Someone who cannot
 change harnesses is never offered it. The spawn dialog
-shows unavailable harnesses with the reason and points to Settings → Harnesses for setup (a link that opens it on
+shows unavailable harnesses with the reason and points to Settings → Agents → Harnesses for setup (a link that opens it on
 the dialog's machine for the owner; anyone else, an admin included, is told to ask the owner). A
 harness can be selected by ID or by its name in `variant`; `native` and `docker` keep their
 meaning for the harnesses named `native` and `harness-docker`.
-"Only run agents in docker" (Settings → General → Agents, an owner or admin setting, off by
+"Only run agents in docker" (Settings → Agents → Agent isolation, an owner or admin setting, off by
 default; `GET`/`PUT /api/agent-isolation`) refuses to create an agent on, or switch one to, a native
 launcher (409 `docker_only`) and holds the turns of one already there; the supervisor refuses
 too, so a stale server or an older machine cannot get around it. A managed agent's key is held in
@@ -228,10 +228,10 @@ Both modes require the server and supervisor to be stopped, and both preserve
 
 Old messages are never deleted to save space; **message expiry** only keeps old
 AI group-tag chatter out of what an agent is given (a mention, reply, DM or human
-message is always delivered). The window is a setting under Settings → General; see
+message is always delivered). The window is a setting under Settings → Server → Storage & performance; see
 [message expiry](retention.md).
 
-Settings → Prompts lets the owner or an admin reword the shared sentences of an agent's turn
+Settings → Agents → Prompts lets the owner or an admin reword the shared sentences of an agent's turn
 prompt globally, and a project's owner or operator for that project (the response format stays fixed); the owner or an admin also sets
 whether a lead is always asked to attach the full plan under a visual plan
 (Inline plans, default optional). While a save or reset is pending the page is locked (the scope
@@ -243,7 +243,7 @@ variant through task, pause, kill, and recovery on a real server; see
 [the variant gate](variant-gate.md).
 
 Error and performance reporting to Sentry is **on by default, once the owner has answered a one-time popup** (its toggle starts on, with the maintainers' DSN filled in; "Not now" turns it off). Set
-`AIMEBU_SENTRY_DSN=off` (or another DSN), or use Settings → Telemetry, to stop or redirect the sending of crashes, 5xx answers and traces from the server and
+`AIMEBU_SENTRY_DSN=off` (or another DSN), or use Settings → Server → Telemetry, to stop or redirect the sending of crashes, 5xx answers and traces from the server and
 the web UI to a Sentry project (the maintainers', yours, or a self-hosted one); `AIMEBU_SENTRY_ENV` and
 `AIMEBU_SENTRY_TRACES_SAMPLE_RATE` tune it (the trace sample rate defaults to `1`: every request and page load). There is no Session Replay.
 Message bodies, prompts, attachments, tokens, cookies, headers, environment values and query strings are never sent: see
@@ -338,7 +338,7 @@ enables it without a reload, and the room's messages return when setup closes.
 If the flow list fails to load, the composer remains usable and the card offers Retry.
 Each card also says when its flow fits, and a disabled "Leader, advisor and
 dispatcher" card (coming later) sits before Custom, which is always last.
-Settings → General → Agents has an instance-wide **Reviewer agents** switch,
+Settings → Agents → Agent isolation has an instance-wide **Reviewer agents** switch,
 on by default. Initial team setup and Project settings offer Inherit, On,
 and Off per project. When off, new reviewer agents and roles extending
 reviewer cannot be spawned or assigned to another agent; existing reviewers
@@ -425,7 +425,7 @@ agent tools.
 
 ## Usage, limits and account switching
 
-Settings → Usages shows Codex, Claude Code, GitHub Copilot, Mistral, and
+Settings → Server → Accounts & usage shows Codex, Claude Code, GitHub Copilot, Mistral, and
 Ollama Cloud usage snapshots. Codex and Claude use local OAuth files; the
 other providers are configured in Settings. Provider secrets stay in the
 private `usages/config.json` under the v2 config root. Usage polling never
@@ -441,10 +441,10 @@ quota ([automatic account switching](quota-switcher.md), off by default), and a
 [limit guard](quota-switcher.md#limit-guard-acting-before-100) holds new turns, and moves the account, at the tool's own switch limit and
 says so at 99% of a window (on by default). Separately, **daily limits** cap what a
 project may spend in a day (cost and turns, all its rooms together): the owner sets a
-default in Settings → Usages, and each project inherits it, sets its own, or has no
+default in Settings → Server → Accounts & usage, and each project inherits it, sets its own, or has no
 limit in Project settings. Fresh provider windows at or below 20% and 10%
 remaining create global Inbox alerts for the owner and global admins. The
-owner can change those thresholds in Settings → Usages; only the owner sees
+owner can change those thresholds in Settings → Server → Accounts & usage; only the owner sees
 account details or changes anything there, and global admins can open the
 Usages view read-only (limits and profile names, nothing that names an account
 or how it signs in). See
@@ -463,6 +463,23 @@ turn's latest activity or usage event with that threshold.
 
 
 ## The web UI: chat, composer, messages and settings
+
+Settings is a tree, as on an iPad or iPhone. On a wide screen the left column has a search box and the sections with their categories; the right column
+shows the chosen category: its icon, name and a line about it, its subcategories as rows with ›, then its settings. On a phone the levels stack: the list of
+categories, then one category under a ← button and a centred title.
+
+- **Personal:** Appearance (theme, room preview), Chat (message layout, system events, debug inspector), Notifications.
+- **Server:** Users & invites, Accounts & usage, Telemetry, Storage & performance (message expiry, prompt cache), Backup & restore (owner or admin).
+- **Agents** (owner or admin, except Agent isolation, which everyone can read): Roles, Prompts, Macros, Harnesses, Machines, Agent isolation.
+
+The box above the sections searches every setting by name, description and keywords, in categories you have not opened. A result shows its path (Agents ›
+Prompts › Mentions); clicking it (or Enter on the first) opens the category and briefly highlights the setting. Settings your account may not open are never
+found. Every level has an address, so the browser's Back and Forward move between the levels and a link opens Settings where it points: `#settings`,
+`#settings/personal/chat`, `#settings/server/storage/prompt-cache`. Opening Settings adds a history entry and closing it returns the address to the room; a link
+opened with no room behind it closes onto the open room instead of leaving the app. Who sees a category is the rule of the page it holds; an unknown or hidden
+address opens the nearest level the account may see. `web/js/pages/shell/registry.js` is the one list the navigation, the addresses and search read (each
+category, and each setting with its name, description and keywords); `scripts/test-settings-registry.cjs` fails when a page draws a setting the registry does
+not know. The old page names (`settings.open('usages')`) still work.
 
 Open `http://127.0.0.1:9997/` for the embedded web UI. It currently supports
 owner sign-in, projects and nested task rooms, chat, replies, reactions, and
@@ -532,7 +549,7 @@ per-message ones, and an unreported figure shows as a dash, never zero. The `#42
 message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the top-right corner of the message, over
 its top edge (it extends to the left when the bubble is narrower than the toolbar), for every message. Someone else's sender line is at the left, clear of it.
 Your own sender line is right-aligned, where the toolbar covers its right end; the owner accepts that. On a phone the toolbar is part of the bubble's flow. The
-**Message layout** setting (Settings → General → Chat, layout A by default) keeps this: B puts every message on the left, so each one's top right is free for its toolbar. A restricted room shows a lock beside its title in the
+**Message layout** setting (Settings → Personal → Chat, layout A by default) keeps this: B puts every message on the left, so each one's top right is free for its toolbar. A restricted room shows a lock beside its title in the
 chat header as well as in the sidebar. With the sidebar's last-message previews on, a room that holds only system notices says "Only system messages", and one whose newest message from a person has no text
 (only an attachment) says "📎 Attachment" (the room list carries `user_message_count` for this). On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. The root of a conversation
 shows an "N replies" chip counting the whole conversation. In the panel, a message's reply button makes the panel's next send answer that message (a chip above the box names it; cancelling answers the root again), and there is no thread button there. The panel shows the conversation like `tree` (depth first, a reply under its parent, with guide lines). A reply that comes in away from the end is marked by a pill that leads to it, and a send goes to its own row. Arrow keys, Home and End move through the buttons. A row's toolbar is not in the page until the row is hovered, focused or touched (it is about 30 DOM nodes a row, more than half of a 100-message room's page); only the last three rows reached keep theirs, and a row that holds the focus, the pointer or an open reaction row keeps its own. System messages
@@ -576,9 +593,9 @@ estimate, and the gauge label caps at 100%;
 unknown values appear as “—”. Compaction posts a room notice with the reported
 before and after token counts. The spawn dialog's Name field starts with a free name from the server's pool (its dice button asks for another; an empty field lets the server pick), and a refused name is answered under the field. The dialog reads tool availability,
 detected CLI versions, and model choices from the server catalog (the owner edits
-the models of each harness in Settings → Harnesses; exactly one is the harness's default,
+the models of each harness in Settings → Agents → Harnesses; exactly one is the harness's default,
 which is preselected; a manually removed model falls back to it, while an agent keeps a detected model that disappears from the harness); unavailable
-tools show the reason and cannot be selected. Settings → Roles edits the
+tools show the reason and cannot be selected. Settings → Agents → Roles edits the
 global role names, emoji, instructions, cardinality, capabilities, and ordered
 default harness/model choices. Each role picks defaults in turn (with a durable
 cursor per project and role) or randomly. Project settings can inherit or
@@ -607,11 +624,11 @@ author, and also the agent that started the conversation when that is someone
 else. A message has one link, `reply_to`; the conversation it belongs to
 (`thread_root`) is derived from the reply chain; a `thread_root` a writer sends is ignored.
 The UI uses v1's dark
-palette and compact room layout. Settings → General offers ten themes
+palette and compact room layout. Settings → Personal → Appearance offers ten themes
 (Dark, Light, Red/Blue/Green Dark/Light, and High Contrast Dark/Light).
 The choice is saved to the account (`/api/me/preferences`), so it follows
 the person to other devices; the browser keeps a cached copy to apply it
-before the page renders. Settings → General also holds two chat switches and the
+before the page renders. Settings → Personal → Chat also holds two chat switches and the
 **Message layout** choice, saved
 the same way: the
 System events bell (on by default; a feed of what needs a look, with an unread count
@@ -627,9 +644,9 @@ stored record, who it addressed, the wake note and turn each agent got,
 and the related events, with previous and next to walk the room's messages and the Reply in thread, Copy
 text and Copy link actions; the Message layout choice is A, your own messages on the right and others on the left, or B, every message on the left so the toolbar's top-right corner is free on each one). The HTML revalidates on refresh and its CSS and JS
 modules use a content version, so a deploy reaches a normal browser refresh.
-Settings → General → Agents has an owner-only Codex warm (experimental) switch,
+Settings → Agents → Agent isolation has an owner-only Codex warm (experimental) switch,
 off by default. An opted-in Codex agent works with a ChatGPT subscription once
-token auto-refresh is on (Settings → Usages), or with an API key; otherwise it
+token auto-refresh is on (Settings → Server → Accounts & usage), or with an API key; otherwise it
 runs cold. An eligible agent can keep its process ready for the same Keep agents
 warm window as Claude Code; its card shows warm or sleeping from the
 supervisor's report. Full credentials with a refresh token run cold.
@@ -764,11 +781,11 @@ one first with an ACTIVE badge; every profile with its token-expiry icon, a SWIT
 inactive ones, and its plan), Session/Weekly bars with the expected-pace
 tick, "N% left" with the reset countdown, and the reserve/deficit line. The group button lists
 each provider's active profile first, then a divider and the other profiles (remembered in this
-browser); with no provider enabled the column offers Open Settings → Usages. The one-row composer
+browser); with no provider enabled the column offers Open Settings → Server → Accounts & usage. The one-row composer
 grows as text is entered, sends with Enter, and
 inserts a newline with Shift+Enter. On a phone or an iPad with no fine pointer (touch only: `(hover: none) and (pointer: coarse)`, read at every key, so an iPad with a trackpad or keyboard acts like a desktop) Enter makes a new line in the room and the thread composers and only the send button sends; an open picker still takes Enter. Pressing ↑ in an empty composer (or with the
 caret at its start) recalls your earlier messages in that room, newest first;
-↓ walks forward and Esc restores the draft. It works in the rich composer (over the whole document, so ↑ on the second line of a draft only moves the caret) and in the thread panel's composer, where it recalls your messages of that conversation; Shift, Ctrl, Alt and ⌘ with the arrows, composing text, and an open picker (mentions, macros, commands, emoji) keep the keys for themselves. Settings → Macros edits shared `<KEY>`
+↓ walks forward and Esc restores the draft. It works in the rich composer (over the whole document, so ↑ on the second line of a draft only moves the caret) and in the thread panel's composer, where it recalls your messages of that conversation; Shift, Ctrl, Alt and ⌘ with the arrows, composing text, and an open picker (mentions, macros, commands, emoji) keep the keys for themselves. Settings → Agents → Macros edits shared `<KEY>`
 composer expansions for the owner and global admins; all signed-in users can insert
 them from prefix suggestions (typing `<` opens the list, as in v1: an outlined
 list over the composer, one line per macro with its first 40 characters; ↑/↓
@@ -812,14 +829,14 @@ Other. The button shows the same
 count. An explicit `ask` cannot be combined with these fields; `proposed_answers` and
 `open_questions` cannot be combined with each other.
 
-The open-item count appears on the Inbox button and in the tab title. Settings → Notifications → "Show message text in notifications" (off by default, kept on your account) puts the start of a chat message in the desktop notification instead of only saying that one arrived; the text is read through the room's own message list, so only what you may read is shown. New items play a short chime after a tab interaction. So do chat messages that address you (a mention, a reply, a group you are in), unless the room is quiet for you (Room settings → Notifications).
+The open-item count appears on the Inbox button and in the tab title. Settings → Personal → Notifications → "Show message text in notifications" (off by default, kept on your account) puts the start of a chat message in the desktop notification instead of only saying that one arrived; the text is read through the room's own message list, so only what you may read is shown. New items play a short chime after a tab interaction. So do chat messages that address you (a mention, a reply, a group you are in), unless the room is quiet for you (Room settings → Notifications).
 The Inbox lists open items with message requests highlighted beside their replies. A card's heading is one short line: a long question shows its first line (or that line's first sentence) as the heading and the rest as rendered Markdown under it, never as heading text. Delivery-failed notices show readable draft text when
 available and can be dismissed after review; failures of archived rooms can be dismissed all at once ("Dismiss all
 resolved"). Usage alerts show the provider, account name, window, remaining percentage and reset time inline and can be dismissed by an admin. The Inbox never shows raw JSON: a payload that is JSON is summarised in plain words, and the raw record is behind a
-bug icon that appears when Settings → General turns the debug inspector on. Resume, Retry and Continue are normal buttons; Abandon,
+bug icon that appears when Settings → Personal → Chat turns the debug inspector on. Resume, Retry and Continue are normal buttons; Abandon,
 Stop, and Remove actions use the destructive style. A phone login lands on the room you last had open, not on the Inbox.
 The first time something needs your attention (an Inbox item, or a chat message that addresses you) while the browser has not been asked yet, a quiet bar under the room header offers browser notifications: its bell button is the click that raises the permission prompt, and its close button dismisses it for good on your account (the `notification_banner_dismissed` preference), so no browser shows it again. It never shows once the permission was granted or refused, and nothing of the message is put in it.
-Settings → Notifications has a mute switch, a choice of inbox sound (Chime, Ding, Beep, Knock, or
+Settings → Personal → Notifications has a mute switch, a choice of inbox sound (Chime, Ding, Beep, Knock, or
 any .mp3/.wav the owner uploads, up to ten files of 1 MB each) and a volume slider that shows its value as a percentage; the mute switch, choice and volume are
 personal preferences saved to the account (`/api/me/preferences`), so they follow the person across devices (the browser only caches them to paint before sign-in); uploads live under `server/sounds/`, and a choice that no longer plays (for example, deleted by the owner) falls back to the chime. In a secure context (HTTPS or
 `localhost`), that page also offers an explicit browser-permission button. Browser notifications appear only
@@ -963,18 +980,18 @@ fork canary is `AIMEBU_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude`.
 
 ## Machines, folders and approvals
 
-The owner can add a remote machine in Settings → Machines. Add machine
+The owner can add a remote machine in Settings → Agents → Machines. Add machine
 shows a short-lived, single-use pairing command to copy and run on that
 host. The same page lists pending, approved, and revoked machines; the owner
 approves a paired machine there or revokes an existing one. Each approved machine also has a stop icon that stops every agent running on it (after a confirmation); owner and admins use it, within the agents they may manage. The supervisor
 sends executable detection and versions for its configured harnesses.
-Settings → Harnesses (owner only) has a machine picker and that machine's harnesses.
+Settings → Agents → Harnesses (owner only) has a machine picker and that machine's harnesses.
 Closing Settings with unsaved form edits asks whether to Discard them or Keep editing.
 The harnesses are a list with the chosen one's detail beside it (above it on a phone): its summary
 and Enabled switch, then its models, each with a labelled switch per role. Ticking a role on a model makes it one of that role's default
 agents; it saves at once, as the role's own change, and a model not yet saved cannot be ticked.
 Role defaults, below the harnesses, shows each role's ordered defaults (move up or down, remove) and
-its pick mode (the Pick order choice shows only for a role with at least two defaults, there being nothing to order otherwise; the same holds in the Roles form). Settings → Roles edits the same lists; a save in either place shows in the other. Saving a role there closes its form.
+its pick mode (the Pick order choice shows only for a role with at least two defaults, there being nothing to order otherwise; the same holds in the Roles form). Settings → Agents → Roles edits the same lists; a save in either place shows in the other. Saving a role there closes its form.
 Unsaved model edits stay while the page redraws (until Save models, a machine change, or closing Settings). Save models sends the revision of the list the edit started from, so a list someone else saved in the meantime is not overwritten: the save is refused (409), the stored list is shown and the page says so.
 Add harness takes a family, an executable name or path and a label; Auto-detect harnesses lists what
 the supervisor found on PATH and in the usual user-level install directories
@@ -1018,7 +1035,7 @@ environment references: the refused names (`PATH`, `HOME`, `LD_*`, `XDG_*`, `OPE
 disturbing the harness itself, not from naming another variable of the supervisor's environment, so only someone trusted with a machine's
 harness settings should be allowed to add providers. Its models are listed like any other, as `<provider id>/<model>`, and a turn is
 refused up front, naming the variable, when it is not set on that machine. A machine whose supervisor
-predates providers holds such turns with a note in the room. On initial harness detection and Reload models, the supervisor reads the machine's OpenCode config (on the host for Docker), adds valid OpenAI-compatible providers with `{env:NAME}` or no key, and saves their config-listed models plus models from each provider's `GET <baseURL>/models`. Endpoint failure keeps the config-listed models. A literal key in the config is never copied; that provider is skipped with a warning because agent turns use a private config. In Settings → Harnesses the Advanced providers section is collapsed by default. It lets the owner edit provider rows, key variable names and token limits; Save providers checks the list revision, and removing a provider whose models are still listed offers to remove those models too. Key status shows whether a variable is set on the machine, never its value. The import icon remains available for manual overrides.
+predates providers holds such turns with a note in the room. On initial harness detection and Reload models, the supervisor reads the machine's OpenCode config (on the host for Docker), adds valid OpenAI-compatible providers with `{env:NAME}` or no key, and saves their config-listed models plus models from each provider's `GET <baseURL>/models`. Endpoint failure keeps the config-listed models. A literal key in the config is never copied; that provider is skipped with a warning because agent turns use a private config. In Settings → Agents → Harnesses the Advanced providers section is collapsed by default. It lets the owner edit provider rows, key variable names and token limits; Save providers checks the list revision, and removing a provider whose models are still listed offers to remove those models too. Key status shows whether a variable is set on the machine, never its value. The import icon remains available for manual overrides.
 OpenCode model discovery runs in the same private config as a turn and asks each custom provider's own endpoint for its models, and
 `aimebu doctor --machine` warns about key variables that are not set. Disabled or
 unavailable harnesses stay visible with a reason; they cannot be selected for

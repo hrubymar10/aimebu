@@ -69,7 +69,7 @@ function audit(MIN) {
   const dialog = document.querySelector('#settings-dialog'); dialog.setAttribute('open', ''); dialog.dataset.view = 'list'; // a phone's first screen: the list of sections
   const tabs = dialog.querySelector('nav'); tabs.style.height = ''; 
   const tabButtons = [...tabs.querySelectorAll('button:not(.settings-nav-close)')].filter(button => !button.hidden);
-  const sample = document.createElement('button'); sample.className = 'settings-nav-item'; sample.textContent = 'Sample extra tab'; tabs.append(sample);
+  const sample = document.createElement('button'); sample.className = 'settings-nav-item'; sample.textContent = 'Sample extra tab'; (tabs.querySelector('.settings-nav-section:last-of-type') || tabs).append(sample); // a category joins the last section
   const tabsRect = box(tabs);
   const vertical = new Set([...tabs.querySelectorAll('button:not(.settings-nav-close)')].filter(button => box(button).width).map(button => Math.round(box(button).left))).size === 1;
   if (!vertical) findings.push(`settings: the tab list is not a vertical column (${tabButtons.length + 1} tabs, nav ${Math.round(tabsRect.width)}x${Math.round(tabsRect.height)})`);

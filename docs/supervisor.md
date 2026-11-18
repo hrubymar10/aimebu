@@ -70,7 +70,7 @@ The host machine uses the project's ordinary folder automatically.
 The supervisor receives named launcher definitions from the server and reports
 whether each executable exists, its version when available, and its current
 availability. A new machine has no harnesses (nothing is seeded): the owner adds
-each in Settings → Harnesses, by hand or from what Auto-detect found, with one
+each in Settings → Agents → Harnesses, by hand or from what Auto-detect found, with one
 executable name or absolute path, a label, argument array, environment variable
 references, path mappings, and visible host roots. Arguments execute without a shell, and environment
 values are never stored in the server. The last report and owner activity stay
@@ -172,7 +172,7 @@ server's allowlist must admit its source IP. A stale spawn is rejected before
 the key is kept; an invalid key sends a failed
 `spawn_result` for that agent while the machine connection stays open.
 
-**Only run agents in docker.** An instance setting (Settings → General → Agents, owner or admin, off by default;
+**Only run agents in docker.** An instance setting (Settings → Agents → Agent isolation, owner or admin, off by default;
 `GET`/`PUT /api/agent-isolation`) that refuses native launchers. A native agent runs as the person who runs the
 supervisor, with that person's files and other agents' folders within reach; a Docker launcher does not mount the
 supervisor's directories. With it on, the server refuses to create or switch an agent onto a native launcher (409
@@ -187,7 +187,7 @@ hangs for every folder, and the launchers are asked one after another before any
 legacy Docker harness rows are asked the same way (the launcher only runs in a folder its container mounts, and the server cannot tell
 which of the machine's folders that is; when none is mounted the row says so once, not with one
 folder's text). The harnesses found on the machine ("Found on this machine" in the wizard and in
-Settings → Harnesses) get their container versions the same way, within a shared 20 second budget;
+Settings → Agents → Harnesses) get their container versions the same way, within a shared 20 second budget;
 without a project folder the entry says why instead of showing nothing. A container launcher's
 features (`claude_home_shared`, `forward_env`, and Codex's `codex_home_shared`)
 are asked with `HARNESS_DOCKER_PRINT_FEATURES=1`. The Codex probe asks the
@@ -553,7 +553,7 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
   a confirmation because the ping is a tiny turn with a refused toolbox, and the harness container's own watchdog
   ends an orphan (a process whose wrapper has gone) within about 15 s: 150 s is ten times that. Where it did not
   work the expiry is not silent: it logs a warning and adds to the **unconfirmed ping ends** counter that the
-  supervisor's `warm_state` report carries (`unconfirmed_ping_ends`; the machine's card in Settings → Machines
+  supervisor's `warm_state` report carries (`unconfirmed_ping_ends`; the machine's card in Settings → Agents → Machines
   shows it once it is above 0).
 - **A lift that was not answered is owed.** If the scope lift after a ping gets no ack (the connection dropped),
   the supervisor remembers the lift per agent (with the ping it is for) and sends it again, waiting for the ack, on reconnect and before a
@@ -585,7 +585,7 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
 
 ### Warm agents (5 minutes by default)
 
-*Instance setting.* The window is set by the owner in Settings → General → Agents ("Keep agents warm
+*Instance setting.* The window is set by the owner in Settings → Agents → Agent isolation ("Keep agents warm
 (minutes)", 5 until the owner saves another, 0 is off, at most 1440; `GET`/`PUT /api/agent-isolation`,
 `warm_idle_minutes` with `warm_idle_saved`, owner only to change). The order is **the owner's saved value, then
 `AIMEBU_WARM_IDLE` on the supervisor, then 5 minutes**: the server puts a window on a delivery and on an
@@ -630,7 +630,7 @@ live process (idle until when, or working), `refusals` with each agent's last cl
 the counts started and reused since it started, the memory of
 the warm processes it runs itself, and what every running container uses. An idle Claude or opted-in Codex agent's card says
 "Warm · sleeps in N min" or "Sleeping" (`warm` on the card: `state` warm or sleeping, `sleeps_at`; absent when
-the window is off or does not apply to the agent), and the machine's card in Settings → Machines says how many
+the window is off or does not apply to the agent), and the machine's card in Settings → Agents → Machines says how many
 agents are warm and what the processes use (`warm` on the machine row). The memory is **not per agent**: the
 harness container is shared by all agents and Docker reports no finer, so it is labelled container memory,
 all containers. A refusal clears on the next real turn and when the agent stops or disappears from the server's desired state. Its reason is limited to 240 Unicode characters; the server gives viewers a generic message instead of the specific configuration key.

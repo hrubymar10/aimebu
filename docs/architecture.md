@@ -160,7 +160,7 @@ rebuilds); tests for stable message identity, draft preservation, scroll
 under live updates. Moving to Preact + htm, vendored and without a build step
 (owner approval 2026-10-21; plan in `docs/design/frontend-preact.md`):
 pages move one at a time, each replacing its legacy module in the same
-change (Settings → Harnesses and its onboarding step are done). One rendering
+change (Settings → Agents → Harnesses and its onboarding step are done). One rendering
 owner per DOM subtree: a container is either Preact's or hand-written code's,
 never both; pure logic stays in import-free modules.
 

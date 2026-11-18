@@ -118,7 +118,7 @@ it, and makes it a member, at that role, of every project its rooms are imported
 into. Once the import has committed the server creates a one-time reset link for
 each new account (valid an hour, working once, shown only on the finished page and
 in the job); a failure to make a link is reported there and never undoes the import,
-and the owner can make one in Settings → Users. A taken login, a duplicate login or a
+and the owner can make one in Settings → Server → Users & invites. A taken login, a duplicate login or a
 malformed one is refused before anything is written. A person's messages show under the account they are mapped to, not under their v1 name (people mapped to one account are merged, and their old messages carry that account's name); only a skipped person, who has no account, keeps their v1 name, as a label. The person with
 the owner's own name (any case; the exact spelling first, then sorted order) is suggested into the owner's account, and so is the one person in the data when there is only one (messages, members, reactions, memory profiles, human agent records with read cursors, and room preferences count: a lone writer next to people who never wrote is not guessed at, and the wizard says so)
 (a single-person install is the owner, and mapping them elsewhere would leave their read positions, memory profile,
@@ -185,7 +185,7 @@ The preview lists command options
 that v2 does not carry over, including fixed room, terminal wrapping, and
 working-directory behavior; v2 uses the room and checkout chosen at spawn
 time. A skipped-settings list explains v1 preferences and
-prompt overrides, which are not imported: v2's overridable sentences (Settings → Prompts) are
+prompt overrides, which are not imported: v2's overridable sentences (Settings → Agents → Prompts) are
 different and shorter, so the owner re-enters any still needed. Malformed settings or role JSON is
 skipped with a reason while the rest of the backup remains importable.
 v1's `messages_considered_expired_after_seconds` is carried into the v2 message-expiry
@@ -335,7 +335,7 @@ and a dry run writes nothing. v1's choice of sound is
 one global server setting (`notification_sound`). A built-in sound that v2 also
 has (`beep`, `chime`, `ding`, `knock`) is carried into the owner's preferences
 with the volume; a custom one (`user:…`) appears under skipped settings, and the
-owner picks it again in Settings → Notifications.
+owner picks it again in Settings → Personal → Notifications.
 
 The importer leaves v1's leaderboard rating cards and its `leaderboard_enabled`
 setting, agents' read cursors,

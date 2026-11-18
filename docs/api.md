@@ -93,7 +93,7 @@ and reconnects the event stream from its last seen `seq`.
 | POST | `/api/quota-switcher/{tool}/rearm`, `/reenable` | `{}` | owner clears the after-reset latch / the circuit breaker |
 | GET | `/api/limit-guard` | — | owner-only limit guard: per tool `{config, saved, result, held, since}` under `tools`, plus `profiles` and `percent_display` (`left` or `used`, the owner's Usages setting, which Health and Settings use to word the percentages); 503 until the quota switcher runs (see [quota-switcher](quota-switcher.md#limit-guard-acting-before-100)) |
 | PUT | `/api/limit-guard/{tool}` | config | owner replaces a tool's soft/hard thresholds and per-profile overrides (400 on validation, 404 unknown tool) |
-| GET | `/api/usages` | — | provider usage snapshots for Settings → Usages. The owner reads all of it; a global admin reads the limits only (`usages.Response.ForAdmin`: windows, resets, plan, credits, status and the profile names, but no e-mail, Enterprise host, error text, credential alerts, token-refresh state or configured-secret flags); anyone else gets 403. Every write stays the owner's |
+| GET | `/api/usages` | — | provider usage snapshots for Settings → Server → Accounts & usage. The owner reads all of it; a global admin reads the limits only (`usages.Response.ForAdmin`: windows, resets, plan, credits, status and the profile names, but no e-mail, Enterprise host, error text, credential alerts, token-refresh state or configured-secret flags); anyone else gets 403. Every write stays the owner's |
 | POST | `/api/usages/refresh` | `{provider?}` | owner-only forced refresh; `429` + `Retry-After` and `retry_after_sec` inside the 15-second cooldown (error code `cooldown`); `400 invalid_provider` for an unknown provider |
 | GET | `/api/switcher` | — | owner-only enabled state, profiles, eligibility, and host agents affected by a switch |
 | PUT | `/api/switcher` | `{enabled}` | owner enables or disables profile switching |
@@ -317,7 +317,7 @@ key, so a default the owner edits or deletes is never re-created or
 overwritten, an existing key keeps its body, and a key the v1 import ledger
 already records is never re-seeded. Keys match `^[a-z][a-z0-9_-]*$`;
 there are at most 256, and each body is at most 16 KiB in UTF-8 bytes.
-Settings → Macros is read-only for other users and editable by the instance
+Settings → Agents → Macros is read-only for other users and editable by the instance
 owner or an admin. Typing `<KEY>` anywhere in the composer offers case-insensitive
 prefix matches. Selecting one inserts expanded text into the editable draft;
 nested references expand to depth 8, and `\<KEY>` inserts literal `<KEY>`.
@@ -375,7 +375,7 @@ its body and agents; project-scoped collisions are logged and left intact.
 
 Roles are global only and defined by the instance owner or an admin; changing a role's capabilities needs the same authority.
 Migration 64 retired project roles: a live project role became global when no global role had its key (the first by id when several
-projects defined it) but without its lead, can-spawn or writer capabilities, which the owner sets again in Settings → Roles; any other was dropped with a log line and its agents moved to the global role of that key, and a deleted one stays
+projects defined it) but without its lead, can-spawn or writer capabilities, which the owner sets again in Settings → Agents → Roles; any other was dropped with a log line and its agents moved to the global role of that key, and a deleted one stays
 as history. A role used by a live agent cannot be deleted. Deleting a role preserves stopped agents' historical
 cards, marks their role as deleted, and frees its key for a new definition;
 those stopped agents cannot reactivate with the deleted role. A role key is

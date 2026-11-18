@@ -11,7 +11,7 @@ Reporting is decided in this order:
 
 1. **`AIMEBU_SENTRY_DSN` in the server's environment wins.** A DSN turns reporting on with that project; `off` (or an empty value)
    turns it off. When it is set, Settings cannot change it and no popup is shown.
-2. Otherwise **Settings → Telemetry** decides. It is one card: the master switch **"Send telemetry"** first (it applies at once, with no Save),
+2. Otherwise **Settings → Server → Telemetry** decides. It is one card: the master switch **"Send telemetry"** first (it applies at once, with no Save),
    then the Sentry DSN field, then the person's own identity (see below). The DSN field is always filled with the effective DSN: the one you chose,
    else the default this build ships (if any); a "Reset to default DSN" icon button to its left puts the default back (off while the field already
    holds it, absent when the build ships no default), and its own **Save** applies a new DSN. **With the switch off, everything under it is disabled
@@ -22,7 +22,7 @@ Reporting is decided in this order:
 3. **Nothing is reported until the owner has answered the popup.** On a new install the owner sees a one-time "Telemetry" popup
    after the welcome, and on the first sign-in after an update that brought telemetry. It holds the toggle (on when this build
    ships a default DSN, otherwise off), the DSN field (filled in, with the same reset button; greyed out while the toggle is off), the owner's own switch "Send my user name instead of a
-   fingerprint" (off by default, greyed out with the DSN while the toggle is off, worded as in Settings → Telemetry), and one sentence on what is and is not sent. **Save** keeps what is shown
+   fingerprint" (off by default, greyed out with the DSN while the toggle is off, worded as in Settings → Server → Telemetry), and one sentence on what is and is not sent. **Save** keeps what is shown
    (and, with the switch ticked and reports on, also sets it for the owner's account, as `PUT /api/me/telemetry` with `send_name`; if that call fails the popup comes back with the reason and what was chosen, up to three times); **Not
    now** (or Escape) turns reports off and changes nothing else. Either way it is not asked again.
 
@@ -34,7 +34,7 @@ Other variables (all optional):
 |---|---|---|
 | `AIMEBU_SENTRY_DSN` | A DSN, or `off`/empty to disable; overrides Settings. | unset |
 | `AIMEBU_SENTRY_ENV` | The Sentry environment name. A normal server run (including `bin/aimebu server`) reports `production`; `make dev` sets `development` itself. | `production` |
-| `AIMEBU_SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (server) and of page loads traced (browser), 0 to 1. Settings → Telemetry shows the value in effect. | `1` |
+| `AIMEBU_SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (server) and of page loads traced (browser), 0 to 1. Settings → Server → Telemetry shows the value in effect. | `1` |
 
 A DSN must be https (http only for a Sentry on this machine: localhost, 127.x, ::1); anything else is refused. A rate outside 0 to 1 (or not a number) is reported on stderr and the process runs with telemetry **off**; it never refuses to start
 over it. The server says `telemetry on: ...` at startup when it is on. The release is the build's version (`aimebu version`, the same
@@ -138,7 +138,7 @@ as `user.telemetry_fingerprint`, **not** derived from the account id). While tel
 as Sentry `user.id`, and nothing else about the person (no name, e-mail, address or place), so Sentry can count affected people and an
 owner can tell their own reports from a tester's.
 
-**Settings → Telemetry** shows every signed-in person their own fingerprint, or their login name while the switch below is on (read-only, labelled accordingly, with a copy button) and a 🎲 button, "Generate a new
+**Settings → Server → Telemetry** shows every signed-in person their own fingerprint, or their login name while the switch below is on (read-only, labelled accordingly, with a copy button) and a 🎲 button, "Generate a new
 fingerprint", that replaces it with a fresh random one. The switch **"Send my user name instead of a fingerprint"** (per person, off by default)
 makes `user.id` the login name instead, and the field shows that name instead of the hash until the switch is turned off or the fingerprint is rolled: never both. Rolling while the switch is on asks first ("Rolling a new fingerprint turns off sending your
 user name and gives you a new anonymous id."); confirming turns the switch off and rolls, cancelling changes nothing. A change reaches the server
@@ -150,7 +150,7 @@ API: `GET`/`PUT /api/me/telemetry` (`{send_name}`) and `POST /api/me/telemetry/f
 ## Volume
 
 The free Sentry plan counts spans (5 million a month), so the number of spans per use is bounded by what is traced, not by how many requests: every request and page load is traced by
-default (`AIMEBU_SENTRY_TRACES_SAMPLE_RATE` lowers the share), a request carries at most 50 database spans, a sampled page load is a handful of spans, and the files of the app are not traced at all. Settings → Telemetry
+default (`AIMEBU_SENTRY_TRACES_SAMPLE_RATE` lowers the share), a request carries at most 50 database spans, a sampled page load is a handful of spans, and the files of the app are not traced at all. Settings → Server → Telemetry
 shows these numbers read-only (`GET /api/telemetry/settings` carries `traces_sample_rate` and `max_db_spans`); the rate is the server's environment's to change.
 - **No Session Replay.** The vendored browser bundle is the tracing-only one and contains no Replay code, so it cannot be turned on by a setting. A
   recording of the screen would carry link targets, names in attributes and page URLs that the SDK offers no hook to scrub, so it is left out until

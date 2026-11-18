@@ -1,6 +1,6 @@
 # Ollama Cloud usage
 
-Settings → Usages → Ollama Cloud accepts a browser `Cookie` request header
+Settings → Server → Accounts & usage → Ollama Cloud accepts a browser `Cookie` request header
 from `ollama.com/settings`, an API key, or both. **Auto** tries the cookie for
 quota data and falls back to the API key; **Cookie** only uses the browser
 header; **API key** only verifies Cloud API access. The API-key endpoint does
