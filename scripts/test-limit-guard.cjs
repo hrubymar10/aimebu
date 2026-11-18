@@ -24,14 +24,14 @@ assert.equal(guardSentence('Claude', undefined), 'Claude: no clear usage reading
 assert.equal(guardSentence('Claude', view('ok', 38), 'left'), 'Claude (main) has 62% left of its weekly window.');
 assert.equal(guardSentence('Claude', view('soft', 91), 'left'), 'Claude (main) has 9% left of its weekly window: new turns are held, running ones finish.');
 assert.equal(guardSentence('Claude', view('ok', 38), 'used'), 'Claude (main) is at 38% of its weekly window.');
-assert.equal(guardHealthRow('claude', 'Claude', view('ok', 38), 'left').display, 'left');
 
-// The Health list only shows a tool with a clear reading.
+// The Health list only shows a tool the guard is holding: an ok reading is not a problem and stays in Settings -> Usages.
 assert.equal(guardHealthRow('claude', 'Claude', view('off', null)), null);
 assert.equal(guardHealthRow('claude', 'Claude', view('unknown', null)), null);
+assert.equal(guardHealthRow('claude', 'Claude', view('ok', 38), 'left'), null);
+assert.equal(guardHealthRow('claude', 'Claude', view('ok', 10)), null);
 const row = guardHealthRow('claude', 'Claude', view('soft', 92));
 assert.deepEqual({ tool: row.tool, state: row.state, held: row.held, percent: row.percent, soft: row.soft, hard: row.hard }, { tool: 'claude', state: 'soft', held: true, percent: 92, soft: 90, hard: 95 });
-assert.equal(guardHealthRow('claude', 'Claude', view('ok', 10)).held, false);
 
 // Only held tools count toward the Health badge.
 assert.equal(heldTools({ tools: { claude: view('soft', 91), codex: view('ok', 5) } }), 1);

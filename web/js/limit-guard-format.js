@@ -20,10 +20,11 @@ export function guardSentence(label, view, display = 'used') {
   }
 }
 
-// What the Health list shows for a tool, or null when there is nothing to say (guard off, or no clear reading).
+// What the Health list shows for a tool, or null when there is nothing to say there: an `ok` reading is not a
+// problem and does not belong in Health (it stays in Settings -> Usages), nor does a guard off or no clear reading.
 export function guardHealthRow(tool, label, view, display = 'used') {
   const result = view?.result || {};
-  if (!['ok', 'soft', 'hard'].includes(result.state)) return null;
+  if (!['soft', 'hard'].includes(result.state)) return null;
   return { tool, state: result.state, held: !!view.held, percent: result.percent, soft: result.soft, hard: result.hard, display, text: guardSentence(label, view, display) };
 }
 

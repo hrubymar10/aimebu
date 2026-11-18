@@ -121,7 +121,7 @@ async function main() {
       const page = await mount({ auto: answerAll({ 'GET /api/health': { agents: [{ id: 'a3', name: 'fine', room_ids: ['r1'], flags: [] }] }, 'GET /api/limit-guard': guard('ok'), 'GET /api/disk': { status: 403, body: { message: 'no' } } }) });
       await page.evaluate(() => window.__refreshed);
       assert.deepEqual(await badge(page), ['0', true, 'All agents healthy', 'Health', false, 'false', 'dialog']);
-      assert.deepEqual(await page.evaluate(() => { const p = document.querySelector('#health-popover'); return [p.getAttribute('role'), p.getAttribute('aria-label'), p.hidden, [...p.querySelectorAll('.health-limit')].map(n => n.dataset.tool + ':' + n.dataset.state)]; }), ['dialog', 'Health', true, ['claude:ok', 'codex:ok']]);
+      assert.deepEqual(await page.evaluate(() => { const p = document.querySelector('#health-popover'); return [p.getAttribute('role'), p.getAttribute('aria-label'), p.hidden, [...p.querySelectorAll('.health-limit')].map(n => n.dataset.tool + ':' + n.dataset.state)]; }), ['dialog', 'Health', true, []]);
       assert.equal(await page.$eval('#health-popover > p.health-ok', el => el.textContent), 'No agent needs attention');
       await open(page);
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#health-toggle').getAttribute('aria-expanded'), document.activeElement.id]), ['true', 'health-popover']);
@@ -129,15 +129,19 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#health-popover').hidden, document.querySelector('#health-toggle').getAttribute('aria-expanded'), document.activeElement.id]), [true, 'false', 'health-toggle']);
       await page.close();
     }
-    // The owner's percent-left setting is honoured: the sentence, the bar and its marks all say what is left.
+    // The owner's percent-left setting is honoured: the sentence, the bar and its marks all say what is left. (Both tools soft, so both
+    // have a Health row here; an ok tool has none, wherever the display is turned.)
     {
-      const page = await mount({ auto: answerAll({ 'GET /api/limit-guard': guard('soft', 'left') }) });
+      const guardBothSoft = display => ({ ...(display ? { percent_display: display } : {}), profiles: {}, tools: {
+        claude: { config: {}, held: true, result: { state: 'soft', profile: 'local', percent: 96, window: 'weekly', soft: 95, hard: 99 } },
+        codex: { config: {}, held: false, result: { state: 'soft', profile: 'main', percent: 40, window: 'session', soft: 98, hard: 99 } } } });
+      const page = await mount({ auto: answerAll({ 'GET /api/limit-guard': guardBothSoft('left') }) });
       await page.$eval('#health-toggle', button => button.click());
       await page.waitForSelector('#health-popover .health-limit');
       // Marks within a few percent of each other step apart in the direction the bar runs: drawn as percent left the hard mark is the one on the left.
       assert.deepEqual(await page.evaluate(() => { const hard = document.querySelector('#health-popover .health-limit[data-tool=codex] [data-mark=hard]'); return hard && [hard.classList.contains('is-near'), hard.classList.contains('is-near-left')]; }), [false, true], 'percent left: the near hard mark steps left');
       assert.deepEqual(await page.$$eval('#health-popover .health-limit', nodes => nodes.map(node => [node.querySelector('.health-limit-text').textContent, node.querySelector('.health-limit-fill').style.width, [...node.querySelectorAll('.health-limit-tick')].map(t => t.style.left)])),
-        [['Claude (local) has 4% left of its weekly window: new turns are held, running ones finish.', '4%', ['5%', '1%']], ['Codex (main) has 60% left of its session window.', '60%', ['2%', '1%']]]);
+        [['Claude (local) has 4% left of its weekly window: new turns are held, running ones finish.', '4%', ['5%', '1%']], ['Codex (main) has 60% left of its session window: new turns are held, running ones finish.', '60%', ['2%', '1%']]]);
       // The two marks of a limit bar are told apart (colour and height), so they do not read as one when the thresholds are close.
       assert.deepEqual(await page.$$eval('#health-popover .health-limit-bar', bars => bars.map(bar => { const soft = bar.querySelector('[data-mark=soft]'), hard = bar.querySelector('[data-mark=hard]'); return [getComputedStyle(soft).backgroundColor !== getComputedStyle(hard).backgroundColor, hard.getBoundingClientRect().height > soft.getBoundingClientRect().height]; })).then(list => [...new Set(list.map(String))]), ['true,true'], 'the soft and hard marks differ in colour and height');
       assert.ok((await page.$eval('.health-limit-legend', el => el.textContent)).includes('two marks'), 'the marks are explained');
@@ -154,7 +158,7 @@ async function main() {
       assert.deepEqual(await badge(page), ['3', false, '3 need attention', 'Health, 3 need attention', true, 'false', 'dialog']);
       assert.deepEqual(await page.evaluate(() => window.__sidebar.health), ['a1', 'a2']);
       assert.deepEqual(await page.$$eval('#health-popover .health-limit', nodes => nodes.map(node => [node.dataset.tool, node.dataset.state, node.querySelector('.health-limit-text').textContent, node.querySelector('.health-limit-fill').style.width, [...node.querySelectorAll('.health-limit-tick')].map(t => t.style.left)])),
-        [['claude', 'soft', 'Claude (local) is at 96% of its weekly window: new turns are held, running ones finish.', '96%', ['95%', '99%']], ['codex', 'ok', 'Codex (main) is at 40% of its session window.', '40%', ['98%', '99%']]]);
+        [['claude', 'soft', 'Claude (local) is at 96% of its weekly window: new turns are held, running ones finish.', '96%', ['95%', '99%']]], 'Health lists only the tools the guard is holding: the ok tool stays in Settings -> Usages');
       assert.deepEqual(await page.$$eval('#health-popover > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase())), ['health-title', 'health-disk', 'health-limits', 'row-btn health-item', 'row-btn health-item', 'row-btn health-item']);
       await page.close();
     }
@@ -202,11 +206,11 @@ async function main() {
       assert.deepEqual(await badge(gone), ['2', false, '2 need attention', 'Health, 2 need attention', true, 'true', 'dialog']);
       await gone.close();
       const page = await mount();
-      await page.waitForFunction(() => document.querySelectorAll('#health-popover .health-limit').length === 2);
+      await page.waitForFunction(() => document.querySelectorAll('#health-popover .health-limit').length === 1);
       assert.equal(await count(page, 'GET', '/api/limit-guard'), 1);
       await page.evaluate(() => window.__auto['GET /api/limit-guard'] = { profiles: {}, tools: { claude: { held: false, result: { state: 'ok', profile: 'local', percent: 10, window: 'weekly', soft: 95, hard: 99 } }, codex: { held: false, result: { state: 'off' } } } });
       await open(page);
-      await page.waitForFunction(() => document.querySelectorAll('#health-popover .health-limit').length === 1);
+      await page.waitForFunction(() => !document.querySelector('#health-popover .health-limit'));
       assert.deepEqual(await badge(page), ['2', false, '2 need attention', 'Health, 2 need attention', true, 'true', 'dialog'], 'the tool no longer held leaves the count');
       assert.equal(await count(page, 'GET', '/api/limit-guard'), 2);
       await page.close();
@@ -357,11 +361,11 @@ async function main() {
       await waitRequest(page, 'GET', '/api/limit-guard');
       await page.$eval('#health-toggle', el => el.click());
       await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/limit-guard').length === 2);
-      await answer(page, await page.evaluate(() => window.__requests.findIndex(request => request.path === '/api/limit-guard' && request !== window.__requests.filter(r => r.path === '/api/limit-guard')[0])), 200, guard('ok'));
-      await page.waitForFunction(() => document.querySelectorAll('#health-popover .health-limit').length === 2);
-      await answer(page, await page.evaluate(() => window.__requests.findIndex(request => request.path === '/api/limit-guard' && !request.answered)), 200, guard('soft'));
+      await answer(page, await page.evaluate(() => window.__requests.findIndex(request => request.path === '/api/limit-guard' && request !== window.__requests.filter(r => r.path === '/api/limit-guard')[0])), 200, guard('soft'));
+      await page.waitForFunction(() => document.querySelectorAll('#health-popover .health-limit').length === 1);
+      await answer(page, await page.evaluate(() => window.__requests.findIndex(request => request.path === '/api/limit-guard' && !request.answered)), 200, guard('ok'));
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#health-count').hidden, [...document.querySelectorAll('#health-popover .health-limit')].map(n => n.dataset.state)]), [true, ['ok', 'ok']], 'an older read does not overwrite a newer one');
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#health-count').textContent, [...document.querySelectorAll('#health-popover .health-limit')].map(n => n.dataset.state)]), ['1', ['soft']], 'an older read does not overwrite a newer one');
       await page.close();
     }
     // An older refusal arriving after a newer success does not stop the limit guard being asked again.
@@ -370,8 +374,8 @@ async function main() {
       const older = await waitRequest(page, 'GET', '/api/limit-guard');
       await page.$eval('#health-toggle', el => el.click());
       await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/limit-guard').length === 2);
-      await answer(page, await page.evaluate(() => window.__requests.findIndex(request => request.path === '/api/limit-guard' && request !== window.__requests.filter(r => r.path === '/api/limit-guard')[0])), 200, guard('ok'));
-      await page.waitForFunction(() => document.querySelectorAll('#health-popover .health-limit').length === 2);
+      await answer(page, await page.evaluate(() => window.__requests.findIndex(request => request.path === '/api/limit-guard' && request !== window.__requests.filter(r => r.path === '/api/limit-guard')[0])), 200, guard('soft'));
+      await page.waitForFunction(() => document.querySelectorAll('#health-popover .health-limit').length === 1);
       await answer(page, older, 403, { message: 'owner only' });
       await settle(page);
       await page.evaluate(() => { window.__auto['GET /api/limit-guard'] = { profiles: {}, tools: {} }; });

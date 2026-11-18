@@ -169,7 +169,8 @@ per change of state.
 
 Settings -> Usages -> **Limits before 100%** (owner only) edits the thresholds per tool and gives a profile
 its own, for one that should be held earlier or later than the rest. The **Health** list starts with a bar
-per tool whose active profile has a clear reading, with the soft and hard thresholds ticked on it; a tool
+per tool the guard is holding (a calm `ok` reading is not a problem; it shows only in this Settings block);
+the soft and hard thresholds are ticked on the bar, and a tool
 that is holding new turns also counts toward the Health badge. The rows are re-read every 30 seconds while
 the list is open and when it opens. Hold changes refresh the badge even when the list is closed,
 including a release after a stale or failed reading.
