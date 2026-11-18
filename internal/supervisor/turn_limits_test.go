@@ -304,3 +304,86 @@ func TestRunTurnRawOutputCountsAsIdleLiveness(t *testing.T) {
 		t.Fatalf("exits=%+v %v", exits, err)
 	}
 }
+
+// probedTurn is a harness that never announces a tool and says only, through ToolProcessSince, whether a process of a tool call is
+// running (OpenCode and Vibe).
+type probedTurn struct {
+	events  chan adapter.Event
+	done    chan struct{}
+	once    sync.Once
+	running atomic.Bool
+	asked   atomic.Int64
+}
+
+func (t *probedTurn) Events() <-chan adapter.Event { return t.events }
+func (t *probedTurn) Cancel() error {
+	t.once.Do(func() { close(t.events); close(t.done) })
+	return nil
+}
+func (t *probedTurn) Wait() (adapter.ExitInfo, error) {
+	<-t.done
+	return adapter.ExitInfo{ExitCode: 137}, nil
+}
+func (t *probedTurn) ToolProcessSince(time.Time) bool { t.asked.Add(1); return t.running.Load() }
+
+func runProbedTurn(t *testing.T, running bool) (*probedTurn, *Journal, <-chan struct{}) {
+	t.Helper()
+	ctx := context.Background()
+	journal, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { journal.Close() })
+	if _, err := journal.RecordStart(ctx, StartRecord{TurnID: "turn-probe", AgentID: "agent", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+	client.TurnLimits = TurnLimitOverrides{Idle: durationPtr(80 * time.Millisecond), Max: durationPtr(0)}
+	turn := &probedTurn{events: make(chan adapter.Event), done: make(chan struct{})}
+	turn.running.Store(running)
+	client.active["agent"] = "turn-probe"
+	client.running["agent"] = turn
+	client.turns.Add(1)
+	go client.runTurn(ctx, protocol.Delivery{AgentID: "agent", TurnID: "turn-probe", Mode: adapter.ModeNormal, Agent: adapter.AgentSpec{Tool: "opencode"}}, turn)
+	finished := make(chan struct{})
+	go func() { client.turns.Wait(); close(finished) }()
+	return turn, journal, finished
+}
+
+// An open child process blocks the idle kill: the harness is silent for many idle periods and is left alone; when the process ends
+// it gets one fresh idle period and is then killed as before.
+func TestRunTurnToolProcessSuspendsIdleKill(t *testing.T) {
+	turn, journal, finished := runProbedTurn(t, true)
+	select {
+	case <-finished:
+		t.Fatal("a turn with a running tool process was killed as idle")
+	case <-time.After(700 * time.Millisecond):
+	}
+	if turn.asked.Load() < 2 {
+		t.Fatalf("the process must be looked at again while it runs, asked %d times", turn.asked.Load())
+	}
+	turn.running.Store(false)
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the turn was not killed after its tool process ended")
+	}
+	exits, err := journal.PendingExits(context.Background())
+	if err != nil || len(exits) != 1 || !exits[0].Exit.LimitStall || !strings.Contains(exits[0].Exit.ErrorEvent, "no output") {
+		t.Fatalf("exits=%+v %v", exits, err)
+	}
+}
+
+// With no tool process, the idle kill applies.
+func TestRunTurnWithoutToolProcessIsKilledAsIdle(t *testing.T) {
+	_, journal, finished := runProbedTurn(t, false)
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("an idle turn with no tool process was never killed")
+	}
+	exits, err := journal.PendingExits(context.Background())
+	if err != nil || len(exits) != 1 || !exits[0].Exit.LimitStall {
+		t.Fatalf("exits=%+v %v", exits, err)
+	}
+}

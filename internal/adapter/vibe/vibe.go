@@ -484,6 +484,13 @@ type turn struct {
 // LastOutput is when the harness last wrote any stdout line, parsed or not, which the supervisor's idle deadline counts as liveness.
 func (t *turn) LastOutput() time.Time { return time.Unix(0, t.lastOutput.Load()) }
 
+// ToolProcessSince says whether a tool call is running: Vibe's streaming output carries an effect only once it has finished (it writes
+// completed entries and nothing for one in progress), so a long silent command is visible only as a process under the harness that began
+// after its last output. A Docker turn runs its tools in a container, out of reach of the process table, and reports nothing.
+func (t *turn) ToolProcessSince(since time.Time) bool {
+	return !t.docker && t.cmd.Process != nil && !t.reap.Reaped() && adapter.ToolProcessSince(t.cmd.Process.Pid, since)
+}
+
 func (t *turn) Events() <-chan adapter.Event { return t.events }
 
 func (t *turn) Cancel() error {

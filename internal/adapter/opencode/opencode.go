@@ -237,7 +237,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted,
-		cmd: cmd, events: make(chan adapter.Event, 64), done: make(chan struct{}), stderrCapture: spec.StderrSink}
+		docker: docker, cmd: cmd, events: make(chan adapter.Event, 64), done: make(chan struct{}), stderrCapture: spec.StderrSink}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -453,6 +453,7 @@ type turn struct {
 	lastOutput          atomic.Int64 // unix nanos of the last stdout line
 	id, expectedSession string
 	started             bool
+	docker              bool
 	cmd                 *exec.Cmd
 	events              chan adapter.Event
 	done                chan struct{}
@@ -470,6 +471,13 @@ type turn struct {
 // LastOutput is when the harness last wrote any stdout line, parsed or not,
 // which the supervisor's idle deadline counts as liveness.
 func (t *turn) LastOutput() time.Time { return time.Unix(0, t.lastOutput.Load()) }
+
+// ToolProcessSince says whether a tool call is running: OpenCode reports a tool part only once it has finished (its JSON output has no
+// event for the start), so a long silent command is visible only as a process under the harness that began after its last output. A Docker
+// turn runs its tools in a container, out of reach of the process table, and reports nothing.
+func (t *turn) ToolProcessSince(since time.Time) bool {
+	return !t.docker && t.cmd.Process != nil && !t.reap.Reaped() && adapter.ToolProcessSince(t.cmd.Process.Pid, since)
+}
 
 func (t *turn) Events() <-chan adapter.Event { return t.events }
 

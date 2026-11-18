@@ -433,8 +433,9 @@ error event, and the session ID stayed the same. The answer is all the text
 parts of the last step, joined as they arrive; narration in earlier steps
 (before a tool call) is ignored. Usage sums the turn's steps
 (tokens, cost, and the last step's prompt as context used). A finished tool
-call is reported once and is activity, so a long silent tool call can trip the
-idle deadline: raise `AIMEBU_TURN_IDLE` for such work. Provider failures are
+call is reported once and is activity; the start of a tool call is not reported, so the supervisor takes a process under
+the harness that began after its last output as a tool in flight (native turns only; see the turn limits in
+[the supervisor](supervisor.md)). A long silent tool call in a Docker turn can still trip the idle deadline: raise `AIMEBU_TURN_IDLE` for such work. Provider failures are
 retried by OpenCode for about 70 seconds without events and then end with one
 `error` event; it goes into the exit evidence as `OpenCode error: APIError
 (HTTP 429): …`, and wording such as `usage limit`, `usage_limit` or a
@@ -577,8 +578,9 @@ assistant message after it; narration before a tool call is ignored. A turn is t
 process exited 0, that prompt was seen, an answer followed, no `<vibe_stop_event>` message ended the
 turn, and the session ID stayed the same. A stop event (a turn, price or token limit) is evidence
 (`Vibe stopped the turn: …`), never an answer, and aimebu sets none of those limits. An `effect` is
-reported once it has finished, so a long silent tool call can trip the idle deadline: raise
-`AIMEBU_TURN_IDLE` for such work. API and configuration failures come on stderr as `Error: …` with exit
+reported once it has finished, so the supervisor takes a process under the harness that began after its last output as a tool in
+flight (native turns only; see the turn limits in [the supervisor](supervisor.md)). A long silent tool call in a Docker turn can
+still trip the idle deadline: raise `AIMEBU_TURN_IDLE` for such work. API and configuration failures come on stderr as `Error: …` with exit
 status 1; the last such line goes into the exit evidence as `Vibe error: …`, and wording such as
 `usage limit` or a weekly, hourly, daily or monthly limit (never a plain `rate limit`) routes into the
 provider-limit gate.

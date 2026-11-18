@@ -98,6 +98,9 @@ type turnWatch struct {
 	started time.Time
 	last    time.Time
 	tools   map[string]int
+	// busy says a tool process is running that the harness has not announced (see toolProber): like an announced tool it suspends the
+	// idle deadline, and it is cleared by the harness's next output or by the process ending.
+	busy bool
 }
 
 func newTurnWatch(limits TurnLimits, now time.Time) *turnWatch {
@@ -113,6 +116,7 @@ func (w *turnWatch) touch(at time.Time) {
 
 func (w *turnWatch) observe(tools []adapter.ToolEvent, now time.Time) {
 	w.last = now
+	w.busy = false
 	for _, tool := range tools {
 		if !tool.Done {
 			w.tools[tool.ID]++
@@ -131,11 +135,34 @@ func (w *turnWatch) next() (deadline time.Time, reason turnStall, ok bool) {
 	if w.limits.Max > 0 {
 		deadline, reason, ok = w.started.Add(w.limits.Max), turnStallMax, true
 	}
-	if w.limits.Idle > 0 && len(w.tools) == 0 {
+	if w.limits.Idle > 0 && len(w.tools) == 0 && !w.busy {
 		idle := w.last.Add(w.limits.Idle)
 		if !ok || idle.Before(deadline) {
 			deadline, reason, ok = idle, turnStallIdle, true
 		}
 	}
 	return deadline, reason, ok
+}
+
+// idleDue says the idle deadline has fallen due with no announced tool running.
+func (w *turnWatch) idleDue(now time.Time) bool {
+	return w.limits.Idle > 0 && len(w.tools) == 0 && !now.Before(w.last.Add(w.limits.Idle))
+}
+
+// setBusy records what the process probe saw. When the tool process ends the harness is given a fresh idle period to say something.
+func (w *turnWatch) setBusy(active bool, now time.Time) {
+	if w.busy && !active {
+		w.last = now
+	}
+	w.busy = active
+}
+
+// toolProbePoll is how often a running tool process is looked at again while it suspends the idle deadline.
+const toolProbePoll = 30 * time.Second
+
+// toolProber is implemented by a turn of a harness that reports a tool call only once it has finished (OpenCode, Vibe), so that a long
+// silent command is not mistaken for a hung harness. since is when the harness last wrote anything: a process that began after it is
+// the tool call in flight. Harnesses that announce a tool's start (Claude, Codex, Pi) do not need it.
+type toolProber interface {
+	ToolProcessSince(since time.Time) bool
 }

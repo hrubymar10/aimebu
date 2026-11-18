@@ -812,8 +812,20 @@ command is legitimately silent. The supervisor counts a tool as in flight
 from pi's `tool_execution_start`/`_end`, Codex's `item.started`/
 `item.completed` for commands, MCP calls, file changes and searches, and
 Claude Code's `tool_use` / `tool_result` blocks. OpenCode and Vibe report a
-tool call only once it has finished, so there the idle deadline is not
-suspended and a long silent command waits for `AIMEBU_TURN_IDLE`.
+tool call only once it has finished (OpenCode's `--format json` emits a `tool_use`
+part when its state is completed or error, and Vibe's streaming output writes only
+completed entries), so neither has an event for a tool's start. For these two the
+supervisor looks at the process table instead, when the idle deadline falls due and
+again every 30 seconds while it holds: a live process under the harness that began
+after the harness last wrote anything (less two seconds, the resolution of a
+process's age) is a tool call in flight, and suspends the idle deadline like an
+announced tool. A helper the harness started earlier, such as a person's own MCP
+server, began before the last output and does not count. When the process ends the
+harness gets one fresh idle period. The process table is read with `ps`, on Linux
+and macOS. A **Docker turn reports nothing this way**: its tools run in a container
+that is shared by every agent, out of reach of the harness's process tree on the
+host, so there a long silent command still waits for `AIMEBU_TURN_IDLE` (and
+`AIMEBU_TURN_MAX` bounds a hung tool in every case).
 `AIMEBU_TURN_MAX` is a
 wall-clock cap for the whole turn, tools included. The defaults are the same
 for every harness: 30 minutes idle and a 90-minute cap. Setting either

@@ -1224,7 +1224,14 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 		if stall != "" {
 			return
 		}
-		if deadline, _, ok := watch.next(); ok {
+		deadline, _, ok := watch.next()
+		if watch.busy {
+			// A tool process holds the idle deadline off: look at it again soon, not at the (suspended) deadline.
+			if poll := time.Now().Add(min(toolProbePoll, max(limits.Idle, time.Millisecond))); !ok || poll.Before(deadline) {
+				deadline, ok = poll, true
+			}
+		}
+		if ok {
 			timer.Reset(time.Until(deadline))
 		}
 	}
@@ -1306,6 +1313,11 @@ events:
 			// the harness is alive.
 			if lo, ok := turn.(interface{ LastOutput() time.Time }); ok {
 				watch.touch(lo.LastOutput())
+			}
+			// A harness that announces no tool start (OpenCode, Vibe) shows a long command only as a process under it: ask when the
+			// idle deadline is due, and again while one runs, so that an end is noticed.
+			if prober, ok := turn.(toolProber); ok && (watch.busy || watch.idleDue(time.Now())) {
+				watch.setBusy(prober.ToolProcessSince(watch.last), time.Now())
 			}
 			deadline, reason, ok := watch.next()
 			if !ok || time.Now().Before(deadline) {
