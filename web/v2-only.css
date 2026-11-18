@@ -29,6 +29,11 @@
 .chat-msg { align-self: stretch; width: auto; max-width: none; animation: none; }
 .chat-msg.self { align-self: flex-end; width: fit-content; max-width: 75%; }
 @media (max-width: 700px) { .chat-msg.self { max-width: 94%; } }
+/* Message layout B (Settings -> General -> Chat, `data-msg-layout` on <html>): every message on the left, so the top right of each one is free
+   for its toolbar — in the thread panel the entry already spans the column and only its bubble sat at the right. */
+:root[data-msg-layout="b"] .chat-msg.self { align-self: stretch; width: auto; max-width: none; }
+:root[data-msg-layout="b"] .thread-entry.self > .chat-msg-bubble { align-self: flex-start; }
+:root[data-msg-layout="b"] .chat-msg > .answer-row.answer-row-self { max-width: 100%; margin-left: 0; justify-content: flex-start; }
 /* A system line spans the column like other people's messages and centres its row inside (v1's text-align: center on an inline row), so the
    seen-by markers under it sit at the column's right edge with every other message's, not at the end of a shrink-wrapped centred box. */
 .chat-msg-system { align-self: stretch; width: auto; max-width: 100%; }
@@ -571,11 +576,11 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
     mask-image: linear-gradient(to right, transparent 0, #000 var(--tools-fade-start), #000 calc(100% - var(--tools-fade-end)), transparent 100%); }
 }
 
-/* Every system line is the same small, grey, left-aligned sans line (v1's centred italic monospace is gone): a short one is shown whole, a long one is cut to its first
-   line with "Show more". */
-.chat-msg-system { font-style: normal; text-align: left; }
-.chat-msg-system-row { display: flex; justify-content: flex-start; }
-.chat-msg-system-row > :first-child, .chat-msg-system-body { text-align: left; }
+/* Every system line is the same small, grey sans line, centred in the column as v1 drew it (only v1's italic monospace is gone): a short one is shown whole,
+   a long one is cut to its first line with "Show more". The row stays a full-width flex line, so its box (and the receipts under it) keep their place. */
+.chat-msg-system { font-style: normal; text-align: center; }
+.chat-msg-system-row { display: flex; justify-content: center; }
+.chat-msg-system-row > :first-child, .chat-msg-system-body { text-align: center; }
 .chat-msg-system-row .chat-msg-body { font: inherit; color: inherit; }
 .system-popup-trigger { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 100%; }
 .system-notice-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -587,9 +592,9 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .system-message-dialog h2 { flex: 1; margin: 0; font-size: 16px; }
 .system-message-dialog-body { display: block; padding: 16px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .system-message-dialog-body:not(.md-rendered) { white-space: pre-wrap; }
-.chat-msg-switch-handoff { padding: 0; font-size: 12px; font-style: normal; text-align: left; }
+.chat-msg-switch-handoff { padding: 0; font-size: 12px; font-style: normal; text-align: center; }
 .chat-msg-switch-handoff > .system-popup-trigger { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-primary); padding: 9px 12px; font-weight: 600; }
-.switch-handoff-meta { display: flex; justify-content: flex-end; align-items: center; gap: 8px; color: var(--text-muted); }
+.switch-handoff-meta { display: flex; justify-content: center; align-items: center; gap: 8px; color: var(--text-muted); }
 
 /* The memory viewer's switch for a project's memory: a plain line under the filter row, in v1's field text. */
 .memory-enabled-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text-secondary); font-size: 0.78rem; }

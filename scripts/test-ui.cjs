@@ -1949,19 +1949,17 @@ async function main() {
     assert.equal(await first.$eval('.chat-msg:first-child .message-actions', el => !el.dataset.built && el.querySelectorAll('button:not(.message-actions-wake)').length === 0 && getComputedStyle(el).width === '1px'), true, 'the message actions are not even made until the message is hovered or focused');
     await first.hover('.chat-msg:first-child');
     await first.waitForFunction(() => getComputedStyle(document.querySelector('.chat-msg:first-child .message-actions')).opacity === '1');
-    // An own message has its toolbar beside the bubble, on its left (its sender line is at the right, where the toolbar would cover it), clear of the line and the text.
+    // An own message keeps its toolbar at the top-right corner of the message, over its top edge, like everyone else's: it covers the right
+    // end of the own sender line (which sits at the right), and that is accepted; the text stays clear.
     assert.deepEqual(await first.evaluate(() => {
       const root = document.querySelector('.chat-msg:first-child');
       const bubble = root.querySelector('.chat-msg-bubble').getBoundingClientRect();
       const bar = root.querySelector('.message-actions').getBoundingClientRect();
       const text = root.querySelector('.chat-msg-body').getBoundingClientRect();
-      const parts = [...root.querySelectorAll('.chat-msg-header *')].map(node => node.getBoundingClientRect()).filter(box => box.width > 0 && box.height > 0);
-      const line = { left: Math.min(...parts.map(box => box.left)), right: Math.max(...parts.map(box => box.right)), top: Math.min(...parts.map(box => box.top)), bottom: Math.max(...parts.map(box => box.bottom)) };
-      const column = document.querySelector('#messages').clientWidth;
-      return { atTopRight: column >= 656 ? Math.abs(bar.right - (bubble.left - 6)) < 2 && bar.left >= 0 && (bar.right <= line.left || bar.left >= line.right || bar.bottom <= line.top || bar.top >= line.bottom) : Math.abs(bar.right - (bubble.right - 6)) < 2 && bar.top < bubble.top && bar.bottom > bubble.top,
+      return { atTopRight: Math.abs(bar.right - (bubble.right - 6)) < 2 && bar.top < bubble.top && bar.bottom > bubble.top,
         clearOfText: bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom,
         buttons: root.querySelectorAll('.message-actions > .message-action').length };
-    }), { atTopRight: true, clearOfText: true, buttons: 6 }, 'an own message has its actions beside the bubble without covering the sender line or text');
+    }), { atTopRight: true, clearOfText: true, buttons: 6 }, 'an own message has its actions at the top-right corner of the message without covering the text');
     // v1 parity of the message frame: the bubble sits right under the sender line, at v1's gap, for the viewer's own message too (the hover toolbar
     // reserves no space), and the sender's name is plain text until it is hovered or focused.
     assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.chat-msg:first-child .chat-msg-header').getBoundingClientRect(), bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), author = document.querySelector('.chat-msg:first-child .chat-msg-from-name'); return { gap: Math.round(bubble.top - meta.bottom), own: document.querySelector('.chat-msg:first-child').classList.contains('self'), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 2, own: true, underline: 'none' }, 'the bubble is 2px under the sender line (v1\'s gap) for the viewer\'s own message too, and the sender name has no permanent underline');
@@ -2273,14 +2271,11 @@ async function main() {
           const geometry = await first.evaluate(selector => {
             const box = node => node.getBoundingClientRect(), hit = (a, b) => !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
             const list = box(document.querySelector('#messages')), root = document.querySelector(selector), bubble = box(root.querySelector('.chat-msg-bubble')), bar = box(root.querySelector('.message-actions')), text = box(root.querySelector('.chat-msg-body'));
-            const items = [...root.querySelector('.chat-msg-header').children].filter(node => node.getClientRects().length).map(box);
-            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.chat-msg-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), levelWithHeader: bar.top < box(root.querySelector('.chat-msg-header')).bottom && bar.bottom > box(root.querySelector('.chat-msg-header')).top, overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2, besideBubble: Math.abs(bar.right - (bubble.left - 6)) < 2, clearOfLine: items.every(item => !hit(bar, item)), self: root.classList.contains('self'), list: Math.round(list.width), bubble: Math.round(bubble.width) };
+            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.chat-msg-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), levelWithHeader: bar.top < box(root.querySelector('.chat-msg-header')).bottom && bar.bottom > box(root.querySelector('.chat-msg-header')).top, overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2, self: root.classList.contains('self'), list: Math.round(list.width), bubble: Math.round(bubble.width) };
           }, message);
-          // Someone else's toolbar is at the bubble's top-right corner, level with the (left-aligned, short) sender line; the viewer's own, whose sender line is at the right, is beside the bubble on its left and covers neither.
-          // (a column under 656px has no room beside an own bubble, which is up to 75% of it: the toolbar stays at its corner there, as for everyone else's)
-          const beside = geometry.self && geometry.list >= 656;
-          const got = beside ? [geometry.readable, geometry.insideList, geometry.clearOfText, geometry.besideBubble, geometry.clearOfLine] : [geometry.readable, geometry.insideList, geometry.clearOfText, geometry.levelWithHeader && geometry.overlapsTopEdge, geometry.atTopRightCorner];
-          assert.deepEqual(got, [true, true, true, true, true], `${kind} message at ${width}px, a ${geometry.list}px column (${beside ? 'the toolbar is beside the bubble' : "the toolbar is at the bubble's top-right corner"}): ${JSON.stringify(geometry)}`);
+          // Every toolbar is at the bubble's top-right corner, level with the sender line (an own message's right-aligned line is covered at its right end, which the owner accepts).
+          const got = [geometry.readable, geometry.insideList, geometry.clearOfText, geometry.levelWithHeader && geometry.overlapsTopEdge, geometry.atTopRightCorner];
+          assert.deepEqual(got, [true, true, true, true, true], `${kind} message at ${width}px, a ${geometry.list}px column (the toolbar is at the bubble's top-right corner): ${JSON.stringify(geometry)}`);
         }
       }
       // The same on a touch tablet (hover: none, a coarse pointer, 701px or wider), whose 46px-tall toolbar appears on a selected message: it sits wholly
@@ -3537,7 +3532,7 @@ async function main() {
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
     for (const id of ['settings-general', 'settings-usages', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
-    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, the reviewer switch, the docker-only and warm-agent settings including the Codex opt-in, the prompt-cache keep-alive settings, and the settings backup, all as rows');
+    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-layout', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message layout, the message-expiry window, the reviewer switch, the docker-only and warm-agent settings including the Codex opt-in, the prompt-cache keep-alive settings, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
     // edge, and row actions such as move, remove and delete are icon buttons with a tooltip and an accessible name.
@@ -7078,13 +7073,14 @@ async function main() {
       await first.click('#composer .composer-format[data-format="quote"]'); assert.equal((await pressed()).quote, 'false'); assert.equal(await draft(), 'said', 'the quote button takes the quote off');
       await wipe(); await first.keyboard.type('```'); await first.keyboard.type('x'); assert.equal((await pressed()).codeblock, 'true');
       // Leaving a block: Backspace at the start of its text, or Enter on an empty line, takes the caret out (and Enter does not send);
-      // a code block also leaves on a second Enter at its end. What would be sent is checked after typing on.
-      const blockExit = async (label, open, backspaceDraft, enterDraft, pressedId) => {
+      // in a list the empty item is removed and the caret returns to the end of the previous item; a code block also leaves on a second
+      // Enter at its end. What would be sent is checked after typing on.
+      const blockExit = async (label, open, backspaceDraft, enterDraft, pressedId, joinsList = false) => {
         // Backspace on the empty line of a quote or list item
         await wipe(); await first.keyboard.type(open); await chord(['Shift'], 'Enter');
         assert.equal((await pressed())[pressedId], 'true', `${label}: still inside after Shift+Enter`);
         await first.keyboard.press('Backspace');
-        assert.equal((await pressed())[pressedId], 'false', `${label}: Backspace on the empty line leaves the block`);
+        assert.equal((await pressed())[pressedId], joinsList ? 'true' : 'false', `${label}: Backspace on the empty line ${joinsList ? 'returns to the previous item' : 'leaves the block'}`);
         await first.keyboard.type('x'); assert.equal(await draft(), backspaceDraft, `${label}: the Markdown after Backspace`);
         // Enter on the empty line
         await wipe(); await first.keyboard.type(open); await chord(['Shift'], 'Enter'); await first.keyboard.press('Enter');
@@ -7093,8 +7089,18 @@ async function main() {
         assert.equal(await first.$$eval('#messages .chat-msg-body', bodies => bodies.filter(body => body.textContent.trim() === 'x').length), 0, `${label}: Enter on an empty line did not send the message`);
       };
       await blockExit('quote', '> a', '> a\n\nx', '> a\n\nx', 'quote');
-      await blockExit('bulleted list', '- a', '- a\n\nx', '- a\n\nx', 'ul');
-      await blockExit('numbered list', '1. a', '1. a\n\nx', '1. a\n\nx', 'ol');
+      await blockExit('bulleted list', '- a', '- ax', '- a\n\nx', 'ul', true);
+      await blockExit('numbered list', '1. a', '1. ax', '1. a\n\nx', 'ol', true);
+      // The list Backspace sequence: Shift+Enter makes a new empty bullet, the first Backspace removes it and returns the caret to the
+      // end of the previous item (no empty line left, one item in the list), and the second Backspace deletes the previous item's last
+      // character instead of recreating the empty bullet.
+      await wipe(); await first.keyboard.type('- one'); await chord(['Shift'], 'Enter');
+      await first.keyboard.press('Backspace');
+      assert.deepEqual([await draft(), (await pressed()).ul, await first.$$eval('#composer .composer-editor ul > li', items => items.length)], ['- one', 'true', 1], 'the first Backspace removes the empty bullet and returns to the end of the previous item');
+      await first.keyboard.press('Backspace');
+      assert.deepEqual([await draft(), (await pressed()).ul], ['- on', 'true'], 'the second Backspace deletes the previous item\'s last character instead of recreating the bullet');
+      await first.keyboard.press('Backspace');
+      assert.equal(await draft(), '- o', 'and a third Backspace keeps deleting');
       // Backspace at the start of a non-empty first line lifts it too, without joining anything.
       await wipe(); await first.keyboard.type('> abc'); for (let i = 0; i < 3; i++) await first.keyboard.press('ArrowLeft'); await first.keyboard.press('Backspace');
       assert.deepEqual([(await pressed()).quote, await draft()], ['false', 'abc'], 'Backspace at the start of a quoted line lifts it out of the quote');

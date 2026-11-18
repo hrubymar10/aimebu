@@ -1012,13 +1012,10 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .sidebar > header { justify-content: flex-start; gap: 6px; padding-right: 12px; }
 .sidebar > header > strong { flex: 1 1 auto; }
 .sidebar form.room-filter { margin: 8px 0 10px; padding: 0; border: 0; }
-/* Message actions float at the bubble's top-right, over the empty end of the sender line (which is left-aligned and short), and leave the message text unobstructed.
-   The viewer's own messages have their sender line at the right, so their toolbar sits beside the bubble, on its left, and covers neither the line nor the text. */
+/* Message actions float at the top-right corner of the message, over its top edge, for every message: the owner knows that on the viewer's own
+   (right-aligned) ones they cover the right end of the sender line, and accepts that. They leave the message text unobstructed. */
 .message-actions { position: absolute; top: -24px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
-/* The list is a size container so a wide enough column can ask: a viewer's own bubble is at most 75% of it, so from 656px (75% + the 158px toolbar + its gap fit) the toolbar always has room
-   beside it; a narrower column keeps it at the bubble's corner. */
 #messages { container-type: inline-size; }
-@media not all and (hover: none) and (pointer: coarse) and (min-width: 701px) { @container (min-width: 656px) { .chat-msg.self .message-actions { top: 0; right: calc(100% + 6px); } } }
 .chat-msg:hover .message-actions, .chat-msg:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
 /* A toolbar that has not been made yet (it is made when its row is reached, see message-actions.js) is not drawn. */
 .message-actions:not([data-built]) { position: absolute !important; display: block !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: hidden !important; clip-path: inset(50%) !important; opacity: 0 !important; pointer-events: none !important; box-shadow: none !important; }

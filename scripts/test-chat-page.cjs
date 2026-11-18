@@ -553,17 +553,35 @@ async function main() {
     // F4: the time of a system line stays beside its text.
     assert.deepEqual(await page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_sys] .chat-msg-system-row'), body = row.firstElementChild, stamp = row.querySelector('.chat-msg-time'); const b = body.getBoundingClientRect(), s = stamp.getBoundingClientRect(); return { sideBySide: s.left >= b.right - 1 && s.top < b.bottom, nowrap: getComputedStyle(row).flexWrap }; }), { sideBySide: true, nowrap: 'nowrap' }, 'the time of a system line is beside its text, not alone on a line below');
     // Seen-by markers sit at the column's right edge whatever they follow: one on a centred system line lines up with one on someone else's message
-    // (the strips are added the way read-receipts.js adds them, as the row's last child), and the system line's own text stays centred.
+    // (the strips are added the way read-receipts.js adds them, as the row's last child), and the system line's own content is centred in the column.
     assert.deepEqual(await page.evaluate(() => {
       const strip = node => { const div = document.createElement('div'); div.className = 'message-receipts'; div.setAttribute('role', 'group'); const avatar = document.createElement('span'); avatar.className = 'receipt-avatar'; avatar.textContent = 'MA'; div.append(avatar); node.append(div); return avatar; };
       const system = document.querySelector('#messages [data-message-id=rm_a_sys]'), other = [...document.querySelectorAll('#messages > .chat-msg:not(.self):not(.chat-msg-system)')].at(-1);
       // A short line is the case that showed it: a long one wraps across the whole column anyway.
       const text = system.querySelector('.chat-msg-system-row').firstElementChild, words = text.textContent; text.textContent = 'ian looks offline';
       const onSystem = strip(system).getBoundingClientRect(), onOther = strip(other).getBoundingClientRect();
-      const list = document.querySelector('#messages'), cs = getComputedStyle(list), box = list.getBoundingClientRect(), row = system.querySelector('.chat-msg-system-row').getBoundingClientRect();
+      const list = document.querySelector('#messages'), cs = getComputedStyle(list), box = list.getBoundingClientRect(), row = system.querySelector('.chat-msg-system-row'), rowBox = row.getBoundingClientRect();
+      const parts = [...row.children].map(node => node.getBoundingClientRect()).filter(part => part.width > 0);
+      const left = Math.min(...parts.map(part => part.left)), right = Math.max(...parts.map(part => part.right));
       document.querySelectorAll('#messages .message-receipts').forEach(node => node.remove()); text.textContent = words;
-      return { sameRight: Math.abs(onSystem.right - onOther.right) <= 1, rowLeft: Math.abs(row.left - (box.left + parseFloat(cs.paddingLeft))) <= 2, style: getComputedStyle(system.querySelector('.chat-msg-system-row')).fontStyle };
-    }), { sameRight: true, rowLeft: true, style: 'normal' }, 'a receipt after a system line is right-aligned with the ones after other messages, and the line itself is a left-aligned non-italic line');
+      return { sameRight: Math.abs(onSystem.right - onOther.right) <= 1, rowLeft: Math.abs(rowBox.left - (box.left + parseFloat(cs.paddingLeft))) <= 2, centred: Math.abs((left + right) / 2 - (rowBox.left + rowBox.right) / 2) <= 2, style: getComputedStyle(row).fontStyle };
+    }), { sameRight: true, rowLeft: true, centred: true, style: 'normal' }, 'a receipt after a system line is right-aligned with the ones after other messages, and the line itself is a centred non-italic line');
+    // The action toolbar sits at the top-right corner of the message for every message: on an own (right-aligned) one it covers the right end of the
+    // sender line, which the owner accepts. The toolbar anchors to the bubble, so this holds in the thread panel and the room alike.
+    assert.deepEqual(await page.evaluate(() => {
+      const root = document.querySelector('#thread-messages [data-message-id=rm_a_t1]');
+      const bubble = root.querySelector('.chat-msg-bubble').getBoundingClientRect(), bar = root.querySelector('.message-actions').getBoundingClientRect();
+      return { atTopRight: Math.abs(bar.right - (bubble.right - 6)) < 2 && bar.top < bubble.top && bar.bottom > bubble.top };
+    }), { atTopRight: true }, 'an own message keeps its toolbar at the top-right corner of the message too');
+    // Message layout B: every message on the left, so the top right of each one is free for the toolbar. Layout A is the default again after it.
+    await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_own', seq: 200, no: 200, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_me', author_name: 'me', body: 'mine alone', created_at: '2026-01-10T12:09:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); }); await settle(page);
+    const layoutOf = () => page.evaluate(() => { const row = document.querySelector('#messages [data-message-id=rm_a_own]'); return { align: getComputedStyle(row).alignSelf, width: getComputedStyle(row).maxWidth }; });
+    assert.deepEqual(await layoutOf(), { align: 'flex-end', width: '75%' }, 'layout A: an own message sits on the right at 75% of the column');
+    await page.evaluate(() => { document.documentElement.dataset.msgLayout = 'b'; });
+    assert.deepEqual(await layoutOf(), { align: 'stretch', width: 'none' }, 'layout B: an own message spans the column like everyone else\'s');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#thread-messages [data-message-id=rm_a_t1] > .chat-msg-bubble')).alignSelf), 'flex-start', 'layout B centres nothing in the thread panel either: its own bubble goes left');
+    await page.evaluate(() => { delete document.documentElement.dataset.msgLayout; });
+    assert.deepEqual(await layoutOf(), { align: 'flex-end', width: '75%' }, 'layout A is back once the choice is gone');
     await page.close();
   }
 
@@ -1148,13 +1166,13 @@ async function main() {
       assert.equal(await page.$eval(`[data-message-id=${id}]`, row => {
         const bubble = row.querySelector('.chat-msg-bubble').getBoundingClientRect();
         const actions = row.querySelector('.message-actions').getBoundingClientRect();
-        // What the sender line actually draws (its box spans the column): the extent of its visible children.
         const parts = [...row.querySelectorAll('.chat-msg-header *')].map(node => node.getBoundingClientRect()).filter(box => box.width > 0 && box.height > 0);
         const header = { left: Math.min(...parts.map(box => box.left)), right: Math.max(...parts.map(box => box.right)), top: Math.min(...parts.map(box => box.top)), bottom: Math.max(...parts.map(box => box.bottom)) };
         const clear = actions.right <= header.left + 1 || actions.left >= header.right - 1 || actions.bottom <= header.top + 1 || actions.top >= header.bottom - 1;
-        // Someone else's toolbar is at the bubble's top-right; the viewer's own, whose sender line is at the right, is beside the bubble on its left; neither covers the sender line.
-        return (row.classList.contains('self') ? Math.abs(bubble.left - actions.right - 6) < 2 : Math.abs(bubble.right - actions.right - 6) < 2) && clear ? true : JSON.stringify({ self: row.classList.contains('self'), bubble, actions, header });
-      }), true, `message actions sit clear of the sender line for ${id}`);
+        // Every toolbar is at the bubble's top-right corner; someone else's sender line is at the left, clear of it, and the viewer's own
+        // right-aligned line is covered at its right end, which the owner accepts.
+        return Math.abs(bubble.right - actions.right - 6) < 2 && (row.classList.contains('self') || clear) ? true : JSON.stringify({ self: row.classList.contains('self'), bubble, actions, header });
+      }), true, `message actions sit at the bubble's top-right corner for ${id}`);
     }
     await hover(page, '[data-message-id=rm_a_m120] .chat-msg-bubble');
     await page.evaluate(() => { const bar = document.querySelector('[data-message-id=rm_a_m120] .message-actions'); window.__buttons = [...bar.querySelectorAll('button')].filter(button => !button.closest('[hidden]')).map(button => button.getAttribute('aria-label')); bar.querySelector('button').focus(); });

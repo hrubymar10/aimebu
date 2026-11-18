@@ -56,10 +56,11 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 
 ## Kept from v2 on purpose (decided by the owner, 2026-11-05)
 
-- The floating message toolbar (not v1's frameless in-bubble controls). It floats over the message's header line, at its right end, and covers that line
-  while it is shown (decided by the owner, 2026-11-07, replacing the 22px that the viewer's own sender line used to keep under it): it reserves no
-  space, the header is back to v1's 2px above the bubble for everyone, and it is too short to reach the bubble's text. Focus within a message shows it as
-  hover does. A touch tablet keeps the toolbar wholly above someone else's bubble (it is 46px tall) and beside an own one; a phone's is in the bubble's flow.
+- The floating message toolbar (not v1's frameless in-bubble controls). It floats at the message's top-right corner, over its top edge, for every
+  message: it covers the right end of an own message's right-aligned sender line while it is shown (accepted by the owner), reserves no space, and
+  is too short to reach the bubble's text. Focus within a message shows it as hover does. A touch tablet keeps the toolbar wholly above the bubble
+  (it is 46px tall); a phone's is in the bubble's flow. The Message layout preference (A, the default, or B: every message on the left) lives in
+  Settings → General → Chat.
 - The composer's formatting toolbar, rich editor, link field and notices (`.composer-toolbar`, `.composer-field`, `.composer-editor`, `.composer-notice`), and the thread composer, which keeps its own markup until its area moves.
 - Own messages at most 75% wide, other people's full width.
 - Touch-sized targets on phones (v1 has none).

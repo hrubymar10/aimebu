@@ -99,6 +99,23 @@ export class ComposerEditor {
       if (type === schema.nodes.blockquote) return PM.lift(state, dispatch);
       return false;
     };
+    // Backspace in an empty list item that has a previous sibling removes that item and puts the caret at the end of the previous one.
+    // (Lifting instead left an empty paragraph after the list, and the next Backspace joined it back in as a new empty bullet.)
+    const joinEmptyItem = (state, dispatch) => {
+      const { $from } = state.selection;
+      let depth = 0;
+      for (let d = $from.depth; d > 0; d--) if ($from.node(d).type === schema.nodes.list_item) { depth = d; break; }
+      if (!depth || $from.index(depth - 1) === 0) return false; // the first item has no previous one to join
+      const item = $from.node(depth);
+      if (item.childCount !== 1 || item.firstChild.type !== schema.nodes.paragraph || item.firstChild.content.size) return false;
+      if (dispatch) {
+        const from = $from.before(depth);
+        const tr = state.tr.delete(from, $from.after(depth));
+        tr.setSelection(PM.TextSelection.near(tr.doc.resolve(from - 1), -1)).scrollIntoView();
+        dispatch(tr);
+      }
+      return true;
+    };
     // Backspace at the start of a block's text lifts it out of its quote or list item, or turns a code block into a paragraph;
     // only when there is nothing to lift does it join with the block before (the default).
     const backspace = (state, dispatch) => {
@@ -108,6 +125,7 @@ export class ComposerEditor {
       if (enterEndOfCode(state, dispatch)) return true;
       if (selection.$from.parentOffset !== 0) return false;
       if (inCode(state)) return PM.setBlockType(schema.nodes.paragraph)(state, dispatch);
+      if (joinEmptyItem(state, dispatch)) return true;
       return leave(state, dispatch);
     };
     // Enter on an empty line inside a quote or list leaves it, as a new paragraph after; it does not send the message.

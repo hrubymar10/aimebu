@@ -10,7 +10,7 @@ import (
 var userPrefNames = map[string]bool{"theme": true, "inbox_muted": true, "inbox_sound": true, "inbox_volume": true,
 	"system_events": true, "debug_inspector": true, "markdown_mode": true, "composer_formatting": true, "sidebar_sort": true, "sidebar_project_order": true,
 	"harness_setup_skipped": true, "notification_banner_dismissed": true,
-	"notification_text": true, "sidebar_preview": true}
+	"notification_text": true, "sidebar_preview": true, "message_layout": true}
 
 // retiredPreferences are names an older page may still send (a cached tab, the bulk upload of a sign-in). They are accepted and
 // dropped, so one stale name never makes the server refuse the other preferences sent with it. A value stored under one earlier is

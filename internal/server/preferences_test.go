@@ -234,3 +234,21 @@ func TestRetiredThreadOrderPreference(t *testing.T) {
 		t.Fatalf("the valid one is stored, the retired one is dropped (the stored value is not replaced): %v", got)
 	}
 }
+
+// The chat's message layout (A: own messages on the right; B: every message on the left) is a personal preference kept on the server, never seen by another person.
+func TestMessageLayoutIsAPerAccountPreference(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	cookie, csrf := registerSecondUser(t, f, "second")
+	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"message_layout": "b"}}, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("store: %d", resp.StatusCode)
+	}
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["message_layout"] != "b" {
+		t.Fatalf("stored, read back %v", got)
+	}
+	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
+	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["message_layout"] != "" {
+		t.Fatalf("the choice leaked to another person: %v", got)
+	}
+}
