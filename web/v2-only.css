@@ -30,10 +30,13 @@
 .chat-msg.self { align-self: flex-end; width: fit-content; max-width: 75%; }
 @media (max-width: 700px) { .chat-msg.self { max-width: 94%; } }
 /* Message layout B (Settings -> General -> Chat, `data-msg-layout` on <html>): every message on the left, so the top right of each one is free
-   for its toolbar — in the thread panel the entry already spans the column and only its bubble sat at the right. */
+   for its toolbar — the header, the receipts under it and the answer rows draw exactly like other people's messages; in the thread panel the
+   entry already spans the column and only its bubble sat at the right. */
 :root[data-msg-layout="b"] .chat-msg.self { align-self: stretch; width: auto; max-width: none; }
-:root[data-msg-layout="b"] .thread-entry.self > .chat-msg-bubble { align-self: flex-start; }
+:root[data-msg-layout="b"] .chat-msg.self .chat-msg-header { justify-content: flex-start; padding-right: 0; padding-left: 2px; }
+:root[data-msg-layout="b"] .chat-msg.self .message-receipts { justify-content: flex-start; padding-left: 2px; padding-right: 0; }
 :root[data-msg-layout="b"] .chat-msg > .answer-row.answer-row-self { max-width: 100%; margin-left: 0; justify-content: flex-start; }
+:root[data-msg-layout="b"] .thread-entry.self > .chat-msg-bubble { align-self: flex-start; }
 /* A system line spans the column like other people's messages and centres its row inside (v1's text-align: center on an inline row), so the
    seen-by markers under it sit at the column's right edge with every other message's, not at the end of a shrink-wrapped centred box. */
 .chat-msg-system { align-self: stretch; width: auto; max-width: 100%; }

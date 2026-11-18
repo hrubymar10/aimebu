@@ -577,8 +577,12 @@ async function main() {
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_own', seq: 200, no: 200, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_me', author_name: 'me', body: 'mine alone', created_at: '2026-01-10T12:09:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); }); await settle(page);
     const layoutOf = () => page.evaluate(() => { const row = document.querySelector('#messages [data-message-id=rm_a_own]'); return { align: getComputedStyle(row).alignSelf, width: getComputedStyle(row).maxWidth }; });
     assert.deepEqual(await layoutOf(), { align: 'flex-end', width: '75%' }, 'layout A: an own message sits on the right at 75% of the column');
+    const headerLeft = () => page.evaluate(() => { const own = document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header'); const other = [...document.querySelectorAll('#messages > .chat-msg:not(.self):not(.chat-msg-system) .chat-msg-header')].at(-1); return own && other ? Math.round(own.getBoundingClientRect().left - other.getBoundingClientRect().left) : null; });
     await page.evaluate(() => { document.documentElement.dataset.msgLayout = 'b'; });
     assert.deepEqual(await layoutOf(), { align: 'stretch', width: 'none' }, 'layout B: an own message spans the column like everyone else\'s');
+    assert.equal(await headerLeft(), 0, 'layout B: an own message\'s header starts where other people\'s do');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header')).justifyContent), 'flex-start', 'layout B lays the own header out left, in the shared order');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-bubble')).alignSelf), 'auto', 'layout B: the own bubble is not pushed right inside the full-width row');
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#thread-messages [data-message-id=rm_a_t1] > .chat-msg-bubble')).alignSelf), 'flex-start', 'layout B centres nothing in the thread panel either: its own bubble goes left');
     await page.evaluate(() => { delete document.documentElement.dataset.msgLayout; });
     assert.deepEqual(await layoutOf(), { align: 'flex-end', width: '75%' }, 'layout A is back once the choice is gone');
