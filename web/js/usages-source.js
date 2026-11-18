@@ -66,6 +66,9 @@ export class MockUsagesSource {
   }
   async list() {
     const response = this.usageList();
+    // The server sorts the providers by the stored order, so a saved provider_order is each provider's order_number.
+    const order = this.preferences.provider_order;
+    if (order) for (const provider of response.providers) provider.order_number = order.indexOf(provider.provider_name);
     for (const provider of response.providers) {
       const tool = provider.provider_name === 'claude-code' ? 'claude' : provider.provider_name;
       const chosen = this.activeProfile?.[tool];

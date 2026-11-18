@@ -13,7 +13,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
-<body><dialog id="settings-dialog" open><section id="settings-usages" class="settings-section active"></section></dialog></body></html>`;
+<body><dialog id="settings-dialog" class="settings-modal" aria-label="Settings" open><div class="settings-pane"><nav class="settings-nav" aria-label="Settings sections"></nav><div class="settings-body"><header class="settings-body-header"></header><section id="settings-usages" class="settings-section active"></section></div></div></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -443,6 +443,42 @@ async function main() {
       await click(page, `${cardOf('ollama-cloud')} .btn-primary`);
       await page.waitForFunction(() => window.__calls.some(call => call[0] === 'ollama'));
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'ollama')[1]), { auth_mode: 'api_key', api_key: 'sk-1' });
+      await page.close();
+    }
+    // Moving a provider in the order redraws the list in place: the moved card stays where it was pressed (the section scrolls only by the
+    // move, never to the top), the card stays on screen, and the pressed button keeps working, so the order can be walked click by click.
+    {
+      const page = await mount();
+      const under = (direction, offset) => page.evaluate((direction, offset) => {
+        const section = document.querySelector('#settings-usages'), card = section.querySelector('[data-provider="claude-code"]');
+        section.scrollTop += card.getBoundingClientRect().top - section.getBoundingClientRect().top - offset;
+        const button = [...card.querySelectorAll('.usage-provider-actions button')].find(node => (node.getAttribute('aria-label') || '').endsWith(direction));
+        const box = button.getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      }, direction, offset);
+      const drawn = () => page.evaluate(() => {
+        const section = document.querySelector('#settings-usages'), card = section.querySelector('[data-provider="claude-code"]');
+        const box = card.getBoundingClientRect(), frame = section.getBoundingClientRect();
+        return { order: [...section.querySelectorAll('.usage-provider')].map(item => item.dataset.provider), top: Math.round(box.top - frame.top), scrollTop: section.scrollTop, inView: box.top >= frame.top && box.bottom <= frame.bottom, focus: document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName };
+      });
+      const at = await under('up', 40);
+      const before = await drawn();
+      await page.mouse.click(at.x, at.y);
+      await page.waitForFunction(() => document.querySelector('#usages-list .usage-provider')?.dataset.provider === 'claude-code');
+      await settle(page);
+      assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'settings')), ['settings', { provider_order: ['claude-code', 'codex', 'github-copilot', 'mistral', 'ollama-cloud'] }]);
+      const after = await drawn();
+      assert.deepEqual(after.order, ['claude-code', 'codex', 'github-copilot', 'mistral', 'ollama-cloud']);
+      assert.equal(after.inView, true, 'the moved card is still on screen');
+      assert.ok(Math.abs(after.top - before.top) <= 2, `the moved card stays where it was pressed, the scroll never jumps to the top (top ${before.top} -> ${after.top}, scrollTop ${before.scrollTop} -> ${after.scrollTop})`);
+      // Moving it back: the same gesture keeps working, and focus stays on the pressed button.
+      const back = await under('down', 40);
+      await page.mouse.click(back.x, back.y);
+      await page.waitForFunction(() => document.querySelector('#usages-list .usage-provider')?.dataset.provider === 'codex');
+      await settle(page);
+      const restored = await drawn();
+      assert.deepEqual(restored.order, ['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud']);
+      assert.equal(restored.focus, 'Move Claude Code down', 'focus stays on the pressed button, so repeated clicks keep working');
       await page.close();
     }
     // An answer arriving after the page is destroyed draws nothing and starts nothing.
