@@ -1,6 +1,6 @@
-/* v1's stylesheet, as it is. Source: aimebu/frontend/style.css, without the fleets and leaderboard rules v2 does not have,
-   and for now without its universal reset, its html/body rules and the rules of classes v2 still styles itself (TRANSITIONAL and v1-css-hold.json).
-   Written by scripts/sync-v1-css.cjs; do not edit it by hand: a fix belongs in v1, then `node scripts/sync-v1-css.cjs` brings it in. */
+/* This repo's own stylesheet, taken over from v1's style.css (v1 commit 466852f, without the fleets and leaderboard rules) at the cutover.
+   It is the source of truth now: edit it by hand; nothing syncs it from v1 or compares it with v1. For now it still lacks v1's universal reset,
+   its html/body rules and the rules of classes v2 styles itself (TRANSITIONAL; see docs/design/css-v1-class-map.md). */
 @layer v2-base, v1-reset, v1;
 
 @layer v1 {

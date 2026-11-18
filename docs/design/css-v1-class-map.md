@@ -1,7 +1,8 @@
 # v2 markup → v1 class names
 
-v2 is moving onto v1's stylesheet: `web/v1.css` is v1's `style.css` at v1 commit 466852f (without fleets and the leaderboard), written by
-`scripts/sync-v1-css.cjs` (`--check` says whether the file still matches v1). An area moves over when its markup carries v1's class names and its v2
+v2 is moving onto v1's stylesheet: `web/v1.css` started as v1's `style.css` at v1 commit 466852f (without fleets and the leaderboard). Since the
+cutover it is this repo's own source of truth: it is edited directly and is no longer synced from, or checked against, v1 (the former
+`scripts/sync-v1-css.cjs` and its hold list `scripts/v1-css-hold.json` are gone). An area moves over when its markup carries v1's class names and its v2
 rules are deleted. Things v1 never had go in `web/v2-only.css`, written with v1's tokens. This page is the map of the renames and the list of
 differences from v1 that are kept on purpose, so a review does not flag them.
 
@@ -109,11 +110,10 @@ Left under v2's names for now (their areas move later): the toolbar (`.message-a
 
 ## Transitional
 
-- `scripts/v1-css-hold.json` lists the classes v2's own markup uses whose v1 rules are held back (v1 uses the same name for another job, and its
-  rule would change an unmigrated area wherever v2 sets nothing). A selector naming one is left out of `web/v1.css`; the commit that migrates an area
-  removes its classes from the list, which is how v1's rules for it come in.
+- Rules of classes v2's own markup uses under another meaning (v1 used the same name for another job) were left out of `web/v1.css` when it was
+  generated; the area that migrates such a class adds the v1 rule it needs by hand.
 
-- `web/v1.css` leaves out v1's universal reset and its `html` / `body` rules until the last area has moved over (`--final` writes them, and drops
+- `web/v1.css` leaves out v1's universal reset and its `html` / `body` rules until the last area has moved over (adding them then also drops
   the layer): v2's unmigrated areas rely on the browser's default margins and on their own page layout.
 - v2's one button system (`button:not(.row-btn)` in `theme-v1.css`, in the `v2-base` layer) still styles every button v1 has no class for. It goes
   area by area; the fixes v1 needs then go in `v2-only.css`. A plain `.btn` or `.btn-icon` keeps a fixed background (`:where()`, so any other v2
@@ -121,9 +121,8 @@ Left under v2's names for now (their areas move later): the toolbar (`.message-a
 - Accepted until their areas move: a `.btn` that nothing else sizes now takes v1's 11.2px text and 30.8px height (it was 12px and 34px), and the
   thread composer's B / I / U / S buttons lose their border. Both go away when those areas take v1's classes.
 
-- `scripts/v1-css-hold.json` `released` maps a held state class to the classes of moved areas that release it: `active` is released by `settings-nav-item`,
-  `settings-section` and `room-item`, `dm` and `pinned` by `room-item`, so v1's `.room-item.active`, `.room-item.dm .room-item-icon` and
-  `.room-item.pinned .room-item-name` rules come in while a bare `.active` elsewhere stays held.
+- The state classes `active`, `dm` and `pinned` have v1 rules only under the moved areas (`.room-item.active`, `.room-item.dm .room-item-icon`,
+  `.room-item.pinned .room-item-name`, and the settings nav and section rules); a bare `.active` elsewhere has none.
 - A row's hover controls (the project menu and the + for a new room) are an overlay at the row's end, centred on it and fading in on hover or focus as v1's
   agent card actions do, so showing them changes neither the row's height nor its badges; on a touch screen they are part of the row.
 - A row's badges (project chip, health, mute, member count, attention, unread) never shrink and never leave the row. The name is cut with an ellipsis,

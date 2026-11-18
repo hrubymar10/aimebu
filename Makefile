@@ -83,7 +83,7 @@ test-web: ## Run the browser-free web unit tests (vm over the module source), in
 	*) echo "make test-web: WEB_TEST_RUNNER must be docker or local, not '$(WEB_TEST_RUNNER)'" >&2; exit 1 ;; \
 	esac
 
-test-ui: ## Check web/v1.css against v1, run Chromium smoke against a scratch server, then the Preact page tests (UI_JOBS=n runs n at once)
+test-ui: ## Run Chromium smoke against a scratch server, then the Preact page tests (UI_JOBS=n runs n at once)
 	node scripts/run-jobs.cjs -j $(UI_JOBS) --label ui --report tmp/ui-report-%p.json scripts/ui-tests.list
 
 gate: ## The full gate: test-full and test-ui (GATE_UI_RUNS times, default 2) as two lanes side by side

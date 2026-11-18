@@ -291,9 +291,9 @@ the switch.
   the ids, classes and text the page it replaced had, so `test-ui` and the
   stylesheet keep working.
 - Styles load in this order, and a later file wins over an earlier one:
-  `web/v1.css` (v1's stylesheet as it is, in a cascade layer, written by
-  `node scripts/sync-v1-css.cjs`; never edit it by hand, and
-  `--check` fails when it drifts from v1, and also when v1 cannot be found: put it at `../aimebu` or set `AIMEBU_V1_CSS`; `make test-ui` runs it first), `web/style.css` (the original base
+  `web/v1.css` (the stylesheet v2 took over from v1, in a cascade layer; since the
+  cutover it is this repo's own source of truth: edit it directly, it is no longer synced or
+  compared with v1), `web/style.css` (the original base
   stylesheet; small and legacy, being deleted area by area),
   `web/theme-v1.css` (colour variables, themes through `data-theme` on
   `<html>`, and the layout of areas that have not moved to v1's rules yet) and
@@ -303,8 +303,7 @@ the switch.
   way v1 does (`docs/design/css-v1-class-map.md` lists every rename) rather
   than restyle it. Put a new style in `v2-only.css` when v1 has nothing like
   it, using variables rather than fixed colours so every theme keeps working.
-  `scripts/v1-css-hold.json` lists classes whose v1 rules are held back until
-  their area has moved. Contrast against WCAG AA is a printed report in
+  Contrast against WCAG AA is a printed report in
   `test-ui` (v1's palette is the owner's choice), and `node
   scripts/a11y-audit.cjs --strict` still enforces it.
 - `web/icons/`: SVG icons plus the app and favicon images. An icon is drawn

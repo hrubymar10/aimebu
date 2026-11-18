@@ -7,7 +7,6 @@ node scripts/test-ui-startup.cjs
 node scripts/test-ui-claude.cjs
 node scripts/test-ui-audits.cjs
 node scripts/test-chat-page.cjs
-node scripts/sync-v1-css.cjs --check
 node scripts/test-harness-page.cjs
 node scripts/test-prompts-page.cjs
 node scripts/test-macros-page.cjs
