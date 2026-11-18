@@ -271,6 +271,12 @@ async function main() {
     await page.waitForFunction(() => !!document.querySelector('[data-room-id=rm_old] > .room-item .room-item-attention'));
     assert.deepEqual(await bells(), ['🔔 2', '', '🔔 2'], 'an actionable archived item marks its own room and the project');
     await page.evaluate(() => { const rooms = window.__sidebar.rooms; rooms.get('rm_old').attention_count = 0; rooms.get('rm_api').attention_count = 2; window.__sidebar.store.touch(); });
+    // The reopen button's icon is centred in its frame (the mask is an inline-block on the anonymous baseline of a 10px line in a
+    // 14px-root line box; the button draws as flex, so its centring is measured, not a baseline offset).
+    assert.deepEqual(await page.$eval('[data-room-id=rm_old] .reopen-room', button => {
+      const frame = button.getBoundingClientRect(), icon = button.querySelector('.icon-mask').getBoundingClientRect();
+      return [Math.round((icon.top + icon.bottom) / 2 - (frame.top + frame.bottom) / 2), Math.round((icon.left + icon.right) / 2 - (frame.left + frame.right) / 2), getComputedStyle(button).display];
+    }), [0, 0, 'flex'], 'the reopen icon is centred in its button');
     // Rows open their room from the name and from the row beside it.
     await page.$eval('[data-room-id=rm_gen] .room-item-name', node => node.click());
     await page.$eval('[data-room-id=rm_api] .room-item', node => node.click());

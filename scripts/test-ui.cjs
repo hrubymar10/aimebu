@@ -4544,9 +4544,10 @@ async function main() {
     await agentPage.evaluate(() => { window.__healthListMode = 'normal'; window.__mockAgentsPanel.source.notify(); });
     await agentPage.waitForFunction(() => document.querySelector('#agents-panel').classList.contains('profile-open') && document.querySelector('#agents-panel header h2').textContent === 'Agent profile');
     assert.equal(await agentPage.$eval('#health-popover', el => el.hidden), true, 'choosing a health entry closes the list');
-    // An open profile is closed by the panel's back arrow, the only close control: no X on the card, no edge arrow beside it.
-    assert.deepEqual(await agentPage.evaluate(() => ({ card: document.querySelectorAll('.agent-card.expanded .agent-expand').length, back: (button => ({ glyph: button.querySelector('.icon-mask')?.className.replace('icon-mask ', ''), title: button.title, label: button.getAttribute('aria-label'), shown: getComputedStyle(button).display !== 'none' }))(document.querySelector('#agent-profile-close')), edge: getComputedStyle(document.querySelector('#edge-agents')).display })),
-      { card: 0, back: { glyph: 'icon-mask-left', title: 'Back to members', label: 'Back to members', shown: true }, edge: 'none' }, 'the open profile is closed by a back arrow');
+    // An open profile is closed by the panel's back arrow, the only close control: no X on the card, no edge arrow beside it. The arrow is
+    // a square like the other icon buttons (it sits in the header with the hidden Spawn `.btn`, whose 32px pairing rule must not reach it).
+    assert.deepEqual(await agentPage.evaluate(() => ({ card: document.querySelectorAll('.agent-card.expanded .agent-expand').length, back: (button => { const frame = button.getBoundingClientRect(); return { glyph: button.querySelector('.icon-mask')?.className.replace('icon-mask ', ''), title: button.title, label: button.getAttribute('aria-label'), shown: getComputedStyle(button).display !== 'none', square: Math.abs(frame.width - frame.height) <= 1 }; })(document.querySelector('#agent-profile-close')), edge: getComputedStyle(document.querySelector('#edge-agents')).display })),
+      { card: 0, back: { glyph: 'icon-mask-left', title: 'Back to members', label: 'Back to members', shown: true, square: true }, edge: 'none' }, 'the open profile is closed by a square back arrow');
     await agentPage.keyboard.press('Escape');
     await agentPage.waitForFunction(() => !document.querySelector('#agents-panel').classList.contains('profile-open'));
     await agentPage.evaluate(() => { window.__healthListMode = 'missing'; window.__healthWaits = 0; });
@@ -4730,6 +4731,16 @@ async function main() {
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .profile-fact-value code, [data-agent-id="agt_mock_worker"] code.profile-fact-value', el => el.textContent), 'agt_mock_worker', 'ids are monospace');
     await domClick(agentPage, '#agent-profile-close');
     assert.deepEqual(await agentPage.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, list: getComputedStyle(document.querySelector('[data-agent-id="agt_mock_worker"]')).display !== 'none', closeShown: !document.querySelector('#agent-profile-close').hidden })), { title: 'Members', list: true, closeShown: false }, 'the close button brings the members back');
+    // The quick actions of the row the profile was opened from stay closed without hover: the back arrow returns focus to the row's
+    // expand button, and a focus that a click carried there is not keyboard focus. (A real Tab still shows them.)
+    await agentPage.mouse.move(2, 2);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    await agentPage.waitForFunction(() => matchMedia('(hover: none)').matches || getComputedStyle(document.querySelector('[data-agent-id="agt_mock_worker"] .agent-quick')).opacity === '0', { timeout: 5000 });
+    const backHoverNone = await agentPage.evaluate(() => matchMedia('(hover: none)').matches);
+    if (!backHoverNone) assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => getComputedStyle(el).opacity), '0', 'back from the profile does not hold the row\'s quick actions open without hover');
+    await agentPage.keyboard.press('Tab'); // a real keyboard focus: shows the row's actions again
+    await agentPage.waitForFunction(selector => getComputedStyle(document.querySelector(selector + ' .agent-quick')).opacity === '1', {}, '[data-agent-id="agt_mock_worker"]').catch(() => {});
+    await agentPage.mouse.move(2, 2);
     await domClick(agentPage, '[data-agent-id="agt_mock_worker"] .agent-name');
     await agentPage.keyboard.press('Escape');
     assert.equal(await agentPage.$eval('#agents-panel', el => el.classList.contains('profile-open')), false, 'Escape closes the profile');

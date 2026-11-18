@@ -2579,8 +2579,10 @@
   pointer-events: none;
 }
 
+/* Keyboard focus alone (a real Tab) shows them; a focus that came back to the row from a dialog (the profile's ← returns
+   focus to the row's expand button) is a mouse visitor, not a keyboard one, and must not hold them open. */
 .agent-card:hover .agent-card-actions,
-.agent-card:focus-within .agent-card-actions {
+.agent-card:has(:focus-visible) .agent-card-actions {
   opacity: 1;
   pointer-events: auto;
 }

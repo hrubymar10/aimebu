@@ -278,7 +278,8 @@ async function main() {
       const visible = el => !!el && !el.hidden && getComputedStyle(el).display !== 'none';
       const header = [...document.querySelectorAll('#agents-panel > header > *')].filter(visible).map(el => el.id || el.tagName.toLowerCase());
       const card = document.querySelector('[data-agent-id=a1]');
-      return { header, back: [document.querySelector('#agent-profile-close').getAttribute('aria-label'), !!document.querySelector('#agent-profile-close .icon-mask-left')], cardButton: !!card.querySelector('.agent-expand'), closeLooking: [...document.querySelectorAll('#agents-panel button')].filter(visible).filter(button => /close|hide|back/i.test(button.getAttribute('aria-label') || '')).map(button => button.id || button.getAttribute('aria-label')) };
+      const back = document.querySelector('#agent-profile-close'), frame = back.getBoundingClientRect();
+      return { header, back: [back.getAttribute('aria-label'), !!back.querySelector('.icon-mask-left'), Math.abs(frame.width - frame.height) <= 1], cardButton: !!card.querySelector('.agent-expand'), closeLooking: [...document.querySelectorAll('#agents-panel button')].filter(visible).filter(button => /close|hide|back/i.test(button.getAttribute('aria-label') || '')).map(button => button.id || button.getAttribute('aria-label')) };
     });
     assert.deepEqual((await controls()).header.slice(0, 1), ['edge-agents'], 'with the members list shown the edge arrow hides the panel');
     await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
@@ -286,7 +287,7 @@ async function main() {
     await answer(page, profile, 200, { native_session_id: '2c081365-8e68-4ebb-9d7f-a083a581d530', cwd: '/Users/someone/work/some-project/tmp', machine_name: 'Host' }); await settle(page);
     assert.equal(await page.$('[data-agent-id=a1] .profile-copy-resume'), null, 'a session without a confirmed resume command has no copy button');
     const open = await controls();
-    assert.deepEqual([open.header[0], open.header.includes('edge-agents'), open.header.includes('agents-close'), open.back, open.cardButton, open.closeLooking], ['agent-profile-close', false, false, ['Back to members', true], false, ['agent-profile-close']], `one way out of a profile, first in the header: ${JSON.stringify(open)}`);
+    assert.deepEqual([open.header[0], open.header.includes('edge-agents'), open.header.includes('agents-close'), open.back, open.cardButton, open.closeLooking], ['agent-profile-close', false, false, ['Back to members', true, true], false, ['agent-profile-close']], `one way out of a profile, first in the header, a square button: ${JSON.stringify(open)}`);
     // The path and the id: cut after / - _ . only, whole width under the label, text unchanged.
     const facts = await page.$$eval('[data-agent-id=a1] .profile-fact-mono', rows => rows.map(row => {
       const label = row.querySelector('.profile-fact-label').getBoundingClientRect(), value = row.querySelector('.profile-fact-value');

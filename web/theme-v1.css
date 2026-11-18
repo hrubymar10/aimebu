@@ -84,7 +84,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-chat-offer { display: flex; align-items: center; }
 .direct-rooms { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 8px; }
 .direct-rooms h3 { margin: 4px 8px 8px; color: var(--text-muted); font-size: 9.8px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
-.reopen-room { padding: 3px 5px; color: var(--accent); font-size: 10px; }
+/* The mask alone is an inline-block on the anonymous baseline of a 10px button in a 14px-root line box, so its baseline sits above the
+   box's centre and the arrow drew high. Flex centring is measured from the box, not a baseline. */
+.reopen-room { display: inline-flex; align-items: center; justify-content: center; padding: 3px 5px; color: var(--accent); font-size: 10px; }
 .room-state { padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); font-size: 9px; }
 .add-room:disabled { opacity: .25; }
 .branch, .add-room { padding: 4px; color: var(--text-muted); }
@@ -939,6 +941,10 @@ body:has(.import-v1-dialog[open]) #app-view { visibility: hidden; }
 /* Agent profile (v1): the opened member replaces the members list; the card is the profile. */
 .agents-panel.profile-open #agents-humans, .agents-panel.profile-open .agents-empty, .agents-panel.profile-open #spawn-open, .agents-panel.profile-open .agent-card:not(.expanded) { display: none; }
 #agent-profile-close { padding: 2px 8px; font-size: 16px; line-height: 1; }
+/* The back arrow sits in the header beside the hidden Spawn .btn, whose 32px icon-button pairing rule (`:has(> .btn) > .btn-icon`)
+   still matches it (it matches the DOM, not the rendering) and drew the arrow taller than wide. It is its own square, at the shared
+   icon-button size, centred in the header. */
+.agents-panel.profile-open #agent-profile-close { align-self: center; width: 28px; height: 28px; min-width: 0; min-height: 0; padding: 0; }
 /* With a profile open the one way out is its back arrow, first in the header (it comes before the title in the page, so the focus order is the visual one): the panel's own hide controls (the edge arrow, the phone's close) wait until it is closed. */
 .agents-panel.profile-open #edge-agents, .agents-panel.profile-open #agents-close { display: none; }
 #agent-profile-close[hidden] { display: none; }
