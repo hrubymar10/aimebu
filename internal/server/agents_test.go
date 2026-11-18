@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -867,8 +868,26 @@ func TestSpawnRetryAfterDeliveryFailureResendsUntilConfirmed(t *testing.T) {
 	fake := adapter.NewFake()
 	fake.SetEchoDefault(true)
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, fake)
-	var supervisorLog bytes.Buffer
-	client.OnError = func(err error) { fmt.Fprintln(&supervisorLog, err) }
+	// The supervisor's OnError runs on its own goroutines (a turn's goroutine outlives RunOnce), so the log is
+	// written under a mutex: the test goroutine writes and reads it too, and -race would call that a data race.
+	var supervisorLog struct {
+		sync.Mutex
+		bytes.Buffer
+	}
+	logLine := func(err error) {
+		if err == nil {
+			return
+		}
+		supervisorLog.Lock()
+		defer supervisorLog.Unlock()
+		fmt.Fprintln(&supervisorLog.Buffer, err)
+	}
+	logText := func() string {
+		supervisorLog.Lock()
+		defer supervisorLog.Unlock()
+		return supervisorLog.Buffer.String()
+	}
+	client.OnError = logLine
 	ready := make(chan struct{}, 1)
 	client.OnReady = func() { ready <- struct{}{} }
 	ctx, cancel := context.WithCancel(context.Background())
@@ -914,13 +933,11 @@ func TestSpawnRetryAfterDeliveryFailureResendsUntilConfirmed(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		if err != nil {
-			fmt.Fprintln(&supervisorLog, err)
-		}
+		logLine(err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("supervisor did not stop")
 	}
-	if strings.Contains(supervisorLog.String(), "aak_") || strings.Contains(supervisorLog.String(), issuedKey) {
+	if strings.Contains(logText(), "aak_") || strings.Contains(logText(), issuedKey) {
 		t.Fatal("raw agent key leaked to supervisor log")
 	}
 	entries, err := os.ReadDir(journalDir)

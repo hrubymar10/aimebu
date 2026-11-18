@@ -281,6 +281,19 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// The same crash file the server installs: a standalone supervisor's fatal errors are recorded beside its
+	// journal, and reported (or kept on disk only) once its reporting is decided — from the environment now, or
+	// from the server's settings when hello_ack answers.
+	pendingCrashLog, err := telemetry.InstallCrashOutput(config.root)
+	if err != nil {
+		fmt.Fprintln(stderr, "crash log:", err)
+	}
+	if telemetry.Current().Enabled() {
+		if err := telemetry.ReportCrashFile(ctx, pendingCrashLog); err != nil {
+			fmt.Fprintln(stderr, "crash log:", err)
+		}
+		pendingCrashLog = ""
+	}
 	if err := refuseV1RootWrite(config.root); err != nil {
 		fmt.Fprintln(stderr, reportSupervisorRootError(config.root, err))
 		return 1
@@ -337,6 +350,12 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 	// server's process and does not take the settings.
 	client.OnTelemetry = func(settings protocol.TelemetrySettings) {
 		applySupervisorTelemetry(settings, resolveVersion(), os.LookupEnv, client, nil, stderr)
+		if pendingCrashLog != "" && telemetry.Current().Enabled() {
+			if err := telemetry.ReportCrashFile(ctx, pendingCrashLog); err != nil {
+				fmt.Fprintln(stderr, "crash log:", err)
+			}
+			pendingCrashLog = ""
+		}
 	}
 	if own, err := telemetry.FromEnv(os.LookupEnv, resolveVersion()); err == nil && own.EnvSet {
 		client.SetTelemetryEnv(telemetryEnvOf(own)) // this machine's own setting, for the bridge too, whatever the server says
@@ -458,6 +477,12 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	// Fatal errors (a runtime throw, which no recover can catch) are written here besides standard error, and the
+	// next start reports what a previous run left in the file, once its reporting decision is final below.
+	pendingCrashLog, err := telemetry.InstallCrashOutput(config.root)
+	if err != nil {
+		fmt.Fprintln(stderr, "crash log:", err)
 	}
 	if moving {
 		serverLogs = attachServerLog(config.root, stdout, stderr)
@@ -626,6 +651,9 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	if telemetry.Current().Enabled() {
 		fmt.Fprintln(stderr, "telemetry on: reporting errors and traces to Sentry (see docs/telemetry.md)")
 	}
+	if err := telemetry.ReportCrashFile(context.Background(), pendingCrashLog); err != nil {
+		fmt.Fprintln(stderr, "crash log:", err)
+	}
 	service.DataRoot = config.root
 	// `aimebu doctor --live` reads this key from the config directory; the server works without it, only --live is then unavailable.
 	if removeDoctorKey, err := service.EnableDoctorKey(config.root); err != nil {
@@ -774,7 +802,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		startEmbedded = nil
 	}
 	serveDone := make(chan error, 2)
-	go func() { serveDone <- httpServer.Serve(listener) }()
+	telemetry.Go(ctx, func() { serveDone <- httpServer.Serve(listener) })
 	if startSupervisorAfterServe {
 		telemetry.Go(ctx, func() {
 			if hook := embeddedStartHook.Load(); hook != nil {
@@ -791,7 +819,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	remaining := 1
 	if httpsServer != nil {
 		remaining++
-		go func() { serveDone <- httpsServer.Serve(tlsListener) }()
+		telemetry.Go(ctx, func() { serveDone <- httpsServer.Serve(tlsListener) })
 	}
 	if hook := servingHook.Load(); hook != nil {
 		(*hook)()

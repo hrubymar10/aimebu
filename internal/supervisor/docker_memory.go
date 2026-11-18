@@ -1,12 +1,15 @@
 package supervisor
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 var dockerUsage = regexp.MustCompile(`^\s*([\d.]+)\s*([KMGT]?i?B)\b`)
@@ -40,7 +43,9 @@ func dockerOutput(args ...string) (string, error) {
 	done := make(chan struct{})
 	var out []byte
 	var err error
-	go func() { out, err = cmd.Output(); close(done) }()
+	// A docker call that never answers is waited for by the timeout below; a panic in it would end the supervisor,
+	// so it is reported (when telemetry is on) and raised again as always (telemetry.Go).
+	telemetry.Go(context.Background(), func() { out, err = cmd.Output(); close(done) })
 	select {
 	case <-done:
 		return string(out), err

@@ -19,6 +19,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/opencode"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 const (
@@ -283,11 +284,13 @@ func providerEndpointModels(ctx context.Context, providers []adapter.CustomProvi
 	var wg sync.WaitGroup
 	for i, p := range providers {
 		wg.Add(1)
-		go func() {
+		// A panic in an endpoint call would end the supervisor, so it is reported (when telemetry is on) and raised
+		// again as always (telemetry.Go).
+		telemetry.Go(ctx, func() {
 			defer wg.Done()
 			ids, err := askEndpoint(ctx, client, p, refs)
 			answers[i] = answer{ids, err}
-		}()
+		})
 	}
 	wg.Wait()
 	// The answers are read in the providers' order, so the candidates and the problems do not depend on which endpoint was quicker.

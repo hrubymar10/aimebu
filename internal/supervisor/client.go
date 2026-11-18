@@ -372,11 +372,11 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	c.mu.Unlock()
 	c.startLauncherReprobe(probeCtx)
 	if c.warmCapable() {
-		go c.sendWarmReports(probeCtx)
+		telemetry.Go(probeCtx, func() { c.sendWarmReports(probeCtx) })
 		c.warmChanged() // the picture at connect: what a server that restarted does not know
 	}
 	// A ping's scope lift the last connection lost is owed: sent again now, so the agent's toolbox is not refused for as long as the server's own limit.
-	go func() { _ = c.keepAliveSettleLifts(probeCtx, "") }()
+	telemetry.Go(probeCtx, func() { _ = c.keepAliveSettleLifts(probeCtx, "") })
 	for _, turn := range stoppedTurns {
 		_ = turn.Cancel()
 	}
@@ -690,8 +690,9 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		case protocol.KeepAlivePausedFrame:
 			c.applyKeepAlivePaused(frame.PausedTools, frame.PausedAgents)
 		case protocol.AgentSettingsFrame:
-			// Ending idle processes can take their grace: not on the loop that reads frames.
-			go c.applyAgentSettings(frame.WarmIdleSeconds, frame.CodexWarmEnabled, frame.KeepAliveByTool)
+			// Ending idle processes can take their grace: not on the loop that reads frames. A panic in it is reported
+			// (when telemetry is on) and raised again, so the process dies as it always did (telemetry.Go).
+			telemetry.Go(ctx, func() { c.applyAgentSettings(frame.WarmIdleSeconds, frame.CodexWarmEnabled, frame.KeepAliveByTool) })
 		case protocol.KeepAliveScopeAckFrame, protocol.WarmClaimAckFrame:
 			c.keepAliveScopeAcked(frame.ReqID) // both are answers to a request waiting by its id
 		case protocol.TelemetryConfig:
@@ -1424,7 +1425,7 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 		}
 	}
 	done := make(chan struct{})
-	go func() { c.turns.Wait(); close(done) }()
+	telemetry.Go(ctx, func() { c.turns.Wait(); close(done) })
 	select {
 	case <-done:
 		return nil

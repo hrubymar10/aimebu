@@ -15,6 +15,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 type importV1JobState struct {
@@ -491,7 +492,10 @@ func (s *Server) importV1Commit(w http.ResponseWriter, r *http.Request) {
 	s.importJob = importV1JobState{ID: id, Phase: "scan"}
 	s.maintenance.Store(true)
 	s.importMu.Unlock()
-	go s.runImportV1Job(id, req.Mapping, userID(r), s.publicBase(r))
+	// The import runs on a goroutine of its own for the whole scan and copy: a panic in it is reported (when
+	// telemetry is on) and raised again, so the process dies as it always did (telemetry.Go).
+	owner, base := userID(r), s.publicBase(r)
+	telemetry.Go(context.Background(), func() { s.runImportV1Job(id, req.Mapping, owner, base) })
 	writeJSON(w, 202, map[string]string{"job_id": id, "phase": "scan"})
 }
 

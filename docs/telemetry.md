@@ -57,11 +57,26 @@ transport inside a test binary.
 - Panics at the entry points of the subcommands (server, supervisor, CLI).
 - Panics in the long-lived background goroutines (the dispatcher, the supervisor's connection loops and warm/keep-alive/launcher workers, the
   credential refreshers, the quota runner, the machine and event-stream writers): reported as `fatal` and then raised again, so the process
-  still dies as it always did (`telemetry.Go` / `defer telemetry.Recover`).
+  still dies as it always did (`telemetry.Go` / `defer telemetry.Recover`). Every goroutine the server or a supervisor starts for its whole
+  life (and the work it puts off to one, an import job, a usage refresh, a machine report) runs under this; the spawn sites that predate it
+  were moved onto it when the crash file below was added.
 - A classified warm-process refusal and an unrecognized Docker Codex host
   config key are warnings. `CaptureWarning` and `CaptureOnce` send each stable
   reason key once a day (per process) with a key-only fingerprint; values, paths, and
   agent IDs are excluded from the event and fingerprint.
+- **Fatal errors, through the crash file.** A Go runtime throw (`fatal error: fault` after a SIGSEGV or SIGBUS in
+  native code, an out-of-memory) is unrecoverable: no panic hook sees it, and a server that hits one used to die
+  with nothing in Sentry. At startup the server and the standalone supervisor call `debug.SetCrashOutput` with
+  `<config root>/server/crash.log` (0600), so the runtime writes its crash report there as well as to standard
+  error. On the next start, if the file is not empty, it is renamed to `crash-<timestamp>.log` (the newest five
+  kept) and, **while reporting is on**, sent to Sentry: the report's first line as the event's title, with the
+  address in it normalised (`unexpected fault address <addr>`), and the trace as a `crash.log` text attachment,
+  trimmed to 256 KiB and scrubbed of the home directory and source roots like every stack trace. With reporting
+  off (`AIMEBU_SENTRY_DSN=off`, or the Settings switch off) nothing is sent and the rotated file just keeps the
+  trace on disk. The report is made once the start's reporting decision is final — for the server after the stored
+  Settings are applied, for the supervisor after the server's settings arrive (or at once when its own
+  `AIMEBU_SENTRY_DSN` decides) — so a Settings-only consent is honoured too. The recording itself needs no
+  consent: it never leaves the machine.
 - Caught failures, by place. One API (`telemetry.ReportError`, `ReportWarning`, `ReportCause`, `WarnCause`): an error the program logs and carries on from
   goes to Sentry as an `error` (a degradation it recovers from by itself as a `warning`), tagged `area`, **once per cause per day** (a set of at most 2000 keys;
   a failure that goes on for days is one report a day, not one per pass). The key and the message are the error text with ids, request ids, timestamps,

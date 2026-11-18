@@ -591,16 +591,50 @@ func (s *Server) usages(w http.ResponseWriter, r *http.Request) {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, out any) bool {
-	return readJSONLimit(w, r, out, 64<<10)
+	return readJSONTooLarge(w, r, out, 64<<10, "")
 }
 
+// readJSONLimit is readJSONTooLarge with the generic wording for a body over the limit.
 func readJSONLimit(w http.ResponseWriter, r *http.Request, out any, limit int64) bool {
+	return readJSONTooLarge(w, r, out, limit, "")
+}
+
+// messageBodyLimit bounds one room message's body, in bytes; the answer endpoints (internal/answer) and the inbox
+// answer route share the bound. There is no store-level check beyond it, so this is the limit of record.
+const messageBodyLimit = 32 << 10
+
+// messageJSONLimit is the JSON body limit of POST /api/rooms/{room}/messages: the body limit plus room for the
+// envelope (reply_to, the attachment ids) and JSON escaping, so a message at the body limit is never refused as
+// too large for the wrong reason (it used to come back as 400 "invalid JSON").
+const messageJSONLimit = messageBodyLimit + 8<<10
+
+func messageTooLarge() string {
+	return fmt.Sprintf("Message is too long (max %d KB)", messageBodyLimit>>10)
+}
+
+// readJSONTooLarge is readJSONLimit with a wording of its own for a body over the limit; empty means the generic one.
+func readJSONTooLarge(w http.ResponseWriter, r *http.Request, out any, limit int64, tooLarge string) bool {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		apiError(w, 415, "invalid_request", "content type must be application/json")
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	d := json.NewDecoder(r.Body)
+	// goccy's decoder reports a body cut off by the limit as a syntax error ("unexpected end of JSON input"), not as
+	// the reader's error, so the body is read against the limit here: an over-limit body is then the
+	// MaxBytesReader's own error, answered with 413 and the limit in the message, whatever the client sent.
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			if tooLarge == "" {
+				tooLarge = fmt.Sprintf("request body exceeds %d KB", limit>>10)
+			}
+			apiError(w, 413, "request_too_large", tooLarge)
+			return false
+		}
+		apiError(w, 400, "invalid_request", "invalid JSON")
+		return false
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		apiError(w, 400, "invalid_request", "invalid JSON")
@@ -1595,11 +1629,15 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		ThreadRoot  string   `json:"thread_root"` // read and ignored: the conversation follows reply_to
 		Attachments []string `json:"attachments"`
 	}
-	if !readJSON(w, r, &req) {
+	if !readJSONTooLarge(w, r, &req, messageJSONLimit, messageTooLarge()) {
 		return
 	}
-	if !utf8.ValidString(req.Body) || len(req.Body) > 32<<10 || strings.TrimSpace(req.Body) == "" && len(req.Attachments) == 0 {
+	if !utf8.ValidString(req.Body) || strings.TrimSpace(req.Body) == "" && len(req.Attachments) == 0 {
 		apiError(w, 400, "invalid_answer", "invalid body")
+		return
+	}
+	if len(req.Body) > messageBodyLimit {
+		apiError(w, 400, "invalid_answer", messageTooLarge())
 		return
 	}
 	// One concept, the reply: thread_root is derived from reply_to, so one in the body (an older client) is read and ignored.

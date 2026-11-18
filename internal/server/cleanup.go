@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 const (
@@ -419,7 +420,10 @@ func (s *Server) remoteAgentLogs(ctx context.Context) ([]diskMachine, error) {
 	var wg sync.WaitGroup
 	for i := range out {
 		wg.Add(1)
-		go func(row *diskMachine) {
+		row := &out[i]
+		// A machine that never answers holds this request anyway; a panic in it would end the process, so it is
+		// reported (when telemetry is on) and raised again as always (telemetry.Go).
+		telemetry.Go(ctx, func() {
 			defer wg.Done()
 			size, err := s.machineAgentLogSize(ctx, row.MachineID)
 			switch {
@@ -432,7 +436,7 @@ func (s *Server) remoteAgentLogs(ctx context.Context) ([]diskMachine, error) {
 			default:
 				row.Error = err.Error()
 			}
-		}(&out[i])
+		})
 	}
 	wg.Wait()
 	return out, nil
@@ -463,10 +467,10 @@ func (s *Server) buildDiskReport(ctx context.Context) (*diskReport, error) {
 		err  error
 	}
 	answered := make(chan machinesAnswer, 1)
-	go func() {
+	telemetry.Go(ctx, func() {
 		rows, err := s.remoteAgentLogs(ctx)
 		answered <- machinesAnswer{rows, err}
-	}()
+	})
 	facts, err := s.inspectWorktrees(ctx)
 	machines := <-answered
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/hrubymar10/aimebu/internal/store"
 	"github.com/hrubymar10/aimebu/internal/switcher"
+	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
 func (s *Server) switcherReady(w http.ResponseWriter) bool {
@@ -272,10 +273,12 @@ func (s *Server) refreshSwitchedUsage(tool string) {
 	}
 	s.Usages.Invalidate(usageProvider(tool))
 	s.usageRefreshes.Add(1)
-	go func() {
+	// A refresh runs while the request is answered: a panic in it is reported (when telemetry is on) and raised
+	// again, so the process dies as it always did (telemetry.Go).
+	telemetry.Go(context.Background(), func() {
 		defer s.usageRefreshes.Done()
 		s.Usages.Refresh(context.Background())
-	}()
+	})
 }
 
 // WaitUsageRefreshes blocks until the usage refreshes that switches started in the background have finished. A refresh writes the usage
