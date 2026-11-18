@@ -1657,7 +1657,9 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .prompt-slot .dialog-actions { align-items: center; }
 .prompt-shipped { margin-top: 6px; color: var(--text-secondary); font-size: .9em; }
 .prompt-shipped p { margin: 6px 0 0; white-space: pre-wrap; }
-.prompt-preview { max-height: 320px; overflow: auto; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); white-space: pre-wrap; font-size: .85em; }
+/* The section is a flex column that scrolls, and an item with overflow:auto has no automatic minimum size, so without this the column
+   crushes the preview to a line; the block keeps its content's height (to the cap) and the section scrolls past it. */
+.prompt-preview { flex-shrink: 0; max-height: 320px; overflow: auto; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); white-space: pre-wrap; font-size: .85em; }
 .spawn-resume { display: grid; gap: 8px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); font-size: 13px; }
 /* The session being continued, as a plain card: label and value, the id and the folder in the mono face. */
 .spawn-resume .spawn-resume-card { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); font-size: 12px; }

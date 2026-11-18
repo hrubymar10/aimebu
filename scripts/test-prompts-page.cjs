@@ -12,7 +12,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
-<body><dialog id="settings-dialog" open><nav></nav></dialog></body></html>`;
+<body><dialog id="settings-dialog" class="settings-modal" aria-label="Settings" open><div class="settings-pane"><nav class="settings-nav" aria-label="Settings sections"></nav><div class="settings-body"><header class="settings-body-header"></header></div></div></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -321,6 +321,19 @@ async function main() {
       assert.equal(await page.evaluate(() => window.__page.hasUnsavedChanges()), false, 'opening again drops the draft');
       await page.evaluate(() => window.__page.destroy());
       assert.equal(await page.evaluate(() => document.querySelector('#settings-prompts').childElementCount), 0, 'destroying the page leaves no content');
+      await page.close();
+    }
+    // The preview shows its prompt: the section is a flex column that scrolls, and an item with overflow:auto has no automatic minimum
+    // size, so the column used to crush the preview to a single line under the slot cards. Text wraps, so nothing scrolls sideways.
+    {
+      const page = await mount();
+      const seen = await page.evaluate(() => {
+        const pre = document.querySelector('#prompt-preview');
+        return { height: pre.getBoundingClientRect().height, content: pre.scrollHeight, sideways: pre.scrollWidth - pre.clientWidth };
+      });
+      assert.ok(seen.height >= Math.min(seen.content, 320) - 2, `the preview is as tall as its content up to its cap, not a crushed line (height ${seen.height}, content ${seen.content})`);
+      assert.ok(seen.height >= 3 * 13, 'even a three-line prompt gets its three lines');
+      assert.ok(seen.sideways <= 0, 'the wrapped text has no horizontal scrollbar');
       await page.close();
     }
     assert.deepEqual(errors, [], 'no page errors');
