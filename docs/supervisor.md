@@ -365,13 +365,13 @@ and settled, and blocked parents raise a delivery-failure inbox item. That
 item exposes the held reason from the parent or correction receipt.
 An exited turn with an uncertain outcome starts a diagnostic only when its
 admitted capability snapshot verifies read-only mode. The diagnostic report
-stays private to the recovery inbox. A lost turn goes straight to the inbox
+stays private to the recovery item. A lost turn goes straight to recovery routing
 because its previous process may still be running. If the harness never
 launched, the supervisor reports a definite start failure. Recovery shows the
 start error and offers Retry or Abandon without a diagnostic or a warning that
 work may have run. A missing tools access error tells the owner to start the
 agent again before retrying.
-Owner/operator decisions
+Owner/operator and lead decisions
 use an item revision and idempotency key: Resume creates a linked turn with
 evidence and a continuation instruction, Retry creates one with raw notes,
 and Abandon aborts the notes. The notes become done only after the linked
@@ -382,7 +382,7 @@ or transient dispatch failure with their chosen recovery context intact.
 Once admitted, they wait for journal reconciliation rather than another
 delivery. New source-turn evidence increments the open item's revision and
 refreshes its decision baseline; an older revision is rejected. A stopped
-agent receives an owner recovery item without starting a diagnostic, and
+agent receives a recovery item without starting a diagnostic, and
 Resume/Retry are unavailable until it is active again. A continuation from a
 lost turn waits for positive process quiescence: a supervisor hello reporting
 that process gone, or its recorded exit/kill. Journal absence after replacement
@@ -844,9 +844,14 @@ stopped by the turn limit, and the room gets a system event saying so, so a
 long but legitimate turn does not wait for a person. Only when that
 continuation turn is limit-killed too does the agent fall back to the
 ordinary failure path: the turn's notes become `unknown`, the agent is
-recovery-blocked, and a recovery inbox item
-carries the evidence, so the delivery is not lost and the owner can continue
-it. A turn that is **interrupted** is continued the same way. When the harness process ends
+recovery-blocked, and a recovery item carries the evidence. A worker's item
+goes to the active project lead first, with a `worker_recovery` wake note and a
+room notice. The lead can choose Resume, Retry, or Abandon with
+`list_recoveries` and `resolve_recovery`. After 30 minutes by default, or when
+the lead stops or becomes recovery-blocked, the dispatcher raises the item to
+the people's Inbox and sends its ordinary notification. Project Settings can
+turn lead routing off or change that interval. The lead's own recovery goes
+straight to people. A turn that is **interrupted** is continued the same way. When the harness process ends
 without a final answer, by a signal, a non-zero status or silently, and says nothing about why
 (no error result, no stderr message with an ordinary non-zero status), it was cut off, not
 answered badly: the harness was killed, the session restarted, or the container stopped. The

@@ -597,7 +597,8 @@ Inbox, usage, events, settings
   agent_id?, requester_kind, requester_id,
   kind[question|approval|recovery|delivery_failed|usage_info|usage_limit],
   options_json?, state[open|resolved|withdrawn|superseded], rev, answer_message_id?,
-  resolved_by?, resolved_at?, created_at) — `assignee` returns in slice 4.
+  resolved_by?, resolved_at?, created_at, lead_due_at?, recovery_lead_id?) — `assignee` returns in slice 4.
+  A worker recovery is assigned to an active project lead when `worker_recovery_to_lead` is on. While `lead_due_at` is set it is hidden from the people's Inbox and cannot be decided by a person; a `worker_recovery` note wakes the lead. The lead may list and decide only its project's assigned recoveries. The periodic dispatcher sweep clears `lead_due_at` after the configured interval or when the lead becomes unavailable, and emits `inbox_item_created` so the ordinary human card and notification appear. The lead's own recovery goes directly to people.
   `usage_alert` is not a stored kind: the inbox listing appends it as a
   virtual row for each open provider usage alert (built in
   `internal/server/inbox.go`, shown to admins), with no table row behind it.
@@ -637,7 +638,8 @@ Inbox, usage, events, settings
 - **settings_project**(project_id, max_live_agents=10, spawn_rate_per_min=6,
   auto_resume_after_clean_diagnostic=false, memory_enabled=false,
   worktree_mode='auto', worktree_auto_since, home_lead_only=true,
-  reviewer_agents='inherit'); **global_setting** holds reviewer_agents_enabled
+  reviewer_agents='inherit', worker_recovery_to_lead=true,
+  worker_recovery_escalate_minutes=30); **global_setting** holds reviewer_agents_enabled
   (absent means on); **cleanup_log**(id, seq, category, target, project_id,
   reason, bytes, action, actor, created_at) (the cleanup log: what each cleanup
   removed and why; also `attachment.removed_at`, `removed_after_days`)
@@ -1514,11 +1516,11 @@ CC/Codex, prompt-only on pi):
    blocker separate from `desired`) → if capability
    `readonly_verified` for (tool, variant): diagnostic turn
    (`mode=diagnostic`, shell/network/MCP/write disabled) producing
-   `reconciliation`; then `recovery` inbox item — unless
+   `reconciliation`; then `recovery` item (lead first for a worker when enabled) — unless
    `auto_resume_after_clean_diagnostic` is on **and** status=clean **and**
    readonly_verified (store policy + actor in `turn.policy_json`).
-   If not readonly_verified → straight to the inbox item. A `lost` turn also
-   goes straight to the inbox even if read-only diagnostics are supported:
+   If not readonly_verified → straight to the recovery item. A `lost` turn also
+   goes straight to recovery routing even if read-only diagnostics are supported:
    its previous process may still be running, so a diagnostic could overlap
    it. The item states that no diagnostic was run and that resuming may
    repeat an action. A Resume/Retry decision creates a linked continuation

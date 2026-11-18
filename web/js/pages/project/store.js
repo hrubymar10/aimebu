@@ -9,8 +9,8 @@ import { UsageLimitStore } from './usage-limit.js';
 import { TeamFlowStore } from './team-flow-store.js';
 import { detailsChanges, detailsView, lifecycleView, stopFailedNote } from './model.js';
 
-const FLAGS = { autoResume: 'auto_resume_after_clean_diagnostic', worktrees: 'worktree_mode', homeLeadOnly: 'home_lead_only' };
-const flagValue = (name, settings) => (name === 'worktrees' ? settings.worktree_mode !== 'off' : name === 'homeLeadOnly' ? settings.home_lead_only !== false : !!settings[FLAGS[name]]);
+const FLAGS = { autoResume: 'auto_resume_after_clean_diagnostic', worktrees: 'worktree_mode', homeLeadOnly: 'home_lead_only', workerRecoveryToLead: 'worker_recovery_to_lead' };
+const flagValue = (name, settings) => (name === 'worktrees' ? settings.worktree_mode !== 'off' : name === 'homeLeadOnly' || name === 'workerRecoveryToLead' ? settings[FLAGS[name]] !== false : !!settings[FLAGS[name]]);
 const flagBody = (name, checked) => (name === 'worktrees' ? { worktree_mode: checked ? 'auto' : 'off' } : { [FLAGS[name]]: checked });
 
 export class ProjectStore {
@@ -27,7 +27,8 @@ export class ProjectStore {
     this.loaded = { name: '', folder: '' };
     this.detailsStatus = signal('');
     this.detailsBusy = signal(false);
-    this.flags = { autoResume: signal({ checked: false, disabled: true }), worktrees: signal({ checked: false, disabled: true }), homeLeadOnly: signal({ checked: false, disabled: true }) };
+    this.flags = { autoResume: signal({ checked: false, disabled: true }), worktrees: signal({ checked: false, disabled: true }), homeLeadOnly: signal({ checked: false, disabled: true }), workerRecoveryToLead: signal({ checked: false, disabled: true }) };
+    this.workerRecoveryMinutes = signal({ value: 30, disabled: true });
     this.reviewerAgents = signal({ value: 'inherit', global: true, enabled: true, disabled: true });
     this.lifecycleBusy = signal('');
     this.lifecycleTurn = 0;
@@ -66,6 +67,7 @@ export class ProjectStore {
     batch(() => {
       this.projectID.value = id || ''; this.revision.value++; this.error.value = ''; this.lifecycleBusy.value = ''; this.lifecycleTurn++;
       for (const flag of Object.values(this.flags)) flag.value = { checked: false, disabled: true };
+      this.workerRecoveryMinutes.value = { value: 30, disabled: true };
       this.reviewerAgents.value = { value: 'inherit', global: true, enabled: true, disabled: true };
     });
     this.refreshDetails(id);
@@ -75,6 +77,7 @@ export class ProjectStore {
       const settings = await this.source.get(id);
       if (!this.alive || generation !== this.generation) return;
       for (const name of Object.keys(this.flags)) this.flags[name].value = { checked: flagValue(name, settings), disabled: false };
+      this.workerRecoveryMinutes.value = { value: settings.worker_recovery_escalate_minutes || 30, disabled: false };
       this.reviewerAgents.value = { value: settings.reviewer_agents || 'inherit', global: settings.reviewer_agents_global_enabled !== false, enabled: settings.reviewer_agents_enabled !== false, disabled: false };
     } catch (failure) { if (this.alive && generation === this.generation) this.error.value = failure.message; }
   }
@@ -107,6 +110,19 @@ export class ProjectStore {
       if (this.alive && generation === this.generation) this.flags[name].value = { checked, disabled: false };
     } catch (failure) {
       if (this.alive && generation === this.generation) batch(() => { this.flags[name].value = { checked: !checked, disabled: false }; this.error.value = failure.message; });
+    }
+  }
+
+  async saveWorkerRecoveryMinutes(value) {
+    const id = this.projectID.peek(), generation = this.generation, previous = this.workerRecoveryMinutes.peek();
+    const minutes = Number(value);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) { this.error.value = 'Escalation interval must be 1 to 1440 minutes.'; return; }
+    this.workerRecoveryMinutes.value = { value: minutes, disabled: true };
+    try {
+      const settings = await this.source.update(id, { worker_recovery_escalate_minutes: minutes });
+      if (this.alive && generation === this.generation) this.workerRecoveryMinutes.value = { value: settings.worker_recovery_escalate_minutes, disabled: false };
+    } catch (failure) {
+      if (this.alive && generation === this.generation) { this.workerRecoveryMinutes.value = previous; this.error.value = failure.message; }
     }
   }
 

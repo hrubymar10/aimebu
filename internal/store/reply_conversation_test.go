@@ -169,6 +169,7 @@ func TestReplyMigrationDerivesConversations(t *testing.T) {
 	afterCross := insert("after the cross-room reply")
 	// The rows as they were before the change: a thread message without reply_to, and plain replies without thread_root (reply_to always
 	// names an existing message: it is a foreign key).
+	rewindWorkerRecoveryMigration(t, s)
 	for _, statement := range [][]any{
 		{`DROP TABLE message_reference_grant`},
 		{`DROP INDEX room_team_flow_key`},

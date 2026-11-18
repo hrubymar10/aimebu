@@ -40,6 +40,8 @@ type tool struct {
 var empty = map[string]any{"type": "object", "properties": map[string]any{}}
 var agentIDPattern = regexp.MustCompile(`^agt_[A-Za-z0-9_-]+$`)
 var catalog = []tool{
+	{"list_recoveries", "Active project lead only. List worker recoveries awaiting your decision.", empty},
+	{"resolve_recovery", "Active project lead only. Resolve a worker recovery with resume, retry, or abandon; retries are idempotent.", map[string]any{"type": "object", "properties": map[string]any{"item_id": map[string]string{"type": "string"}, "choice": map[string]any{"type": "string", "enum": []string{"resume", "retry", "abandon"}}, "note": map[string]string{"type": "string"}}, "required": []string{"item_id", "choice"}}},
 	{"list_rooms", "List rooms where you are an active member, including archived rooms, without message previews.", empty},
 	{"list_agents", "List agents in your project, including their roles and current state.", empty},
 	{"room_history", "Read a page of messages in a project room. Private chats require current membership. Use before_no to page backward.", map[string]any{"type": "object", "properties": map[string]any{"room_id": map[string]string{"type": "string"}, "before_no": map[string]string{"type": "integer"}, "limit": map[string]string{"type": "integer"}}, "required": []string{"room_id"}}},
@@ -220,6 +222,16 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 	}
 	getBool := func(field string) bool { var value bool; _ = json.Unmarshal(args[field], &value); return value }
 	switch name {
+	case "list_recoveries":
+		path = "/api/agent/recoveries"
+	case "resolve_recovery":
+		itemID, choice := getString("item_id"), getString("choice")
+		if !strings.HasPrefix(itemID, "inb_") || len(itemID) > 100 || choice != "resume" && choice != "retry" && choice != "abandon" {
+			return toolResult("valid item_id and choice required", true)
+		}
+		method, path = http.MethodPost, "/api/agent/recoveries/"+url.PathEscape(itemID)+"/decision"
+		requestKey = "resolve_recovery:" + itemID + ":" + choice
+		body = map[string]any{"choice": choice, "note": getString("note")}
 	case "list_rooms":
 		path = "/api/agent/rooms"
 	case "list_agents":

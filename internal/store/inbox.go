@@ -63,7 +63,7 @@ type inboxAsk struct {
 // (the message and the turn, both by primary key) neither add nor drop rows.
 const inboxFromSQL = `FROM inbox_item i JOIN room r ON r.id=i.room_id JOIN membership member ON member.project_id=i.project_id
         AND member.user_id=?`
-const inboxWhereSQL = `WHERE i.state='open' AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
+const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
 		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
 		AND (i.kind!='approval' OR member.role='owner' OR r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + `)
 		AND (i.requester_id NOT LIKE 'note:%' OR EXISTS (SELECT 1 FROM user u WHERE u.id=member.user_id AND u.disabled_at IS NULL

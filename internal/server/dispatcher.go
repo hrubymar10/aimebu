@@ -393,7 +393,18 @@ func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, caller fun
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	lastAttachmentSweep := time.Now()
+	lastRecoverySweep := time.Time{}
 	for {
+		if !d.Server.maintenance.Load() && time.Since(lastRecoverySweep) >= 10*time.Second {
+			d.Server.maintenanceMu.RLock()
+			if !d.Server.maintenance.Load() {
+				if err := d.Server.Store.SweepWorkerRecoveries(ctx); err != nil && ctx.Err() == nil {
+					onError(err)
+				}
+			}
+			d.Server.maintenanceMu.RUnlock()
+			lastRecoverySweep = time.Now()
+		}
 		if !d.Server.maintenance.Load() && time.Since(lastAttachmentSweep) >= time.Hour {
 			d.Server.maintenanceMu.RLock()
 			if d.Server.maintenance.Load() {

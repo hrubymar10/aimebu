@@ -28,6 +28,7 @@ func TestMigration110BackfillsOnlyKnownMessageGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rewindWorkerRecoveryMigration(t, s)
 	for _, statement := range []string{
 		`UPDATE message SET author_harness='',author_model='' WHERE id IN ('` + old.ID + `','` + current.ID + `','` + known.ID + `')`,
 		`ALTER TABLE message DROP COLUMN switch_handoff_json`,
@@ -82,6 +83,7 @@ func TestMigration110LeavesMessagesBeforeModelSettlementUnknown(t *testing.T) {
 		VALUES ('mla_settled',? ,?,'model_default','2025-01-01T00:00:00.000000Z')`, agent.MachineID, agent.ID); err != nil {
 		t.Fatal(err)
 	}
+	rewindWorkerRecoveryMigration(t, s)
 	for _, statement := range []string{
 		`ALTER TABLE message DROP COLUMN switch_handoff_json`,
 		`ALTER TABLE team_flow_migration DROP COLUMN drain_errors`,

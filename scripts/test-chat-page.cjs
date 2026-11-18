@@ -593,8 +593,12 @@ async function main() {
   {
     const page = await mount();
     await page.evaluate(() => window.__data.rooms.rm_a.messages.push(
-      { id: 'rm_a_long_system', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: 'The team flow changed.\n\n## Instructions\n- **Review** the task with @tess. See #42.\n\n```text\nHand off active work.\n```', created_at: '2026-01-10T12:01:00Z' }));
+      { id: 'rm_a_long_system', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: 'The team flow changed.\n\n## Instructions\n- **Review** the task with @tess. See #42.\n\n```text\nHand off active work.\n```', created_at: '2026-01-10T12:01:00Z' },
+      { id: 'rm_a_recovery_handoff', seq: 132, no: 132, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: 'Recovery handed to the lead', created_at: '2026-01-10T12:02:00Z' },
+      { id: 'rm_a_recovery_resolved', seq: 133, no: 133, room_id: 'rm_a', author_kind: 'system', author_id: 'system', body: 'Recovery resolved by the lead: resume', created_at: '2026-01-10T12:03:00Z' }));
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.match(await page.$eval('[data-message-id=rm_a_recovery_handoff]', row => row.textContent), /Recovery handed to the lead/);
+    assert.match(await page.$eval('[data-message-id=rm_a_recovery_resolved]', row => row.textContent), /Recovery resolved by the lead: resume/);
     await page.evaluate(() => window.__chat.setAgents([{ id: 'agt_tess', slug: 'tess', name: 'tess', project_id: 'prj_a', room_id: 'rm_a', status: 'online' }])); await settle(page);
     assert.deepEqual(await page.$eval('[data-message-id=rm_a_long_system]', row => {
       const link = row.querySelector('.system-popup-link'), preview = row.querySelector('.system-notice-preview');

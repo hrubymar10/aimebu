@@ -206,6 +206,7 @@ func TestMigrationNinetySixBackfillsSeenFromEvents(t *testing.T) {
 	}
 	before := agentReceipts(t, s, room.ID)
 	// Back to version 95, as a database from before the table, then migrate again.
+	rewindWorkerRecoveryMigration(t, s)
 	if _, err := s.db.Exec(`ALTER TABLE team_flow_migration DROP COLUMN drain_errors`); err != nil {
 		t.Fatal(err)
 	}

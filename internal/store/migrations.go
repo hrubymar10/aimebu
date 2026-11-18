@@ -1885,6 +1885,12 @@ CREATE TABLE IF NOT EXISTS agent_context_clear (
 -- milliseconds. Parent lookups elsewhere (recovery, answers) walk the same
 -- column.
 CREATE INDEX IF NOT EXISTS turn_parent_mode ON turn(parent_turn_id, mode);
+`}, {120, `
+ALTER TABLE settings_project ADD COLUMN worker_recovery_to_lead INTEGER NOT NULL DEFAULT 1 CHECK (worker_recovery_to_lead IN (0,1));
+ALTER TABLE settings_project ADD COLUMN worker_recovery_escalate_minutes INTEGER NOT NULL DEFAULT 30 CHECK (worker_recovery_escalate_minutes BETWEEN 1 AND 1440);
+ALTER TABLE inbox_item ADD COLUMN lead_due_at TEXT;
+ALTER TABLE inbox_item ADD COLUMN recovery_lead_id TEXT;
+CREATE INDEX inbox_lead_recovery_due ON inbox_item(lead_due_at) WHERE kind='recovery' AND state='open' AND lead_due_at IS NOT NULL;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

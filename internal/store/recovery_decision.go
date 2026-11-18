@@ -23,25 +23,44 @@ type RecoveryDecision struct {
 }
 
 func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice string, rev int) (RecoveryDecision, bool, error) {
-	digest := sha256.Sum256([]byte(itemID + "\x00" + choice + "\x00" + strconv.Itoa(rev)))
+	return s.decideRecoveryActor(ctx, itemID, "user", userID, key, choice, "", rev)
+}
+
+func (s *Store) DecideRecoveryAsAgent(ctx context.Context, itemID, leadID, key, choice, note string, rev int) (RecoveryDecision, bool, error) {
+	return s.decideRecoveryActor(ctx, itemID, "agent", leadID, key, choice, note, rev)
+}
+
+func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, actorID, key, choice, note string, rev int) (RecoveryDecision, bool, error) {
+	digestInput := itemID + "\x00" + choice + "\x00" + strconv.Itoa(rev)
+	if actorKind == "agent" {
+		digestInput = itemID + "\x00" + choice + "\x00" + note
+	}
+	digest := sha256.Sum256([]byte(digestInput))
 	var stoppedAgent *AgentCard
-	result, reused, err := s.WithRequestKey(ctx, RequestKey{ActorKind: "user", ActorID: userID, Kind: "recovery_decision",
+	result, reused, err := s.WithRequestKey(ctx, RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "recovery_decision",
 		Key: key, Digest: hex.EncodeToString(digest[:])}, func(tx *Tx) (string, error) {
 		var projectID, roomID, agentID, kind, state, createdAt, options string
 		var source, role sql.NullString
 		var currentRev int
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT i.project_id,i.room_id,i.agent_id,i.kind,i.state,i.turn_id,i.rev,i.created_at,COALESCE(i.options_json,''),m.role
-			FROM inbox_item i LEFT JOIN membership m ON m.project_id=i.project_id AND m.user_id=? WHERE i.id=?`, userID, itemID).
-			Scan(&projectID, &roomID, &agentID, &kind, &state, &source, &currentRev, &createdAt, &options, &role); err != nil {
+		var leadID sql.NullString
+		var leadDue sql.NullString
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT i.project_id,i.room_id,i.agent_id,i.kind,i.state,i.turn_id,i.rev,i.created_at,COALESCE(i.options_json,''),m.role,i.recovery_lead_id,i.lead_due_at
+			FROM inbox_item i LEFT JOIN membership m ON m.project_id=i.project_id AND m.user_id=? WHERE i.id=?`, actorID, itemID).
+			Scan(&projectID, &roomID, &agentID, &kind, &state, &source, &currentRev, &createdAt, &options, &role, &leadID, &leadDue); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return "", ErrForbidden
 			}
 			return "", err
 		}
-		if !role.Valid {
-			return "", ErrForbidden
-		}
-		if role.String != "owner" && role.String != "operator" {
+		if actorKind == "agent" {
+			var allowed bool
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.project_id=? AND r.cap_is_lead=1 AND a.desired='active' AND a.recovery_block=0 AND a.revoked_at IS NULL)`, actorID, projectID).Scan(&allowed); err != nil {
+				return "", err
+			}
+			if !allowed || !leadID.Valid || leadID.String != actorID || !leadDue.Valid {
+				return "", ErrForbidden
+			}
+		} else if !role.Valid || role.String != "owner" && role.String != "operator" || leadDue.Valid {
 			return "", ErrForbidden
 		}
 		if kind != "recovery" {
@@ -89,7 +108,7 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 					return "", ErrStaleInboxRev
 				}
 				if _, err := tx.AppendEvent(Event{Kind: "agent_control_requested", ProjectID: projectID, AgentID: agentID,
-					PayloadJSON: payloadJSON(map[string]string{"desired": "active", "actor": userID})}); err != nil {
+					PayloadJSON: payloadJSON(map[string]string{"desired": "active", "actor": actorID})}); err != nil {
 					return "", err
 				}
 			} else {
@@ -98,7 +117,7 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 				}
 			}
 		} else if ask.Phase == "quiescence_wait" {
-			childID, err := tx.decideQuiescenceWait(source.String, projectID, roomID, agentID, userID, choice)
+			childID, err := tx.decideQuiescenceWait(source.String, projectID, roomID, agentID, actorID, choice)
 			if err != nil {
 				return "", err
 			}
@@ -120,7 +139,7 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 				return "", ErrStaleInboxRev
 			}
 			var itemSeq int64
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT seq FROM event WHERE kind IN ('inbox_item_created','inbox_item_updated') AND json_extract(payload_json,'$.inbox_item_id')=? ORDER BY seq DESC LIMIT 1`, itemID).Scan(&itemSeq); err != nil {
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT seq FROM event WHERE kind IN ('inbox_item_created','inbox_item_updated','recovery_handed_to_lead') AND json_extract(payload_json,'$.inbox_item_id')=? ORDER BY seq DESC LIMIT 1`, itemID).Scan(&itemSeq); err != nil {
 				return "", err
 			}
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM event WHERE turn_id=? AND seq>? AND kind IN ('turn_process_exit','turn_finished','turn_lost','turn_ack_accepted','answer_committed','answer_held','recovery_override')`, source.String, itemSeq).Scan(&newer); err != nil {
@@ -140,11 +159,11 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 					return "", err
 				}
 				if _, err := tx.AppendEvent(Event{Kind: "recovery_override", ProjectID: projectID, RoomID: roomID,
-					AgentID: agentID, TurnID: source.String, PayloadJSON: payloadJSON(map[string]string{"choice": choice, "actor": userID})}); err != nil {
+					AgentID: agentID, TurnID: source.String, PayloadJSON: payloadJSON(map[string]string{"choice": choice, "actor": actorID})}); err != nil {
 					return "", err
 				}
 			} else {
-				if err := tx.createRecoveryContinuation(source.String, choice, userID, ""); err != nil {
+				if err := tx.createRecoveryContinuation(source.String, choice, actorID, ""); err != nil {
 					return "", err
 				}
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM turn WHERE parent_turn_id=? AND mode='normal' ORDER BY id DESC LIMIT 1`, source.String).Scan(&decision.TurnID); err != nil {
@@ -171,19 +190,28 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 				return "", err
 			}
 			if desired != "stopped" {
-				card, err := tx.setAgentDesiredTrusted(agentID, userID, "stopped", desiredRev)
+				card, err := tx.setAgentDesiredTrusted(agentID, actorID, "stopped", desiredRev)
 				if err != nil {
 					return "", err
 				}
 				decision.StoppedAgent = &card
 			}
 		}
-		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at=? WHERE id=? AND state='open' AND rev=?`, userID, timestamp(), itemID, rev); err != nil {
+		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at=? WHERE id=? AND state='open' AND rev=?`, actorID, timestamp(), itemID, rev); err != nil {
 			return "", err
 		}
 		if _, err := tx.AppendEvent(Event{Kind: "inbox_item_resolved", ProjectID: projectID, RoomID: roomID, AgentID: agentID,
-			PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "choice": choice, "actor": userID})}); err != nil {
+			PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "choice": choice, "actor": actorID, "actor_kind": actorKind})}); err != nil {
 			return "", err
+		}
+		if actorKind == "agent" {
+			body := "Recovery resolved by the lead: " + choice
+			if note != "" {
+				body += ". " + note
+			}
+			if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{}}); err != nil {
+				return "", err
+			}
 		}
 		if waitForQuiescence {
 			if err := tx.createQuiescenceWaitingItem(source.String, decision.TurnID); err != nil {

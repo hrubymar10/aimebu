@@ -781,6 +781,17 @@ async function main() {
     }
     // A project override is saved independently of the instance default.
     {
+      const page = await mount({ settings: { worker_recovery_to_lead: true, worker_recovery_escalate_minutes: 30 } });
+      await ready(page);
+      assert.equal(await page.$eval('#worker-recovery-to-lead', el => el.checked), true, 'worker recoveries go to the lead by default');
+      assert.equal(await page.$eval('#worker-recovery-escalate-minutes', el => el.value), '30');
+      await page.$eval('#worker-recovery-to-lead', el => el.click());
+      await page.waitForFunction(() => window.__calls.some(call => call[0] === 'update' && call[2]?.worker_recovery_to_lead === false));
+      await page.$eval('#worker-recovery-escalate-minutes', el => { el.value = '45'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+      await page.waitForFunction(() => window.__calls.some(call => call[0] === 'update' && call[2]?.worker_recovery_escalate_minutes === 45));
+      await page.close();
+    }
+    {
       const page = await mount({ settings: { auto_resume_after_clean_diagnostic: true, worktree_mode: 'auto', home_lead_only: false, reviewer_agents: 'inherit', reviewer_agents_global_enabled: false, reviewer_agents_enabled: false } });
       await ready(page);
       assert.equal(await page.$eval('#project-reviewer-agents', el => el.value), 'inherit');

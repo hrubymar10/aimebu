@@ -23,11 +23,13 @@ func (s *Server) projectRecoverySettings(w http.ResponseWriter, r *http.Request)
 		HomeLeadOnly                   *bool   `json:"home_lead_only"`
 		MaxLiveAgents                  *int    `json:"max_live_agents"`
 		ReviewerAgents                 *string `json:"reviewer_agents"`
+		WorkerRecoveryToLead           *bool   `json:"worker_recovery_to_lead"`
+		WorkerRecoveryEscalateMinutes  *int    `json:"worker_recovery_escalate_minutes"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.AutoResumeAfterCleanDiagnostic == nil && req.WorktreeMode == nil && req.HomeLeadOnly == nil && req.MaxLiveAgents == nil && req.ReviewerAgents == nil {
+	if req.AutoResumeAfterCleanDiagnostic == nil && req.WorktreeMode == nil && req.HomeLeadOnly == nil && req.MaxLiveAgents == nil && req.ReviewerAgents == nil && req.WorkerRecoveryToLead == nil && req.WorkerRecoveryEscalateMinutes == nil {
 		apiError(w, 400, "invalid_request", "a project setting is required")
 		return
 	}
@@ -43,7 +45,11 @@ func (s *Server) projectRecoverySettings(w http.ResponseWriter, r *http.Request)
 		apiError(w, 400, "invalid_request", "reviewer_agents must be inherit, on or off")
 		return
 	}
-	settings, err := s.Store.SetProjectRecoverySettings(r.Context(), projectID, userID(r), store.ProjectSettingsUpdate{AutoResumeAfterCleanDiagnostic: req.AutoResumeAfterCleanDiagnostic, WorktreeMode: req.WorktreeMode, HomeLeadOnly: req.HomeLeadOnly, MaxLiveAgents: req.MaxLiveAgents, ReviewerAgents: req.ReviewerAgents})
+	if req.WorkerRecoveryEscalateMinutes != nil && (*req.WorkerRecoveryEscalateMinutes < 1 || *req.WorkerRecoveryEscalateMinutes > 1440) {
+		apiError(w, 400, "invalid_request", "worker_recovery_escalate_minutes must be between 1 and 1440")
+		return
+	}
+	settings, err := s.Store.SetProjectRecoverySettings(r.Context(), projectID, userID(r), store.ProjectSettingsUpdate{AutoResumeAfterCleanDiagnostic: req.AutoResumeAfterCleanDiagnostic, WorktreeMode: req.WorktreeMode, HomeLeadOnly: req.HomeLeadOnly, MaxLiveAgents: req.MaxLiveAgents, ReviewerAgents: req.ReviewerAgents, WorkerRecoveryToLead: req.WorkerRecoveryToLead, WorkerRecoveryEscalateMinutes: req.WorkerRecoveryEscalateMinutes})
 	if err != nil {
 		fail(w, err)
 		return

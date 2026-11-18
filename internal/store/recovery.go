@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-json"
 )
@@ -278,9 +279,75 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 		id, projectID, roomID, originID, agentID, agentID, string(optionsBytes), timestamp()); err != nil {
 		return err
 	}
+	leadID, leadRoom, due, err := tx.workerRecoveryLead(projectID, roomID, agentID)
+	if err != nil {
+		return err
+	}
+	if leadID != "" {
+		if _, err := tx.Exec(`UPDATE inbox_item SET recovery_lead_id=?,lead_due_at=? WHERE id=?`, leadID, due, id); err != nil {
+			return err
+		}
+		var evidence, exitCode sql.NullString
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.evidence'),json_extract(payload_json,'$.exit_code') FROM event WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, originID).Scan(&evidence, &exitCode)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		body := fmt.Sprintf("Recovery handed to the lead for agent %s in room %s: %s (exit code %s). Evidence: %s. [Worker output](/api/rooms/%s/agents/%s/output). Item ID: %s.", agentID, roomID, reason, exitCode.String, evidence.String, roomID, agentID, id)
+		if leadRoom != roomID {
+			if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: "Recovery handed to the lead", OnlyTargets: []string{}}); err != nil {
+				return err
+			}
+		}
+		message, err := tx.InsertMessage(Message{RoomID: leadRoom, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{}})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.InsertNote(Note{AgentID: leadID, MessageID: message.ID, RoomID: leadRoom, WakeReason: "worker_recovery"}); err != nil {
+			return err
+		}
+		_, err = tx.AppendEvent(Event{Kind: "recovery_handed_to_lead", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "lead_id": leadID, "reason": reason})})
+		return err
+	}
 	_, err = tx.AppendEvent(Event{Kind: "inbox_item_created", ProjectID: projectID, RoomID: roomID,
 		AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "kind": "recovery", "reason": reason})})
 	return err
+}
+
+func (tx *Tx) workerRecoveryLead(projectID, roomID, workerID string) (string, string, string, error) {
+	var targetIsLead bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, workerID).Scan(&targetIsLead); err != nil {
+		return "", "", "", err
+	}
+	if targetIsLead {
+		return "", "", "", nil
+	}
+	var enabled bool
+	var minutes int
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT worker_recovery_to_lead,worker_recovery_escalate_minutes FROM settings_project WHERE project_id=?`, projectID).Scan(&enabled, &minutes); err != nil {
+		return "", "", "", err
+	}
+	if !enabled {
+		return "", "", "", nil
+	}
+	var leadID string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND a.id<>? AND r.cap_is_lead=1 AND a.desired='active' AND a.recovery_block=0 AND a.revoked_at IS NULL ORDER BY a.created_at,a.id LIMIT 1`, projectID, workerID).Scan(&leadID)
+	if err == sql.ErrNoRows {
+		return "", "", "", nil
+	}
+	if err != nil {
+		return "", "", "", err
+	}
+	var joined bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`, roomID, leadID).Scan(&joined); err != nil {
+		return "", "", "", err
+	}
+	leadRoom := roomID
+	if !joined {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home' LIMIT 1`, projectID).Scan(&leadRoom); err != nil {
+			return "", "", "", err
+		}
+	}
+	return leadID, leadRoom, time.Now().UTC().Add(time.Duration(minutes) * time.Minute).Format(timestampLayout), nil
 }
 
 // definiteFailure says whether the turn's process exit reported a failure before it did anything (see adapter.ExitInfo.DefiniteFailure),

@@ -12,6 +12,10 @@ aimebu runs a team of AI agents around your projects and tasks. Each project
 has a home, each task has a room, and questions needing your input collect in
 one inbox. You can steer or stop agents, see their activity and usage, and
 archive completed rooms with their history.
+When a worker needs a recovery decision, the project lead receives it first;
+unresolved items reach the people's Inbox after 30 minutes by default. Project
+Settings → Recovery controls this routing and interval. A lead's own recovery
+goes straight to the Inbox.
 Settings → Users creates one-hour, single-use links to invite people into a
 project as viewers, operators, or owners. New people choose a login and
 password; existing users sign in and apply the invitation to their account.

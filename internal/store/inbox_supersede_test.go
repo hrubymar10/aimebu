@@ -137,6 +137,7 @@ func TestSupersessionMigrationClosesOnlyQualifyingAsks(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE inbox_item SET state='open',rev=0,resolved_by=NULL,resolved_at=NULL WHERE id=?`, item.ID); err != nil {
 		t.Fatal(err)
 	}
+	rewindWorkerRecoveryMigration(t, s)
 	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=117`); err != nil {
 		t.Fatal(err)
 	}
