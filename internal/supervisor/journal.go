@@ -375,6 +375,9 @@ func (j *Journal) RecordExitInfo(ctx context.Context, turnID string, exit adapte
 		if exit.LimitStall {
 			diagnostic["limit_stall"] = true
 		}
+		if exit.Interrupted {
+			diagnostic["interrupted"] = true
+		}
 		data, err := json.Marshal(diagnostic)
 		if err != nil {
 			return err
@@ -525,7 +528,8 @@ func (j *Journal) PendingExits(ctx context.Context) ([]PendingExit, error) {
 		COALESCE((SELECT json_extract(e.payload_json,'$.error_event') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),''),
 		COALESCE((SELECT json_extract(e.payload_json,'$.error_summary') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),''),
 		COALESCE((SELECT json_extract(e.payload_json,'$.definite_failure') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0),
-		COALESCE((SELECT json_extract(e.payload_json,'$.limit_stall') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0)
+		COALESCE((SELECT json_extract(e.payload_json,'$.limit_stall') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0),
+		COALESCE((SELECT json_extract(e.payload_json,'$.interrupted') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0)
 		FROM turn_start t WHERE t.exec='exited' AND t.exit_acked=0 ORDER BY t.started_at,t.turn_id`)
 	if err != nil {
 		return nil, err
@@ -534,7 +538,7 @@ func (j *Journal) PendingExits(ctx context.Context) ([]PendingExit, error) {
 	exits := []PendingExit{}
 	for rows.Next() {
 		var exit PendingExit
-		if err := rows.Scan(&exit.TurnID, &exit.AgentID, &exit.Generation, &exit.Exit.ExitCode, &exit.Exit.TerminalEvent, &exit.Exit.CancelIntent, &exit.Exit.StderrTail, &exit.Exit.ErrorEvent, &exit.Exit.ErrorSummary, &exit.Exit.DefiniteFailure, &exit.Exit.LimitStall); err != nil {
+		if err := rows.Scan(&exit.TurnID, &exit.AgentID, &exit.Generation, &exit.Exit.ExitCode, &exit.Exit.TerminalEvent, &exit.Exit.CancelIntent, &exit.Exit.StderrTail, &exit.Exit.ErrorEvent, &exit.Exit.ErrorSummary, &exit.Exit.DefiniteFailure, &exit.Exit.LimitStall, &exit.Exit.Interrupted); err != nil {
 			return nil, err
 		}
 		exits = append(exits, exit)

@@ -163,6 +163,10 @@ type ExitInfo struct {
 	// LimitStall marks an exit the supervisor's own turn-limit watchdog caused (the idle deadline or the wall-clock cap), not a
 	// harness failure or an owner cancel. The server then continues the turn once on its own instead of asking a person.
 	LimitStall bool `json:"limit_stall,omitempty"`
+	// Interrupted marks an exit whose harness process ended without an answer by a signal, a non-zero status, or silently (it was killed,
+	// the session restarted, the container stopped) and said nothing about why: the turn was cut off, not answered badly. Set by the
+	// supervisor, never guessed from evidence text; the server continues the turn once on its own.
+	Interrupted bool `json:"interrupted,omitempty"`
 }
 
 // ToolEvent marks a tool execution (shell command, MCP call, ...) beginning

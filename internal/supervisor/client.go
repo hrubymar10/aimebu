@@ -1243,6 +1243,47 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 			_ = turn.Cancel()
 		}
 	}
+	var held *adapter.Event
+	forward := func(event adapter.Event) {
+		if event.Kind == adapter.EventUsage && event.Usage != nil && event.Usage.CostCumulative && event.Usage.CostEstimate != nil {
+			c.keepAliveNoteCost(delivery.AgentID, *event.Usage.CostEstimate)
+		}
+		frame := turnEventFrame(delivery.AgentID, delivery.Generation, delivery.TurnID, event)
+		switch event.Kind {
+		case adapter.EventActivity, adapter.EventUsage, adapter.EventCompaction:
+		case adapter.EventNativeSessionStarted:
+			frame.Type = protocol.NativeSessionStarted
+			frame.NativeSessionHandle = event.NativeSessionHandle
+			c.keepAliveNativeSessionStarted(delivery.AgentID, event.NativeSessionHandle)
+		case adapter.EventFinalAnswer:
+			frame.Type = protocol.Answer
+			if delivery.Mode == adapter.ModeCorrection {
+				frame.AnswerRev = 1
+			}
+			sum := sha256.Sum256(event.Answer)
+			frame.Digest = hex.EncodeToString(sum[:])
+			frame.Candidate = string(event.Answer)
+			if _, err := c.Journal.RecordAnswer(ctx, delivery.TurnID, frame.AnswerRev, frame.Digest, event.Answer); err != nil {
+				abandon(err)
+				return
+			}
+		default:
+			return
+		}
+		if event.Kind != adapter.EventFinalAnswer {
+			payload, err := json.Marshal(event)
+			if err == nil {
+				err = c.Journal.RecordEvent(ctx, delivery.TurnID, event.SourceEventID, string(event.Kind), event.Summary, payload)
+			}
+			if err != nil {
+				abandon(err)
+				return
+			}
+		}
+		if err := c.sendCurrent(ctx, frame); err != nil {
+			c.report("a turn frame could not be sent to the server", err)
+		}
+	}
 	events := turn.Events()
 events:
 	for {
@@ -1285,48 +1326,27 @@ events:
 		if event.Kind == adapter.EventProcessExit || journalErr != nil {
 			continue
 		}
-		if event.Kind == adapter.EventUsage && event.Usage != nil && event.Usage.CostCumulative && event.Usage.CostEstimate != nil {
-			c.keepAliveNoteCost(delivery.AgentID, *event.Usage.CostEstimate)
-		}
-		frame := turnEventFrame(delivery.AgentID, delivery.Generation, delivery.TurnID, event)
-		switch event.Kind {
-		case adapter.EventActivity, adapter.EventUsage, adapter.EventCompaction:
-		case adapter.EventNativeSessionStarted:
-			frame.Type = protocol.NativeSessionStarted
-			frame.NativeSessionHandle = event.NativeSessionHandle
-			c.keepAliveNativeSessionStarted(delivery.AgentID, event.NativeSessionHandle)
-		case adapter.EventFinalAnswer:
-			frame.Type = protocol.Answer
-			if delivery.Mode == adapter.ModeCorrection {
-				frame.AnswerRev = 1
-			}
-			sum := sha256.Sum256(event.Answer)
-			frame.Digest = hex.EncodeToString(sum[:])
-			frame.Candidate = string(event.Answer)
-			if _, err := c.Journal.RecordAnswer(ctx, delivery.TurnID, frame.AnswerRev, frame.Digest, event.Answer); err != nil {
-				abandon(err)
-				continue
-			}
-		default:
+		if event.Kind == adapter.EventFinalAnswer && emptyAnswer(event.Answer) {
+			// An answer with no content cannot be told from a harness cut off mid-turn until its exit is known: hold it.
+			held = &event
 			continue
 		}
-		if event.Kind != adapter.EventFinalAnswer {
-			payload, err := json.Marshal(event)
-			if err == nil {
-				err = c.Journal.RecordEvent(ctx, delivery.TurnID, event.SourceEventID, string(event.Kind), event.Summary, payload)
-			}
-			if err != nil {
-				abandon(err)
-				continue
-			}
-		}
-		if err := c.sendCurrent(ctx, frame); err != nil {
-			c.report("a turn frame could not be sent to the server", err)
-		}
+		forward(event)
 	}
 	exit, err := turn.Wait()
 	if err != nil {
 		c.report("waiting for a turn failed", err)
+	}
+	if held != nil {
+		// The harness ended its turn with an empty answer. If its process was also cut off (killed, container stopped), the turn
+		// was interrupted, not answered badly: the empty answer is dropped (a clean exit 0 is the harness's own empty reply). Otherwise it goes to the server as it always did.
+		probe := exit
+		probe.TerminalEvent = false
+		if _, cut := interruptedReason(probe); cut && exit.ExitCode != 0 && stall == "" && journalErr == nil {
+			exit.TerminalEvent = false
+		} else if journalErr == nil {
+			forward(*held)
+		}
 	}
 	if stall != "" && !exit.TerminalEvent {
 		// Our own kill is not an owner cancel: leave CancelIntent false so the
@@ -1342,6 +1362,13 @@ events:
 		// Marked, not sniffed out of the evidence text: the server continues a
 		// limit kill once on its own, and must not confuse one with a crash.
 		exit.LimitStall = true
+	}
+	if reason, cut := interruptedReason(exit); cut && stall == "" && journalErr == nil && delivery.Mode == adapter.ModeNormal {
+		// Marked, not sniffed out of the evidence text: the server continues an interrupted turn once on its own, and must not
+		// confuse one with a failure the harness explained.
+		exit.Interrupted = true
+		exit.ErrorEvent = reason
+		exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\n" + reason)
 	}
 	if journalErr != nil {
 		// Like a stall, this kill is ours rather than an owner cancel. Events

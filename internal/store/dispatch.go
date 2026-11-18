@@ -144,7 +144,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			r.lifecycle,r.gate,p.gate,EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id) FROM turn t JOIN room r ON r.id=t.room_id JOIN agent ag ON ag.id=t.agent_id JOIN project p ON p.id=ag.project_id
 			WHERE t.agent_id=? AND t.exec='pending' AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested') AND (t.mode IN ('correction','diagnostic')
 			OR EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id)
-			OR (t.mode='normal' AND t.parent_turn_id IS NOT NULL AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind IN ('recovery_decision','turn_limit_continuation'))))
+			OR (t.mode='normal' AND t.parent_turn_id IS NOT NULL AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind IN ('recovery_decision','turn_limit_continuation','turn_interrupted_continuation'))))
 			ORDER BY t.id LIMIT 1`, agentID).
 			Scan(&special.ID, &special.SessionID, &special.Generation, &special.RoomID, &parentID, &special.Attempt, &special.Mode, &special.Exec, &lifecycle, &roomGate, &projectGate, &handoffTurn)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {

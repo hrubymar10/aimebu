@@ -834,7 +834,20 @@ continuation turn is limit-killed too does the agent fall back to the
 ordinary failure path: the turn's notes become `unknown`, the agent is
 recovery-blocked, and a recovery inbox item
 carries the evidence, so the delivery is not lost and the owner can continue
-it. A failed journal write for a turn's event or final answer is handled the
+it. A turn that is **interrupted** is continued the same way. When the harness process ends
+without a final answer, by a signal, a non-zero status or silently, and says nothing about why
+(no error result, no stderr message with an ordinary non-zero status), it was cut off, not
+answered badly: the harness was killed, the session restarted, or the container stopped. The
+supervisor marks the exit `interrupted` (with the reason, such as `the harness process was
+stopped by signal 9 (killed) (exit code 137)`, as its evidence), and an empty answer from such a
+process is not sent, since the server would hold it as `invalid_answer: EOF`. The server then
+continues the turn once with the note `your previous turn was interrupted (<reason>); check
+state and continue` and a `turn_interrupted_continuation` system event that carries
+`reason: turn_interrupted`, the detail and the exit code. A chain of turns has one automatic
+continuation in all, of either kind; a repeat takes the ordinary failure path below. An
+owner cancel, a start failure, an explained failure, a provider limit and a lost thread are
+not interruptions and keep their own handling, and an answer that arrives but does not parse
+stays an invalid answer. A failed journal write for a turn's event or final answer is handled the
 same way (without the automatic continuation): the supervisor stops
 forwarding that turn's events, kills the
 harness process group, waits for it to exit, and reports a non-terminal

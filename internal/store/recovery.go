@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/goccy/go-json"
@@ -89,11 +90,37 @@ func (tx *Tx) ensureRecoveryPath(turnID string) error {
 // supervisor's turn-limit watchdog, not by a failure of the work.
 const turnLimitContinuationNote = "your previous turn was stopped by the turn limit; check state and continue; keep commands short"
 
+// turnInterruptedNote is the same for a turn whose harness process was cut off (killed, session restarted, container stopped);
+// the reason is the supervisor's plain description of how it ended.
+func turnInterruptedNote(reason string) string {
+	if reason == "" {
+		reason = "the harness process ended unexpectedly"
+	}
+	return "your previous turn was interrupted (" + reason + "); check state and continue"
+}
+
+// Kinds of automatic continuation. Both share one allowance per chain of turns: a turn born from either does not continue again.
+const (
+	eventLimitContinuation       = "turn_limit_continuation"
+	eventInterruptedContinuation = "turn_interrupted_continuation"
+)
+
 // createLimitContinuation continues once, on its own, a turn the supervisor's turn-limit watchdog killed: the turn's notes are
 // re-queued on a child turn with a note that says why, so a long but legitimate turn does not leave the agent behind a recovery
 // card waiting for a person to click Resume. It reports whether it continued; a turn whose chain already had its one
 // continuation, one that already has a child, or an agent that is not active, falls back to the ordinary recovery path.
 func (tx *Tx) createLimitContinuation(originID, reason string) (bool, error) {
+	return tx.createAutoContinuation(originID, eventLimitContinuation, "turn_limit", turnLimitContinuationNote, map[string]string{"reason": reason})
+}
+
+// createInterruptedContinuation is the same for a turn the supervisor marked interrupted: reason is how the process ended, and the
+// event records turn_interrupted with the exit code.
+func (tx *Tx) createInterruptedContinuation(originID, reason string, exitCode int) (bool, error) {
+	return tx.createAutoContinuation(originID, eventInterruptedContinuation, "turn_interrupted", turnInterruptedNote(reason),
+		map[string]string{"reason": "turn_interrupted", "detail": reason, "exit_code": fmt.Sprint(exitCode)})
+}
+
+func (tx *Tx) createAutoContinuation(originID, eventKind, wakeReason, noteBody string, payload map[string]string) (bool, error) {
 	var agentID, roomID, projectID, sessionID, desired string
 	var attempt, generation int
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.agent_id,t.room_id,a.project_id,t.session_id,t.attempt,t.generation,a.desired
@@ -118,7 +145,7 @@ func (tx *Tx) createLimitContinuation(originID, reason string) (bool, error) {
 			SELECT id,parent_turn_id FROM turn WHERE id=?
 			UNION ALL
 			SELECT t.id,t.parent_turn_id FROM turn t JOIN chain c ON t.id=c.parent
-		) SELECT EXISTS(SELECT 1 FROM event e JOIN chain c ON e.turn_id=c.id WHERE e.kind='turn_limit_continuation')`, originID).Scan(&already); err != nil {
+		) SELECT EXISTS(SELECT 1 FROM event e JOIN chain c ON e.turn_id=c.id WHERE e.kind IN ('turn_limit_continuation','turn_interrupted_continuation'))`, originID).Scan(&already); err != nil {
 		return false, err
 	}
 	if already {
@@ -135,11 +162,11 @@ func (tx *Tx) createLimitContinuation(originID, reason string) (bool, error) {
 	if _, err := tx.Exec(`INSERT INTO turn_note(turn_id,note_id) SELECT ?,note_id FROM turn_note WHERE turn_id=?`, turn.ID, originID); err != nil {
 		return false, err
 	}
-	message, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: turnLimitContinuationNote})
+	message, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: noteBody})
 	if err != nil {
 		return false, err
 	}
-	note, err := tx.InsertNote(Note{AgentID: agentID, MessageID: message.ID, RoomID: roomID, WakeReason: "turn_limit"})
+	note, err := tx.InsertNote(Note{AgentID: agentID, MessageID: message.ID, RoomID: roomID, WakeReason: wakeReason})
 	if err != nil {
 		return false, err
 	}
@@ -152,8 +179,9 @@ func (tx *Tx) createLimitContinuation(originID, reason string) (bool, error) {
 	if _, err := tx.Exec(`UPDATE turn SET settle='settled' WHERE id=? AND settle='pending'`, originID); err != nil {
 		return false, err
 	}
-	_, err = tx.AppendEvent(Event{Kind: "turn_limit_continuation", ProjectID: projectID, RoomID: roomID,
-		AgentID: agentID, TurnID: turn.ID, PayloadJSON: payloadJSON(map[string]string{"origin_turn_id": originID, "reason": reason})})
+	payload["origin_turn_id"] = originID
+	_, err = tx.AppendEvent(Event{Kind: eventKind, ProjectID: projectID, RoomID: roomID,
+		AgentID: agentID, TurnID: turn.ID, PayloadJSON: payloadJSON(payload)})
 	if err != nil {
 		return false, err
 	}

@@ -446,6 +446,7 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 		// recovery card. Only a normal turn continues; a provider limit or a lost thread is classified first, and anything that
 		// cannot continue falls back to the ordinary failure path below.
 		limitStall := info.LimitStall && !terminal && !cancel && mode == "normal"
+		interrupted := info.Interrupted && !limitStall && !terminal && !cancel && !providerLimited && mode == "normal"
 		limitContinued := false
 		if limitStall {
 			continued, err := tx.createLimitContinuation(turnID, errorEvent)
@@ -478,6 +479,15 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 				return err
 			}
 			threadMissing = started.Valid && !hasReceipt && !ownThread
+		}
+		// An interrupted turn (the harness process was cut off and said nothing about why) is continued once too, unless the evidence
+		// shows a lost thread, which has its own handling; a repeat falls back to the ordinary recovery card.
+		if interrupted && !threadMissing {
+			continued, err := tx.createInterruptedContinuation(turnID, errorEvent, exitCode)
+			if err != nil {
+				return err
+			}
+			limitContinued = continued
 		}
 		if terminal && settle == "settled" {
 			if err := tx.finishCompletedTurn(turnID, agentID); err != nil {
