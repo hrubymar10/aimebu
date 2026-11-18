@@ -334,7 +334,7 @@ VALUES
 ALTER TABLE session ADD COLUMN native_session_started_at TEXT;
 `}, {9, `
 CREATE TABLE agent_switch (
-  agent_id TEXT PRIMARY KEY REFERENCES agent(id),
+  agent_id TEXT PRIMARY KEY REFERENCES agent(id) ON DELETE CASCADE,
   room_id TEXT NOT NULL REFERENCES room(id),
   tool TEXT NOT NULL,
   variant TEXT NOT NULL,
@@ -1871,6 +1871,13 @@ WHERE i.state='open' AND i.kind IN ('question','approval') AND i.requester_kind=
   AND EXISTS (SELECT 1 FROM message ask WHERE ask.id=i.message_id AND ask.ask_json IS NOT NULL
     AND EXISTS (SELECT 1 FROM message newer WHERE newer.room_id=i.room_id AND newer.seq>ask.seq
       AND (newer.author_kind='user' OR newer.author_kind='agent' AND newer.author_id=i.requester_id)));
+`}, {118, `
+CREATE TABLE IF NOT EXISTS agent_context_clear (
+  agent_id TEXT PRIMARY KEY REFERENCES agent(id),
+  generation INTEGER NOT NULL,
+  requested_by TEXT NOT NULL REFERENCES user(id),
+  requested_at TEXT NOT NULL
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

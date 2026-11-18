@@ -98,7 +98,7 @@ export class AgentCard extends Component {
 
   render({ agent, expanded, profile, output, readOutput, down, lifecycle, api }) {
     const state = stateOf(agent), activity = activityOf(agent, state), grants = grantsOf(agent), context = contextOf(agent.latest_usage), live = liveOf(agent);
-    const sw = switchStatusOf(agent, harnessName), actions = actionsOf(agent, { down, lifecycle }), keep = keepAliveOf(agent);
+    const sw = switchStatusOf(agent, harnessName), actions = actionsOf(agent, { down, lifecycle }).filter(action => action.name !== 'clear-context' || api.canControl?.() !== false), keep = keepAliveOf(agent);
     const { src, label } = harnessIcon(agent.tool || '');
     const name = agentLabel(agent) || agent.id, dm = `Message ${agent.name || agent.slug || 'agent'} privately`;
     const roleName = agent.role_label || (agent.role || agent.role_key || 'Agent').replace(/[_-]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -135,7 +135,7 @@ export class AgentCard extends Component {
       <button type="button" class="btn agent-recovery" title="This agent needs a decision: open it in the Inbox" hidden=${!agent.recovery_block} onClick=${() => api.onRecovery(agent)}><span class="icon-mask icon-mask-health" aria-hidden="true"></span> Review in Inbox</button>
       <div class="agent-profile-facts">${expanded && html`<${Profile} agent=${agent} profile=${profile} output=${output} readOutput=${readOutput} store=${api.store} />`}</div>
       <div class="agent-actions">${actions.map(action => html`<button key=${action.name} type="button" class=${`btn-icon ${action.name === 'act-stop' || action.name === 'remove' ? 'icon-btn-danger ' : ''}agent-act agent-${action.name}`} disabled=${action.disabled} title=${action.title} aria-label=${action.disabled ? action.title : action.label}
-        onClick=${() => ({ message: () => api.onPrivate(agent), 'act-pause': () => api.store.control(agent.id, 'pause'), 'act-stop': () => api.store.control(agent.id, 'stop'), switch: () => api.openSwitch(agent.id), reactivate: () => api.store.control(agent.id, 'reactivate'), 'start-fresh': () => api.store.control(agent.id, 'start-fresh'), remove: () => api.store.remove(agent) })[action.name]()}><span class=${`icon-mask icon-mask-${{ message: 'message', 'act-pause': 'pause', 'act-stop': 'stop', switch: 'switch', reactivate: 'play', 'start-fresh': 'refresh', remove: 'trash' }[action.name]}`} aria-hidden="true"></span></button>`)}</div>
+        onClick=${() => ({ message: () => api.onPrivate(agent), 'act-pause': () => api.store.control(agent.id, 'pause'), 'act-stop': () => api.store.control(agent.id, 'stop'), switch: () => api.openSwitch(agent.id), reactivate: () => api.store.control(agent.id, 'reactivate'), 'start-fresh': () => api.store.control(agent.id, 'start-fresh'), 'clear-context': () => api.store.clearContext(agent), remove: () => api.store.remove(agent) })[action.name]()}><span class=${`icon-mask icon-mask-${{ message: 'message', 'act-pause': 'pause', 'act-stop': 'stop', switch: 'switch', reactivate: 'play', 'start-fresh': 'refresh', 'clear-context': 'clear-context', remove: 'trash' }[action.name]}`} aria-hidden="true"></span></button>`)}</div>
       </article>`;
   }
 }

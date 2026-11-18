@@ -79,6 +79,10 @@ automatic room-history summary. The agent card shows the source and offers
 Cancel, Retry handoff, or Continue without handoff when those actions are
 available. Identity, role, and room membership stay with the agent; the new
 harness starts a fresh native session.
+An owner or operator can use Clear context on an active agent card to start a
+fresh harness session after its current turn. The agent keeps its role, rooms,
+handbook, and memory; the previous session stays in history. Manual clears and
+harness-reported compactions appear in the system-event bell and room history.
 
 A project handbook keeps the lead's durable working state across restarts and
 lead switches. Its five Markdown sections are Current state, Open backlog,

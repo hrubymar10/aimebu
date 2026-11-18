@@ -538,6 +538,17 @@ func TestWarmSpawnEndsTheProcess(t *testing.T) {
 	}
 }
 
+func TestWarmContextClearGenerationRetiresPreviousProcess(t *testing.T) {
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	old := h.f.sessions[0]
+	result := h.c.applySpawn(protocol.Frame{AgentID: "agt_a", Generation: 2, DesiredRev: 3, AgentKey: "aak_" + strings.Repeat("z", 43), CheckoutPath: t.TempDir(), Agent: &adapter.AgentSpec{Tool: "claude", Variant: "native"}})
+	if result.Result != "ok" || old.Alive() || h.idle("agt_a") {
+		t.Fatalf("fresh generation kept old context: result=%+v alive=%t idle=%t", result, old.Alive(), h.idle("agt_a"))
+	}
+}
+
 // A process older than its lifetime is not reused and is not kept idle.
 func TestWarmLifetime(t *testing.T) {
 	h := newWarmHarness(t)

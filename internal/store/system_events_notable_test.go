@@ -10,7 +10,7 @@ func TestIsNotableSystemEvent(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"agent_spawn_confirmed", "agent_spawn_failed", "agent_stopped", "agent_revoked", "agent_switch_failed", "agent_turn_budget_exceeded", "turn_lost",
 		"turn_never_started", "loop_guard", "credential_alert", "provider_limit_detected", "provider_limit_cleared", "usage_limit_reset", "limit_guard_clear", "quota_reset_seen",
-		"quota_hold", "native_session_reset", "user_admin_changed", "user_deactivated", "room_close_blocked", "machine_revoked", "notes_dropped"} {
+		"quota_hold", "native_session_reset", "agent_context_cleared", "agent_context_compacted", "user_admin_changed", "user_deactivated", "room_close_blocked", "machine_revoked", "notes_dropped"} {
 		if !IsNotableSystemEvent(kind, "{}") {
 			t.Errorf("%s should be notable", kind)
 		}

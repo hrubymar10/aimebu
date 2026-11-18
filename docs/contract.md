@@ -443,6 +443,18 @@ Roles, agents
   limited to 1,500 characters. These are prior context, not new requests.
   If starting needs folder or machine approval, the pending request retains
   the explicit fresh choice until it is approved.
+  An owner or operator may request Clear context for an active agent. The
+  request waits for any running turn to finish, then ends the current session
+  and increments the generation. The new `fresh_with_history` session has no
+  prior native session handle; the old session and turns remain in history.
+  Its first turn receives the normal role, handbook, memory, and bounded
+  room-history bootstrap. A warm harness process is ended before the new
+  generation starts, so it cannot carry the old conversation into the next
+  turn.
+  A manual clear records a notable `agent_context_cleared` event with the
+  requesting user; a harness-reported compaction records a notable
+  `agent_context_compacted` event. Each also posts a one-line system notice in
+  the agent's room.
 - **agent_switch**(agent_id UNIQUE, room_id, tool, variant, launcher_id?, model,
   provider, machine_id?, checkout_path?, state[draining|starting|failed],
   error, requested_at) — durable target for an in-place tool, model, or
@@ -854,6 +866,8 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   "Resume" button): desired → active; a new session that resumes the last
   known native handle bumps `generation`. Start fresh explicitly drops that
   handle and supplies recent room history on the first turn.
+  Clear context does not interrupt a running turn or change the agent's
+  desired state, role, room memberships, or queued notes.
 - **Switch model/tool** (owner/operator): an active or not-accepting agent
   enters a durable handoff wait. An in-progress turn finishes without
   interruption; no new ordinary turn starts. A dedicated normal-adapter turn

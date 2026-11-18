@@ -779,6 +779,29 @@ async function main() {
     await page.close();
   }
 
+  // Clear context asks before it queues a fresh session; cancelling sends no request.
+  {
+    const page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada', { desired_rev: 4 })]);
+    const selector = '[data-agent-id=a1] .agent-clear-context';
+    assert.equal(await page.$eval(selector, button => [button.getAttribute('aria-label'), button.querySelector('.icon-mask').classList.contains('icon-mask-clear-context')].join('|')), 'Clear context|true');
+    await page.$eval(selector, button => button.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    assert.equal(await page.$eval('.app-dialog-message', node => node.textContent), 'The agent starts a fresh session; it keeps its role, rooms, handbook and memory, but loses the current conversation.');
+    await page.$eval('.app-dialog-cancel', button => button.click()); await settle(page);
+    assert.equal(await count(page, 'POST', '/api/agents/a1/clear-context'), 0);
+    await page.$eval(selector, button => button.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    await page.$eval('.app-dialog-ok', button => button.click());
+    const request = await waitRequest(page, 'POST', '/api/agents/a1/clear-context');
+    assert.equal(await page.evaluate(index => window.__requests[index].body.rev, request), 4);
+    await page.close();
+    const viewer = await mount({ owner: false, role: 'viewer' });
+    await show(viewer, 'r1', [agent('a1', 'ada')]);
+    assert.equal(await viewer.$('[data-agent-id=a1] .agent-clear-context'), null, 'viewers have no clear-context action');
+    await viewer.close();
+  }
+
   // Remove: only a stopped agent can be removed (the button says why otherwise), it asks first, naming the agent, and a refused removal stays on the
   // panel; a removed agent leaves the list once the room is read again.
   {

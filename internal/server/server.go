@@ -351,6 +351,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{project}/usage-limit", s.Auth.RequireUser(http.HandlerFunc(s.usageLimit)))
 	mux.Handle("PUT /api/projects/{project}/usage-limit", s.Auth.RequireUser(http.HandlerFunc(s.usageLimit)))
 	mux.Handle("POST /api/agents/{id}/control", s.Auth.RequireUser(http.HandlerFunc(s.agentControl)))
+	mux.Handle("POST /api/agents/{id}/clear-context", s.Auth.RequireUser(http.HandlerFunc(s.agentClearContext)))
 	mux.Handle("DELETE /api/agents/{id}/worktree", s.Auth.RequireUser(http.HandlerFunc(s.agentWorktreeRemove)))
 	mux.Handle("DELETE /api/agents/{id}", s.Auth.RequireUser(http.HandlerFunc(s.agentRemove)))
 	mux.Handle("POST /api/agents/{id}/dm", s.Auth.RequireUser(http.HandlerFunc(s.openAgentDM)))

@@ -1325,7 +1325,7 @@ func TestReconnectReplaysUsageAndCompactionOnce(t *testing.T) {
 	}
 	notices := 0
 	for _, message := range messages {
-		if strings.Contains(message.Body, "memory was trimmed") {
+		if strings.Contains(message.Body, "context was compacted") {
 			notices++
 		}
 	}

@@ -357,6 +357,9 @@ its own thread and then lost it, so a fresh start that fails the same way falls
 through to ordinary recovery instead of looping.
 The server stores reported usage for the agent card and posts a room system
 notice for each deduped compaction event, including after journal replay.
+A manual context clear waits for a running turn to settle. Its fresh generation
+is spawned through the ordinary path, which ends a warm process before it can
+accept another turn.
 A correction proven never started is abandoned: its parent receipt is held
 and settled, and blocked parents raise a delivery-failure inbox item. That
 item exposes the held reason from the parent or correction receipt.

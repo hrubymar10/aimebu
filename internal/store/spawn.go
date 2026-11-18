@@ -664,6 +664,15 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 	if rev != oldRev {
 		return AgentCard{}, ErrStaleRev
 	}
+	if desired == "active" {
+		var clearPending bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent_context_clear WHERE agent_id=?)`, id).Scan(&clearPending); err != nil {
+			return AgentCard{}, err
+		}
+		if clearPending && current != "not_accepting" {
+			return AgentCard{}, ErrInvalidTransition
+		}
+	}
 	if fresh && (current != "stopped" || desired != "active") {
 		return AgentCard{}, ErrInvalidTransition
 	}

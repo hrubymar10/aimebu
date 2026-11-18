@@ -104,6 +104,13 @@ func (tx *Tx) BeginAgentSwitchToLauncher(id, actorID, roomID, tool, variant, mod
 	if rev != oldRev {
 		return AgentCard{}, ErrStaleRev
 	}
+	var clearPending bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent_context_clear WHERE agent_id=?)`, id).Scan(&clearPending); err != nil {
+		return AgentCard{}, err
+	}
+	if clearPending {
+		return AgentCard{}, ErrInvalidTransition
+	}
 	if revoked || blocked || desired != "active" && desired != "not_accepting" {
 		return AgentCard{}, ErrInvalidTransition
 	}

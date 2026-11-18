@@ -133,6 +133,15 @@ export class AgentsStore {
     } catch (error) { if (this.alive && generation === this.generation) this.onError(error.message); }
   }
 
+  async clearContext(agent) {
+    const generation = this.generation;
+    const sure = await confirmDialog('The agent starts a fresh session; it keeps its role, rooms, handbook and memory, but loses the current conversation.', { title: `Clear ${agentLabel(agent) || agent.id}'s context?`, confirm: 'Clear context', danger: true });
+    if (!sure || !this.alive || generation !== this.generation) return;
+    this.onError('');
+    try { await this.source.clearContext(agent.id); if (this.alive && generation === this.generation) await this.refresh(); }
+    catch (error) { if (this.alive && generation === this.generation) this.onError(error.message); }
+  }
+
   // Removing an agent is for good (its messages stay, it cannot be started again), so it asks first, naming the agent as the rest of the page does.
   async remove(agent) {
     const generation = this.generation;

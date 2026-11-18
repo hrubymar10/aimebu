@@ -39,6 +39,13 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if desired != "active" || revoked {
 			return nil
 		}
+		var clearPending bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent_context_clear WHERE agent_id=?)`, agentID).Scan(&clearPending); err != nil {
+			return err
+		}
+		if clearPending {
+			return nil
+		}
 		// A model the owner has since removed from the harness's list is replaced by its default before this turn starts.
 		if model, err = tx.settleAgentModel(agentID, launcherID, model); err != nil {
 			return err

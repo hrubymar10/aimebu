@@ -25,7 +25,7 @@ export class AgentsPanel {
     this.cardListeners = new Set();
     this.store = new AgentsStore({ source, onError: message => { this.error.textContent = message; }, onChange: agents => this.onChange?.(agents), onCards: () => this.notifyCards(), onSync: () => this.syncSpawnControl() });
     this.api = { store: this.store, source, onPrivate: agent => this.onPrivate?.(agent), onRecovery: agent => this.onRecovery(agent), onPrivateHuman: human => this.onPrivateHuman?.(human),
-      openSwitch: id => this.switch.open(id), switchAction: (id, action) => this.switchAction(id, action), canReadOutput: () => this.canReadOutput() };
+      openSwitch: id => this.switch.open(id), switchAction: (id, action) => this.switchAction(id, action), canReadOutput: () => this.canReadOutput(), canControl: () => !!this.room && ['owner', 'operator'].includes(this.projectRole?.(this.room.project_id)) };
     this.spawnDialog = document.querySelector('#spawn-dialog');
     this.spawn = new SpawnStore(this);
     this.switchDialog = document.querySelector('#switch-dialog');

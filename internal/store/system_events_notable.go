@@ -22,6 +22,7 @@ var notableKinds = []string{
 	"credential_alert", "provider_limit_detected", "provider_limit_cleared", "usage_limit_threshold", "usage_limit_reset", "limit_guard_soft", "limit_guard_hard", "limit_guard_clear",
 	"quota_switch", "quota_hold", "quota_switch_failed", "quota_reset_seen", "quota_switcher_tripped",
 	"native_session_reset", "user_admin_changed", "user_deactivated",
+	"agent_context_cleared", "agent_context_compacted",
 	"room_close_blocked", "machine_revoked",
 }
 

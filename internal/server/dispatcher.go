@@ -126,6 +126,19 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 			}
 		}
 	}
+	clearControls, err := d.Server.Store.AdvanceAgentContextClears(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, card := range clearControls {
+		if machine, err := d.Server.machineForID(card.MachineID); err == nil {
+			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
+				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
+					log.Printf("context clear spawn %s: %v", card.ID, err)
+				}
+			}
+		}
+	}
 	if _, err := d.Server.Store.ExpireBlockedSpecialTurns(ctx); err != nil {
 		return 0, err
 	}

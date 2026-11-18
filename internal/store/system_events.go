@@ -19,6 +19,7 @@ var systemEventKinds = []string{
 	"agent_created", "agent_stopped", "agent_revoked", "agent_key_rotated", "agent_role_changed",
 	"agent_spawn_requested", "agent_spawn_confirmed", "agent_spawn_failed",
 	"agent_control_requested", "agent_control_applied",
+	"agent_context_cleared", "agent_context_compacted",
 	"agent_switch_requested", "agent_switch_starting", "agent_switch_completed", "agent_switch_failed",
 	"agent_turn_budget_exceeded", "loop_guard",
 	"room_created", "room_renamed", "room_closing", "room_closed", "room_reopened", "room_close_blocked",

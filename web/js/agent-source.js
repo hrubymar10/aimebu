@@ -61,6 +61,7 @@ export class MockAgentSource {
     if (!this.agents.has(id)) throw new Error('Agent not found');
     this.agents.delete(id); this.notify();
   }
+  async clearContext(id) { const agent = this.agents.get(id); if (!agent) throw new Error('Agent not found'); agent.generation = (agent.generation || 0) + 1; agent.desired_rev = (agent.desired_rev || 0) + 1; this.notify(); return { ...agent }; }
   async control(id, action) {
     if (!this.available) throw new Error('Agent controls are not available yet');
     const agent = this.agents.get(id); if (!agent) throw new Error('Agent not found');
@@ -164,6 +165,12 @@ export class HttpAgentSource {
   async remove(id) {
     await request(`/api/agents/${id}`, { method: 'DELETE', body: {} });
     this.agents.delete(id); await this.changed();
+  }
+  async clearContext(id) {
+    const current = this.agents.get(id);
+    if (!current) throw new Error('Agent not found');
+    const card = await request(`/api/agents/${encodeURIComponent(id)}/clear-context`, { method: 'POST', body: { rev: current.desired_rev } });
+    this.agents.set(id, card); await this.changed(); return this.normalize(card);
   }
   async control(id, action) {
     const current = this.agents.get(id);

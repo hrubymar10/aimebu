@@ -112,6 +112,9 @@ assert.equal(describe(control({ desired: 'stopped', actor_kind: 'user', actor_id
 
 // (What the bell shows is decided by the server, which marks each event `notable`; the store's tests hold that list.)
 assert.equal(describe(control({ desired: 'active', actor: 'usr_1' }, undefined)).text, 'owen@test: started by wren', 'a recovery decision names its actor `actor`, not `actor_id`');
+assert.equal(describe({ kind: 'agent_context_cleared', agent_id: 'agt_1', names: { agt_1: 'owen@test', usr_1: 'wren' }, payload_json: '{"actor_id":"usr_1"}' }).text, 'Context cleared · owen@test');
+assert.equal(describe({ kind: 'agent_context_cleared', agent_id: 'agt_1', names: { agt_1: 'owen@test', usr_1: 'wren' }, payload_json: '{"actor_id":"usr_1"}' }).details, 'requested by wren');
+assert.equal(describe({ kind: 'agent_context_compacted', agent_id: 'agt_1', names: { agt_1: 'owen@test' }, payload_json: '{"pre_tokens":"180k","post_tokens":"40k"}' }).text, 'Context compacted · owen@test');
 
 // Every other kind keeps its own label.
 assert.equal(describe({ kind: 'agent_stopped', payload_json: '{}' }).text, 'Agent stopped');

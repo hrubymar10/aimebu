@@ -10,6 +10,7 @@ const labels = {
   agent_created: 'Agent created', agent_stopped: 'Agent stopped', agent_revoked: 'Agent revoked', agent_key_rotated: 'Agent key rotated', agent_role_changed: 'Agent role changed',
   agent_spawn_requested: 'Agent spawn requested', agent_spawn_confirmed: 'Agent spawned', agent_spawn_failed: 'Agent spawn failed',
   agent_control_requested: 'Agent control requested', agent_control_applied: 'Agent control applied',
+  agent_context_cleared: 'Context cleared', agent_context_compacted: 'Context compacted',
   agent_switch_requested: 'Agent switch requested', agent_switch_starting: 'Agent switch starting', agent_switch_completed: 'Agent switched', agent_switch_failed: 'Agent switch failed',
   agent_turn_budget_exceeded: 'Agent paused: turn budget exceeded', loop_guard: 'Agents stopped answering each other',
   room_created: 'Room created', room_renamed: 'Room renamed', room_closing: 'Room closing', room_closed: 'Room closed', room_reopened: 'Room reopened', room_removed: 'Room removed', room_close_blocked: 'Room close blocked',
@@ -61,6 +62,13 @@ export function describeEvent(event, names = {}) {
     const what = { active: 'started', stopped: 'stopped', not_accepting: 'paused' }[payload.desired] || 'changed';
     const by = payload.actor_kind === 'user' || (!payload.actor_kind && payload.actor) ? person(payload.actor_id || payload.actor) || 'someone' : payload.reason === 'provider_limit_retry' ? 'the limit guard' : 'the system';
     return { text: `${agent || 'An agent'}: ${what} by ${by}`, where: room || '', details: payload.reason ? `reason: ${String(payload.reason).replaceAll('_', ' ')}` : '' };
+  }
+  if (event.kind === 'agent_context_cleared') {
+    const by = person(payload.actor_id);
+    return { text: `Context cleared · ${agent || 'An agent'}`, where: room || '', details: by ? `requested by ${by}` : '' };
+  }
+  if (event.kind === 'agent_context_compacted') {
+    return { text: `Context compacted · ${agent || 'An agent'}`, where: room || '', details: payload.pre_tokens && payload.post_tokens ? `${payload.pre_tokens} → ${payload.post_tokens} tokens` : '' };
   }
   if (event.kind === 'credential_alert') {
     // The payload is {kind, detail}: `kind` names the alert (login imported, refresh

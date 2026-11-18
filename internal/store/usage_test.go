@@ -42,8 +42,12 @@ func TestUsageReadAndCompactionNoticeDedup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 2 || messages[1].AuthorKind != "system" || !strings.Contains(messages[1].Body, "worker's memory was trimmed (180k → 40k tokens)") {
+	if len(messages) != 2 || messages[1].AuthorKind != "system" || !strings.Contains(messages[1].Body, "worker's context was compacted (180k → 40k tokens)") {
 		t.Fatalf("messages=%+v", messages)
+	}
+	var compactEvents int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE agent_id=? AND kind='agent_context_compacted'`, f.agent.ID).Scan(&compactEvents); err != nil || compactEvents != 1 {
+		t.Fatalf("deduped context event=%d err=%v", compactEvents, err)
 	}
 	unknownFrame, _ := json.Marshal(map[string]any{"type": "compaction", "compaction": map[string]any{"pre_tokens": 0, "post_tokens": 0}})
 	if err := s.RecordTurnEvent(ctx, f.turn.ID, f.agent.ID, "compact-2", "compaction", "", unknownFrame); err != nil {
