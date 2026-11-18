@@ -95,7 +95,7 @@ func TestServerErrorFramesAreReportedOnlyWhenTheyAreFailures(t *testing.T) {
 	transport := startReporting(t)
 	var logged int
 	c := &Client{OnError: func(error) { logged++ }}
-	for _, code := range []string{"stale_generation", "conflict", "forbidden", "invalid_transition"} {
+	for _, code := range []string{"stale_generation", "stale_rev", "conflict", "forbidden", "invalid_transition"} {
 		c.handleServerError(protocol.Frame{Type: protocol.Error, Code: code, Message: "refused"})
 	}
 	if got := transport.sent(); len(got) != 0 {
@@ -107,7 +107,7 @@ func TestServerErrorFramesAreReportedOnlyWhenTheyAreFailures(t *testing.T) {
 	if len(got) != 1 || got[0].Level != sentry.LevelError || got[0].Exception[0].Value != "server error frame: invalid_request" {
 		t.Fatalf("an unclassified code is reported once, by its code: %+v", got)
 	}
-	if logged != 6 {
+	if logged != 7 {
 		t.Fatalf("every error frame stays in the local log, got %d", logged)
 	}
 }

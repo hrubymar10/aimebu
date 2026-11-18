@@ -1515,7 +1515,7 @@ func (c *Client) handleControl(frame protocol.Frame) bool {
 func (c *Client) handleServerError(frame protocol.Frame) {
 	c.reportLocal(fmt.Errorf("server %s: %s", frame.Code, frame.Message))
 	switch frame.Code {
-	case "stale_generation", "conflict", "forbidden", "invalid_transition":
+	case "stale_generation", "stale_rev", "conflict", "forbidden", "invalid_transition":
 		return
 	}
 	telemetry.ReportCause(context.Background(), "supervisor", "server error frame: "+frame.Code)

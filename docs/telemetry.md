@@ -33,7 +33,7 @@ Other variables (all optional):
 | Variable | Meaning | Default |
 |---|---|---|
 | `AIMEBU_SENTRY_DSN` | A DSN, or `off`/empty to disable; overrides Settings. | unset |
-| `AIMEBU_SENTRY_ENV` | The Sentry environment name. | `dev` |
+| `AIMEBU_SENTRY_ENV` | The Sentry environment name. A normal server run (including `bin/aimebu server`) reports `production`; `make dev` sets `development` itself. | `production` |
 | `AIMEBU_SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (server) and of page loads traced (browser), 0 to 1. Settings → Telemetry shows the value in effect. | `1` |
 
 A DSN must be https (http only for a Sentry on this machine: localhost, 127.x, ::1); anything else is refused. A rate outside 0 to 1 (or not a number) is reported on stderr and the process runs with telemetry **off**; it never refuses to start
@@ -84,7 +84,8 @@ transport inside a test binary.
   recognisable shape (an account or profile name, a person's file, a harness's own output) only a **fixed phrase** is sent (`ReportCause` / `WarnCause`); the
   text stays in the local log. A cancelled context (a client that went away) is not a failure and is not reported. The local log lines are unchanged.
   - `supervisor`: the supervisor's own failures (a harness that would not start, a failed journal write, a stalled turn, an error frame from the server that is
-    not one of the classified refusals (those are the protocol working and are only logged), a warm process not confirmed gone, keep-alive and detection problems,
+    not one of the classified refusals (a stale generation or desired revision, a conflict, a forbidden or invalid transition: those are the
+    protocol working and are only logged), a warm process not confirmed gone, keep-alive and detection problems,
     a server connection that failed five times in a row). Each call site names its cause with a **fixed phrase** and only that goes out; the error behind it (a
     harness's own words, a path, a name) stays in the local log.
   - `machine`, `event-stream`: a failure while a supervisor connects (machine state, reconciliation, harness and launcher state, agent keys), an agent frame

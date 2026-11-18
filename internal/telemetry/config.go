@@ -116,8 +116,10 @@ func loopbackHost(host string) bool {
 	return err == nil && addr.Unmap().IsLoopback()
 }
 
-// FromEnv reads AIMEBU_SENTRY_DSN ("off" or empty disables), AIMEBU_SENTRY_ENV (default "dev"), AIMEBU_SENTRY_TRACES_SAMPLE_RATE (default DefaultTracesSampleRate). A bad rate is an error:
-// the caller says so and runs with telemetry off, rather than guessing.
+// FromEnv reads AIMEBU_SENTRY_DSN ("off" or empty disables), AIMEBU_SENTRY_ENV (default "production": a server run
+// the normal way reports as production; `make dev` sets "development" itself), AIMEBU_SENTRY_TRACES_SAMPLE_RATE
+// (default DefaultTracesSampleRate). A bad rate is an error: the caller says so and runs with telemetry off, rather
+// than guessing.
 func FromEnv(lookup func(string) (string, bool), version string) (Config, error) {
 	getenv := func(name string) string { value, _ := lookup(name); return value }
 	config := Config{Environment: strings.TrimSpace(getenv("AIMEBU_SENTRY_ENV")), Release: ReleaseName(version),
@@ -129,7 +131,7 @@ func FromEnv(lookup func(string) (string, bool), version string) (Config, error)
 		}
 	}
 	if config.Environment == "" {
-		config.Environment = "dev"
+		config.Environment = "production"
 	}
 	for _, rate := range []struct {
 		name string

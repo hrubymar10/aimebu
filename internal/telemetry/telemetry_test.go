@@ -81,7 +81,7 @@ func TestCaptureWarningOnceUsesKeyFingerprint(t *testing.T) {
 
 func TestFromEnv(t *testing.T) {
 	off, err := FromEnv(lookup(nil), "aimebu v2")
-	if err != nil || off.Enabled() || off.EnvSet || off.Environment != "dev" {
+	if err != nil || off.Enabled() || off.EnvSet || off.Environment != "production" {
 		t.Fatalf("nothing set: %+v %v", off, err)
 	}
 	on, err := FromEnv(lookup(map[string]string{"AIMEBU_SENTRY_DSN": " https://k@h/1 ", "AIMEBU_SENTRY_ENV": "prod", "AIMEBU_SENTRY_TRACES_SAMPLE_RATE": "0.5"}), "aimebu v2.0.0-3-gabc/x y")

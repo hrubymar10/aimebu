@@ -529,6 +529,11 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 				code = "forbidden"
 			} else if errors.Is(err, store.ErrStaleGeneration) {
 				code = "stale_generation"
+			} else if errors.Is(err, store.ErrStaleRev) {
+				// A control (or a spawn) that an older desired_rev left behind: the expected race of a stop or a
+				// change arriving while the supervisor acks what it had. The newer control is already on its way, so
+				// the machine converges; nothing is reported.
+				code = "stale_rev"
 			} else if errors.Is(err, store.ErrInvalidTransition) {
 				code = "invalid_transition"
 			} else {
