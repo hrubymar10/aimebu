@@ -1008,7 +1008,7 @@ harness is one summary row (label, status, version and active agents, its comman
 switch that saves on its own, Models and an Edit icon); Edit opens the label, executable, arguments,
 environment, container and path settings, and Models opens its model list: slug (the exact id, never
 an alias), label, a note with the full text on hover, and one default. Each row has a visible radio
-and star; only the selected row has a filled star and says "Default". Trash icons remove harnesses or models, a refresh
+and star; only the selected row has a filled star and says "Default". A search box and a provider select (the id's prefix before the first `/`, with a count; an id without one falls under the harness's own name) filter the list as you type: every word must be in the id, label or note, case-insensitively. The default and any model with unsaved edits stay shown with a "(shown: default)" or "(shown: edited)" mark, "Showing N of M" counts the rows, and an empty result offers a clear-filters icon. The filter is not saved and starts empty for each harness. Trash icons remove harnesses or models, a refresh
 icon reloads and saves the models the harness currently offers in one click. Reload models asks Pi (`pi --offline
 --list-models`), OpenCode (`opencode models`) and Codex (`codex debug models --bundled`, the models
 it lists) on the machine itself, native or containerized alike (for Mistral Vibe, which has no listing

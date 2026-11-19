@@ -359,6 +359,52 @@ async function main() {
       assert.deepEqual(await page.$eval(`${card('a1')} .harness-model-detect`, el => [el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Reload models from harness', true, ''], 'model detection is an icon');
       await page.close();
     }
+    // The model list is searched and filtered by provider; the default and edited models stay shown; an empty result says so.
+    {
+      const big = launcher('mch_a', 'a1', { tool: 'opencode' });
+      big.models = [
+        { slug: 'acme-llm/alpha-fast', label: 'Alpha Fast', note: 'cheap', default: true },
+        { slug: 'acme-llm/beta', label: 'Beta', note: '', default: false },
+        { slug: 'zeta-cloud/beam', label: 'Beam', note: 'cheap and slow', default: false },
+        { slug: 'zeta-cloud/gamma', label: 'Gamma', note: '', default: false },
+        { slug: 'plain', label: 'Plain', note: '', default: false },
+      ];
+      const page = await mount({ 'GET /api/machines/mch_a/launchers': { launchers: [big, launchers.mch_a[1]], activity: [] } });
+      const rows = () => page.$$eval(`${card('a1')} .harness-model-row`, list => list.map(row => row.dataset.slug));
+      const status = () => page.$eval(`${card('a1')} .harness-model-count`, el => el.textContent);
+      assert.deepEqual(await page.$eval(`${card('a1')} [name=model-provider]`, el => [...el.options].map(option => option.textContent)), ['All providers', 'a1 (1)', 'acme-llm (2)', 'zeta-cloud (2)'], 'each provider once with its count; an id without a prefix falls under the harness');
+      assert.equal((await rows()).length, 5);
+      assert.ok(await page.$(`${card('a1')} .harness-model-search .icon-mask-search, ${card('a1')} .harness-model-search svg, ${card('a1')} .harness-model-search .settings-icon`), 'the search carries the Settings icon');
+      await type(page, `${card('a1')} [name=model-search]`, 'CHEAP');
+      await settle(page);
+      assert.deepEqual(await rows(), ['acme-llm/alpha-fast', 'zeta-cloud/beam'], 'case-insensitive over the note');
+      assert.equal(await status(), 'Showing 2 of 5');
+      await type(page, `${card('a1')} [name=model-search]`, 'cheap slow');
+      await settle(page);
+      assert.deepEqual(await rows(), ['acme-llm/alpha-fast', 'zeta-cloud/beam'], 'words are ANDed (the default stays shown)');
+      assert.equal(await page.$eval(`${card('a1')} [data-slug="acme-llm/alpha-fast"] .harness-model-pinned`, el => el.textContent), '(shown: default)');
+      await type(page, `${card('a1')} [name=model-search]`, '');
+      await page.select(`${card('a1')} [name=model-provider]`, 'zeta-cloud');
+      await settle(page);
+      assert.deepEqual(await rows(), ['acme-llm/alpha-fast', 'zeta-cloud/beam', 'zeta-cloud/gamma'], 'the provider filter keeps the default');
+      await page.select(`${card('a1')} [name=model-provider]`, 'acme-llm');
+      await type(page, `${card('a1')} [name=model-search]`, 'nothing-like-this');
+      await settle(page);
+      assert.equal(await page.$eval(`${card('a1')} .harness-model-empty`, el => el.textContent.trim()), 'No models match');
+      await page.$eval(`${card('a1')} .harness-model-clear`, el => el.click());
+      await settle(page);
+      assert.equal((await rows()).length, 5, 'clear filters shows everything');
+      assert.equal(await page.$eval(`${card('a1')} [name=model-search]`, el => el.value), '');
+      // An edited model stays shown when the filter would hide it.
+      await type(page, `${card('a1')} [name=model-search]`, 'gamma');
+      await settle(page);
+      await type(page, `${card('a1')} [data-slug="zeta-cloud/gamma"] [name=label]`, 'Gamma 2');
+      await type(page, `${card('a1')} [name=model-search]`, 'beta');
+      await settle(page);
+      assert.deepEqual(await rows(), ['acme-llm/alpha-fast', 'acme-llm/beta', 'zeta-cloud/gamma']);
+      assert.equal(await page.$eval(`${card('a1')} [data-slug="zeta-cloud/gamma"] .harness-model-pinned`, el => el.textContent), '(shown: edited)');
+      await page.close();
+    }
     // The page hands its chosen machine to the next one: a fresh page asked to open on machine B shows B's harnesses.
     // Sync removes vanished detected models, keeps manual entries and edits, and saves provenance.
     {

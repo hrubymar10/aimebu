@@ -1026,3 +1026,13 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
 .settings-results-empty { margin: 8px 6px; font-size: 0.82rem; color: var(--text-muted); }
 :root:root[data-theme^="high-contrast"] :is(.settings-search-input, .settings-result:hover) { border-color: var(--text-primary); outline: 1px solid var(--accent); }
 @media (max-width: 700px), (pointer: coarse) { .settings-search-input { height: 40px; } .settings-result { min-height: 48px; } }
+
+/* The model list's search and provider filter. */
+.harness-model-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.harness-model-search { flex: 1 1 200px; margin: 0; }
+.harness-model-filter select { flex: 0 1 220px; min-width: 0; height: 34px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 0.85rem; }
+.harness-model-count, .harness-model-pinned, .harness-model-empty { color: var(--text-muted); font-size: 0.8rem; }
+.harness-model-count:empty { display: none; }
+.harness-model-pinned { flex: 0 0 auto; font-size: 11px; }
+.harness-model-empty { display: flex; align-items: center; gap: 8px; }
+@media (max-width: 700px), (pointer: coarse) { .harness-model-filter select { height: 40px; } }

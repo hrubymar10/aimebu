@@ -4,9 +4,11 @@ import { IconButton } from '../../components/icon-button.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { useDirty } from '../../hooks/use-dirty.js';
 import { positionOf, canAddDefault } from '../../role-defaults-logic.js';
+import { Icon } from '../shell/icons.js';
 import { DetectionDetails } from './detection-details.js';
 import { RoleSwitch } from './role-switch.js';
 import { useIdPrefix } from './id-prefix.js';
+import { filterModels, providerCounts } from './model-filter.js';
 import { addModel, sortModels, removeModel, setDefaultModel, updateModel, modelsError, detectionFailure } from './model.js';
 
 const modelsURL = (machineID, harnessID) => `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}/models`;
@@ -28,6 +30,9 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
   const [entry, setEntry] = useState({ slug: '', label: '', note: '' });
   const [dir, setDir] = useState('');
   const slugInput = useRef(null), dirInput = useRef(null);
+  // The list's own filter: it starts empty for every harness, so switching to another one shows its whole list.
+  const [filter, setFilter] = useState({ query: '', provider: '' });
+  useEffect(() => { setFilter({ query: '', provider: '' }); }, [machineID, harness.id]);
   const edit = change => {
     revision.current++;
     setDraft(current => ({ models: change(current?.models || harness.models || []), rev: current?.rev ?? harness.models_rev ?? '' }));
@@ -154,12 +159,37 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
     }
   };
 
+  const ownProvider = harness.label || harness.name || '';
+  const providers = providerCounts(models, ownProvider);
+  const provider = providers.some(item => item.name === filter.provider) ? filter.provider : '';
+  const shown = filterModels(models, harness.models || [], { query: filter.query, provider }, ownProvider);
+  const filtering = !!(filter.query.trim() || provider);
+  const clearFilters = () => setFilter({ query: '', provider: '' });
+
   return html`
     <div class="harness-models" id=${`${prefix}harness-models-${harness.id}`}>
       <h4>Models of ${harness.label || harness.name}</h4>
+      ${models.length > 0 && html`
+        <div class="harness-model-filter">
+          <div class="settings-search harness-model-search"><${Icon} name="search" size=${15} /><input type="search" class="settings-search-input" name="model-search" placeholder="Search models" aria-label="Search models" autocomplete="off" spellcheck="false" value=${filter.query}
+            onInput=${event => { const query = event.currentTarget.value; setFilter(current => ({ ...current, query })); }}
+            onKeyDown=${event => { if (event.key === 'Escape' && filter.query) { event.preventDefault(); event.stopPropagation(); setFilter(current => ({ ...current, query: '' })); } }} /></div>
+          <select name="model-provider" aria-label="Filter models by provider" value=${provider} onChange=${event => { const next = event.currentTarget.value; setFilter(current => ({ ...current, provider: next })); }}>
+            <option value="" selected=${provider === ''}>All providers</option>
+            ${providers.map(item => html`<option value=${item.name} key=${item.name} selected=${provider === item.name}>${`${item.name} (${item.count})`}</option>`)}
+          </select>
+          <span class="harness-model-count" role="status">${filtering ? `Showing ${shown.rows.length} of ${models.length}` : ''}</span>
+        </div>
+      `}
       <div class="harness-model-rows">
         ${!models.length && html`<p class="settings-intro">No models yet: this harness cannot start an agent until one is added.</p>`}
-        ${sortModels(models).map(model => html`
+        ${models.length > 0 && shown.matched === 0 && html`
+          <div class="harness-model-empty" role="status">
+            <span>No models match</span>
+            <${IconButton} name="close" label="Clear filters" className="harness-model-clear" onClick=${clearFilters} />
+          </div>
+        `}
+        ${sortModels(shown.rows.map(row => row.model)).map(model => html`
           <div class="harness-model-row harness-detail-row" data-slug=${model.slug} key=${model.slug}>
             <div class="harness-detail-top">
               <label class=${`harness-model-default${model.default ? ' is-default' : ''}`} title=${model.default ? 'Default model' : 'Make default'}>
@@ -173,6 +203,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
                 <span class="harness-model-default-text">${model.default ? 'Default' : ''}</span>
               </label>
               <code class="harness-model-slug">${model.slug}</code>
+              ${shown.reasons[model.slug] && html`<span class="harness-model-pinned">${`(shown: ${shown.reasons[model.slug]})`}</span>`}
               <${IconButton} name="trash" label=${model.default && models.length > 1 ? `${model.slug} is the default model: make another one the default before removing it` : `Remove ${model.slug}`} danger className="harness-model-remove" disabled=${model.default && models.length > 1} onClick=${() => edit(list => removeModel(list, model.slug))} />
             </div>
             <div class="harness-detail-fields">
