@@ -883,7 +883,9 @@ An agent can start a long command (a test gate, 15–30 minutes) that runs
 outside its turn, so it neither holds the turn nor dies with it: `run_command`
 in the agent toolbox, which records a `command_job` and sends `command_run` to
 the machine (see the contract for the frames). The supervisor runs it in its
-own process group, in the agent's own checkout (`cwd` may not leave it), with
+own process group, in the agent's own checkout (`cwd` may not leave it: it is
+cleaned first, so `..`, `./..` or `a/../..` is refused on the server and again
+on the machine), with
 the same rights that agent's own Bash has there and nothing more: none of the
 agent's keys is in its environment. It is not a turn: no turn row, no usage,
 and the turn limits do not apply to it.
@@ -913,12 +915,39 @@ and the turn limits do not apply to it.
   it. The wrapper writes its exit code to `<log>.exit` before it exits, so a
   supervisor that restarts (and cannot wait for a process it did not start)
   still learns the real exit code; a job whose process is gone and left no
-  marker is reported `lost`, never guessed at. A process of a dead predecessor
-  that is still running is watched until its marker appears and is never
-  killed by the new supervisor.
+  marker is reported `lost`, never guessed at. With every connection the
+  supervisor adopts the journal's open commands it does not already hold (its
+  own running commands are left alone, so nothing is adopted or reported
+  twice). An adopted command is held like one it started, so a cancel, a stop
+  of its agent and its timeout (counted from its journaled start) reach it;
+  it is not this process's child, so it is watched for its marker rather than
+  waited for. Its pid is checked against the start time journaled with it
+  (`pid_start`): a pid that now belongs to another process is never
+  signalled, and the job is reported `lost`.
+- **Who may report an end.** A command outlives a context clear or a harness
+  switch, which move the agent's generation on. Its `command_started` and
+  `command_ended` frames are therefore authorized by the job they report on
+  (this agent's job, run on this machine), not by the agent's current
+  generation. An end for a job the server no longer has is acknowledged, so
+  the journal stops replaying it.
+- **An unconfirmed start.** The server records the machine's
+  `command_started` as it arrives, whether or not the `run_command` call still
+  waits for it. When no answer comes (a timeout, a disconnect), that does not
+  prove the machine refused it: the job stays `queued`, the call answers 202
+  with `start_unconfirmed`, and a late `command_started` or `command_ended`
+  still settles it. A fast command's end may arrive before its start; the call
+  then returns the finished job. A job cancelled while its start was
+  unconfirmed is killed if the machine turns out to run it.
+- **Reconciliation on hello.** A supervisor's hello lists the commands it
+  still runs (`command_open`) and the ends it still owes (`command_exits`).
+  The server makes a `queued` job the machine runs `running`, and ends the
+  jobs the machine knows nothing of, since they can never be reported: one
+  whose start was never confirmed becomes `failed` (it never started), a
+  running one `lost`. Either wakes the agent, so a job never stays `running`
+  forever or holds one of the agent's two slots.
 - **Cancellation and limits.** A cancel is SIGTERM to the process group and
   SIGKILL after 8 seconds; a stop of the agent kills its commands the same
-  way. A Docker cancel is confirmed only as far as the wrapper confirms it, so
+  way, aside from the frame loop (the grace never holds up other frames). A Docker cancel is confirmed only as far as the wrapper confirms it, so
   an unconfirmed end is reported `cancelled_unconfirmed`, never as done. Each
   job has a timeout (default 1 hour, cap 6); at most two run per agent. The
   job's log and its `.exit` marker are swept with the checkout's runtime

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -178,4 +179,64 @@ func noteCount(t *testing.T, s *Store, roomID string) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+// A cwd may not leave the agent's checkout, however it is spelled; one that only wanders inside it is kept, cleaned.
+func TestCommandCwdStaysInsideTheCheckout(t *testing.T) {
+	t.Parallel()
+	for _, cwd := range []string{"..", "./..", "../x", "a/../..", "a/../../b", "/etc", "C:/x", "a\x00b"} {
+		if CommandCwdInside(cwd) {
+			t.Errorf("%q must be refused", cwd)
+		}
+	}
+	for _, cwd := range []string{"", ".", "a", "a/..", "./a/b", "a/../b", "..a"} {
+		if !CommandCwdInside(cwd) {
+			t.Errorf("%q must be allowed", cwd)
+		}
+	}
+	s, project, room, worker := commandFixture(t)
+	ctx := context.Background()
+	for i, cwd := range []string{"..", "./.."} {
+		_, _, err := s.CreateCommandJob(ctx, CommandJob{AgentID: worker.ID, MachineID: "mch_wake", ProjectID: project.ID, RoomID: room.ID,
+			Cmd: "ls", Cwd: cwd, CheckoutPath: "/tmp/wake"},
+			RequestKey{ActorKind: "agent", ActorID: worker.ID, Kind: "command_run", Key: "cwd" + string(rune('a'+i)), Digest: cwd})
+		if !errors.Is(err, ErrCommandInvalid) {
+			t.Fatalf("cwd %q: %v", cwd, err)
+		}
+	}
+	job, _, err := s.CreateCommandJob(ctx, CommandJob{AgentID: worker.ID, MachineID: "mch_wake", ProjectID: project.ID, RoomID: room.ID,
+		Cmd: "ls", Cwd: "./sub/../pkg/", CheckoutPath: "/tmp/wake"},
+		RequestKey{ActorKind: "agent", ActorID: worker.ID, Kind: "command_run", Key: "cwd-ok", Digest: "ok"})
+	if err != nil || job.Cwd != "pkg" {
+		t.Fatalf("job %+v err=%v", job, err)
+	}
+}
+
+// A fast command's end can be recorded before its start: recording the start then keeps the end, and returns the row.
+func TestCommandStartAfterItsEndKeepsTheEnd(t *testing.T) {
+	t.Parallel()
+	s, project, room, worker := commandFixture(t)
+	ctx := context.Background()
+	job, _, err := s.CreateCommandJob(ctx, CommandJob{AgentID: worker.ID, MachineID: "mch_wake", ProjectID: project.ID, RoomID: room.ID,
+		Cmd: "true", CheckoutPath: "/tmp/wake"}, RequestKey{ActorKind: "agent", ActorID: worker.ID, Kind: "command_run", Key: "fast", Digest: "fast"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := 0
+	if _, err := s.FinishCommand(ctx, job.ID, CommandResult{State: "done", ExitCode: &code, StartedAt: "2026-11-19T10:00:00.000000000Z"}); err != nil {
+		t.Fatal(err)
+	}
+	started, err := s.RecordCommandStarted(ctx, job.ID, "2026-11-19T10:00:05.000000000Z", "/visible/log", "/visible")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.State != "done" || started.StartedAt != "2026-11-19T10:00:00.000000000Z" || started.VisibleLogPath != "/visible/log" {
+		t.Fatalf("job %+v", started)
+	}
+	if _, err := s.FailCommandStart(ctx, job.ID, "late refusal"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("a finished job cannot fail its start: %v", err)
+	}
+	if _, err := s.RecordCommandStarted(ctx, "cmd_missing", "x", "", ""); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("no such job: %v", err)
+	}
 }

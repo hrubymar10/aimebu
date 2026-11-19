@@ -2,8 +2,11 @@ package supervisor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -216,4 +219,148 @@ func TestAdoptedCommandIsReconciledFromItsExitMarker(t *testing.T) {
 	if open, err := j.OpenCommands(t.Context()); err != nil || len(open) != 0 {
 		t.Fatalf("the journal still lists them as open: %v %v", open, err)
 	}
+}
+
+// startPredecessorCommand stands in for a command a dead predecessor started: a live process group this supervisor did not start, and its
+// journal record.
+func startPredecessorCommand(t *testing.T, c *Client, j *Journal, jobID string, timeoutSeconds int, startedAt time.Time) int {
+	t.Helper()
+	logPath := filepath.Join(t.TempDir(), ".aimebu", "commands", jobID+".log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("still running\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sleep", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	reaped := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(reaped) }() // the test reaps its own child, as init would reap a predecessor's
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL); <-reaped })
+	if _, err := j.RecordCommandStart(t.Context(), CommandStartRecord{JobID: jobID, AgentID: "agt_one", Generation: 1, Pid: pid,
+		PidStart: c.identityOf(pid), Cmd: "sleep 60", LogPath: logPath, StartedAt: startedAt.UTC().Format(commandTimeLayout),
+		TimeoutSeconds: timeoutSeconds}); err != nil {
+		t.Fatal(err)
+	}
+	return pid
+}
+
+// A command adopted after a restart is held like one this supervisor started: a cancel, a stop of its agent and its timeout all reach it,
+// and its end says it was killed.
+func TestAdoptedCommandIsReachedByCancelStopAndTimeout(t *testing.T) {
+	for _, how := range []string{"cancel", "stop", "timeout"} {
+		t.Run(how, func(t *testing.T) {
+			c, j, _ := commandTestClient(t)
+			sink := make(chan protocol.CommandExit, 4)
+			c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
+			started := time.Now()
+			if how == "timeout" {
+				started = started.Add(-2 * time.Hour) // its hour ran out while no supervisor watched it
+			}
+			pid := startPredecessorCommand(t, c, j, "cmd_adopted", 3600, started)
+			c.reconcileCommands(t.Context())
+			if !c.runner().has("cmd_adopted") {
+				t.Fatal("the adopted command is not held")
+			}
+			switch how {
+			case "cancel":
+				if result := c.commandCancel("cmd_adopted"); result.Result != "ok" {
+					t.Fatalf("cancel: %+v", result)
+				}
+			case "stop":
+				c.killAgentCommands("agt_one")
+			}
+			exit := waitCommandExit(t, sink)
+			if exit.JobID != "cmd_adopted" || !exit.Killed || exit.Lost || exit.TimedOut != (how == "timeout") {
+				t.Fatalf("exit %+v", exit)
+			}
+			if commandProcessAlive(pid) {
+				t.Fatal("the adopted process is still running")
+			}
+			if c.runner().has("cmd_adopted") {
+				t.Fatal("the job is still held")
+			}
+		})
+	}
+}
+
+// A journaled pid that now belongs to another process (its start time differs) is not the command: it is reported lost and never
+// signalled.
+func TestAdoptedCommandWithAReusedPidIsLost(t *testing.T) {
+	c, j, _ := commandTestClient(t)
+	sink := make(chan protocol.CommandExit, 2)
+	c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
+	logPath := filepath.Join(t.TempDir(), "cmd_reused.log")
+	if err := os.WriteFile(logPath, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// This test's own pid is alive, but it was not started at the journaled time.
+	if _, err := j.RecordCommandStart(t.Context(), CommandStartRecord{JobID: "cmd_reused", AgentID: "agt_one", Generation: 1,
+		Pid: os.Getpid(), PidStart: "Thu Jan  1 00:00:00 1970", LogPath: logPath, TimeoutSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	c.reconcileCommands(t.Context())
+	exit := waitCommandExit(t, sink)
+	if exit.JobID != "cmd_reused" || !exit.Lost || exit.Killed || exit.ExitCode != nil {
+		t.Fatalf("exit %+v", exit)
+	}
+	if c.runner().has("cmd_reused") {
+		t.Fatal("the job is still held")
+	}
+}
+
+// Reconciling runs with every connection: a command this supervisor runs itself is not adopted a second time, and its end is reported once,
+// with how it ended.
+func TestReconcileLeavesTheSupervisorsOwnCommandsAlone(t *testing.T) {
+	c, _, _ := commandTestClient(t)
+	sink := make(chan protocol.CommandExit, 4)
+	c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
+	result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_own", AgentID: "agt_one", Generation: 1,
+		CheckoutPath: t.TempDir(), Cmd: "sleep 60", TimeoutSeconds: 300})
+	if result.Result != "ok" {
+		t.Fatalf("start: %+v", result)
+	}
+	own := c.runner().get("cmd_own")
+	c.reconcileCommands(t.Context())
+	c.reconcileCommands(t.Context())
+	if c.runner().get("cmd_own") != own || own.adopted {
+		t.Fatal("the supervisor's own command was adopted")
+	}
+	if ack := c.commandCancel("cmd_own"); ack.Result != "ok" {
+		t.Fatalf("cancel: %+v", ack)
+	}
+	exit := waitCommandExit(t, sink)
+	if !exit.Killed {
+		t.Fatalf("exit %+v", exit)
+	}
+	select {
+	case again := <-sink:
+		t.Fatalf("the end was reported twice: %+v", again)
+	case <-time.After(commandWaitPoll + time.Second):
+	}
+}
+
+// A cwd may not leave the checkout, however it is spelled.
+func TestCommandCwdMayNotLeaveTheCheckout(t *testing.T) {
+	c, _, _ := commandTestClient(t)
+	checkout := t.TempDir()
+	for i, cwd := range []string{"..", "./..", "a/../..", "../x", "/tmp"} {
+		result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_cwd" + strconv.Itoa(i), AgentID: "agt_one", Generation: 1,
+			CheckoutPath: checkout, Cmd: "true", Cwd: cwd, TimeoutSeconds: 60})
+		if result.Result != "error" || !strings.Contains(result.Message, "cwd") {
+			t.Fatalf("cwd %q: %+v", cwd, result)
+		}
+	}
+	sink := make(chan protocol.CommandExit, 1)
+	c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
+	result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_cwd_ok", AgentID: "agt_one", Generation: 1,
+		CheckoutPath: checkout, Cmd: "true", Cwd: "./sub/..", TimeoutSeconds: 60})
+	if result.Result != "ok" || result.VisibleCwd != checkout {
+		t.Fatalf("a cwd inside the checkout: %+v", result)
+	}
+	waitCommandExit(t, sink)
 }

@@ -59,6 +59,11 @@ type commandJob struct {
 	timer    *time.Timer
 	killed   bool
 	timedOut bool
+	// adopted is a job of a dead predecessor: not this process's child, so it is watched rather than waited for, and its pid is checked
+	// against pidStart before it is signalled (the pid may belong to another process by now).
+	adopted bool
+	// notOurs is set when a kill finds an adopted job's pid owned by another process: its watcher then reports it lost.
+	notOurs bool
 }
 
 func (j *commandJob) markKilled(timedOut bool) {
@@ -66,6 +71,18 @@ func (j *commandJob) markKilled(timedOut bool) {
 	defer j.mu.Unlock()
 	j.killed = true
 	j.timedOut = j.timedOut || timedOut
+}
+
+func (j *commandJob) markNotOurs() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.notOurs = true
+}
+
+func (j *commandJob) isNotOurs() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.notOurs
 }
 
 func (j *commandJob) flags() (killed, timedOut bool) {
@@ -113,6 +130,28 @@ func (r *commandRunner) drop(jobID string) {
 	delete(r.jobs, jobID)
 }
 
+// putNew holds a job unless one with its id is already held: an adoption never replaces a command this process runs.
+func (r *commandRunner) putNew(jobID string, job *commandJob) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, found := r.jobs[jobID]; found {
+		return false
+	}
+	r.jobs[jobID] = job
+	return true
+}
+
+// take lets go of exactly this job, and says whether it was still held: only the one that takes it reports its end.
+func (r *commandRunner) take(jobID string, job *commandJob) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.jobs[jobID] != job {
+		return false
+	}
+	delete(r.jobs, jobID)
+	return true
+}
+
 func (r *commandRunner) get(jobID string) *commandJob {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -150,9 +189,10 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	if strings.TrimSpace(spec.Cwd) == "" {
 		spec.Cwd = "."
 	}
-	if filepath.IsAbs(spec.Cwd) || strings.Contains(spec.Cwd, "\x00") || strings.HasPrefix(spec.Cwd, "../") || strings.Contains(spec.Cwd, "/../") {
+	if filepath.IsAbs(spec.Cwd) || strings.Contains(spec.Cwd, "\x00") || !withinDir(spec.CheckoutPath, filepath.Join(spec.CheckoutPath, spec.Cwd)) {
 		return fail(errors.New("cwd must stay inside the agent's checkout"))
 	}
+	spec.Cwd = filepath.Clean(spec.Cwd)
 	if spec.TimeoutSeconds < 1 {
 		spec.TimeoutSeconds = 3600
 	}
@@ -204,12 +244,11 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 		return fail(fmt.Errorf("the command could not be started: %w", err))
 	}
 	job := &commandJob{spec: spec, pid: cmd.Process.Pid, started: time.Now(), logPath: spec.LogPath, marker: marker, log: log}
-	if c.ProcessStart != nil {
-		job.pidStart = c.ProcessStart(job.pid)
-	}
+	// The start time tells this process from a later one that reuses its pid, for a supervisor that adopts the job after a restart.
+	job.pidStart = c.identityOf(job.pid)
 	already, err := c.Journal.RecordCommandStart(ctx, CommandStartRecord{JobID: spec.JobID, AgentID: spec.AgentID,
 		Generation: spec.Generation, Pid: job.pid, PidStart: job.pidStart, Cmd: spec.Cmd, LogPath: spec.LogPath,
-		StartedAt: job.started.UTC().Format(commandTimeLayout)})
+		StartedAt: job.started.UTC().Format(commandTimeLayout), TimeoutSeconds: spec.TimeoutSeconds})
 	if err != nil || already {
 		// No command runs without its journal record: kill it now rather than leave one this machine cannot account for.
 		_ = adapter.SignalGroup(job.pid, syscall.SIGKILL, func() bool { return false })
@@ -253,7 +292,8 @@ func (c *Client) waitCommand(ctx context.Context, job *commandJob, cmd *exec.Cmd
 	c.finishCommand(ctx, job, exit)
 }
 
-// finishCommand writes the end of one command and reports it. A job adopted after a restart calls it with the exit code its marker holds.
+// finishCommand writes the end of one command this process started and reports it. The end is journaled before the job is let go, so a
+// reconnect in between finds it either held or ended, never open and unheld (which would adopt it a second time).
 func (c *Client) finishCommand(ctx context.Context, job *commandJob, exit protocol.CommandExit) {
 	exit.EndedAt = time.Now().UTC().Format(commandTimeLayout)
 	tail, written, truncated := job.log.CloseTail()
@@ -261,8 +301,11 @@ func (c *Client) finishCommand(ctx context.Context, job *commandJob, exit protoc
 	if job.timer != nil {
 		job.timer.Stop()
 	}
-	c.runner().drop(exit.JobID)
-	c.recordCommandEnd(ctx, exit)
+	if err := c.Journal.RecordCommandExit(context.WithoutCancel(ctx), exit); err != nil {
+		c.report("a command's end could not be journaled", fmt.Errorf("job %s: %w", exit.JobID, err))
+	}
+	c.runner().take(exit.JobID, job)
+	c.reportCommand(exit)
 }
 
 // recordCommandEnd journals one end and sends it; the journal keeps it until the server acknowledges it.
@@ -285,10 +328,15 @@ func (c *Client) reportCommand(exit protocol.CommandExit) {
 	}
 }
 
-// commandKill ends one running command: SIGTERM for its process group, SIGKILL after a grace. A timeout is a kill too, and says so.
+// commandKill ends one running command: SIGTERM for its process group, SIGKILL after a grace. A timeout is a kill too, and says so. An
+// adopted job whose pid now belongs to another process is not signalled: its watcher reports it lost.
 func (c *Client) commandKill(jobID string, timedOut bool) {
 	job := c.runner().get(jobID)
 	if job == nil {
+		return
+	}
+	if job.adopted && !c.sameCommandProcess(job) {
+		job.markNotOurs()
 		return
 	}
 	job.markKilled(timedOut)
@@ -334,21 +382,44 @@ func (c *Client) commandLogTail(reqID, logPath string, maxBytes int) protocol.Fr
 	return result
 }
 
-// reconcileCommands is what a supervisor does with the commands of a dead predecessor at startup: one whose exit marker says how it ended
-// is reported with that exit code, one whose process is gone and left no marker is reported lost, and one still running is watched until its
-// marker appears (the process is not this supervisor's child, so it cannot be waited for).
+// reconcileCommands adopts the commands the journal still lists as open and this process does not run: those of a dead predecessor. It
+// runs with every connection, so a command this process runs (or one it already adopted) is left alone. An adopted job is held like any
+// other, so a cancel, a stop of its agent and its timeout reach it; it is watched rather than waited for (it is not this process's child).
+// One whose exit marker says how it ended is reported with that exit code; one whose process is gone, or whose pid now belongs to another
+// process (its start time differs from the journaled one), and left no marker is reported lost.
 func (c *Client) reconcileCommands(ctx context.Context) {
-	open, err := c.Journal.OpenCommands(ctx)
+	open, err := c.Journal.OpenCommandStarts(ctx)
 	if err != nil {
 		c.report("the journal's open commands could not be read", err)
 		return
 	}
 	for _, item := range open {
-		job := &commandJob{spec: protocol.CommandSpec{JobID: item.JobID, AgentID: item.AgentID, Generation: item.Generation},
-			pid: item.Pid, pidStart: item.PidStart, marker: commandExitMarker(item.LogPath), logPath: item.LogPath}
+		if c.runner().has(item.JobID) {
+			continue
+		}
+		job := &commandJob{spec: protocol.CommandSpec{JobID: item.JobID, AgentID: item.AgentID, Generation: item.Generation,
+			TimeoutSeconds: item.TimeoutSeconds}, pid: item.Pid, pidStart: item.PidStart, marker: commandExitMarker(item.LogPath),
+			logPath: item.LogPath, adopted: true}
 		if started, err := time.Parse(commandTimeLayout, item.StartedAt); err == nil {
 			job.started = started
+		} else {
+			job.started = time.Now()
 		}
+		// Its end may have been journaled since the list was read (this process's own command ending just now): nothing to adopt.
+		if ended, err := c.Journal.HasCommandExit(ctx, item.JobID); err != nil || ended {
+			continue
+		}
+		if !c.runner().putNew(item.JobID, job) {
+			continue
+		}
+		timeout := time.Duration(item.TimeoutSeconds) * time.Second
+		if item.TimeoutSeconds <= 0 {
+			timeout = 6 * time.Hour // a record from before timeouts were journaled: the longest any job may ask for
+		}
+		jobID := item.JobID
+		job.mu.Lock()
+		job.timer = time.AfterFunc(max(time.Until(job.started.Add(timeout)), 0), func() { c.commandKill(jobID, true) })
+		job.mu.Unlock()
 		go func() {
 			defer telemetry.Recover(ctx)
 			c.watchAdoptedCommand(ctx, job)
@@ -356,7 +427,18 @@ func (c *Client) reconcileCommands(ctx context.Context) {
 	}
 }
 
+// sameCommandProcess says whether an adopted job's pid is still its own process: alive, and started when the journal says it was. A
+// record without a start time (from a supervisor that did not keep one) is taken at its pid.
+func (c *Client) sameCommandProcess(job *commandJob) bool {
+	if !commandProcessAlive(job.pid) {
+		return false
+	}
+	return job.pidStart == "" || c.identityOf(job.pid) == job.pidStart
+}
+
 func (c *Client) watchAdoptedCommand(ctx context.Context, job *commandJob) {
+	// The pid is checked against its start time once, here: after that, the process is polled for being alive, and its exit marker read.
+	alive := c.sameCommandProcess(job)
 	for {
 		if code, found := readExitMarker(job.marker); found {
 			exit := protocol.CommandExit{JobID: job.spec.JobID, AgentID: job.spec.AgentID, Generation: job.spec.Generation}
@@ -369,7 +451,7 @@ func (c *Client) watchAdoptedCommand(ctx context.Context, job *commandJob) {
 			c.finishAdoptedCommand(ctx, job, exit)
 			return
 		}
-		if !commandProcessAlive(job.pid) {
+		if !alive || job.isNotOurs() || !commandProcessAlive(job.pid) {
 			c.finishAdoptedCommand(ctx, job, protocol.CommandExit{JobID: job.spec.JobID, AgentID: job.spec.AgentID,
 				Generation: job.spec.Generation, Lost: true})
 			return
@@ -383,18 +465,41 @@ func (c *Client) watchAdoptedCommand(ctx context.Context, job *commandJob) {
 }
 
 // finishAdoptedCommand ends a job this supervisor found running after a restart. Its log is the file the previous one wrote; its tail is
-// read from there, and the end is reported like any other.
+// read from there, and the end is reported like any other. A job this supervisor killed (a cancel, a stop, its timeout) says so, as the
+// marker of a killed wrapper is never written. Only the holder of the job reports it, once.
 func (c *Client) finishAdoptedCommand(ctx context.Context, job *commandJob, exit protocol.CommandExit) {
+	job.mu.Lock()
+	if job.timer != nil {
+		job.timer.Stop()
+	}
+	job.mu.Unlock()
+	if killed, timedOut := job.flags(); killed {
+		exit.Killed, exit.TimedOut = true, timedOut
+		if exit.ExitCode == nil {
+			exit.Lost = false
+		}
+	}
 	if tail, written, truncated, err := tailFile(job.logPath, commandTailBytes); err == nil {
 		exit.LogBytes, exit.TailTruncated, exit.Tail = written, truncated, adapter.RedactSecrets(tail)
 	}
-	c.recordCommandEnd(ctx, exit)
+	exit.StartedAt = job.started.UTC().Format(commandTimeLayout)
+	if !c.runner().take(exit.JobID, job) {
+		return
+	}
+	if ended, err := c.Journal.HasCommandExit(ctx, exit.JobID); err == nil && ended {
+		return // already ended and journaled by the process that ran it
+	}
+	c.recordCommandEnd(context.WithoutCancel(ctx), exit)
 }
 
-// killAgentCommands ends the commands one agent has running: a stopped agent has nothing of its own left on the machine.
+// killAgentCommands ends the commands one agent has running: a stopped agent has nothing of its own left on the machine. Each kill waits up
+// to its grace for the process group to go, so it runs aside from the caller (the frame loop).
 func (c *Client) killAgentCommands(agentID string) {
 	for _, jobID := range c.runner().forAgent(agentID) {
-		c.commandKill(jobID, false)
+		go func() {
+			defer telemetry.Recover(context.Background())
+			c.commandKill(jobID, false)
+		}()
 	}
 }
 

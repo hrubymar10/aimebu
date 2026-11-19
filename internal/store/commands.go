@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
 var ErrCommandInvalid = errors.New("invalid command")
@@ -88,9 +90,10 @@ func validateCommand(job CommandJob) (CommandJob, error) {
 	if job.Cwd == "" {
 		job.Cwd = "."
 	}
-	if filepathIsAbsolute(job.Cwd) || strings.Contains(job.Cwd, "\x00") || strings.HasPrefix(job.Cwd, "../") || strings.Contains(job.Cwd, "/../") {
+	if !CommandCwdInside(job.Cwd) {
 		return CommandJob{}, fmt.Errorf("%w: cwd must stay inside the agent's checkout", ErrCommandInvalid)
 	}
+	job.Cwd = path.Clean(job.Cwd)
 	if job.TimeoutSeconds == 0 {
 		job.TimeoutSeconds = CommandTimeoutDefault
 	}
@@ -98,6 +101,19 @@ func validateCommand(job CommandJob) (CommandJob, error) {
 		return CommandJob{}, fmt.Errorf("%w: timeout_seconds is between 1 and %d", ErrCommandInvalid, CommandTimeoutMax)
 	}
 	return job, nil
+}
+
+// CommandCwdInside says whether a command's cwd, relative to the agent's checkout, stays inside it: not absolute, and not "..", "./.." or
+// "a/../.." once cleaned.
+func CommandCwdInside(cwd string) bool {
+	if cwd == "" {
+		return true
+	}
+	if filepathIsAbsolute(cwd) || strings.Contains(cwd, "\x00") {
+		return false
+	}
+	clean := path.Clean(cwd)
+	return clean != ".." && !strings.HasPrefix(clean, "../")
 }
 
 // filepathIsAbsolute is filepath.IsAbsolute without importing the package here: a Windows drive path is absolute too.
@@ -216,33 +232,34 @@ func (s *Store) RunningTurnRoom(ctx context.Context, agentID string) (string, er
 	return roomID, err
 }
 
-// RecordCommandStarted marks a job as running on its machine, with the spellings of its log and working directory the agent can open.
+// RecordCommandStarted marks a job as running on its machine, with the spellings of its log and working directory the agent can open. A
+// job that already ended (a fast command's end can arrive before its start is recorded) keeps its end and only gains those spellings: the
+// current row is returned either way, and sql.ErrNoRows means there is no such job.
 func (s *Store) RecordCommandStarted(ctx context.Context, id, startedAt, visibleLogPath, visibleCwd string) (CommandJob, error) {
 	var job CommandJob
 	err := s.Tx(ctx, func(tx *Tx) error {
-		result, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='running',started_at=?,visible_log_path=?,
-			visible_cwd=? WHERE id=? AND state='queued'`, startedAt, visibleLogPath, visibleCwd, id)
-		if err != nil {
+		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='running',started_at=COALESCE(started_at,?),visible_log_path=?,
+			visible_cwd=? WHERE id=? AND state='queued'`, startedAt, visibleLogPath, visibleCwd, id); err != nil {
 			return err
 		}
-		count, err := result.RowsAffected()
-		if err != nil {
+		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET started_at=COALESCE(started_at,?),
+			visible_log_path=CASE WHEN visible_log_path='' THEN ? ELSE visible_log_path END,
+			visible_cwd=CASE WHEN visible_cwd='' THEN ? ELSE visible_cwd END WHERE id=?`, startedAt, visibleLogPath, visibleCwd, id); err != nil {
 			return err
 		}
-		if count == 0 {
-			return sql.ErrNoRows
-		}
+		var err error
 		job, err = scanCommand(tx.tx.QueryRowContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE id=?`, id))
 		return err
 	})
 	return job, err
 }
 
-// FailCommandStart records that a job never ran: the machine refused it. The tool call itself says why, so nothing wakes.
+// FailCommandStart records that a job never ran: the machine refused it, or the request never reached it. The tool call itself says why,
+// so nothing wakes. Only a job whose start is unconfirmed (queued) can fail; sql.ErrNoRows means it is past that.
 func (s *Store) FailCommandStart(ctx context.Context, id, message string) (CommandJob, error) {
 	var job CommandJob
 	err := s.Tx(ctx, func(tx *Tx) error {
-		result, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='failed',error=?,ended_at=? WHERE id=? AND state IN ('queued','running')`,
+		result, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='failed',error=?,ended_at=? WHERE id=? AND state='queued'`,
 			message, timestamp(), id)
 		if err != nil {
 			return err
@@ -330,8 +347,9 @@ func (s *Store) CommandJobByAnyAgent(ctx context.Context, id string) (CommandJob
 
 // CommandResult is what the supervisor reports when a job ends.
 type CommandResult struct {
-	State         string // done | cancelled | cancelled_unconfirmed | timed_out | lost
+	State         string // done | cancelled | cancelled_unconfirmed | timed_out | lost | failed
 	ExitCode      *int
+	StartedAt     string // when the machine started it, for a job whose start was never recorded
 	EndedAt       string
 	LogBytes      int64
 	TailTruncated bool
@@ -365,10 +383,13 @@ func finishCommand(tx *Tx, id string, result CommandResult) (CommandJob, error) 
 	if result.EndedAt == "" {
 		result.EndedAt = timestamp()
 	}
-	if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state=?,exit_code=?,ended_at=?,log_bytes=?,tail_truncated=?,error=?
-		WHERE id=?`, result.State, nullableExitCode(result.ExitCode), result.EndedAt, result.LogBytes, result.TailTruncated,
-		nullableString(result.Error), id); err != nil {
+	if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state=?,exit_code=?,ended_at=?,log_bytes=?,tail_truncated=?,error=?,
+		started_at=COALESCE(started_at,?) WHERE id=?`, result.State, nullableExitCode(result.ExitCode), result.EndedAt, result.LogBytes,
+		result.TailTruncated, nullableString(result.Error), nullableString(result.StartedAt), id); err != nil {
 		return CommandJob{}, err
+	}
+	if job.StartedAt == "" {
+		job.StartedAt = result.StartedAt
 	}
 	job.State, job.EndedAt, job.LogBytes = result.State, result.EndedAt, result.LogBytes
 	job.ExitCode, job.TailTruncated, job.Error = result.ExitCode, result.TailTruncated, result.Error
@@ -496,4 +517,80 @@ func commandDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh%02dm%02ds", hours, minutes, seconds)
 	}
 	return fmt.Sprintf("%dm%02ds", minutes, seconds)
+}
+
+// ReconcileMachineCommands settles one machine's unfinished jobs against what its supervisor said in hello: the commands it still runs
+// (open) and the ends it has not been acknowledged for (exits, replayed right after). A job whose start was never confirmed but which the
+// machine runs becomes running; a job the machine knows nothing of can no longer be reported, so it ends now (failed when it never started,
+// lost when its end was never reported) and its agent is woken. It returns the jobs the machine runs that were cancelled before their start
+// was confirmed: the caller kills them.
+func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID string, open []protocol.CommandOpen, exits []protocol.CommandExit) ([]CommandJob, error) {
+	openByID := make(map[string]protocol.CommandOpen, len(open))
+	for _, item := range open {
+		openByID[item.JobID] = item
+	}
+	ended := make(map[string]bool, len(exits))
+	for _, exit := range exits {
+		ended[exit.JobID] = true
+	}
+	var kill []CommandJob
+	err := s.Tx(ctx, func(tx *Tx) error {
+		kill = nil
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE machine_id=? AND state IN ('queued','running')`, machineID)
+		if err != nil {
+			return err
+		}
+		var unfinished []CommandJob
+		for rows.Next() {
+			job, err := scanCommand(rows)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			unfinished = append(unfinished, job)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		known := map[string]bool{}
+		for _, job := range unfinished {
+			known[job.ID] = true
+			if ended[job.ID] {
+				continue // its end is replayed right after hello
+			}
+			if item, running := openByID[job.ID]; running {
+				if job.State == "queued" {
+					if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='running',started_at=COALESCE(started_at,?) WHERE id=?`,
+						nullableString(item.StartedAt), job.ID); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			result := CommandResult{State: "lost", Error: "the machine's supervisor no longer knows this command, so its end will never be reported"}
+			if job.State == "queued" {
+				result = CommandResult{State: "failed", Error: "the machine never started this command"}
+			}
+			if _, err := finishCommand(tx, job.ID, result); err != nil {
+				return err
+			}
+		}
+		for id := range openByID {
+			if known[id] {
+				continue
+			}
+			job, err := scanCommand(tx.tx.QueryRowContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE id=? AND machine_id=?`, id, machineID))
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if job.State == "cancelled" {
+				kill = append(kill, job)
+			}
+		}
+		return nil
+	})
+	return kill, err
 }

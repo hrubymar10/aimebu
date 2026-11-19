@@ -292,6 +292,17 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusInternalError, "reconciliation error")
 		return
 	}
+	// A supervisor that runs commands says which it still runs and which ends it still owes: a job it knows nothing of can never be reported
+	// now, so it is settled here instead of counting against its agent forever.
+	var killCommands []store.CommandJob
+	if hello.SupportsCommands {
+		killCommands, err = s.Store.ReconcileMachineCommands(ctx, machineID, hello.CommandOpen, hello.CommandExits)
+		if err != nil {
+			telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: command reconciliation error: %w", err))
+			conn.Close(websocket.StatusInternalError, "reconciliation error")
+			return
+		}
+	}
 	resend := make([]protocol.ReceiptBody, 0, len(records))
 	for _, record := range records {
 		details, _ := json.Marshal(map[string]string{"held_reason": record.Reason})
@@ -378,6 +389,12 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Telemetry: s.telemetryForMachine(ctx, c), AgentKeys: grants, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
 		return
+	}
+	for _, job := range killCommands {
+		// Cancelled before its start was confirmed, yet the machine runs it: it must not outlive the cancel.
+		if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.CommandCancel, ReqID: newRequestNonce(), JobID: job.ID, AgentID: job.AgentID}); err != nil {
+			return
+		}
 	}
 	if err := s.enqueuePendingSpawns(ctx, c); err != nil {
 		return
@@ -501,6 +518,23 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 				case waiter <- frame:
 				default:
 				}
+			}
+			continue
+		}
+		if frame.Type == protocol.CommandStarted {
+			// Recorded before the waiting call (if any) sees it, so a late start or a refusal is never lost.
+			s.applyCommandStarted(ctx, c, frame)
+		}
+		if frame.Type == protocol.CommandEnded {
+			// Authorized by the job it reports on, not the agent's generation: a command outlives a context clear or a harness switch.
+			if err := s.handleCommandEnd(ctx, c, frame); err != nil {
+				code := "invalid_request"
+				if errors.Is(err, store.ErrForbidden) {
+					code = "forbidden"
+				} else {
+					telemetry.ReportError(ctx, "machine", fmt.Errorf("command end failed: %w", err))
+				}
+				_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: frame.AgentID, JobID: frame.JobID, Code: code, Message: err.Error()})
 			}
 			continue
 		}
@@ -764,8 +798,6 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 			}
 		}
 		return c.send(answerReceiptFrame(receipt))
-	case protocol.CommandEnded:
-		return s.handleCommandEnd(ctx, c, frame)
 	case protocol.Process:
 		if frame.Exit == nil {
 			return errors.New("missing process exit")

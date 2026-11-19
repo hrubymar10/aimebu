@@ -138,6 +138,10 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := ensureColumn(ctx, db, "command_start", "timeout_seconds", `ALTER TABLE command_start ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 0`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	random := make([]byte, 16)
 	if _, err := rand.Read(random); err != nil {
 		db.Close()
@@ -157,7 +161,12 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 }
 
 func ensureExitAckColumn(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(turn_start)`)
+	return ensureColumn(ctx, db, "turn_start", "exit_acked", `ALTER TABLE turn_start ADD COLUMN exit_acked INTEGER NOT NULL DEFAULT 0`)
+}
+
+// ensureColumn adds a column a journal written by an older supervisor lacks.
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, alter string) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return err
 	}
@@ -171,7 +180,7 @@ func ensureExitAckColumn(ctx context.Context, db *sql.DB) error {
 			rows.Close()
 			return err
 		}
-		if name == "exit_acked" {
+		if name == column {
 			found = true
 		}
 	}
@@ -183,7 +192,7 @@ func ensureExitAckColumn(ctx context.Context, db *sql.DB) error {
 	if found {
 		return nil
 	}
-	_, err = db.ExecContext(ctx, `ALTER TABLE turn_start ADD COLUMN exit_acked INTEGER NOT NULL DEFAULT 0`)
+	_, err = db.ExecContext(ctx, alter)
 	return err
 }
 
@@ -589,6 +598,9 @@ type CommandStartRecord struct {
 	Cmd        string
 	LogPath    string
 	StartedAt  string
+	// TimeoutSeconds is the job's own timeout, so a supervisor that adopts it after a restart still enforces it (0 in a record written
+	// before it was kept).
+	TimeoutSeconds int
 }
 
 func (j *Journal) RecordCommandStart(ctx context.Context, record CommandStartRecord) (already bool, err error) {
@@ -596,8 +608,9 @@ func (j *Journal) RecordCommandStart(ctx context.Context, record CommandStartRec
 		record.StartedAt = timestamp()
 	}
 	result, err := j.db.ExecContext(ctx, `INSERT OR IGNORE INTO command_start
-		(job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at) VALUES (?,?,?,?,?,?,?,?)`,
-		record.JobID, record.AgentID, record.Generation, record.Pid, record.PidStart, record.Cmd, record.LogPath, record.StartedAt)
+		(job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at,timeout_seconds) VALUES (?,?,?,?,?,?,?,?,?)`,
+		record.JobID, record.AgentID, record.Generation, record.Pid, record.PidStart, record.Cmd, record.LogPath, record.StartedAt,
+		record.TimeoutSeconds)
 	if err != nil {
 		return false, err
 	}
@@ -611,10 +624,40 @@ func (j *Journal) RecordCommandStart(ctx context.Context, record CommandStartRec
 // CommandStart reads the start record of one job (for a restart that must decide what became of it).
 func (j *Journal) CommandStart(ctx context.Context, jobID string) (CommandStartRecord, error) {
 	var record CommandStartRecord
-	err := j.db.QueryRowContext(ctx, `SELECT job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at
+	err := j.db.QueryRowContext(ctx, `SELECT job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at,timeout_seconds
 		FROM command_start WHERE job_id=?`, jobID).Scan(&record.JobID, &record.AgentID, &record.Generation,
-		&record.Pid, &record.PidStart, &record.Cmd, &record.LogPath, &record.StartedAt)
+		&record.Pid, &record.PidStart, &record.Cmd, &record.LogPath, &record.StartedAt, &record.TimeoutSeconds)
 	return record, err
+}
+
+// OpenCommandStarts are the start records of the jobs this journal has not seen end: what a restarted supervisor adopts.
+func (j *Journal) OpenCommandStarts(ctx context.Context) ([]CommandStartRecord, error) {
+	rows, err := j.db.QueryContext(ctx, `SELECT s.job_id,s.agent_id,s.generation,s.pid,s.pid_start,s.cmd,s.log_path,s.started_at,s.timeout_seconds
+		FROM command_start s LEFT JOIN command_exit e ON e.job_id=s.job_id WHERE e.job_id IS NULL ORDER BY s.started_at,s.job_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := []CommandStartRecord{}
+	for rows.Next() {
+		var record CommandStartRecord
+		if err := rows.Scan(&record.JobID, &record.AgentID, &record.Generation, &record.Pid, &record.PidStart, &record.Cmd,
+			&record.LogPath, &record.StartedAt, &record.TimeoutSeconds); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+// HasCommandExit says whether a job's end is already journaled: nothing reports it a second time.
+func (j *Journal) HasCommandExit(ctx context.Context, jobID string) (bool, error) {
+	var found int
+	err := j.db.QueryRowContext(ctx, `SELECT 1 FROM command_exit WHERE job_id=?`, jobID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // RecordCommandExit writes how one command ended. It is replayed until the server acknowledges it.
