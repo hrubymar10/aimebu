@@ -722,7 +722,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 /* UI part B: settings use the v1 full-height pane and grouped rows. */
 :is(#settings-dialog, #onboarding-harnesses) .settings-section h3 { font-size: 12.6px; margin: 0 0 12px; }
 :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-intro { font-size: 10.5px; }
-:is(#settings-harnesses, #onboarding-harnesses) :is(input:not([type="checkbox"], [type="range"], .settings-text-input), select:not(.settings-select), textarea:not(.settings-text-input)) { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: 11.5px var(--font-sans); }
+:is(#settings-harnesses, #onboarding-harnesses) :is(input:not([type="checkbox"], [type="range"], .settings-text-input, .settings-search-input), select:not(.settings-select), textarea:not(.settings-text-input)) { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: 11.5px var(--font-sans); }
 :is(#settings-dialog, #onboarding-harnesses) .settings-section :is(input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 :is(#settings-harnesses, #onboarding-harnesses) textarea:not(.settings-text-input) { min-height: 84px; resize: vertical; }
 #settings-dialog #role-editor { max-width: none; }

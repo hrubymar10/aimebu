@@ -375,6 +375,12 @@ async function main() {
       assert.deepEqual(await page.$eval(`${card('a1')} [name=model-provider]`, el => [...el.options].map(option => option.textContent)), ['All providers', 'a1 (1)', 'acme-llm (2)', 'zeta-cloud (2)'], 'each provider once with its count; an id without a prefix falls under the harness');
       assert.equal((await rows()).length, 5);
       assert.ok(await page.$(`${card('a1')} .harness-model-search .icon-mask-search, ${card('a1')} .harness-model-search svg, ${card('a1')} .harness-model-search .settings-icon`), 'the search carries the Settings icon');
+      const clear = await page.$eval(`${card('a1')} .harness-model-search`, el => {
+        const input = el.querySelector('.settings-search-input'), icon = el.querySelector('.settings-icon');
+        const box = input.getBoundingClientRect(), style = getComputedStyle(input);
+        return { textStart: box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft), iconRight: icon.getBoundingClientRect().right };
+      });
+      assert.ok(clear.textStart > clear.iconRight, `the search text starts right of its icon: ${JSON.stringify(clear)}`);
       await type(page, `${card('a1')} [name=model-search]`, 'CHEAP');
       await settle(page);
       assert.deepEqual(await rows(), ['acme-llm/alpha-fast', 'zeta-cloud/beam'], 'case-insensitive over the note');
