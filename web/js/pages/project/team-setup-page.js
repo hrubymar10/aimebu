@@ -8,13 +8,14 @@ import {
   TargetPicker, StatusBanner, RecommendedModels, KeptAgent, MigrationSummary, MigrationProgress, isModelChange, MIGRATION_TERMINAL,
 } from './team-wizard-parts.js';
 import { captureError } from '../../telemetry.js';
+import { OFFERED_ROLES, LegacyOffer, legacyOptions, legacyTarget, withLegacy, legacyBlocked } from './legacy-offer.js';
 
 const SECOND_ROLE = { 'leader-dispatcher': 'Dispatcher', 'leader-advisor': 'Advisor' };
 const CORE = ['leader', 'worker', 'reviewer'];
 const TERMINAL = MIGRATION_TERMINAL;
 
 function Summary({ body, flowLabel, preview, options, selectedRemovals, onToggleRemoval }) {
-  const describe = target => `${target?.name ? `${target.name} · ` : ''}${describeTarget(options, target)}`;
+  const describe = target => `${target?.resume_legacy ? `${target.resume_legacy} (continues its v1 session) · ` : target?.name ? `${target.name} · ` : ''}${describeTarget(options, target)}`;
   return html`<div class="team-setup-summary">
     <p><strong>Team flow:</strong> ${flowLabel}</p>
     <p><strong>Leader:</strong> ${describe(body.leader)}</p>
@@ -52,6 +53,8 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   const [preview, setPreview] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [plan, setPlan] = useState(null), [changes, setChanges] = useState({}), [recommended, setRecommended] = useState([]);
   const [migration, setMigration] = useState(null), [cancelling, setCancelling] = useState(false);
+  // The v1 agents that held a core role and are not started yet, by role; what the person picked for the role ('new' or a v1 id; nothing yet means the first); whether v1 no longer runs it.
+  const [legacy, setLegacy] = useState({}), [legacyPick, setLegacyPick] = useState({}), [legacyConfirmed, setLegacyConfirmed] = useState({});
   const commitKey = useRef(''), generation = useRef(0), settingsTouched = useRef(false);
   const reviewerAgentsLoaded = useRef(false), reviewerAgentsTouched = useRef(false);
   useEffect(() => {
@@ -59,12 +62,16 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
     setStep(1); setChoices(null); setLeader(null); setDispatcher(null); setAdvisor(null); setNames({}); setNameBusy({}); setNameErrors({}); nameRequests.current = {}; setWorker(null); setReviewer(null);
     setSettings({ worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10, reviewer_agents: 'inherit', reviewer_agents_global_enabled: true });
     setLoadError(''); setPreview(null); setBusy(false); setError(''); commitKey.current = ''; settingsTouched.current = false; reviewerAgentsLoaded.current = false; reviewerAgentsTouched.current = false;
-    setPlan(null); setChanges({}); setMigration(null); setCancelling(false);
+    setPlan(null); setChanges({}); setMigration(null); setCancelling(false); setLegacy({}); setLegacyPick({}); setLegacyConfirmed({});
     if (!id) return undefined;
     request(`${projectPath(id)}/settings`).then(answer => {
       if (turn !== generation.current || !answer?.reviewer_agents) return;
       reviewerAgentsLoaded.current = true;
       if (!reviewerAgentsTouched.current) setSettings(previous => ({ ...previous, reviewer_agents: answer.reviewer_agents, reviewer_agents_global_enabled: answer.reviewer_agents_global_enabled !== false }));
+    }, () => {});
+    // Only an owner or operator may start a v1 agent; the others are not offered one (and the server would refuse the list).
+    if (canEdit) for (const role of OFFERED_ROLES) request(`${projectPath(id)}/legacy-agents?role=${role}`).then(answer => {
+      if (turn === generation.current && answer?.agents?.length) setLegacy(old => ({ ...old, [role]: answer.agents }));
     }, () => {});
     Promise.resolve(flow.source.recommendedModels?.()).then(answer => { if (turn === generation.current) setRecommended(Array.isArray(answer?.rows) ? answer.rows : []); }, () => {});
     // A change already under way keeps its progress on screen, whoever started it.
@@ -143,13 +150,38 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   };
   const typeName = (role, value) => { nameRequests.current[role] = (nameRequests.current[role] || 0) + 1; setNames(old => ({ ...old, [role]: value })); setNameErrors(old => ({ ...old, [role]: '' })); setNameBusy(old => ({ ...old, [role]: false })); };
   useEffect(() => { if (needsTarget && !reuse && choices && names[roleKey] == null) void suggestName(roleKey, roleKey === 'leader' ? '' : names.leader || ''); }, [roleKey, needsTarget, choices]);
+  const options = choices?.options || [];
+  const setters = { leader: setLeader, dispatcher: setDispatcher, advisor: setAdvisor };
+  const candidatesOf = role => (needsTarget && roleKey === role && !reuse && legacy[role]) || [];
+  const pickOf = role => legacyPick[role] ?? candidatesOf(role)[0]?.legacy_id;
+  const continuing = role => candidatesOf(role).find(item => item.legacy_id === pickOf(role));
+  // The offer starts on continuing the v1 agent, with the choice a session it can be continued with.
+  useEffect(() => {
+    for (const role of OFFERED_ROLES) {
+      const first = legacy[role]?.[0];
+      if (!first || legacyPick[role] !== undefined || !options.length) continue;
+      setLegacyPick(old => ({ ...old, [role]: first.legacy_id }));
+      setters[role](current => legacyTarget(options, first, current) || current);
+    }
+  }, [legacy, choices]);
+  const pickLegacy = (role, value) => {
+    setLegacyPick(old => ({ ...old, [role]: value }));
+    const candidate = legacy[role]?.find(item => item.legacy_id === value);
+    if (candidate) setters[role](current => legacyTarget(options, candidate, current) || current);
+  };
   if (!state) return null;
   const flowLabel = (key = selected) => { const index = templates.findIndex(item => item.key === key); return index < 0 ? '' : `${flowLetter(templates, key)} · ${templates[index].label}`; };
   const minimumAgents = 1;
   const coreRoles = templates.find(item => item.key === selected)?.core_roles || [];
   const coreNames = coreRoles.map((role, index) => index ? role : role.charAt(0).toUpperCase() + role.slice(1)).join(' and ');
   const coreHint = coreNames ? `${coreNames} ${coreRoles.length === 1 ? 'is' : 'are'} not counted.` : '';
-  const named = (target, role) => target && (names[role]?.trim() ? { ...target, name: names[role].trim() } : target);
+  // A role that continues a v1 agent keeps its name and carries the Spawn's v1 parameters; any other new agent is named as typed.
+  const chosenLegacy = role => legacy[role]?.find(item => item.legacy_id === (legacyPick[role] ?? legacy[role][0].legacy_id));
+  const named = (target, role) => {
+    const candidate = target && chosenLegacy(role);
+    if (candidate) return withLegacy(target, candidate, legacyConfirmed[role]);
+    return target && (names[role]?.trim() ? { ...target, name: names[role].trim() } : target);
+  };
   const roleTargets = { leader, dispatcher, advisor };
   const defaults = { worker: { default_agents: worker?.items || [], pick_mode: worker?.mode || 'in_turn' }, ...(reviewersEnabled ? { reviewer: { default_agents: reviewer?.items || [], pick_mode: reviewer?.mode || 'in_turn' } } : {}) };
   const removals = flow.removals.value.length ? { remove_memberships: flow.removals.value } : {};
@@ -207,7 +239,6 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
     finally { setCancelling(false); }
   };
   const finishCustom = async () => { await flow.apply(); if (!flow.error.peek()) onClose(); };
-  const options = choices?.options || [];
   const optionsList = options.map(item => ({ launcher_id: item.launcher_id, model: item.model, label: `${item.machine_name} · ${item.tool_label} · ${item.model_label}` }));
   const from = state.key, fromLetter = flowLetter(templates, from), toLetter = flowLetter(templates, selected);
   const keptOf = role => (entryOf(role)?.status === 'kept' || role === 'worker' || role === 'reviewer') ? entryOf(role)?.agents || [] : [];
@@ -218,7 +249,7 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
     onChange=${target => setChanges(old => ({ ...old, [agent.agent_id]: target }))} onReset=${() => setChanges(old => { const next = { ...old }; delete next[agent.agent_id]; return next; })} />`;
   const switching = !setupMode && migration;
   const heading = setupMode ? 'Project setup' : 'Team flow change';
-  const nextDisabled = busy || needsTarget && !roleTargets[roleKey] || stepLabel === 'Project settings' && (!Number.isInteger(settings.max_live_agents) || settings.max_live_agents < minimumAgents || settings.max_live_agents > 100);
+  const nextDisabled = busy || needsTarget && !roleTargets[roleKey] || needsTarget && !reuse && legacyBlocked(continuing(roleKey), options, legacyConfirmed[roleKey]) || stepLabel === 'Project settings' && (!Number.isInteger(settings.max_live_agents) || settings.max_live_agents < minimumAgents || settings.max_live_agents > 100);
   const sameFlow = !setupMode && selected === from;
   return html`<section class=${`team-flow-home-card team-setup-wizard${embedded ? ' team-setup-embedded' : ''}`} aria-labelledby="team-flow-home-title">
     <div class="team-flow-heading"><small>${heading}${step > 1 && !switching ? ` · Step ${step} of ${steps.length}` : ''}</small><h2 id="team-flow-home-title">${switching ? migration.state === 'done' ? 'Team flow changed' : 'Changing your team flow' : step === 1 ? (setupMode ? 'Choose how your AI team works' : 'Choose a team flow') : stepLabel}</h2>
@@ -231,7 +262,9 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
       ${roleStatus === 'new' && html`${choices && !options.length && html`<p class="error" role="alert">No available machine, tool, and model combination is ready for this project.</p>`}
         ${roleKey === 'advisor' && html`<p class="team-setup-hint">Pick a stronger model than the leader's.</p>`}
         ${reuse && html`<p class="team-wizard-current">${reuse.slug || reuse.agent_id} keeps its name; pick the model it should run now.</p>`}
-        ${options.length > 0 && html`<${TargetPicker} label=${stepLabel} prefix=${`team-setup-${roleKey}`} options=${options} value=${roleTargets[roleKey]} withName=${!reuse} onChange=${{ leader: setLeader, dispatcher: setDispatcher, advisor: setAdvisor }[roleKey]}
+        ${candidatesOf(roleKey).length > 0 && html`<${LegacyOffer} role=${roleKey} label=${stepLabel} candidates=${candidatesOf(roleKey)} picked=${pickOf(roleKey)} onPick=${value => pickLegacy(roleKey, value)}
+          confirmed=${legacyConfirmed[roleKey]} onConfirm=${value => setLegacyConfirmed(old => ({ ...old, [roleKey]: value }))} options=${options} />`}
+        ${options.length > 0 && html`<${TargetPicker} label=${stepLabel} prefix=${`team-setup-${roleKey}`} options=${continuing(roleKey)?.resumable ? legacyOptions(options, continuing(roleKey)) : options} value=${roleTargets[roleKey]} withName=${!reuse && !continuing(roleKey)} onChange=${setters[roleKey]}
           name=${names[roleKey]} nameBusy=${!!nameBusy[roleKey]} nameError=${nameErrors[roleKey] || ''} onName=${value => typeName(roleKey, value)} onDice=${() => suggestName(roleKey, names[roleKey] || '')} />`}`}
       ${roleStatus === 'kept' && html`<div class="team-wizard-kept-list">${(entryOf(roleKey)?.agents || []).map(agent => renderKept(agent, `team-setup-${roleKey}`))}</div>`}
       ${roleStatus === 'leaving' && html`<ul class="team-wizard-leaving">${(entryOf(roleKey)?.agents || []).map(agent => html`<li key=${agent.agent_id}><strong>${agent.slug || agent.agent_id}</strong> · ${describeTarget(options, agent)}</li>`)}</ul>`}

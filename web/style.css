@@ -13,7 +13,7 @@
 
 /* Messages: body, chrome, identity and debug */
 .message-role{font-size:10px;font-weight:700;color:var(--text-secondary);background:var(--bg-tertiary);border-radius:12px;padding:1px 6px;text-transform:capitalize}
-.msg-sender-presence{display:inline-flex;align-items:center;gap:2px}.msg-sender-icon{width:14px;height:14px;flex-shrink:0}.msg-sender-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:2px;flex-shrink:0}.msg-sender-dot.dot-active{background:var(--green-text)}.msg-sender-dot.dot-stale{background:var(--orange)}.msg-sender-dot.dot-offline,.msg-sender-dot.dot-departed,.msg-sender-dot.dot-historical{background:var(--red)}
+.msg-sender-presence{display:inline-flex;align-items:center;gap:2px}.msg-sender-icon{width:14px;height:14px;flex-shrink:0}.msg-sender-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:2px;flex-shrink:0}.msg-sender-dot.dot-active{background:var(--green-text)}.msg-sender-dot.dot-stale{background:var(--orange)}.msg-sender-dot.dot-offline,.msg-sender-dot.dot-departed{background:var(--red)}.msg-sender-dot.dot-historical{background:var(--text-muted)}
 
 
 .chat-msg-debug-toggle{display:none}html[data-debug-inspector=on] .chat-msg-debug-toggle{display:inline-flex}

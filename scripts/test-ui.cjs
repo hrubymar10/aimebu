@@ -1238,9 +1238,13 @@ async function main() {
       chat.store.add({ ...base, id: 'i6', seq: 906, no: 906, author_kind: 'user', author_id: 'someone' });
       chat.store.add({ ...base, id: 'i7', seq: 907, no: 907, author_kind: 'agent', author_id: 'agt_01GONE0000', author_model: 'opus4.8', author_harness: 'claude-code' });
       chat.store.add({ ...base, id: 'i8', seq: 908, no: 908, author_kind: 'agent', author_id: 'imported-bot', author_model: 'sonnet4.6', author_harness: 'codex' });
+      // A v1 author that a live v2 agent continues (agent.resumed_from_legacy_id) has that agent's presence on its old messages.
+      const quin = { id: 'agt_quin', slug: 'quin', tool: 'claude', model: 'opus', observed: 'idle', resumed_from_legacy_id: 'quin@repo' };
+      chat.agents.set('agt_quin', quin); chat.legacyAgents = new Map([['quin@repo', quin]]);
+      chat.store.add({ ...base, id: 'i9', seq: 909, no: 909, author_kind: 'agent', author_id: 'quin@repo', author_tool: 'claude', author_model: 'opus' });
       const read = id => { const el = chat.list.querySelector(`[data-message-id="${id}"]`); const dot = el.querySelector('.msg-sender-dot'); const icon = el.querySelector('.msg-sender-icon');
         return { icon: icon.getAttribute('src'), title: icon.title, dot: dot.hidden ? null : [dot.className.replace('msg-sender-dot ', ''), dot.title], bell: Boolean(el.querySelector('.chat-msg-attention-icon')) }; };
-      const out = { live: read('i1'), stopped: read('i2'), wait: read('i3'), historical: read('i4'), attention: read('i5'), plain: read('i6'), departed: read('i7'), importedKnown: read('i8') };
+      const out = { continuedName: chat.authorName({ author_kind: 'agent', author_id: 'quin@repo' }), live: read('i1'), stopped: read('i2'), wait: read('i3'), historical: read('i4'), attention: read('i5'), plain: read('i6'), departed: read('i7'), importedKnown: read('i8'), continued: read('i9') };
       chat.agents.get('live').observed = 'lost'; chat.agentSigs = new Map([['live', 'lost']]); chat.listUpdate();
       out.liveAfter = read('i1').dot;
       const number = chat.list.querySelector('[data-message-id="i5"] .chat-msg-id');
@@ -1294,6 +1298,7 @@ async function main() {
     assert.deepEqual(identityHeader.historical, { icon: '/icons/unknown.svg', title: '', dot: ['dot-historical', 'Imported from v1 (no live agent)'], bell: false }, 'a message without recorded model or tool has no misleading tooltip');
     assert.deepEqual(identityHeader.departed, { icon: '/icons/claude-code.svg', title: 'opus4.8 · Claude Code (departed)', dot: ['dot-departed', 'departed'], bell: false }, 'an agent that was in a v2 room and left keeps the red departed dot');
     assert.deepEqual(identityHeader.importedKnown.dot, ['dot-historical', 'Imported from v1 (no live agent)']);
+    assert.deepEqual([identityHeader.continued.dot, identityHeader.continuedName], [['dot-active', 'idle'], 'quin'], 'an old v1 message of a continued agent shows the live agent\'s presence and name');
     assert.deepEqual(identityHeader.attention, { icon: '/icons/human.svg', title: 'human', dot: null, bell: true });
     assert.equal(identityHeader.plain.bell, false);
     assert.deepEqual(identityHeader.liveAfter, ['dot-offline', 'lost']);

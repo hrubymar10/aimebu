@@ -83,6 +83,14 @@ type flowMigrationResolvedTarget struct {
 	Model      string `json:"model"`
 	Provider   string `json:"provider"`
 	Path       string `json:"path"`
+	// The v1 agent the new agent continues, and what the preflight resolved from it (see TeamSetupTarget).
+	ResumeLegacy string `json:"resume_legacy,omitempty"`
+	ResumeHandle string `json:"resume_handle,omitempty"`
+	LaunchPath   string `json:"launch_path,omitempty"`
+}
+
+func (t flowMigrationResolvedTarget) setup() TeamSetupTarget {
+	return TeamSetupTarget{ResumeLegacy: t.ResumeLegacy, ResumeHandle: t.ResumeHandle, LaunchPath: t.LaunchPath}
 }
 
 type flowMigrationStored struct {
@@ -92,7 +100,8 @@ type flowMigrationStored struct {
 
 func flowMigrationResolveTarget(target *TeamSetupTarget) flowMigrationResolvedTarget {
 	return flowMigrationResolvedTarget{MachineID: target.MachineID, Name: target.Name, Tool: target.Tool, Variant: target.Variant,
-		LauncherID: target.LauncherID, Model: target.Model, Provider: target.Provider, Path: target.Path}
+		LauncherID: target.LauncherID, Model: target.Model, Provider: target.Provider, Path: target.Path,
+		ResumeLegacy: target.ResumeLegacy, ResumeHandle: target.ResumeHandle, LaunchPath: target.LaunchPath}
 }
 
 var ErrTeamFlowMigration = errors.New("invalid team flow migration")
@@ -989,9 +998,10 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home' AND lifecycle='open' ORDER BY created_at LIMIT 1`, projectID).Scan(&homeID); err != nil {
 				return nil, err
 			}
-			card, err := tx.SpawnAgent(SpawnInput{RoomID: homeID, ActorKind: "user", ActorID: actorID, MachineID: target.MachineID,
+			legacy := target.setup()
+			card, err := tx.SpawnAgent(legacy.spawnLegacy(SpawnInput{RoomID: homeID, ActorKind: "user", ActorID: actorID, MachineID: target.MachineID,
 				Path: target.Path, Slug: target.Name, RoleKey: "leader", Tool: target.Tool, Variant: target.Variant,
-				LauncherID: target.LauncherID, Model: target.Model, Provider: target.Provider})
+				LauncherID: target.LauncherID, Model: target.Model, Provider: target.Provider}))
 			if err != nil {
 				return nil, err
 			}
@@ -1187,9 +1197,10 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND team_flow_room_key=? AND lifecycle='open' ORDER BY created_at LIMIT 1`, projectID, roomKey).Scan(&roomID); err != nil {
 			return nil, err
 		}
-		card, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "user", ActorID: actorID, MachineID: target.MachineID,
+		legacy := target.setup()
+		card, err := tx.SpawnAgent(legacy.spawnLegacy(SpawnInput{RoomID: roomID, ActorKind: "user", ActorID: actorID, MachineID: target.MachineID,
 			Path: target.Path, Slug: target.Name, RoleKey: role, Tool: target.Tool, Variant: target.Variant,
-			LauncherID: target.LauncherID, Model: target.Model, Provider: target.Provider})
+			LauncherID: target.LauncherID, Model: target.Model, Provider: target.Provider}))
 		if err != nil {
 			return nil, err
 		}

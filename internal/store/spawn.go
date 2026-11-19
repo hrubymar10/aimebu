@@ -45,7 +45,9 @@ type AgentCard struct {
 	MachineLastSeen  string              `json:"machine_last_seen,omitempty"`
 	Switch           *AgentSwitch        `json:"switch,omitempty"`
 	BoundaryPending  string              `json:"boundary_pending,omitempty"`
-	BoundaryGrants   []BoundaryGrant     `json:"boundary_grants,omitempty"`
+	// ResumedFromLegacyID is the v1 agent this one continues; its imported messages that stay under the v1 author belong to this agent too.
+	ResumedFromLegacyID string          `json:"resumed_from_legacy_id,omitempty"`
+	BoundaryGrants      []BoundaryGrant `json:"boundary_grants,omitempty"`
 	// WokenBy is why the turn in progress started, when that was an agent's reply to this one ("reply"); the card tags it so a person can
 	// see an exchange between agents as it happens. Empty when idle or for any other reason.
 	WokenBy string `json:"woken_by,omitempty"`
@@ -542,7 +544,7 @@ func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCa
 		a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block,
 		COALESCE((SELECT MAX(e.created_at) FROM event e WHERE e.agent_id=a.id AND `+agentOwnActivitySQL+`),''),COALESCE(machine.last_seen,''),
 		COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.outcome='unknown' ORDER BY t.id DESC LIMIT 1) AND e.kind='turn_process_exit' LIMIT 1),''),
-		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),'')
+		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),COALESCE(a.resumed_from_legacy_id,'')
 		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL
 		LEFT JOIN machine ON machine.id=a.machine_id WHERE m.room_id=? ORDER BY a.created_at,a.id`, roomID)
 	if err != nil {
@@ -553,7 +555,7 @@ func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCa
 	for rows.Next() {
 		var c AgentCard
 		c.RoomID = roomID
-		if err := rows.Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.LastActivityAt, &c.MachineLastSeen, &c.LastExitEvidence, &c.BoundaryPending); err != nil {
+		if err := rows.Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.LastActivityAt, &c.MachineLastSeen, &c.LastExitEvidence, &c.BoundaryPending, &c.ResumedFromLegacyID); err != nil {
 			return nil, err
 		}
 		cards = append(cards, c)
@@ -591,8 +593,8 @@ func (s *Store) AgentCardByID(ctx context.Context, id string) (AgentCard, error)
 		EXISTS(SELECT 1 FROM role current WHERE current.project_id IS NULL AND current.role_key=r.role_key AND current.id<>r.id AND current.deleted_at IS NULL AND (current.body<>r.body OR current.extends<>r.extends OR current.label<>r.label OR current.emoji<>r.emoji OR current.cardinality<>r.cardinality OR current.cap_is_lead<>r.cap_is_lead OR current.cap_can_spawn<>r.cap_can_spawn OR current.cap_singleton_writer<>r.cap_singleton_writer)),
 		a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block, m.room_id,
 		COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.outcome='unknown' ORDER BY t.id DESC LIMIT 1) AND e.kind='turn_process_exit' LIMIT 1),''),
-		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),'')
-		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL WHERE a.id=? ORDER BY m.joined_at LIMIT 1`, id).Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.RoomID, &c.LastExitEvidence, &c.BoundaryPending)
+		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),COALESCE(a.resumed_from_legacy_id,'')
+		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL WHERE a.id=? ORDER BY m.joined_at LIMIT 1`, id).Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.RoomID, &c.LastExitEvidence, &c.BoundaryPending, &c.ResumedFromLegacyID)
 	if err == nil {
 		c.Switch, err = s.agentSwitch(ctx, id)
 		if err == nil {

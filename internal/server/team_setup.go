@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -16,7 +17,10 @@ import (
 var errTeamSetupFolder = errors.New("team setup folder unavailable")
 
 func teamSetupError(w http.ResponseWriter, err error) {
+	var refusal *legacyCheckError
 	switch {
+	case errors.As(err, &refusal):
+		apiError(w, refusal.status, refusal.code, refusal.msg)
 	case errors.Is(err, store.ErrTeamFlowRev), errors.Is(err, store.ErrStaleRev):
 		apiError(w, 409, "stale_rev", "team flow changed; reload and try again")
 	case errors.Is(err, store.ErrTeamFlowSelection):
@@ -234,24 +238,34 @@ func (s *Server) preflightTeamSetup(r *http.Request, projectID string, input *st
 			return store.ErrTeamSetupInvalid
 		}
 		target.Model, target.LauncherID = model, launcherID
-		path, err := s.Store.ProjectMachineFolder(r.Context(), projectID, machine.ID)
-		if err != nil {
-			return err
+		resumed := false
+		target.ResumeHandle, target.LaunchPath = "", ""
+		if target.ResumeLegacy != "" {
+			if resumed, err = s.prepareLegacyTarget(r.Context(), projectID, conn, machine, launcher, target); err != nil {
+				return err
+			}
 		}
-		if path == "" {
-			return errMissingMachineFolder
-		}
-		if machine.IsHost {
-			path, err = filepath.Abs(path)
+		path := target.Path // a continued session runs where v1 made it, already resolved
+		if !resumed {
+			path, err = s.Store.ProjectMachineFolder(r.Context(), projectID, machine.ID)
 			if err != nil {
 				return err
 			}
-			path, err = filepath.EvalSymlinks(path)
-		} else {
-			path, err = s.probeMachinePath(r.Context(), machine.ID, path)
-		}
-		if err != nil {
-			return fmt.Errorf("%w: %v", errTeamSetupFolder, err)
+			if path == "" {
+				return errMissingMachineFolder
+			}
+			if machine.IsHost {
+				path, err = filepath.Abs(path)
+				if err != nil {
+					return err
+				}
+				path, err = filepath.EvalSymlinks(path)
+			} else {
+				path, err = s.probeMachinePath(r.Context(), machine.ID, path)
+			}
+			if err != nil {
+				return fmt.Errorf("%w: %v", errTeamSetupFolder, err)
+			}
 		}
 		if err := s.validateLauncherCheckout(r.Context(), machine, launcherID, path); err != nil {
 			return fmt.Errorf("%w: %v", errTeamSetupFolder, err)
@@ -265,4 +279,57 @@ func (s *Server) preflightTeamSetup(r *http.Request, projectID string, input *st
 		}
 	}
 	return nil
+}
+
+// prepareLegacyTarget checks and resolves a team flow target that continues a v1 agent, with the checks a spawn from v1 history makes: the
+// agent must be found in the project and not started yet, keep its name, and, when its session can be continued, run the tool v1 ran, in
+// the folder v1 worked in, on a machine that can see the session. resumed says the session is continued (Path is then its folder); when it
+// is not, the agent starts fresh under the v1 name in the project's folder.
+func (s *Server) prepareLegacyTarget(ctx context.Context, projectID string, conn *machineConn, machine store.Machine, launcher *store.Launcher, target *store.TeamSetupTarget) (resumed bool, err error) {
+	req := spawnRequest{Tool: target.Tool, Variant: target.Variant, ResumeLegacy: target.ResumeLegacy, ConfirmV1Idle: target.ConfirmV1Idle}
+	legacy, resuming, err := s.checkLegacyStart(ctx, projectID, "user", &req)
+	if err != nil {
+		return false, err
+	}
+	taken, err := s.Store.AgentSlugTaken(ctx, projectID, legacy.Slug)
+	if err != nil {
+		return false, err
+	}
+	if taken {
+		return false, &legacyCheckError{409, "name_in_use", "the project already has an agent, person or role of the name " + legacy.Slug}
+	}
+	target.Name, target.ResumeLegacy = legacy.Slug, legacy.AgentID
+	if !resuming {
+		return false, nil
+	}
+	containerized := launcherKeepsOwnSessions(launcher, target.Variant)
+	sharedHome := containerized && target.Tool == "claude" && sharesClaudeHome(conn, launcher)
+	if containerized && !sharedHome {
+		return false, &legacyCheckError{409, "needs_native", sessionsMessage(target.Tool, launcher)}
+	}
+	if target.Tool != "claude" && !conn.supportsLegacySessionCopy {
+		return false, &legacyCheckError{409, "supervisor_update_needed", "this machine's supervisor cannot copy v1 sessions into a private agent runtime; update it before continuing"}
+	}
+	path, err := s.legacyResumeCWD(ctx, machine, legacy.CWD)
+	if err != nil {
+		return false, &legacyCheckError{409, "v1_folder_missing", err.Error()}
+	}
+	launch := filepath.Clean(legacy.CWD)
+	if target.Tool == "claude" && launch != path && filepath.IsAbs(launch) && sameDirectory(machine, launch, path) {
+		if !conn.supportsLaunchPath {
+			return false, &legacyCheckError{409, "supervisor_update_needed", "v1 worked in this folder through a link (" + launch + "); the supervisor on " + machine.Name + " predates starting Claude in that spelling, so update it"}
+		}
+		target.LaunchPath = launch
+	}
+	if machine.IsHost && (!containerized || sharedHome) {
+		look := path
+		if target.LaunchPath != "" {
+			look = target.LaunchPath
+		}
+		if checkHarnessSession(target.Tool, legacy.SessionID, look) == sessionMissing {
+			return false, &legacyCheckError{409, "session_not_found", "the v1 session " + legacy.SessionID + " was not found on this machine, so it cannot be continued"}
+		}
+	}
+	target.Path, target.ResumeHandle = path, legacy.SessionID
+	return true, nil
 }

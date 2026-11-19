@@ -303,6 +303,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/global-memory/{scope}/{id}", s.Auth.RequireUser(http.HandlerFunc(s.globalMemoryRecord)))
 	mux.Handle("PUT /api/global-memory/{scope}/{id}/activation", s.Auth.RequireUser(http.HandlerFunc(s.globalMemoryActivation)))
 	mux.Handle("GET /api/projects/{project}/rooms", s.Auth.RequireUser(http.HandlerFunc(s.rooms)))
+	mux.Handle("GET /api/projects/{project}/legacy-agents", s.Auth.RequireUser(http.HandlerFunc(s.legacyAgents)))
 	mux.Handle("GET /api/projects/{project}/claude-sessions", s.Auth.RequireUser(http.HandlerFunc(s.claudeSessions)))
 	mux.Handle("GET /api/projects/{project}/dm-peers", s.Auth.RequireUser(http.HandlerFunc(s.dmPeers)))
 	mux.Handle("POST /api/projects/{project}/dms", s.Auth.RequireUser(http.HandlerFunc(s.openUserDM)))

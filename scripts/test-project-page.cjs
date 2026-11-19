@@ -639,6 +639,50 @@ async function main() {
       assert.equal(await title(), 'Summary');
       await page.close();
     }
+    // A v1 agent that held the leader role is offered next to a new leader, continuing it is the default, and it is sent with the Spawn's v1 parameters.
+    {
+      const auto = base(); auto['GET /api/projects/p1/team-flow'] = { key: '', rev: 0, review_pending: true };
+      auto['GET /api/rooms/r1/agent-name'] = { name: 'ada' };
+      auto['GET /api/projects/p1/legacy-agents?role=leader'] = { agents: [{ legacy_id: 'quin@alpha', slug: 'quin', tool: 'claude', model: 'm2', cwd: '/srv/alpha', role_key: 'leader', resumable: true, v1_active: true }] };
+      auto['GET /api/projects/p1/role-spawn-defaults'] = [{ role_key: 'leader', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }];
+      const page = await mount({ auto });
+      await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ id: 'r1', kind: 'home', project_id: 'p1' }); });
+      await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 5);
+      await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-workers"] .team-flow-card', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.$eval('#team-flow-home .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
+      await page.waitForSelector('#team-flow-home .team-setup-legacy');
+      assert.deepEqual(await page.$$eval('#team-flow-home .team-setup-legacy label:has(input[type=radio])', nodes => nodes.map(node => [node.textContent.trim(), node.querySelector('input').checked])), [['Continue v1 leader quin@alpha', true], ['New leader', false]], 'the v1 leader is offered, and is the default');
+      assert.equal(await page.$('#team-setup-leader-name'), null, 'a continued agent keeps its name, so there is no Name field');
+      assert.equal(await page.$eval('#team-flow-home select[name=model]', node => node.value), 'm2', 'the model v1 ran is preselected');
+      assert.equal(await page.$eval('#team-flow-home .team-flow-actions .btn-primary', node => node.disabled), true, 'a v1 session seen a moment ago needs the confirmation first');
+      await page.$eval('.team-setup-legacy-confirm', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#team-flow-home .team-flow-actions .btn-primary').disabled);
+      await page.$eval('#team-flow-home .team-flow-actions .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Workers and reviewers');
+      await page.$eval('#team-flow-home .team-flow-actions .btn-primary', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Project settings');
+      await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-setup/preview']; });
+      await page.$eval('#team-flow-home .team-flow-actions .btn-primary', node => node.click());
+      const setupPreview = await waitRequest(page, 'POST', '/api/projects/p1/team-setup/preview');
+      const draft = await page.evaluate(index => window.__requests[index].body, setupPreview);
+      assert.deepEqual([draft.leader.resume_legacy, draft.leader.confirm_v1_idle, draft.leader.name, draft.leader.model, draft.leader.tool], ['quin@alpha', true, undefined, 'm2', 'claude'], 'the leader is sent with the Spawn\'s v1 parameters');
+      await answer(page, setupPreview, 200, { can_create: true, created_rooms: [], conflicts: [] });
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Summary');
+      assert.match(await page.$eval('.team-setup-summary', node => node.textContent), /Leader: quin@alpha \(continues its v1 session\)/);
+      // Back to the leader step: choosing a new leader goes back to a plain, named one.
+      for (let i = 0; i < 3; i++) await page.$eval('#team-flow-home .team-flow-actions .btn:not(.btn-primary)', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
+      await page.$eval('.team-setup-legacy input[value=new]', node => node.click());
+      await page.waitForSelector('#team-setup-leader-name');
+      await page.evaluate(() => { delete window.__auto['POST /api/projects/p1/team-setup/preview']; });
+      for (let i = 0; i < 3; i++) { await page.$eval('#team-flow-home .team-flow-actions .btn-primary', node => node.click()); await settle(page); }
+      const plain = await waitRequest(page, 'POST', '/api/projects/p1/team-setup/preview');
+      const plainDraft = await page.evaluate(index => window.__requests[index].body, plain);
+      assert.deepEqual([plainDraft.leader.resume_legacy, plainDraft.leader.confirm_v1_idle, plainDraft.leader.name], [undefined, undefined, 'ada'], 'a new leader carries no v1 parameters');
+      await page.close();
+    }
     // Initial setup follows the inherited reviewer switch and can opt a project back in.
     {
       const auto = base();

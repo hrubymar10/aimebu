@@ -40,7 +40,7 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 		a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block,
 		COALESCE((SELECT MAX(e.created_at) FROM event e WHERE e.agent_id=a.id AND `+agentOwnActivitySQL+`),''),COALESCE(machine.last_seen,''),
 		COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.outcome='unknown' ORDER BY t.id DESC LIMIT 1) AND e.kind='turn_process_exit' LIMIT 1),''),
-		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),
+		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),COALESCE(a.resumed_from_legacy_id,''),
 		sw.agent_id IS NOT NULL,COALESCE(sw.state,''),COALESCE(sw.tool,''),COALESCE(sw.variant,''),COALESCE(sw.model,''),COALESCE(sw.machine_id,''),COALESCE(sw.error,''),
 		sh.agent_id IS NOT NULL,COALESCE(sh.status,''),COALESCE(sh.source,''),COALESCE(sh.body_json,''),COALESCE(sh.handoff_deadline,''),COALESCE(sh.overall_deadline,''),
 		CASE WHEN sh.turn_id IS NULL THEN 0 ELSE EXISTS(SELECT 1 FROM turn WHERE id=sh.turn_id AND (exec IN ('pending','running') OR settle='pending')) END,
@@ -85,7 +85,7 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 		var estimated bool
 		var started, lastEvent, detected string
 		var reset sql.NullString
-		if err := rows.Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.LastActivityAt, &c.MachineLastSeen, &c.LastExitEvidence, &c.BoundaryPending,
+		if err := rows.Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.LastActivityAt, &c.MachineLastSeen, &c.LastExitEvidence, &c.BoundaryPending, &c.ResumedFromLegacyID,
 			&hasSwitch, &sw.State, &sw.Tool, &sw.Variant, &sw.Model, &sw.MachineID, &sw.Error,
 			&hasHandoff, &handoffStatus, &handoffSource, &handoffBody, &handoffDeadline, &overallDeadline, &turnOpen, &c.WokenBy,
 			&hasUsage, &input, &output, &used, &window, &cost, &estimated,

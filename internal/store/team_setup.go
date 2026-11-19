@@ -24,6 +24,22 @@ type TeamSetupTarget struct {
 	Provider   string `json:"-"`
 	Path       string `json:"-"`
 	KeyHash    string `json:"-"`
+	// ResumeLegacy starts the agent from an imported v1 agent, as the Spawn dialog does (the same parameters as `resume_legacy` and
+	// `confirm_v1_idle` on a spawn). The next three are what the server's preflight resolved from it, never request fields.
+	ResumeLegacy  string `json:"resume_legacy,omitempty"`
+	ConfirmV1Idle bool   `json:"confirm_v1_idle,omitempty"`
+	ResumeHandle  string `json:"-"`
+	LaunchPath    string `json:"-"`
+}
+
+// spawnLegacy fills the legacy part of a spawn from the target: the agent keeps its v1 name (the preflight put it in Name) and continues
+// the v1 session when the preflight found one.
+func (t TeamSetupTarget) spawnLegacy(in SpawnInput) SpawnInput {
+	in.LaunchPath = t.LaunchPath
+	if t.ResumeLegacy != "" {
+		in.ResumeLegacyID, in.ResumeHandle = t.ResumeLegacy, t.ResumeHandle
+	}
+	return in
 }
 
 type TeamSetupRoleDefault struct {
@@ -239,7 +255,7 @@ func (tx *Tx) CreateTeamSetup(projectID, actorID string, in TeamSetupInput) (Tea
 				return out, err
 			}
 		}
-		card, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "user", ActorID: actorID, MachineID: spec.target.MachineID, Path: spec.target.Path, Slug: spec.target.Name, RoleKey: spec.role, Tool: spec.target.Tool, Variant: spec.target.Variant, LauncherID: spec.target.LauncherID, Model: spec.target.Model, Provider: spec.target.Provider, KeyHash: spec.target.KeyHash})
+		card, err := tx.SpawnAgent(spec.target.spawnLegacy(SpawnInput{RoomID: roomID, ActorKind: "user", ActorID: actorID, MachineID: spec.target.MachineID, Path: spec.target.Path, Slug: spec.target.Name, RoleKey: spec.role, Tool: spec.target.Tool, Variant: spec.target.Variant, LauncherID: spec.target.LauncherID, Model: spec.target.Model, Provider: spec.target.Provider, KeyHash: spec.target.KeyHash}))
 		if err != nil {
 			return out, err
 		}

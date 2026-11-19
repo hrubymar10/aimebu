@@ -393,6 +393,15 @@ dialog states what will happen; submitting sends `resume_legacy` with the v1
 agent id on `POST /api/rooms/{room}/agents` for the room picked in Start in.
 The server reads the session itself: the client never supplies a session id.
 
+The team flow wizard offers the same start for a core role (leader, dispatcher or advisor) that is new in
+the chosen flow: when an imported agent that held the role most often has not been started yet
+(`GET /api/projects/{project}/legacy-agents?role=`), the role's step offers
+**Continue v1 leader `<name>`** (the default) next to **New leader**. Continuing sends `resume_legacy`
+and `confirm_v1_idle` on the role's target of the team setup or flow change, with the checks of a Spawn
+(the tool v1 ran, the folder v1 worked in, the confirmation for a session v1 saw a moment ago). In the chat,
+a v1 message whose author a live v2 agent continues shows that agent's presence (`agent.resumed_from_legacy_id`);
+a v1 author that was never continued shows a neutral dot.
+
 **Which session is offered.** v1 keeps one session per agent name, so a name that
 another harness or model, or a later instance, used still holds an earlier one.
 The session is chosen, in this order:

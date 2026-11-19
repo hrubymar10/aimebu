@@ -315,7 +315,7 @@ export class Chat {
   // as a reply to that message, to change before sending.
   answerOptions(message) {
     if (!message || message.author_kind === 'system') return {};
-    const agent = message.author_kind === 'user' ? null : this.agents?.get(message.author_id);
+    const agent = message.author_kind === 'user' ? null : this.authorAgent(message);
     const name = agent?.slug || (message.author_kind === 'user' ? message.author_name : '');
     return {
       mention: name ? `@${name}` : '',
@@ -500,14 +500,21 @@ export class Chat {
     this.agents = new Map(agents.map(agent => [agent.id, agent]));
     // One signature per agent record, so a row whose sender did not change between polls is not drawn again.
     this.agentSigs = new Map(agents.map(agent => [agent.id, JSON.stringify(agent)]));
+    // A v1 author that a v2 agent continues: the agent's record answers for the author's old messages too.
+    this.legacyAgents = new Map(agents.filter(agent => agent.resumed_from_legacy_id).map(agent => [agent.resumed_from_legacy_id, agent]));
     this.refreshMentions();
     this.listUpdate(); this.threadUpdate();
     if (this.reply) this.chipText.textContent = `Replying to ${this.authorName(this.reply)}: ${messageSnippet(this.reply)}`;
   }
+  // The live agent behind a message's author: the agent itself, or the v2 agent that continues the v1 author of an imported message.
+  authorAgent(message) {
+    if (message.author_kind !== 'agent') return undefined;
+    return this.agents.get(message.author_id) || this.legacyAgents?.get(message.author_id);
+  }
   authorName(message) {
     if (message.author_kind === 'system') return 'System';
     if (message.author_kind === 'user') return message.author_name || (message.author_id === currentUser && currentLogin) || (String(message.author_id).startsWith('usr_') ? 'Someone' : message.author_id); // your own messages carry your name like anyone's, not "You" // never the raw account id
-    const agent = this.agents.get(message.author_id);
+    const agent = this.authorAgent(message);
     if (agent?.name || agent?.slug) return agentLabel(agent);
     // An agent that was removed: the server sends the name it had (and its project), and the row says so.
     if (message.author_kind === 'agent' && message.author_name) return `${agentLabel({ slug: message.author_name, project_id: message.author_project_id })} (removed)`;
@@ -524,8 +531,8 @@ export class Chat {
     if (written) this.openSender(written);
   }
   openSender(message) {
-    const kind = senderKind(message, this.agents.get(message.author_id));
-    if (kind === 'live') { if (message.author_kind === 'agent') this.legacyOpener?.(message.author_id); return; }
+    const agent = this.authorAgent(message), kind = senderKind(message, agent);
+    if (kind === 'live') { if (message.author_kind === 'agent') this.legacyOpener?.(agent.id); return; }
     return openSenderProfile({ name: this.authorName(message), authorID: message.author_id, kind, roomID: this.room?.id, messages: this.messages.values(), identity: senderIdentity(message, undefined), onStartAgent: this.legacyStarter, onOpenAgent: this.legacyOpener });
   }
   // The viewer's own messages in this room, oldest first, consecutive duplicates collapsed; in the thread panel, those of the open conversation.
@@ -586,7 +593,7 @@ export class Chat {
   }
   // What a row shows that is not in its record: the author as the page knows it, the answer state, and the keys that make the row draw again.
   rowView(message, main = false) {
-    const agent = this.agents.get(message.author_id), kind = senderKind(message, agent), live = kind === 'live' && message.author_kind === 'agent';
+    const agent = this.authorAgent(message), kind = senderKind(message, agent), live = kind === 'live' && message.author_kind === 'agent';
     const author = { name: this.authorName(message), kind, link: kind !== 'live' || live, title: live ? 'Open profile' : `${kind === 'historical' ? 'Historical sender' : 'Departed agent'}: open profile`,
       identity: senderIdentity(message, agent), roleEmoji: agent?.role_emoji || '', roleTitle: agent?.role || '' };
     const answer = this.answerView(message), bodyKey = `${this.raw}|${this.mentionIndex?.signature ?? ''}`;
@@ -602,7 +609,7 @@ export class Chat {
       view.expired = this.expiry.expired.has(message.id); view.boundary = this.expiry.divider === message.id;
       extra += `|${count}|${view.expired}|${view.boundary}`;
     }
-    view.key = `${this.agentSigs?.get(message.author_id) ?? ''}|${bodyKey}|${answer.key}${extra}`;
+    view.key = `${this.agentSigs?.get(this.authorAgent(message)?.id ?? message.author_id) ?? ''}|${bodyKey}|${answer.key}${extra}`;
     return view;
   }
   answerView(message) {

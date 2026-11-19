@@ -27,7 +27,7 @@ export async function loadChoices(projectID) {
   const options = machines.flatMap((machine, index) => catalogs[index].filter(tool => tool.available && tool.launcher_id).flatMap(tool =>
     (tool.models || []).filter(model => model.id && !model.unavailable).map(model => ({
       ...targetOf(machine, tool, model), machine_name: machine.name, tool_label: tool.label, model_label: model.label || model.id,
-      default_model: !!model.default,
+      default_model: !!model.default, containerized: !!tool.containerized, shares_claude_home: !!tool.shares_claude_home,
     }))));
   return { machines, options, defaults: Array.isArray(defaults) ? defaults : [] };
 }
@@ -130,7 +130,7 @@ export function MigrationSummary({ plan, options, changes, newTargets, flowLabel
   return html`<div class="team-setup-summary">
     <p><strong>Team flow:</strong> ${fromLabel} → ${flowLabel}</p>
     ${roles.map(role => html`<div key=${role.role_key} class="team-wizard-summary-role"><strong>${roleLabel(role.role_key)}</strong>
-      ${role.status === 'new' && newTargets[role.role_key] ? html`<p>${role.agents?.[0] ? `${role.agents[0].slug || role.agents[0].agent_id} · ` : newTargets[role.role_key].name ? `${newTargets[role.role_key].name} · ` : ''}${describeTarget(options, newTargets[role.role_key])} ${role.agents?.[0] ? ACTION.reactivate : ACTION.new}</p>`
+      ${role.status === 'new' && newTargets[role.role_key] ? html`<p>${role.agents?.[0] ? `${role.agents[0].slug || role.agents[0].agent_id} · ` : newTargets[role.role_key].resume_legacy ? `${newTargets[role.role_key].resume_legacy} (continues its v1 session) · ` : newTargets[role.role_key].name ? `${newTargets[role.role_key].name} · ` : ''}${describeTarget(options, newTargets[role.role_key])} ${role.agents?.[0] ? ACTION.reactivate : ACTION.new}</p>`
     : (role.agents || []).length ? html`<ul>${role.agents.map(agent => html`<li key=${agent.agent_id}>${agent.slug || agent.agent_id}: ${ACTION[agentAction(role.status, !!changes[agent.agent_id], agent.state)]}${changes[agent.agent_id] ? ` (${describeTarget(options, changes[agent.agent_id])})` : ''}</li>`)}</ul>` : html`<p>${role.status === 'leaving' ? 'No agent.' : 'None yet.'}</p>`}</div>`)}
     ${preview?.created_rooms?.length > 0 && html`<p><strong>Rooms to create:</strong> ${preview.created_rooms.map(room => room.title || room.key || room).join(', ')}</p>`}
     ${preview?.conflicts?.length > 0 && html`<div class="team-flow-change-group"><strong>Agents needing action</strong><ul>${preview.conflicts.map(item => html`<li key=${`${item.agent_id}:${item.room_id}`}><label class="team-flow-removal"><input type="checkbox" checked=${selectedRemovals.some(selected => selected.agent_id === item.agent_id && selected.room_id === item.room_id)} onChange=${event => onToggleRemoval(item, event.currentTarget.checked)} />Remove ${item.slug || item.agent_id} (${item.role_label || item.role_key || 'agent'}) from ${item.room_title || 'this room'} when applying</label></li>`)}</ul></div>`}

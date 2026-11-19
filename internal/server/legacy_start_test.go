@@ -565,3 +565,136 @@ func TestStartAsV2AgentFromAFolderV1ReachedThroughALink(t *testing.T) {
 		})
 	}
 }
+
+// The team flow wizard offers the v1 agent that held the leader role, and starting the flow with it continues its session like a Spawn does.
+func TestTeamSetupContinuesTheV1LeaderAndTheRoomsAgentCardLinksBack(t *testing.T) {
+	f := newLegacyFixture(t)
+	if _, err := f.exec(`INSERT INTO legacy_agent_role(agent_id,v1_room_id,role_key) VALUES ('sage@old','y','leader'),('sage@old','z','leader')`); err != nil {
+		t.Fatal(err)
+	}
+	list := func(role string) []store.LegacyStartInfo {
+		t.Helper()
+		resp := f.request(http.MethodGet, "/api/projects/"+f.project.ID+"/legacy-agents?role="+role, nil, false)
+		defer resp.Body.Close()
+		var out struct {
+			Agents []store.LegacyStartInfo `json:"agents"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != 200 {
+			t.Fatalf("list %s: %d %v", role, resp.StatusCode, err)
+		}
+		return out.Agents
+	}
+	if got := list("leader"); len(got) != 1 || got[0].LegacyID != "sage@old" || got[0].Slug != "sage" || !got[0].Resumable || got[0].Tool != "claude" {
+		t.Fatalf("leader candidates: %+v", got)
+	}
+	if got := list("reviewer"); len(got) != 0 {
+		t.Fatalf("an agent is offered only for the role it held most: %+v", got)
+	}
+	leader := map[string]any{"machine_id": f.machineID, "tool": "claude", "variant": "native", "model": "haiku", "resume_legacy": "sage@old"}
+	path := "/api/projects/" + f.project.ID + "/team-setup"
+	body := map[string]any{"flow_key": "leader-workers", "flow_rev": 0, "leader": leader}
+	preview := f.request(http.MethodPost, path+"/preview", body, true)
+	preview.Body.Close()
+	if preview.StatusCode != 200 {
+		t.Fatalf("preview %d", preview.StatusCode)
+	}
+	encoded, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, f.http.URL+path, bytes.NewReader(encoded))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.Header.Set("Idempotency-Key", "team-leader-v1")
+	req.AddCookie(f.cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created store.TeamSetupResult
+	err = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if err != nil || resp.StatusCode != 201 || len(created.Agents) != 1 {
+		t.Fatalf("create %d %v %+v", resp.StatusCode, err, created)
+	}
+	live := f.profile(t, created.Agents[0].AgentID)
+	if live.NativeSessionID != legacyHandle || live.StartMode != "native_resume" || live.Cwd != f.cwd || live.ResumedFrom != "sage@old" {
+		t.Fatalf("the leader did not continue the v1 session: %+v", live)
+	}
+	cards, err := f.db.AgentCardsForRoom(t.Context(), created.Agents[0].RoomID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked := false
+	for _, card := range cards {
+		linked = linked || card.ID == created.Agents[0].AgentID && card.Slug == "sage" && card.ResumedFromLegacyID == "sage@old"
+	}
+	if !linked {
+		t.Fatalf("the agent card does not name the v1 agent it continues: %+v", cards)
+	}
+	if got := list("leader"); len(got) != 0 {
+		t.Fatalf("a started v1 agent is offered again: %+v", got)
+	}
+}
+
+func TestTeamSetupRefusesAV1LeaderThatCannotBeContinuedWithAnotherTool(t *testing.T) {
+	f := newLegacyFixture(t)
+	leader := map[string]any{"machine_id": f.machineID, "tool": "codex", "variant": "native", "model": "gpt-5", "resume_legacy": "sage@old"}
+	resp := f.request(http.MethodPost, "/api/projects/"+f.project.ID+"/team-setup/preview", map[string]any{"flow_key": "leader-workers", "flow_rev": 0, "leader": leader}, true)
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode == 200 || (out["error"] != "tool_mismatch" && out["error"] != "invalid_request") {
+		t.Fatalf("a v1 session continued with another tool: %d %+v", resp.StatusCode, out)
+	}
+}
+
+// A team flow change that adds a role takes over the v1 agent that held it the same way, and the migration remembers it through the apply.
+func TestTeamFlowMigrationContinuesTheV1Agent(t *testing.T) {
+	f := newLegacyFixture(t)
+	base := "/api/projects/" + f.project.ID
+	post := func(path, key string, body any) (int, map[string]any) {
+		t.Helper()
+		encoded, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, f.http.URL+path, bytes.NewReader(encoded))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", f.csrf)
+		req.Header.Set("Idempotency-Key", key)
+		req.AddCookie(f.cookie)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	fresh := map[string]any{"machine_id": f.machineID, "tool": "fake", "variant": "test", "model": "test"}
+	if status, out := post(base+"/team-setup", "setup-first", map[string]any{"flow_key": "leader-workers", "flow_rev": 0, "leader": fresh}); status != 201 {
+		t.Fatalf("setup %d %+v", status, out)
+	}
+	dispatcher := map[string]any{"machine_id": f.machineID, "tool": "claude", "variant": "native", "model": "haiku", "resume_legacy": "sage@old"}
+	body := map[string]any{"flow_key": "leader-dispatcher", "flow_rev": 1, "dispatcher": dispatcher}
+	preview := f.request(http.MethodPost, base+"/team-flow/migration/preview", body, true)
+	var planned map[string]any
+	_ = json.NewDecoder(preview.Body).Decode(&planned)
+	preview.Body.Close()
+	if preview.StatusCode != 200 || planned["can_apply"] != true {
+		t.Fatalf("preview %d %+v", preview.StatusCode, planned)
+	}
+	if status, out := post(base+"/team-flow/migrate", "migrate-v1", body); status != 202 && status != 200 {
+		t.Fatalf("migrate %d %+v", status, out)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := f.db.AdvanceTeamFlowMigrations(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		legacy, err := f.db.LegacyStart(t.Context(), f.project.ID, "sage@old")
+		if err == nil && legacy.StartedID != "" && legacy.StartedSlg == "sage" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the v1 agent was not continued by the migration: %+v %v", legacy, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}

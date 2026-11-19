@@ -89,57 +89,71 @@ func claudeFolderName(cwd string) string {
 
 var nonAlphanumeric = regexp.MustCompile(`[^a-zA-Z0-9]`)
 
+// legacyCheckError is a refusal of a start from v1 history: the HTTP status and code it is reported with, and the words.
+type legacyCheckError struct {
+	status    int
+	code, msg string
+}
+
+func (e *legacyCheckError) Error() string { return e.msg }
+
 // legacyStartChecks validates a request to start an agent from imported v1 history, before anything is chosen or created. It writes the
 // error response itself. resuming says the harness session will be continued (the harness can, and v1 kept its id); otherwise the agent
 // starts fresh under the same name.
 func (s *Server) legacyStartChecks(w http.ResponseWriter, r *http.Request, room store.Room, actorKind string, req *spawnRequest) (legacy store.LegacyStart, resuming, ok bool) {
-	if actorKind != "user" {
-		apiError(w, 403, "forbidden", "only a person starts an agent from v1 history")
+	legacy, resuming, err := s.checkLegacyStart(r.Context(), room.ProjectID, actorKind, req)
+	if err != nil {
+		var refusal *legacyCheckError
+		if errors.As(err, &refusal) {
+			apiError(w, refusal.status, refusal.code, refusal.msg)
+		} else {
+			fail(w, err)
+		}
 		return legacy, false, false
+	}
+	return legacy, resuming, true
+}
+
+// checkLegacyStart is the check behind legacyStartChecks, for a start that is not a spawn request (a team flow's leader): a refusal is a
+// *legacyCheckError, anything else is a failure of the server.
+func (s *Server) checkLegacyStart(ctx context.Context, projectID, actorKind string, req *spawnRequest) (legacy store.LegacyStart, resuming bool, err error) {
+	if actorKind != "user" {
+		return legacy, false, &legacyCheckError{403, "forbidden", "only a person starts an agent from v1 history"}
 	}
 	// Scoped to the project: an agent that never wrote in any of its rooms is not found, with nothing said about it.
-	legacy, err := s.resolveLegacyStart(r.Context(), room.ProjectID, req.ResumeLegacy)
+	legacy, err = s.resolveLegacyStart(ctx, projectID, req.ResumeLegacy)
 	if errors.Is(err, sql.ErrNoRows) {
-		apiError(w, 404, "not_found", "no such agent in this project's history")
-		return legacy, false, false
+		return legacy, false, &legacyCheckError{404, "not_found", "no such agent in this project's history"}
 	}
 	if err != nil {
-		fail(w, err)
-		return legacy, false, false
+		return legacy, false, err
 	}
 	if legacy.StartedID != "" {
-		apiError(w, 409, "already_started", "this v1 agent was already started as "+legacy.StartedSlg+"; restart that agent instead")
-		return legacy, false, false
+		return legacy, false, &legacyCheckError{409, "already_started", "this v1 agent was already started as " + legacy.StartedSlg + "; restart that agent instead"}
 	}
 	if !store.ValidAgentSlug(legacy.Slug) {
-		apiError(w, 400, "invalid_name", "the v1 name "+legacy.Slug+" cannot be an agent name in v2")
-		return legacy, false, false
+		return legacy, false, &legacyCheckError{400, "invalid_name", "the v1 name " + legacy.Slug + " cannot be an agent name in v2"}
 	}
 	if legacy.Tool != "" && store.ValidSessionHandle(legacy.SessionID) {
 		resuming = true
 		if req.Tool != legacy.Tool {
-			apiError(w, 400, "tool_mismatch", "to continue this session the tool must be "+legacy.Tool)
-			return legacy, false, false
+			return legacy, false, &legacyCheckError{400, "tool_mismatch", "to continue this session the tool must be " + legacy.Tool}
 		}
 		if req.Worktree {
-			apiError(w, 400, "invalid_request", "a continued session runs where it was made, so it cannot use a worktree")
-			return legacy, false, false
+			return legacy, false, &legacyCheckError{400, "invalid_request", "a continued session runs where it was made, so it cannot use a worktree"}
 		}
 		// A copy leaves the original as it is, so v1 still having it open is no obstacle.
 		if legacy.SeenRecently(time.Now()) && !req.ConfirmV1Idle && req.ResumeMode != resumeFork {
-			apiError(w, 409, "v1_may_be_active", "v1 saw this agent a moment ago and may still be using the session; stop it first, then confirm")
-			return legacy, false, false
+			return legacy, false, &legacyCheckError{409, "v1_may_be_active", "v1 saw this agent a moment ago and may still be using the session; stop it first, then confirm"}
 		}
 	}
 	if req.ResumeMode == resumeFork && !resuming {
-		apiError(w, 400, "invalid_request", "this agent's session cannot be continued, so there is nothing to work on a copy of")
-		return legacy, false, false
+		return legacy, false, &legacyCheckError{400, "invalid_request", "this agent's session cannot be continued, so there is nothing to work on a copy of"}
 	}
 	if req.ResumeMode == resumeFork && legacy.Tool != "claude" {
-		apiError(w, 400, "invalid_request", "working on a copy is available only for Claude Code sessions")
-		return legacy, false, false
+		return legacy, false, &legacyCheckError{400, "invalid_request", "working on a copy is available only for Claude Code sessions"}
 	}
-	return legacy, resuming, true
+	return legacy, resuming, nil
 }
 
 // sessionsMessage says why a Claude Code session cannot be continued through a containerized launcher, and what would make it possible. A
@@ -184,4 +198,41 @@ func launcherKeepsOwnSessions(launcher *store.Launcher, variant string) bool {
 		return launcher.Containerized
 	}
 	return variant == "docker"
+}
+
+// legacyAgents lists the imported v1 agents of a project that held a role and are not started yet (GET /api/projects/{project}/legacy-agents
+// ?role=leader), each as the start info of its profile: what the team flow wizard offers to continue instead of a new agent. For the
+// project's owners and operators, who may start them. Only an agent whose most frequent v1 role is the one asked for is listed.
+func (s *Server) legacyAgents(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("project")
+	if !s.projectOperator(w, r, projectID) {
+		return
+	}
+	role := r.URL.Query().Get("role")
+	if role == "" {
+		apiError(w, 400, "invalid_request", "role required")
+		return
+	}
+	ids, err := s.Store.LegacyAgentsWithRole(r.Context(), projectID, role)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	folder, _ := s.Store.ProjectFolder(r.Context(), projectID)
+	agents := []store.LegacyStartInfo{}
+	for _, id := range ids {
+		legacy, err := s.resolveLegacyStart(r.Context(), projectID, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if legacy.StartedID != "" || legacy.RoleKey != role || !store.ValidAgentSlug(legacy.Slug) {
+			continue
+		}
+		agents = append(agents, legacy.StartInfo(time.Now(), folder))
+	}
+	writeJSON(w, 200, map[string]any{"agents": agents})
 }

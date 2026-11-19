@@ -110,6 +110,31 @@ const legacyStartQuery = `SELECT harness,model,cwd,harness_session_id,last_seen,
 		AND m.author_id IN (l.agent_id,l.started_agent_id) AND r.project_id=? AND r.kind<>'dm'
 		AND (m.author_id=l.agent_id OR r.project_id=(SELECT a.project_id FROM agent a WHERE a.id=l.started_agent_id)))`
 
+// LegacyAgentsWithRole lists the ids of the imported v1 agents of a project that v1 gave the role in some room and that no v2 agent continues
+// yet, in id order. Whether the role is the one the agent held most often is for LegacyStart to say.
+func (s *Store) LegacyAgentsWithRole(ctx context.Context, projectID, roleKey string) ([]string, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT l.agent_id FROM legacy_agent_session l
+		WHERE (l.started_agent_id IS NULL OR l.started_agent_id='') AND l.agent_id IN (SELECT agent_id FROM legacy_agent_role WHERE role_key=?)
+		AND EXISTS (SELECT 1 FROM message m JOIN room r ON r.id=m.room_id WHERE m.author_kind='agent' AND m.author_id=l.agent_id
+			AND r.project_id=? AND r.kind<>'dm') ORDER BY l.agent_id`, roleKey, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // LegacyStart reads one legacy agent for starting in projectID: it must be an agent that wrote in some room of that project (a private chat
 // does not count: whoever is not in it must not learn that the agent wrote there), so that one
 // project's owner cannot start, or learn anything about, an agent that only worked in another project. Which room of the project it is
@@ -345,6 +370,7 @@ func (s *Store) LegacyStarted(ctx context.Context, agentID string) (legacyID str
 
 // LegacyStartInfo is what the web needs to offer "Start as v2 agent" for an imported sender.
 type LegacyStartInfo struct {
+	LegacyID       string `json:"legacy_id,omitempty"`
 	Slug           string `json:"slug"`
 	Tool           string `json:"tool,omitempty"`
 	Model          string `json:"model,omitempty"`
@@ -363,7 +389,7 @@ type LegacyStartInfo struct {
 // StartInfo describes the legacy agent for the start dialog; projectFolder is the project's folder on the machine it would start on,
 // to say whether the old working folder lies outside it.
 func (l LegacyStart) StartInfo(now time.Time, projectFolder string) LegacyStartInfo {
-	info := LegacyStartInfo{Slug: l.Slug, Tool: l.Tool, Model: l.Model, RoleKey: l.RoleKey, CWD: l.CWD, StartedAgentID: l.StartedID, StartedSlug: l.StartedSlg}
+	info := LegacyStartInfo{LegacyID: l.AgentID, Slug: l.Slug, Tool: l.Tool, Model: l.Model, RoleKey: l.RoleKey, CWD: l.CWD, StartedAgentID: l.StartedID, StartedSlug: l.StartedSlg}
 	if l.HistoryRoom.ID != "" {
 		history := l.HistoryRoom
 		info.HistoryRoom = &history
