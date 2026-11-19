@@ -136,8 +136,8 @@ func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
 func TestRoleDefaultsFreshAndUpgradeMatch(t *testing.T) {
 	fresh, _ := testStore(t, Options{})
 	want := roleBodies(t, fresh.db)
-	if len(want) != 8 {
-		t.Fatalf("fresh global role count = %d, want 8", len(want))
+	if len(want) != 9 {
+		t.Fatalf("fresh global role count = %d, want 9", len(want))
 	}
 	for key, body := range want {
 		for _, local := range []string{"AIMEBU_CONFIG_DIR", "flock", "prohibited substring"} {
@@ -149,6 +149,7 @@ func TestRoleDefaultsFreshAndUpgradeMatch(t *testing.T) {
 	for key, needle := range map[string]string{
 		"leader": "frame the problem", "worker": "parent SHA", "reviewer": "ordered by severity",
 		"sec-reviewer": "authorization boundaries", "test-reviewer": "regression coverage", "ux-reviewer": "accessibility",
+		"researcher": "strictly read-only",
 	} {
 		if !strings.Contains(want[key], needle) {
 			t.Errorf("%s missing %q", key, needle)
@@ -199,8 +200,8 @@ func TestRoleDefaultsMigrationPreservesEdits(t *testing.T) {
 			t.Errorf("%s body=%q err=%v", id, got, err)
 		}
 	}
-	if got := len(roleBodies(t, s.db)); got != 8 {
-		t.Errorf("idempotent migration role count = %d, want 8", got)
+	if got := len(roleBodies(t, s.db)); got != 9 {
+		t.Errorf("idempotent migration role count = %d, want 9", got)
 	}
 }
 
@@ -389,5 +390,41 @@ func TestFrozenLeadBodyIsWhatTheEarlierMigrationsWrite(t *testing.T) {
 				t.Errorf("after migration 79: body=%q err=%v", got, err)
 			}
 		})
+	}
+}
+
+// TestResearcherRoleMigrationIsFrozenAndKeepsOwnersRow pins migration 122: the shipped row matches the code default, and a row an owner
+// already holds under the id is left alone.
+func TestResearcherRoleMigrationIsFrozenAndKeepsOwnersRow(t *testing.T) {
+	fresh, _ := testStore(t, Options{})
+	var key, label, emoji, card, body string
+	var lead, spawn, writer int
+	if err := fresh.db.QueryRow(`SELECT key,label,emoji,cardinality,body,cap_is_lead,cap_can_spawn,cap_singleton_writer FROM role WHERE id='role_researcher_default' AND project_id IS NULL`).Scan(&key, &label, &emoji, &card, &body, &lead, &spawn, &writer); err != nil {
+		t.Fatal(err)
+	}
+	if key != "researcher" || label != "Researcher" || emoji != "🔬" || card != "multi" || lead+spawn+writer != 0 {
+		t.Fatalf("researcher row = %q %q %q %q caps %d/%d/%d", key, label, emoji, card, lead, spawn, writer)
+	}
+	if body != researcherRoleBody || !strings.HasSuffix(body, roomMentionGuidance) || !strings.Contains(body, roleSafety) || !strings.Contains(body, roleCommunication) {
+		t.Fatal("researcher body differs from the code default or lacks the shared paragraphs")
+	}
+	for _, needle := range []string{"strictly read-only", "Never commit", "paid external APIs", "credential or configuration homes", "Cite every source", "verified", "infer", "handoff"} {
+		if !strings.Contains(body, needle) {
+			t.Errorf("researcher body missing %q", needle)
+		}
+	}
+	// An owner's row under the id survives the insert: the migration's statement is INSERT OR IGNORE.
+	if _, err := fresh.db.Exec(`UPDATE role SET label='Mine',body='owner text' WHERE id='role_researcher_default'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range migrations {
+		if step.version == 122 {
+			if _, err := fresh.db.Exec(step.sql); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := fresh.db.QueryRow(`SELECT label,body FROM role WHERE id='role_researcher_default'`).Scan(&label, &body); err != nil || label != "Mine" || body != "owner text" {
+		t.Fatalf("owner row = %q %q %v", label, body, err)
 	}
 }

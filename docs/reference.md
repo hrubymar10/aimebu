@@ -610,7 +610,12 @@ Changing a role's capabilities requires an owner. Deleted roles remain on stoppe
 history and can be recreated under the same key; those agents cannot restart
 with the deleted role.
 Fresh projects include leader, dispatcher, worker, reviewer, security reviewer, test
-reviewer, and UX reviewer roles. The built-in instructions cover task-room
+reviewer, UX reviewer, and researcher roles. The researcher is a read-only role a
+lead spawns on demand for questions such as how another project does something,
+comparisons, pre-design analysis, or digging through logs and history: it never
+commits, edits files, or pushes, cites its sources, separates what it verified
+from what it infers, and hands off with a recommendation and its risks. Alpha
+upgrades add it with an insert that leaves an existing `researcher` role alone. The built-in instructions cover task-room
 handoffs, independent plans and reviews, evidence-backed verification, and
 structured human asks. Global instructions refer agents to each project's
 `AGENTS.md` for local test and commit rules. Upgrades refresh only untouched

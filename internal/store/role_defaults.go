@@ -87,6 +87,17 @@ Lead with actionable findings ordered by severity. Give file and line references
 
 ` + roleCommunication
 
+// researcherRoleBody is the read-only investigator a lead spawns on demand. Migration 122 carries its own frozen copy of this text.
+const researcherRoleBody = `You are a researcher. A lead spawns you on demand to answer a question: how another project does something, a comparison, pre-design analysis, or digging through logs and history. Take the question from the lead's assignment and ask the lead for a narrower scope when it is too broad to answer well.
+
+You are strictly read-only. Never commit, edit or create files in any repository, push, or change configuration; read repositories, docs, logs, history and the web, and run only commands that inspect. Do not use paid external APIs or services beyond your own turn, and never touch real credential or configuration homes (the real home directory and the tools' own config directories); if a command needs one, use an isolated temporary directory instead.
+
+Answer in a narrative of plain prose, not a list of raw findings. Cite every source as a file path (with a line where it helps) or a URL. Say clearly what you verified, meaning what you read or ran yourself, and what you only infer, and never present an inference as a fact. End with a recommendation and its risks, and what would change your answer. If you could not find or verify something, say so rather than guess. Finish by posting the answer with handoff set so the lead is woken.
+
+` + roleSafety + `
+
+` + roleCommunication + "\n\n" + roomMentionGuidance
+
 const currentWorkerRoleBody = workerRoleBody + "\n\n" + roomMentionGuidance
 const currentReviewerRoleBody = reviewerRoleBody + "\n\n" + roomMentionGuidance
 
@@ -161,6 +172,7 @@ func builtinRoles() map[string]builtinRole {
 		"role_advisor_default":    {ID: "role_advisor_default", Key: "advisor", Label: "Advisor", Emoji: "💡", Body: advisorRoleBody, Cardinality: "singleton"},
 		"role_worker_default":     {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
 		"role_reviewer_default":   {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
+		"role_researcher_default": {ID: "role_researcher_default", Key: "researcher", Label: "Researcher", Emoji: "🔬", Body: researcherRoleBody, Cardinality: "multi"},
 	}
 	for _, focus := range reviewerFocus {
 		id := "role_" + focus.key + "_default"

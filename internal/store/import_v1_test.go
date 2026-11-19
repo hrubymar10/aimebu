@@ -191,7 +191,7 @@ func TestV1SettingsAndRoleImportPreview(t *testing.T) {
 	for _, statement := range []string{
 		`INSERT INTO settings(id,data) VALUES (1,'{"memory_enabled":true,"theme":"dark"}')`,
 		`INSERT INTO role_custom(key,data) VALUES
-		('researcher','{"description":"Researcher","emoji":"🔬","body":"Research facts","cardinality":"singleton"}'),
+		('analyst','{"description":"Analyst","emoji":"🔬","body":"Research facts","cardinality":"singleton"}'),
 		('deep-reviewer','{"description":"Deep reviewer","emoji":"🔍","body":"Extra checks","extends":"reviewer"}'),
 		('cycle-a','{"body":"A","extends":"cycle-b"}'),
 		('cycle-b','{"body":"B","extends":"cycle-a"}')`,
@@ -267,7 +267,7 @@ func TestV1SettingsAndRoleImportPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	byKey := destinationRoleMap(allRoles)
-	if byKey["researcher"].Cardinality != "singleton" || byKey["deep-reviewer"].Body != "Extra checks" || byKey["sec-reviewer"].Body != "v1 security focus" {
+	if byKey["analyst"].Cardinality != "singleton" || byKey["deep-reviewer"].Body != "Extra checks" || byKey["sec-reviewer"].Body != "v1 security focus" {
 		t.Fatalf("imported roles=%+v", byKey)
 	}
 	// The links came across, and the text an agent would get is the parent's followed by the role's own, as in v1.
