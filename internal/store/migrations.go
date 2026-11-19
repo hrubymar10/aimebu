@@ -1952,6 +1952,41 @@ Your final answer delivers room messages. Put substantive decisions, evidence, b
 
 A mention only reaches members of the message''s room; for a worker use their task room or dm_agent. A final-answer message with a live mention of a project agent outside that room is held unless you set force:true on that message.',
 0,0,0,NULL,'researcher','🔬','multi');
+`}, {123, `
+-- A schedule may run on a cron expression. SQLite cannot alter the kind CHECK, so the table is rebuilt (create, copy, drop, rename); the
+-- migration runs with foreign keys off, or dropping the old table would cascade away the schedule_run rows that point at it.
+CREATE TABLE schedule_new (
+  id TEXT PRIMARY KEY,
+  room_id TEXT NOT NULL REFERENCES room(id),
+  project_id TEXT NOT NULL REFERENCES project(id),
+  creator_kind TEXT NOT NULL CHECK (creator_kind IN ('user','agent')),
+  creator_id TEXT NOT NULL,
+  target_agent_id TEXT REFERENCES agent(id),
+  target_lead INTEGER NOT NULL CHECK (target_lead IN (0,1)),
+  body TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('once','interval','daily','weekly','cron')),
+  timezone TEXT NOT NULL,
+  interval_seconds INTEGER NOT NULL DEFAULT 0,
+  local_time TEXT NOT NULL DEFAULT '',
+  weekday INTEGER NOT NULL DEFAULT -1,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  next_run_at TEXT NOT NULL,
+  last_outcome TEXT NOT NULL DEFAULT '',
+  last_reason TEXT NOT NULL DEFAULT '',
+  last_run_at TEXT,
+  rev INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  cron_expr TEXT NOT NULL DEFAULT '',
+  CHECK ((target_agent_id IS NULL) = target_lead)
+);
+INSERT INTO schedule_new (id,room_id,project_id,creator_kind,creator_id,target_agent_id,target_lead,body,kind,timezone,interval_seconds,local_time,weekday,
+    enabled,next_run_at,last_outcome,last_reason,last_run_at,rev,created_at,updated_at)
+  SELECT id,room_id,project_id,creator_kind,creator_id,target_agent_id,target_lead,body,kind,timezone,interval_seconds,local_time,weekday,
+    enabled,next_run_at,last_outcome,last_reason,last_run_at,rev,created_at,updated_at FROM schedule;
+DROP TABLE schedule;
+ALTER TABLE schedule_new RENAME TO schedule;
+CREATE INDEX schedule_due ON schedule(enabled,next_run_at);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -2038,7 +2073,7 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if limit > 0 && m.version > limit {
 			break
 		}
-		if m.version == 103 || m.version == 117 {
+		if m.version == 103 || m.version == 117 || m.version == 123 {
 			if err := migrateWithForeignKeysOff(ctx, db, m); err != nil {
 				return fmt.Errorf("migration %d: %w", m.version, err)
 			}

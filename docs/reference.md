@@ -30,8 +30,10 @@ Owners and operators can pause, stop, or resume a whole room or project;
 queued messages remain available when the scope resumes.
 Optional daily cost and turn limits warn at 80% and pause dispatch at 100%.
 Task rooms and the project home room can schedule a note for a member agent
-or the room lead, once or on an interval, daily time, or weekly time (private
-chats cannot). Room settings shows each schedule's
+or the room lead, once or on an interval, daily time, weekly time, or a
+[cron expression](api.md) such as `0 8,12,16,20 * * *` (private
+chats cannot). The Cron option of the form describes the expression in plain
+English and lists its next five runs in the schedule's time zone as you type. Room settings shows each schedule's
 time zone, next run in the viewer's local time, and last result. Schedules
 stop when their room closes and stay stopped after it reopens.
 Task rooms can opt into a Git worktree at

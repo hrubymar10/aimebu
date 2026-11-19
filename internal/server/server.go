@@ -325,6 +325,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/rooms/{room}/export", s.Auth.RequireUser(http.HandlerFunc(s.exportRoom)))
 	mux.Handle("GET /api/rooms/{room}/usage", s.Auth.RequireUser(http.HandlerFunc(s.roomUsage)))
 	mux.Handle("GET /api/projects/{project}/usage", s.Auth.RequireUser(http.HandlerFunc(s.projectUsage)))
+	mux.Handle("GET /api/cron/preview", s.Auth.RequireUser(http.HandlerFunc(s.cronPreview)))
 	mux.Handle("GET /api/rooms/{room}/schedules", s.Auth.RequireUser(http.HandlerFunc(s.schedules)))
 	mux.Handle("POST /api/rooms/{room}/schedules", s.Auth.RequireUser(http.HandlerFunc(s.schedules)))
 	mux.Handle("PATCH /api/rooms/{room}/schedules/{id}", s.Auth.RequireUser(http.HandlerFunc(s.schedule)))

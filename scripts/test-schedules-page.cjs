@@ -152,6 +152,75 @@ async function main() {
     await page.close();
   }
 
+  // Cron: the old kinds' fields become the expression when the person switches to Cron; typing asks the server for its meaning and next runs (the
+  // last answer wins, an error is said inline); creating sends kind cron and the expression.
+  {
+    const page = await mount();
+    await load(page, roomOf('r1'));
+    const previewPath = (expr, zone) => `/api/cron/preview?expr=${encodeURIComponent(expr)}&timezone=${encodeURIComponent(zone)}`;
+    const cronView = () => page.evaluate(() => {
+      const root = document.querySelector('#room-schedules');
+      return { input: root.querySelector('.schedule-cron').hidden ? null : root.querySelector('[name=cron]').value, preview: root.querySelector('.schedule-cron-preview').hidden ? null : {
+        description: root.querySelector('.schedule-cron-description')?.textContent || '', error: root.querySelector('.schedule-cron-error')?.textContent || '', next: [...root.querySelectorAll('.schedule-cron-next li')].map(li => li.textContent) },
+        presets: [...root.querySelectorAll('#schedule-cron-presets option')].length, textButtons: [...root.querySelectorAll('.schedule-form button')].filter(b => b.textContent.trim()).length };
+    });
+    assert.deepEqual((await cronView()).input, null, 'the cron input is hidden until Cron is chosen');
+    await page.$eval('#room-schedules [name=timezone]', el => { el.value = 'Europe/Prague'; });
+    // Daily 08:00 -> "0 8 * * *".
+    await page.select('#room-schedules [name=kind]', 'daily'); await settle(page);
+    await page.$eval('#room-schedules [name=local_time]', el => { el.value = '08:00'; });
+    await page.select('#room-schedules [name=kind]', 'cron'); await settle(page);
+    let cv = await cronView();
+    assert.equal(cv.input, '0 8 * * *', 'daily 08:00 becomes its expression');
+    assert.equal(cv.textButtons, 0, 'no text buttons in the form');
+    assert.ok(cv.presets >= 3, 'the input suggests presets');
+    const first = await waitRequest(page, 'GET', previewPath('0 8 * * *', 'Europe/Prague'));
+    await answer(page, first, 200, { cron: '0 8 * * *', description: 'at 08:00, every day', next: ['2026-11-20T07:00:00Z', '2026-11-21T07:00:00Z', '2026-11-22T07:00:00Z', '2026-11-23T07:00:00Z', '2026-11-24T07:00:00Z'] }); await settle(page);
+    cv = await cronView();
+    assert.equal(cv.preview.description, 'Runs at 08:00, every day');
+    assert.equal(cv.preview.next.length, 5);
+    assert.match(cv.preview.next[0], /Fri.*20 Nov 2026.*08:00/, 'run times are shown in the schedule\'s zone');
+    // Typing: only the latest answer is kept, even when an older one comes last.
+    await page.$eval('#room-schedules [name=cron]', el => { el.value = ''; });
+    await page.type('#room-schedules [name=cron]', '0 8,12,16,20 * * *');
+    const slow = await waitRequest(page, 'GET', previewPath('0 8,12,16,20 * * *', 'Europe/Prague'));
+    await page.$eval('#room-schedules [name=cron]', el => { el.value = ''; });
+    await page.type('#room-schedules [name=cron]', '60 * * * *');
+    const bad = await waitRequest(page, 'GET', previewPath('60 * * * *', 'Europe/Prague'));
+    await answer(page, bad, 200, { error: 'cron minute: 60 is out of range 0-59' });
+    await answer(page, slow, 200, { cron: '0 8,12,16,20 * * *', description: 'at 08:00, 12:00, 16:00 and 20:00, every day', next: ['2026-11-20T07:00:00Z'] }); await settle(page);
+    cv = await cronView();
+    assert.deepEqual([cv.preview.error, cv.preview.description, cv.preview.next.length], ['cron minute: 60 is out of range 0-59', '', 0], 'a stale answer does not replace the newer one');
+    // A changed zone asks again for the same expression.
+    await page.$eval('#room-schedules [name=cron]', el => { el.value = '0 9 * * 1-5'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+    await answer(page, await waitRequest(page, 'GET', previewPath('0 9 * * 1-5', 'Europe/Prague')), 200, { cron: '0 9 * * 1-5', description: 'at 09:00, on Monday to Friday', next: ['2026-11-20T08:00:00Z'] }); await settle(page);
+    await page.$eval('#room-schedules [name=timezone]', el => { el.value = 'America/New_York'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+    await answer(page, await waitRequest(page, 'GET', previewPath('0 9 * * 1-5', 'America/New_York')), 200, { cron: '0 9 * * 1-5', description: 'at 09:00, on Monday to Friday', next: ['2026-11-20T14:00:00Z'] }); await settle(page);
+    assert.match((await cronView()).preview.next[0], /09:00.*(EST|GMT-5)/, 'the next run is shown in the new zone');
+    // Create.
+    await page.type('#room-schedules [name=body]', 'standup');
+    await page.click('#room-schedules button[type=submit]');
+    const post = await waitRequest(page, 'POST', '/api/rooms/r1/schedules');
+    const sent = await page.evaluate(index => window.__requests[index].body, post);
+    assert.deepEqual([sent.kind, sent.cron, sent.timezone, sent.local_time, sent.interval_seconds], ['cron', '0 9 * * 1-5', 'America/New_York', undefined, undefined]);
+    await answer(page, post, 201, item('s9', { kind: 'cron', cron: '0 9 * * 1-5', body: 'standup' })); await settle(page);
+    assert.match(await page.$eval('#room-schedules .schedule-row span', el => el.textContent), /standup → room lead · cron 0 9 \* \* 1-5 · Europe\/Prague/);
+    // A refused expression (400) is said by the form.
+    await page.type('#room-schedules [name=body]', 'again');
+    await page.click('#room-schedules button[type=submit]');
+    await answer(page, await waitRequest(page, 'POST', '/api/rooms/r1/schedules'), 400, { error: 'invalid_schedule', message: 'cron minute: 60 is out of range 0-59' }); await settle(page);
+    assert.equal((await view(page)).error, 'cron minute: 60 is out of range 0-59');
+    // Other kinds convert too: weekly Wednesday 17:30 and an interval of 30 minutes; one with no equivalent leaves the input empty.
+    const presetOf = async (kind, values) => page.evaluate(async (kind, values) => (await import('/js/pages/room-panel/schedules.js')).cronPreset(kind, values), kind, values);
+    assert.equal(await presetOf('weekly', { local_time: '17:30', weekday: '3' }), '30 17 * * 3');
+    assert.equal(await presetOf('interval', { minutes: '30' }), '*/30 * * * *');
+    assert.equal(await presetOf('interval', { minutes: '60' }), '0 * * * *');
+    assert.equal(await presetOf('interval', { minutes: '120' }), '0 */2 * * *');
+    assert.equal(await presetOf('interval', { minutes: '7' }), '');
+    assert.equal(await presetOf('once', {}), '');
+    await page.close();
+  }
+
   // A closed room cannot get a new schedule or resume a paused one; a read that fails says why; an answer for a room that was left is dropped.
   {
     const page = await mount();

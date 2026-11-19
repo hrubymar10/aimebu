@@ -274,8 +274,8 @@ Projects, rooms, people
   task-note turn context. Rooms cannot enable memory above a disabled project.
   The override controls content flow and does not erase saved records.
 - **schedule**(id, task or home room (never dm/lobby), project, creator
-  kind/id, target agent or lead, body, kind[once|interval|daily|weekly], IANA time zone, interval/local time/
-  weekday, enabled, next UTC run, last outcome/reason/time, rev, timestamps).
+  kind/id, target agent or lead, body, kind[once|interval|daily|weekly|cron], IANA time zone, interval/local time/
+  weekday, cron expression (`cron_expr`, kind cron only), enabled, next UTC run, last outcome/reason/time, rev, timestamps).
   At most 20 enabled schedules per room; note length ≤2000 characters and
   ≤8000 bytes; interval ≥5 minutes. **schedule_run**(schedule_id, due_at,
   processed_at, delivered|skipped, reason, message_id?) is unique by schedule
@@ -967,9 +967,11 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
   target, or closed room skips the due run. Skips are stored individually;
   repeated skips with the same reason post one room notice until the result
   changes. Each delivered run posts a room message naming creator, due time,
-  and processing time. For local daily/weekly times, a spring DST gap shifts
+  and processing time. For local daily/weekly/cron times, a spring DST gap shifts
   to the next valid instant, and a fall overlap runs once at its first
-  occurrence.
+  occurrence. A cron schedule (`internal/cron`, Vixie semantics, five fields
+  or an `@` macro) computes `next_run_at` from `cron_expr` in the schedule's
+  zone and, like daily/weekly, fires once after downtime.
 
 ### 3.5b project — live → archived → deleted
 - Archive (owner or admin, who need not be a member): `archived_at` is set, the

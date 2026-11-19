@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,5 +216,109 @@ func TestHomeRoomSchedulesAndPrivateChatRefusal(t *testing.T) {
 		return err
 	}); err == nil {
 		t.Fatal("store accepted a schedule in a private chat")
+	}
+}
+
+func TestCronScheduleHTTPAndToolValidation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	path := "/api/rooms/" + f.room.ID + "/schedules"
+	resp := f.request(http.MethodPost, path, map[string]any{"target_lead": true, "body": "standup", "kind": "cron", "timezone": "Europe/Prague", "cron": "0 8,12,16,20 * * *"}, true)
+	var created store.Schedule
+	if resp.StatusCode != 201 || json.NewDecoder(resp.Body).Decode(&created) != nil {
+		t.Fatalf("create cron status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	next, err := time.Parse(time.RFC3339, created.NextRunAt)
+	prague, _ := time.LoadLocation("Europe/Prague")
+	if err != nil || !next.After(time.Now()) || next.In(prague).Minute() != 0 || next.In(prague).Hour()%4 != 0 || next.Sub(time.Now()) > 12*time.Hour+time.Minute || created.Kind != "cron" || created.CronExpr != "0 8,12,16,20 * * *" {
+		t.Fatalf("created=%+v next=%v err=%v", created, next, err)
+	}
+	resp = f.request(http.MethodGet, path, nil, false)
+	var listed struct {
+		Schedules []store.Schedule `json:"schedules"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&listed)
+	resp.Body.Close()
+	if len(listed.Schedules) != 1 || listed.Schedules[0].CronExpr != created.CronExpr {
+		t.Fatalf("listed=%+v", listed.Schedules)
+	}
+	for expr, field := range map[string]string{"": "expression", "60 * * * *": "minute", "0 25 * * *": "hour", "0 0 * 13 *": "month", "0 0 * * funday": "day-of-week", "* * * *": "5 fields"} {
+		resp = f.request(http.MethodPost, path, map[string]any{"target_lead": true, "body": "bad", "kind": "cron", "timezone": "UTC", "cron": expr}, true)
+		var body struct{ Error, Message string }
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		if resp.StatusCode != 400 || body.Error != "invalid_schedule" || !strings.Contains(body.Message, field) {
+			t.Errorf("cron %q: status=%d body=%+v, want 400 naming %q", expr, resp.StatusCode, body, field)
+		}
+	}
+	// The other kinds keep their short message.
+	resp = f.request(http.MethodPost, path, map[string]any{"target_lead": true, "body": "bad", "kind": "interval", "timezone": "UTC", "interval_seconds": 60}, true)
+	var body struct{ Error, Message string }
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	resp.Body.Close()
+	if resp.StatusCode != 400 || body.Message != "invalid schedule, target, time, or room" {
+		t.Fatalf("interval refusal = %d %+v", resp.StatusCode, body)
+	}
+	// The lead tool accepts it, idempotently.
+	_, key := f.createToolAgent(t, "role_leader_default")
+	toolPath := "/api/agent/rooms/" + f.room.ID + "/schedules"
+	toolBody := map[string]any{"target_lead": true, "body": "check", "kind": "cron", "timezone": "UTC", "cron": "@daily"}
+	first := f.toolPost(t, toolPath, key, "cron-key", toolBody)
+	var item store.Schedule
+	_ = json.NewDecoder(first.Body).Decode(&item)
+	first.Body.Close()
+	if first.StatusCode != 201 || item.CronExpr != "@daily" || item.Kind != "cron" {
+		t.Fatalf("tool create status=%d item=%+v", first.StatusCode, item)
+	}
+	replay := f.toolPost(t, toolPath, key, "cron-key", toolBody)
+	replay.Body.Close()
+	if replay.StatusCode != 200 {
+		t.Fatalf("tool replay status=%d", replay.StatusCode)
+	}
+	refused := f.toolPost(t, toolPath, key, "cron-bad", map[string]any{"target_lead": true, "body": "check", "kind": "cron", "timezone": "UTC", "cron": "99 * * * *"})
+	_ = json.NewDecoder(refused.Body).Decode(&body)
+	refused.Body.Close()
+	if refused.StatusCode != 400 || !strings.Contains(body.Message, "minute") {
+		t.Fatalf("tool refusal = %d %+v", refused.StatusCode, body)
+	}
+}
+
+func TestCronPreviewDescribesAndListsNextRuns(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	get := func(query string) (int, map[string]any) {
+		resp := f.request(http.MethodGet, "/api/cron/preview?"+query, nil, false)
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	status, out := get(url.Values{"expr": {"0 8,12,16,20 * * *"}, "timezone": {"Europe/Prague"}}.Encode())
+	next, _ := out["next"].([]any)
+	if status != 200 || out["description"] != "at 08:00, 12:00, 16:00 and 20:00, every day" || len(next) != 5 || out["cron"] != "0 8,12,16,20 * * *" {
+		t.Fatalf("preview = %d %+v", status, out)
+	}
+	prague, _ := time.LoadLocation("Europe/Prague")
+	last := time.Now()
+	for _, value := range next {
+		at, err := time.Parse(time.RFC3339, value.(string))
+		if err != nil || !at.After(last) || at.In(prague).Minute() != 0 {
+			t.Fatalf("next runs = %v", next)
+		}
+		last = at
+	}
+	for query, want := range map[string]string{
+		url.Values{"expr": {"61 * * * *"}, "timezone": {"UTC"}}.Encode():         "cron minute",
+		url.Values{"expr": {"0 0 30 feb *"}, "timezone": {"UTC"}}.Encode():       "never",
+		url.Values{"expr": {"* * * * *"}, "timezone": {"Nowhere/Zone"}}.Encode(): "time zone",
+		url.Values{"expr": {"* * * * *"}}.Encode():                               "time zone",
+	} {
+		status, out := get(query)
+		if message, _ := out["error"].(string); status != 200 || !strings.Contains(message, want) {
+			t.Errorf("%s: %d %+v, want error containing %q", query, status, out, want)
+		}
 	}
 }

@@ -92,7 +92,7 @@ contract](docs/contract.md), [the supervisor](docs/supervisor.md).
 | **Inbox** | Everything waiting for a person: questions, approvals, recovery decisions, usage alerts, held deliveries. |
 | **Handbook** | The lead's durable notes for a project (current state, backlog, conventions, gotchas, timeline), handed to each new lead session. |
 | **Memory** | Optional project facts, user profiles and shared notes that agents can save and recall; off until you enable it per project. |
-| **Schedules** | A note delivered to an agent or the lead in a room once, on an interval, daily or weekly. |
+| **Schedules** | A note delivered to an agent or the lead in a room once, on an interval, daily, weekly or on a cron expression. |
 
 Roles, flows and limits are covered in the
 [feature reference](docs/reference.md#team-flows-and-project-setup).

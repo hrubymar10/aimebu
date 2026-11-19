@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/cron"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
@@ -20,6 +21,7 @@ type scheduleRequest struct {
 	IntervalSeconds int64  `json:"interval_seconds"`
 	LocalTime       string `json:"local_time"`
 	Weekday         int    `json:"weekday"`
+	Cron            string `json:"cron"`
 	At              string `json:"at"`
 }
 
@@ -54,7 +56,7 @@ func (s *Server) schedules(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	item := store.Schedule{RoomID: room.ID, ProjectID: room.ProjectID, CreatorKind: "user", CreatorID: userID(r), TargetAgentID: req.TargetAgentID, TargetLead: req.TargetLead, Body: req.Body, Kind: req.Kind, Timezone: req.Timezone, IntervalSeconds: req.IntervalSeconds, LocalTime: req.LocalTime, Weekday: req.Weekday, NextRunAt: req.At}
+	item := store.Schedule{RoomID: room.ID, ProjectID: room.ProjectID, CreatorKind: "user", CreatorID: userID(r), TargetAgentID: req.TargetAgentID, TargetLead: req.TargetLead, Body: req.Body, Kind: req.Kind, Timezone: req.Timezone, IntervalSeconds: req.IntervalSeconds, LocalTime: req.LocalTime, Weekday: req.Weekday, CronExpr: req.Cron, NextRunAt: req.At}
 	item, err = s.StoreCreateSchedule(r, item)
 	if err != nil {
 		scheduleError(w, err)
@@ -117,7 +119,11 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 func scheduleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrScheduleInvalid):
-		apiError(w, 400, "invalid_schedule", "invalid schedule, target, time, or room")
+		message := "invalid schedule, target, time, or room"
+		if detail := err.Error(); detail != store.ErrScheduleInvalid.Error() {
+			message = detail // names the cron field that is wrong
+		}
+		apiError(w, 400, "invalid_schedule", message)
 	case errors.Is(err, store.ErrScheduleLimit):
 		apiError(w, 409, "schedule_limit", "room has 20 active schedules")
 	case errors.Is(err, store.ErrStaleRev):
@@ -170,7 +176,7 @@ func (s *Server) agentToolSchedules(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	item := store.Schedule{RoomID: roomID, ProjectID: room.ProjectID, CreatorKind: "agent", CreatorID: caller.ID, TargetAgentID: req.TargetAgentID, TargetLead: req.TargetLead, Body: req.Body, Kind: req.Kind, Timezone: req.Timezone, IntervalSeconds: req.IntervalSeconds, LocalTime: req.LocalTime, Weekday: req.Weekday, NextRunAt: req.At}
+	item := store.Schedule{RoomID: roomID, ProjectID: room.ProjectID, CreatorKind: "agent", CreatorID: caller.ID, TargetAgentID: req.TargetAgentID, TargetLead: req.TargetLead, Body: req.Body, Kind: req.Kind, Timezone: req.Timezone, IntervalSeconds: req.IntervalSeconds, LocalTime: req.LocalTime, Weekday: req.Weekday, CronExpr: req.Cron, NextRunAt: req.At}
 	raw, _ := json.Marshal(item)
 	digest := sha256.Sum256(raw)
 	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: "agent", ActorID: caller.ID, Kind: "schedule_create", Key: key, Digest: hex.EncodeToString(digest[:])}, func(tx *store.Tx) (string, error) {
@@ -192,4 +198,29 @@ func (s *Server) agentToolSchedules(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(result))
+}
+
+// cronPreview describes a cron expression and lists its next runs in a zone, for the schedule form as the person types. It reads no room
+// and writes nothing; a bad expression or zone is a 200 with `error` set, so the form can show it inline.
+func (s *Server) cronPreview(w http.ResponseWriter, r *http.Request) {
+	expr, zone := r.URL.Query().Get("expr"), r.URL.Query().Get("timezone")
+	loc, err := time.LoadLocation(zone)
+	if err != nil || zone == "" || zone == "Local" {
+		writeJSON(w, 200, map[string]any{"error": "unknown time zone"})
+		return
+	}
+	spec, err := cron.Parse(expr)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"error": err.Error()})
+		return
+	}
+	next := []string{}
+	for _, at := range spec.Upcoming(time.Now(), loc, 5) {
+		next = append(next, at.UTC().Format(time.RFC3339))
+	}
+	if len(next) == 0 {
+		writeJSON(w, 200, map[string]any{"error": "this expression never runs"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"cron": spec.String(), "description": spec.Describe(), "next": next})
 }

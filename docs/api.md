@@ -206,7 +206,8 @@ and reconnects the event stream from its last seen `seq`.
 | GET/POST | `/api/rooms/{room}/control` | POST: `{action:"pause"|"stop"|"resume",rev}` and `Idempotency-Key` | room bulk control state and per-agent results |
 | GET/POST | `/api/projects/{project}/control` | POST: `{action:"pause"|"stop"|"resume",rev}` and `Idempotency-Key` | project bulk control state and per-agent results |
 | GET/PUT | `/api/usage-limit-default` | PUT (owner): `{daily_cost_cap?,daily_turn_cap?}`, null or absent = no limit | the global default daily limits every project inherits (any signed-in user may read it; `can_edit` says whether the caller may change it); changing it re-checks the projects that inherit it: for each field (cost, turns) whose default actually changed, today's Continue raise on a project that inherits that field is cleared (a field the project sets itself, or one whose default is unchanged, keeps its raise), so a raised default lifts the pause the old one caused; saving the values it already has does nothing |
-| GET/POST | `/api/rooms/{room}/schedules` | POST: `{target_agent_id? ,target_lead?,body,kind,timezone,at?,interval_seconds?,local_time?,weekday?}` | task-room or home-room schedules / created schedule; 409 `invalid_scope` for a private chat or the lobby, 400 `invalid_schedule` for a bad target, time or note, 409 `schedule_limit` beyond 20 active |
+| GET/POST | `/api/rooms/{room}/schedules` | POST: `{target_agent_id? ,target_lead?,body,kind,timezone,at?,interval_seconds?,local_time?,weekday?,cron?}` | task-room or home-room schedules / created schedule; 409 `invalid_scope` for a private chat or the lobby, 400 `invalid_schedule` for a bad target, time or note, 409 `schedule_limit` beyond 20 active |
+| GET | `/api/cron/preview?expr=&timezone=` | — | signed-in user; describes a cron expression for the schedule form: `{cron,description,next:[5 RFC3339 UTC instants]}`, or `{error}` (still 200) for a bad expression or zone |
 | PATCH/DELETE | `/api/rooms/{room}/schedules/{id}` | PATCH: `{enabled,rev}` | pause/resume or delete a schedule |
 | DELETE | `/api/agents/{agent}/worktree` | `{force?,confirm?}` | removes an existing agent-specific worktree (project operator): `{state:"removed"}`, or `{state:"preserved",reason}` when it holds uncommitted or unmerged work, which only `force` with `confirm: "REMOVE <name>"` removes anyway (400 `confirmation_required` otherwise); 409 `worktree_in_use` while its agent runs (a start of the agent waits for a removal under way, and a removal that finds the agent started refuses); worktree preparation errors use 409 `worktree_failed`, an unavailable supervisor uses 503 `machine_unavailable`, and an internal store failure uses 500 `internal_error`; the branch is kept, and the agent goes back to its room's checkout (its ready worktree, else the project folder) |
 | GET/PUT | `/api/projects/{project}/usage-limit` | PUT: `{cost_mode?,daily_cost_cap?,turn_mode?,daily_turn_cap?,rev}`; a mode is `inherit`, `custom` (needs its value) or `none`; without modes a value means custom and null means none | the project's daily limits (all its rooms together), the caps in force, `inherited_cost_cap`/`inherited_turn_cap` (the global default), measured totals, and effective state |
@@ -457,13 +458,23 @@ lead. The note is limited to 2000 characters and 8000 bytes;
 intervals are at least 300 seconds. `kind=once` uses `at` as an RFC3339
 instant; `interval` uses `interval_seconds`; `daily` and `weekly` use
 `local_time` (`HH:MM`) in the named IANA `timezone`, with weekly `weekday`
-0=Sunday through 6=Saturday. Responses include UTC `next_run_at`, creator,
+0=Sunday through 6=Saturday. `kind=cron` uses `cron`, a five-field expression
+`minute hour day-of-month month day-of-week` (or `@hourly`, `@daily`, `@weekly`,
+`@monthly`, `@yearly`) with `*`, lists (`1,15`), ranges (`mon-fri`), steps
+(`*/15`, `0-30/10`) and `jan`/`mon` names, for example `0 8,12,16,20 * * *`;
+sunday is 0 or 7, and when both day-of-month and day-of-week are restricted
+either one matches (Vixie cron). It runs in the named `timezone`; a bad field is
+a 400 `invalid_schedule` naming it (for example `cron minute: 60 is out of range 0-59`),
+and the response carries `cron`. Responses include UTC `next_run_at`, creator,
 target, last outcome/reason, and revision. Pausing or resuming uses a matching
 revision. Closing a room disables schedules, and reopening does not resume
 them. A delayed server catches up one occurrence per schedule. While a gate
 or target prevents delivery, runs are skipped, recorded, and surfaced by a
 room notice on each changed skip reason. A spring DST gap advances to the
-next valid local minute; a fall overlap runs at its first occurrence only.
+next valid local minute; a fall overlap runs at its first occurrence only. The same holds for cron:
+a local time the gap skips runs at the first valid minute after it (two skipped
+slots run once), and a repeated local time runs once; a delayed server fires a
+cron schedule once, not once per missed slot.
 
 Daily limits belong to a project and count the spend of all its rooms together;
 there are no room limits. A project's cost and turn limits are each inherited

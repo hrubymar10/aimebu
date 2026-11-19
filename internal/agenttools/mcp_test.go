@@ -267,3 +267,29 @@ func TestCreateScheduleForwardsIdempotentLeadRequest(t *testing.T) {
 		t.Fatalf("calls=%d result=%s", calls, result)
 	}
 }
+
+// create_schedule forwards a cron schedule's expression untouched, and its schema and text tell the lead about the kind.
+func TestCreateScheduleForwardsCron(t *testing.T) {
+	var body map[string]any
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		_, _ = w.Write([]byte(`{"id":"sch_cron"}`))
+	}))
+	defer httpServer.Close()
+	raw := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_schedule","arguments":{"room_id":"room_test","target_lead":true,"body":"standup","kind":"cron","cron":"0 8,12,16,20 * * *","timezone":"Europe/Prague","request_key":"k"}}}`)
+	result, _ := (Server{URL: httpServer.URL, Key: "aak_test"}).Process(t.Context(), raw)
+	if body["kind"] != "cron" || body["cron"] != "0 8,12,16,20 * * *" || body["timezone"] != "Europe/Prague" || !bytes.Contains(result, []byte(`sch_cron`)) {
+		t.Fatalf("body=%v result=%s", body, result)
+	}
+	for _, entry := range catalog {
+		if entry.Name != "create_schedule" {
+			continue
+		}
+		properties := entry.InputSchema["properties"].(map[string]any)
+		if _, ok := properties["cron"]; !ok || !strings.Contains(entry.Description, "cron") || !strings.Contains(entry.Description, "0 8,12,16,20 * * *") {
+			t.Fatalf("create_schedule does not describe cron: %v / %s", properties, entry.Description)
+		}
+	}
+}

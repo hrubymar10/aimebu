@@ -8,10 +8,17 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hrubymar10/aimebu/internal/cron"
 )
 
 var ErrScheduleInvalid = errors.New("invalid schedule")
 var ErrScheduleLimit = errors.New("schedule limit")
+
+// scheduleInvalidf is ErrScheduleInvalid with a reason the caller can show; errors.Is still matches the sentinel.
+func scheduleInvalidf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrScheduleInvalid, fmt.Sprintf(format, args...))
+}
 
 // SchedulableRoomKind reports whether a room of this kind may hold schedules:
 // task rooms and the project home room, which is an ordinary open room with
@@ -32,6 +39,7 @@ type Schedule struct {
 	IntervalSeconds int64  `json:"interval_seconds,omitempty"`
 	LocalTime       string `json:"local_time,omitempty"`
 	Weekday         int    `json:"weekday,omitempty"`
+	CronExpr        string `json:"cron,omitempty"`
 	Enabled         bool   `json:"enabled"`
 	NextRunAt       string `json:"next_run_at"`
 	LastOutcome     string `json:"last_outcome,omitempty"`
@@ -70,6 +78,16 @@ func NextScheduleTime(s Schedule, after time.Time) (time.Time, error) {
 			return base, nil
 		}
 		return base.Add((after.Sub(base)/step + 1) * step), nil
+	case "cron":
+		spec, err := cron.Parse(s.CronExpr)
+		if err != nil {
+			return time.Time{}, scheduleInvalidf("%v", err)
+		}
+		next, ok := spec.Next(after, loc)
+		if !ok {
+			return time.Time{}, scheduleInvalidf("cron %q never runs", s.CronExpr)
+		}
+		return next, nil
 	case "daily", "weekly":
 		parts := strings.Split(s.LocalTime, ":")
 		if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 2 {
@@ -113,6 +131,9 @@ func validateSchedule(s Schedule, now time.Time) (Schedule, error) {
 	if _, err := time.LoadLocation(s.Timezone); err != nil || s.Timezone == "Local" {
 		return s, ErrScheduleInvalid
 	}
+	if s.Kind != "cron" {
+		s.CronExpr = ""
+	}
 	switch s.Kind {
 	case "once":
 		at, err := time.Parse(time.RFC3339, s.NextRunAt)
@@ -125,6 +146,14 @@ func validateSchedule(s Schedule, now time.Time) (Schedule, error) {
 			return s, ErrScheduleInvalid
 		}
 		s.NextRunAt = now.Add(time.Duration(s.IntervalSeconds) * time.Second).UTC().Format(timestampLayout)
+	case "cron":
+		s.CronExpr = strings.TrimSpace(s.CronExpr)
+		s.NextRunAt = now.UTC().Format(timestampLayout)
+		at, err := NextScheduleTime(s, now)
+		if err != nil {
+			return s, err
+		}
+		s.NextRunAt = at.Format(timestampLayout)
 	case "daily", "weekly":
 		// Seed NextRunAt for the recurrence helper; its value is used only by interval.
 		s.NextRunAt = now.UTC().Format(timestampLayout)
@@ -142,13 +171,13 @@ func validateSchedule(s Schedule, now time.Time) (Schedule, error) {
 func scanSchedule(row interface{ Scan(...any) error }) (Schedule, error) {
 	var s Schedule
 	var target, lastRun sql.NullString
-	err := row.Scan(&s.ID, &s.RoomID, &s.ProjectID, &s.CreatorKind, &s.CreatorID, &target, &s.TargetLead, &s.Body, &s.Kind, &s.Timezone, &s.IntervalSeconds, &s.LocalTime, &s.Weekday, &s.Enabled, &s.NextRunAt, &s.LastOutcome, &s.LastReason, &lastRun, &s.Rev, &s.CreatedAt, &s.UpdatedAt)
+	err := row.Scan(&s.ID, &s.RoomID, &s.ProjectID, &s.CreatorKind, &s.CreatorID, &target, &s.TargetLead, &s.Body, &s.Kind, &s.Timezone, &s.IntervalSeconds, &s.LocalTime, &s.Weekday, &s.Enabled, &s.NextRunAt, &s.LastOutcome, &s.LastReason, &lastRun, &s.Rev, &s.CreatedAt, &s.UpdatedAt, &s.CronExpr)
 	s.TargetAgentID = target.String
 	s.LastRunAt = lastRun.String
 	return s, err
 }
 
-const scheduleColumns = `id,room_id,project_id,creator_kind,creator_id,target_agent_id,target_lead,body,kind,timezone,interval_seconds,local_time,weekday,enabled,next_run_at,last_outcome,last_reason,last_run_at,rev,created_at,updated_at`
+const scheduleColumns = `id,room_id,project_id,creator_kind,creator_id,target_agent_id,target_lead,body,kind,timezone,interval_seconds,local_time,weekday,enabled,next_run_at,last_outcome,last_reason,last_run_at,rev,created_at,updated_at,cron_expr`
 
 func (s *Store) ListSchedules(ctx context.Context, roomID string) ([]Schedule, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
@@ -219,7 +248,7 @@ func (tx *Tx) CreateSchedule(item Schedule, now time.Time) (Schedule, error) {
 	item.Enabled = true
 	item.CreatedAt = now.UTC().Format(timestampLayout)
 	item.UpdatedAt = item.CreatedAt
-	_, err = tx.Exec(`INSERT INTO schedule (`+scheduleColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, item.ID, item.RoomID, item.ProjectID, item.CreatorKind, item.CreatorID, nullable(item.TargetAgentID), item.TargetLead, item.Body, item.Kind, item.Timezone, item.IntervalSeconds, item.LocalTime, item.Weekday, item.Enabled, item.NextRunAt, "", "", nil, 0, item.CreatedAt, item.UpdatedAt)
+	_, err = tx.Exec(`INSERT INTO schedule (`+scheduleColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, item.ID, item.RoomID, item.ProjectID, item.CreatorKind, item.CreatorID, nullable(item.TargetAgentID), item.TargetLead, item.Body, item.Kind, item.Timezone, item.IntervalSeconds, item.LocalTime, item.Weekday, item.Enabled, item.NextRunAt, "", "", nil, 0, item.CreatedAt, item.UpdatedAt, item.CronExpr)
 	if err != nil {
 		return Schedule{}, err
 	}

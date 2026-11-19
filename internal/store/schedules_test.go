@@ -2,6 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -186,5 +190,153 @@ func TestHomeRoomScheduleFiresToActiveLead(t *testing.T) {
 	}
 	if _, err := s.NoteForAgentMessage(ctx, stale.ID, messageID); err == nil {
 		t.Fatal("stopped lead was woken")
+	}
+}
+
+// Migration 123 rebuilds schedule to allow kind cron. It must carry every row and its schedule_run history across (dropping the old table
+// with foreign keys on would cascade the history away), keep the due index and the foreign keys, and start old rows with no expression.
+func TestCronScheduleMigrationKeepsRowsRunsAndIndex(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open(SQLDriverName, sqliteDSN(filepath.Join(t.TempDir(), "cron.sqlite")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if err := migrateUpTo(ctx, db, 122); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO project(id,name,folder,created_at) VALUES ('p1','one','/tmp/one','2026-01-01T00:00:00Z')`,
+		`INSERT INTO room(id,project_id,depth,kind,title,created_by,created_at) VALUES ('r1','p1',0,'home','home','usr','2026-01-01T00:00:00.000000Z')`,
+		`INSERT INTO schedule(id,room_id,project_id,creator_kind,creator_id,target_lead,body,kind,timezone,local_time,weekday,next_run_at,rev,created_at,updated_at)
+		 VALUES ('sch_old','r1','p1','user','usr',1,'daily note','daily','Europe/Prague','08:00',-1,'2026-01-02T07:00:00.000000000Z',3,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`INSERT INTO schedule_run(schedule_id,due_at,processed_at,outcome) VALUES ('sch_old','2026-01-01T07:00:00.000000000Z','2026-01-01T07:00:01.000000000Z','delivered')`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO schedule(id,room_id,project_id,creator_kind,creator_id,target_lead,body,kind,timezone,next_run_at,created_at,updated_at)
+		VALUES ('sch_cron','r1','p1','user','usr',1,'x','cron','UTC','2026-01-02T07:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err == nil {
+		t.Fatal("version 122 accepted kind cron")
+	}
+	if err := migrateUpTo(ctx, db, 123); err != nil {
+		t.Fatal(err)
+	}
+	var foreignKeys, violations, runs, rev int
+	var kind, cronExpr, nextRun string
+	if err := db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil || foreignKeys != 1 {
+		t.Fatalf("foreign keys after migration: %d %v", foreignKeys, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT kind,cron_expr,next_run_at,rev FROM schedule WHERE id='sch_old'`).Scan(&kind, &cronExpr, &nextRun, &rev); err != nil || kind != "daily" || cronExpr != "" || nextRun != "2026-01-02T07:00:00.000000000Z" || rev != 3 {
+		t.Fatalf("old row = %q %q %q %d %v", kind, cronExpr, nextRun, rev, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schedule_run WHERE schedule_id='sch_old'`).Scan(&runs); err != nil || runs != 1 {
+		t.Fatalf("schedule_run rows after rebuild = %d %v", runs, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil || violations != 0 {
+		t.Fatalf("foreign key violations = %d %v", violations, err)
+	}
+	var index string
+	if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='index' AND name='schedule_due'`).Scan(&index); err != nil || !strings.Contains(index, "schedule(enabled,next_run_at)") {
+		t.Fatalf("schedule_due index = %q %v", index, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO schedule(id,room_id,project_id,creator_kind,creator_id,target_lead,body,kind,timezone,cron_expr,next_run_at,created_at,updated_at)
+		VALUES ('sch_cron','r1','p1','user','usr',1,'x','cron','UTC','0 8 * * *','2026-01-02T08:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("kind cron after migration: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO schedule(id,room_id,project_id,creator_kind,creator_id,target_lead,body,kind,timezone,next_run_at,created_at,updated_at)
+		VALUES ('sch_bad','r1','p1','user','usr',1,'x','hourly','UTC','2026-01-02T08:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err == nil {
+		t.Fatal("an unknown kind was accepted")
+	}
+	// Deleting the schedule still cascades its runs: the foreign key survived the rebuild.
+	if _, err := db.ExecContext(ctx, `DELETE FROM schedule WHERE id='sch_old'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schedule_run`).Scan(&runs); err != nil || runs != 0 {
+		t.Fatalf("runs after delete = %d %v", runs, err)
+	}
+}
+
+func TestCronScheduleCreateValidateAndCatchUpOnce(t *testing.T) {
+	t.Parallel()
+	s, project, room, worker, _ := wakeFixture(t)
+	ctx := context.Background()
+	prague, _ := time.LoadLocation("Europe/Prague")
+	now := time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC)
+	create := func(item Schedule) (Schedule, error) {
+		var created Schedule
+		err := s.Tx(ctx, func(tx *Tx) error {
+			var e error
+			item.RoomID, item.ProjectID, item.CreatorKind, item.CreatorID, item.TargetAgentID = room.ID, project.ID, "user", "owner", worker.ID
+			created, e = tx.CreateSchedule(item, now)
+			return e
+		})
+		return created, err
+	}
+	item, err := create(Schedule{Body: "standup", Kind: "cron", Timezone: "Europe/Prague", CronExpr: "  0 8,12,16,20 * * *  ", LocalTime: "ignored"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 12:00Z on the 28th is 13:00 CET: the next slot is 16:00 CET.
+	if item.NextRunAt != "2026-03-28T15:00:00.000000000Z" || item.CronExpr != "0 8,12,16,20 * * *" {
+		t.Fatalf("created = %+v", item)
+	}
+	// The row round-trips through the table.
+	listed, err := s.ListSchedules(ctx, room.ID)
+	if err != nil || len(listed) != 1 || listed[0].CronExpr != "0 8,12,16,20 * * *" || listed[0].Kind != "cron" {
+		t.Fatalf("listed = %+v %v", listed, err)
+	}
+	// Other kinds carry no expression, whatever the request said.
+	daily, err := create(Schedule{Body: "d", Kind: "daily", Timezone: "UTC", LocalTime: "08:00", CronExpr: "* * * * *"})
+	if err != nil || daily.CronExpr != "" {
+		t.Fatalf("daily = %+v %v", daily, err)
+	}
+	// A bad expression is refused with the field named, and still matches the sentinel.
+	for expr, want := range map[string]string{"": "expression", "60 * * * *": "minute", "* * * * funday": "day-of-week", "0 0 30 feb *": "never runs"} {
+		_, err := create(Schedule{Body: "bad", Kind: "cron", Timezone: "UTC", CronExpr: expr})
+		if !errors.Is(err, ErrScheduleInvalid) || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want invalid schedule mentioning %q", expr, err, want)
+		}
+	}
+	// Two days of downtime: one run, then the next slot after now.
+	later := now.Add(48 * time.Hour)
+	count, err := s.AdvanceSchedules(ctx, later)
+	if err != nil || count < 1 {
+		t.Fatalf("advance count=%d err=%v", count, err)
+	}
+	var runs int
+	var next string
+	if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM schedule_run WHERE schedule_id=?),next_run_at FROM schedule WHERE id=?`, item.ID, item.ID).Scan(&runs, &next); err != nil || runs != 1 {
+		t.Fatalf("runs=%d next=%q err=%v", runs, next, err)
+	}
+	due, _ := time.Parse(timestampLayout, next)
+	if !due.After(later) || due.In(prague).Minute() != 0 || due.Sub(later) > 4*time.Hour {
+		t.Fatalf("next after catch-up = %s (now %s)", next, later)
+	}
+	// Pausing and resuming recomputes from now.
+	var paused, resumed Schedule
+	var rev int64
+	if err := s.db.QueryRow(`SELECT rev FROM schedule WHERE id=?`, item.ID).Scan(&rev); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		var e error
+		if paused, e = tx.SetScheduleEnabled(item.ID, room.ID, false, rev, later); e != nil {
+			return e
+		}
+		resumed, e = tx.SetScheduleEnabled(item.ID, room.ID, true, paused.Rev, later.Add(24*time.Hour))
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := time.Parse(timestampLayout, resumed.NextRunAt); !got.After(later.Add(24 * time.Hour)) {
+		t.Fatalf("resumed next = %s", resumed.NextRunAt)
+	}
+	// DST through the store: the 02:30 slot on the spring day runs at 03:00 CEST (01:00Z).
+	got, err := NextScheduleTime(Schedule{Kind: "cron", Timezone: "Europe/Prague", CronExpr: "30 2 * * *"}, time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC))
+	if err != nil || !got.Equal(time.Date(2026, 3, 29, 1, 0, 0, 0, time.UTC)) {
+		t.Fatalf("spring gap = %s %v", got, err)
 	}
 }
