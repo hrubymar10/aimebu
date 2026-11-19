@@ -218,3 +218,29 @@ func (tx *Tx) resolveDeliveryFailures(agentID, turnID string, roomIDs ...string)
 	}
 	return nil
 }
+
+// partialHeldText says which messages of a reply were held alone, for the Inbox card and the room's system row.
+func partialHeldText(held []HeldMessage, total int) string {
+	parts := make([]string, 0, len(held))
+	for _, h := range held {
+		parts = append(parts, fmt.Sprintf("message %d of %d (%s: %s)", h.Index+1, total, h.Reason, h.Error))
+	}
+	delivered := total - len(held)
+	return fmt.Sprintf("%s held; the other %d delivered", strings.Join(parts, ", "), delivered)
+}
+
+// partialHeldRow says in the originating room, when it is open, that only part of a reply was held and which messages. It raises no Inbox item:
+// the author gets a note with the held text and is the one to resend it.
+func (tx *Tx) partialHeldRow(parent answerTurn, input AnswerInput, receipt AnswerReceipt) error {
+	var lifecycle string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT lifecycle FROM room WHERE id=?`, parent.roomID).Scan(&lifecycle); err != nil || lifecycle != "open" {
+		return err
+	}
+	actor, err := tx.agentDisplay(parent.agentID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.InsertMessage(Message{RoomID: parent.roomID, AuthorKind: "system", AuthorID: "system",
+		Body: fmt.Sprintf("%s reply was only partly delivered: %s. The author was asked to resend it.", actor, partialHeldText(receipt.HeldMessages, len(input.Parsed.Messages)))})
+	return err
+}

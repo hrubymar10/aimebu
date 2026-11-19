@@ -81,12 +81,36 @@ func (tx *Tx) defaultReplyTarget(turn answerTurn, input AnswerInput) (string, er
 	return messageID, nil
 }
 
-func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *AnswerReceipt) error {
+func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *AnswerReceipt, dropped []droppedMessage) error {
 	defaultTo, err := tx.defaultReplyTarget(turn, input)
 	if err != nil {
 		return err
 	}
+	heldAt := make(map[int]droppedMessage, len(dropped))
+	for _, d := range dropped {
+		heldAt[d.index] = d
+	}
 	for index, item := range input.Parsed.Messages {
+		if d, held := heldAt[index]; held {
+			// Held alone: the row keeps what the agent wrote (its target may not exist or be readable), and the rest of the reply goes on.
+			held := item
+			held.ReplyTo = ""
+			outID, err := tx.insertOutbox(turn, input, index, held, "proposed", "")
+			if err != nil {
+				return err
+			}
+			if err := OutboxTransitions.Transition("proposed", "held"); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE outbox SET state='held',held_reason=? WHERE id=?`, d.reason, outID); err != nil {
+				return err
+			}
+			if receipt.HeldReason == "" {
+				receipt.HeldReason, receipt.Error = d.reason, d.detail // what the delivery-failed card shows
+			}
+			receipt.HeldMessages = append(receipt.HeldMessages, HeldMessage{Index: index, Reason: d.reason, Error: d.detail, Room: item.Room, Body: item.Body})
+			continue
+		}
 		defaulted := defaultTo != "" && item.Room == turn.roomID && item.ReplyTo == "" && item.Ask == nil && !item.Handoff
 		if defaulted {
 			item.ReplyTo = defaultTo

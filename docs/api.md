@@ -700,7 +700,7 @@ admission and records `system (auto-resume setting)` as the decision actor.
 Delivery-failure items link to the room and include `held_reason` and a
 redacted `delivery_error` from the parent or correction receipt, plus a
 240-character candidate preview with credentials redacted. The originating
-room receives a system notice with the fixed held reason when open;
+room receives a system notice with the fixed held reason when open (when only some messages of a reply were refused for their target, the rest is delivered and only the notice, with no inbox item, says which messages were held);
 the candidate preview remains visible only in the authorized Inbox. They
 resolve only when an answer for the same originating turn commits. Neither kind
 uses the inbox answer endpoint for questions and approvals.

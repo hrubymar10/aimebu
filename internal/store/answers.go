@@ -21,15 +21,34 @@ type AnswerInput struct {
 }
 
 type AnswerReceipt struct {
-	TurnID     string          `json:"turn_id"`
-	Digest     string          `json:"digest"`
-	Result     string          `json:"result"`
-	HeldReason string          `json:"held_reason,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	AnswerRev  int             `json:"answer_rev"`
-	MessageIDs []string        `json:"message_ids,omitempty"`
-	Warnings   []string        `json:"warnings,omitempty"`
-	Additional []AnswerReceipt `json:"-"`
+	TurnID     string   `json:"turn_id"`
+	Digest     string   `json:"digest"`
+	Result     string   `json:"result"`
+	HeldReason string   `json:"held_reason,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	AnswerRev  int      `json:"answer_rev"`
+	MessageIDs []string `json:"message_ids,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+	// HeldMessages lists the messages of a committed reply that were held while the rest was delivered, because their target was refused (see
+	// droppedMessage). Empty for a reply delivered whole and for a reply held whole.
+	HeldMessages []HeldMessage   `json:"held_messages,omitempty"`
+	Additional   []AnswerReceipt `json:"-"`
+}
+
+// HeldMessage is one message of a reply that was held alone: its position in the reply, why, and the room it named.
+type HeldMessage struct {
+	Index  int    `json:"index"`
+	Reason string `json:"reason"`
+	Error  string `json:"error"`
+	Room   string `json:"room,omitempty"`
+	Body   string `json:"body,omitempty"`
+}
+
+// droppedMessage is a message refused for its target (outside the project, closed room, not a member, a foreign private chat) rather than for
+// its shape. Such a message is held alone: the others of the same reply are delivered, so one bad target never costs the author's whole answer.
+type droppedMessage struct {
+	index          int
+	reason, detail string
 }
 
 type answerTurn struct {
@@ -114,13 +133,18 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 					return err
 				}
 			}
-			reason, detail, err := tx.validateAnswer(parent, input, &receipt.Warnings)
+			var dropped []droppedMessage
+			reason, detail, err := tx.validateAnswer(parent, input, &receipt.Warnings, &dropped)
 			if err != nil {
 				return err
 			}
+			if reason == "" && len(dropped) > 0 && len(dropped) == len(input.Parsed.Messages) {
+				// Nothing of the reply can be delivered: hold it whole, as a reply with a single bad target always was.
+				reason, detail = dropped[0].reason, dropped[0].detail
+			}
 			if reason == "" {
 				receipt.Result = "committed"
-				if err := tx.commitAnswerMessages(parent, input, &receipt); err != nil {
+				if err := tx.commitAnswerMessages(parent, input, &receipt, dropped); err != nil {
 					return err
 				}
 			} else if reason == "room_closed" || reason == "not_member" {
@@ -164,8 +188,16 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 			return err
 		}
 		if receipt.Result == "committed" {
-			if err := tx.resolveDeliveryFailures(turn.agentID, parent.id, committedRooms(input)...); err != nil {
+			if err := tx.resolveDeliveryFailures(turn.agentID, parent.id, committedRooms(input, receipt.HeldMessages)...); err != nil {
 				return err
+			}
+			if len(receipt.HeldMessages) > 0 {
+				if err := tx.partialHeldRow(parent, input, receipt); err != nil {
+					return err
+				}
+				if err := tx.partialHeldNote(parent, receipt); err != nil {
+					return err
+				}
 			}
 		}
 		if receipt.Result == "correction_requested" && turn.exec != "pending" && turn.exec != "running" {
@@ -211,7 +243,7 @@ func (tx *Tx) noActionMode(raw string) bool {
 	return json.Unmarshal([]byte(raw), &policy) == nil && policy.Capabilities.NoActionMode
 }
 
-func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, warnings *[]string) (reason, detail string, dbErr error) {
+func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, warnings *[]string, dropped *[]droppedMessage) (reason, detail string, dbErr error) {
 	if input.ParseError != "" || input.Parsed == nil {
 		return "invalid_answer", input.ParseError, nil
 	}
@@ -225,7 +257,8 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, warnings *[]str
 	agentChat := turnRoomKind == "dm" && turnRoomProject == AgentDMProjectID
 	for i, item := range input.Parsed.Messages {
 		if turnRoomKind == "dm" && item.Room != turn.roomID && !agentChat {
-			return "not_member", "private chat replies must stay in that chat", nil
+			*dropped = append(*dropped, droppedMessage{i, "not_member", "private chat replies must stay in that chat"})
+			continue
 		}
 		var projectID, lifecycle, itemKind string
 		err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,lifecycle,kind FROM room WHERE id=?`, item.Room).Scan(&projectID, &lifecycle, &itemKind)
@@ -240,20 +273,24 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, warnings *[]str
 			return "", "", err
 		}
 		if projectID != agentProject && !(agentChat && item.Room == turn.roomID) {
-			return "not_member", "room is outside the agent project", nil
+			*dropped = append(*dropped, droppedMessage{i, "not_member", outsideProjectDetail})
+			continue
 		}
 		if agentChat && item.Room != turn.roomID && itemKind == "dm" {
-			return "not_member", "a chat between agents cannot report into another private chat", nil
+			*dropped = append(*dropped, droppedMessage{i, "not_member", "a chat between agents cannot report into another private chat"})
+			continue
 		}
 		if lifecycle != "open" {
-			return "room_closed", "room is closing or closed", nil
+			*dropped = append(*dropped, droppedMessage{i, "room_closed", "room is closing or closed"})
+			continue
 		}
 		var member int
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, item.Room, turn.agentID).Scan(&member); err != nil {
 			return "", "", err
 		}
 		if member != 1 {
-			return "not_member", "agent is not an active room member", nil
+			*dropped = append(*dropped, droppedMessage{i, "not_member", "agent is not an active room member"})
+			continue
 		}
 		if !item.Force {
 			miss, warning, err := tx.missedAnswerMention(item.Room, projectID, turn.agentID, item.Body)
@@ -388,11 +425,15 @@ func (tx *Tx) missedAnswerMention(roomID, projectID, authorID, body string) (mis
 
 // committedRooms lists the rooms a committed reply actually posted into: a reply
 // with no messages posted nowhere, so it clears no earlier failure by room.
-func committedRooms(input AnswerInput) []string {
+func committedRooms(input AnswerInput, held []HeldMessage) []string {
 	var rooms []string
+	skip := make(map[int]bool, len(held))
+	for _, h := range held {
+		skip[h.Index] = true
+	}
 	if input.Parsed != nil {
-		for _, message := range input.Parsed.Messages {
-			if message.Room != "" {
+		for i, message := range input.Parsed.Messages {
+			if message.Room != "" && !skip[i] {
 				rooms = append(rooms, message.Room)
 			}
 		}
@@ -401,6 +442,8 @@ func committedRooms(input AnswerInput) []string {
 }
 
 const heldReplyNotePrefix = "Your previous reply was held: "
+const partialHeldNotePrefix = "Part of your previous reply was held: "
+const outsideProjectDetail = "room is outside the agent project"
 
 // invalidReplyNote tells an agent that cannot be asked for a correction why its
 // previous reply was held, as a system turn note only it can see.
@@ -409,7 +452,7 @@ func (tx *Tx) invalidReplyNote(turn answerTurn, detail string) error {
 	// invalid shape ends in the delivery-failed card instead of a loop of notes and turns.
 	var woken bool
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
-		WHERE tn.turn_id=? AND m.author_kind='system' AND m.body LIKE ?)`, turn.id, heldReplyNotePrefix+"%").Scan(&woken); err != nil || woken {
+		WHERE tn.turn_id=? AND m.author_kind='system' AND (m.body LIKE ? OR m.body LIKE ?))`, turn.id, heldReplyNotePrefix+"%", partialHeldNotePrefix+"%").Scan(&woken); err != nil || woken {
 		return err
 	}
 	// A parser error quotes what the agent wrote (a field name, a character); the room can read this note, so only the fixed
@@ -452,4 +495,35 @@ func (tx *Tx) sharedMentionRoom(targetRoom, projectID, authorID, recipientID str
 		return "", "", nil
 	}
 	return id, title, err
+}
+
+// partialHeldNote tells an agent, as a system note only it can see, which messages of its reply were not delivered and why, with their text so it
+// can resend them correctly. Like invalidReplyNote it wakes the agent, and a turn already woken by such a note gets no second one.
+func (tx *Tx) partialHeldNote(turn answerTurn, receipt AnswerReceipt) error {
+	var woken bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
+		WHERE tn.turn_id=? AND m.author_kind='system' AND (m.body LIKE ? OR m.body LIKE ?))`, turn.id, heldReplyNotePrefix+"%", partialHeldNotePrefix+"%").Scan(&woken); err != nil || woken {
+		return err
+	}
+	var b strings.Builder
+	b.WriteString(partialHeldNotePrefix)
+	b.WriteString("the other messages were delivered and must not be sent again. Not delivered:")
+	for _, h := range receipt.HeldMessages {
+		fmt.Fprintf(&b, "\n- message %d: %s.", h.Index+1, h.Error)
+		switch {
+		case h.Error == outsideProjectDetail:
+			b.WriteString(" This room is in another project; to reach an agent there use the `dm_agent` tool, and to reach a person use your own project's rooms.")
+		case h.Reason == "room_closed":
+			b.WriteString(" That room is closing or closed; use an open room of your project.")
+		default:
+			b.WriteString(" Send it to a room of your project that you are a member of.")
+		}
+		body := []rune(h.Body)
+		if len(body) > 4000 {
+			body = append(body[:4000:4000], []rune("…")...)
+		}
+		fmt.Fprintf(&b, " Its text was:\n%s", string(body))
+	}
+	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: b.String(), OnlyTargets: []string{turn.agentID}})
+	return err
 }

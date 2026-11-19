@@ -837,11 +837,34 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   a repeating invalid reply ends in the delivery-failed card, not a loop. A
   committed reply clears the author's earlier open delivery failures only for
   its own parent turn and for the rooms it actually posted a message to.
-- `room_closed` / `not_member` targets are authorisation/lifecycle
-  failures, not formatting errors: never re-asked (the model must not
-  reroute content); the whole batch is `held` with the reason and raises a
-  delivery-failure inbox item; release or retry needs explicit human
-  authorisation. Closing a room can move a still
+- `room_closed` / `not_member` targets (a room outside the agent's project,
+  a closed room, a room the agent is not an active member of, a private chat
+  that is not the turn's own) are authorisation/lifecycle failures, not
+  formatting errors: never re-asked (the model must not reroute content).
+  They hold **only the message that names them**. When at least one other
+  message of the reply is valid, that message is delivered, the refused rows
+  are `held(room_closed|not_member)` and the receipt is `committed` with
+  `held_messages[{index,reason,error,room,body}]` (and `held_reason`/`error`
+  of the first). A reply whose messages are *all* refused is `held` whole with
+  the reason, as before. Any structural error (malformed JSON, schema errors,
+  an unknown room, a bad reply reference or attachment, a missed mention, an
+  `ask` with no recipient) still holds the whole reply, whatever else it
+  holds. A partial hold raises **no** inbox item (the author is the one to
+  act, and a person would only get noise); an open originating room gets a
+  system row "<agent> reply was only partly delivered: message 2 of 2
+  (not_member: …) held; the other 1 delivered. The author was asked to resend
+  it." The author gets one system note (`OnlyTargets` the author, once
+  per turn, like the invalid-reply note above) starting "Part of your previous
+  reply was held: the other messages were delivered and must not be sent
+  again." It lists each held message with its text and a hint: for a room
+  outside the project, "This room is in another project; to reach an agent
+  there use the `dm_agent` tool, and to reach a person use your own project's
+  rooms."; for a closed room, to use an open room of the project; otherwise,
+  to send it to a room of the project the agent is a member of. A replay of
+  the same digest returns the stored receipt, so the delivered part is never
+  delivered twice; the committed reply clears earlier delivery failures only
+  for the rooms it actually posted to. Release or retry of the held part needs
+  the agent to resend just that message. Closing a room can move a still
   `proposed` row directly to `held(room_closed)`. Correction is only for
   repairable formatting/reference errors.
 - Dedupe: same dedupe_key + same digest → return the original receipt;

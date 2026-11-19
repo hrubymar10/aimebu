@@ -25,6 +25,7 @@ Inbox, so `needs_attention`, `proposed_answers` and `open_questions` sent with i
 with a receipt warning instead of rejecting the reply. When a final answer is invalid and the
 harness cannot be asked for a correction (no `no_action_mode`, as for Claude), the reply is held
 and the agent gets a system note that wakes it: "Your previous reply was held: <error>" (quote-bearing parser errors are described, not echoed). A turn woken by such a note and held again gets no further note.
+A message refused only for its target (a room in another project, a closed room, a room the agent is not in) never holds the whole reply: the other messages are delivered and the agent gets a note "Part of your previous reply was held: ..." with the held text and, for another project's room, the hint to use `dm_agent`.
 `Turn.Wait()` returns exit code,
 terminal-event evidence, and cancel intent separately. Exit code zero alone
 does not mean the answer completed.
