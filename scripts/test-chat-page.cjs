@@ -584,6 +584,16 @@ async function main() {
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header')).justifyContent), 'flex-start', 'layout B lays the own header out left, in the shared order');
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-bubble')).alignSelf), 'auto', 'layout B: the own bubble is not pushed right inside the full-width row');
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#thread-messages [data-message-id=rm_a_t1] > .chat-msg-bubble')).alignSelf), 'flex-start', 'layout B centres nothing in the thread panel either: its own bubble goes left');
+    // The seen-by strip keeps its bottom-right place under the viewer's own message in B, like under everyone else's: its right edge is the message row's right edge.
+    assert.deepEqual(await page.evaluate(() => {
+      const own = document.querySelector('#messages [data-message-id=rm_a_own]');
+      const strip = document.createElement('div'); strip.className = 'message-receipts'; strip.setAttribute('role', 'group');
+      const avatar = document.createElement('span'); avatar.className = 'receipt-avatar'; avatar.textContent = 'QU'; strip.append(avatar); own.append(strip);
+      const justify = getComputedStyle(strip).justifyContent;
+      const stripBox = strip.getBoundingClientRect(), ownBox = own.getBoundingClientRect();
+      strip.remove();
+      return { atRight: Math.abs(stripBox.right - ownBox.right) < 2, justify };
+    }), { atRight: true, justify: 'flex-end' }, 'layout B: the receipts strip under an own message is right-aligned with its right edge');
     await page.evaluate(() => { delete document.documentElement.dataset.msgLayout; });
     assert.deepEqual(await layoutOf(), { align: 'flex-end', width: '75%' }, 'layout A is back once the choice is gone');
     await page.close();
