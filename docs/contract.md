@@ -622,9 +622,11 @@ Inbox, usage, events, settings
   An open agent `ask` question or approval becomes `superseded` when a later
   message from a person or that asking agent commits in the same room; system
   messages and messages in other rooms do not supersede it. Supersession and
-  the new message commit in one transaction, and a superseded item rejects an
-  inbox answer like any other closed item. Migration 117 applies this rule
-  once to existing open agent asks with a later qualifying room message.
+  the new message commit in one transaction. A superseded item only leaves the
+  Inbox listing and the unseen count: it is not closed, its chat answer
+  controls stay active, and an inbox answer still resolves it
+  (`superseded → resolved`). Migration 117 applies this rule once to existing
+  open agent asks with a later qualifying room message.
 - **usage_record**(id, source_event_id UNIQUE, turn_id, agent_id, room_id,
   project_id, tokens_in?, tokens_out?, tokens_cache_read?, tokens_cache_write?,
   context_used?, context_window?, cost_est?, cost_total?, model?, partial,
@@ -1011,7 +1013,9 @@ switches, or dispatch. Checkout identity includes the project, so projects
 that use one physical folder do not share a checkout record.
 
 ### 3.7 inbox item
-`open → resolved | withdrawn`, compare-and-set on (state=open, rev):
+`open → resolved | withdrawn | superseded`, `superseded → resolved`;
+compare-and-set on (state, rev) — an answer to an open item matches
+`state=open`, an answer to a superseded ask matches `state=superseded`:
 - Boundary admission is a distinct use of `approval`: only a project owner
   may choose Approve or Deny. Approve records the project-machine admission
   and the agent's exact canonical path grant in the same transaction as
@@ -1021,13 +1025,20 @@ that use one physical folder do not share a checkout record.
   decision; a stale revision cannot release the agent.
 - Answer: in one transaction write a **message** (author = user, reply_to =
   the ask message), set resolved + answer_message_id + resolved_by, bump rev,
-  create the requester's note, emit event; idempotent by request_key.
+  create the requester's note, emit event; idempotent by request_key. A
+  superseded ask is answered the same way and reaches its requester as an open
+  one does.
 - A message with needs_attention or answer controls creates one ordinary
   question inbox item. Proposed answers always allow free text; open questions
   collect one answer per question and add a free-text Other choice to each.
   The room and inbox use the same item and answer endpoint. An explicit ask
   cannot be combined with attention controls.
-- Withdraw (requester or system): open → withdrawn.
+- Supersede (agent asks only): a later qualifying room message sets
+  `open → superseded` in that message's transaction. It only removes the item
+  from the Inbox listing and the unseen count — the ask is not closed, so the
+  chat keeps its answer controls and an answer resolves it.
+- Withdraw (requester or system): open → withdrawn. `resolved` and `withdrawn`
+  stay final and reject answers (`already_resolved`, `already_withdrawn`).
 - Close vs answer: closing a room withdraws its open question/approval
   items in the close transaction (an answer committed first wins). A
   recovery decision after close is stored as a control/audit decision

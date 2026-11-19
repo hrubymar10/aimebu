@@ -43,9 +43,10 @@ export function AnswerControls({ item, submit, mention = '', compose = null, fre
 }
 
 // What a question or proposed answers on a message look like once nothing is open for them: the same buttons and question count, all disabled, kept under the message so the
-// history reads as it did. A resolved item marks its chosen answer; other closed items say "No longer pending".
+// history reads as it did. A resolved item marks its chosen answer; other closed items say "No longer pending". A superseded ask is not closed - it left the Inbox only, and
+// stays answerable - so it is drawn without that label.
 export function AnswerHistory({ message, answered, className = '' }) {
-  const note = answered ? 'Answered' : 'No longer pending';
+  const note = answered ? 'Answered' : (message.answer_state === 'superseded' ? '' : 'No longer pending');
   const chosen = message.answer_body || '';
   const plain = chosen.replace(/^@[a-z0-9][a-z0-9_-]*(?:@[a-z0-9_.-]+)?\s+/i, '');
   const choice = (message.proposed_answers || []).find(value => plain === value);
@@ -54,7 +55,7 @@ export function AnswerHistory({ message, answered, className = '' }) {
     ${answered && choice ? html`<span class="answer-history-label">Answered:</span>` : null}
     ${(message.proposed_answers || []).map(value => html`<button type="button" class=${`btn proposed-answer-btn${choice === value ? ' answer-chosen' : ''}`} key=${value} disabled title=${choice === value ? 'Chosen answer' : note}>${choice === value ? '✓ ' : ''}${value}</button>`)}
     ${chosen && (message.open_questions?.length || !choice) ? html`<span class="answer-history-choice">${chosen}</span>` : null}
-    ${answered ? null : html`<span class="answer-history-status">${note}</span>`}
+    ${answered || !note ? null : html`<span class="answer-history-status">${note}</span>`}
   </div>`;
 }
 

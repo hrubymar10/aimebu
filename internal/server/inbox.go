@@ -20,6 +20,14 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	// A superseded ask is out of the Inbox (its list and its badge count drop it) but not over: its answer controls stay in the chat, so its
+	// row rides along here and the Inbox view leaves it out on its state.
+	superseded, err := s.Store.SupersededAsksForUser(r.Context(), userID(r))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	items = append(items, superseded...)
 	if s.usageAlerts != nil {
 		admin, err := s.Store.IsGlobalAdmin(r.Context(), userID(r))
 		if err != nil {
@@ -39,11 +47,11 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				items = append(items, store.InboxEntry{ID: alert.ID, Kind: "usage_alert", Question: question, State: "open",
 					Options: []string{}, CreatedAt: alert.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")})
 			}
-			sort.Slice(items, func(i, j int) bool {
-				return items[i].CreatedAt < items[j].CreatedAt || items[i].CreatedAt == items[j].CreatedAt && items[i].ID < items[j].ID
-			})
 		}
 	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt < items[j].CreatedAt || items[i].CreatedAt == items[j].CreatedAt && items[i].ID < items[j].ID
+	})
 	writeJSON(w, http.StatusOK, items)
 }
 

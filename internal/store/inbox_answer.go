@@ -28,7 +28,7 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 			Scan(&projectID, &roomID, &askMessage, &requesterKind, &requesterID, &kind, &state, &currentRev); err != nil {
 			return "", err
 		}
-		if state == "resolved" || state == "superseded" {
+		if state == "resolved" {
 			return "", ErrAlreadyResolved
 		}
 		if state == "withdrawn" {
@@ -74,8 +74,9 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 		if lifecycle != "open" {
 			return "", ErrInvalidTransition
 		}
-		// Close the item before writing the answer so that the answer itself cannot supersede its ask.
-		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at=? WHERE id=? AND state='open' AND rev=?`, userID, timestamp(), itemID, rev); err != nil {
+		// Close the item before writing the answer so that the answer itself cannot supersede its ask. A superseded ask is not over: it
+		// left the Inbox only, and the answer resolves it here like an open one.
+		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at=? WHERE id=? AND state IN ('open','superseded') AND rev=?`, userID, timestamp(), itemID, rev); err != nil {
 			return "", err
 		}
 		// The answer replies to the ask, so it joins the ask's conversation (its thread_root is derived from that).

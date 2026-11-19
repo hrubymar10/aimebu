@@ -27,7 +27,7 @@ func TestTransitionTablesExhaustive(t *testing.T) {
 			"idle>in_turn idle>stopped in_turn>idle in_turn>interrupting in_turn>lost interrupting>stopped interrupting>lost stopped>idle lost>idle lost>stopped", AgentObservedTransitions},
 		{"room", "open closing closed", "open>closing closing>closed closed>open", RoomLifecycleTransitions},
 		{"writer", "none reserved releasing", "none>reserved reserved>releasing releasing>none", WriterStateTransitions},
-		{"inbox", "open resolved withdrawn superseded", "open>resolved open>withdrawn open>superseded", InboxItemTransitions},
+		{"inbox", "open resolved withdrawn superseded", "open>resolved open>withdrawn open>superseded superseded>resolved", InboxItemTransitions},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

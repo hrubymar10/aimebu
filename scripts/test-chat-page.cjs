@@ -761,19 +761,48 @@ async function main() {
     await page.close();
   }
 
-  // A superseded ask stays visible in the room but offers no answer control.
+  // A superseded ask is out of the Inbox but not over: its chat controls stay active and answer it through the Inbox like an open ask.
   {
     const page = await mount();
     await page.evaluate(() => {
       const messages = window.__data.rooms.rm_a.messages;
-      messages[118] = { ...messages[118], author_kind: 'agent', author_id: 'agt_zed', ask_json: '{"kind":"question","text":"Which?"}', answer_state: 'superseded' };
-      messages[119] = { ...messages[119], author_kind: 'agent', author_id: 'agt_zed', proposed_answers: ['A', 'B'], answer_state: 'superseded' };
+      messages[118] = { ...messages[118], author_kind: 'agent', author_id: 'agt_zed', body: 'Which one?', ask_json: '{"kind":"question","text":"Which?"}', answer_state: 'superseded' };
+      messages[119] = { ...messages[119], author_kind: 'agent', author_id: 'agt_zed', body: 'Pick one', proposed_answers: ['alpha', 'beta'], answer_state: 'superseded' };
+      window.__answered = [];
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => {
+      window.__chat.agents = new Map([['agt_zed', { slug: 'zed' }]]);
+      window.__chat.setInbox({ answer: async (item, text) => { window.__answered.push([item.id, text]); return true; } });
+      window.__chat.updateAnswerControls([
+        { id: 'inb_sup_options', rev: 1, kind: 'question', message_id: 'rm_a_m119', state: 'superseded', options: ['A', 'B'], free_text: true, can_decide: true },
+        { id: 'inb_sup_proposed', rev: 1, kind: 'question', message_id: 'rm_a_m120', state: 'superseded', proposed_answers: ['alpha', 'beta'], options: [], free_text: false, can_decide: true },
+      ]);
+    });
+    await page.waitForSelector('#messages [data-message-id=rm_a_m120] .answer-controls .proposed-answer-btn');
+    assert.deepEqual(await page.evaluate(() => ['rm_a_m119', 'rm_a_m120'].map(id => {
+      const row = document.querySelector(`#messages [data-message-id=${id}]`);
+      return [!!row.querySelector('.answer-controls'), [...row.querySelectorAll('.answer-controls button')].map(button => button.disabled), row.textContent.includes('No longer pending')];
+    })), [[true, [false, false], false], [true, [false, false], false]], 'a superseded ask keeps its active answer controls and no "No longer pending"');
+    await page.$eval('#messages [data-message-id=rm_a_m120] .answer-controls .proposed-answer-btn', button => button.click());
+    await page.waitForFunction(() => window.__answered.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__answered), [['inb_sup_proposed', '@zed alpha']], 'answering a superseded ask goes through the Inbox like an open one');
+    await page.close();
+  }
+
+  // With no answer control to show, a superseded ask is drawn quiet while a closed one keeps its "No longer pending".
+  {
+    const page = await mount();
+    await page.evaluate(() => {
+      const messages = window.__data.rooms.rm_a.messages;
+      messages[118] = { ...messages[118], author_kind: 'agent', author_id: 'agt_zed', body: 'Pick one', proposed_answers: ['alpha', 'beta'], answer_state: 'superseded' };
+      messages[119] = { ...messages[119], author_kind: 'agent', author_id: 'agt_zed', body: 'Pick one', proposed_answers: ['alpha', 'beta'], answer_state: 'withdrawn' };
     });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     assert.deepEqual(await page.evaluate(() => ['rm_a_m119', 'rm_a_m120'].map(id => {
       const row = document.querySelector(`#messages [data-message-id=${id}]`);
-      return [row.querySelector('.answer-done button, .answer-history-status')?.textContent, !!row.querySelector('.answer-done button, .answer-history button')?.disabled, !!row.querySelector('.answer-controls')];
-    })), [['No longer pending', true, false], ['No longer pending', true, false]], 'superseded asks show a disabled history state');
+      return [!!row.querySelector('.answer-history'), row.querySelector('.answer-history-status')?.textContent || '', [...row.querySelectorAll('.answer-history button')].map(button => button.disabled)];
+    })), [[true, '', [true, true]], [true, 'No longer pending', [true, true]]], 'a superseded ask draws no "No longer pending"; a withdrawn one does');
     await page.close();
   }
 

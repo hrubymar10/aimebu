@@ -35,8 +35,9 @@ const boundaryFixture = [
 
 export class MockInboxSource {
   constructor(seed = false) { this.items = seed ? fixture.map(item => ({ ...item })) : []; this.listeners = new Set(); }
-  async list() { return this.items.filter(item => item.state === 'open'); }
-  async answer(id, value) { const item = this.items.find(entry => entry.id === id); if (!item || item.state !== 'open') throw new Error('This item is already resolved'); item.state = 'resolved'; item.answer = value; this.notify(); }
+  // The HTTP source returns open items plus superseded agent asks: the Inbox view filters to open, the chat answers the rest.
+  async list() { return this.items.filter(item => item.state === 'open' || item.state === 'superseded'); }
+  async answer(id, value) { const item = this.items.find(entry => entry.id === id); if (!item || (item.state !== 'open' && item.state !== 'superseded')) throw new Error('This item is already resolved'); item.state = 'resolved'; item.answer = value; this.notify(); }
   async decision(id, choice, requestKey, rev) {
     const item = this.items.find(entry => entry.id === id);
     if (!item || item.state !== 'open') throw new Error('This item is already resolved');

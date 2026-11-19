@@ -58,12 +58,16 @@ type inboxAsk struct {
 	OpenQuestions   []answer.OpenQuestion `json:"open_questions,omitempty"`
 }
 
-// inboxFromSQL and inboxWhereSQL say which open items a person can access (two ? placeholders: the user, twice). They are shared by the full
-// inbox read and by the per-room unseen count, so the badge uses the same visibility rules. The joins the full read adds between them
-// (the message and the turn, both by primary key) neither add nor drop rows.
+// inboxFromSQL and inboxVisibleSQL say which items a person can access (two ? placeholders: the user, twice). They are shared by the full
+// inbox read, by the read of the superseded asks that keep their answer controls, and by the per-room unseen count, so the badge uses the
+// same visibility rules. The joins the full read adds between them (the message and the turn, both by primary key) neither add nor drop rows.
+// The two item sets each add their own state filter: inboxWhereSQL is the Inbox itself (open items), inboxSupersededWhereSQL the superseded
+// agent asks that leave the Inbox but stay answerable in the chat.
 const inboxFromSQL = `FROM inbox_item i JOIN room r ON r.id=i.room_id JOIN membership member ON member.project_id=i.project_id
         AND member.user_id=?`
-const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
+const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')` + inboxVisibleSQL
+const inboxSupersededWhereSQL = `WHERE i.state='superseded' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval') AND i.requester_kind='agent'` + inboxVisibleSQL
+const inboxVisibleSQL = `
 		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
 		AND (i.kind!='approval' OR member.role='owner' OR r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + `)
 		AND (i.requester_id NOT LIKE 'note:%' OR EXISTS (SELECT 1 FROM user u WHERE u.id=member.user_id AND u.disabled_at IS NULL
@@ -74,7 +78,18 @@ const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind
 			OR (i.kind='recovery' AND member.role IN ('owner','operator'))
 			OR (i.kind='approval' AND member.role='owner' AND EXISTS(SELECT 1 FROM boundary_pending b WHERE b.inbox_id=i.id)))`
 
+// InboxForUser is the Inbox: the open items a person can see. A superseded ask is not among them (its list and its badge count drop it).
 func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, error) {
+	return s.inboxEntriesForUser(ctx, userID, inboxWhereSQL)
+}
+
+// SupersededAsksForUser is the set a superseded ask leaves the Inbox for: still answerable in the chat, so the same rows (state included)
+// reach the page's answer controls while the Inbox skips them.
+func (s *Store) SupersededAsksForUser(ctx context.Context, userID string) ([]InboxEntry, error) {
+	return s.inboxEntriesForUser(ctx, userID, inboxSupersededWhereSQL)
+}
+
+func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) ([]InboxEntry, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
@@ -105,7 +120,7 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
         `+inboxFromSQL+`
         LEFT JOIN message msg ON msg.id=i.message_id
 		LEFT JOIN turn t ON t.id=i.turn_id
-		`+inboxWhereSQL+`
+		`+where+`
         ORDER BY i.created_at,i.id`, userID, userID, userID)
 	if err != nil {
 		return nil, err

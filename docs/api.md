@@ -247,7 +247,7 @@ and reconnects the event stream from its last seen `seq`.
 | GET | `/api/messages/referenced/{no}` | `source_message_id` query parameter | `{no,available,room_id?,room?,from?,body?,created_at?}` for exactly the target cited by the source message. The caller must be able to read the source room; for a missed-mention system pointer, only project owners and operators may open the cited target this way. Other source-room members receive `{no,available:false}`. A missing grant also returns `{no,available:false}` without identifying the target. This does not grant access to the target room or its history |
 | GET | `/api/events?after=<seq>` | WebSocket upgrade | event stream: project events for project members (private chats for their members), events with no project for the instance owner only; owners and global admins also get transient `{type:"usages_updated",alert_revision}` frames (no `seq`, never replayed). `alert_revision` advances when a synthetic usage alert changes or is dismissed, or a limit guard hold changes; the browser refreshes Inbox on those changes and after reconnect. Server shutdown closes this socket with 1001 (server restarting), so clients reconnect quietly |
 | GET | `/api/events/cursor` | — | `{seq}` current global event watermark |
-| GET | `/api/inbox` | — | open questions, approvals, recovery, and delivery failures visible to authorized project members and private-chat peers; each stored entry includes the caller's `seen` flag, which does not remove it from the Inbox. An `approval` entry with `note_id` is a shared agent note waiting for approval (only the owner and admins who own the agent's project see it; its card sits in the project's home room): `POST /api/inbox/{item}/decision` with choice `approve` switches the note on for every project's agents, `deny` deletes it, and either closes the card, as does any other change to the note |
+| GET | `/api/inbox` | — | open questions, approvals, recovery, and delivery failures visible to authorized project members and private-chat peers, plus superseded agent asks (with `state: superseded`) so the chat can still answer them; the Inbox list and badge count only open entries. Each stored entry includes the caller's `seen` flag, which does not remove it from the Inbox. An `approval` entry with `note_id` is a shared agent note waiting for approval (only the owner and admins who own the agent's project see it; its card sits in the project's home room): `POST /api/inbox/{item}/decision` with choice `approve` switches the note on for every project's agents, `deny` deletes it, and either closes the card, as does any other change to the note |
 | GET | `/api/agent/rooms` | active or not-accepting agent key | rooms where the caller is an active member, including archived rooms; no message previews |
 | GET/POST | `/api/agent/rooms/{room}/schedules` | joined agent key; POST requires active lead, schedule fields above and `Idempotency-Key` | list or create schedules in a joined task room or the project home room |
 | POST | `/api/agent/rooms` | active lead key; `{title,parent_id?,worktree?:{enabled,base_ref?}}` and `Idempotency-Key` | create task room beneath the home room by default or a joined parent, join the lead, and post one parent-room system notice |
@@ -630,8 +630,11 @@ idempotency key returns the original message; a changed
 answer with that key returns `conflict`. A stale revision returns `stale_rev`.
 An ordinary agent ask is superseded when a later message from a person or the
 asking agent commits in the same room. System messages and messages in other
-rooms leave it open. Superseded asks leave the Inbox, show "No longer pending"
-in chat, and reject answers as closed items do. Existing open asks with such a
+rooms leave it open. Superseding only removes the ask from the Inbox listing
+and the unseen count: its chat answer controls stay active and look like an
+open ask's, and `POST /api/inbox/{item}/answer` still accepts the answer,
+resolves the item, and reaches the requester as usual. "No longer pending" in
+chat marks a resolved or withdrawn item only. Existing open asks with such a
 later message are superseded once by migration 117.
 Uncertain-turn recovery items carry Resume, Retry, and Abandon; loop-budget
 items carry Continue and Abandon. A turn that ended with an explicit error result

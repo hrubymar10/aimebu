@@ -27,16 +27,19 @@ export class InboxStore {
   async refresh({ notify = true } = {}) {
     if (!this.alive) return;
     const ticket = ++this.requestSeq;
-    const items = await this.source.list();
+    const entries = await this.source.list();
     if (!this.alive || ticket !== this.requestSeq) return;
+    // The Inbox is the open rows (its list and its badge count); a superseded ask is not over, so it leaves the Inbox and keeps its answer
+    // controls in the chat, which is why every row goes on to the page that draws them.
+    const items = entries.filter(item => item.state === 'open');
     const previous = this.items.peek() && new Set(this.items.peek().map(item => item.id));
     batch(() => {
       this.items.value = items;
-      const ids = new Set(items.map(item => item.id));
+      const ids = new Set(entries.map(item => item.id));
       const stale = [...this.pending.peek()].filter(id => !ids.has(id));
       if (stale.length) { const next = new Set(this.pending.peek()); for (const id of stale) { next.delete(id); this.keys.delete(id); } this.pending.value = next; }
     });
-    this.onItems?.(items);
+    this.onItems?.(entries);
     if (notify && previous) this.notifications?.arrived(items.filter(item => !previous.has(item.id)), this.projects, this.rooms);
   }
 

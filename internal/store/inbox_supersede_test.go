@@ -97,12 +97,51 @@ func TestNewRoomMessageSupersedesOnlyItsOpenAsk(t *testing.T) {
 				if !found {
 					t.Fatal("ask card did not carry superseded state")
 				}
-				_, _, err = s.AnswerInbox(ctx, item.ID, "usr_answers", "late-answer", "A", wantRev)
-				if !errors.Is(err, ErrAlreadyResolved) {
-					t.Fatalf("late answer: %v", err)
+				// A superseded ask is not over: the Inbox hides it while an answer still resolves it and wakes the asking agent.
+				answer, reused, err := s.AnswerInbox(ctx, item.ID, "usr_answers", "late-answer", "A", wantRev)
+				if err != nil || reused {
+					t.Fatalf("late answer: reused=%v err=%v", reused, err)
+				}
+				state, rev, by = inboxState(t, s, item.ID)
+				if state != "resolved" || rev != wantRev+1 || by != "usr_answers" {
+					t.Fatalf("answered item state=%q rev=%d by=%q", state, rev, by)
+				}
+				if answer.ReplyTo != item.MessageID {
+					t.Fatalf("answer reply_to=%q, want ask %q", answer.ReplyTo, item.MessageID)
+				}
+				var answerID string
+				if err := s.db.QueryRow(`SELECT answer_message_id FROM inbox_item WHERE id=?`, item.ID).Scan(&answerID); err != nil {
+					t.Fatal(err)
+				}
+				if answerID != answer.ID {
+					t.Fatalf("answer_message_id=%q, want %q", answerID, answer.ID)
+				}
+				if _, err := s.NoteForAgentMessage(ctx, f.agent.ID, answer.ID); err != nil {
+					t.Fatalf("asking agent was not woken: %v", err)
+				}
+				// Resolved stays final: a second answer is refused exactly as for an open ask answered twice.
+				if _, _, err := s.AnswerInbox(ctx, item.ID, "usr_answers", "late-answer-2", "B", rev); !errors.Is(err, ErrAlreadyResolved) {
+					t.Fatalf("second late answer: %v", err)
+				}
+				items, err := s.InboxForUser(ctx, "usr_answers")
+				if err != nil || len(items) != 0 {
+					t.Fatalf("resolved ask in inbox=%+v err=%v", items, err)
 				}
 			}
 		})
+	}
+}
+
+// The answer guard now admits a superseded ask; withdrawn stays final and refuses one.
+func TestAnswerRefusesWithdrawnAsk(t *testing.T) {
+	s, f := answerFixture(t, false)
+	ctx := context.Background()
+	item := askForSupersession(t, s, f)
+	if err := s.DismissInboxItem(ctx, item.ID, "usr_answers", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AnswerInbox(ctx, item.ID, "usr_answers", "after-withdraw", "A", 1); !errors.Is(err, ErrAlreadyWithdrawn) {
+		t.Fatalf("answer after withdraw: %v", err)
 	}
 }
 

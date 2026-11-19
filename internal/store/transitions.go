@@ -94,5 +94,5 @@ var InboxItemTransitions = TransitionTable{"inbox_item", map[string][]string{
 	"open":       {"resolved", "withdrawn", "superseded"},
 	"resolved":   {},
 	"withdrawn":  {},
-	"superseded": {},
+	"superseded": {"resolved"},
 }}

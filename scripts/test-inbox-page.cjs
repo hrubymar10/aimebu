@@ -101,6 +101,14 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-view').hidden, document.querySelector('.chat').hidden, document.querySelector('.sidebar').hidden, document.querySelector('#app-view').classList.contains('inbox-open')]), [true, false, false, false]);
       await page.close();
     }
+    // A superseded ask is out of the Inbox (no card, not counted) but still reaches the chat, which answers it there.
+    {
+      const page = await mount({ list: [...items(), { ...base, id: 'sup1', kind: 'question', question: 'A question a newer message overtook', options: ['A', 'B'], state: 'superseded' }] });
+      await waitList(page);
+      assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.inbox-card').length, document.querySelector('#inbox-count').textContent, document.querySelector('#inbox-count').hidden, window.__onItems.at(-1).includes('sup1'), !!document.querySelector('[data-inbox-id=sup1]')]),
+        [items().length, String(items().length), false, true, false], 'a superseded ask is not in the Inbox but is handed to the chat');
+      await page.close();
+    }
     // A recovery card of a turn that failed before it did anything shows the sentence the harness gave, the raw output folded away behind a
     // toggle, Retry and Abandon only (nothing to resume), and a repeated failure says so in its question.
     {
