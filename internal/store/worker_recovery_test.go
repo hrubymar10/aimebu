@@ -118,3 +118,27 @@ func TestWorkerRecoveryWithoutLeadGoesToHuman(t *testing.T) {
 		t.Fatalf("human inbox=%+v err=%v", items, err)
 	}
 }
+
+// A lead outside the worker's room, in a project with no home room to tell it in, leaves the decision to the person: the turn's exit is
+// still recorded, instead of failing for want of a room.
+func TestWorkerRecoveryWithLeadOutsideRoomAndNoHomeRoomGoesToHuman(t *testing.T) {
+	s, f, owner, lead := workerRecoveryFixture(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=?`, timestamp(), f.room.ID, lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE room SET kind='task' WHERE project_id=? AND kind='home'`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 137, false, false); err != nil {
+		t.Fatalf("the exit must be recorded: %v", err)
+	}
+	items, err := s.InboxForUser(ctx, owner)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("human inbox=%+v err=%v", items, err)
+	}
+	recoveries, err := s.ListLeadRecoveries(ctx, lead.ID, f.project.ID)
+	if err != nil || len(recoveries) != 0 {
+		t.Fatalf("lead items=%+v err=%v", recoveries, err)
+	}
+}

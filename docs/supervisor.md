@@ -851,7 +851,8 @@ room notice. The lead can choose Resume, Retry, or Abandon with
 the lead stops or becomes recovery-blocked, the dispatcher raises the item to
 the people's Inbox and sends its ordinary notification. Project Settings can
 turn lead routing off or change that interval. The lead's own recovery goes
-straight to people. A turn that is **interrupted** is continued the same way. When the harness process ends
+straight to people, and so does a worker's when the lead is not in the
+worker's room and the project has no home room to wake it in. A turn that is **interrupted** is continued the same way. When the harness process ends
 without a final answer, by a signal, a non-zero status or silently, and says nothing about why
 (no error result, no stderr message with an ordinary non-zero status), it was cut off, not
 answered badly: the harness was killed, the session restarted, or the container stopped. The

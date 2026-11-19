@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -343,7 +344,12 @@ func (tx *Tx) workerRecoveryLead(projectID, roomID, workerID string) (string, st
 	}
 	leadRoom := roomID
 	if !joined {
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home' LIMIT 1`, projectID).Scan(&leadRoom); err != nil {
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home' LIMIT 1`, projectID).Scan(&leadRoom)
+		if errors.Is(err, sql.ErrNoRows) {
+			// A lead outside the worker's room, in a project with no home room, has nowhere to be told: the person decides, as with no lead.
+			return "", "", "", nil
+		}
+		if err != nil {
 			return "", "", "", err
 		}
 	}
