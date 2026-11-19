@@ -6710,7 +6710,7 @@ async function main() {
     await first.waitForFunction(id => location.hash.slice(1) === id && document.querySelector('#room-title')?.textContent === 'Archive smoke', {}, archiveRoomID);
     // Archive lives in Room settings (the header has no Archive button); a room that is not archived cannot be removed.
     assert.equal(await first.$('#room-archive'), null, 'the header has no Archive button');
-    // The viewer's own messages are on the right (header line included), shrink-wrapped and at most 75% wide; others fill the column on the left.
+    // Layout B is the default: every message spans the column, others' and the viewer's own alike, and the own bubble keeps its green border.
     await first.waitForSelector('#messages .chat-msg.self', { timeout: 20000 });
     const alignment = await first.evaluate(() => {
       const list = document.querySelector('#messages'), cs = getComputedStyle(list), left = list.getBoundingClientRect().left + list.clientLeft + parseFloat(cs.paddingLeft), right = list.getBoundingClientRect().left + list.clientLeft + list.clientWidth - parseFloat(cs.paddingRight), column = right - left; // clientWidth excludes a scrollbar
@@ -6720,8 +6720,9 @@ async function main() {
       return { own: !!own, ownRight: own ? Math.abs(box(own).right - right) < 2 : null, ownNarrow: own ? box(own).width <= column * 0.75 + 1 : null, ownHeaderRight: ownTime ? Math.abs(box(ownTime).right - (box(own).right - 2)) < 6 : null,
         ownBorder: own ? (() => { const probe = document.createElement('i'); probe.style.color = 'var(--green)'; document.body.append(probe); const green = getComputedStyle(probe).color; probe.remove(); return getComputedStyle(own.querySelector('.chat-msg-bubble')).borderTopColor === green; })() : null, other: other ? Math.abs(box(other).left - left) < 2 && Math.abs(box(other).width - column) < 2 : null };
     });
+    // Layout B is the default: every message spans the column (so each one's top right is free for the toolbar); own messages keep their green border.
     assert.equal(alignment.own, true, 'the archive room has a message of the viewer');
-    assert.deepEqual(alignment, { own: true, ownRight: true, ownNarrow: true, ownHeaderRight: true, ownBorder: true, other: alignment.other === null ? null : true }, `own messages right, others left: ${JSON.stringify(alignment)}`);
+    assert.deepEqual(alignment, { own: true, ownRight: true, ownNarrow: false, ownHeaderRight: false, ownBorder: true, other: alignment.other === null ? null : true }, `layout B, the default, spans the column: ${JSON.stringify(alignment)}`);
     const openCommands = await first.evaluate(() => {
       const draft = document.querySelector('#composer textarea');
       draft.value = '/'; draft.dispatchEvent(new Event('input', { bubbles: true }));

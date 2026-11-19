@@ -16,7 +16,7 @@ export class GeneralSettings {
     this.userID = '';
     this.theme = signal(document.documentElement.dataset.theme || 'dark');
     this.preview = signal(false);
-    this.chat = signal({ systemEvents: true, debugInspector: false, messageLayout: 'a' });
+    this.chat = signal({ systemEvents: true, debugInspector: false, messageLayout: 'b' });
     this.rights = signal({ owner: false, admin: false });
     this.page = mountPreactPage(section, ({ onDirty }) => html`<${GeneralPage} store=${this} onDirty=${onDirty} />`);
   }

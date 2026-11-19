@@ -233,8 +233,15 @@ async function main() {
       assert.equal(await page.$eval('#pref-debug-inspector', el => el.checked), true, 'showing General again reads the switches');
       await page.close();
     }
-    // The Message layout choice: what this person chose shows, and choosing applies it to the page at once (the `data-msg-layout`
-    // attribute the styles read) and saves it to the account.
+    // The Message layout choice: nothing stored shows B (the default), what this person chose shows, and choosing applies it to the page at
+    // once (the `data-msg-layout` attribute the styles read) and saves it to the account.
+    {
+      const page = await mount();
+      await page.evaluate(() => window.__general.setUser('u1'));
+      await settle(page);
+      assert.equal(await page.$eval('#message-layout', el => el.value), 'b', 'with nothing stored, layout B is shown');
+      await page.close();
+    }
     {
       const page = await mount({ 'aimebu2.ui.message-layout.u1': 'b' });
       await page.evaluate(() => window.__general.setUser('u1'));
