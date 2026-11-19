@@ -40,7 +40,7 @@ export class OnboardingStore {
 
   close() { this.stopWatching(); this.set(() => { this.open.value = false; }); this.harnesses.clear(); }
 
-  // The Harnesses step: the Settings → Harnesses component itself, and Continue once a harness with a model exists. It checks that every
+  // The Harnesses step: the Settings → Harnesses & models component itself, and Continue once a harness with a model exists. It checks that every
   // couple of seconds while it is shown, since the component saves on its own.
   async showHarnesses(mode = this.mode) {
     this.stopWatching();
@@ -108,7 +108,7 @@ export class OnboardingStore {
 
   async skipHarnesses() {
     const ticket = this.ticket;
-    if (!await this.confirm('Skip harness setup? Agents need a harness with a model to run on. You can set one up later in Settings → Harnesses.', { title: 'Skip harness setup', confirm: 'Skip for now' })) return;
+    if (!await this.confirm('Skip harness setup? Agents need a harness with a model to run on. You can set one up later in Settings → Harnesses & models.', { title: 'Skip harness setup', confirm: 'Skip for now' })) return;
     if (this.current(ticket)) await this.leaveHarnesses(false);
   }
 

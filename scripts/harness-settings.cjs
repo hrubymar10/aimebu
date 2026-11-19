@@ -1,4 +1,4 @@
-// Settings → Harnesses (a list of harnesses beside the chosen one) against a scratch server: the smoke for model editing, the per-model
+// Settings → Harnesses & models (a list of harnesses beside the chosen one) against a scratch server: the smoke for model editing, the per-model
 // role defaults, the role order and pick mode, the sync with Settings → Roles, the stale-save refusal and the phone width; and, with
 // SHOTS_DIR set, a screenshot on a desktop and a phone viewport. `make test-ui` runs the smoke; this file runs on its own too:
 //   SHOTS_DIR=/some/dir node scripts/harness-settings.cjs

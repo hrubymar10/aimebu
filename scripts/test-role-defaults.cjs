@@ -1,4 +1,4 @@
-// The pure helpers behind the role defaults on Settings → Harnesses: where a model sits in a role's list, turning it on or off, moving,
+// The pure helpers behind the role defaults on Settings → Harnesses & models: where a model sits in a role's list, turning it on or off, moving,
 // removing, and the body that saves a role. Runs the module source in a vm.
 'use strict';
 const assert = require('node:assert/strict');

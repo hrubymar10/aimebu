@@ -186,7 +186,7 @@ func (s *Server) spawnCatalog(w http.ResponseWriter, r *http.Request) {
 			}
 			item.SharesClaudeHome = sharesClaudeHome(machine, &definition)
 			if !definition.Enabled {
-				item.Available, item.UnavailableReason = false, "disabled by owner; enable it in Settings → Harnesses"
+				item.Available, item.UnavailableReason = false, "disabled by owner; enable it in Settings → Harnesses & models"
 			}
 			if item.Available && definition.Containerized && definition.AgentServerURL == "" && dockerBindIsLoopback() {
 				item.Available, item.UnavailableReason = false, dockerBindUnavailableMessage
@@ -272,7 +272,7 @@ func dockerBindIsLoopback() bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-var errLauncherUnavailable = errors.New("pass an enabled launcher_id or a launcher name in variant (native/docker for the default names); check Settings → Harnesses")
+var errLauncherUnavailable = errors.New("pass an enabled launcher_id or a launcher name in variant (native/docker for the default names); check Settings → Harnesses & models")
 
 func launcherAlias(name string) string {
 	if name == "harness-docker" {
@@ -994,7 +994,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			return
 		}
 		if !ok {
-			apiError(w, 400, "model_unlisted", "the model is not one this harness offers; add it under Settings → Harnesses")
+			apiError(w, 400, "model_unlisted", "the model is not one this harness offers; add it under Settings → Harnesses & models")
 			return
 		}
 		req.Model = model
@@ -1623,7 +1623,7 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ok {
-			apiError(w, 400, "model_unlisted", "the model is not one this harness offers; add it under Settings → Harnesses")
+			apiError(w, 400, "model_unlisted", "the model is not one this harness offers; add it under Settings → Harnesses & models")
 			return
 		}
 		req.Model = model

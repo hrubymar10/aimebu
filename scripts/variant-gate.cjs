@@ -241,7 +241,7 @@ class Variant {
     if (!entry) { this.skip = 'the server does not list this variant'; return; }
     if (!entry.available) { this.skip = `unavailable: ${entry.unavailable_reason || 'no reason given'}`; return; }
     const model = (entry.models || []).find(m => m.id === CHEAP_MODEL[this.tool]);
-    if (!model) { this.skip = `cheapest model ${CHEAP_MODEL[this.tool]} is not listed on this harness (listed: ${(entry.models || []).map(m => m.id).join(', ') || 'none'}); add it under Settings → Harnesses`; return; }
+    if (!model) { this.skip = `cheapest model ${CHEAP_MODEL[this.tool]} is not listed on this harness (listed: ${(entry.models || []).map(m => m.id).join(', ') || 'none'}); add it under Settings → Harnesses & models`; return; }
     this.model = model.id;
     const ts = stamp();
     let ok = await this.step('room', async () => {

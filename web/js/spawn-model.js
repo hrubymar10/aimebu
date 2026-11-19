@@ -64,7 +64,7 @@ export function sessionEntryState(selected, catalog) {
   const label = selected.label || 'This launcher';
   const switchTo = catalog.findIndex(canContinue);
   if (switchTo >= 0) return { enabled: false, note: `${label} keeps its own Claude home, so a session cannot be continued through it.`, switchTo };
-  return { enabled: false, note: `${label} keeps its own Claude home, so a session cannot be continued through it. Sessions need the native Claude Code harness, or a Docker launcher that shares Claude's home (harness-docker's claude_home_shared); add one under Settings → Harnesses.`, switchTo: -1 };
+  return { enabled: false, note: `${label} keeps its own Claude home, so a session cannot be continued through it. Sessions need the native Claude Code harness, or a Docker launcher that shares Claude's home (harness-docker's claude_home_shared); add one under Settings → Harnesses & models.`, switchTo: -1 };
 }
 
 // A warning whenever the model chosen for the agent is not the one the session ran on, versions included, so a session is not continued on
@@ -89,7 +89,7 @@ export const NEW_ROOM = '__new__';
 // The value of the "Start in" choice that reopens an archived room (the one with the agent's v1 history) and starts the agent there.
 export const REOPEN_PREFIX = 'reopen:';
 
-const HARNESSES = 'Settings → Harnesses';
+const HARNESSES = 'Settings → Harnesses & models';
 
 // One row of the tool list: the entry's index as its value, and for an unavailable one why, with where to look. `unfit` (resumeToolChoice's
 // `disabled`) marks the rows a session cannot be continued through; such a row says why too, never a silent grey.
@@ -124,14 +124,14 @@ export function worktreeOption({ roomKind, resumable, check }) {
   return { hidden: roomKind !== 'task' || !!resumable || refused, disabled: refused, refused, note: '' };
 }
 
-// A hint that names Settings → Harnesses makes that name a button that opens it, so an empty machine says where to go. Only the owner
+// A hint that names Settings → Harnesses & models makes that name a button that opens it, so an empty machine says where to go. Only the owner
 // can add or change a harness (an admin reads them), so anyone else gets plain words (the link would only end in a refusal).
 export function hintParts(text, canManage) {
   const at = text.indexOf(HARNESSES);
   if (at < 0) return { text };
   if (!canManage) {
-    return { text: text.replace(/Add a harness in Settings → Harnesses/, 'Ask the owner to add a harness').replace(/Add one (?:in|under) Settings → Harnesses/, 'Ask the owner to add one').replace(/add one (?:in|under) Settings → Harnesses/, 'ask the owner to add one')
-      .replace(/; [Cc]heck Settings → Harnesses/, '; ask the owner to check the harnesses').replace(/[Cc]heck Settings → Harnesses/, 'Ask the owner to check the harnesses').replace(/enable it in Settings → Harnesses/, 'ask the owner to enable it') };
+    return { text: text.replace(/Add a harness in Settings → Harnesses & models/, 'Ask the owner to add a harness').replace(/Add one (?:in|under) Settings → Harnesses & models/, 'Ask the owner to add one').replace(/add one (?:in|under) Settings → Harnesses & models/, 'ask the owner to add one')
+      .replace(/; [Cc]heck Settings → Harnesses & models/, '; ask the owner to check the harnesses').replace(/[Cc]heck Settings → Harnesses & models/, 'Ask the owner to check the harnesses').replace(/enable it in Settings → Harnesses & models/, 'ask the owner to enable it') };
   }
   return { before: text.slice(0, at), link: HARNESSES, after: text.slice(at + HARNESSES.length) };
 }

@@ -68,7 +68,7 @@ export class ImportStore {
       if (!this.fresh(generation)) return;
       const tools = (catalog.tools || []).filter(usableTool);
       batch(() => { this.tools.value = tools; this.harness.value = tools.length ? '0' : ''; this.model.value = defaultModel(tools[0]); });
-      if (!tools.length) { this.status.value = 'This machine has no Claude Code harness that can continue a session (a native one, or a Docker one that shares the host Claude home). Add one under Settings → Harnesses.'; return; }
+      if (!tools.length) { this.status.value = 'This machine has no Claude Code harness that can continue a session (a native one, or a Docker one that shares the host Claude home). Add one under Settings → Harnesses & models.'; return; }
       await this.loadSessions();
     } catch (failure) {
       if (!this.fresh(generation)) return;

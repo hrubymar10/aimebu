@@ -380,7 +380,7 @@ async function main() {
       await settle(page);
       assert.deepEqual(await page.evaluate(() => ({ boxes: [...document.querySelectorAll('#settings-backup-plan .backup-section input')].map(box => `${box.value}:${box.checked}:${box.disabled}`), text: [...document.querySelectorAll('#settings-backup-plan .backup-section span')].map(span => span.textContent),
         notes: [...document.querySelectorAll('#settings-backup-plan > p')].map(p => p.textContent), apply: document.querySelector('#settings-backup-apply').disabled })),
-        { boxes: ['macros:true:false', 'roles:false:true', 'ui_prefs:true:false'], text: ['Macros: 1 new', 'Roles: 2 already the same', 'Interface preferences: 1 to overwrite'], notes: ['Model lists are per harness now (Settings → Harnesses), so the model catalog in this file is not imported.', 'Not understood by this version and ignored: mystery.'], apply: false });
+        { boxes: ['macros:true:false', 'roles:false:true', 'ui_prefs:true:false'], text: ['Macros: 1 new', 'Roles: 2 already the same', 'Interface preferences: 1 to overwrite'], notes: ['Model lists are per harness now (Settings → Harnesses & models), so the model catalog in this file is not imported.', 'Not understood by this version and ignored: mystery.'], apply: false });
       // Untick everything: Apply says so and sends nothing. Then tick macros and apply; the answer is shown and the page is told.
       await page.$$eval('#settings-backup-plan .backup-section input:not(:disabled)', boxes => boxes.forEach(box => box.click()));
       await page.$eval('#settings-backup-apply', el => el.click());

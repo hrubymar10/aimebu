@@ -46,7 +46,7 @@ Pending or failed opt-ins can be canceled while the room is open, and failed
 creation can be retried. Removal waits while any active agent uses the
 worktree checkout, including when forced.
 A machine runs harnesses: the Claude Code, Codex, Pi, OpenCode and Mistral Vibe installs the owner sets up
-under Settings → Agents → Harnesses (a harness is stored as a named launcher). A new machine has none:
+under Settings → Agents → Harnesses & models (a harness is stored as a named launcher). A new machine has none:
 nothing is seeded, and nothing is added until the owner adds it by hand or ticks what
 Auto-detect found. Spawn and switch use the selected harness's stable ID. Upgraded machines keep the launchers that were enabled or in use. Migration 69 deletes unused
 seeded ones and logs what it removed and moved.
@@ -58,13 +58,13 @@ continues with the verified new copy. An agent's model that the old list lacked
 is added to its harness
 so no running agent changes model. A tool whose model list was edited keeps
 one disabled harness so the list survives. After the first project is created and no machine has a harness with a model, the first run continues with a **Set up a harness** step (the
-Settings → Agents → Harnesses component itself: Add, Auto-detect and models) and offers "Spawn your first agent" only once one is ready; "Skip for now" leaves a
+Settings → Agents → Harnesses & models component itself: Add, Auto-detect and models) and offers "Spawn your first agent" only once one is ready; "Skip for now" leaves a
 "Set up a harness first" hint in place of the spawn button, and someone who cannot change harnesses (anyone but the owner) is told to ask the owner. The same step is offered
 on its own to the owner who signs in while no machine has a harness with a model (after a v1 import, which carries none over, from another browser, or once
 every harness was removed), once per browser session. That comes from the server, not the browser: Skip is stored with the account
 (the `harness_setup_skipped` preference), so no browser asks again, until a harness with a model exists and the app resets it. Someone who cannot
 change harnesses is never offered it. The spawn dialog
-shows unavailable harnesses with the reason and points to Settings → Agents → Harnesses for setup (a link that opens it on
+shows unavailable harnesses with the reason and points to Settings → Agents → Harnesses & models for setup (a link that opens it on
 the dialog's machine for the owner; anyone else, an admin included, is told to ask the owner). A
 harness can be selected by ID or by its name in `variant`; `native` and `docker` keep their
 meaning for the harnesses named `native` and `harness-docker`.
@@ -470,7 +470,7 @@ categories, then one category under a ← button and a centred title.
 
 - **Personal:** Appearance (theme, room preview), Chat (message layout, system events, debug inspector), Notifications.
 - **Server:** Users & invites, Accounts & usage, Telemetry, Storage & performance (message expiry, prompt cache), Backup & restore (owner or admin).
-- **Agents** (owner or admin, except Agent isolation, which everyone can read): Roles, Prompts, Macros, Harnesses, Machines, Agent isolation.
+- **Agents** (owner or admin, except Agent isolation, which everyone can read): Roles, Prompts, Macros, Harnesses & models, Machines, Agent isolation.
 
 The box above the sections searches every setting by name, description and keywords, in categories you have not opened. A result shows its path (Agents ›
 Prompts › Mentions); clicking it (or Enter on the first) opens the category and briefly highlights the setting. Settings your account may not open are never
@@ -593,7 +593,7 @@ estimate, and the gauge label caps at 100%;
 unknown values appear as “—”. Compaction posts a room notice with the reported
 before and after token counts. The spawn dialog's Name field starts with a free name from the server's pool (its dice button asks for another; an empty field lets the server pick), and a refused name is answered under the field. The dialog reads tool availability,
 detected CLI versions, and model choices from the server catalog (the owner edits
-the models of each harness in Settings → Agents → Harnesses; exactly one is the harness's default,
+the models of each harness in Settings → Agents → Harnesses & models; exactly one is the harness's default,
 which is preselected; a manually removed model falls back to it, while an agent keeps a detected model that disappears from the harness); unavailable
 tools show the reason and cannot be selected. Settings → Agents → Roles edits the
 global role names, emoji, instructions, cardinality, capabilities, and ordered
@@ -990,7 +990,7 @@ shows a short-lived, single-use pairing command to copy and run on that
 host. The same page lists pending, approved, and revoked machines; the owner
 approves a paired machine there or revokes an existing one. Each approved machine also has a stop icon that stops every agent running on it (after a confirmation); owner and admins use it, within the agents they may manage. The supervisor
 sends executable detection and versions for its configured harnesses.
-Settings → Agents → Harnesses (owner only) has a machine picker and that machine's harnesses.
+Settings → Agents → Harnesses & models (owner only) has a machine picker and that machine's harnesses.
 Closing Settings with unsaved form edits asks whether to Discard them or Keep editing.
 The harnesses are a list with the chosen one's detail beside it (above it on a phone): its summary
 and Enabled switch, then its models, each with a labelled switch per role. Ticking a role on a model makes it one of that role's default
@@ -1040,7 +1040,7 @@ environment references: the refused names (`PATH`, `HOME`, `LD_*`, `XDG_*`, `OPE
 disturbing the harness itself, not from naming another variable of the supervisor's environment, so only someone trusted with a machine's
 harness settings should be allowed to add providers. Its models are listed like any other, as `<provider id>/<model>`, and a turn is
 refused up front, naming the variable, when it is not set on that machine. A machine whose supervisor
-predates providers holds such turns with a note in the room. On initial harness detection and Reload models, the supervisor reads the machine's OpenCode config (on the host for Docker), adds valid OpenAI-compatible providers with `{env:NAME}` or no key, and saves their config-listed models plus models from each provider's `GET <baseURL>/models`. Endpoint failure keeps the config-listed models. A literal key in the config is never copied; that provider is skipped with a warning because agent turns use a private config. In Settings → Agents → Harnesses the Advanced providers section is collapsed by default. It lets the owner edit provider rows, key variable names and token limits; Save providers checks the list revision, and removing a provider whose models are still listed offers to remove those models too. Key status shows whether a variable is set on the machine, never its value. The import icon remains available for manual overrides.
+predates providers holds such turns with a note in the room. On initial harness detection and Reload models, the supervisor reads the machine's OpenCode config (on the host for Docker), adds valid OpenAI-compatible providers with `{env:NAME}` or no key, and saves their config-listed models plus models from each provider's `GET <baseURL>/models`. Endpoint failure keeps the config-listed models. A literal key in the config is never copied; that provider is skipped with a warning because agent turns use a private config. In Settings → Agents → Harnesses & models the Advanced providers section is collapsed by default. It lets the owner edit provider rows, key variable names and token limits; Save providers checks the list revision, and removing a provider whose models are still listed offers to remove those models too. Key status shows whether a variable is set on the machine, never its value. The import icon remains available for manual overrides.
 OpenCode model discovery runs in the same private config as a turn and asks each custom provider's own endpoint for its models, and
 `aimebu doctor --machine` warns about key variables that are not set. Disabled or
 unavailable harnesses stay visible with a reason; they cannot be selected for

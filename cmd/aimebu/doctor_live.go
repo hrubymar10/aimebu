@@ -166,12 +166,12 @@ func liveLauncherCheck(machine string, launcher protocol.DoctorLauncher) doctorC
 		if reason == "" {
 			reason = "no reason given"
 		}
-		return doctorCheck{Name: name, Status: statusWarn, Description: "unavailable: " + reason, Hint: "Fix the launcher in Settings → Harnesses."}
+		return doctorCheck{Name: name, Status: statusWarn, Description: "unavailable: " + reason, Hint: "Fix the launcher in Settings → Harnesses & models."}
 	case launcher.Tool == "codex" && strings.Contains(launcher.FeatureProblem, "codex_home"):
 		return doctorCheck{Name: name, Status: statusWarn, Description: launcher.FeatureProblem,
-			Hint: "Start the container, or update harness-docker on that machine; then re-check in Settings → Harnesses."}
+			Hint: "Start the container, or update harness-docker on that machine; then re-check in Settings → Harnesses & models."}
 	case launcher.FeatureProblem != "":
-		return doctorCheck{Name: name, Status: statusWarn, Description: launcher.FeatureProblem, Hint: "Update harness-docker on that machine, then re-check in Settings → Harnesses."}
+		return doctorCheck{Name: name, Status: statusWarn, Description: launcher.FeatureProblem, Hint: "Update harness-docker on that machine, then re-check in Settings → Harnesses & models."}
 	}
 	description := "available"
 	if launcher.Version != "" {

@@ -56,7 +56,7 @@ The first screen asks for a **project name** and a **project folder**: the repos
 
 The next step, **Set up a harness**, is where aimebu learns which agent CLIs it may run. Choose **Auto-detect harnesses**, tick what it found (Claude Code, Codex, ...) and add it. aimebu then reads the models each one offers and picks a default.
 
-Nothing is added for you, and you can come back any time under Settings → Agents → Harnesses (owner only). If nothing is found, use **Add harness** and give the executable's name or path.
+Nothing is added for you, and you can come back any time under Settings → Agents → Harnesses & models (owner only). If nothing is found, use **Add harness** and give the executable's name or path.
 
 ### 6. Start the lead
 

@@ -3,7 +3,7 @@ import { switchRows } from '../../spawn-model.js';
 import { MachineFields } from './machine-fields.js';
 import { ModelPicker } from './model-picker.js';
 
-// The reason line under the tool: plain words, or words with Settings → Harnesses as a button that opens it.
+// The reason line under the tool: plain words, or words with Settings → Harnesses & models as a button that opens it.
 function Reason({ text, store, host }) {
   const parts = store.hint(text);
   return html`<p id="switch-tool-reason" class="spawn-tool-reason">${parts.link ? html`${parts.before}<button type="button" class="inline-link" onClick=${() => host.openSettings(store.machine.id.peek())}>${parts.link}</button>${parts.after}` : parts.text}</p>`;

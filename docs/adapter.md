@@ -184,7 +184,7 @@ non-terminal exit instead of waiting on a child blocked on its unread pipe.
 The catalog probes `claude --version` at supervisor startup and advertises it
 only when the executable is available. CLI version is discovery data, not a
 model choice: the server's spawn catalog separately bounds Claude models to
-the list the owner sets on the harness in Settings → Agents → Harnesses (nothing is seeded; Auto-detect offers the current models). Normal turns receive the aimebu MCP entry
+the list the owner sets on the harness in Settings → Agents → Harnesses & models (nothing is seeded; Auto-detect offers the current models). Normal turns receive the aimebu MCP entry
 inline through `--mcp-config` and are not strict: the person's own MCP servers and connectors
 (user, project and local scope, claude.ai) stay available to the agent, as in their
 terminal. The aimebu entry takes precedence over a server of the same name in any
@@ -411,7 +411,7 @@ prompt and may remain in the checkout's Pi session transcript. The bearer
 works only while that turn is live, for delivered files in rooms where the
 agent remains a member; a saved transcript cannot fetch files after the turn.
 No long-lived agent key is written in the checkout. The
-owner lists the models of a Pi harness in Settings → Agents → Harnesses (Auto-detect models
+owner lists the models of a Pi harness in Settings → Agents → Harnesses & models (Auto-detect models
 runs `pi --offline --list-models` on the machine; ids are `provider/model`). Set
 `AIMEBU_LIVE_PI=1` or `AIMEBU_LIVE_PI_DOCKER=1` to run the respective
 two-turn nonce-recall canary.
@@ -464,7 +464,7 @@ its project, and their related rows before placing the result at the agent's
 private `OPENCODE_DB`. The source database and its account rows stay untouched.
 
 The owner lists the models of an OpenCode harness in
-Settings → Agents → Harnesses (Reload models runs `opencode models` and saves the result);
+Settings → Agents → Harnesses & models (Reload models runs `opencode models` and saves the result);
 ids must be `provider/model`. During that action the supervisor reads the
 machine's OpenCode config and imports usable OpenAI-compatible providers with
 environment-referenced or absent keys. The models named in that config and
@@ -479,7 +479,7 @@ Linux.
 
 #### Custom providers
 
-An OpenCode harness may have custom providers (Settings → Agents → Harnesses): OpenAI-compatible endpoints with a
+An OpenCode harness may have custom providers (Settings → Agents → Harnesses & models): OpenAI-compatible endpoints with a
 base URL and the name of the environment variable their key is read from. A turn whose model id starts with
 `<id>/` of one carries that provider (`TurnSpec.Providers`: id, name, npm package, base URL, key variable
 name, token limits and the harness's models of it), and the adapter adds it to the same private inline
@@ -621,7 +621,7 @@ prints a warning about it on stderr). The variables the adapter sets itself (`VI
 `VIBE_ACTIVE_MODEL`, `VIBE_SESSION_LOGGING__SAVE_DIR`, `VIBE_MCP_SERVERS` and the bearer's variable)
 come last and an owner's environment reference to one of them is ignored.
 
-The owner lists the models of a Vibe harness in Settings → Agents → Harnesses; as Vibe
+The owner lists the models of a Vibe harness in Settings → Agents → Harnesses & models; as Vibe
 has no command that lists them, Auto-detect models reads the `[[models]]` of the machine's Vibe config
 (by alias) and adds Vibe's built-in default, `mistral-medium-3.5`. A model with no
 `display_name` is labelled by its model and provider (`devstral-small-latest (llamacpp)`), not only by the alias.
@@ -679,7 +679,7 @@ an unmounted path fails spawn with the launcher's error. The adapters create
 repository's `info/exclude` (shared by its worktrees, carried by no commit) so an agent's `git add -A` cannot publish that
 runtime state. Ordinary `git clean -fd` leaves ignored state alone; `git clean -fdx` can still remove it. The Docker
 launcher version probe supplies the catalog version. The owner adds and enables
-native or containerized harnesses per machine in Settings → Agents → Harnesses; a new
+native or containerized harnesses per machine in Settings → Agents → Harnesses & models; a new
 machine has none.
 
 Claude and Codex Docker turns connect to the server's `/api/agent/mcp` HTTP endpoint using the

@@ -3028,7 +3028,7 @@ async function main() {
           assert.equal(await setupPage.$eval('#onboarding-form [name=folder]', input => input.value), path.join(tmp, 'demo-folder'), 'a typed folder is not replaced when the field is focused again');
           await setupPage.click('#onboarding-form button[type=submit]');
           // This server has no machine, so no harness: after the project the first run does not go on to a spawn that cannot start. It asks
-          // for a harness first, with the Settings → Harnesses component itself, and offers Continue only once a harness has a model.
+          // for a harness first, with the Settings → Harnesses & models component itself, and offers Continue only once a harness has a model.
           await setupPage.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])');
           // The card is a modal over the viewport: the page does not scroll behind it and the app under it cannot be reached.
           assert.deepEqual(await setupPage.evaluate(() => { const view = document.querySelector('#onboarding-view'), box = view.getBoundingClientRect(); return { fixed: getComputedStyle(view).position, covers: box.top <= 0 && box.left <= 0 && box.right >= innerWidth - 1 && box.bottom >= innerHeight - 1, appInert: document.querySelector('#app-view').inert }; }), { fixed: 'fixed', covers: true, appInert: true }, 'the first-run card covers the viewport and the app behind it is inert');
@@ -3074,7 +3074,7 @@ async function main() {
           // Skip asks first: Cancel stays on the step, OK leaves it.
           await stepSettled(setupPage); await setupPage.click('#onboarding-harnesses-skip');
           await setupPage.waitForSelector('#app-dialog[open]');
-          assert.match(await setupPage.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Settings → Harnesses/);
+          assert.match(await setupPage.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Settings → Harnesses & models/);
           await setupPage.click('#app-dialog .app-dialog-cancel');
           await setupPage.waitForFunction(() => !document.querySelector('#app-dialog').open);
           assert.equal(await setupPage.$eval('#onboarding-view [data-step="harnesses"]', step => step.hidden), false, 'cancelling the skip stays on the harness step');
@@ -3862,7 +3862,7 @@ async function main() {
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await settingsPage.$eval('#project-auto-resume', el => el.checked), true, 'saved project toggle was lost');
     await settingsTab(settingsPage, '#settings-usages-tab');
-    // Settings -> Harnesses over a mock of the machine's harnesses.
+    // Settings -> Harnesses & models over a mock of the machine's harnesses.
     const harnessChecks = async () => {
       await settingsPage.evaluate(() => {
         window.__harnessFetch = window.fetch;
@@ -5078,17 +5078,17 @@ async function main() {
       assert.deepEqual(await first.$$eval('#spawn-form [name=model] option', options => options.map(option => option.value)), firstAvailable.models.map(model => model.id));
       assert.equal(await first.$eval('#spawn-version', el => el.textContent), firstAvailable.cli_version ? `CLI version ${firstAvailable.cli_version}` : '');
     } else assert.equal(await first.$eval('#spawn-form button[type=submit]', el => el.disabled), true);
-    await first.waitForFunction(() => document.querySelector('#spawn-tool-reason').textContent.includes('Settings → Harnesses'), { timeout: 10000 }); // with no harness the dialog points to Settings → Harnesses
+    await first.waitForFunction(() => document.querySelector('#spawn-tool-reason').textContent.includes('Settings → Harnesses & models'), { timeout: 10000 }); // with no harness the dialog points to Settings → Harnesses & models
     // The hint is a link for the owner, and plain words for anyone else (who could only be refused): checked on the real class.
     const hints = await first.evaluate(async () => {
       const { hintParts } = await import('/js/spawn-model.js');
       const text = (owner, message) => { const parts = hintParts(message, owner); return [parts.link ? `${parts.before}${parts.link}${parts.after}` : parts.text, !!parts.link]; };
-      return { ownerLink: text(true, 'No harness yet. Add a harness in Settings → Harnesses.'), other: text(false, 'No harness yet. Add a harness in Settings → Harnesses.'),
-        otherCheck: text(false, 'not found; check Settings → Harnesses'), otherEnable: text(false, 'disabled by owner; enable it in Settings → Harnesses'), none: text(false, 'No models') };
+      return { ownerLink: text(true, 'No harness yet. Add a harness in Settings → Harnesses & models.'), other: text(false, 'No harness yet. Add a harness in Settings → Harnesses & models.'),
+        otherCheck: text(false, 'not found; check Settings → Harnesses & models'), otherEnable: text(false, 'disabled by owner; enable it in Settings → Harnesses & models'), none: text(false, 'No models') };
     });
-    assert.deepEqual(hints, { ownerLink: ['No harness yet. Add a harness in Settings → Harnesses.', true], other: ['No harness yet. Ask the owner to add a harness.', false], otherCheck: ['not found; ask the owner to check the harnesses', false],
+    assert.deepEqual(hints, { ownerLink: ['No harness yet. Add a harness in Settings → Harnesses & models.', true], other: ['No harness yet. Ask the owner to add a harness.', false], otherCheck: ['not found; ask the owner to check the harnesses', false],
       otherEnable: ['disabled by owner; ask the owner to enable it', false], none: ['No models', false] });
-    // ... as a link: it closes the dialog and opens Settings → Harnesses.
+    // ... as a link: it closes the dialog and opens Settings → Harnesses & models.
     await first.waitForSelector('#spawn-tool-reason button.inline-link');
     await first.click('#spawn-tool-reason button.inline-link');
     await first.waitForFunction(() => !document.querySelector('#spawn-dialog').open && !document.querySelector('#settings-harnesses').hidden && document.querySelector('#settings-dialog').open);

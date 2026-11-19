@@ -184,7 +184,7 @@ start open by default. Rooms you chose to archive appear in each project's
 the rooms you want to keep working in. Old AI sessions do
 not resume automatically. Check imported memory in **Memory** (it arrives as ordinary
 records, and project facts reach agents only once you enable the project's
-memory), check **Settings → Agents → Harnesses** for each harness and its models (the v1 import does not carry model lists), and run
+memory), check **Settings → Agents → Harnesses & models** for each harness and its models (the v1 import does not carry model lists), and run
 `aimebu doctor` to confirm the database and listener are healthy.
 
 ## If the wizard reports a changed backup

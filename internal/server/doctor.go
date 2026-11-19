@@ -65,7 +65,7 @@ var doctorCapabilities = []struct {
 	{"supports_path_probe", "folder checks for a project on this machine are refused: a remote folder cannot be verified", func(c *machineConn) bool { return c.supportsPathProbe }},
 	{"supports_worktree", "room worktrees cannot be created or removed on this machine", func(c *machineConn) bool { return c.supportsWorktree }},
 	{"supports_launchers", "harness launchers are unavailable: the Harnesses page reports that the supervisor needs updating", func(c *machineConn) bool { return c.supportsLaunchers }},
-	{"supports_detect", "Settings → Harnesses cannot auto-detect harnesses or models on this machine", func(c *machineConn) bool { return c.supportsDetect }},
+	{"supports_detect", "Settings → Harnesses & models cannot auto-detect harnesses or models on this machine", func(c *machineConn) bool { return c.supportsDetect }},
 	{"supports_detect_dir", "auto-detect cannot run in a chosen folder", func(c *machineConn) bool { return c.supportsDetectDir }},
 	{"supports_session_scan", "Claude Code sessions on this machine cannot be listed for import", func(c *machineConn) bool { return c.supportsSessionScan }},
 	{"supports_session_fork", "a Claude Code session cannot be continued as a copy (fork); only continued in place", func(c *machineConn) bool { return c.supportsSessionFork }},

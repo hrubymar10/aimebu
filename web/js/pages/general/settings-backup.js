@@ -9,7 +9,7 @@ import { collectPrefs, applyPrefs, describeSection, SECTION_LABELS } from '../..
 const EXPORT_BASE = 'macros, global roles, the model catalog, message expiry';
 const EXPORT_OWNER_DESC = `Download ${EXPORT_BASE}, the quota switcher and limit guard setup and this browser's interface preferences. Credentials and tokens are never included.`;
 const EXPORT_ADMIN_DESC = `Download ${EXPORT_BASE} and this browser's interface preferences. Credentials and tokens are never included.`;
-const RETIRED = { spawn_models: 'Model lists are per harness now (Settings → Harnesses), so the model catalog in this file is not imported.' };
+const RETIRED = { spawn_models: 'Model lists are per harness now (Settings → Harnesses & models), so the model catalog in this file is not imported.' };
 
 function Plan({ preview, ticked, busy, onTick, onApply, onCancel }) {
   const actionable = preview.sections.filter(section => section.new + section.overwrite > 0).length;

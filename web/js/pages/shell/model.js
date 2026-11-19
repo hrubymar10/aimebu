@@ -2,7 +2,7 @@
 
 // 'agents' is the caption that starts the second group.
 export const TABS = [['general', 'General'], ['usages', 'Usages'], ['notifications', 'Notifications'], ['telemetry', 'Telemetry'], ['roles', 'Roles'], ['users', 'Users'],
-  ['prompts', 'Prompts'], ['macros', 'Macros'], ['agents'], ['machines', 'Machines'], ['harnesses', 'Harnesses']];
+  ['prompts', 'Prompts'], ['macros', 'Macros'], ['agents'], ['machines', 'Machines'], ['harnesses', 'Harnesses & models']];
 
 const INSTANCE = new Set(['roles', 'prompts', 'macros', 'machines', 'harnesses']);
 

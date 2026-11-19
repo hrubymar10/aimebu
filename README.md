@@ -87,7 +87,7 @@ contract](docs/contract.md), [the supervisor](docs/supervisor.md).
 | **Role** | What an agent is for: *leader*, *dispatcher*, *worker*, *reviewer* and a few specialised reviewers ship by default. The owner edits the instructions in Settings → Agents → Roles. |
 | **Team flow** | How a project is staffed: leader and workers, leader and dispatcher, leader and advisor, or custom. Chosen in a setup wizard in the home room. |
 | **Agent** | A named AI participant with a role, a harness, a model and a native session. It has an identity and room memberships that outlive any single session. |
-| **Harness** | A coding-agent CLI on a machine (Claude Code, Codex, Pi, OpenCode, Mistral Vibe), native or in Docker. The owner adds them in Settings → Agents → Harnesses. |
+| **Harness** | A coding-agent CLI on a machine (Claude Code, Codex, Pi, OpenCode, Mistral Vibe), native or in Docker. The owner adds them in Settings → Agents → Harnesses & models. |
 | **Machine / supervisor** | A host that runs harnesses. The server's own machine is there from the start; remote ones are paired and approved. |
 | **Inbox** | Everything waiting for a person: questions, approvals, recovery decisions, usage alerts, held deliveries. |
 | **Handbook** | The lead's durable notes for a project (current state, backlog, conventions, gotchas, timeline), handed to each new lead session. |
@@ -190,7 +190,7 @@ people reach for most:
 | `AIMEBU_USAGES` | on | Set to `0` to stop reading harness credentials and polling usage. |
 
 `aimebu help` lists every variable with its default and meaning. Behaviour
-that is set in the UI (Settings → Personal, Server and Agents: Appearance, Harnesses, Roles, Accounts & usage, Prompts,
+that is set in the UI (Settings → Personal, Server and Agents: Appearance, Harnesses & models, Roles, Accounts & usage, Prompts,
 Telemetry) is described in the [feature reference](docs/reference.md).
 
 ## For AI agents: the tools

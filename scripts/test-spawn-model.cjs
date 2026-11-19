@@ -94,8 +94,8 @@ assert.equal(modelChangeWarning('claude-opus-4-5', null), '');
 assert.match(modelChangeWarning('claude-opus-4-5', { value: 'gpt-6-sol', label: 'GPT 6 Sol' }), /continue it on GPT 6 Sol/);
 
 // The tool list: unavailable entries say why and where to look, once.
-assert.deepEqual(plain(toolRows([{ tool: 'codex', label: 'Codex', available: true }, { tool: 'pi', available: false }, { label: 'Vibe', available: false, unavailable_reason: 'no models; see Settings → Harnesses' }, { label: 'Dock', available: false, unavailable_reason: 'not installed' }])),
-  [{ value: '0', label: 'Codex', disabled: false }, { value: '1', label: 'pi — unavailable; check Settings → Harnesses', disabled: true }, { value: '2', label: 'Vibe — no models; see Settings → Harnesses', disabled: true }, { value: '3', label: 'Dock — not installed; check Settings → Harnesses', disabled: true }]);
+assert.deepEqual(plain(toolRows([{ tool: 'codex', label: 'Codex', available: true }, { tool: 'pi', available: false }, { label: 'Vibe', available: false, unavailable_reason: 'no models; see Settings → Harnesses & models' }, { label: 'Dock', available: false, unavailable_reason: 'not installed' }])),
+  [{ value: '0', label: 'Codex', disabled: false }, { value: '1', label: 'pi — unavailable; check Settings → Harnesses & models', disabled: true }, { value: '2', label: 'Vibe — no models; see Settings → Harnesses & models', disabled: true }, { value: '3', label: 'Dock — not installed; check Settings → Harnesses & models', disabled: true }]);
 
 // A session's start: a row the session cannot go through says why in its label (a container with a Claude home of its own, or another tool).
 assert.deepEqual(plain(toolRows([{ tool: 'claude', label: 'Claude Code', available: true }, { tool: 'claude', label: 'Claude Code (Docker)', available: true, containerized: true }, { tool: 'codex', label: 'Codex', available: true }], [false, true, true])),
@@ -117,23 +117,23 @@ assert.deepEqual(plain(worktreeOption({ roomKind: 'task', check: { ok: false, re
 assert.equal(worktreeOption({ roomKind: 'task', check: { ok: false } }).note, '');
 assert.deepEqual([worktreeOption({ roomKind: 'home' }).hidden, worktreeOption({ roomKind: 'task', resumable: true }).hidden], [true, true]);
 
-// A hint names Settings → Harnesses as a button for an admin, and gives anyone else plain words.
-assert.deepEqual(plain(hintParts('No harness yet. Add a harness in Settings → Harnesses.', true)), { before: 'No harness yet. Add a harness in ', link: 'Settings → Harnesses', after: '.' });
-assert.equal(hintParts('No harness yet. Add a harness in Settings → Harnesses.', false).text, 'No harness yet. Ask the owner to add a harness.');
-assert.equal(hintParts('This harness has no models yet. Add one under Settings → Harnesses.', false).text, 'This harness has no models yet. Ask the owner to add one.');
-assert.equal(hintParts('x; check Settings → Harnesses', false).text, 'x; ask the owner to check the harnesses');
-assert.equal(hintParts('x. Check Settings → Harnesses.', false).text, 'x. Ask the owner to check the harnesses.');
-assert.equal(hintParts('disabled; enable it in Settings → Harnesses', false).text, 'disabled; ask the owner to enable it');
+// A hint names Settings → Harnesses & models as a button for an admin, and gives anyone else plain words.
+assert.deepEqual(plain(hintParts('No harness yet. Add a harness in Settings → Harnesses & models.', true)), { before: 'No harness yet. Add a harness in ', link: 'Settings → Harnesses & models', after: '.' });
+assert.equal(hintParts('No harness yet. Add a harness in Settings → Harnesses & models.', false).text, 'No harness yet. Ask the owner to add a harness.');
+assert.equal(hintParts('This harness has no models yet. Add one under Settings → Harnesses & models.', false).text, 'This harness has no models yet. Ask the owner to add one.');
+assert.equal(hintParts('x; check Settings → Harnesses & models', false).text, 'x; ask the owner to check the harnesses');
+assert.equal(hintParts('x. Check Settings → Harnesses & models.', false).text, 'x. Ask the owner to check the harnesses.');
+assert.equal(hintParts('disabled; enable it in Settings → Harnesses & models', false).text, 'disabled; ask the owner to enable it');
 assert.deepEqual(plain(hintParts('No models', true)), { text: 'No models' });
 
 // What the line under the tool says.
 const codex = { available: true, models: [] };
 assert.equal(spawnReason({ needsUpdate: true, tool: null, catalogCount: 0, modelCount: 0 }), 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.');
-assert.equal(spawnReason({ tool: null, catalogCount: 0 }), 'No harness yet. Add a harness in Settings → Harnesses.');
-assert.equal(spawnReason({ tool: null, catalogCount: 2 }), 'No tool is available on a connected machine. Check Settings → Harnesses.');
-assert.equal(spawnReason({ tool: { unavailable_reason: 'not installed' }, catalogCount: 1 }), 'not installed; check Settings → Harnesses');
-assert.equal(spawnReason({ tool: { unavailable_reason: 'see Settings → Harnesses' }, catalogCount: 1 }), 'see Settings → Harnesses');
-assert.equal(spawnReason({ tool: codex, modelCount: 0 }), 'This harness has no models yet. Add one under Settings → Harnesses.');
+assert.equal(spawnReason({ tool: null, catalogCount: 0 }), 'No harness yet. Add a harness in Settings → Harnesses & models.');
+assert.equal(spawnReason({ tool: null, catalogCount: 2 }), 'No tool is available on a connected machine. Check Settings → Harnesses & models.');
+assert.equal(spawnReason({ tool: { unavailable_reason: 'not installed' }, catalogCount: 1 }), 'not installed; check Settings → Harnesses & models');
+assert.equal(spawnReason({ tool: { unavailable_reason: 'see Settings → Harnesses & models' }, catalogCount: 1 }), 'see Settings → Harnesses & models');
+assert.equal(spawnReason({ tool: codex, modelCount: 0 }), 'This harness has no models yet. Add one under Settings → Harnesses & models.');
 assert.equal(spawnReason({ tool: { available: true, toolbox: false, toolbox_reason: 'no channel' }, modelCount: 1 }), 'No agent toolbox: no channel.');
 assert.equal(spawnReason({ tool: { available: true }, modelCount: 1 }), '');
 
@@ -226,8 +226,8 @@ assert.equal(switchModel({ tool: 'codex', variant: 'native', launcher_id: 'l1', 
 const agent = { tool: 'codex', variant: 'native', model: 'gpt-6-sol', machine_id: 'm1' };
 assert.deepEqual([switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-mini', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent, machineID: 'm2' }), switchUnchanged({ tool: own[0], model: 'gpt-6-sol', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent: { ...agent, machine_id: '' }, machineID: 'm2' })], [true, false, false, false, true]);
 assert.equal(switchReason({ needsUpdate: true, tool: null }), 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.');
-assert.equal(switchReason({ tool: null }), 'No harness is available on a connected machine. Add one in Settings → Harnesses.');
-assert.equal(switchReason({ tool: { available: true }, modelCount: 0 }), 'This harness has no models yet. Add one under Settings → Harnesses.');
+assert.equal(switchReason({ tool: null }), 'No harness is available on a connected machine. Add one in Settings → Harnesses & models.');
+assert.equal(switchReason({ tool: { available: true }, modelCount: 0 }), 'This harness has no models yet. Add one under Settings → Harnesses & models.');
 assert.equal(switchReason({ tool: { available: true }, modelCount: 1, unchanged: true }), 'Choose a different model or tool.');
 assert.equal(switchReason({ tool: { available: true, toolbox: false, toolbox_reason: 'no channel' }, modelCount: 1 }), 'No agent toolbox: no channel.');
 assert.equal(switchReason({ tool: { available: true }, modelCount: 1 }), '');

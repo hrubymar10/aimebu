@@ -298,7 +298,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 /* An icon button in a row with a text button is as tall as it (32px), so the pair lines up; icon buttons alone stay 28px. */
 :has(> .btn) > .btn-icon:not(.edge-toggle) { width: 32px; height: 32px; }
-/* Settings → Harnesses: a list of harnesses beside the chosen one. */
+/* Settings → Harnesses & models: a list of harnesses beside the chosen one. */
 .harness-models .settings-desc:empty, .harness-detect-models:empty { display: none; }
 /* One width for every section (v1's 760px, the pane's own rule): a page that wants more room (Harnesses) lays itself out in the room it has, so the dialog never
    grows over the top bar. */
@@ -1799,7 +1799,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .profile-output-text { margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 11px/1.4 var(--font-mono); background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
 .profile-output-status { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .profile-output-status:empty { display: none; }
-/* Settings → Harnesses: the default-model radio is a 16px control, not the full-width field the generic settings rule makes of an input. */
+/* Settings → Harnesses & models: the default-model radio is a 16px control, not the full-width field the generic settings rule makes of an input. */
 :is(#settings-dialog, #onboarding-harnesses) .settings-section .harness-model-default input[type="radio"] { flex: none; box-sizing: content-box; width: 16px; min-width: 0; height: 16px; min-height: 0; margin: 0; padding: 0; }
 :is(#settings-dialog, #onboarding-harnesses) .settings-section .harness-role-head-line select { width: auto; min-width: 110px; }
 .harness-role-mode { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--text-muted); font-size: 11px; }

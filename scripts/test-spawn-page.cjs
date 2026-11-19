@@ -115,7 +115,7 @@ async function main() {
     await ready(page);
     const state = await form(page);
     assert.deepEqual(state.roles, ['🔧 Worker', '🧭 Leader']); assert.equal(state.role, 'worker');
-    assert.deepEqual(state.tools, [['Codex', false], ['Claude Code', false], ['Pi — not installed; check Settings → Harnesses', true]]);
+    assert.deepEqual(state.tools, [['Codex', false], ['Claude Code', false], ['Pi — not installed; check Settings → Harnesses & models', true]]);
     assert.deepEqual([state.tool, state.model, state.version, state.name, state.submit, state.machine], ['Codex', 'gpt-6-sol', 'CLI version 0.9', 'nova', false, 'm1']);
     assert.deepEqual(state.models, [['gpt-6-sol', 'GPT-6 Sol', ''], ['gpt-6-mini', 'GPT-6 Mini', '']]);
     // The flow hint is a helper line (not amber), and the model's filter and list are one joined control.

@@ -107,7 +107,7 @@ const FIXTURE = async () => {
     const slot = document.createElement('div'); slot.style.display = 'contents'; agents.append(slot);
     render(html`<${AgentCard} agent=${agent} expanded=${true} profile=${profile} output=${null} readOutput=${false} down="" lifecycle="open" api=${api} />`, slot);
   }
-  // Settings -> Harnesses, from the real page over the fixture server's answers: the list beside one harness, with the Edit form open on a disabled one.
+  // Settings -> Harnesses & models, from the real page over the fixture server's answers: the list beside one harness, with the Edit form open on a disabled one.
   {
     const { HarnessSettings } = await import('/js/pages/harnesses/page.js');
     document.querySelector('#settings-harnesses')?.remove(); document.querySelector('#settings-harnesses-tab')?.remove();

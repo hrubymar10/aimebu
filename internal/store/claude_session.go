@@ -222,7 +222,7 @@ func (s *Store) NoteDockerOnlyHeld(ctx context.Context, agentID string) error {
 // could not be read), so a native launcher cannot be ruled out.
 func (s *Store) NoteDockerOnlyUnchecked(ctx context.Context, agentID string) error {
 	return s.noteHeld(ctx, agentID, func(slug, _ string) string {
-		return fmt.Sprintf("%s is held: Only run agents in docker is on and this agent's launcher could not be read, so a native launcher cannot be ruled out. Nothing was sent to it; check the agent's launcher in Settings -> Harnesses.", slug)
+		return fmt.Sprintf("%s is held: Only run agents in docker is on and this agent's launcher could not be read, so a native launcher cannot be ruled out. Nothing was sent to it; check the agent's launcher in Settings -> Harnesses & models.", slug)
 	})
 }
 

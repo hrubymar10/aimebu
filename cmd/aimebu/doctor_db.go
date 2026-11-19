@@ -529,11 +529,11 @@ func checkLaunchers(db *sql.DB) []doctorCheck {
 	var checks []doctorCheck
 	if len(noModels) > 0 {
 		checks = append(checks, doctorCheck{Name: name, Status: statusWarn, Description: "enabled with no models: " + strings.Join(noModels, ", "),
-			Hint: "Add a model in Settings → Harnesses, or disable the launcher."})
+			Hint: "Add a model in Settings → Harnesses & models, or disable the launcher."})
 	}
 	if len(noDefault) > 0 {
 		checks = append(checks, doctorCheck{Name: name, Status: statusWarn, Description: "model list has no default: " + strings.Join(noDefault, ", "),
-			Hint: "Mark one model as the default in Settings → Harnesses."})
+			Hint: "Mark one model as the default in Settings → Harnesses & models."})
 	}
 	if len(checks) == 0 {
 		checks = append(checks, doctorCheck{Name: name, Status: statusOK, Description: fmt.Sprintf("%d launcher(s), %d enabled, each with a model list and a default", total, enabled)})

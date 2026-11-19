@@ -49,3 +49,7 @@ for (const category of CATEGORIES) for (const result of find(category.title)) as
 const all = find('a'.repeat(0) + 'e');
 assert.ok(all.length > 20, 'a common letter finds many');
 console.log('settings search tests passed');
+
+// The Harnesses category is shown as "Harnesses & models" (its id, and so its address, stay `harnesses`), and "models" finds it.
+assert.equal(CATEGORIES.find(category => category.id === 'harnesses').title, 'Harnesses & models');
+assert.ok(find('models').some(result => result.kind === 'category' && result.category.id === 'harnesses' && result.path === 'Agents › Harnesses & models'), 'searching "models" finds the category');

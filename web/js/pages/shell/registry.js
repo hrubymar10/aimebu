@@ -28,7 +28,7 @@ export const CATEGORIES = [
   { id: 'roles', section: 'agents', title: 'Roles', icon: 'badge', page: 'roles', description: 'The roles an agent can hold and their instructions' },
   { id: 'prompts', section: 'agents', title: 'Prompts', icon: 'text', page: 'prompts', description: 'The wording agents get around their role instructions' },
   { id: 'macros', section: 'agents', title: 'Macros', icon: 'zap', page: 'macros', description: 'Short keys that expand into longer messages' },
-  { id: 'harnesses', section: 'agents', title: 'Harnesses', icon: 'terminal', page: 'harnesses', description: 'The tools each machine runs, their providers and models' },
+  { id: 'harnesses', section: 'agents', title: 'Harnesses & models', icon: 'terminal', page: 'harnesses', description: 'The tools each machine runs, their providers and models' },
   { id: 'machines', section: 'agents', title: 'Machines', icon: 'server', page: 'machines', description: 'The computers agents run on, and pairing a new one' },
   { id: 'isolation', section: 'agents', title: 'Agent isolation', icon: 'shield', page: 'general', rights: 'general', blocks: ['agent-isolation'], description: 'Docker-only runs, reviewer agents and keeping agents warm' },
 ];
@@ -92,7 +92,7 @@ export const SETTINGS = [
   { anchor: 'prompt-tail', category: 'prompts', group: 'Prompts', name: 'Closing guidance', description: 'The last shared sentence before the adapter\'s own closing.', keywords: ['prompt', 'wording'] },
   { anchor: 'prompt-preview', category: 'prompts', group: 'Preview', name: 'Preview', description: 'The assembled prompt a turn would get.', keywords: ['prompt', 'assembled'] },
   { anchor: 'macros-list', category: 'macros', group: 'Macros', name: 'Macros', description: 'Short keys that expand into longer messages; import, export and search them.', keywords: ['macro', 'snippet', 'shortcut', 'canned', 'quick command', 'import', 'copy all'] },
-  { anchor: 'harness-machine', category: 'harnesses', group: 'Harnesses', name: 'Machine', description: 'The supervisor whose harnesses and recent changes are shown.', keywords: ['supervisor', 'providers', 'models', 'claude', 'codex', 'cursor', 'role defaults'] },
+  { anchor: 'harness-machine', category: 'harnesses', group: 'Harnesses & models', name: 'Machine', description: 'The supervisor whose harnesses and recent changes are shown.', keywords: ['supervisor', 'providers', 'models', 'claude', 'codex', 'cursor', 'role defaults'] },
   { anchor: 'machines-list', category: 'machines', group: 'Machines', name: 'Machines', description: 'The computers agents run on; pair, approve or revoke one.', keywords: ['pair', 'supervisor', 'approve', 'revoke', 'host', 'computer'] },
 ];
 

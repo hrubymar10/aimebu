@@ -70,7 +70,7 @@ The host machine uses the project's ordinary folder automatically.
 The supervisor receives named launcher definitions from the server and reports
 whether each executable exists, its version when available, and its current
 availability. A new machine has no harnesses (nothing is seeded): the owner adds
-each in Settings → Agents → Harnesses, by hand or from what Auto-detect found, with one
+each in Settings → Agents → Harnesses & models, by hand or from what Auto-detect found, with one
 executable name or absolute path, a label, argument array, environment variable
 references, path mappings, and visible host roots. Arguments execute without a shell, and environment
 values are never stored in the server. The last report and owner activity stay
@@ -187,7 +187,7 @@ hangs for every folder, and the launchers are asked one after another before any
 legacy Docker harness rows are asked the same way (the launcher only runs in a folder its container mounts, and the server cannot tell
 which of the machine's folders that is; when none is mounted the row says so once, not with one
 folder's text). The harnesses found on the machine ("Found on this machine" in the wizard and in
-Settings → Agents → Harnesses) get their container versions the same way, within a shared 20 second budget;
+Settings → Agents → Harnesses & models) get their container versions the same way, within a shared 20 second budget;
 without a project folder the entry says why instead of showing nothing. A container launcher's
 features (`claude_home_shared`, `forward_env`, and Codex's `codex_home_shared`)
 are asked with `HARNESS_DOCKER_PRINT_FEATURES=1`. The Codex probe asks the
