@@ -27,7 +27,24 @@ const (
 	// CommandMaxCmdBytes bounds one command line; CommandMaxTailBytes bounds the tail a wake note carries (the whole output stays on disk).
 	CommandMaxCmdBytes  = 8 << 10
 	CommandMaxTailBytes = 8 << 10
+	// CommandUnconfirmedWindow is how long a job may wait for its machine to confirm its start before the server infers anything: the run
+	// request's 30-second timeout and a margin. CommandUnconfirmedMax is the longest an unconfirmed job holds one of its agent's slots,
+	// whatever the machine's connection does.
+	CommandUnconfirmedWindow = 60 * time.Second
+	CommandUnconfirmedMax    = 10 * time.Minute
 )
+
+// An end the server infers, rather than one the machine reported, is recorded with one of these errors. The machine's own evidence (a late
+// start, a reported end) still corrects it, so an inference never hides what really happened.
+const (
+	commandNeverStarted         = "the machine never started this command"
+	commandCancelledBeforeStart = "cancelled before the machine confirmed its start"
+)
+
+// commandEndInferred says whether a job's end was inferred by the server, so the machine's own report may still replace it.
+func commandEndInferred(job CommandJob) bool {
+	return (job.State == "failed" && job.Error == commandNeverStarted) || (job.State == "cancelled" && job.Error == commandCancelledBeforeStart)
+}
 
 // CommandJob is one long command an agent started outside its turn. It runs under the supervisor in the agent's own checkout, and its
 // completion wakes the agent with a note.
@@ -238,8 +255,10 @@ func (s *Store) RunningTurnRoom(ctx context.Context, agentID string) (string, er
 func (s *Store) RecordCommandStarted(ctx context.Context, id, startedAt, visibleLogPath, visibleCwd string) (CommandJob, error) {
 	var job CommandJob
 	err := s.Tx(ctx, func(tx *Tx) error {
+		// A job inferred never started that the machine says it did start is running after all.
 		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='running',started_at=COALESCE(started_at,?),visible_log_path=?,
-			visible_cwd=? WHERE id=? AND state='queued'`, startedAt, visibleLogPath, visibleCwd, id); err != nil {
+			visible_cwd=?,error=NULL,ended_at=NULL WHERE id=? AND (state='queued' OR (state='failed' AND error=?))`,
+			startedAt, visibleLogPath, visibleCwd, id, commandNeverStarted); err != nil {
 			return err
 		}
 		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET started_at=COALESCE(started_at,?),
@@ -283,8 +302,9 @@ func (s *Store) FailCommandStart(ctx context.Context, id, message string) (Comma
 	return job, err
 }
 
-// CancelCommand records the end of a job cancelled before it ever ran on a machine: its caller already sees the state in the tool result,
-// so nothing wakes.
+// CancelCommand records the end of a job cancelled before its machine confirmed its start: its caller already sees the state in the tool
+// result, so nothing wakes. The machine may have started it all the same, so the end is an inferred one: the caller also sends the machine a
+// cancel, a late start kills it, and a real end the machine reports replaces this one.
 func (s *Store) CancelCommand(ctx context.Context, id string) (CommandJob, error) {
 	var job CommandJob
 	err := s.Tx(ctx, func(tx *Tx) error {
@@ -296,10 +316,11 @@ func (s *Store) CancelCommand(ctx context.Context, id string) (CommandJob, error
 		if job.State != "queued" {
 			return nil // only a job that never started is cancelled here; a running one ends on its machine's report
 		}
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='cancelled',ended_at=? WHERE id=?`, timestamp(), id); err != nil {
+		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='cancelled',error=?,ended_at=? WHERE id=?`,
+			commandCancelledBeforeStart, timestamp(), id); err != nil {
 			return err
 		}
-		job.State, job.EndedAt = "cancelled", timestamp()
+		job.State, job.Error, job.EndedAt = "cancelled", commandCancelledBeforeStart, timestamp()
 		_, err = tx.AppendEvent(Event{Kind: "command_finished", ProjectID: job.ProjectID, RoomID: job.RoomID,
 			AgentID: job.AgentID, PayloadJSON: payloadJSON(map[string]string{"job_id": job.ID, "label": job.Label,
 				"state": "cancelled", "not_woken": "cancelled_before_start"})})
@@ -355,6 +376,8 @@ type CommandResult struct {
 	TailTruncated bool
 	Tail          string // already redacted by the supervisor
 	Error         string
+	// Reported says the machine itself reported this end: it replaces an end the server only inferred.
+	Reported bool
 }
 
 // FinishCommand records the end of a job and wakes its agent with a note in the room the command was started from. A job whose agent is
@@ -374,8 +397,10 @@ func finishCommand(tx *Tx, id string, result CommandResult) (CommandJob, error) 
 	if err != nil {
 		return CommandJob{}, err
 	}
-	if job.State == "done" || job.State == "cancelled" || job.State == "cancelled_unconfirmed" || job.State == "timed_out" || job.State == "lost" || job.State == "failed" {
-		return job, nil // a replayed report of an end already recorded changes nothing
+	terminal := job.State == "done" || job.State == "cancelled" || job.State == "cancelled_unconfirmed" || job.State == "timed_out" ||
+		job.State == "lost" || job.State == "failed"
+	if terminal && !(commandEndInferred(job) && result.Reported) {
+		return job, nil // a replayed report of an end already recorded changes nothing, and an inference never replaces another end
 	}
 	if result.State == "" {
 		result.State = "done"
@@ -534,6 +559,7 @@ func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID string, 
 		ended[exit.JobID] = true
 	}
 	var kill []CommandJob
+	cutoff := time.Now().UTC().Add(-CommandUnconfirmedWindow).Format(timestampLayout)
 	err := s.Tx(ctx, func(tx *Tx) error {
 		kill = nil
 		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE machine_id=? AND state IN ('queued','running')`, machineID)
@@ -567,9 +593,13 @@ func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID string, 
 				}
 				continue
 			}
+			if job.State == "queued" && job.CreatedAt > cutoff {
+				// Its run request may still be in flight on the connection this hello replaces: the sweep decides once the window has passed.
+				continue
+			}
 			result := CommandResult{State: "lost", Error: "the machine's supervisor no longer knows this command, so its end will never be reported"}
 			if job.State == "queued" {
-				result = CommandResult{State: "failed", Error: "the machine never started this command"}
+				result = CommandResult{State: "failed", Error: commandNeverStarted}
 			}
 			if _, err := finishCommand(tx, job.ID, result); err != nil {
 				return err
@@ -586,11 +616,56 @@ func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID string, 
 			if err != nil {
 				return err
 			}
-			if job.State == "cancelled" {
+			switch {
+			case job.State == "cancelled":
 				kill = append(kill, job)
+			case job.State == "failed" && job.Error == commandNeverStarted:
+				// Inferred never started, yet the machine runs it: it is running after all, and its end will be reported.
+				if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='running',error=NULL,ended_at=NULL,
+					started_at=COALESCE(started_at,?) WHERE id=?`, nullableString(openByID[id].StartedAt), id); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
 	})
 	return kill, err
+}
+
+// UnconfirmedCommands lists the jobs still waiting for their machine to confirm their start that were created before the cutoff.
+func (s *Store) UnconfirmedCommands(ctx context.Context, before time.Time) ([]CommandJob, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+commandColumns+` FROM command_job WHERE state='queued' AND created_at<? ORDER BY created_at,id LIMIT 200`,
+		before.UTC().Format(timestampLayout))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := []CommandJob{}
+	for rows.Next() {
+		job, err := scanCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+// FailUnconfirmedCommand ends a job whose start its machine never confirmed and, by the server's evidence, never will: it is failed and its
+// agent woken. The end is an inferred one, so a late start or a reported end from the machine still corrects it.
+func (s *Store) FailUnconfirmedCommand(ctx context.Context, id string) (CommandJob, error) {
+	var job CommandJob
+	err := s.Tx(ctx, func(tx *Tx) error {
+		var err error
+		job, err = scanCommand(tx.tx.QueryRowContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE id=?`, id))
+		if err != nil || job.State != "queued" {
+			return err
+		}
+		job, err = finishCommand(tx, id, CommandResult{State: "failed", Error: commandNeverStarted})
+		return err
+	})
+	return job, err
 }

@@ -262,6 +262,8 @@ func TestUnansweredCommandStartIsSettledByTheNextHello(t *testing.T) {
 	if call := waitCommandCall(t, answer); call.status != 202 {
 		t.Fatalf("run_command %d %s", call.status, call.body)
 	}
+	// Old enough that its run request cannot still be in flight.
+	backdateCommand(t, f, unknown.JobID, 2*time.Minute)
 	f.dialCommandMachine(t, nil, nil)
 	if job, err := f.db.CommandJobByAnyAgent(t.Context(), unknown.JobID); err != nil || job.State != "failed" || job.Error == "" {
 		t.Fatalf("a job the machine never started fails: %+v err=%v", job, err)
@@ -297,5 +299,133 @@ func TestCommandCancelledBeforeItsConfirmedStartIsKilled(t *testing.T) {
 	kill = readCommandFrame(t, conn, func(frame protocol.Frame) bool { return frame.Type == protocol.CommandCancel })
 	if kill.JobID != run.JobID {
 		t.Fatalf("cancel frame after hello %+v", kill)
+	}
+}
+
+func backdateCommand(t *testing.T, f *fixture, jobID string, age time.Duration) {
+	t.Helper()
+	created := time.Now().UTC().Add(-age).Format(commandTimeLayout)
+	if _, err := f.exec(`UPDATE command_job SET created_at=? WHERE id=?`, created, jobID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A hello that arrives while a run request is still in flight on the connection it replaces does not fail that young job: the machine
+// may be starting it right now. Its reported end is recorded as usual.
+func TestHelloDuringAnInFlightRunLeavesTheJobQueued(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	old := f.dialCommandMachine(t, nil, nil)
+	answer, run := f.startCommandCall(t, old, key, "in-flight")
+	conn := f.dialCommandMachine(t, nil, nil) // the old connection's run is unanswered, and the hello does not list it
+	if call := waitCommandCall(t, answer); call.status != 202 {
+		t.Fatalf("run_command %d %s", call.status, call.body)
+	}
+	if job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID); err != nil || job.State != "queued" {
+		t.Fatalf("a job whose run may still be in flight must not be failed: %+v err=%v", job, err)
+	}
+	writeCommandFrame(t, conn, commandEndedFrame(run, run.Generation, 0))
+	waitCommandAck(t, conn, run.JobID)
+	if job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID); err != nil || job.State != "done" {
+		t.Fatalf("job %+v err=%v", job, err)
+	}
+	if commandNotes(t, f, agent.ID) != 1 {
+		t.Fatal("the agent was not woken")
+	}
+}
+
+// The sweep fails an unconfirmed job once its run request went out on a connection since replaced, or once it is older than any request
+// could be. The failure is inferred, so a late end from the machine still replaces it with the real outcome.
+func TestSweepFailsAnUnconfirmedJobAndAReportedEndCorrectsIt(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	old := f.dialCommandMachine(t, nil, nil)
+	answer, run := f.startCommandCall(t, old, key, "swept")
+	conn := f.dialCommandMachine(t, nil, nil)
+	if call := waitCommandCall(t, answer); call.status != 202 {
+		t.Fatalf("run_command %d %s", call.status, call.body)
+	}
+	if err := f.srv.sweepUnconfirmedCommands(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if job, _ := f.db.CommandJobByAnyAgent(t.Context(), run.JobID); job.State != "queued" {
+		t.Fatalf("a job inside the window is left alone: %+v", job)
+	}
+	backdateCommand(t, f, run.JobID, 2*time.Minute)
+	if err := f.srv.sweepUnconfirmedCommands(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if job, _ := f.db.CommandJobByAnyAgent(t.Context(), run.JobID); job.State != "failed" {
+		t.Fatalf("a job sent on a replaced connection fails: %+v", job)
+	}
+	writeCommandFrame(t, conn, commandEndedFrame(run, run.Generation, 4))
+	waitCommandAck(t, conn, run.JobID)
+	if job, _ := f.db.CommandJobByAnyAgent(t.Context(), run.JobID); job.State != "done" || job.ExitCode == nil || *job.ExitCode != 4 || job.Error != "" {
+		t.Fatalf("the reported end must replace the inferred failure: %+v", job)
+	}
+	if got := commandNotes(t, f, agent.ID); got != 2 {
+		t.Fatalf("the inferred failure and the real end each wake the agent: %d", got)
+	}
+
+	// On the connection it was sent on, a job is failed only past the longest any request could take.
+	answer, slow := f.startCommandCall(t, conn, key, "slow")
+	f.srv.machineMu.Lock()
+	machine := f.srv.machines[f.machineID]
+	f.srv.machineMu.Unlock()
+	machine.connectedAt.Store(time.Now().Add(-time.Hour).UnixNano())
+	backdateCommand(t, f, slow.JobID, 2*time.Minute)
+	if err := f.srv.sweepUnconfirmedCommands(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if job, _ := f.db.CommandJobByAnyAgent(t.Context(), slow.JobID); job.State != "queued" {
+		t.Fatalf("a job still on its own connection waits: %+v", job)
+	}
+	backdateCommand(t, f, slow.JobID, store.CommandUnconfirmedMax+time.Minute)
+	if err := f.srv.sweepUnconfirmedCommands(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if job, _ := f.db.CommandJobByAnyAgent(t.Context(), slow.JobID); job.State != "failed" {
+		t.Fatalf("a job past the longest wait fails: %+v", job)
+	}
+	writeCommandFrame(t, conn, commandStartedFrame(slow))
+	if call := waitCommandCall(t, answer); call.status != 201 || !strings.Contains(string(call.body), `"state":"running"`) {
+		t.Fatalf("a late start revives the job: %d %s", call.status, call.body)
+	}
+}
+
+// Cancelling a job whose start is unconfirmed sends the machine a cancel too, and when the command had already finished, its real end
+// replaces the cancel.
+func TestCancelOfAnUnconfirmedJobKeepsItsRealEnd(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	conn := f.dialCommandMachine(t, nil, nil)
+	answer, run := f.startCommandCall(t, conn, key, "finished-first")
+	cancelResp := f.toolPost(t, "/api/agent/commands/"+run.JobID+"/cancel", key, "cancel-1", map[string]any{})
+	cancelResp.Body.Close()
+	if cancelResp.StatusCode != 200 {
+		t.Fatalf("cancel %d", cancelResp.StatusCode)
+	}
+	if kill := readCommandFrame(t, conn, func(frame protocol.Frame) bool { return frame.Type == protocol.CommandCancel }); kill.JobID != run.JobID {
+		t.Fatalf("cancel frame %+v", kill)
+	}
+	// The command had ended before the cancel reached it: its end arrives first, then its (late) start.
+	writeCommandFrame(t, conn, commandEndedFrame(run, run.Generation, 0))
+	waitCommandAck(t, conn, run.JobID)
+	writeCommandFrame(t, conn, commandStartedFrame(run))
+	if call := waitCommandCall(t, answer); call.status != 201 {
+		t.Fatalf("run_command %d %s", call.status, call.body)
+	}
+	job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID)
+	if err != nil || job.State != "done" || job.ExitCode == nil || *job.ExitCode != 0 || job.Error != "" {
+		t.Fatalf("the real end must replace the cancel: %+v err=%v", job, err)
+	}
+	if commandNotes(t, f, agent.ID) != 1 {
+		t.Fatal("the real end must wake the agent")
 	}
 }

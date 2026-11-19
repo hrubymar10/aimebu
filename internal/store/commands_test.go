@@ -240,3 +240,49 @@ func TestCommandStartAfterItsEndKeepsTheEnd(t *testing.T) {
 		t.Fatalf("no such job: %v", err)
 	}
 }
+
+// An end the server only inferred (cancelled before the start was confirmed, or failed as never started) gives way to the end the machine
+// reports, and to a late start; a real end, or another inference, never replaces it.
+func TestInferredCommandEndGivesWayToTheMachinesEvidence(t *testing.T) {
+	t.Parallel()
+	s, project, room, worker := commandFixture(t)
+	ctx := context.Background()
+	newJob := func(key string) CommandJob {
+		job, _, err := s.CreateCommandJob(ctx, CommandJob{AgentID: worker.ID, MachineID: "mch_wake", ProjectID: project.ID, RoomID: room.ID,
+			Cmd: "true", CheckoutPath: "/tmp/wake"}, RequestKey{ActorKind: "agent", ActorID: worker.ID, Kind: "command_run", Key: key, Digest: key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job
+	}
+	code := 2
+	cancelled := newJob("cancelled")
+	if _, err := s.CancelCommand(ctx, cancelled.ID); err != nil {
+		t.Fatal(err)
+	}
+	if job, _ := s.FinishCommand(ctx, cancelled.ID, CommandResult{State: "lost"}); job.State != "cancelled" {
+		t.Fatalf("an inference must not replace another: %+v", job)
+	}
+	if job, _ := s.FinishCommand(ctx, cancelled.ID, CommandResult{State: "done", ExitCode: &code, Reported: true}); job.State != "done" || job.Error != "" {
+		t.Fatalf("the reported end must replace the cancel: %+v", job)
+	}
+	other := 9
+	if job, _ := s.FinishCommand(ctx, cancelled.ID, CommandResult{State: "done", ExitCode: &other, Reported: true}); *job.ExitCode != 2 {
+		t.Fatalf("a real end is never replaced: %+v", job)
+	}
+	never := newJob("never")
+	if _, err := s.FailUnconfirmedCommand(ctx, never.ID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.RecordCommandStarted(ctx, never.ID, timestamp(), "/v/log", "/v")
+	if err != nil || job.State != "running" || job.Error != "" || job.EndedAt != "" {
+		t.Fatalf("a late start revives a job inferred never started: %+v err=%v", job, err)
+	}
+	refused := newJob("refused")
+	if _, err := s.FailCommandStart(ctx, refused.ID, "refused by the machine"); err != nil {
+		t.Fatal(err)
+	}
+	if job, _ := s.RecordCommandStarted(ctx, refused.ID, timestamp(), "", ""); job.State != "failed" {
+		t.Fatalf("a refusal is the machine's own answer, not an inference: %+v", job)
+	}
+}

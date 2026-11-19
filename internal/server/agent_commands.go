@@ -260,6 +260,11 @@ func (s *Server) agentToolCommandCancel(w http.ResponseWriter, r *http.Request) 
 			fail(w, err)
 			return
 		}
+		// Its start is unconfirmed, not refused: the machine may run it already, or be about to (a cancel sent now follows its run
+		// request on the same connection). Best effort: a late start kills it too, and so does the machine's next hello.
+		if conn, err := s.machineForID(job.MachineID); err == nil && conn.supportsCommands {
+			_ = conn.send(protocol.Frame{V: protocol.Version, Type: protocol.CommandCancel, ReqID: newRequestNonce(), JobID: job.ID, AgentID: job.AgentID})
+		}
 		writeJSON(w, 200, cancelled)
 		return
 	}
@@ -328,7 +333,7 @@ func (s *Server) handleCommandEnd(ctx context.Context, conn *machineConn, frame 
 		state = "cancelled"
 	}
 	if _, err := s.Store.FinishCommand(ctx, exit.JobID, store.CommandResult{State: state, ExitCode: exit.ExitCode,
-		StartedAt: exit.StartedAt, EndedAt: exit.EndedAt, LogBytes: exit.LogBytes, TailTruncated: exit.TailTruncated, Tail: exit.Tail}); err != nil &&
+		StartedAt: exit.StartedAt, EndedAt: exit.EndedAt, Reported: true, LogBytes: exit.LogBytes, TailTruncated: exit.TailTruncated, Tail: exit.Tail}); err != nil &&
 		!errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -398,4 +403,32 @@ func commandError(w http.ResponseWriter, err error) {
 	default:
 		fail(w, err)
 	}
+}
+
+// sweepUnconfirmedCommands ends the jobs whose start their machine never confirmed and never will: the run request went out on a connection
+// that has since been replaced (the hello of the new one leaves a job that young alone, as its request may still be in flight), or the job
+// has waited longer than any request could. Each is failed and its agent woken; a late start or end from the machine still corrects it.
+func (s *Server) sweepUnconfirmedCommands(ctx context.Context) error {
+	now := time.Now()
+	jobs, err := s.Store.UnconfirmedCommands(ctx, now.Add(-store.CommandUnconfirmedWindow))
+	if err != nil {
+		return err
+	}
+	for _, job := range jobs {
+		created, err := time.Parse(commandTimeLayout, job.CreatedAt)
+		if err != nil {
+			continue
+		}
+		replaced := false
+		if conn, err := s.machineForID(job.MachineID); err == nil {
+			replaced = time.Unix(0, conn.connectedAt.Load()).After(created)
+		}
+		if !replaced && now.Sub(created) < store.CommandUnconfirmedMax {
+			continue // still on the connection it was sent on (or the machine is offline): its answer or the next hello settles it
+		}
+		if _, err := s.Store.FailUnconfirmedCommand(ctx, job.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

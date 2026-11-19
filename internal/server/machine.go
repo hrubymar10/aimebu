@@ -33,6 +33,7 @@ type machineConn struct {
 	sendQueue                  chan protocol.Frame
 	done                       chan struct{}
 	stopOnce                   sync.Once
+	connectedAt                atomic.Int64   // unix nanoseconds when this connection replaced the last one: a request older than it went out on another one
 	workers                    sync.WaitGroup // helpers may read the store after the socket handler exits
 	bound                      map[string]int
 	boundMu                    sync.RWMutex
@@ -348,6 +349,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	s.machineMu.Lock()
 	old := s.machines[machineID]
+	c.connectedAt.Store(time.Now().UnixNano())
 	s.machines[machineID] = c
 	s.machineMu.Unlock()
 	if old != nil {

@@ -401,6 +401,9 @@ func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, caller fun
 				if err := d.Server.Store.SweepWorkerRecoveries(ctx); err != nil && ctx.Err() == nil {
 					onError(err)
 				}
+				if err := d.Server.sweepUnconfirmedCommands(ctx); err != nil && ctx.Err() == nil {
+					onError(err)
+				}
 			}
 			d.Server.maintenanceMu.RUnlock()
 			lastRecoverySweep = time.Now()

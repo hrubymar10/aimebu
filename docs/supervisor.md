@@ -936,15 +936,30 @@ and the turn limits do not apply to it.
   prove the machine refused it: the job stays `queued`, the call answers 202
   with `start_unconfirmed`, and a late `command_started` or `command_ended`
   still settles it. A fast command's end may arrive before its start; the call
-  then returns the finished job. A job cancelled while its start was
-  unconfirmed is killed if the machine turns out to run it.
+  then returns the finished job. Cancelling a job whose start is unconfirmed
+  records it `cancelled` at once and also sends the machine a cancel; it is
+  killed if the machine turns out to run it, and if it had already finished,
+  its reported end replaces the cancel.
+- **Inferred ends give way to evidence.** When the server ends a job on its
+  own inference (cancelled before its start was confirmed, or `failed` as
+  never started), the machine's own evidence still corrects it: a late
+  `command_started` makes a job inferred never started `running`, and a
+  reported `command_ended` replaces either inference with the real outcome
+  (and wakes the agent). A real end is never replaced.
 - **Reconciliation on hello.** A supervisor's hello lists the commands it
   still runs (`command_open`) and the ends it still owes (`command_exits`).
   The server makes a `queued` job the machine runs `running`, and ends the
   jobs the machine knows nothing of, since they can never be reported: one
   whose start was never confirmed becomes `failed` (it never started), a
   running one `lost`. Either wakes the agent, so a job never stays `running`
-  forever or holds one of the agent's two slots.
+  forever or holds one of the agent's two slots. A `queued` job younger than
+  60 seconds (the run request's 30-second timeout and a margin) is left alone:
+  its request may still be in flight on the connection the hello replaces.
+- **Unconfirmed-job sweep.** Every 10 seconds the dispatcher fails, and wakes
+  the agent for, a job still `queued` after those 60 seconds whose run request
+  went out before the machine's current connection was made (it can never be
+  answered now), and any job still `queued` after 10 minutes. Both are
+  inferred ends, so the machine's evidence still corrects them.
 - **Cancellation and limits.** A cancel is SIGTERM to the process group and
   SIGKILL after 8 seconds; a stop of the agent kills its commands the same
   way, aside from the frame loop (the grace never holds up other frames). A Docker cancel is confirmed only as far as the wrapper confirms it, so
