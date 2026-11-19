@@ -204,7 +204,7 @@ func (r *TargetRefresher) WarmupDue(ctx context.Context) error {
 			return ctx.Err()
 		}
 		before := last.get(candidate.profile.Tool + "/" + candidate.profile.Name)
-		if err := r.warmupProfile(ctx, candidate); err != nil {
+		if err := r.warmupProfile(ctx, candidate); err != nil && !accountReported(err) {
 			errs = append(errs, fmt.Errorf("%s/%s: %w", candidate.profile.Tool, candidate.profile.Name, err))
 		}
 		if mode == "smart" && last.get(candidate.profile.Tool+"/"+candidate.profile.Name).After(before) {
@@ -300,14 +300,15 @@ func (r *TargetRefresher) warmupProfile(ctx context.Context, c warmupCandidate) 
 	if err := store.setJournal(entry); err != nil {
 		return err
 	}
-	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.runTimeout)
-	run, runErr := runRefreshExecutor(runCtx, r.executors[p.Tool], dir, r.modelFlag(p.Tool), func() {
+	// A server shutdown must not kill a CLI that is in the middle of a warmup
+	// request, and the run's own budget starts only after the harness image
+	// exists (the executor bounds the run itself, after ensureImage).
+	run, runErr := runRefreshExecutor(context.WithoutCancel(ctx), r.executors[p.Tool], dir, r.modelFlag(p.Tool), func() {
 		entry.Phase = journalStarted
 		if err := store.setJournal(entry); err != nil {
 			log.Printf("usages: warmup journal start: %v", err)
 		}
 	})
-	cancel()
 	// Rate-limit every started request, including one that failed. A success is
 	// only visible on the next usage fetch.
 	if run.Started {
@@ -347,7 +348,8 @@ func (r *TargetRefresher) warmupProfile(ctx context.Context, c warmupCandidate) 
 	if attempt.Outcome == OutcomeNotSent {
 		r.clearJournal(store, p.Tool, p.Name)
 		r.emit(AccountRefreshFailed, p.Tool+"/"+p.Name, attempt.Detail)
-		return fmt.Errorf("warmup %s/%s: %s", p.Tool, p.Name, attempt.Detail)
+		// The account's own alert went out; the pass-level report must not repeat it.
+		return fmt.Errorf("warmup %s/%s: %s: %w", p.Tool, p.Name, attempt.Detail, errAccountReported)
 	}
 	state := AccountNeedsReloginSoon
 	if attempt.Outcome == OutcomeInvalidGrant {

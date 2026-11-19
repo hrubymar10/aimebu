@@ -32,8 +32,63 @@ type refreshExecutor interface {
 	Refresh(ctx context.Context, dir, modelFlag string) error
 }
 
+// harnessRun carries the two time budgets of one CLI run and the seams that
+// stand in for the real commands in tests. The zero value runs the real image
+// build and `docker run` with the default budgets.
+type harnessRun struct {
+	buildTimeout time.Duration // zero uses targetBuildTimeout
+	runTimeout   time.Duration // zero uses targetRunTimeout
+	// build and run stand in for `harness-docker-ctrl build-image` and
+	// `docker run` in tests; nil uses the real commands.
+	build func(context.Context) error
+	run   func(context.Context, []string, func()) (refreshRunResult, error)
+}
+
+func (h harnessRun) buildBudget() time.Duration {
+	if h.buildTimeout == 0 {
+		return targetBuildTimeout
+	}
+	return h.buildTimeout
+}
+
+func (h harnessRun) runBudget() time.Duration {
+	if h.runTimeout == 0 {
+		return targetRunTimeout
+	}
+	return h.runTimeout
+}
+
+// ensureImage makes sure the harness image exists before a CLI run starts. The
+// build has its own budget, longer than a run's: after the image was pruned, a
+// cold `harness-docker-ctrl build-image` outlasted the run timeout and was
+// killed mid-build. The budget is cut off from the caller's cancellation, so a
+// server shutdown does not kill a build halfway; the run's own budget starts
+// only once this returns.
+func (h harnessRun) ensureImage(ctx context.Context) error {
+	build := h.build
+	if build == nil {
+		build = ensureHarnessDockerImage
+	}
+	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.buildBudget())
+	defer cancel()
+	return build(buildCtx)
+}
+
+// runCLI runs one `docker run` under the run budget. The caller derives that
+// budget only after ensureImage returned, so a slow build never eats into it.
+func (h harnessRun) runCLI(ctx context.Context, args []string, onStart func()) (refreshRunResult, error) {
+	runCtx, cancel := context.WithTimeout(ctx, h.runBudget())
+	defer cancel()
+	if h.run != nil {
+		return h.run(runCtx, args, onStart)
+	}
+	return runDockerCapture(runCtx, args, onStart)
+}
+
 // dockerRefreshExecutor is the production claude executor.
-type dockerRefreshExecutor struct{}
+type dockerRefreshExecutor struct {
+	harnessRun
+}
 
 func (e dockerRefreshExecutor) Refresh(ctx context.Context, dir, modelFlag string) error {
 	_, err := e.RunStarted(ctx, dir, modelFlag, nil)
@@ -44,11 +99,11 @@ func (e dockerRefreshExecutor) Refresh(ctx context.Context, dir, modelFlag strin
 // whether the CLI process was started at all (a refresh that never reached the
 // CLI cannot have spent the refresh token), the bounded CLI output, and a
 // notification at the moment the process exists.
-func (dockerRefreshExecutor) RunStarted(ctx context.Context, dir, modelFlag string, onStart func()) (refreshRunResult, error) {
-	if err := ensureHarnessDockerImage(ctx); err != nil {
+func (e dockerRefreshExecutor) RunStarted(ctx context.Context, dir, modelFlag string, onStart func()) (refreshRunResult, error) {
+	if err := e.ensureImage(ctx); err != nil {
 		return refreshRunResult{Started: false}, err
 	}
-	result, err := runDockerCapture(ctx, dockerRefreshArgs(dir, modelFlag), onStart)
+	result, err := e.runCLI(ctx, dockerRefreshArgs(dir, modelFlag), onStart)
 	if err != nil {
 		return result, fmt.Errorf("harness-docker claude refresh run failed: %w: %s", err, strings.TrimSpace(result.Output))
 	}
@@ -70,7 +125,9 @@ func dockerRefreshArgs(dir, modelFlag string) []string {
 }
 
 // codexRefreshExecutor is the production codex executor.
-type codexRefreshExecutor struct{}
+type codexRefreshExecutor struct {
+	harnessRun
+}
 
 func (e codexRefreshExecutor) Refresh(ctx context.Context, dir, modelFlag string) error {
 	_, err := e.RunStarted(ctx, dir, modelFlag, nil)
@@ -78,11 +135,11 @@ func (e codexRefreshExecutor) Refresh(ctx context.Context, dir, modelFlag string
 }
 
 // RunStarted: see dockerRefreshExecutor.RunStarted.
-func (codexRefreshExecutor) RunStarted(ctx context.Context, dir, modelFlag string, onStart func()) (refreshRunResult, error) {
-	if err := ensureHarnessDockerImage(ctx); err != nil {
+func (e codexRefreshExecutor) RunStarted(ctx context.Context, dir, modelFlag string, onStart func()) (refreshRunResult, error) {
+	if err := e.ensureImage(ctx); err != nil {
 		return refreshRunResult{Started: false}, err
 	}
-	result, err := runDockerCapture(ctx, codexRefreshArgs(dir, modelFlag), onStart)
+	result, err := e.runCLI(ctx, codexRefreshArgs(dir, modelFlag), onStart)
 	if err != nil {
 		return result, fmt.Errorf("harness-docker codex run failed: %w: %s", err, strings.TrimSpace(result.Output))
 	}
@@ -99,7 +156,9 @@ func codexRefreshArgs(dir, modelFlag string) []string {
 }
 
 // ensureHarnessDockerImage builds the image via harness-docker-ctrl when it is
-// not already present locally.
+// not already present locally. It runs under whatever budget its caller gives
+// it: a run reaches it through ensureImage, which owns the build's separate
+// budget.
 func ensureHarnessDockerImage(ctx context.Context) error {
 	if exec.CommandContext(ctx, "docker", "image", "inspect", harnessDockerImage).Run() == nil {
 		return nil

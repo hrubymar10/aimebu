@@ -29,8 +29,16 @@ const (
 
 	// targetTick is how often the due pass runs.
 	targetTick = 30 * time.Second
-	// targetRunTimeout bounds one CLI refresh run.
+	// targetRunTimeout bounds one CLI refresh run. It starts only after the
+	// harness image exists: the image build has its own, longer budget
+	// (targetBuildTimeout), because a cold build outlasts a run.
 	targetRunTimeout = 4 * time.Minute
+	// targetBuildTimeout bounds one harness image build, separately from a run:
+	// after the image was pruned, a cold `harness-docker-ctrl build-image`
+	// outlasted the run timeout and was killed mid-build. The budget is derived
+	// from context.WithoutCancel of the caller's context, so a server shutdown
+	// does not kill a build halfway.
+	targetBuildTimeout = 20 * time.Minute
 	// targetSwitchAwayGrace is how long after a profile stops being active the
 	// refresher still leaves it alone. Under the token-only model no CLI holds a
 	// profile's refresh token, so only the switch itself needs to settle.
@@ -85,6 +93,12 @@ var (
 	ErrRefreshBackoff = errors.New("usages: token refresh is backing off after a failure")
 )
 
+// errAccountReported marks a failure that was already announced for the one
+// account it concerns (its own AccountRefreshFailed alert), so the pass-level
+// report must not repeat it. Pass-level failures (a listing error, a shutdown)
+// do not carry it.
+var errAccountReported = errors.New("failure already reported for the account")
+
 // TargetRefresher is the scheduler. The server runs one instance (Server.RunTokenCopies).
 //
 // Every refresh follows the same spend-once protocol:
@@ -132,7 +146,6 @@ type TargetRefresher struct {
 	migratedAt    func(tool string) (time.Time, bool) // when tool was migrated; default reads the marker
 	afterLock     func()                              // test seam: runs right after the account lock is taken
 	lead          map[string]time.Duration
-	runTimeout    time.Duration
 	interval      time.Duration
 	started       atomic.Bool // set by the first Run; a second Run is a no-op
 }
@@ -214,12 +227,11 @@ func NewTargetRefresher(cfg TargetRefresherConfig) *TargetRefresher {
 			"claude": dockerRefreshExecutor{},
 			"codex":  codexRefreshExecutor{},
 		},
-		available:  harnessDockerCtrlAvailable,
-		reachable:  dockerReachable,
-		enabled:    func() bool { return false },
-		lead:       targetLeadsFromEnv(),
-		runTimeout: targetRunTimeout,
-		interval:   targetTick,
+		available: harnessDockerCtrlAvailable,
+		reachable: dockerReachable,
+		enabled:   func() bool { return false },
+		lead:      targetLeadsFromEnv(),
+		interval:  targetTick,
 	}
 	r.spendCnd = sync.NewCond(&r.spendMu)
 	return r
@@ -488,6 +500,10 @@ func (r *TargetRefresher) duePasses(ctx context.Context) {
 	}
 }
 
+// accountReported says whether err is (or carries) a failure that was already
+// announced for its account, which the pass-level report must not repeat.
+func accountReported(err error) bool { return errors.Is(err, errAccountReported) }
+
 // RefreshDue refreshes every due profile (single-flight per account via the
 // maintenance lock; a held lock skips the tick). Profiles are refreshed one
 // after another so a slow CLI run never fans out into a burst of requests.
@@ -508,7 +524,7 @@ func (r *TargetRefresher) RefreshDue(ctx context.Context) error {
 				return ctx.Err()
 			}
 			err := r.refreshProfile(ctx, p, false)
-			if err != nil && !errors.Is(err, ErrRefreshBackoff) && !errors.Is(err, ErrAccountNeedsLogin) {
+			if err != nil && !errors.Is(err, ErrRefreshBackoff) && !errors.Is(err, ErrAccountNeedsLogin) && !accountReported(err) {
 				errs = append(errs, fmt.Errorf("%s/%s: %w", tool, p.Name, err))
 			}
 		}
@@ -697,8 +713,8 @@ func (r *TargetRefresher) spend(ctx context.Context, p StoredProfile, start []by
 	// A server shutdown must not kill a CLI that is in the middle of spending the
 	// token: the run is bounded by its own timeout, not by ctx, and the commit
 	// below proceeds even if ctx was cancelled meanwhile. The pass starts no
-	// further run once ctx is done.
-	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.runTimeout)
+	// further run once ctx is done. The executor bounds the run itself, after the
+	// harness image exists, so the run's budget does not pay for the image build.
 	onStart := func() {
 		// The CLI process exists: from here the token may be spent. A crash
 		// before this point never reached it, and recovery treats it as not sent.
@@ -707,8 +723,7 @@ func (r *TargetRefresher) spend(ctx context.Context, p StoredProfile, start []by
 			telemetry.ReportCause(ctx, "credentials", "token refresh: cannot journal that the CLI started")
 		}
 	}
-	run, runErr := runRefreshExecutor(runCtx, r.executors[tool], dir, flag, onStart)
-	cancel()
+	run, runErr := runRefreshExecutor(context.WithoutCancel(ctx), r.executors[tool], dir, flag, onStart)
 
 	rotated, _ := os.ReadFile(tmpPath)
 	startToken, _ := refreshToken(start, tool)
@@ -1066,9 +1081,10 @@ func (r *TargetRefresher) noteFailure(acct *targetAccount, tool, name, detail st
 	r.mu.Unlock()
 	if report {
 		r.emit(AccountRefreshFailed, tool+"/"+name, detail)
-	} else {
-		log.Printf("usages: token refresh %s/%s outcome=noop: %s", tool, name, detail)
+		// The account's own alert went out; the pass-level report must not repeat it.
+		return fmt.Errorf("token refresh %s/%s: %s: %w", tool, name, detail, errAccountReported)
 	}
+	log.Printf("usages: token refresh %s/%s outcome=noop: %s", tool, name, detail)
 	return fmt.Errorf("token refresh %s/%s: %s", tool, name, detail)
 }
 

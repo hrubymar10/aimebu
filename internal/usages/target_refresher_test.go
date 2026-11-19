@@ -286,6 +286,107 @@ func TestTokenRefresherRefreshesEveryDueProfileIncludingTheActiveOne(t *testing.
 	}
 }
 
+func slowBuildExecutor(tool string, buildCalls, runCalls *int) refreshExecutor {
+	h := harnessRun{
+		buildTimeout: time.Second,
+		runTimeout:   20 * time.Millisecond,
+		build: func(ctx context.Context) error {
+			*buildCalls++
+			select {
+			case <-time.After(50 * time.Millisecond):
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+		run: func(ctx context.Context, args []string, onStart func()) (refreshRunResult, error) {
+			*runCalls++
+			if onStart != nil {
+				onStart()
+			}
+			return refreshRunResult{Started: true}, nil
+		},
+	}
+	if tool == "codex" {
+		return codexRefreshExecutor{harnessRun: h}
+	}
+	return dockerRefreshExecutor{harnessRun: h}
+}
+
+func TestTokenRefresherBuildsTheHarnessImageUnderItsOwnBudget(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	runner := &scriptedRunner{fn: func(call int, dir string) (refreshRunResult, error) {
+		return refreshRunResult{Started: true}, nil
+	}}
+	for _, tool := range []string{"claude", "codex"} {
+		t.Run(tool, func(t *testing.T) {
+			h := newRefreshHarness(t, runner)
+			var buildCalls, runCalls int
+			h.r.executors[tool] = slowBuildExecutor(tool, &buildCalls, &runCalls)
+			body := claudeFull("a", "r1", now.Add(10*time.Minute))
+			if tool == "codex" {
+				body = codexFull(now.Add(10*time.Minute), "a", "r1", now)
+			}
+			h.addProfile(tool, "main", true, body)
+			_ = h.r.RefreshDue(context.Background())
+			if buildCalls != 1 || runCalls != 1 {
+				t.Fatalf("build calls = %d, run calls = %d; a build that outlasts the run budget must still finish, and the CLI must run", buildCalls, runCalls)
+			}
+		})
+	}
+}
+
+func TestWarmupBuildsTheHarnessImageUnderItsOwnBudget(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	runner := &scriptedRunner{fn: func(call int, dir string) (refreshRunResult, error) {
+		return refreshRunResult{Started: true}, nil
+	}}
+	h := newRefreshHarness(t, runner)
+	var buildCalls, runCalls int
+	h.r.executors["claude"] = slowBuildExecutor("claude", &buildCalls, &runCalls)
+	h.addProfile("claude", "idle", false, claudeFull("a", "r1", now.Add(time.Hour)))
+	h.r.cfg.WarmupSettings = func() (string, string, bool, error) { return "force", "", true, nil }
+	h.r.cfg.UsageProfile = func(_, name string) (Profile, bool) { return warmupSnapshot(name) }
+	if err := h.r.WarmupDue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if buildCalls != 1 || runCalls != 1 {
+		t.Fatalf("build calls = %d, run calls = %d; the warmup run must wait for the build under its own budget, not kill it", buildCalls, runCalls)
+	}
+}
+
+func TestTokenRefresherAnAlreadyAlertedAccountFailureIsNotReportedTwice(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	runner := &scriptedRunner{fn: func(call int, dir string) (refreshRunResult, error) {
+		return refreshRunResult{Started: true, Output: "dial tcp 127.0.0.1:443: connect: connection refused"}, errors.New("connect: connection refused")
+	}}
+	h := newRefreshHarness(t, runner)
+	h.addProfile("claude", "main", true, claudeFull("a", "r1", now.Add(10*time.Minute)))
+	if err := h.r.RefreshDue(context.Background()); err != nil {
+		t.Fatalf("the failure was already reported for the account; the pass must not repeat it: %v", err)
+	}
+	if got := h.stateAlertKinds(); len(got) != 1 || got[0] != AccountRefreshFailed {
+		t.Fatalf("alerts = %v, want one refresh_failed for the account", got)
+	}
+}
+
+func TestWarmupAnAlreadyAlertedAccountFailureIsNotReportedTwice(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	runner := &scriptedRunner{fn: func(call int, dir string) (refreshRunResult, error) {
+		return refreshRunResult{Started: true, Output: "dial tcp 127.0.0.1:443: connect: connection refused"}, errors.New("connect: connection refused")
+	}}
+	h := newRefreshHarness(t, runner)
+	h.addProfile("claude", "idle", false, claudeFull("a", "r1", now.Add(time.Hour)))
+	h.r.cfg.WarmupSettings = func() (string, string, bool, error) { return "force", "", true, nil }
+	h.r.cfg.UsageProfile = func(_, name string) (Profile, bool) { return warmupSnapshot(name) }
+	if err := h.r.WarmupDue(context.Background()); err != nil {
+		t.Fatalf("the failure was already reported for the account; the pass must not repeat it: %v", err)
+	}
+	if got := h.stateAlertKinds(); len(got) != 1 || got[0] != AccountRefreshFailed {
+		t.Fatalf("alerts = %v, want one refresh_failed for the account", got)
+	}
+}
+
 func TestTokenRefresherLeavesLinkedAndFreshProfilesAlone(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	runner := &scriptedRunner{fn: rotateClaudeRunner("n", "n", now.Add(8*time.Hour))}
@@ -391,8 +492,11 @@ func TestTokenRefresherNotSentRetriesWithBackoffAndTouchesNothing(t *testing.T) 
 	before := h.stored(p)
 	ctx := context.Background()
 
-	if err := h.r.RefreshDue(ctx); err == nil {
-		t.Fatal("a failed refresh must be reported")
+	if err := h.r.RefreshDue(ctx); err != nil {
+		t.Fatalf("an already-alerted account failure must not fail the pass: %v", err)
+	}
+	if got := h.stateAlertKinds(); len(got) != 1 || got[0] != AccountRefreshFailed {
+		t.Fatalf("alerts = %v, want one refresh_failed for the account", got)
 	}
 	if h.stored(p) != before {
 		t.Fatal("store changed after a failed refresh")
@@ -402,7 +506,7 @@ func TestTokenRefresherNotSentRetriesWithBackoffAndTouchesNothing(t *testing.T) 
 		t.Fatalf("within backoff: err=%v calls=%d", err, runner.callCount())
 	}
 	h.clock.now = h.clock.now.Add(6 * time.Minute)
-	if err := h.r.RefreshDue(ctx); err == nil || runner.callCount() != 2 {
+	if err := h.r.RefreshDue(ctx); err != nil || runner.callCount() != 2 {
 		t.Fatalf("second try: err=%v calls=%d (a DNS failure proves nothing was sent, so it retries)", err, runner.callCount())
 	}
 	if h.stored(p) != before || len(h.r.stateStore().journal()) != 0 {

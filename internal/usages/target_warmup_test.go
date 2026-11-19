@@ -221,8 +221,10 @@ func TestWarmupUnsentFailureDoesNotMarkAccountTerminal(t *testing.T) {
 	h.addProfile("claude", "idle", false, claudeFull("a", "unsent-refresh", now.Add(time.Hour)))
 	h.r.cfg.WarmupSettings = func() (string, string, bool, error) { return "force", "", true, nil }
 	h.r.cfg.UsageProfile = func(_, name string) (Profile, bool) { return warmupSnapshot(name) }
-	if err := h.r.WarmupDue(context.Background()); err == nil {
-		t.Fatal("unsent failure was treated as success")
+	// The failure goes out as the account's own alert (below); it must not also
+	// fail the pass: one failure is reported once.
+	if err := h.r.WarmupDue(context.Background()); err != nil {
+		t.Fatalf("an already-alerted account failure must not fail the warmup pass: %v", err)
 	}
 	if states := h.r.AccountStates(); len(states) != 0 {
 		t.Fatalf("unsent failure changed terminal state: %+v", states)
@@ -235,8 +237,8 @@ func TestWarmupUnsentFailureDoesNotMarkAccountTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.clock.now = now.Add(4 * time.Hour)
-	if err := h.r.WarmupDue(context.Background()); err == nil {
-		t.Fatal("second unsent failure was treated as success")
+	if err := h.r.WarmupDue(context.Background()); err != nil {
+		t.Fatalf("the re-armed account failure must not fail the warmup pass: %v", err)
 	}
 	if got := h.stateAlertKinds(); len(got) != 2 || got[1] != AccountRefreshFailed {
 		t.Fatalf("success did not re-arm failure alert: %v", got)

@@ -126,6 +126,14 @@ stopping aimebu for long or uninstalling it. The toggle is unavailable (off stay
 possible) while `harness-docker-ctrl` is not on `PATH`, because the refresh runs
 the real CLI in a throwaway container.
 
+The harness container image is built by `harness-docker-ctrl build-image` the
+first time a refresh or a warmup run needs it (for example after the image was
+pruned). The build has its own 20-minute budget, separate from the 4-minute
+limit of one CLI run, and it is not interrupted by a server shutdown; the run
+limit starts counting only once the image exists. A failure is reported once:
+an account failure that already went out as its own alert (refresh-failed) does
+not raise a second, pass-level report.
+
 - **On** converts each tool on the server, in the background: the same as
   `aimebu switcher migrate-copies --tool <tool>`, whose safety refusals (a live token
   with under 15 minutes left, a running codex) become a per-tool
