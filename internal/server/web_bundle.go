@@ -81,8 +81,8 @@ func buildWebBundle(raw map[string][]byte) (webBundle, error) {
 
 // reportBundleFailure says that the bundle could not be made and the page is served from its modules instead. It is loud on purpose: the app works,
 // but its first load is slow again, and someone has to look. It is reported to Sentry too when telemetry is on.
-// Each distinct failure is said once per process: the handler is built again for every agent MCP request, and each build would otherwise log and report
-// the same failure again (a Sentry event per request).
+// Each distinct failure is said once per process: the handler can be built more than once in a process (a restart of the web handler, a test), and each build would otherwise log and report
+// the same failure again (a Sentry event per build).
 var bundleFailuresSaid sync.Map // error text -> struct{}
 
 func reportBundleFailure(err error) {

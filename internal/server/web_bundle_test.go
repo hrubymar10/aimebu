@@ -147,8 +147,10 @@ func TestTheBundleCanBeTurnedOffForDebugging(t *testing.T) {
 	}
 }
 
-// forgetSaidBundleFailures empties the process-wide memory of the bundle failures already said, so a test of what is said starts from nothing.
+// forgetSaidBundleFailures empties the process-wide memory of the bundle failures already said, and the prepared-assets cache (which would otherwise
+// replay a failed preparation without saying it again), so a test of what is said starts from nothing.
 func forgetSaidBundleFailures() {
+	assetsCache.Range(func(key, _ any) bool { assetsCache.Delete(key); return true })
 	bundleFailuresSaid.Range(func(key, _ any) bool { bundleFailuresSaid.Delete(key); return true })
 }
 
@@ -204,7 +206,7 @@ func TestABundleThatCannotBeMadeFallsBackToTheModulesLoudly(t *testing.T) {
 			t.Fatalf("%s: the module is not served", broken.name)
 		}
 	}
-	// The same failure again (the handler is rebuilt for every agent MCP request) is not said again: no new log line, no new event.
+	// The same failure again (the handler is built more than once in a process) is not said again: no new log line, no new event.
 	logged.Reset()
 	for i := 0; i < 3; i++ {
 		if _, err := prepareWebAssets(files, true); err != nil {
