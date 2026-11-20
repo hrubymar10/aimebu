@@ -197,7 +197,7 @@ export class RoomPanelStore {
       await request(`/api/rooms/${room.id}`, { method: 'DELETE' });
       if (!this.current(call, room.id)) return;
       this.host.closeInfo();
-      await this.host.unwound?.(); // closing the dialog walks the history back; going to another room before that ends leaves the removed room's hash in the address
+      await this.host.unwound?.(); // closeInfo hands the address back at once, which starts the history walk back; going to another room before it ends leaves the removed room's hash in the address
       await this.host.removed(room);
     } catch (error) { if (this.current(call, room.id)) { this.infoError.value = error.message || 'Could not remove the room'; this.setBusy({ remove: false }); } }
   }

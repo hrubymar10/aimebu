@@ -6841,6 +6841,7 @@ async function main() {
         if (!response.ok) throw new Error(await response.text());
         return (await response.json()).id;
       }, actualProjectID);
+      const removeHome = await first.evaluate(async projectID => (await (await fetch(`/api/projects/${projectID}/rooms`)).json()).find(room => room.kind === 'home').id, actualProjectID);
       await first.waitForSelector(`[data-room-id="${removeID}"] .room-item-name`);
       await domClick(first, `[data-room-id="${removeID}"] .room-item-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id, {}, removeID);
@@ -6857,6 +6858,11 @@ async function main() {
       await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`) && !document.querySelector('#room-info-dialog').open, {}, removeID);
       assert.equal(await first.evaluate(id => fetch(`/api/rooms/${id}`).then(response => response.status), removeID), 404, 'the removed room is gone from the server');
       await first.waitForFunction(id => location.hash.slice(1) !== id && document.querySelector('#room-title').textContent !== 'Remove smoke', {}, removeID);
+      // The dialog's history walk back must finish before the home room is selected, or it leaves the removed room's hash in the address: once
+      // everything has settled the address names the home room, and still does after the late popstate would have landed.
+      await first.waitForFunction(id => location.hash.slice(1) === id, { timeout: 10000 }, removeHome);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      assert.equal(await first.evaluate(() => decodeURIComponent(location.hash.slice(1))), removeHome, 'after the room is removed from its open settings dialog the address is the home room');
       await domClick(first, `[data-room-id="${returnTo}"] .room-item-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id, {}, returnTo);
     }

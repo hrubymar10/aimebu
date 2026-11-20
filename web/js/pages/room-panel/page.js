@@ -28,7 +28,7 @@ export class RoomPanel {
       role: id => chat.projectRole?.(id), canArchive: () => chat.canArchiveRoom(), setFacts: room => chat.setRoomFacts(room),
       mutation: room => chat.onRoomMutation?.(room), left: room => chat.onChatLeft?.(room), removed: room => chat.onRoomRemoved?.(room),
       hide: room => chat.setRoomPreference?.(chat.roomView?.(room.id) || room, 'hidden', true),
-      chatError: text => { chat.error.textContent = text; }, infoOpen: () => this.infoDialog.open, closeInfo: () => this.infoDialog.close(), unwound: () => this.address.unwinding, closeExport: () => this.exportDialog.close(),
+      chatError: text => { chat.error.textContent = text; }, infoOpen: () => this.infoDialog.open, closeInfo: () => this.requestClose(), unwound: () => this.address.unwinding, closeExport: () => this.exportDialog.close(),
     };
     this.store = new RoomPanelStore(host);
     this.worktreeSection = section('room-worktree'); this.notesSection = section('room-notes', 'room-notes-title'); this.memorySection = section('room-memory-setting');
