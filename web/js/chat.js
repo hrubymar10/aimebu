@@ -620,7 +620,7 @@ export class Chat {
     // The quiet "Answered" is for a message that asked for an answer (it needed attention, or its question was answered here); an ordinary message that
     // somebody replied to is not "answered".
     const doneOk = Boolean(this.answeredMessages.has(id) || (repliedByOther && message.needs_attention)), area = answerArea(item, message, doneOk);
-    if (area === 'history') return { kind: 'history', answered, key: `h:${answered}:${message.answer_body || ''}` };
+    if (area === 'history') return { kind: 'history', answered, key: `h:${answered}:${message.answer_body || ''}:${message.answer_message_no || ''}:${message.answer_author_name || ''}` };
     if (area === 'done') return { kind: 'done', answered, key: 'd:answered', label: 'Answered' };
     return { kind: 'none', answered, key: '' };
   }

@@ -353,7 +353,7 @@ export class ChatStore {
       const message = page.find(entry => entry.id === id);
       if (!message) return;
       const prior = this.messages.get(id);
-      if (prior?.answer_state === message.answer_state && prior?.answer_body === message.answer_body) return;
+      if (prior?.answer_state === message.answer_state && prior?.answer_body === message.answer_body && prior?.answer_message_no === message.answer_message_no && prior?.answer_author_name === message.answer_author_name) return;
       this.messages.set(id, message);
       this.rows = this.rows.map(entry => entry.id === id ? message : entry);
       this.threadEntries = this.threadEntries.map(entry => entry.id === id ? message : entry);

@@ -502,6 +502,8 @@ type Message struct {
 	OpenQuestionsJSON   string       `json:"-"`
 	AnswerState         string       `json:"answer_state,omitempty"`
 	AnswerBody          string       `json:"answer_body,omitempty"`
+	AnswerMessageNo     int64        `json:"answer_message_no,omitempty"`
+	AnswerAuthorName    string       `json:"answer_author_name,omitempty"`
 	VisualPlanJSON      string       `json:"-"`
 	AppendixPagesJSON   string       `json:"-"`
 	SourceOutID         string       `json:"source_out_id,omitempty"`
@@ -748,21 +750,27 @@ func (s *Store) answerStateForMessages(ctx context.Context, messages []Message) 
 	if len(ids) == 0 {
 		return nil
 	}
-	query := `SELECT item.message_id,item.state,COALESCE(answer.body,'') FROM inbox_item item
+	query := `SELECT item.message_id,item.state,COALESCE(answer.body,''),COALESCE(answer.no,0),COALESCE(answerer.login,'') FROM inbox_item item
 		LEFT JOIN message answer ON answer.id=item.answer_message_id
+		LEFT JOIN user answerer ON answer.author_kind='user' AND answerer.id=answer.author_id
 		WHERE item.kind IN ('question','approval') AND item.message_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + `)`
 	rows, err := s.readDB.QueryContext(ctx, query, ids...)
 	if err != nil {
 		return err
 	}
-	states := make(map[string][2]string)
+	type answerState struct {
+		state, body, authorName string
+		messageNo               int64
+	}
+	states := make(map[string]answerState)
 	for rows.Next() {
-		var id, state, body string
-		if err := rows.Scan(&id, &state, &body); err != nil {
+		var id string
+		var answer answerState
+		if err := rows.Scan(&id, &answer.state, &answer.body, &answer.messageNo, &answer.authorName); err != nil {
 			rows.Close()
 			return err
 		}
-		states[id] = [2]string{state, body}
+		states[id] = answer
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -772,8 +780,11 @@ func (s *Store) answerStateForMessages(ctx context.Context, messages []Message) 
 		return err
 	}
 	for i := range messages {
-		messages[i].AnswerState = states[messages[i].ID][0]
-		messages[i].AnswerBody = states[messages[i].ID][1]
+		answer := states[messages[i].ID]
+		messages[i].AnswerState = answer.state
+		messages[i].AnswerBody = answer.body
+		messages[i].AnswerMessageNo = answer.messageNo
+		messages[i].AnswerAuthorName = answer.authorName
 	}
 	return nil
 }

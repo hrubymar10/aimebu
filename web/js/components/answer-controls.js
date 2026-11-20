@@ -42,20 +42,21 @@ export function AnswerControls({ item, submit, mention = '', compose = null, fre
   </div>`;
 }
 
-// What a question or proposed answers on a message look like once nothing is open for them: the same buttons and question count, all disabled, kept under the message so the
-// history reads as it did. A resolved item marks its chosen answer; other closed items say "No longer pending". A superseded ask is not closed - it left the Inbox only, and
-// stays answerable - so it is drawn without that label.
+// A resolved question points to the person's reply. A closed one has a single quiet status; a superseded ask has no history line.
 export function AnswerHistory({ message, answered, className = '' }) {
-  const note = answered ? 'Answered' : (message.answer_state === 'superseded' ? '' : 'No longer pending');
+  if (!answered && message.answer_state === 'superseded') return null;
+  if (!answered) return html`<div class=${`answer-history${className}`} data-answered="false"><span class="answer-history-status">No longer pending</span></div>`;
   const chosen = message.answer_body || '';
-  const plain = chosen.replace(/^@[a-z0-9][a-z0-9_-]*(?:@[a-z0-9_.-]+)?\s+/i, '');
-  const choice = (message.proposed_answers || []).find(value => plain === value);
-  return html`<div class=${`answer-history${className}`} data-answered=${String(answered)}>
-    ${message.open_questions?.length ? html`<button type="button" class="btn" disabled title=${note}>Open Questions${' '}<span class="open-questions-count">${message.open_questions.length}</span></button>` : null}
-    ${answered && choice ? html`<span class="answer-history-label">Answered:</span>` : null}
-    ${(message.proposed_answers || []).map(value => html`<button type="button" class=${`btn proposed-answer-btn${choice === value ? ' answer-chosen' : ''}`} key=${value} disabled title=${choice === value ? 'Chosen answer' : note}>${choice === value ? '✓ ' : ''}${value}</button>`)}
-    ${chosen && (message.open_questions?.length || !choice) ? html`<span class="answer-history-choice">${chosen}</span>` : null}
-    ${answered || !note ? null : html`<span class="answer-history-status">${note}</span>`}
+  const plain = chosen.replace(/^@[a-z0-9][a-z0-9_-]*(?:@[a-z0-9_.-]+)?\s+/i, '').replace(/\s+/g, ' ').trim();
+  const choice = (message.proposed_answers || []).filter(value => plain.startsWith(value) && (plain.length === value.length || /[\s\p{P}]/u.test(plain[value.length]))).sort((a, b) => b.length - a.length)[0];
+  const summary = message.open_questions?.length
+    ? `Answered by ${message.answer_author_name || 'someone'} (${message.open_questions.length}/${message.open_questions.length})`
+    : `Answered by ${message.answer_author_name || 'someone'}: ${choice || [...plain].slice(0, 60).join('')}${[...plain].length > 60 && !choice ? '…' : ''}`;
+  const content = html`<span class="icon-mask icon-mask-check" aria-hidden="true"></span><span>${summary}</span>`;
+  const no = message.answer_message_no;
+  return html`<div class=${`answer-history${className}`} data-answered="true">
+    ${no ? html`<a class="msg-ref answer-history-link" href=${`#${no}`} data-no=${String(no)} title=${`Go to reply #${no}`}>${content}</a>`
+      : html`<span class="answer-history-link">${content}</span>`}
   </div>`;
 }
 

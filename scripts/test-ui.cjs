@@ -1123,8 +1123,7 @@ async function main() {
     });
     assert.deepEqual(stableAnswerControls, { kept: true, replaced: true, removed: true, answered: { room: [['Answered', true]], thread: [['Answered', true]] }, stillOnce: 1, redrawn: 1, reopened: { controls: true, marker: 0 }, neverOpen: 'none' },
       'an answered question keeps a disabled "Answered", once; a reopened one swaps it for its buttons; a message that was never open gets none');
-    // Proposed answers and open questions stay visible under their message once nothing is open for them (imported or old asks): disabled,
-    // "Answered" when a person replied to it or it was answered here, otherwise "No longer pending"; nothing for a message with none.
+    // Closed questions show one quiet status, while answered questions show one summary below the message.
     const askHistory = await first.evaluate(async () => {
       const main = document.createElement('div'); document.body.append(main);
       const chat = window.__fixtureChat(main); chat.inbox = { answer: async () => true };
@@ -1133,7 +1132,7 @@ async function main() {
       const base = { seq: 1, no: 1, body: 'q', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
       chat.store.add({ ...base, id: 'ask-1', proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] });
       chat.store.add({ ...base, id: 'plain', seq: 2, no: 2, body: 'hi' });
-      const read = node => ({ buttons: [...node.querySelectorAll('.answer-history button')].map(button => [button.textContent.trim(), button.disabled, button.title]), status: node.querySelector('.answer-history-status')?.textContent || '', blocks: node.querySelectorAll('.answer-history').length });
+      const read = node => ({ text: node.querySelector('.answer-history')?.textContent || '', buttons: node.querySelectorAll('.answer-history button').length, blocks: node.querySelectorAll('.answer-history').length });
       const bubble = main;
       const pending = read(bubble); const block = bubble.querySelector('.answer-history');
       const card = main.querySelector('[data-message-id=ask-1]'), messageBubble = card.querySelector('.chat-msg-bubble').getBoundingClientRect(), under = block.getBoundingClientRect();
@@ -1153,11 +1152,11 @@ async function main() {
       main.remove();
       return result;
     });
-    assert.deepEqual(askHistory.pending, { buttons: [['Open Questions 1', true, 'No longer pending'], ['Proceed', true, 'No longer pending'], ['Hold', true, 'No longer pending']], status: 'No longer pending', blocks: 1 }, 'an ask with nothing open shows its buttons, disabled and marked no longer pending');
+    assert.deepEqual(askHistory.pending, { text: 'No longer pending', buttons: 0, blocks: 1 }, 'a closed ask shows one status and no chips');
     assert.equal(askHistory.same, true, 'a sync that changes nothing keeps the same block');
     assert.deepEqual(askHistory.rowEnd, { askEndsAtItsCard: true, plainEndsAtItsCard: true }, 'each row ends at its own card');
     assert.deepEqual(askHistory.placed, { below: true, outside: true }, 'the answers sit just below the bubble, before seen-by markers');
-    assert.deepEqual([askHistory.answered.status, askHistory.answered.buttons.every(([, disabled, title]) => disabled && title === 'Answered'), askHistory.answered.blocks], ['', true, 1], 'a replied-to ask is its dimmed buttons, with no label of their own (their tooltip says Answered)');
+    assert.deepEqual(askHistory.answered, { text: 'Answered by someone (1/1)', buttons: 0, blocks: 1 }, 'an answered ask shows one compact summary');
     assert.deepEqual([askHistory.reopened, askHistory.plain], [{ history: 0, live: 1 }, 0], 'an open ask swaps the history for live buttons; a message without an ask gets nothing');
     await first.evaluate(() => { window.__priorTheme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'high-contrast-dark'; const button = document.createElement('button'); button.id = 'answer-hover-check'; button.className = 'btn proposed-answer-btn'; button.textContent = 'Proceed'; button.style.cssText = 'position:fixed;top:80px;left:80px;z-index:100'; document.body.append(button); });
     await first.hover('#answer-hover-check');

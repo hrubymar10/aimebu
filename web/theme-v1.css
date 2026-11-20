@@ -557,8 +557,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .proposed-answer-btn { min-height: 28px; max-width: 100%; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); padding: 4px 9px; font: 600 11.5px var(--font-sans); line-height: 1.2; white-space: normal; overflow-wrap: anywhere; cursor: pointer; transition: border-color .15s, background .15s; }
 .proposed-answer-btn:hover:not(:disabled), .proposed-answer-btn:focus-visible:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
 .proposed-answer-btn:disabled { cursor: default; opacity: .52; }
-/* Imported or closed-unanswered: nothing can answer these, so they read as quoted chips (dashed, flat, no pointer), not as live buttons. */
-.answer-history[data-answered="false"] .btn:disabled { background: transparent; border-style: dashed; box-shadow: none; cursor: default; pointer-events: none; font-weight: 400; }
 .answer-controls > .open-questions-open { display: inline-flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); font: 700 11.8px var(--font-sans); }
 .answer-controls > .open-questions-open:hover:not(:disabled), .answer-controls > .open-questions-open:focus-visible:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
 .answer-error { width: 100%; color: var(--red); margin: 3px 0; }
@@ -1366,11 +1364,13 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .chat-msg > .answer-row .btn { margin: 0; }
 .chat-msg > .message-receipts { order: 2; }
 .answer-done .btn:disabled { opacity: 1; color: var(--text-secondary); }
-.answer-history { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
-.answer-history .btn:disabled { opacity: .7; cursor: default; }
-.answer-history-status { color: var(--text-muted); font-size: 12px; }
-.answer-history-choice { flex-basis: 100%; white-space: pre-wrap; color: var(--text-secondary); font-size: 12px; }
-.answer-history .answer-chosen:disabled { opacity: 1; border-color: var(--accent); }
+.answer-history { margin-top: 6px; min-width: 0; font-size: 12px; color: var(--text-secondary); }
+.answer-history-link { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; color: inherit; text-decoration: none; vertical-align: middle; }
+.answer-history-link > .icon-mask { flex: none; width: 12px; height: 12px; }
+.answer-history-link > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.answer-history-link:is(:hover, :focus-visible) { color: var(--text-primary); text-decoration: underline; }
+.answer-history-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.answer-history-status { color: var(--text-secondary); }
 
 /* Glyphs for buttons that used to carry a text character or word (close, plus, copy, stop, ...): Lucide icons (ISC, see
    web/vendor/README.md), drawn through a mask in the current colour like the navbar glyphs. */

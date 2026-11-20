@@ -356,7 +356,7 @@ func TestAttentionAnswerUsesOneInboxAndWakesRequester(t *testing.T) {
 		t.Fatalf("state=%q answer=%q err=%v", state, answerID, err)
 	}
 	after, err := s.ListMessagesLatest(ctx, f.room.ID, 10)
-	if err != nil || len(after) < 2 || after[len(after)-2].AnswerState != "resolved" || after[len(after)-2].AnswerBody != "Q1) a) Small" {
+	if err != nil || len(after) < 2 || after[len(after)-2].AnswerState != "resolved" || after[len(after)-2].AnswerBody != "Q1) a) Small" || after[len(after)-2].AnswerMessageNo != answer.No || after[len(after)-2].AnswerAuthorName != "owner" {
 		t.Fatalf("chosen answer state=%+v err=%v", after, err)
 	}
 	if _, reused, err := s.AnswerInbox(ctx, items[0].ID, "usr_answers", "attention-key", "Q1) a) Small", int(items[0].Rev)); err != nil || !reused {

@@ -751,6 +751,8 @@ func messageView(m store.Message) map[string]any {
 		view["answer_state"] = m.AnswerState
 		if m.AnswerState == "resolved" {
 			view["answer_body"] = m.AnswerBody
+			view["answer_message_no"] = m.AnswerMessageNo
+			view["answer_author_name"] = m.AnswerAuthorName
 		}
 	}
 	if m.VisualPlanJSON != "" {

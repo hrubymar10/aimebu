@@ -545,6 +545,9 @@ other saved usage settings and credentials remain intact.
 
 Project responses set `repo_url` to `null` when absent. Message responses
 expose `targets` as a JSON array and omit the raw `targets_json` column.
+For a resolved question, the message view includes `answer_state: "resolved"`,
+`answer_body`, `answer_message_no` (the reply's `#N`), and
+`answer_author_name` (the answering person's login).
 Project room lists and single-room details include read-only `member_count`
 (active project humans, or a private chat's own people, plus room agents; a disabled
 user counts nowhere), `message_count`, `user_message_count` (the messages that are not system notices: a room whose newest such message has only an attachment has an empty preview but a count above zero), and an optional

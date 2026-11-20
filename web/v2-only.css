@@ -621,13 +621,6 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
    draws for them. */
 :root:root :is(button.proposed-answer-btn, button.open-questions-open):not(:disabled) { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
 :root:root :is(button.proposed-answer-btn, button.open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--bg-tertiary); border-color: var(--accent); color: var(--text-primary); }
-/* A closed one (answered, or no longer pending) is not a control any more, so it is not drawn as one: plain text at full contrast, no frame, no fill, no dimming (a dimmed,
-   framed chip read as clickable, and was hard to read in the high-contrast themes). The chosen answer is the bold primary text, after "Answered:". */
-:root:root .answer-history { gap: 4px 12px; }
-:root:root .answer-history button:disabled { background: none; border: 0; box-shadow: none; min-height: 0; padding: 0; color: var(--text-secondary); opacity: 1; cursor: default; font-weight: 400; font-size: 12px; }
-:root:root .answer-history button.answer-chosen:disabled { color: var(--text-primary); font-weight: 700; }
-.answer-history-label { color: var(--text-secondary); font-size: 12px; }
-
 /* "Review in Inbox" on an agent card that needs a decision (v2 only): a small outlined control like the card's other buttons, in v1's palette (the orange of a decision
    waiting, the border colour for its outline, the accent on hover and focus), not the browser's plain button; the high-contrast themes fill it with the page colour. */
 :root:root .agent-card button.agent-recovery { background: transparent; color: var(--orange); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-decoration: none; cursor: pointer; }
