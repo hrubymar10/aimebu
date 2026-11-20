@@ -151,6 +151,8 @@ type warmFakeSession struct {
 	closed      bool // ended by Close (input closed, then it went on its own) rather than Kill
 	// onKill runs when the session is killed (the supervisor's state at that moment is what a test looks at).
 	onKill func()
+	// kills counts Kill calls, what a backoff test looks at.
+	kills atomic.Int32
 }
 
 func (s *warmFakeSession) Fingerprint() string     { return s.fp }
@@ -198,6 +200,7 @@ func (s *warmFakeSession) Close(time.Duration) error {
 	return nil
 }
 func (s *warmFakeSession) Kill() error {
+	s.kills.Add(1)
 	if s.slowKill.Load() {
 		select {
 		case s.killEntered <- struct{}{}:
@@ -1602,6 +1605,64 @@ func TestWarmContainerQuarantineReleasesReapedWrapper(t *testing.T) {
 	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
 	if h.f.started != 2 {
 		t.Fatalf("next turn did not start a new container process: %d", h.f.started)
+	}
+}
+
+// countWarmReports counts what the supervisor reports about a stuck warm
+// process: the harness's own turn frames that fail offline are noise every
+// test produces, and are not what a stuck slot logs.
+func countWarmReports(c *Client) *atomic.Int32 {
+	var reports atomic.Int32
+	c.OnError = func(err error) {
+		if msg := err.Error(); strings.Contains(msg, "not confirmed gone") {
+			reports.Add(1)
+		}
+	}
+	return &reports
+}
+
+// Repeated failures of a stuck slot report once and back off: the retry
+// interval doubles, so a slot nothing can settle does not spin or log forever.
+func TestWarmStuckRetriesReportOnceAndBackOff(t *testing.T) {
+	oldRetry := warmRetryEvery
+	warmRetryEvery = 10 * time.Millisecond
+	defer func() { warmRetryEvery = oldRetry }()
+	h := newWarmHarness(t)
+	reports := countWarmReports(h.c)
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	h.f.sessions[0].killFails.Store(true)
+	if h.c.retireWarm("agt_a", "test") {
+		t.Fatal("an alive process was treated as gone")
+	}
+	time.Sleep(250 * time.Millisecond)
+	if reports.Load() != 1 {
+		t.Fatalf("reports = %d, want the one unconfirmed end", reports.Load())
+	}
+	slot := h.c.pool().slot("agt_a")
+	slot.mu.Lock()
+	stuck := slot.stuck != nil
+	slot.mu.Unlock()
+	if !stuck {
+		t.Fatal("the slot must still be stuck")
+	}
+	// A fixed 10 ms cadence would have killed about twice per attempt for some
+	// twenty attempts (forty and more kills); backed off, the intervals of
+	// 10, 20, 40, 80 and 160 ms hold a fifth of that.
+	if kills := h.f.sessions[0].kills.Load(); kills < 2 || kills > 16 {
+		t.Fatalf("kills = %d, want a backed-off few", kills)
+	}
+	// Let the retry confirm the end before the test returns: the background
+	// watcher's goroutine must be gone (the slot's lock orders that) before
+	// the deferred restore of the retry interval writes it again.
+	h.f.sessions[0].killFails.Store(false)
+	eventually(t, "the background retry confirming the end", func() bool {
+		slot.mu.Lock()
+		defer slot.mu.Unlock()
+		return slot.stuck == nil
+	})
+	if reports.Load() != 1 {
+		t.Fatalf("the confirmed end reports again: %d", reports.Load())
 	}
 }
 

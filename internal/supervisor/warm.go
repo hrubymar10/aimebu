@@ -324,16 +324,18 @@ func (c *Client) finish(slot *warmSlot, entry *warmEntry, reason string, grace t
 var warmStuckQuarantine = 2 * time.Minute
 
 func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
-	ticker := time.NewTicker(warmRetryEvery)
-	defer ticker.Stop()
+	wait := warmRetryEvery
 	exited := entry.session.Exited()
 	for {
+		timer := time.NewTimer(wait)
 		select {
 		case <-pool.ctx.Done():
+			timer.Stop()
 			return
 		case <-exited:
 			exited = nil
-		case <-ticker.C:
+			timer.Stop()
+		case <-timer.C:
 		}
 		slot.mu.Lock()
 		if slot.stuck != entry {
@@ -361,8 +363,20 @@ func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
 		if confirmed {
 			return
 		}
+		// Still stuck: try again after twice as long, so a slot that nothing
+		// can settle does not spin (and log) forever.
+		if wait < warmStuckRetryMax {
+			wait *= 2
+			if wait > warmStuckRetryMax {
+				wait = warmStuckRetryMax
+			}
+		}
 	}
 }
+
+// warmStuckRetryMax caps how long a stuck slot's background retry waits once
+// the backoff has grown: about five minutes.
+var warmStuckRetryMax = 5 * time.Minute
 
 // clearStuck makes only cheap checks so a delivery does not wait behind a
 // slow background Close or Kill. The caller holds slot.mu.
