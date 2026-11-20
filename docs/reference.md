@@ -377,7 +377,9 @@ warns when a turn has stalled for fifteen minutes, offers **Cancel** until
 applying starts, and reopens by itself if a change is already running. A change
 that waits for a long turn can **Continue in background** (an icon button in the
 progress view): the dialog closes, the change keeps going, and Project settings →
-Team flow shows its progress (and the outcome, until dismissed). Next to an agent
+Team flow shows its progress (and the outcome, until dismissed; the dismissal
+is remembered per project in the browser, so the outcome is still there after
+a reload). Next to an agent
 the change is waiting for, **Interrupt now** (after a confirmation) cuts its turn
 by stopping it, so the change goes on; a kept agent is started again once the
 switch is through, an agent the new flow stops anyway stays stopped (the

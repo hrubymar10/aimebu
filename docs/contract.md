@@ -217,9 +217,14 @@ Projects, rooms, people
   `{agent_id}` (owner or operator, while draining) stops an agent the
   migration waits for (`blocking` in its progress) to cut its turn. A kept
   agent (`keeps`) is recorded in `team_flow_migration_interrupt` (migration
-  127), started again once its turn is gone and waited for until it runs, and
-  also started again when the change is cancelled or fails; an agent the
-  flow stops anyway stays stopped. Room conflicts still require an
+  127), started again once its turn is gone and waited for until its spawn is
+  confirmed (or has failed), and also started again when the change is
+  cancelled or fails; an agent the flow stops anyway stays stopped. Each
+  restart has its own savepoint: a refusal never fails the dispatcher pass; a
+  spawn limit or an open boundary or clear keeps the mark and retries, any
+  other refusal logs and drops it. An agent already stopping is no longer
+  `blocking`, and interrupting it again succeeds. The finished change's
+  notice lists the rooms it created. Room conflicts still require an
   explicit removal choice, and existing restricted rooms remain restricted.
   Archived projects refuse flow changes. The template catalog includes a
   card recommendation, and the role/flow/harness model recommendation table

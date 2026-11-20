@@ -1001,7 +1001,7 @@ func TestFlowMigrationFinishPostsOneNoticeInHomeAndGeneral(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want := "Team flow changed: leader-workers → leader-dispatcher. Added: zeno (dispatcher)."
+	want := "Team flow changed: leader-workers → leader-dispatcher. Added: zeno (dispatcher). Rooms created: routing."
 	for _, room := range []string{f.home.ID, generalID} {
 		if got := flowBodies(t, f, room); len(got) != 1 || got[0] != want {
 			t.Fatalf("room %s notices = %q, want one %q", room, got, want)
@@ -1152,6 +1152,22 @@ func TestInterruptedKeptAgentRestartsBeforeTheChangeApplies(t *testing.T) {
 		t.Fatalf("the interrupted leader was not started again: %+v %v", controls, err)
 	}
 	var key string
+	// The change waits for the restarted agent's spawn to be confirmed, not just for the optimistic idle the restart writes.
+	for range 2 {
+		if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.s.db.QueryRow(`SELECT team_flow_key FROM project WHERE id=?`, f.project.ID).Scan(&key); err != nil || key != "leader-workers" {
+		t.Fatalf("the change applied before the restarted agent's spawn was confirmed: %q %v", key, err)
+	}
+	var generation int
+	if err := f.s.db.QueryRow(`SELECT generation FROM agent WHERE id=?`, leaderID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.ConfirmSpawn(ctx, leaderID, generation); err != nil {
+		t.Fatal(err)
+	}
 	for range 3 {
 		if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
 			t.Fatal(err)
@@ -1235,5 +1251,107 @@ func TestCancelledChangeRestartsAnInterruptedKeptAgent(t *testing.T) {
 	controls, err := f.s.AdvanceTeamFlowMigrations(ctx)
 	if err != nil || len(controls) != 1 || controls[0].ID != leaderID || controls[0].Desired != "active" {
 		t.Fatalf("restart after cancel: %+v %v", controls, err)
+	}
+}
+
+// A refused restart (here: the project was archived after a cancel) neither fails the pass nor repeats: other work still advances and the
+// permanent refusal drops the mark.
+func TestRefusedRestartOfAnInterruptedAgentDoesNotFailThePass(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	turnID := openTurn(t, f, leaderID)
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turnID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.CancelTeamFlowMigration(ctx, f.project.ID, f.alice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE project SET archived_at=? WHERE id=?`, timestamp(), f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+			t.Fatalf("a refused restart failed the pass: %v", err)
+		}
+	}
+	var marks int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM team_flow_migration_interrupt WHERE agent_id=?`, leaderID).Scan(&marks); err != nil || marks != 0 {
+		t.Fatalf("a permanently refused restart keeps its mark: %d %v", marks, err)
+	}
+	var desired string
+	if err := f.s.db.QueryRow(`SELECT desired FROM agent WHERE id=?`, leaderID).Scan(&desired); err != nil || desired != "stopped" {
+		t.Fatalf("the refused agent's desired state = %q %v", desired, err)
+	}
+}
+
+// A passing refusal (an open boundary or a pending clear shows as an invalid transition) keeps the mark, and the pass still succeeds; the
+// restart happens once it clears.
+func TestTransientRefusalKeepsTheMarkAndRetries(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	turnID := openTurn(t, f, leaderID)
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turnID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.CancelTeamFlowMigration(ctx, f.project.ID, f.alice); err != nil {
+		t.Fatal(err)
+	}
+	// A pending context clear refuses the restart for now (an invalid transition).
+	if _, err := f.s.db.Exec(`INSERT INTO agent_context_clear(agent_id,generation,requested_by,requested_at) VALUES (?,0,?,?)`, leaderID, f.alice, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if controls, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil || len(controls) != 0 {
+			t.Fatalf("a passing refusal: %+v %v", controls, err)
+		}
+	}
+	var marks int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM team_flow_migration_interrupt WHERE agent_id=?`, leaderID).Scan(&marks); err != nil || marks != 1 {
+		t.Fatalf("a passing refusal keeps the mark: %d %v", marks, err)
+	}
+	if _, err := f.s.db.Exec(`DELETE FROM agent_context_clear WHERE agent_id=?`, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	controls, err := f.s.AdvanceTeamFlowMigrations(ctx)
+	if err != nil || len(controls) != 1 || controls[0].ID != leaderID {
+		t.Fatalf("restart once the refusal cleared: %+v %v", controls, err)
+	}
+}
+
+// A second interrupt of an agent that is already stopping is a success, and progress no longer calls it blocking.
+func TestInterruptIsIdempotentAndStopsBlocking(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	openTurn(t, f, leaderID)
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	card, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID)
+	if err != nil || card.Desired != "stopped" {
+		t.Fatalf("second interrupt: %+v %v", card, err)
+	}
+	progress, err := f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range progress.Agents {
+		if agent.AgentID == leaderID && agent.Blocking {
+			t.Fatal("an agent that is already stopping is reported as blocking")
+		}
 	}
 }
