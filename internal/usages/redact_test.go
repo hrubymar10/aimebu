@@ -77,7 +77,7 @@ func TestForAdminAllowListCoversEveryField(t *testing.T) {
 		}
 		return out
 	}()}} {
-		want := []string{"PercentDisplay", "RefreshIntervalSec", "AlertWarningRemaining", "AlertCriticalRemaining", "TokenAutoRefresh", "ClaudeAutoRefresh", "TokenAutoRefreshAvailable", "TokenAutoRefreshState", "WarmupMode", "WarmupSchedule", "WarmupAvailable"}
+		want := []string{"PercentDisplay", "RefreshIntervalSec", "AlertWarningRemaining", "AlertCriticalRemaining", "AlertPaceEnabled", "AlertResetNoticeEnabled", "AlertExpiryEnabled", "TokenAutoRefresh", "ClaudeAutoRefresh", "TokenAutoRefreshAvailable", "TokenAutoRefreshState", "WarmupMode", "WarmupSchedule", "WarmupAvailable"}
 		if !reflect.DeepEqual(c.got, want) {
 			t.Errorf("%s gained or lost a field: %v: decide what an admin may see of it in ForAdmin, then update this list", c.name, c.got)
 		}

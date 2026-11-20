@@ -100,6 +100,11 @@ func (s *Server) usageSettings(w http.ResponseWriter, r *http.Request) {
 		ProviderOrder          *[]string `json:"provider_order"`
 		AlertWarningRemaining  *int      `json:"alert_warning_remaining"`
 		AlertCriticalRemaining *int      `json:"alert_critical_remaining"`
+		// The three opt-in alert toggles of the usages-ports experiment; each is
+		// off by default and the UI only offers them in that experiment's B.
+		AlertPaceEnabled        *bool `json:"alert_pace_enabled"`
+		AlertResetNoticeEnabled *bool `json:"alert_reset_notice_enabled"`
+		AlertExpiryEnabled      *bool `json:"alert_expiry_enabled"`
 		// TokenAutoRefresh is the "Auto-refresh tokens" setting; ClaudeAutoRefresh is
 		// its legacy name, accepted for older clients. The new key wins.
 		TokenAutoRefresh  *bool   `json:"token_auto_refresh"`
@@ -137,6 +142,15 @@ func (s *Server) usageSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.AlertCriticalRemaining != nil {
 			cfg.AlertCriticalRemaining = *body.AlertCriticalRemaining
+		}
+		if body.AlertPaceEnabled != nil {
+			cfg.AlertPaceEnabled = *body.AlertPaceEnabled
+		}
+		if body.AlertResetNoticeEnabled != nil {
+			cfg.AlertResetNoticeEnabled = *body.AlertResetNoticeEnabled
+		}
+		if body.AlertExpiryEnabled != nil {
+			cfg.AlertExpiryEnabled = *body.AlertExpiryEnabled
 		}
 		if body.WarmupMode != nil {
 			cfg.WarmupMode = *body.WarmupMode

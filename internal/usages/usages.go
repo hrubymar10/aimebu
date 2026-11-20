@@ -79,6 +79,12 @@ type Response struct {
 		RefreshIntervalSec     int    `json:"refresh_interval_sec"`
 		AlertWarningRemaining  int    `json:"alert_warning_remaining"`
 		AlertCriticalRemaining int    `json:"alert_critical_remaining"`
+		// The three opt-in alert toggles of the usages-ports experiment (off by
+		// default): the predictive pace alert, the reset notice and the
+		// credential-expiry alert.
+		AlertPaceEnabled        bool `json:"alert_pace_enabled"`
+		AlertResetNoticeEnabled bool `json:"alert_reset_notice_enabled"`
+		AlertExpiryEnabled      bool `json:"alert_expiry_enabled"`
 		// TokenAutoRefresh is the "Auto-refresh tokens" setting; the claude_ key
 		// is its read-only legacy alias.
 		TokenAutoRefresh          bool                                 `json:"token_auto_refresh"`
@@ -234,6 +240,9 @@ func (r *Reader) Snapshot() Response {
 		out.Settings.ClaudeAutoRefresh = cfg.TokenAutoRefresh
 		out.Settings.AlertWarningRemaining = cfg.AlertWarningRemaining
 		out.Settings.AlertCriticalRemaining = cfg.AlertCriticalRemaining
+		out.Settings.AlertPaceEnabled = cfg.AlertPaceEnabled
+		out.Settings.AlertResetNoticeEnabled = cfg.AlertResetNoticeEnabled
+		out.Settings.AlertExpiryEnabled = cfg.AlertExpiryEnabled
 		out.Settings.WarmupMode = cfg.WarmupMode
 		out.Settings.WarmupSchedule = cfg.WarmupSchedule
 	} else {

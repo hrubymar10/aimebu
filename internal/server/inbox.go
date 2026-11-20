@@ -39,11 +39,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				if s.strongerUsageGuard(r, alert) {
 					continue
 				}
-				reset := "reset time unavailable"
-				if alert.ResetAt != nil {
-					reset = "resets " + alert.ResetAt.UTC().Format("2 Jan 2006 15:04 MST")
-				}
-				question := fmt.Sprintf("%s · %s · %s: %.1f%% remaining; %s.", providers.ProviderLabel(alert.Provider), alert.Profile, alert.Window, alert.Remaining, reset)
+				question := usageAlertQuestion(alert)
 				items = append(items, store.InboxEntry{ID: alert.ID, Kind: "usage_alert", Question: question, State: "open",
 					Options: []string{}, CreatedAt: alert.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")})
 			}
@@ -55,7 +51,47 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, items)
 }
 
+// usageAlertQuestion renders one Inbox line per alert tier. The threshold
+// tiers keep the shape the remaining-quota alerts always had; the opt-in
+// usages-ports tiers describe the episode, the reset or the expiry instead.
+func usageAlertQuestion(alert usages.UsageAlert) string {
+	who := providers.ProviderLabel(alert.Provider) + " · " + alert.Profile
+	reset := "reset time unavailable"
+	if alert.ResetAt != nil {
+		reset = "resets " + alert.ResetAt.UTC().Format("2 Jan 2006 15:04 MST")
+	}
+	switch alert.Tier {
+	case "pace":
+		eta := ""
+		if alert.ResetAt != nil {
+			eta = " before its " + alert.ResetAt.UTC().Format("15:04 MST") + " reset"
+		}
+		return fmt.Sprintf("%s · %s: projected to run out%s; %.1f%% remaining.", who, alert.Window, eta, alert.Remaining)
+	case "reset":
+		return fmt.Sprintf("%s · %s: the window reset; a fresh allowance is available.", who, alert.Window)
+	case "expiry":
+		expires := "no expiry reported"
+		if alert.ExpiresAt != nil {
+			expires = alert.ExpiresAt.UTC().Format("2 Jan 2006 15:04 MST")
+		}
+		tool := alert.Provider
+		if tool == "claude-code" {
+			tool = "claude"
+		}
+		return fmt.Sprintf("%s: the access token expires %s. Run %s to renew it.", who, expires, tool)
+	default:
+		return fmt.Sprintf("%s · %s: %.1f%% remaining; %s.", who, alert.Window, alert.Remaining, reset)
+	}
+}
+
+// strongerUsageGuard says whether an active limit guard hides this alert: it
+// takes over a tool's quota, so its threshold and pace notices stay hidden
+// while it holds. The reset notice and the expiry alert describe facts, not
+// quota pressure, and are never hidden.
 func (s *Server) strongerUsageGuard(r *http.Request, alert usages.UsageAlert) bool {
+	if alert.Tier != "warning" && alert.Tier != "critical" && alert.Tier != "pace" {
+		return false
+	}
 	guard := s.limitGuard()
 	if guard == nil {
 		return false

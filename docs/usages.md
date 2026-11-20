@@ -124,6 +124,39 @@ invalid JSON file can be repaired from Settings. If the JSON is valid but a
 field has the wrong type, settings saves are refused so saved credentials are
 not lost; a literal `null` is also refused. Fix the field in the file first.
 
+## Opt-in usage alerts (the usages-ports experiment)
+
+Settings → Server → Accounts & usage offers three opt-in alert toggles behind
+the `usages-ports` experiment's B (the A/B pill in the top bar; A is the
+current state and shows none of them). Each is off by default, posts its own
+change to `POST /api/usages/settings`, and is stored in `usages/config.json`
+(`alert_pace_enabled`, `alert_reset_notice_enabled`, `alert_expiry_enabled`).
+An alert they have opened is closed again when its toggle goes off; in A they
+never fire.
+
+- **Predictive pace alerts**: when a fresh Codex or Claude Code session or
+  weekly window is projected to run out before it resets (the same projection
+  that draws "Runs out in …", from `pace.eta_seconds`), the Inbox gets one
+  notice per risk episode, with the window, the remaining share and the reset
+  time. The episode closes when the window is again projected to last until
+  its reset, and only then can a later episode raise a fresh notice; a new
+  reset cycle closes and re-arms it too.
+- **Reset notices**: one Inbox note per provider, profile and window when a
+  new reset cycle is observed (never for the very first observation). The
+  next cycle's observation closes it, as does dismissal.
+- **Credential expiry alerts**: from the same expiry data that drives the
+  Usages token-expiry badge, a notice when a Claude or Codex credential is
+  within its expiry alert window (15 minutes) or has expired — one per
+  account and expiry time. A renewed credential closes the notice, and a
+  later decay raises a fresh one; the notice carries no reset time, so it
+  stays open until then.
+
+All three share the remaining-quota alerts' storage and lifecycle otherwise:
+private `usages/alerts.json` (0600, hashed accounts), the owner-and-admin
+Inbox visibility, dismissal, and the corrupt-state recovery. An active limit
+guard hides the threshold and pace notices of its tool, but never the reset
+notice or the expiry alert.
+
 ## Auto-refresh tokens (Account maintenance)
 
 Settings → Server → Accounts & usage → Account maintenance has an **Auto-refresh tokens** toggle

@@ -386,3 +386,167 @@ func TestCorruptUsageAlertsAreMovedAside(t *testing.T) {
 		t.Fatalf("saved corrupt state: %q %v", data, err)
 	}
 }
+
+func TestPaceAlertFiresPerEpisodeAndRearmsAfterRecovery(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	eta := 2 * time.Hour
+	etaSeconds := eta.Seconds()
+	risk := &Pace{ExpectedPercent: 40, DeltaPercent: 30, State: "deficit", EtaSeconds: &etaSeconds}
+	safe := &Pace{ExpectedPercent: 40, DeltaPercent: -30, State: "reserve", LastsToReset: true}
+	response := Response{Providers: []Provider{
+		{ProviderName: "codex", Enabled: true, Available: true,
+			Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", LastRefreshAt: &now,
+				Windows: []Window{{Key: "session", PercentUsed: 70, ResetAt: &reset, Pace: risk}}}}},
+		{ProviderName: "mistral", Enabled: true, Available: true,
+			Profiles: []Profile{{ProfileName: "local", Status: "ok", LastRefreshAt: &now,
+				Windows: []Window{{Key: "local", PercentUsed: 70, ResetAt: &reset, Pace: risk}}}}},
+	}}
+	response.Settings.AlertPaceEnabled = true
+	observe := func(want bool) {
+		t.Helper()
+		now = now.Add(time.Minute)
+		for i := range response.Providers {
+			response.Providers[i].Profiles[0].LastRefreshAt = &now
+		}
+		got, err := tracker.Observe(response)
+		if err != nil || got != want {
+			t.Fatalf("observe: created=%v error=%v, want %v", got, err, want)
+		}
+	}
+	observe(true)
+	open := tracker.OpenAlerts()
+	if len(open) != 1 || open[0].Tier != "pace" || open[0].Provider != "codex" || open[0].Window != "session" {
+		t.Fatalf("pace alert: %+v", open)
+	}
+	if open[0].Remaining != 30 || open[0].ResetAt == nil || !open[0].ResetAt.Equal(reset) {
+		t.Fatalf("pace alert detail: %+v", open[0])
+	}
+	observe(false) // still the same episode: no second alert
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].ID != open[0].ID {
+		t.Fatalf("episode must hold one alert: %+v", got)
+	}
+	// Recovery closes the episode; a new risk re-arms it in the same cycle.
+	response.Providers[0].Profiles[0].Windows[0].Pace = safe
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("recovery must close the pace alert: %+v", got)
+	}
+	response.Providers[0].Profiles[0].Windows[0].Pace = risk
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "pace" {
+		t.Fatalf("a recovered episode re-arms: %+v", got)
+	}
+	// Off again closes what it opened.
+	response.Settings.AlertPaceEnabled = false
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("the pace toggle must close its alerts: %+v", got)
+	}
+}
+
+func TestResetNoticeOncePerCycle(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", LastRefreshAt: &now,
+			Windows: []Window{{Key: "weekly", PercentUsed: 10, ResetAt: &reset}}}}}}}
+	response.Settings.AlertResetNoticeEnabled = true
+	observe := func(want bool) {
+		t.Helper()
+		now = now.Add(time.Minute)
+		response.Providers[0].Profiles[0].LastRefreshAt = &now
+		got, err := tracker.Observe(response)
+		if err != nil || got != want {
+			t.Fatalf("observe: created=%v error=%v, want %v", got, err, want)
+		}
+	}
+	observe(false) // the first observation starts a cycle, it does not announce one
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("no notice for the first observation: %+v", got)
+	}
+	reset = reset.Add(5 * time.Hour)
+	response.Providers[0].Profiles[0].Windows[0].ResetAt = &reset
+	response.Providers[0].Profiles[0].Windows[0].PercentUsed = 1
+	observe(true)
+	open := tracker.OpenAlerts()
+	if len(open) != 1 || open[0].Tier != "reset" || open[0].Window != "weekly" {
+		t.Fatalf("reset notice: %+v", open)
+	}
+	observe(false) // the same cycle never repeats it
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].ID != open[0].ID {
+		t.Fatalf("one notice per cycle: %+v", got)
+	}
+	// The next cycle closes the old notice and raises a fresh one.
+	reset = reset.Add(7 * 24 * time.Hour)
+	response.Providers[0].Profiles[0].Windows[0].ResetAt = &reset
+	observe(true)
+	got := tracker.OpenAlerts()
+	if len(got) != 1 || got[0].ID == open[0].ID {
+		t.Fatalf("the next cycle replaces the notice: %+v", got)
+	}
+	// Off again closes what it opened.
+	response.Settings.AlertResetNoticeEnabled = false
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("the reset toggle must close its notices: %+v", got)
+	}
+}
+
+func TestExpiryAlertOncePerCredentialUntilRenewed(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := now.Add(10 * time.Minute)
+	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1"}}}}}
+	response.Settings.AlertExpiryEnabled = true
+	observe := func(want bool) {
+		t.Helper()
+		now = now.Add(time.Minute)
+		got, err := tracker.Observe(response)
+		if err != nil || got != want {
+			t.Fatalf("observe: created=%v error=%v, want %v", got, err, want)
+		}
+	}
+	observe(true)
+	open := tracker.OpenAlerts()
+	if len(open) != 1 || open[0].Tier != "expiry" || open[0].ExpiresAt == nil || !open[0].ExpiresAt.Equal(expires) {
+		t.Fatalf("expiry alert: %+v", open)
+	}
+	observe(false) // one notice per credential and expiry
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].ID != open[0].ID {
+		t.Fatalf("one expiry notice per credential: %+v", got)
+	}
+	// A renewed credential closes the notice; a later decay raises a new one.
+	renewed := now.Add(30 * 24 * time.Hour)
+	response.Providers[0].Profiles[0].ExpiresAt = &renewed
+	response.Providers[0].Profiles[0].AlertCredential = "cred-2"
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("a renewal must close the expiry notice: %+v", got)
+	}
+	decayed := now.Add(5 * time.Minute)
+	response.Providers[0].Profiles[0].ExpiresAt = &decayed
+	response.Providers[0].Profiles[0].AlertCredential = "cred-2"
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].ID == open[0].ID {
+		t.Fatalf("a new decay re-arms: %+v", got)
+	}
+	// Off again closes what it opened.
+	response.Settings.AlertExpiryEnabled = false
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("the expiry toggle must close its notices: %+v", got)
+	}
+}
