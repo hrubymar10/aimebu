@@ -103,6 +103,11 @@ const originalTarget = agent => cleanTarget(agent);
 export const isModelChange = (agent, target) => !!agent && !!target && !sameTarget(agent, target);
 export const MIGRATION_TERMINAL = ['done', 'cancelled', 'failed', 'lost'];
 
+// The outcome of a finished change stays under Settings -> Team flow until the person dismisses it; what they dismissed is remembered per project.
+const dismissedKey = projectID => `aimebu2.teamFlowDismissed.${projectID}`;
+export const dismissedMigration = projectID => { try { return localStorage.getItem(dismissedKey(projectID)) || ''; } catch { return ''; } };
+export const dismissMigration = (projectID, id) => { try { localStorage.setItem(dismissedKey(projectID), id); } catch { /* private mode: it shows again next time */ } };
+
 // Stopped agents stay as they are through a change, so the wizard does not list them one by one: the active ones are listed, the stopped
 // ones are counted in a single line.
 export const isStopped = agent => agent.state === 'stopped';

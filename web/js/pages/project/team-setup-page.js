@@ -5,7 +5,7 @@ import { SpawnDefaults } from '../../components/spawn-defaults.js';
 import { TeamFlowCards, TeamFlowPreview } from './team-flow-page.js';
 import {
   projectPath, cleanTarget, roleLabel, flowLetter, loadChoices, initialTarget, initialDefaults, describeTarget,
-  TargetPicker, StatusBanner, RecommendedModels, KeptAgent, MigrationSummary, MigrationProgress, isModelChange, MIGRATION_TERMINAL, activeAgents, StoppedLine, interruptAgent,
+  TargetPicker, StatusBanner, RecommendedModels, KeptAgent, MigrationSummary, MigrationProgress, isModelChange, MIGRATION_TERMINAL, activeAgents, StoppedLine, interruptAgent, dismissMigration,
 } from './team-wizard-parts.js';
 import { captureError } from '../../telemetry.js';
 import { OFFERED_ROLES, LegacyOffer, legacyOptions, legacyTarget, withLegacy, legacyBlocked } from './legacy-offer.js';
@@ -227,7 +227,7 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   const finishMigration = async () => {
     if (migration?.state !== 'done' || busy) return;
     setBusy(true); setError('');
-    try { await flow.completeMigration(flow.projectID, migration); onClose(); }
+    try { await flow.completeMigration(flow.projectID, migration); dismissMigration(flow.projectID, migration.id); onClose(); }
     catch (failure) { setError(failure.message); }
     finally { setBusy(false); }
   };
@@ -261,7 +261,7 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   return html`<section class=${`team-flow-home-card team-setup-wizard${embedded ? ' team-setup-embedded' : ''}`} aria-labelledby="team-flow-home-title">
     <div class="team-flow-heading"><small>${heading}${step > 1 && !switching ? ` · Step ${step} of ${steps.length}` : ''}</small><h2 id="team-flow-home-title">${switching ? migration.state === 'done' ? 'Team flow changed' : 'Changing your team flow' : step === 1 ? (setupMode ? 'Choose how your AI team works' : 'Choose a team flow') : stepLabel}</h2>
       ${step === 1 && !switching && html`<p>${state.key === 'custom' && state.review_pending ? 'Your existing setup is kept. Choose another flow, or keep the current custom setup.' : setupMode ? 'Pick a starting team flow. You can change it later in Project settings.' : 'Switching keeps the leader and your rooms and messages; other agents are kept, added, or hand off and stop.'}</p>`}</div>
-    ${switching ? html`<${MigrationProgress} migration=${migration} onCancel=${cancel} cancelling=${cancelling} onInterrupt=${interrupt} interrupting=${interrupting} onBackground=${embedded && onBackground ? () => onBackground(migration) : null} />${migration.state === 'done' ? html`<div class="team-flow-actions"><button type="button" class="btn btn-primary" disabled=${busy} onClick=${finishMigration}>${busy ? 'Closing…' : 'Done'}</button></div>` : TERMINAL.includes(migration.state) && html`<div class="team-flow-actions"><button type="button" class="btn" onClick=${() => { setMigration(null); setStep(1); setPlan(null); }}>Back to the wizard</button></div>`}` : html`
+    ${switching ? html`<${MigrationProgress} migration=${migration} onCancel=${cancel} cancelling=${cancelling} onInterrupt=${interrupt} interrupting=${interrupting} onBackground=${embedded && onBackground ? () => onBackground(migration) : null} />${migration.state === 'done' ? html`<div class="team-flow-actions"><button type="button" class="btn btn-primary" disabled=${busy} onClick=${finishMigration}>${busy ? 'Closing…' : 'Done'}</button></div>` : TERMINAL.includes(migration.state) && html`<div class="team-flow-actions"><button type="button" class="btn" onClick=${() => { dismissMigration(flow.projectID, migration.id); setMigration(null); setStep(1); setPlan(null); }}>Back to the wizard</button></div>`}` : html`
     ${step === 1 && html`<${TeamFlowCards} templates=${templates} selected=${selected} currentKey=${state.key} onSelect=${key => flow.select(key)} disabled=${flow.applying.value || !canEdit} />
       <${TeamFlowPreview} preview=${flow.preview.value} busy=${flow.previewing.value} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => flow.toggleRemoval(item, checked)} />`}
     ${step > 1 && roleKey && html`${!setupMode && roleStatus && html`<${StatusBanner} status=${roleStatus} role=${roleKey} from=${fromLetter} to=${toLetter} reactivate=${!!reuse} />`}

@@ -2,7 +2,7 @@ import { createPortal, html, useEffect, useRef, useState } from '../../ui.js';
 import { TeamWizard } from './team-setup-page.js';
 import { IconButton } from '../../components/icon-button.js';
 import { captureError } from '../../telemetry.js';
-import { flowLetter, interruptAgent, MigrationProgress, MIGRATION_TERMINAL } from './team-wizard-parts.js';
+import { dismissedMigration, dismissMigration, flowLetter, interruptAgent, MigrationProgress, MIGRATION_TERMINAL } from './team-wizard-parts.js';
 
 const conflictName = item => `${item.slug || item.agent_id} (${item.role_label || item.role_key || 'agent'})`;
 
@@ -28,7 +28,9 @@ export function TeamFlowSettings({ flow, canEdit, project }) {
   // settings is open (unless the person sent it to the background) and under the flow otherwise.
   const refreshMigration = (id, turn, showWizard) => Promise.resolve(flow.source.migration?.(id)).then(answer => {
     const running = answer?.migration || answer;
-    if (turn !== generationRef.current || !running?.id || MIGRATION_TERMINAL.includes(running.state)) return;
+    if (turn !== generationRef.current || !running?.id) return;
+    // A finished change shows its outcome here until it is dismissed.
+    if (MIGRATION_TERMINAL.includes(running.state)) { if (dismissedMigration(id) !== running.id) setBackground(running); return; }
     if (showWizard && backgrounded.current !== running.id && document.querySelector('#room-info-dialog')?.open) show();
     else setBackground(running);
   }, () => {});
@@ -96,7 +98,7 @@ export function TeamFlowSettings({ flow, canEdit, project }) {
       ${state && html`<p class="team-flow-current">Current: <strong>${current ? `${flowLetter(templates, current.key)} · ${current.label}` : 'Not chosen'}</strong>${state.review_pending ? ' · Setup needs review' : ''}</p>`}
       ${!open && state?.conflicts?.length > 0 && html`<div class="team-flow-preview team-flow-warning" role="alert"><div class="team-flow-change-group"><strong>⚠ Agents needing action</strong><ul>${state.conflicts.map((item, index) => html`<li key=${index}>${conflictName(item)} in ${item.room_title || 'a room'}: ${item.reason} <button type="button" class="btn" onClick=${show}>Review in wizard</button></li>`)}</ul></div></div>`}
       ${!open && background && html`<div id="team-flow-progress" class="team-flow-background-progress"><${MigrationProgress} migration=${background} onCancel=${cancelBackground} cancelling=${working === 'cancel'} onInterrupt=${interruptBackground} interrupting=${working === 'interrupt'} />
-        ${MIGRATION_TERMINAL.includes(background.state) && html`<${IconButton} name="close" label="Dismiss" onClick=${() => setBackground(null)} />`}
+        ${MIGRATION_TERMINAL.includes(background.state) && html`<${IconButton} name="close" label="Dismiss" onClick=${() => { dismissMigration(flow.projectID, background.id); setBackground(null); }} />`}
         <p class="error" role="alert">${progressError}</p></div>`}
       ${!open && html`<button type="button" class="btn btn-primary" disabled=${!canEdit || !state} onClick=${show}>Change team flow</button>`}
       ${open && createPortal(html`

@@ -351,6 +351,41 @@ async function main() {
       await page.waitForFunction(() => !document.querySelector('#team-flow-progress'));
       await page.close();
     }
+    // Interrupt now follows the server's `blocking`: it goes once the agent is stopping and comes back if the change waits on it again.
+    {
+      const agentRow = blocking => ({ agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'switch', state: 'draining', blocking, keeps: true });
+      const auto = base(); auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg-flip', state: 'draining', can_cancel: true, agents: [agentRow(true)] } };
+      const page = await mount({ auto });
+      await ready(page);
+      await page.waitForSelector('#team-flow-modal .team-wizard-background');
+      await page.$eval('#team-flow-modal .team-wizard-background', node => node.click());
+      await page.waitForSelector('#team-flow-progress .team-wizard-interrupt');
+      await page.evaluate(agent => { window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg-flip', state: 'draining', can_cancel: true, agents: [agent] } }; }, agentRow(false));
+      await page.waitForFunction(() => !document.querySelector('#team-flow-progress .team-wizard-interrupt'), { timeout: 8000 });
+      await page.evaluate(agent => { window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg-flip', state: 'draining', can_cancel: true, agents: [agent] } }; }, agentRow(true));
+      await page.waitForSelector('#team-flow-progress .team-wizard-interrupt', { timeout: 8000 });
+      await page.close();
+    }
+    // A finished change shows its outcome in settings after a remount, until it is dismissed; the dismissal is remembered for the project.
+    {
+      const finished = { id: 'mg-outcome', state: 'done', can_cancel: false, agents: [{ agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'notice', state: 'done' }] };
+      const auto = base(); auto['GET /api/projects/p1/team-flow/migration'] = { migration: finished };
+      const first = await mount({ auto });
+      await first.evaluate(() => localStorage.removeItem('aimebu2.teamFlowDismissed.p1'));
+      await first.evaluate(() => void window.__project.load('p1'));
+      await first.waitForSelector('#project-team-flow #team-flow-progress');
+      assert.match(await first.$eval('#team-flow-progress', node => node.textContent), /Team flow changed\./);
+      const second = await mount({ auto: auto });
+      await second.waitForSelector('#project-team-flow #team-flow-progress');
+      await second.close();
+      await first.$eval('#team-flow-progress [aria-label=Dismiss]', node => node.click());
+      assert.equal(await first.evaluate(() => localStorage.getItem('aimebu2.teamFlowDismissed.p1')), 'mg-outcome');
+      await first.close();
+      const third = await mount({ auto: auto });
+      await ready(third); await settle(third); await settle(third);
+      assert.equal(await third.$('#team-flow-progress'), null, 'a dismissed outcome does not come back');
+      await third.close();
+    }
     // A background refresh must not pull a running migration over the main page or reopen settings.
     {
       const running = { id: 'mg-background', state: 'draining', can_cancel: true, agents: [] };
