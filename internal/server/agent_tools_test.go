@@ -360,6 +360,21 @@ func TestAgentToolRoomsAreKeyAuthenticatedAndProjectScoped(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestSpawnWithoutVariantNamesTheMissingField(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	_, key := f.createToolAgent(t, "role_leader_default")
+	resp := f.toolPost(t, "/api/agent/agents", key, "no-variant", map[string]string{
+		"room_id": f.room.ID, "role_key": "reviewer", "tool": "fake", "model": "test",
+	})
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "add variant (e.g. docker)") {
+		t.Fatalf("spawn without variant: %d %s", resp.StatusCode, body)
+	}
+}
+
 func TestWorkerToolCannotSpawnOrStop(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

@@ -74,6 +74,8 @@ func roomLifecycleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrHomeRoom):
 		apiError(w, 409, "home_room", "project home room cannot be closed")
+	case errors.Is(err, store.ErrFlowRoom):
+		apiError(w, 409, "flow_room", "the team flow's general, routing and advice rooms cannot be closed")
 	case errors.Is(err, store.ErrOpenChildren):
 		apiError(w, 409, "open_children", "close child rooms first or confirm cascade")
 	case errors.Is(err, store.ErrStaleRev):

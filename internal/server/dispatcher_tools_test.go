@@ -81,6 +81,12 @@ func TestDispatcherCanDispatch(t *testing.T) {
 		t.Fatalf("lead create_room: %d", statusOf(resp))
 	}
 	decodeInto(t, resp, &leadRoom)
+	var otherRoom store.Room
+	resp = f.toolPost(t, "/api/agent/rooms", leadKey, "lead-room-2", map[string]any{"title": "before the switch, too"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("lead create_room 2: %d", statusOf(resp))
+	}
+	decodeInto(t, resp, &otherRoom)
 	ownWorker, _ := f.flowAgent(t, "role_worker_default", "ownworker", lead.ID, leadRoom)
 	roomWorker, _ := f.flowAgent(t, "role_worker_default", "roomworker", "test", leadRoom)
 
@@ -190,10 +196,21 @@ func TestDispatcherCanDispatch(t *testing.T) {
 		t.Fatalf("dispatcher deleted a person's schedule: %d", status)
 	}
 
-	// (4) The dispatcher may not close a room it neither created nor belongs to, nor stop the leader's pre-switch worker
-	// there. The leader keeps close and stop over what it started before the switch.
-	if status := statusOf(f.toolPost(t, "/api/agent/rooms/"+leadRoom.ID+"/close", dispatcherKey, "close-lead-room", map[string]any{"lifecycle_rev": leadRoom.LifecycleRev})); status != 403 {
-		t.Fatalf("dispatcher closed the leader's room: %d", status)
+	// (4) The dispatcher may close a task room under home that the leader made before the switch, but may not close the
+	// flow's own rooms, and may not stop the leader's pre-switch worker. The leader keeps close and stop over what it
+	// started before the switch.
+	resp = f.toolPost(t, "/api/agent/rooms/"+otherRoom.ID+"/close", dispatcherKey, "close-lead-room", map[string]any{"lifecycle_rev": otherRoom.LifecycleRev})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("dispatcher close_room on a pre-switch room under home: %d", statusOf(resp))
+	}
+	resp.Body.Close()
+	for _, flowRoom := range rooms {
+		if flowRoom.TeamFlowRoomKey == "" {
+			continue
+		}
+		if status := statusOf(f.toolPost(t, "/api/agent/rooms/"+flowRoom.ID+"/close", dispatcherKey, "close-flow-"+flowRoom.TeamFlowRoomKey, map[string]any{"lifecycle_rev": flowRoom.LifecycleRev})); status != 409 {
+			t.Fatalf("dispatcher closed flow room %s: %d", flowRoom.TeamFlowRoomKey, status)
+		}
 	}
 	stop := func(key, requestKey string, target store.Agent) int {
 		card, err := f.db.AgentCardByID(ctx, target.ID)

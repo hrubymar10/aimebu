@@ -8,6 +8,9 @@ import (
 )
 
 var ErrHomeRoom = errors.New("home_room")
+
+// ErrFlowRoom: the room is one of the team flow's own (general, routing, advice); an agent tool cannot close it.
+var ErrFlowRoom = errors.New("flow_room")
 var ErrOpenChildren = errors.New("open_children")
 
 type RoomCloseFailure struct {
@@ -156,8 +159,15 @@ func (tx *Tx) beginRoomClose(id, actor string, rev int64, cascade bool) (control
 
 func (tx *Tx) CloseTaskRoomAsTool(id, actor string, rev int64, cascade bool) (Room, []AgentCard, error) {
 	var wasOpen bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT lifecycle='open' FROM room WHERE id=?`, id).Scan(&wasOpen); err != nil {
+	var kind, flowKey string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT lifecycle='open',kind,team_flow_room_key FROM room WHERE id=?`, id).Scan(&wasOpen, &kind, &flowKey); err != nil {
 		return Room{}, nil, err
+	}
+	if kind == "home" {
+		return Room{}, nil, ErrHomeRoom
+	}
+	if flowKey != "" {
+		return Room{}, nil, ErrFlowRoom
 	}
 	controls, err := tx.beginRoomClose(id, actor, rev, cascade)
 	if err != nil {
@@ -214,6 +224,18 @@ func (tx *Tx) roomClosePermission(projectID, roomID, kind, actor string) error {
 	if err == nil {
 		if kind == "task" && joined && active {
 			return tx.authorizeSpawnActor(projectID, "agent", actor, false)
+		}
+		// A flow coordinator may also close a task room directly under the home or a flow's general room: rooms made
+		// before a flow switch (by the leader) have no dispatcher member, and joining each would be a larger change.
+		if kind == "task" && active {
+			var underShared bool
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room x JOIN room p ON p.id=x.parent_id
+				WHERE x.id=? AND (p.kind='home' OR p.team_flow_room_key='general'))`, roomID).Scan(&underShared); err != nil {
+				return err
+			}
+			if underShared {
+				return tx.authorizeSpawnActor(projectID, "agent", actor, false)
+			}
 		}
 		return ErrForbidden
 	}

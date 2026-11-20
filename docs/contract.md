@@ -137,7 +137,12 @@ Projects, rooms, people
   leader included, may also stop an agent it spawned or whose home room it
   created even when the current flow's spawn rules exclude that role, so
   rooms and workers a leader started before a switch to this flow stay its to
-  close and stop. In flows A and B the leader belongs
+  close and stop. A flow coordinator may close any open task room directly under
+  the home room or a flow's `general` room, member or not, so rooms made before a
+  switch need no dispatcher membership. No agent can close the home room or a flow's
+  `general`, `routing` or `advice` room (409 `home_room` / `flow_room`). A
+  `spawn_agent` with tool and model but no variant is refused with "add variant
+  (e.g. docker)". In flows A and B the leader belongs
   to `general`; in the dispatcher flow, specs still go through routing and
   task work stays in task rooms.
   In this flow, the leader's specification states worker count and whether

@@ -917,6 +917,10 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 				return
 			}
 		}
+		if req.Tool != "" && req.Model != "" && req.Variant == "" && req.LauncherID == "" {
+			apiError(w, 400, "invalid_request", "add variant (e.g. docker) for the tool and model, or give launcher_id")
+			return
+		}
 		apiError(w, 400, "invalid_request", "tool, and either launcher_id (model optional: the harness default) or variant and model required; no available role default could fill them")
 		return
 	}
