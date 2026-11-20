@@ -711,7 +711,8 @@ same `result_text` when both turns have one, else the same evidence when it says
 an exit code (two unrelated failures that both exited with code 1 are not a repeat). The
 decision endpoint refuses a choice the item was not stored with (`400 invalid_choice`),
 so Resume of a definite failure is refused through the API as well as not offered. `choice` is the lowercase form of the
-button label. A worker recovery first goes to the active project lead when enabled; the lead gets a `worker_recovery` note and may use `list_recoveries` and `resolve_recovery` (`restart` is the fresh-session choice of a broken session; a held answer takes `retry` or `abandon`). It stays out of the people's Inbox until the configured interval elapses or the lead becomes unavailable, when a human card and notification appear. The lead's own recovery goes to people immediately. Project owners and operators may decide human-routed recovery in every room.
+button label. A lead deciding an item that was resolved while it was unassigned (the sweep had handed it to people) gets `409 already_resolved`
+naming who resolved it and how, instead of a bare refusal. A worker recovery first goes to the active project lead when enabled; the lead gets a `worker_recovery` note and may use `list_recoveries` and `resolve_recovery` (`restart` is the fresh-session choice of a broken session; a held answer takes `retry` or `abandon`). It stays out of the people's Inbox until the configured interval elapses or the lead becomes unavailable, when a human card and notification appear. The lead's own recovery goes to people immediately. Project owners and operators may decide human-routed recovery in every room.
 The human peer can view a private-chat recovery item, but only a project owner
 or operator may decide it. Owners and operators can see those recovery items
 without joining the private chat because recovery blocks the agent across

@@ -56,6 +56,9 @@ type inboxAsk struct {
 	Preview         string                `json:"candidate_preview,omitempty"`
 	ProposedAnswers []string              `json:"proposed_answers,omitempty"`
 	OpenQuestions   []answer.OpenQuestion `json:"open_questions,omitempty"`
+	// TargetRooms lists the rooms the held reply of a delivery_failed item meant to reach (see deliveryFailedInbox). A later committed reply
+	// that reaches one of them settles the item, even when the card itself was raised in the turn's room.
+	TargetRooms []string `json:"target_rooms,omitempty"`
 }
 
 // inboxFromSQL and inboxVisibleSQL say which items a person can access (two ? placeholders: the user, twice). They are shared by the full

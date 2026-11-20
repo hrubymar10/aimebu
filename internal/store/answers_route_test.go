@@ -138,6 +138,68 @@ func TestLeadMalformedAnswerReachesPeople(t *testing.T) {
 	}
 }
 
+// A lead's held reply left a card for people; when its resend succeeds, the card settles on its own — even though the resend went to the
+// room the reply was meant for and the card was raised in the turn's room.
+func TestResendToTheIntendedRoomSettlesTheHeldCard(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	asLead(t, s, f)
+	ctx := context.Background()
+	other, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "other", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, other.ID, "agent", f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The reply to other is invalid (a bad reply reference), so it is held whole and the card is raised in the turn's room.
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","reply_to":"msg_missing"}]}`, other.ID)); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {
+		t.Fatalf("people see %q, want delivery_failed", got)
+	}
+	second := nextNormalTurn(t, s, f, f.turn, heldNote(t, s, f.room.ID).ID)
+	if receipt, err := applyCandidate(t, s, second, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"fixed"}]}`, other.ID)); err != nil || receipt.Result != "committed" {
+		t.Fatalf("resend receipt=%+v err=%v", receipt, err)
+	}
+	if got := openInboxKinds(t, s, "usr_answers"); len(got) != 0 {
+		t.Fatalf("the card stayed open after the resend reached its room: %v", got)
+	}
+}
+
+// A committed reply that reaches neither the card's room nor the held reply's target leaves the card: the failed content still reached nobody.
+func TestResendToAnotherRoomLeavesTheHeldCardOpen(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	asLead(t, s, f)
+	ctx := context.Background()
+	other, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "other", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, other.ID, "agent", f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	third, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "third", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, third.ID, "agent", f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","reply_to":"msg_missing"}]}`, other.ID)); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	second := nextNormalTurn(t, s, f, f.turn, heldNote(t, s, f.room.ID).ID)
+	if receipt, err := applyCandidate(t, s, second, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"elsewhere"}]}`, third.ID)); err != nil || receipt.Result != "committed" {
+		t.Fatalf("reply receipt=%+v err=%v", receipt, err)
+	}
+	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {
+		t.Fatalf("people see %q, want the card still open", got)
+	}
+}
+
 // Two empty answers in a row with no tool activity are a broken session: a recovery for the lead offering a fresh session, nothing for
 // people, and no second correction note.
 func TestTwoEmptyAnswersRaiseBrokenSessionRecoveryForTheLead(t *testing.T) {

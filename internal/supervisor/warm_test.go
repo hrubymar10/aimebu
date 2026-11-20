@@ -2165,3 +2165,63 @@ func TestWarmTurnExitSaysWhetherTheProcessLivesOn(t *testing.T) {
 		t.Fatalf("exits = %+v: want the first with the process alive and the failed one without", exits)
 	}
 }
+
+// quarantineEndReports counts the local reports of a quarantine whose time ran out releasing a stuck slot.
+func quarantineEndReports(c *Client) *atomic.Int32 {
+	var reports atomic.Int32
+	c.OnError = func(err error) {
+		if strings.Contains(err.Error(), "releasing the session after quarantine") {
+			reports.Add(1)
+		}
+	}
+	return &reports
+}
+
+// A slot stuck by a planned stop releases when its quarantine is over, and says nothing: the unconfirmed container end and the quarantine
+// are the stop's own path, not a failure.
+func TestWarmQuarantineReleaseAfterAPlannedStopIsNotReported(t *testing.T) {
+	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+	warmRetryEvery, warmStuckQuarantine = 10*time.Millisecond, 40*time.Millisecond
+	defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+	h := newWarmHarness(t)
+	reports := quarantineEndReports(h.c)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	h.c.handleControl(protocol.Frame{AgentID: "agt_a", Generation: 1, DesiredRev: 2, DesiredState: "stopped"})
+	slot := h.c.pool().slot("agt_a")
+	eventually(t, "release of the stopped agent's reaped wrapper after quarantine", func() bool {
+		slot.mu.Lock()
+		stuck := slot.stuck != nil
+		slot.mu.Unlock()
+		return !stuck && h.c.warmLive.Load() == 0
+	})
+	if n := reports.Load(); n != 0 {
+		t.Fatalf("a planned stop's quarantine release reported %d times, want none", n)
+	}
+}
+
+// A slot stuck by anything else still reports its quarantine release: the process would not die on its own, and that is worth hearing about.
+func TestWarmQuarantineReleaseAfterAnUnplannedStuckIsReported(t *testing.T) {
+	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+	warmRetryEvery, warmStuckQuarantine = 10*time.Millisecond, 40*time.Millisecond
+	defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+	h := newWarmHarness(t)
+	reports := quarantineEndReports(h.c)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	if h.c.retireWarm("agt_a", "test") {
+		t.Fatal("an unconfirmed container end was treated as confirmed")
+	}
+	slot := h.c.pool().slot("agt_a")
+	eventually(t, "release of the reaped wrapper after quarantine", func() bool {
+		slot.mu.Lock()
+		stuck := slot.stuck != nil
+		slot.mu.Unlock()
+		return !stuck && h.c.warmLive.Load() == 0
+	})
+	if n := reports.Load(); n != 1 {
+		t.Fatalf("an unplanned stuck slot's quarantine release reported %d times, want once", n)
+	}
+}

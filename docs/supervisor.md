@@ -847,7 +847,9 @@ processes are never on one session.
   for two minutes while kill is retried; it is released at the first background retry after the two
   minutes, which the backoff makes a little later than the deadline itself. The supervisor then
   reports the uncertainty once and releases the session; the harness's session heartbeat cleans up a
-  process left in the container.
+  process left in the container. The release report is a warning, and there is none at all when the
+  end that stuck the slot was a planned one (the agent was stopped, or the supervisor is stopping):
+  that quarantine is the stop's own path.
   A launcher
   without the capability runs its agents cold on every turn, as before. A process in a container is
   always closed first (input, then SIGTERM with about eight seconds for the wrapper's own cleanup, only

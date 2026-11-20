@@ -909,8 +909,12 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   of the same digest returns the stored receipt). It wakes the author, so a turn
   that was itself woken by such a note and is held again gets no second note:
   a repeating invalid reply ends in the delivery-failed card, not a loop. A
-  committed reply clears the author's earlier open delivery failures only for
-  its own parent turn and for the rooms it actually posted a message to.
+  committed reply clears the author's earlier open delivery failures for its
+  own parent turn, for the rooms it actually posted a message to, and for the
+  cards whose recorded intended target rooms it reached: a delivery-failure
+  card stores the rooms its held reply meant to reach, so the reply's
+  successful resend settles the card even when the card was raised in the
+  turn's room while the reply was meant for another one.
 - `room_closed` / `not_member` targets (a room outside the agent's project,
   a closed room, a room the agent is not an active member of, a private chat
   that is not the turn's own) are authorisation/lifecycle failures, not

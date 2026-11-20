@@ -30,6 +30,30 @@ func (s *Store) DecideRecoveryAsAgent(ctx context.Context, itemID, leadID, key, 
 	return s.decideRecoveryActor(ctx, itemID, "agent", leadID, key, choice, note, rev)
 }
 
+// AlreadySettledError says a recovery was decided already, by whom and how. A lead retrying a decision on an item that moved on while it was
+// unassigned (the sweep handed it to people and someone resolved it) gets this instead of a bare refusal, so the retry can stop instead of
+// hunting for a permission it does not lack. It unwraps to ErrAlreadyResolved or ErrAlreadyWithdrawn, which the callers already map.
+type AlreadySettledError struct {
+	State string // resolved or withdrawn
+	By    string // the actor recorded on the item: a user or agent id, or "system (<reason>)" for an auto-settled one
+	How   string // the choice recorded on the resolution event, when there is one
+}
+
+func (e *AlreadySettledError) Error() string {
+	text := "already " + e.State + " by " + e.By
+	if e.How != "" {
+		text += " (choice " + e.How + ")"
+	}
+	return text
+}
+
+func (e *AlreadySettledError) Unwrap() error {
+	if e.State == "withdrawn" {
+		return ErrAlreadyWithdrawn
+	}
+	return ErrAlreadyResolved
+}
+
 func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, actorID, key, choice, note string, rev int) (RecoveryDecision, bool, error) {
 	digestInput := itemID + "\x00" + choice + "\x00" + strconv.Itoa(rev)
 	if actorKind == "agent" {
@@ -57,7 +81,14 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.project_id=? AND r.cap_is_lead=1 AND a.desired='active' AND a.recovery_block=0 AND a.revoked_at IS NULL)`, actorID, projectID).Scan(&allowed); err != nil {
 				return "", err
 			}
-			if !allowed || !leadID.Valid || leadID.String != actorID || !leadDue.Valid {
+			if !allowed {
+				return "", ErrForbidden
+			}
+			// A lead that lost the item to the sweep reads its end, not a refusal: the item was decided while nobody held it.
+			if state == "resolved" || state == "withdrawn" {
+				return "", tx.settledRecoveryError(itemID, state)
+			}
+			if !leadID.Valid || leadID.String != actorID || !leadDue.Valid {
 				return "", ErrForbidden
 			}
 		} else if !role.Valid || role.String != "owner" && role.String != "operator" || leadDue.Valid {
@@ -277,6 +308,23 @@ func (tx *Tx) decideQuiescenceWait(originID, projectID, roomID, agentID, actorID
 
 // ErrChoiceNotOffered is a recovery decision that is not among the options the item was stored with.
 var ErrChoiceNotOffered = errors.New("choice_not_offered")
+
+// settledRecoveryError reads who settled an item and how, for the error a late lead decision gets (see AlreadySettledError). An item with no
+// recorded resolver (nothing should settle one without) still says it is over.
+func (tx *Tx) settledRecoveryError(itemID, state string) error {
+	var by, how sql.NullString
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(resolved_by,''),
+		(SELECT json_extract(payload_json,'$.choice') FROM event WHERE kind='inbox_item_resolved' AND json_extract(payload_json,'$.inbox_item_id')=?
+			ORDER BY seq DESC LIMIT 1) FROM inbox_item WHERE id=?`, itemID, itemID).Scan(&by, &how)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	e := &AlreadySettledError{State: state, By: by.String, How: how.String}
+	if e.By == "" {
+		e.By = "nobody recorded"
+	}
+	return e
+}
 
 // choiceOffered says whether a decision (the lowercase form of a button label) is among the stored options; an item without any offers all.
 func choiceOffered(options []string, choice string) bool {

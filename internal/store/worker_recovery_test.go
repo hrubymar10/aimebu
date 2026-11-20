@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -140,5 +141,42 @@ func TestWorkerRecoveryWithLeadOutsideRoomAndNoHomeRoomGoesToHuman(t *testing.T)
 	recoveries, err := s.ListLeadRecoveries(ctx, lead.ID, f.project.ID)
 	if err != nil || len(recoveries) != 0 {
 		t.Fatalf("lead items=%+v err=%v", recoveries, err)
+	}
+}
+
+// A lead retrying a decision on an item the sweep gave to people and someone then resolved reads who resolved it and how, not a bare
+// refusal that sounds like it lacks the lead role.
+func TestLateLeadDecisionOnAResolvedRecoverySaysWhoResolvedIt(t *testing.T) {
+	s, f, owner, lead := workerRecoveryFixture(t)
+	ctx := context.Background()
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 137, false, false); err != nil {
+		t.Fatal(err)
+	}
+	recoveries, err := s.ListLeadRecoveries(ctx, lead.ID, f.project.ID)
+	if err != nil || len(recoveries) != 1 {
+		t.Fatalf("lead items=%+v err=%v", recoveries, err)
+	}
+	item := recoveries[0]
+	// The sweep hands the item to people: while it is open, the lead's decision is still refused.
+	if _, err := s.db.Exec(`UPDATE inbox_item SET lead_due_at=NULL WHERE id=?`, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.DecideRecoveryAsAgent(ctx, item.ID, lead.ID, "lead-late", "retry", "", item.Rev); err != ErrForbidden {
+		t.Fatalf("an open item held by people: %v", err)
+	}
+	if _, _, err := s.DecideRecovery(ctx, item.ID, owner, "person-retry", "retry", int(item.Rev)); err != nil {
+		t.Fatalf("person decision: %v", err)
+	}
+	rev, err := s.RecoveryItemRevision(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = s.DecideRecoveryAsAgent(ctx, item.ID, lead.ID, "lead-late", "retry", "", rev)
+	var settled *AlreadySettledError
+	if !errors.As(err, &settled) || !errors.Is(err, ErrAlreadyResolved) {
+		t.Fatalf("late lead decision: %v", err)
+	}
+	if settled.By != owner || settled.How != "retry" || settled.Error() != "already resolved by "+owner+" (choice retry)" {
+		t.Fatalf("settled=%+v text=%q", settled, settled.Error())
 	}
 }

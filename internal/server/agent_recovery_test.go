@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"testing"
 
@@ -118,5 +119,48 @@ func TestInboxDecisionAcceptsRestart(t *testing.T) {
 	}
 	if status := post("bogus"); status != 400 {
 		t.Fatalf("made-up choice status=%d, want 400", status)
+	}
+}
+
+// A lead deciding a recovery someone resolved while the item was with people reads the resolution, not a bare "project lead required".
+func TestAgentRecoveryToolOnAResolvedItemSaysWhoResolvedIt(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	lead, leadKey := f.createToolAgentNamed(t, "role_leader_default", "laterecoverylead")
+	worker, _ := f.createToolAgentNamed(t, "role_worker_default", "laterecoveryworker")
+	itemID := "inb_recovery_resolved"
+	owner, err := f.db.UserByLogin(t.Context(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerID := owner.ID
+	err = f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,agent_id,requester_kind,requester_id,kind,lead_due_at,recovery_lead_id,created_at) VALUES (?,?,?,?,'agent',?,'recovery','2099-01-01T00:00:00.000000000Z',?,?)`,
+			itemID, f.project.ID, f.room.ID, worker.ID, worker.ID, lead.ID, "2026-01-01T00:00:00.000000000Z"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at='2026-01-02T00:00:00.000000000Z' WHERE id=?`, ownerID, itemID); err != nil {
+			return err
+		}
+		_, err := tx.AppendEvent(store.Event{ProjectID: f.project.ID, RoomID: f.room.ID, Kind: "inbox_item_resolved",
+			PayloadJSON: `{"inbox_item_id":"` + itemID + `","choice":"abandon","actor":"` + ownerID + `"}`})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := f.toolPost(t, "/api/agent/recoveries/"+itemID+"/decision", leadKey, "late-recovery", map[string]string{"choice": "abandon"})
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 409 {
+		t.Fatalf("late decision status=%d body=%s", resp.StatusCode, body)
+	}
+	var payload struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Error != "already_resolved" ||
+		payload.Message != "already resolved by "+ownerID+" (choice abandon)" {
+		t.Fatalf("payload=%+v body=%s", payload, body)
 	}
 }

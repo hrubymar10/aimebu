@@ -114,7 +114,8 @@ type warmEntry struct {
 	unconfirmedReported atomic.Bool   // retries must not report the same uncertain end repeatedly
 	quarantineReported  atomic.Bool   // a still-live process past the quarantine is reported once
 	stuckAt             time.Time
-	kept                bool // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
+	stuckReason         string // why the process was ended and not confirmed gone (the reason its slot went stuck); a planned stop's quarantine release is not reported
+	kept                bool   // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
 }
 
 // swapWriter is the stderr sink of a warm process: it writes to the output log of the turn that is running, and to nothing between turns (a
@@ -312,6 +313,7 @@ func (c *Client) finish(slot *warmSlot, entry *warmEntry, reason string, grace t
 	if entry != nil {
 		slot.stuck = entry
 		entry.stuckAt = time.Now()
+		entry.stuckReason = reason
 		pool := c.pool()
 		telemetry.Go(context.Background(), func() { c.watchStuck(pool, slot, entry) })
 	}
@@ -378,6 +380,15 @@ func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
 // the backoff has grown: about five minutes.
 var warmStuckRetryMax = 5 * time.Minute
 
+// plannedWarmEnd says why a warm process was ended on purpose: a stop of its
+// agent, or the supervisor shutting down. The quarantine such an end runs and
+// the release when it is over are the normal course of that decision, not a
+// failure to report; anything else (a process that would not die on its own,
+// a start that could not be tracked) is worth the report.
+func plannedWarmEnd(reason string) bool {
+	return reason == "the agent was stopped" || reason == "the supervisor is stopping"
+}
+
 // clearStuck makes only cheap checks so a delivery does not wait behind a
 // slow background Close or Kill. The caller holds slot.mu.
 func (c *Client) clearStuck(slot *warmSlot) bool {
@@ -392,7 +403,11 @@ func (c *Client) clearStuck(slot *warmSlot) bool {
 	}
 	if time.Since(entry.stuckAt) >= warmStuckQuarantine {
 		if !entry.session.Alive() && slot.busy != entry {
-			c.report("a warm process quarantine ended", fmt.Errorf("agent %s: host wrapper exited but its container end was not confirmed; releasing the session after quarantine", entry.agentID))
+			// A released quarantine is a degraded state the supervisor recovers from by itself, and no news at all when the process was
+			// ended on purpose (a stop, a shutdown): its unconfirmed container end and the quarantine are that decision's own path.
+			if !plannedWarmEnd(entry.stuckReason) {
+				c.degraded("a warm process quarantine ended", fmt.Errorf("agent %s: host wrapper exited but its container end was not confirmed; releasing the session after quarantine", entry.agentID))
+			}
 			c.recordWarmEnd(entry, "quarantine ended after its host wrapper exited")
 			slot.stuck = nil
 			return true

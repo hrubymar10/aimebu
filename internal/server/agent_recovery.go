@@ -71,8 +71,16 @@ func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request
 			apiError(w, 403, "forbidden", "project lead required")
 		case errors.Is(err, store.ErrConflict):
 			apiError(w, 409, "conflict", "request key reused with different decision")
-		case errors.Is(err, store.ErrAlreadyResolved):
-			apiError(w, 409, "already_resolved", "recovery already resolved")
+		case errors.Is(err, store.ErrAlreadyResolved), errors.Is(err, store.ErrAlreadyWithdrawn):
+			message := "recovery already resolved"
+			if errors.Is(err, store.ErrAlreadyWithdrawn) {
+				message = "recovery already withdrawn"
+			}
+			var settled *store.AlreadySettledError
+			if errors.As(err, &settled) && settled.By != "" {
+				message = settled.Error()
+			}
+			apiError(w, 409, "already_resolved", message)
 		case errors.Is(err, store.ErrStaleInboxRev):
 			apiError(w, 409, "stale_rev", "recovery evidence changed")
 		case errors.Is(err, store.ErrChoiceNotOffered):

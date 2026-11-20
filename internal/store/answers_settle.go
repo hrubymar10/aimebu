@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/answer"
 )
 
 func (tx *Tx) insertAnswerReceipt(receipt AnswerReceipt, raw []byte) error {
@@ -104,7 +105,9 @@ func (tx *Tx) ensureCorrectionTurn(parent answerTurn) error {
 }
 
 // deliveryFailedInbox raises the card for a held answer. toLead is set only for invalid-answer holds, which a worker's lead settles first;
-// room_closed and not_member holds are never re-asked by an agent, so they stay with people.
+// room_closed and not_member holds are never re-asked by an agent, so they stay with people. The card records the rooms the held reply meant
+// to reach (read back out of the stored candidate), so a later committed reply that reaches one of them settles the card even when it was
+// raised in the turn's own room.
 func (tx *Tx) deliveryFailedInbox(parent answerTurn, toLead bool) error {
 	var projectID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, parent.agentID).Scan(&projectID); err != nil {
@@ -129,7 +132,7 @@ func (tx *Tx) deliveryFailedInbox(parent answerTurn, toLead bool) error {
 	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
 		return err
 	}
-	ask := inboxAsk{Text: "An agent reply could not be delivered.", Preview: candidatePreview(saved.CandidateRaw)}
+	ask := inboxAsk{Text: "An agent reply could not be delivered.", Preview: candidatePreview(saved.CandidateRaw), TargetRooms: candidateTargetRooms(saved.CandidateRaw)}
 	leadID := ""
 	if toLead {
 		var err error
@@ -184,6 +187,25 @@ var previewBearer = regexp.MustCompile(`(?i)Bearer[[:space:]]+[^[:space:]"']+`)
 var previewAPIKey = regexp.MustCompile(`sk-[A-Za-z0-9_-]{8,}`)
 var previewSecretField = regexp.MustCompile(`(?i)("(?:api_key|access_token|refresh_token|password|secret|token)"[[:space:]]*:[[:space:]]*")[^"]*(")`)
 
+// candidateTargetRooms lists, in order and without repeats, the rooms the stored candidate of a held reply named: what a later committed
+// reply must reach to settle the reply's delivery-failure card. A candidate that does not parse (the reply was held for its shape before
+// any target could be read) names none, and its card then settles only through the turn and the turn's room.
+func candidateTargetRooms(raw string) []string {
+	parsed, err := answer.Parse([]byte(raw), false)
+	if err != nil {
+		return nil
+	}
+	var seen = make(map[string]bool, len(parsed.Messages))
+	var rooms []string
+	for _, message := range parsed.Messages {
+		if message.Room != "" && !seen[message.Room] {
+			seen[message.Room] = true
+			rooms = append(rooms, message.Room)
+		}
+	}
+	return rooms
+}
+
 func candidatePreview(raw string) string {
 	redacted := strings.ToValidUTF8(raw, "�")
 	redacted = previewAgentKey.ReplaceAllString(redacted, "[redacted]")
@@ -199,24 +221,22 @@ func candidatePreview(raw string) string {
 }
 
 // resolveDeliveryFailures closes the agent's open delivery failures once it has
-// committed a reply: the failures of the same parent turn, and any earlier ones
-// in the rooms the committed reply posted to.
+// committed a reply: the failures of the same parent turn, any earlier ones in
+// the rooms the committed reply posted to, and any earlier ones whose recorded
+// intended target rooms the committed reply reached — the successful resend of
+// a held reply settles its card even when the card was raised in the turn's
+// room while the reply was meant for another one.
 func (tx *Tx) resolveDeliveryFailures(agentID, turnID string, roomIDs ...string) error {
-	query := `SELECT id,project_id,room_id FROM inbox_item WHERE agent_id=? AND kind='delivery_failed' AND state='open' AND (turn_id=?`
-	args := []any{agentID, turnID}
-	for _, id := range roomIDs {
-		query += ` OR room_id=?`
-		args = append(args, id)
-	}
-	rows, err := tx.tx.QueryContext(tx.ctx, query+`)`, args...)
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id,project_id,room_id,COALESCE(turn_id,''),COALESCE(options_json,'') FROM inbox_item
+		WHERE agent_id=? AND kind='delivery_failed' AND state='open'`, agentID)
 	if err != nil {
 		return err
 	}
-	type item struct{ id, projectID, roomID string }
+	type item struct{ id, projectID, roomID, turnID, options string }
 	items := []item{}
 	for rows.Next() {
 		var x item
-		if err := rows.Scan(&x.id, &x.projectID, &x.roomID); err != nil {
+		if err := rows.Scan(&x.id, &x.projectID, &x.roomID, &x.turnID, &x.options); err != nil {
 			rows.Close()
 			return err
 		}
@@ -227,7 +247,14 @@ func (tx *Tx) resolveDeliveryFailures(agentID, turnID string, roomIDs ...string)
 	if err != nil {
 		return err
 	}
+	posted := make(map[string]bool, len(roomIDs))
+	for _, id := range roomIDs {
+		posted[id] = true
+	}
 	for _, x := range items {
+		if !deliveryFailureSettled(x.turnID, x.roomID, x.options, turnID, posted) {
+			continue
+		}
 		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_at=? WHERE id=?`, timestamp(), x.id); err != nil {
 			return err
 		}
@@ -236,6 +263,26 @@ func (tx *Tx) resolveDeliveryFailures(agentID, turnID string, roomIDs ...string)
 		}
 	}
 	return nil
+}
+
+// deliveryFailureSettled says whether a committed reply settles one open delivery-failure card: the card's own turn, the card's room, or a
+// room the card recorded as the held reply's target (options of items stored before the target was kept name none and match the old ways only).
+func deliveryFailureSettled(itemTurnID, itemRoomID, options, turnID string, posted map[string]bool) bool {
+	if itemTurnID == turnID || posted[itemRoomID] {
+		return true
+	}
+	var ask inboxAsk
+	if options != "" {
+		if err := json.Unmarshal([]byte(options), &ask); err != nil {
+			return false
+		}
+	}
+	for _, room := range ask.TargetRooms {
+		if posted[room] {
+			return true
+		}
+	}
+	return false
 }
 
 // partialHeldText says which messages of a reply were held alone, for the Inbox card and the room's system row.
