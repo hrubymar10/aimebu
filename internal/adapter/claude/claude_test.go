@@ -717,7 +717,7 @@ func TestNativeTurnKeyIsInTheEnvironmentOnly(t *testing.T) {
 	if err := json.Unmarshal([]byte(inline), &config); err != nil {
 		t.Fatalf("the MCP entry is not inline JSON: %q: %v", inline, err)
 	}
-	server := config.Servers["aimebu"]
+	server := config.Servers[toolboxServer]
 	if server.Command != "/usr/bin/aimebu" || len(server.Args) != 1 || server.Args[0] != "agent-tools" || server.Env["AIMEBU_AGENT_KEY"] != "${AIMEBU_AGENT_KEY}" || server.Env["AIMEBU_AGENT_ID"] != "agt_test" || server.Env["AIMEBU_URL"] != "http://127.0.0.1:9897" || server.Env["AIMEBU_SENTRY_DSN"] != "off" {
 		t.Fatalf("bridge entry: %+v", server)
 	}

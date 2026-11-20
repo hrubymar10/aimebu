@@ -982,8 +982,10 @@ The native live canaries are opt-in:
 
 `AIMEBU_LIVE_CC=1 go test ./internal/adapter/claude` and
 `AIMEBU_LIVE_CODEX=1 go test ./internal/adapter/codex` and
-`AIMEBU_LIVE_PI=1 go test ./internal/adapter/pi`. See
-[the adapter guide](adapter.md).
+`AIMEBU_LIVE_PI=1 go test ./internal/adapter/pi`, and
+`AIMEBU_LIVE_CC_MCP=1 go test ./internal/adapter/claude` checks that the real
+`claude` lists the toolbox next to a person's disabled or enabled v1 `aimebu`
+server (no login needed). See [the adapter guide](adapter.md).
 Docker variants launch `claude-docker`, `codex-docker`, and `pi-docker` when
 those commands are on the supervisor's `PATH`. They require a mirrored
 checkout. All Docker variants need a server bind/allowlist reachable from

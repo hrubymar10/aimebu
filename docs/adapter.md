@@ -212,9 +212,20 @@ model choice: the server's spawn catalog separately bounds Claude models to
 the list the owner sets on the harness in Settings → Agents → Harnesses & models (nothing is seeded; Auto-detect offers the current models). Normal turns receive the aimebu MCP entry
 inline through `--mcp-config` and are not strict: the person's own MCP servers and connectors
 (user, project and local scope, claude.ai) stay available to the agent, as in their
-terminal. The aimebu entry takes precedence over a server of the same name in any
-scope, so a v1 bus the person has configured under that name never reaches a v2
-agent. Diagnostic turns pass `--strict-mcp-config` with the narrow read-only tool flags. Its capability report advertises schema, compaction,
+terminal. The toolbox entry is named `aimebu-agent` (its tools are
+`mcp__aimebu-agent__<tool>`), not `aimebu`: Claude applies a project's
+`disabledMcpServers` by name to every source, an inline `--mcp-config` entry
+included, so a person who switched off a v1 bus called `aimebu` in a project
+would otherwise switch off the toolbox of every agent working there. A Docker
+agent runs in the host's spelling of the checkout with the host's mounted
+Claude home, so it inherits that project state too. A v1 bus named `aimebu`,
+of any scope, is instead hidden with `--disallowedTools mcp__aimebu` (a deny
+rule holds under `bypassPermissions`), so it never reaches a v2 agent.
+`AIMEBU_LIVE_CC_MCP=1 go test ./internal/adapter/claude` runs the real
+`claude` (on `PATH`, no login needed) through the Docker entry against a fake
+toolbox, with a user-scope v1 `aimebu` server enabled and then disabled in the
+project, and checks that the toolbox's tools are listed and the v1 tools are not.
+Diagnostic turns pass `--strict-mcp-config` with the narrow read-only tool flags. Its capability report advertises schema, compaction,
 context-window, cost, and confirmed-cancel support; it does not claim
 verified no-action or read-only modes. The normal test suite uses a scripted
 `claude` binary.
@@ -752,7 +763,21 @@ network source. Pi Docker needs the same network access for turn attachments.
 A loopback-only bind makes Docker catalog entries unavailable and blocks direct
 spawn, switch, and reactivation requests.
 The server checks the agent key and exposes the same managed toolbox as stdio
-MCP.
+MCP. Neither entry runs a command inside the container, so the toolbox does not
+depend on an `aimebu` binary in the harness image.
+
+An image that installs `aimebu` anyway (for an agent to run by hand, or for a
+v1 `aimebu mcp` entry in the mounted Claude configuration) must install it from
+the v2 line, not with `@latest`: `@latest` resolves to `master`, which is still
+v1 until v2 lands there. `@v2` does not work either (Go reads it as a version
+prefix), and the `v2.0.0-*` tags are refused because the module path has no
+`/v2` suffix, so pin a commit of the `v2` branch:
+
+```sh
+go install github.com/hrubymar10/aimebu/cmd/aimebu@$(git ls-remote https://github.com/hrubymar10/aimebu refs/heads/v2 | cut -f1)
+```
+
+Once v2 is on `master`, `@latest` works again.
 Codex's response schema is written below the mirrored checkout, while its
 credentials stay in the container's configured Codex home. The adapter checks
 that the schema still exists immediately before launch and recreates it

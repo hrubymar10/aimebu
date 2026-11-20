@@ -46,6 +46,16 @@ func (a *Adapter) variant() string {
 
 func (a *Adapter) CatalogIdentity() (string, string) { return "claude", a.variant() }
 
+// toolboxServer names the aimebu entry a normal turn passes with --mcp-config, so its tools are mcp__aimebu-agent__<tool>. It is not
+// "aimebu": Claude applies a project's disabledMcpServers by name to every source, an inline --mcp-config entry included, and a person
+// who switched off a v1 bus called aimebu in a project (in their terminal, or because it was superseded) would switch off the v2 toolbox
+// of every agent working there with it. legacyToolsRule hides the tools of such a v1 server instead (a deny rule holds in
+// bypassPermissions too), so a v1 bus the person still has enabled never reaches a v2 agent.
+const (
+	toolboxServer   = "aimebu-agent"
+	legacyToolsRule = "mcp__aimebu"
+)
+
 var systemDeltas = prompt.Deltas{
 	Opening:     "Complete this aimebu turn from the JSON supplied on standard input.",
 	Role:        "Obey the role instructions in context.role_body. " + prompt.UnchangedContext,
@@ -256,8 +266,8 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 	} else {
 		if spec.Mode == adapter.ModeNormal {
 			// Not strict: the person's own MCP servers and connectors stay available to the agent, as in their terminal. The --mcp-config entry
-			// is named aimebu like a v1 bus the person may have configured, and it takes precedence over a same-named server of any scope
-			// (user, project, local), so that bus never reaches a v2 agent.
+			// is toolboxServer, and a v1 bus named aimebu, of any scope, is denied (see toolboxServer).
+			args = append(args, "--disallowedTools", legacyToolsRule)
 			if a.variant() == "docker" {
 				endpoint, header, err := adapter.DockerMCPAt(spec.AgentTools, spec.Agent.ID, spec.AgentServerURL)
 				if err != nil {
@@ -266,7 +276,7 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 				// Claude expands ${NAME} in a header from its own environment, so the key is not in the argument list: it travels in the
 				// forwarded variable.
 				agentKey = adapter.DockerAgentKeyEnv(header)
-				config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"aimebu": map[string]any{"type": "http", "url": endpoint, "headers": map[string]string{"Authorization": "Bearer ${" + adapter.AgentKeyEnv + "}"}}}})
+				config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{toolboxServer: map[string]any{"type": "http", "url": endpoint, "headers": map[string]string{"Authorization": "Bearer ${" + adapter.AgentKeyEnv + "}"}}}})
 				if err != nil {
 					return nil, err
 				}
@@ -278,7 +288,7 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 				if err != nil {
 					return nil, err
 				}
-				config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"aimebu": map[string]any{"command": command, "args": bridgeArgs, "env": bridgeEnv}}})
+				config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{toolboxServer: map[string]any{"command": command, "args": bridgeArgs, "env": bridgeEnv}}})
 				if err != nil {
 					return nil, err
 				}
