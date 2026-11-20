@@ -6,11 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"hash"
 	"io/fs"
 	"path"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // One module under two URLs would run twice (a second api.js session, a second copy of Preact).
@@ -115,7 +118,36 @@ func (a webAssets) contentSecurityPolicy(host string, extraConnect []string) str
 
 // prepareWebAssets reads the embedded web files and makes the page and the modules ready; with `bundled` the page starts from the bundle of the modules
 // (see web_bundle.go), without it from the modules themselves.
+//
+// The result is cached by a digest of the sources (and `bundled`), so a process prepares each distinct set of sources once however many Handlers it builds;
+// a changed source (dev live reload) has another digest and is prepared again. It is read-only once made, so it is shared.
 func prepareWebAssets(files fs.FS, bundled bool) (webAssets, error) {
+	raw, digest, err := readWebFiles(files)
+	if err != nil {
+		return webAssets{}, err
+	}
+	key := fmt.Sprintf("%x/%t", digest.Sum(nil), bundled)
+	entry, _ := assetsCache.LoadOrStore(key, &assetsOnce{})
+	made := entry.(*assetsOnce)
+	made.once.Do(func() {
+		assetPrepares.Add(1)
+		made.assets, made.err = makeWebAssets(raw, digest, bundled)
+	})
+	return made.assets, made.err
+}
+
+var assetsCache sync.Map // sources digest + bundled -> *assetsOnce
+
+// assetPrepares counts the preparations actually made (a test reads it).
+var assetPrepares atomic.Int64
+
+type assetsOnce struct {
+	once   sync.Once
+	assets webAssets
+	err    error
+}
+
+func readWebFiles(files fs.FS) (map[string][]byte, hash.Hash, error) {
 	raw := make(map[string][]byte)
 	hash := sha256.New()
 	err := fs.WalkDir(files, ".", func(name string, entry fs.DirEntry, walkErr error) error {
@@ -135,8 +167,13 @@ func prepareWebAssets(files fs.FS, bundled bool) (webAssets, error) {
 		return nil
 	})
 	if err != nil {
-		return webAssets{}, err
+		return nil, nil, err
 	}
+	return raw, hash, nil
+}
+
+func makeWebAssets(raw map[string][]byte, hash hash.Hash, bundled bool) (webAssets, error) {
+	var err error
 	index, ok := raw["index.html"]
 	if !ok {
 		return webAssets{}, fmt.Errorf("embedded index.html is missing")

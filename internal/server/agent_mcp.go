@@ -24,7 +24,7 @@ func (s *Server) agentToolMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	toolbox := agenttools.Server{URL: "http://aimebu.local", Key: key,
-		Client: &http.Client{Transport: localAgentTransport{handler: s.Handler(), remoteAddr: r.RemoteAddr}}}
+		Client: &http.Client{Transport: localAgentTransport{handler: s.localHandler(), remoteAddr: r.RemoteAddr}}}
 	response, notification := toolbox.Process(r.Context(), raw)
 	if notification {
 		w.WriteHeader(http.StatusAccepted)
@@ -33,6 +33,13 @@ func (s *Server) agentToolMCP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(response)
+}
+
+// localHandler is the handler the agent MCP endpoint dispatches its tool calls to. It is built once per Server: building it prepares the whole web UI
+// (reads and hashes the embedded files, gzips the page), which is far too much work to repeat for every MCP request.
+func (s *Server) localHandler() http.Handler {
+	s.localOnce.Do(func() { s.localBuilds.Add(1); s.localMux = s.Handler() })
+	return s.localMux
 }
 
 type localAgentTransport struct {

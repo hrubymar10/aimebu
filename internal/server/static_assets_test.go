@@ -260,3 +260,21 @@ func TestPolicyAllowsTheErrorReportOriginOnlyWhileReportingIsOn(t *testing.T) {
 		t.Fatalf("only the origin of the DSN may appear, not its key or project: %q", on)
 	}
 }
+
+func TestAgentMCPPreparesWebAssetsOnce(t *testing.T) {
+	f := newFixture(t)
+	f.srv.NoWebBundle = true
+	f.srv.Handler() // warms the cache for these sources
+	before := assetPrepares.Load()
+	f.srv.Handler()
+	f.srv.Handler()
+	for i := 0; i < 5; i++ {
+		f.srv.localHandler()
+	}
+	if got := f.srv.localBuilds.Load(); got != 1 {
+		t.Fatalf("the MCP handler was built %d times, want once", got)
+	}
+	if got := assetPrepares.Load() - before; got != 0 {
+		t.Fatalf("web assets were prepared %d more times for repeated handlers", got)
+	}
+}
