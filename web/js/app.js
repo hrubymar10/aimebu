@@ -120,6 +120,8 @@ async function roomRemoved(projectID, roomID) {
   sidebar.forgetRoom(roomID);
   await sidebar.refreshProject(projectID);
   if (generation !== sessionGeneration || chat.room?.id !== roomID) return;
+  await chat.panel?.address?.unwinding; // the settings dialog's history walk (it was open on this room) must end first, or selectRoom's replaceState lands before it
+  if (generation !== sessionGeneration || chat.room?.id !== roomID) return;
   const home = [...sidebar.rooms.values()].find(room => room.project_id === projectID && room.kind === 'home');
   if (home) await selectRoom(home);
 }
