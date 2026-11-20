@@ -56,6 +56,12 @@ async function main() {
     await click('#room-info');
     assert.deepEqual(await state(), { hash: room_(home.id), open: true, category: 'details', view: 'list', title: 'Project settings', history: before + 1 }, 'opening: its own address, the project General shown on a wide screen');
     await page.waitForFunction(() => document.querySelector('#room-info-danger-tab')); // the project's lifecycle controls arrive with the project
+    // The search box's text starts to the right of its magnifier: a generic dialog input rule must not reset the shared search padding.
+    const searchClear = async what => assert.equal(await page.$eval('#room-info-search', input => {
+      const icon = input.parentElement.querySelector('.settings-icon').getBoundingClientRect();
+      return input.getBoundingClientRect().left + parseFloat(getComputedStyle(input).paddingLeft) + parseFloat(getComputedStyle(input).borderLeftWidth) >= icon.right;
+    }), true, what + ': the search text starts clear of the magnifier icon');
+    await searchClear('project settings');
     assert.deepEqual(await tabs(), ['details', 'project-agents', 'team-flow', 'recovery', 'limits', 'sessions', 'danger', 'general', 'members', 'notifications', 'agents', 'memory', 'workspace'],
       'a home room: the project categories, then the room\'s without Leave & remove (a home room cannot be archived, left or deleted as a room)');
     assert.deepEqual([await shown('#project-details'), await shown('#room-rename-form'), await shown('#room-member-list')], [true, false, false], 'only the category\'s blocks are shown');
@@ -106,6 +112,7 @@ async function main() {
     assert.deepEqual(await tabs(), ['general', 'members', 'notifications', 'agents', 'memory', 'workspace', 'leave']);
     assert.equal(await shown('#room-usage-project'), false, 'a task room has no project usage to link');
     await click('#room-info-leave-tab');
+    await searchClear('room settings');
     assert.deepEqual([await shown('#room-lifecycle'), await shown('#room-remove')], [true, true]);
     await click('#room-info-close');
 

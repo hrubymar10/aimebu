@@ -1094,7 +1094,7 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
 /* Room settings: one control size, one heading size, and the debugging facts hidden unless the inspector is on. */
 #room-info-dialog :is(button, input:not([type="checkbox"]), select) { box-sizing: border-box; height: 32px; font-size: 12px; }
 @media (max-width: 700px), (pointer: coarse) { #room-info-dialog :is(button, input:not([type="checkbox"]), select) { height: 40px; } }
-#room-info-dialog :is(input:not([type="checkbox"]), select, textarea) { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-family: inherit; font-size: 12px; }
+#room-info-dialog :is(input:not([type="checkbox"], .settings-search-input), select, textarea) { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-family: inherit; font-size: 12px; }
 #room-info-dialog textarea { box-sizing: border-box; min-height: 56px; }
 #room-info-dialog :is(h3, h4):not(.room-members-heading) { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
 #room-info-dialog label { color: var(--text-secondary); font-size: 12px; }
