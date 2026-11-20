@@ -235,20 +235,28 @@ func TestRetiredThreadOrderPreference(t *testing.T) {
 	}
 }
 
-// The chat's message layout (A: own messages on the right; B: every message on the left) is a personal preference kept on the server, never seen by another person.
-func TestMessageLayoutIsAPerAccountPreference(t *testing.T) {
+// The message layout preference is retired with layout A (every message now sits on the left): an older page may still send the name, and a
+// value stored while the choice existed stays in the database and is ignored harmlessly.
+func TestMessageLayoutIsRetired(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	cookie, csrf := registerSecondUser(t, f, "second")
-	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"message_layout": "b"}}, true)
-	if resp.StatusCode != 200 {
-		t.Fatalf("store: %d", resp.StatusCode)
+	me := f.request("GET", "/api/me", nil, false)
+	var user struct {
+		ID string `json:"id"`
 	}
-	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["message_layout"] != "b" {
-		t.Fatalf("stored, read back %v", got)
+	if err := json.NewDecoder(me.Body).Decode(&user); err != nil {
+		t.Fatal(err)
 	}
-	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
-	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["message_layout"] != "" {
-		t.Fatalf("the choice leaked to another person: %v", got)
+	me.Body.Close()
+	if err := f.db.SetUserPreferences(context.Background(), user.ID, map[string]string{"message_layout": "a", "theme": "dark"}); err != nil {
+		t.Fatal(err)
+	}
+	// Sent with a valid name: 200, the valid one is stored, the retired one is dropped (the stored "a" is not replaced).
+	put := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"message_layout": "b", "theme": "light"}}, true)
+	if put.StatusCode != 200 {
+		t.Fatalf("a retired name next to a valid one: %d", put.StatusCode)
+	}
+	if got := prefsOf(t, put.Body, json.NewDecoder(put.Body).Decode); got["theme"] != "light" || got["message_layout"] != "a" {
+		t.Fatalf("the valid one is stored, the retired one is dropped (the stored value is not replaced): %v", got)
 	}
 }

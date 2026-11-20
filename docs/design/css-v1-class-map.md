@@ -57,12 +57,11 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 ## Kept from v2 on purpose (decided by the owner, 2026-11-05)
 
 - The floating message toolbar (not v1's frameless in-bubble controls). It floats at the message's top-right corner, over its top edge, for every
-  message: it covers the right end of an own message's right-aligned sender line while it is shown (accepted by the owner), reserves no space, and
+  message: it overlays the message's top-right corner, which the sender line (every sender line sits at the left) leaves free, reserves no space, and
   is too short to reach the bubble's text. Focus within a message shows it as hover does. A touch tablet keeps the toolbar wholly above the bubble
-  (it is 46px tall); a phone's is in the bubble's flow. The Message layout preference (B, the default: every message on the left, or A: your own messages on the right) lives in
-  Settings → General → Chat.
+  (it is 46px tall); a phone's is in the bubble's flow. Every message sits on the left, so each one's top right is free for its toolbar.
 - The composer's formatting toolbar, rich editor, link field and notices (`.composer-toolbar`, `.composer-field`, `.composer-editor`, `.composer-notice`), and the thread composer, which keeps its own markup until its area moves.
-- Own messages at most 75% wide, other people's full width.
+- Every message full width on the left (v1 gives each bubble 75% of the column and right-aligns the viewer's own).
 - Touch-sized targets on phones (v1 has none).
 - A real background on a plain `.btn` (v1 leaves the browser's grey), a hover on it, and a visible focus ring (v1's `.btn` sets `outline: none`).
 - Icon-only top bar with tooltips (v1 and v2 already agree).

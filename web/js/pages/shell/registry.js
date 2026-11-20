@@ -15,7 +15,7 @@ export const SECTIONS = [
 // subs: groups inside the category, each a jump to an anchor.
 export const CATEGORIES = [
   { id: 'appearance', section: 'personal', title: 'Appearance', icon: 'palette', page: 'general', blocks: ['settings-appearance'], description: 'Theme and the room list preview' },
-  { id: 'chat', section: 'personal', title: 'Chat', icon: 'message', page: 'general', blocks: ['chat-preferences'], description: 'Message layout, system events and the debug inspector' },
+  { id: 'chat', section: 'personal', title: 'Chat', icon: 'message', page: 'general', blocks: ['chat-preferences'], description: 'System events and the debug inspector' },
   { id: 'notifications', section: 'personal', title: 'Notifications', icon: 'bell', page: 'notifications', description: 'Sound and browser notifications for the inbox and chat' },
   { id: 'users', section: 'server', title: 'Users & invites', icon: 'users', page: 'users', description: 'Who has access to a project and the invitations' },
   { id: 'usages', section: 'server', title: 'Accounts & usage', icon: 'chart', page: 'usages', description: 'Tool accounts, usage limits and automatic switching',
@@ -39,7 +39,6 @@ export const CATEGORIES = [
 export const SETTINGS = [
   { anchor: 'theme-select', category: 'appearance', group: 'Appearance', name: 'Theme', description: 'Colour scheme for the web UI, saved to your account.', keywords: ['dark', 'light', 'colour', 'color', 'high contrast', 'mode'] },
   { anchor: 'sidebar-preview', category: 'appearance', group: 'Appearance', name: 'Show the last message under every room', description: 'A one-line preview of the newest message under each room.', keywords: ['preview', 'room list', 'sidebar'] },
-  { anchor: 'message-layout', category: 'chat', group: 'Messages', name: 'Message layout', description: 'A keeps your own messages on the right; B puts every message on the left.', keywords: ['layout a', 'layout b', 'bubbles', 'alignment'] },
   { anchor: 'pref-system-events', category: 'chat', group: 'Messages', name: 'Show system events', description: 'A bell in the top bar with a feed of joins, spawns, recoveries and quota limits.', keywords: ['bell', 'events', 'feed', 'joins'] },
   { anchor: 'pref-debug-inspector', category: 'chat', group: 'Messages', name: 'Message debug inspector', description: 'A debug button on each message with its raw record.', keywords: ['debug', 'raw', 'inspect', 'developer'] },
   { anchor: 'notification-muted', category: 'notifications', group: 'Sound and alerts', name: 'Mute inbox sound', description: 'A chime for new inbox items and messages that address you.', keywords: ['sound', 'chime', 'audio', 'mute', 'silent'] },

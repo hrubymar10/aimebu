@@ -566,25 +566,24 @@ async function main() {
       document.querySelectorAll('#messages .message-receipts').forEach(node => node.remove()); text.textContent = words;
       return { sameRight: Math.abs(onSystem.right - onOther.right) <= 1, rowLeft: Math.abs(rowBox.left - (box.left + parseFloat(cs.paddingLeft))) <= 2, centred: Math.abs((left + right) / 2 - (rowBox.left + rowBox.right) / 2) <= 2, style: getComputedStyle(row).fontStyle };
     }), { sameRight: true, rowLeft: true, centred: true, style: 'normal' }, 'a receipt after a system line is right-aligned with the ones after other messages, and the line itself is a centred non-italic line');
-    // The action toolbar sits at the top-right corner of the message for every message: on an own (right-aligned) one it covers the right end of the
-    // sender line, which the owner accepts. The toolbar anchors to the bubble, so this holds in the thread panel and the room alike.
+    // The action toolbar sits at the top-right corner of the message for every message: every message sits on the left, so the corner is free
+    // of the sender line. The toolbar anchors to the bubble, so this holds in the thread panel and the room alike.
     assert.deepEqual(await page.evaluate(() => {
       const root = document.querySelector('#thread-messages [data-message-id=rm_a_t1]');
       const bubble = root.querySelector('.chat-msg-bubble').getBoundingClientRect(), bar = root.querySelector('.message-actions').getBoundingClientRect();
       return { atTopRight: Math.abs(bar.right - (bubble.right - 6)) < 2 && bar.top < bubble.top && bar.bottom > bubble.top };
     }), { atTopRight: true }, 'an own message keeps its toolbar at the top-right corner of the message too');
-    // Message layout B: every message on the left, so the top right of each one is free for the toolbar. Layout A is the default again after it.
+    // Every message sits on the left (the only layout now): an own message spans the column like everyone else's, so the top right of each one
+    // is free for the toolbar, and the seen-by strip keeps its bottom-right place under the viewer's own message, its right edge the message
+    // row's right edge.
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_own', seq: 200, no: 200, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_me', author_name: 'me', body: 'mine alone', created_at: '2026-01-10T12:09:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); }); await settle(page);
     const layoutOf = () => page.evaluate(() => { const row = document.querySelector('#messages [data-message-id=rm_a_own]'); return { align: getComputedStyle(row).alignSelf, width: getComputedStyle(row).maxWidth }; });
-    assert.deepEqual(await layoutOf(), { align: 'flex-end', width: '75%' }, 'layout A: an own message sits on the right at 75% of the column');
+    assert.deepEqual(await layoutOf(), { align: 'stretch', width: 'none' }, 'an own message spans the column like everyone else\'s');
     const headerLeft = () => page.evaluate(() => { const own = document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header'); const other = [...document.querySelectorAll('#messages > .chat-msg:not(.self):not(.chat-msg-system) .chat-msg-header')].at(-1); return own && other ? Math.round(own.getBoundingClientRect().left - other.getBoundingClientRect().left) : null; });
-    await page.evaluate(() => { document.documentElement.dataset.msgLayout = 'b'; });
-    assert.deepEqual(await layoutOf(), { align: 'stretch', width: 'none' }, 'layout B: an own message spans the column like everyone else\'s');
-    assert.equal(await headerLeft(), 0, 'layout B: an own message\'s header starts where other people\'s do');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header')).justifyContent), 'flex-start', 'layout B lays the own header out left, in the shared order');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-bubble')).alignSelf), 'auto', 'layout B: the own bubble is not pushed right inside the full-width row');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#thread-messages [data-message-id=rm_a_t1] > .chat-msg-bubble')).alignSelf), 'flex-start', 'layout B centres nothing in the thread panel either: its own bubble goes left');
-    // The seen-by strip keeps its bottom-right place under the viewer's own message in B, like under everyone else's: its right edge is the message row's right edge.
+    assert.equal(await headerLeft(), 0, 'an own message\'s header starts where other people\'s do');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header')).justifyContent), 'flex-start', 'an own header lays out left, in the shared order');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-bubble')).alignSelf), 'auto', 'the own bubble is not pushed right inside the full-width row');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#thread-messages [data-message-id=rm_a_t1] > .chat-msg-bubble')).alignSelf), 'flex-start', 'nothing is centred or pushed right in the thread panel either: its own bubble goes left');
     assert.deepEqual(await page.evaluate(() => {
       const own = document.querySelector('#messages [data-message-id=rm_a_own]');
       const strip = document.createElement('div'); strip.className = 'message-receipts'; strip.setAttribute('role', 'group');
@@ -593,9 +592,7 @@ async function main() {
       const stripBox = strip.getBoundingClientRect(), ownBox = own.getBoundingClientRect();
       strip.remove();
       return { atRight: Math.abs(stripBox.right - ownBox.right) < 2, justify };
-    }), { atRight: true, justify: 'flex-end' }, 'layout B: the receipts strip under an own message is right-aligned with its right edge');
-    await page.evaluate(() => { delete document.documentElement.dataset.msgLayout; });
-    assert.deepEqual(await layoutOf(), { align: 'flex-end', width: '75%' }, 'layout A is back once the choice is gone');
+    }), { atRight: true, justify: 'flex-end' }, 'the receipts strip under an own message is right-aligned with its right edge');
     await page.close();
   }
 
@@ -2710,7 +2707,7 @@ async function main() {
             at: gutter ? Math.round(box(gutter).left - box(row).left) : null, connector: (cell('tee') || cell('elbow')) ? Math.round(box(cell('tee') || cell('elbow')).left - box(row).left) : null,
             label: label && getComputedStyle(label).display !== 'none' && box(label).width > 2 ? label.textContent : '', words: label ? label.textContent : '',
             lines: [...cells].map(item => item.className.replace('tree-', '') + ':' + [getComputedStyle(item, '::before').borderLeftStyle, getComputedStyle(item, '::after').borderTopStyle].join('/')),
-            bubbleRight: Math.round(box(list).right - box(row.querySelector(':scope > .chat-msg-bubble')).right), own: row.classList.contains('self'),
+            bubbleLeft: Math.round(box(row.querySelector(':scope > .chat-msg-bubble')).left - box(list).left), own: row.classList.contains('self'),
           }];
         })),
       };
@@ -2736,7 +2733,7 @@ async function main() {
     assert.match(tree.rows.c5.words, /^\u21b3 to #\d+$/);
     assert.equal(tree.rows.c1.at, 0, 'the gutter starts at the row\'s left edge');
     assert.equal(tree.rows.f1.connector, tree.rows.c3.connector, 'a sibling\'s connector is in the same column, even for an own row');
-    assert.ok(tree.rows.f1.own && Math.abs(tree.rows.f1.bubbleRight - tree.rows.c3.bubbleRight) <= 1, `an own row's bubble ends where the others' do (right-aligned): ${tree.rows.f1.bubbleRight} vs ${tree.rows.c3.bubbleRight}`);
+    assert.ok(tree.rows.f1.own && Math.abs(tree.rows.f1.bubbleLeft - tree.rows.c3.bubbleLeft) <= 1, `an own row's bubble starts where the others' do (every message on the left): ${tree.rows.f1.bubbleLeft} vs ${tree.rows.c3.bubbleLeft}`);
     assert.deepEqual(tree.rows.c3.lines, ['pipe:solid/none', 'blank:none/none', 'tee:solid/solid'], 'a pipe is a vertical line, a tee a vertical line and an arm');
     assert.equal(tree.rows.f1.lines.at(-1), 'elbow:solid/solid');
     assert.equal(tree.overflow, false, 'the panel does not grow sideways');

@@ -25,18 +25,14 @@
 .visual-plan-block-body :is(ul, ol) { margin: 6px 0; padding-left: 22px; }
 .visual-plan-block-body blockquote { margin: 8px 0; padding: 3px 10px; border-left: 3px solid var(--border); white-space: pre-wrap; }
 
-/* Messages. v1 gives every bubble 75% of the column; here other people's messages are full width and only the viewer's own sit at 75% on the right. */
+/* Messages. v1 gives every bubble 75% of the column and right-aligns the viewer's own; here every message is full width on the left, so the top
+   right of each one is free for its toolbar — the header and the answer rows draw exactly like other people's messages while the receipts keep
+   their right edge (the seen-by strip sits at the bottom right under every message). The `.chat-msg.self` rule repeats the row's own so that
+   v1's right-aligned `.chat-msg.self` loses to it. */
 .chat-msg { align-self: stretch; width: auto; max-width: none; animation: none; }
-.chat-msg.self { align-self: flex-end; width: fit-content; max-width: 75%; }
-@media (max-width: 700px) { .chat-msg.self { max-width: 94%; } }
-/* Message layout B (Settings -> General -> Chat, `data-msg-layout` on <html>): every message on the left, so the top right of each one is free
-   for its toolbar — the header and the answer rows draw exactly like other people's messages while the receipts keep their right edge (the
-   seen-by strip sits at the bottom right under every message); in the thread panel the entry already spans the column and only its bubble sat
-   at the right. */
-:root[data-msg-layout="b"] .chat-msg.self { align-self: stretch; width: auto; max-width: none; }
-:root[data-msg-layout="b"] .chat-msg.self .chat-msg-header { justify-content: flex-start; padding-right: 0; padding-left: 2px; }
-:root[data-msg-layout="b"] .chat-msg > .answer-row.answer-row-self { max-width: 100%; margin-left: 0; justify-content: flex-start; }
-:root[data-msg-layout="b"] .thread-entry.self > .chat-msg-bubble { align-self: flex-start; }
+.chat-msg.self { align-self: stretch; width: auto; max-width: none; }
+.chat-msg.self .chat-msg-header { justify-content: flex-start; padding-right: 0; padding-left: 2px; }
+.chat-msg > .answer-row.answer-row-self { max-width: 100%; margin-left: 0; justify-content: flex-start; }
 /* A system line spans the column like other people's messages and centres its row inside (v1's text-align: center on an inline row), so the
    seen-by markers under it sit at the column's right edge with every other message's, not at the end of a shrink-wrapped centred box. */
 .chat-msg-system { align-self: stretch; width: auto; max-width: 100%; }
@@ -731,9 +727,9 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 @media (max-width: 700px) { :root { --tree-step: 11px; } }
 .thread-entry { position: relative; margin-left: 0; margin-right: 0; padding-left: calc(var(--tree-levels, 0) * var(--tree-step)); }
 .thread-entry .quote { display: none; }
-/* An own row is right-aligned and shrinks to its bubble: it spans the panel instead, so its gutter lines up with the others', and its sender line and bubble stay at the right. */
+/* An own row spans the panel like the others, so its gutter lines up with theirs, and its bubble sits at the left like every other message's. */
 .thread-entry.self { align-self: stretch; width: auto; max-width: none; }
-.thread-entry.self > .chat-msg-bubble { align-self: flex-end; max-width: 100%; }
+.thread-entry.self > .chat-msg-bubble { align-self: flex-start; max-width: 100%; }
 .thread-entry .tree-gutter { position: absolute; left: 0; top: 0; bottom: calc(-1 * var(--tree-gap, 0px)); width: calc(var(--tree-levels, 0) * var(--tree-step)); pointer-events: none; }
 .tree-gutter > span { position: absolute; top: 0; bottom: 0; left: calc(var(--i) * var(--tree-step)); width: var(--tree-step); }
 .tree-gutter > :is(.tree-pipe, .tree-tee, .tree-elbow)::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; border-left: 1px solid var(--tree-line); }

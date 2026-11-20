@@ -16,7 +16,7 @@ export class GeneralSettings {
     this.userID = '';
     this.theme = signal(document.documentElement.dataset.theme || 'dark');
     this.preview = signal(false);
-    this.chat = signal({ systemEvents: true, debugInspector: false, messageLayout: 'b' });
+    this.chat = signal({ systemEvents: true, debugInspector: false });
     this.rights = signal({ owner: false, admin: false });
     this.page = mountPreactPage(section, ({ onDirty }) => html`<${GeneralPage} store=${this} onDirty=${onDirty} />`);
   }
@@ -28,7 +28,7 @@ export class GeneralSettings {
   }
 
   // What the chat switches hold now, for the person this browser is signed in as.
-  readChat() { this.chat.value = { systemEvents: chatPreferences.showSystemEvents, debugInspector: chatPreferences.debugInspector, messageLayout: chatPreferences.messageLayout }; }
+  readChat() { this.chat.value = { systemEvents: chatPreferences.showSystemEvents, debugInspector: chatPreferences.debugInspector }; }
 
   // Reads what this person chose in this browser and applies the theme.
   setUser(userID) {

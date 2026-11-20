@@ -3542,7 +3542,7 @@ async function main() {
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
     for (const id of ['settings-general', 'settings-usages', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
-    assert.deepEqual(rowAudit.filter(item => item.id === 'settings-general').flatMap(item => item.rowIds).sort(), ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-layout', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file'].sort(), 'General holds the theme, the room-preview switch, the two chat switches, the message layout, the message-expiry window, the reviewer switch, the docker-only and warm-agent settings including the Codex opt-in, the prompt-cache keep-alive settings, and the settings backup, all as rows');
+    assert.deepEqual(rowAudit.filter(item => item.id === 'settings-general').flatMap(item => item.rowIds).sort(), ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file'].sort(), 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, the reviewer switch, the docker-only and warm-agent settings including the Codex opt-in, the prompt-cache keep-alive settings, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
     // edge, and row actions such as move, remove and delete are icon buttons with a tooltip and an accessible name.
@@ -6722,7 +6722,7 @@ async function main() {
     await first.waitForFunction(id => location.hash.slice(1) === id && document.querySelector('#room-title')?.textContent === 'Archive smoke', {}, archiveRoomID);
     // Archive lives in Room settings (the header has no Archive button); a room that is not archived cannot be removed.
     assert.equal(await first.$('#room-archive'), null, 'the header has no Archive button');
-    // Layout B is the default: every message spans the column, others' and the viewer's own alike, and the own bubble keeps its green border.
+    // Every message spans the column, others' and the viewer's own alike, and the own bubble keeps its green border.
     await first.waitForSelector('#messages .chat-msg.self', { timeout: 20000 });
     const alignment = await first.evaluate(() => {
       const list = document.querySelector('#messages'), cs = getComputedStyle(list), left = list.getBoundingClientRect().left + list.clientLeft + parseFloat(cs.paddingLeft), right = list.getBoundingClientRect().left + list.clientLeft + list.clientWidth - parseFloat(cs.paddingRight), column = right - left; // clientWidth excludes a scrollbar
@@ -6732,9 +6732,9 @@ async function main() {
       return { own: !!own, ownRight: own ? Math.abs(box(own).right - right) < 2 : null, ownNarrow: own ? box(own).width <= column * 0.75 + 1 : null, ownHeaderRight: ownTime ? Math.abs(box(ownTime).right - (box(own).right - 2)) < 6 : null,
         ownBorder: own ? (() => { const probe = document.createElement('i'); probe.style.color = 'var(--green)'; document.body.append(probe); const green = getComputedStyle(probe).color; probe.remove(); return getComputedStyle(own.querySelector('.chat-msg-bubble')).borderTopColor === green; })() : null, other: other ? Math.abs(box(other).left - left) < 2 && Math.abs(box(other).width - column) < 2 : null };
     });
-    // Layout B is the default: every message spans the column (so each one's top right is free for the toolbar); own messages keep their green border.
+    // Every message spans the column (so each one's top right is free for the toolbar); own messages keep their green border.
     assert.equal(alignment.own, true, 'the archive room has a message of the viewer');
-    assert.deepEqual(alignment, { own: true, ownRight: true, ownNarrow: false, ownHeaderRight: false, ownBorder: true, other: alignment.other === null ? null : true }, `layout B, the default, spans the column: ${JSON.stringify(alignment)}`);
+    assert.deepEqual(alignment, { own: true, ownRight: true, ownNarrow: false, ownHeaderRight: false, ownBorder: true, other: alignment.other === null ? null : true }, `every message spans the column: ${JSON.stringify(alignment)}`);
     const openCommands = await first.evaluate(() => {
       const draft = document.querySelector('#composer textarea');
       draft.value = '/'; draft.dispatchEvent(new Event('input', { bubbles: true }));

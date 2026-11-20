@@ -13,12 +13,6 @@ export function ChatPreferences({ store }) {
     <${SettingsGroup} label="Chat">
       ${toggle('pref-system-events', 'Show system events', 'Adds a bell to the top bar with a feed of joins, spawns, recoveries, quota limits, and machine changes.', chat.systemEvents, value => { chatPreferences.showSystemEvents = value; })}
       ${toggle('pref-debug-inspector', 'Message debug inspector', 'Adds a debug button to each message that shows its raw record, who it addressed, and what happened to each agent it woke.', chat.debugInspector, value => { chatPreferences.debugInspector = value; })}
-      <${SettingsRow} label="Message layout" desc="A keeps your own messages on the right. B puts every message on the left, leaving each message's top right free for its action toolbar. Saved to your account." id="message-layout">
-        <select class="settings-select" value=${chat.messageLayout} onChange=${event => { chatPreferences.messageLayout = event.currentTarget.value; applyChatPreferences(); store.readChat(); }}>
-          <option value="a">A · Own messages on the right</option>
-          <option value="b">B · All messages on the left</option>
-        </select>
-      <//>
     <//>
   `;
 }

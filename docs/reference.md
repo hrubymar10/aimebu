@@ -470,7 +470,7 @@ Settings is a tree, as on an iPad or iPhone. On a wide screen the left column ha
 shows the chosen category: its icon, name and a line about it, its subcategories as rows with ›, then its settings. On a phone the levels stack: the list of
 categories, then one category under a ← button and a centred title.
 
-- **Personal:** Appearance (theme, room preview), Chat (message layout, system events, debug inspector), Notifications.
+- **Personal:** Appearance (theme, room preview), Chat (system events, debug inspector), Notifications.
 - **Server:** Users & invites, Accounts & usage, Telemetry, Storage & performance (message expiry, prompt cache), Backup & restore (owner or admin).
 - **Agents** (owner or admin, except Agent isolation, which everyone can read): Roles, Prompts, Macros, Harnesses & models, Machines, Agent isolation.
 
@@ -561,9 +561,8 @@ A chart icon beside an agent message's
 model, and its place among the turn's messages, such as "2 of 3"); these are the turn's figures, not
 per-message ones, and an unreported figure shows as a dash, never zero. The `#42` number is the message's own number, one sequence across every room (as in v1, where an imported message keeps its v1 number); it copies itself, a `#42` in text links to that message (opening its room when it is elsewhere), and an agent may name a message by it. Hovering or focusing a
 message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the top-right corner of the message, over
-its top edge (it extends to the left when the bubble is narrower than the toolbar), for every message. Someone else's sender line is at the left, clear of it.
-Your own sender line is right-aligned, where the toolbar covers its right end; the owner accepts that. On a phone the toolbar is part of the bubble's flow. The
-**Message layout** setting (Settings → Personal → Chat, layout B by default) keeps this: B puts every message on the left, so each one's top right is free for its toolbar; A puts your own messages back on the right. A restricted room shows a lock beside its title in the
+its top edge (it extends to the left when the bubble is narrower than the toolbar), for every message. Every sender line is at the left, clear of it.
+On a phone the toolbar is part of the bubble's flow. Every message sits on the left, so each one's top right is free for its toolbar. A restricted room shows a lock beside its title in the
 chat header as well as in the sidebar. With the sidebar's last-message previews on, a room that holds only system notices says "Only system messages", and one whose newest message from a person has no text
 (only an attachment) says "📎 Attachment" (the room list carries `user_message_count` for this). On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. The root of a conversation
 shows an "N replies" chip counting the whole conversation. In the panel, a message's reply button makes the panel's next send answer that message (a chip above the box names it; cancelling answers the root again), and there is no thread button there. The panel shows the conversation like `tree` (depth first, a reply under its parent, with guide lines). A reply that comes in away from the end is marked by a pill that leads to it, and a send goes to its own row. Arrow keys, Home and End move through the buttons. A row's toolbar is not in the page until the row is hovered, focused or touched (it is about 30 DOM nodes a row, more than half of a 100-message room's page); only the last three rows reached keep theirs, and a row that holds the focus, the pointer or an open reaction row keeps its own. System messages
@@ -647,8 +646,7 @@ palette and compact room layout. Settings → Personal → Appearance offers ten
 (Dark, Light, Red/Blue/Green Dark/Light, and High Contrast Dark/Light).
 The choice is saved to the account (`/api/me/preferences`), so it follows
 the person to other devices; the browser keeps a cached copy to apply it
-before the page renders. Settings → Personal → Chat also holds two chat switches and the
-**Message layout** choice, saved
+before the page renders. Settings → Personal → Chat also holds two chat switches, saved
 the same way: the
 System events bell (on by default; a feed of what needs a look, with an unread count
 that counts only what the feed shows: agents spawned, started, stopped or removed, failures, a
@@ -661,7 +659,7 @@ code. The server decides which events are notable, marks them `notable` and can 
 debug inspector (off by default; v1's bug icon in each message's header line, next to its `#id`, opens its
 stored record, who it addressed, the wake note and turn each agent got,
 and the related events, with previous and next to walk the room's messages and the Reply in thread, Copy
-text and Copy link actions; the Message layout choice is B, every message on the left so the toolbar's top-right corner is free on each one, or A, your own messages on the right and others on the left). The HTML revalidates on refresh and its CSS and JS
+text and Copy link actions). The HTML revalidates on refresh and its CSS and JS
 modules use a content version, so a deploy reaches a normal browser refresh.
 Settings → Agents → Agent isolation has an owner-only Codex warm (experimental) switch,
 off by default. An opted-in Codex agent works with a ChatGPT subscription once

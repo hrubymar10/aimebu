@@ -213,7 +213,7 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general > div')].map(div => `${div.id}:${div.querySelector('h3').textContent}`)),
         ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'agent-isolation:Agents', 'prompt-cache:Prompt cache', 'settings-backup:Settings backup']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general .settings-row')].filter(row => !row.hidden).map(row => (row.querySelector('input, select, button')).id)),
-        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-layout', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
+        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
       await page.close();
     }
     // The chat switches show what this person has and change the page at once: the bell and the debug button follow them.
@@ -231,31 +231,6 @@ async function main() {
       await page.evaluate(() => { localStorage.setItem('aimebu2.ui.debug-inspector.u1', '1'); window.__general.open(); });
       await settle(page);
       assert.equal(await page.$eval('#pref-debug-inspector', el => el.checked), true, 'showing General again reads the switches');
-      await page.close();
-    }
-    // The Message layout choice: nothing stored shows B (the default), what this person chose shows, and choosing applies it to the page at
-    // once (the `data-msg-layout` attribute the styles read) and saves it to the account.
-    {
-      const page = await mount();
-      await page.evaluate(() => window.__general.setUser('u1'));
-      await settle(page);
-      assert.equal(await page.$eval('#message-layout', el => el.value), 'b', 'with nothing stored, layout B is shown');
-      await page.close();
-    }
-    {
-      const page = await mount({ 'aimebu2.ui.message-layout.u1': 'b' });
-      await page.evaluate(() => window.__general.setUser('u1'));
-      await settle(page);
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#message-layout').value, document.querySelector('#message-layout').labels[0].textContent, [...document.querySelectorAll('#message-layout option')].map(option => option.value)]), ['b', 'Message layout', ['a', 'b']], 'the stored layout B is shown, with A and B on offer');
-      await page.select('#message-layout', 'a');
-      await settle(page);
-      assert.deepEqual(await page.evaluate(() => [document.documentElement.dataset.msgLayout ?? null, localStorage.getItem('aimebu2.ui.message-layout.u1'), window.__puts.at(-1)]), [null, 'a', { preferences: { message_layout: 'a' } }], 'layout A removes the attribute and is saved');
-      await page.select('#message-layout', 'b');
-      await settle(page);
-      assert.deepEqual(await page.evaluate(() => [document.documentElement.dataset.msgLayout ?? null, localStorage.getItem('aimebu2.ui.message-layout.u1'), window.__puts.at(-1)]), ['b', 'b', { preferences: { message_layout: 'b' } }], 'layout B sets the attribute and is saved');
-      await page.evaluate(() => { localStorage.setItem('aimebu2.ui.message-layout.u1', 'a'); window.__general.open(); });
-      await settle(page);
-      assert.equal(await page.$eval('#message-layout', el => el.value), 'a', 'showing General again reads the layout');
       await page.close();
     }
     // Message expiry: the window is read each time General is shown; what is typed is kept apart until Save; a bad value is refused before
