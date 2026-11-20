@@ -257,7 +257,9 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 		var turns, notes string
 		_ = probe.QueryRow(`SELECT COALESCE(group_concat(id||':'||exec,','),'') FROM turn WHERE agent_id=?`, agent.ID).Scan(&turns)
 		_ = probe.QueryRow(`SELECT COALESCE(group_concat(state,','),'') FROM note WHERE agent_id=?`, agent.ID).Scan(&notes)
-		t.Fatalf("fake turn did not start: running=%d err=%v turns=%q notes=%q; server log: %s; supervisor log: %s", running, err, turns, notes, tailOfFile(serverLogPath(root), 40), tailOfFile(filepath.Join(root, "supervisor", "aimebu.log"), 20))
+		// The supervisor's stdout and stderr are its log; whether it is still alive says if an empty log means it never ran or was never asked.
+		pid, held, pidErr := supervisorPID(root)
+		t.Fatalf("fake turn did not start: running=%d err=%v turns=%q notes=%q supervisor pid=%d held=%t err=%v; server log: %s; supervisor log: %s", running, err, turns, notes, pid, held, pidErr, tailOfFile(serverLogPath(root), 40), tailOfFile(filepath.Join(root, "supervisor", "aimebu.log"), 20))
 	}
 	if restartNow {
 		var out, errOut bytes.Buffer
