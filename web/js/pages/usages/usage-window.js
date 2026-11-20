@@ -1,5 +1,5 @@
 import { html } from '../../ui.js';
-import { percent, windowLabel, paceExplanation, sparkGeometry, countdown, shown, staleResetText } from '../../usage-format.js';
+import { percent, windowLabel, paceExplanation, sparkGeometry, countdown, shown, staleResetText, dailyTargetText } from '../../usage-format.js';
 
 // One limit window, laid out as v1's row (the same classes and rules as the popover): the label, the bar with the expected-pace tick, the 48-hour
 // sparkline (v2 only), "N% left" with the reset countdown, then the pace line.
@@ -18,6 +18,9 @@ export function UsageWindow({ window, usedDisplay, fetchedAt, stale = false }) {
     else if (pace.eta_seconds != null) eta = `Runs out in ${countdown(new Date((Number.isFinite(Date.parse(fetchedAt)) ? Date.parse(fetchedAt) : Date.now()) + pace.eta_seconds * 1000).toISOString())}`;
   }
   const explanation = pace && paceExplanation(pace, usedDisplay), paceText = [paceLabel, eta].filter(Boolean).join(' · ');
+  // The daily target follows the pace: it appears with the same data the pace line needs, and a
+  // stale profile claims no pace and no target.
+  const target = pace ? dailyTargetText(window) : '';
   return html`<div class="usage-window usages-window-row">
     <div class="usages-window-top"><span>${label}</span></div>
     <div class="usage-track usages-progress" role="progressbar" aria-label=${`${label} ${side}`} aria-valuenow=${String(Math.round(value))} aria-valuemin="0" aria-valuemax="100">
@@ -34,5 +37,6 @@ export function UsageWindow({ window, usedDisplay, fetchedAt, stale = false }) {
     <div class="usages-window-meta usage-window-foot"><strong>${`${shown(value)} ${side}`}</strong><span>${window.reset_at ? (stale ? staleResetText(window.reset_at) : `Resets in ${countdown(window.reset_at)}`) : ''}</span></div>
     ${paceText && html`<div class=${`usages-pace-text usages-pace-text--${state}`} title=${explanation} tabindex="0" aria-label=${`${paceText}. ${explanation}`}>
       ${paceLabel && html`<span>${paceLabel}</span>`}${paceLabel && eta && html`<span class="usages-pace-sep">·</span>`}${eta && html`<span>${eta}</span>`}</div>`}
+    ${target && html`<div class="usages-daily-target">${target}</div>`}
   </div>`;
 }

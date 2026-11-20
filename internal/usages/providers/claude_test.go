@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"errors"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 func writeClaudeAuthFixture(t *testing.T, home string, body string) string {
@@ -185,8 +186,9 @@ func TestClaudeUsageTreatsScopedLimitsAsValues(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1", calls)
 	}
-	if len(raw.Limits) != 1 || raw.Limits[0].Percent == nil || *raw.Limits[0].Percent != 5 {
-		t.Fatalf("raw = %+v", raw)
+	limits := decodeClaudeLimits(raw.Limits, nil)
+	if len(limits) != 1 || limits[0].Percent == nil || *limits[0].Percent != 5 {
+		t.Fatalf("limits = %+v", limits)
 	}
 }
 
@@ -385,16 +387,13 @@ func TestNormalizeClaudeUsageDetailsMissingWeeklyFallback(t *testing.T) {
 func TestNormalizeClaudeUsageIncludesScopedWeeklyLimits(t *testing.T) {
 	session := 12.0
 	weekly := 34.0
-	fable := 5.0
-	teamResearch := 8.0
-	inactive := false
 	snap, detail, err := normalizeClaudeUsage(claudeUsageRaw{
 		FiveHour: &claudeWindowRaw{Utilization: &session, ResetsAt: "2030-01-01T00:00:00Z"},
 		SevenDay: &claudeWindowRaw{Utilization: &weekly, ResetsAt: "2030-01-07T00:00:00Z"},
-		Limits: []claudeLimitRaw{
-			{Kind: "session", Group: "session", Percent: &session, ResetsAt: "2030-01-01T00:00:00Z", IsActive: &inactive},
-			{Kind: "weekly_scoped", Group: "weekly", Percent: &fable, ResetsAt: "2030-01-07T00:00:00Z", Scope: claudeLimitScopeRaw{Model: &claudeLimitModelRaw{DisplayName: "Fable"}}, IsActive: &inactive},
-			{Kind: "weekly_scoped", Group: "weekly", Percent: &teamResearch, ResetsAt: "2030-01-07T00:00:00Z", Scope: claudeLimitScopeRaw{Model: &claudeLimitModelRaw{ID: "team/research", DisplayName: "Team Research"}}, IsActive: &inactive},
+		Limits: []json.RawMessage{
+			json.RawMessage(`{"kind":"session","group":"session","percent":12,"resets_at":"2030-01-01T00:00:00Z","is_active":false}`),
+			json.RawMessage(`{"kind":"weekly_scoped","group":"weekly","percent":5,"resets_at":"2030-01-07T00:00:00Z","scope":{"model":{"display_name":"Fable"}},"is_active":false}`),
+			json.RawMessage(`{"kind":"weekly_scoped","group":"weekly","percent":8,"resets_at":"2030-01-07T00:00:00Z","scope":{"model":{"id":"team/research","display_name":"Team Research"}},"is_active":false}`),
 		},
 	}, claudeCredentials{})
 	if err != nil {
@@ -418,13 +417,14 @@ func TestNormalizeClaudeUsageIncludesScopedWeeklyLimits(t *testing.T) {
 
 func TestNormalizeClaudeUsageIgnoresMalformedScopedWeeklyLimits(t *testing.T) {
 	session := 12.0
-	bad := math.NaN()
 	snap, detail, err := normalizeClaudeUsage(claudeUsageRaw{
 		FiveHour: &claudeWindowRaw{Utilization: &session, ResetsAt: "2030-01-01T00:00:00Z"},
-		Limits: []claudeLimitRaw{
-			{Kind: "weekly_scoped", Group: "weekly", Percent: &bad, Scope: claudeLimitScopeRaw{Model: &claudeLimitModelRaw{DisplayName: "Fable"}}},
-			{Kind: "weekly_scoped", Group: "weekly", Percent: &session, Scope: claudeLimitScopeRaw{}},
-			{Kind: "weekly_scoped", Group: "monthly", Percent: &session, Scope: claudeLimitScopeRaw{Model: &claudeLimitModelRaw{DisplayName: "Ignored"}}},
+		Limits: []json.RawMessage{
+			json.RawMessage(`{"kind":"weekly_scoped","group":"weekly","percent":"5","scope":{"model":{"display_name":"Fable"}}}`),
+			json.RawMessage(`null`),
+			json.RawMessage(`{"kind":"weekly_scoped","group":"weekly","percent":true,"scope":{"model":{"display_name":"Story"}}}`),
+			json.RawMessage(`{"kind":"weekly_scoped","group":"weekly","percent":12,"scope":{}}`),
+			json.RawMessage(`{"kind":"weekly_scoped","group":"monthly","percent":12,"scope":{"model":{"display_name":"Ignored"}}}`),
 		},
 	}, claudeCredentials{})
 	if err != nil {
@@ -433,7 +433,7 @@ func TestNormalizeClaudeUsageIgnoresMalformedScopedWeeklyLimits(t *testing.T) {
 	if len(snap.Windows) != 1 || snap.Windows[0].Key != "session" {
 		t.Fatalf("windows = %+v", snap.Windows)
 	}
-	if detail == nil || detail.Fields["limits.0.percent"] != "number_out_of_range" || detail.Fields["limits.1.scope.model"] != "missing" {
+	if detail == nil || detail.Fields["limits.0.percent"] != "missing" || detail.Fields["limits.1"] != "invalid" || detail.Fields["limits.2.percent"] != "missing" || detail.Fields["limits.3.scope.model"] != "missing" {
 		t.Fatalf("detail = %+v", detail)
 	}
 }
@@ -461,11 +461,35 @@ func TestNormalizeClaudeUsageSupportsSpendLimitOnly(t *testing.T) {
 	if detail != nil {
 		t.Fatalf("detail = %+v", detail)
 	}
-	if len(snap.Windows) != 0 {
-		t.Fatalf("windows = %+v, want none", snap.Windows)
+	// The cap becomes the spend-only account's only meter: a monthly_spend window with a
+	// calendar-month pace and a midnight-UTC-on-the-1st reset, beside the credit row.
+	if len(snap.Windows) != 1 || snap.Windows[0].Key != "monthly_spend" {
+		t.Fatalf("windows = %+v", snap.Windows)
+	}
+	if got := snap.Windows[0].PercentUsed; got != 763.0/2000.0*100 {
+		t.Fatalf("percent = %v", got)
+	}
+	if snap.Windows[0].ResetAt == nil || snap.Windows[0].Pace == nil || snap.Windows[0].WindowDurationSeconds < 28*24*3600 {
+		t.Fatalf("window = %+v", snap.Windows[0])
 	}
 	if snap.Credits == nil || snap.Credits.Balance != 7.63 || snap.Credits.SpendLimit != 20 {
 		t.Fatalf("credits = %+v", snap.Credits)
+	}
+}
+
+func TestClaudeMonthlySpendResetsMidnightUTCOnTheFirst(t *testing.T) {
+	cases := []struct {
+		now  time.Time
+		want time.Time
+	}{
+		{time.Date(2026, 11, 20, 15, 4, 0, 0, time.UTC), time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)},
+		{time.Date(2026, 12, 31, 23, 59, 0, 0, time.UTC), time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{time.Date(2026, 3, 1, 0, 0, 30, 0, time.FixedZone("test", -8*3600)), time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range cases {
+		if got := claudeMonthlySpendReset(tc.now); !got.Equal(tc.want) {
+			t.Errorf("reset(%s) = %s, want %s", tc.now, got, tc.want)
+		}
 	}
 }
 

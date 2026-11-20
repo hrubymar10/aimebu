@@ -538,6 +538,7 @@ func TestQuotaSourceMapsTheUsageSnapshotAndTheSwitcher(t *testing.T) {
 	snapshot := usages.Response{Providers: []usages.Provider{{ProviderName: "codex", Profiles: []usages.Profile{{ProfileName: "local", Active: true, Status: "not_configured"}}}, {ProviderName: "claude-code", Profiles: []usages.Profile{
 		{ProfileName: "local", Active: true, Status: "ok", HasCredentials: true, ExpiresAt: &exp, LastRefreshAt: &exp, Windows: []usages.Window{{Key: "session", PercentUsed: 12}, {Key: "weekly", PercentUsed: 34}, {Key: "weekly_opus", PercentUsed: 99}}},
 		{ProfileName: "B", Status: "ok", HasCredentials: true, Windows: []usages.Window{{Key: "weekly", PercentUsed: 5}}},
+		{ProfileName: "C", Status: "ok", HasCredentials: true, Windows: []usages.Window{{Key: "monthly_spend", PercentUsed: 40}}},
 	}}}}
 	dir := t.TempDir()
 	data, _ := json.Marshal(snapshot)
@@ -569,6 +570,11 @@ func TestQuotaSourceMapsTheUsageSnapshotAndTheSwitcher(t *testing.T) {
 	}
 	if b := byName["B"]; b.Session != nil || b.Weekly == nil || *b.Weekly != 5 {
 		t.Fatalf("a profile with no session window must have a nil session: %+v", b)
+	}
+	// The spend-only monthly_spend window is display-only: the guard and the switcher read
+	// only the session and weekly windows and must keep ignoring it.
+	if c := byName["C"]; c.Session != nil || c.Weekly != nil {
+		t.Fatalf("a spend-only profile reached the runner as a quota window: %+v", c)
 	}
 	if names, err := (quotaSource{f.srv}).Profiles(context.Background(), switcher.ToolClaude); err != nil || len(names) != 2 {
 		t.Fatalf("profiles = %v %v", names, err)

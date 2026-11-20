@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,8 @@ import (
 
 	"github.com/goccy/go-json"
 )
+
+func ptr(value float64) *float64 { return &value }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -396,5 +400,302 @@ func TestCopilotDeviceStartRefusesAVerificationAddressThatIsNotHTTPS(t *testing.
 		if _, err := NewCopilotFlow().Start(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "not https") {
 			t.Fatalf("%s: err=%v", body, err)
 		}
+	}
+}
+
+// ── Ollama API-key balance (GET /api/balance) ───────────────────────────────
+
+func TestOllamaAPIKeyBalanceIncludedAllowanceAndPurchasedCredits(t *testing.T) {
+	snap, detail, err := normalizeOllamaBalance([]byte(`{"included":{"allowance_usd":60,"balance_usd":"46.50","period":{"until":"2026-12-01T00:00:00Z"}},"purchased":{"balance_usd":12.34}}`))
+	if err != nil || detail != nil {
+		t.Fatalf("balance %+v detail=%+v err=%v", snap, detail, err)
+	}
+	if len(snap.Windows) != 1 || snap.Windows[0].Key != "monthly" || snap.Windows[0].PercentUsed != 22.5 {
+		t.Fatalf("windows = %+v", snap.Windows)
+	}
+	window := snap.Windows[0]
+	if window.ResetAt == nil || !window.ResetAt.Equal(time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)) || window.WindowDurationSeconds != ollamaMonthlyWindowSeconds || window.Pace == nil {
+		t.Fatalf("window = %+v", window)
+	}
+	if snap.Credits == nil || snap.Credits.Label != "Credit balance" || snap.Credits.Balance != 12.34 {
+		t.Fatalf("credits = %+v", snap.Credits)
+	}
+}
+
+func TestOllamaAPIKeyBalanceEdgeShapes(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		windows int
+		credits *float64
+	}{
+		{"purchased only", `{"purchased":{"balance_usd":5}}`, 0, ptr(5)},
+		{"zero allowance", `{"included":{"allowance_usd":0,"balance_usd":0}}`, 0, nil},
+		{"allowance over balance", `{"included":{"allowance_usd":10,"balance_usd":12}}`, 1, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snap, _, err := normalizeOllamaBalance([]byte(tc.body))
+			if err != nil || snap.Status != StatusOK {
+				t.Fatalf("balance %+v err=%v", snap, err)
+			}
+			if len(snap.Windows) != tc.windows {
+				t.Fatalf("windows = %+v", snap.Windows)
+			}
+			switch {
+			case tc.credits == nil && snap.Credits != nil:
+				t.Fatalf("unexpected credits %+v", snap.Credits)
+			case tc.credits != nil && (snap.Credits == nil || snap.Credits.Balance != *tc.credits):
+				t.Fatalf("credits = %+v", snap.Credits)
+			}
+		})
+	}
+}
+
+func TestOllamaAPIKeyBalanceLegacyRemainingPercentWindows(t *testing.T) {
+	snap, _, err := normalizeOllamaBalance([]byte(`{"included":{"session":{"remaining_percent":100,"resets_at":"2026-11-06T18:00:00Z"},"weekly":{"remaining_percent":"84.96","resets_at":"2026-11-09T00:00:00Z"}},"purchased":{"balance_usd":0}}`))
+	if err != nil {
+		t.Fatalf("legacy balance err=%v", err)
+	}
+	if len(snap.Windows) != 2 || snap.Windows[0].Key != "session" || snap.Windows[0].PercentUsed != 0 || snap.Windows[0].WindowDurationSeconds != ollamaSessionWindowSeconds {
+		t.Fatalf("session window = %+v", snap.Windows)
+	}
+	if snap.Windows[1].Key != "weekly" || math.Abs(snap.Windows[1].PercentUsed-15.04) > 1e-9 || snap.Windows[1].WindowDurationSeconds != ollamaWeeklyWindowSeconds {
+		t.Fatalf("weekly window = %+v", snap.Windows)
+	}
+	if snap.Credits == nil || snap.Credits.Balance != 0 {
+		t.Fatalf("credits = %+v", snap.Credits)
+	}
+	// A weekly-only response invents no session window and no credit row.
+	snap, _, err = normalizeOllamaBalance([]byte(`{"included":{"weekly":{"remaining_percent":58}}}`))
+	if err != nil || len(snap.Windows) != 1 || snap.Windows[0].Key != "weekly" || snap.Windows[0].PercentUsed != 42 || snap.Credits != nil {
+		t.Fatalf("weekly-only = %+v err=%v", snap, err)
+	}
+}
+
+func TestOllamaAPIKeyBalanceMalformedResponsesFailSafely(t *testing.T) {
+	for _, body := range []string{
+		`{"included":{"session":{"remaining_percent":-1,"resets_at":"2026-11-06T18:00:00Z"}}}`,
+		`{"included":{"session":{"remaining_percent":101,"resets_at":"2026-11-06T18:00:00Z"}}}`,
+		`{"included":{"session":{"remaining_percent":"NaN","resets_at":"2026-11-06T18:00:00Z"}}}`,
+		`{"included":{"session":{"remaining_percent":null,"resets_at":"2026-11-06T18:00:00Z"}}}`,
+		`{"included":{"session":{"remaining_percent":true,"resets_at":"2026-11-06T18:00:00Z"}}}`,
+		`{"included":{"session":{"remaining_percent":50,"resets_at":"2026-02-31T00:00:00Z"}}}`,
+		`{"included":{"session":[]}}`,
+		`{"included":{"allowance_usd":5}}`,
+		`{"included":{"allowance_usd":-5,"balance_usd":1}}`,
+		`{"included":{"allowance_usd":5,"balance_usd":1,"period":{"until":"not-a-date"}}}`,
+		`{"included":{"allowance_usd":5,"balance_usd":1,"period":[]}}`,
+		`{"purchased":{}}`,
+		`{}`,
+		`not json`,
+	} {
+		snap, _, err := normalizeOllamaBalance([]byte(body))
+		var wrapped *SnapshotError
+		if !errors.As(fetchOllamaNormalizeAsError(snap, err), &wrapped) || wrapped.Snapshot.Status != StatusFetchError {
+			t.Errorf("%s: expected a parse failure, got %+v %v", body, snap, err)
+		}
+	}
+}
+
+// fetchOllamaNormalizeAsError mirrors how the fetcher reports a normalize failure.
+func fetchOllamaNormalizeAsError(snap Snapshot, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &SnapshotError{Snapshot: ollamaStatus(StatusFetchError, err.Error(), nil), Err: err}
+}
+
+func TestOllamaAPIKeyBalanceRejectsARevokedKey(t *testing.T) {
+	old := ollamaHTTPClient
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader(`{"error":"invalid"}`)), Header: http.Header{}}, nil
+	})}
+	t.Cleanup(func() { ollamaHTTPClient = old })
+	snap, err := fetchOllamaWithAPIKey(context.Background(), "key")
+	if err != nil || snap.Status != StatusAuthMissing {
+		t.Fatalf("401 = %+v %v", snap, err)
+	}
+}
+
+// ── Ollama cookie mode: Free usage meter and text-node label matching ───────
+
+func TestOllamaFreeUsageMeterMapsToTheMonthlyWindow(t *testing.T) {
+	// Captured free-plan shape: the included-credit meter is labelled "Free usage", and an
+	// info box mentions it in prose before the meter.
+	html := `<span>Cloud Usage</span><span>Free</span>` +
+		`<p>Free usage credits can be used with the following cloud models:</p>` +
+		`<div>Free usage<span>69.5% used</span><time data-time="2026-10-26T15:19:11Z"></time></div>`
+	snap, detail, err := parseOllamaSettingsHTML([]byte(html))
+	if err != nil || detail != nil {
+		t.Fatalf("free plan %+v detail=%+v err=%v", snap, detail, err)
+	}
+	if len(snap.Windows) != 1 || snap.Windows[0].Key != "monthly" || snap.Windows[0].PercentUsed != 69.5 {
+		t.Fatalf("windows = %+v", snap.Windows)
+	}
+	if snap.Windows[0].ResetAt == nil || !snap.Windows[0].ResetAt.Equal(time.Date(2026, 10, 26, 15, 19, 11, 0, time.UTC)) {
+		t.Fatalf("reset = %+v", snap.Windows[0].ResetAt)
+	}
+}
+
+func TestOllamaProseContainingALabelDoesNotTruncateThePreviousBlock(t *testing.T) {
+	// The prose sentence sits between the weekly and free meters; as a substring it used to
+	// act as a spurious boundary and cut the weekly reset timestamp off.
+	html := `<div>Weekly usage<span>12.5% used</span><time data-time="2026-10-20T22:00:00Z"></time></div>` +
+		`<p>Free usage credits can be used with the following cloud models:</p>` +
+		`<div>Free usage<span>30% used</span><time data-time="2026-10-26T15:19:11Z"></time></div>`
+	snap, _, err := parseOllamaSettingsHTML([]byte(html))
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(snap.Windows) != 2 || snap.Windows[0].Key != "weekly" || snap.Windows[0].ResetAt == nil {
+		t.Fatalf("windows = %+v", snap.Windows)
+	}
+	if snap.Windows[1].Key != "monthly" || snap.Windows[1].PercentUsed != 30 || snap.Windows[1].ResetAt == nil {
+		t.Fatalf("free window = %+v", snap.Windows[1])
+	}
+}
+
+// ── Ollama credit wallet ────────────────────────────────────────────────────
+
+func TestOllamaCreditWalletShowsCreditsAndNeverAPercent(t *testing.T) {
+	html := `<h2>Usage credits <span>Pro</span></h2>` +
+		`<div><span>$1,234.56</span></div>` +
+		`<div><span>Monthly credits used</span><span>$7.50</span></div>` +
+		`<p>Refills to $60.00 in 12 days.</p>` +
+		`</section><h2>Something else</h2>`
+	snap, detail, err := parseOllamaSettingsHTML([]byte(html))
+	if err != nil || detail != nil {
+		t.Fatalf("wallet %+v detail=%+v err=%v", snap, detail, err)
+	}
+	if snap.Plan != "Pro" || len(snap.Windows) != 0 {
+		t.Fatalf("plan=%q windows=%+v", snap.Plan, snap.Windows)
+	}
+	if snap.Credits == nil || snap.Credits.Label != "Credit balance" || snap.Credits.Balance != 1234.56 {
+		t.Fatalf("credits = %+v", snap.Credits)
+	}
+	// A wallet page that reports no balance still counts as usage data, and never invents a percentage.
+	snap, _, err = parseOllamaSettingsHTML([]byte(`<h2>Usage credits</h2><div><span>Monthly credits used</span><span>$7.50</span></div></section>`))
+	if err != nil || len(snap.Windows) != 0 || snap.Credits != nil {
+		t.Fatalf("spend-only wallet = %+v err=%v", snap, err)
+	}
+}
+
+func TestOllamaWalletDetailsCoexistWithQuotaMeters(t *testing.T) {
+	html := `<h2>Usage credits <span>Pro</span></h2><div><span>$12.00</span></div></section>` +
+		`<div>Session usage <span>42% used</span><time data-time="2026-10-15T22:00:00Z"></time></div>`
+	snap, _, err := parseOllamaSettingsHTML([]byte(html))
+	if err != nil || len(snap.Windows) != 1 || snap.Credits == nil || snap.Credits.Balance != 12 {
+		t.Fatalf("wallet beside meters = %+v %+v err=%v", snap.Windows, snap.Credits, err)
+	}
+}
+
+// ── Copilot subscription_ended ──────────────────────────────────────────────
+
+func TestCopilotSubscriptionEndedReportsAClearErrorWithoutStaleData(t *testing.T) {
+	old := usageHTTPClient
+	usageHTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return response(`{"login":"fixture-user","access_type_sku":"subscription_ended","copilot_plan":"individual","chat_enabled":false,"cli_enabled":false,"can_signup_for_limited":true}`), nil
+	})}
+	t.Cleanup(func() { usageHTTPClient = old })
+	store := NewStore(t.TempDir())
+	if _, err := store.UpdateConfig(func(cfg *Config) error {
+		cfg.Providers[ProviderGitHubCopilot] = ProviderConfig{Enabled: true, Token: "token"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := NewCopilotProvider().Fetch(context.Background(), store)
+	if err != nil {
+		t.Fatalf("Fetch err=%v", err)
+	}
+	if snap.Status != StatusAuthMissing || snap.Windows != nil || snap.Credits != nil {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	if !strings.Contains(snap.Error, "subscription has ended") {
+		t.Fatalf("error = %q", snap.Error)
+	}
+	if snap.ErrorDetail == nil || snap.ErrorDetail.Fields["usage"] != "subscription_ended" {
+		t.Fatalf("detail = %+v", snap.ErrorDetail)
+	}
+}
+
+// ── Mistral price key ───────────────────────────────────────────────────────
+
+func TestMistralPriceKeyMatchesEveryDimensionWithALegacyFallback(t *testing.T) {
+	prices := mistralPriceIndex([]mistralPrice{
+		{BillingMetric: "tokens", BillingGroup: "completion", Price: "2"},
+		{BillingMetric: "audio.seconds", BillingGroup: "audio", EventType: "realtime", APIZone: "eu", ServiceTier: "priority", Price: "1000"},
+	})
+	model := mistralModelUsageData{
+		Input: []mistralUsageEntry{
+			{BillingMetric: "tokens", BillingGroup: "completion", Value: 10},
+			{BillingMetric: "audio.seconds", BillingGroup: "audio", EventType: "realtime", APIZone: "eu", ServiceTier: "priority", Value: 2},
+			{BillingMetric: "audio.seconds", BillingGroup: "audio", EventType: "realtime", APIZone: "us", ServiceTier: "priority", Value: 1},
+			{BillingMetric: "audio.seconds", BillingGroup: "audio", EventType: "realtime", Value: 3},
+		},
+	}
+	_, _, _, cost := aggregateMistralModel(model, prices)
+	// 10 tokens at the unqualified price, 2 audio seconds at the exact zone+tier price; the
+	// unmatched zone and the tier-less entry price at zero rather than at another tier's rate.
+	if cost != 10*2+2*1000 {
+		t.Fatalf("cost = %v", cost)
+	}
+}
+
+func TestMistralSpendUsesTheDimensionedPriceKey(t *testing.T) {
+	raw := mistralBillingResponse{
+		Completion: &mistralModelUsageCategory{Models: map[string]mistralModelUsageData{
+			"model": {Input: []mistralUsageEntry{{BillingMetric: "tokens", BillingGroup: "completion", APIZone: "eu", ServiceTier: "priority", Value: 5}}},
+		}},
+		Currency: "EUR",
+		Prices: []mistralPrice{
+			{BillingMetric: "tokens", BillingGroup: "completion", Price: "1"},
+			{BillingMetric: "tokens", BillingGroup: "completion", APIZone: "eu", ServiceTier: "priority", Price: "4"},
+		},
+	}
+	credits, ok := normalizeMistralSpend(raw)
+	if !ok || credits == nil || credits.Balance != 5*4 || credits.Label != "Monthly spend (EUR)" {
+		t.Fatalf("credits = %+v ok=%v", credits, ok)
+	}
+}
+
+// ── Mistral login redirect ──────────────────────────────────────────────────
+
+func TestMistralLoginRedirectReportsAuthMissing(t *testing.T) {
+	cookies, _, err := parseMistralCookieHeader("csrftoken=abcdef1234; ory_session_test=secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginURL := &url.URL{Scheme: "https", Host: "auth.mistral.ai", Path: "/self-service/login/browser"}
+	cases := []struct {
+		name     string
+		response *http.Response
+		want     Status
+	}{
+		{"followed redirect lands on the login page", func() *http.Response {
+			resp := response(`{"result":{"data":{"json":{"usage_percentage":10}}}}`)
+			resp.Request = &http.Request{URL: loginURL}
+			return resp
+		}(), StatusAuthMissing},
+		{"an unfollowed 302 carries the login location", func() *http.Response {
+			resp := &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://auth.mistral.ai/self-service/login?return_to=%2F"}}, Body: io.NopCloser(strings.NewReader(""))}
+			return resp
+		}(), StatusAuthMissing},
+		{"an unrelated redirect stays a fetch error", func() *http.Response {
+			resp := &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://console.mistral.ai/"}}, Body: io.NopCloser(strings.NewReader(""))}
+			return resp
+		}(), StatusFetchError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			old := mistralHTTPClient
+			mistralHTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return tc.response, nil }), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			t.Cleanup(func() { mistralHTTPClient = old })
+			_, detail, status, err := fetchMistralVibeUsage(context.Background(), cookies)
+			if status != tc.want {
+				t.Fatalf("status = %s (err=%v detail=%+v)", status, err, detail)
+			}
+		})
 	}
 }

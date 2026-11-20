@@ -83,8 +83,16 @@ CLI rotated it meanwhile. Error text is redacted of the access token, and the
 HTTP client drops credential headers on cross-origin redirects.
 
 Claude Code windows: `session` (5 h), `weekly`, `weekly_opus`, `weekly_sonnet`,
-and one `weekly_scoped:<model>` window for each per-model weekly limit the
-account reports. Pace is computed for the session and weekly windows. When
+one `weekly_scoped:<model>` window for each per-model weekly limit the
+account reports (parsed entry by entry, so a malformed sibling or an
+unexpected field type never hides a valid model row), and, for accounts whose
+only limit is a monthly spend cap (no quota windows and an extra-usage
+monthly cap above zero), a `monthly_spend` display window with a calendar-month
+pace and a reset at midnight UTC on the 1st. The limit guard and the account
+switcher read only the session and weekly windows and keep ignoring
+`monthly_spend`; remaining-quota alerts treat it like any other window. The
+cap keeps its credit row (used / limit) beside the window. Pace is computed for the
+session and weekly windows. When
 extra usage is enabled the monthly cap shows as credits (`Extra usage monthly
 cap`, used / limit). The plan is the subscription type, or the rate-limit tier.
 Codex windows: `session`, `weekly` and `monthly` by their reported duration,
@@ -336,6 +344,12 @@ deficit", "Lasts until reset", "Runs out in …") explains itself in a tooltip o
 focus: pace compares what has been used with an even spend across the window; in reserve means behind
 that pace, so the limit should last until it resets, and in deficit means ahead of it, so at this rate
 the limit runs out first. The tooltip also gives the share an even spend would have used by now.
+A monthly window (a 28–31-day span, including a 30-day sentinel) also shows a daily target:
+the remaining share of the allowance divided by the local calendar days left before the reset,
+counting today; a reset exactly at local midnight starts the next allowance without adding a day.
+The target follows the pace visibility (it shows with the pace line and not on a stale profile),
+shows nothing for unknown usage or a missing or expired reset, and is a budget for the remaining
+period, not a measurement of today's usage or an alert threshold.
 
 - [GitHub Copilot setup and quota shapes](github-copilot.md)
 - [Mistral Vibe quota and spend](mistral.md)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,7 +19,7 @@ import (
 
 const (
 	ollamaSettingsURL = "https://ollama.com/settings"
-	ollamaTagsURL     = "https://ollama.com/api/tags"
+	ollamaBalanceURL  = "https://ollama.com/api/balance"
 	// This tracks a currently shipping Chrome-like user agent for the settings page.
 	ollamaUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 	ollamaAccept    = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
@@ -36,15 +37,19 @@ var (
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaPlanAnchor = regexp.MustCompile(`(?is)Cloud Usage\s*</span\s*>\s*<span[^>]*>([^<]+)</span\s*>`)
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
+	ollamaWalletPlanAnchor = regexp.MustCompile(`(?is)<h[1-6][^>]*>\s*Usage credits\s*<span[^>]*>\s*([^<]+)\s*</span\s*>`)
+	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaEmailAnchor = regexp.MustCompile(`(?is)id=["']header-email["'][^>]*>([^<]+)<`)
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaSessionAnchor = "Session usage"
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaHourlyAnchor = "Hourly usage"
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
-	ollamaWeeklyAnchor  = "Weekly usage"
+	ollamaWeeklyAnchor = "Weekly usage"
+	// Free plans label the included-credit meter "Free usage" instead of "Monthly usage"; both are the monthly window.
+	ollamaFreeAnchor    = "Free usage"
 	ollamaMonthlyAnchor = "Monthly usage"
-	ollamaUsageAnchors  = []string{ollamaSessionAnchor, ollamaHourlyAnchor, ollamaWeeklyAnchor, ollamaMonthlyAnchor}
+	ollamaUsageAnchors  = []string{ollamaSessionAnchor, ollamaHourlyAnchor, ollamaWeeklyAnchor, ollamaMonthlyAnchor, ollamaFreeAnchor}
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaPercentAnchor = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*%\s*used`)
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
@@ -54,8 +59,38 @@ var (
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaSignedOutAnchor = regexp.MustCompile(`(?is)(sign in to ollama|log in to ollama|/auth/login|/auth/signin|/signin)`)
 
+	// Usage labels match their own text node (`>Label<`), never a bare substring: explanatory
+	// prose such as "Free usage credits can be used with the following cloud models:" contains
+	// a usage label, which would both start a window before the real meter and truncate the
+	// previous block's reset timestamp at a spurious boundary.
+	ollamaLabelTextNodes = ollamaBuildLabelTextNodes(ollamaUsageAnchors)
+
+	// Credit-wallet fields are matched by complete elements within their wallet section, so a
+	// missing value cannot borrow adjacent spending or prose.
+	ollamaWalletHeadingAnchor = regexp.MustCompile(`(?is)<h[1-6][^>]*>\s*Usage credits(?:\s*<span[^>]*>[^<]*</span\s*>)?\s*</h[1-6]\s*>`)
+	ollamaWalletSectionEnd    = regexp.MustCompile(`(?is)</section\s*>|<h[1-6][^>]*>`)
+	ollamaWalletAmountPattern = `(\$(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?)`
+	ollamaWalletBalanceAnchor = regexp.MustCompile(`(?i)^\s*(?:<div[^>]*>\s*)*<span[^>]*>\s*` + ollamaWalletAmountPattern + `\s*</span\s*>`)
+	ollamaWalletUsedAnchor    = regexp.MustCompile(`(?i)<span[^>]*>\s*Monthly credits used\s*</span\s*>\s*<span[^>]*>\s*` + ollamaWalletAmountPattern + `\s*</span\s*>`)
+
 	ollamaHTTPClient = newUsageHTTPClient()
 )
+
+// ollamaBuildLabelTextNodes compiles one `>Label<` matcher per usage label.
+func ollamaBuildLabelTextNodes(labels []string) map[string]*regexp.Regexp {
+	patterns := make(map[string]*regexp.Regexp, len(labels))
+	for _, label := range labels {
+		patterns[label] = regexp.MustCompile(`(?is)>\s*` + regexp.QuoteMeta(label) + `\s*<`)
+	}
+	return patterns
+}
+
+func ollamaLabelTextNode(label string) *regexp.Regexp {
+	if pattern, ok := ollamaLabelTextNodes[label]; ok {
+		return pattern
+	}
+	return regexp.MustCompile(`(?is)>\s*` + regexp.QuoteMeta(label) + `\s*<`)
+}
 
 type ollamaCloudProvider struct{}
 
@@ -138,7 +173,7 @@ func fetchOllamaWithAPIKey(ctx context.Context, apiKey string) (Snapshot, error)
 	if apiKey == "" {
 		return ollamaStatus(StatusAuthMissing, "Ollama Cloud API key is not configured. Add a key or select cookie mode.", fieldDetail("config.ollama-cloud.api_key", "missing")), nil
 	}
-	_, detail, status, err := fetchOllamaTags(ctx, apiKey)
+	data, detail, status, err := fetchOllamaBalance(ctx, apiKey)
 	if err != nil {
 		snap := ollamaStatus(status, err.Error(), detail)
 		if status == StatusFetchError || status == StatusTimeout {
@@ -146,7 +181,15 @@ func fetchOllamaWithAPIKey(ctx context.Context, apiKey string) (Snapshot, error)
 		}
 		return snap, nil
 	}
-	return Snapshot{Status: StatusOK, Plan: "API key verified"}, nil
+	snap, detail, err := normalizeOllamaBalance(data)
+	if err != nil {
+		snap := ollamaStatus(StatusFetchError, err.Error(), detail)
+		return Snapshot{}, &SnapshotError{Snapshot: snap, Err: err}
+	}
+	if detail != nil && len(detail.Fields) > 0 {
+		snap.ErrorDetail = detail
+	}
+	return snap, nil
 }
 
 func normalizeOllamaAuthMode(value string) string {
@@ -366,8 +409,8 @@ func fetchOllamaSettingsHTML(ctx context.Context, cookie string) ([]byte, *Error
 	}
 }
 
-func fetchOllamaTags(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, Status, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ollamaTagsURL, nil)
+func fetchOllamaBalance(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, Status, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ollamaBalanceURL, nil)
 	if err != nil {
 		return nil, nil, StatusFetchError, err
 	}
@@ -382,22 +425,204 @@ func fetchOllamaTags(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, 
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusOK && isOllamaSignInRedirect(responseFinalURL(resp)):
-		return nil, fieldDetail("tags", "signin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
-	case resp.StatusCode == http.StatusOK && isUsageCrossOriginRedirect(resp, ollamaTagsURL):
-		return nil, fieldDetail("tags", "cross_origin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
+		return nil, fieldDetail("balance", "signin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
+	case resp.StatusCode == http.StatusOK && isUsageCrossOriginRedirect(resp, ollamaBalanceURL):
+		return nil, fieldDetail("balance", "cross_origin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
 	case resp.StatusCode == http.StatusOK:
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return nil, jsonShapeDetail("tags", data), StatusAuthMissing, errors.New("Ollama Cloud rejected the API key. Create a fresh key or select cookie mode.")
+		return nil, jsonShapeDetail("balance", data), StatusAuthMissing, errors.New("Ollama Cloud rejected the API key. Create a fresh key or select cookie mode.")
 	default:
-		return nil, httpStatusDetail("tags", data, resp.StatusCode), StatusFetchError, fmt.Errorf("Ollama Cloud API endpoint returned HTTP %d.", resp.StatusCode)
-	}
-	var raw struct {
-		Models []json.RawMessage `json:"models"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, jsonShapeDetail("tags", data), StatusFetchError, errors.New("Ollama Cloud API response could not be decoded.")
+		return nil, httpStatusDetail("balance", data, resp.StatusCode), StatusFetchError, fmt.Errorf("Ollama Cloud balance endpoint returned HTTP %d.", resp.StatusCode)
 	}
 	return data, nil, "", nil
+}
+
+// ollamaBalanceRaw keeps the flexible amounts as raw JSON: numeric and decimal-string
+// amounts are both accepted, and anything else is a parse failure rather than a zero.
+type ollamaBalanceRaw struct {
+	Included  json.RawMessage `json:"included"`
+	Purchased json.RawMessage `json:"purchased"`
+}
+
+func normalizeOllamaBalance(data []byte) (Snapshot, *ErrorDetail, error) {
+	unrecognized := func() (Snapshot, *ErrorDetail, error) {
+		return Snapshot{}, jsonShapeDetail("balance", data), errors.New("Ollama returned an unrecognized credit balance response.")
+	}
+	var raw ollamaBalanceRaw
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return unrecognized()
+	}
+	snap := Snapshot{Status: StatusOK, Plan: "API key verified"}
+	sawIncluded := false
+	if len(ollamaTrimNull(raw.Purchased)) > 0 {
+		purchased, ok := ollamaBalanceObject(raw.Purchased)
+		if !ok {
+			return unrecognized()
+		}
+		balance, ok := ollamaBalanceAmount(purchased, "balance_usd")
+		if !ok {
+			return unrecognized()
+		}
+		snap.Credits = &Credits{Label: "Credit balance", Balance: balance}
+	}
+	if len(ollamaTrimNull(raw.Included)) > 0 {
+		fields, ok := ollamaBalanceObject(raw.Included)
+		if !ok {
+			return unrecognized()
+		}
+		sawIncluded = true
+		session, hasSession := ollamaBalanceField(fields, "session")
+		weekly, hasWeekly := ollamaBalanceField(fields, "weekly")
+		if hasSession || hasWeekly {
+			// Legacy shape: per-window remaining percentages instead of a credit allowance.
+			if hasSession {
+				window, ok, err := ollamaLegacyBalanceWindow(session, "session", ollamaSessionWindowSeconds)
+				if err != nil {
+					return unrecognized()
+				}
+				if ok {
+					snap.Windows = append(snap.Windows, window)
+				}
+			}
+			if hasWeekly {
+				window, ok, err := ollamaLegacyBalanceWindow(weekly, "weekly", ollamaWeeklyWindowSeconds)
+				if err != nil {
+					return unrecognized()
+				}
+				if ok {
+					snap.Windows = append(snap.Windows, window)
+				}
+			}
+		} else {
+			allowance, ok := ollamaBalanceAmount(fields, "allowance_usd")
+			if !ok || allowance < 0 {
+				return unrecognized()
+			}
+			balance, ok := ollamaBalanceAmount(fields, "balance_usd")
+			if !ok {
+				return unrecognized()
+			}
+			period, hasPeriod := ollamaBalanceField(fields, "period")
+			var reset *time.Time
+			if hasPeriod {
+				var periodFields map[string]json.RawMessage
+				if err := json.Unmarshal(period, &periodFields); err != nil {
+					return unrecognized()
+				}
+				until, hasUntil := ollamaBalanceField(periodFields, "until")
+				if hasUntil {
+					t, ok := ollamaBalanceTimestamp(until)
+					if !ok {
+						return unrecognized()
+					}
+					reset = &t
+				}
+			}
+			// A zero allowance carries no percentage; the purchased credits stay the only balance.
+			if allowance > 0 {
+				used := allowance - balance
+				if used < 0 {
+					used = 0
+				}
+				window := normalizedWindow("monthly", used/allowance*100, reset, ollamaMonthlyWindowSeconds)
+				window.Pace = computeWindowPace(window, time.Now())
+				snap.Windows = append(snap.Windows, window)
+			}
+		}
+	}
+	if len(snap.Windows) == 0 && snap.Credits == nil && !sawIncluded {
+		return unrecognized()
+	}
+	return snap, nil, nil
+}
+
+// ollamaBalanceObject decodes a present, non-null JSON object field.
+func ollamaBalanceObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	raw = ollamaTrimNull(raw)
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return nil, false
+	}
+	return object, true
+}
+
+func ollamaBalanceField(fields map[string]json.RawMessage, key string) (json.RawMessage, bool) {
+	raw, ok := fields[key]
+	return raw, ok && len(ollamaTrimNull(raw)) > 0
+}
+
+func ollamaTrimNull(raw json.RawMessage) json.RawMessage {
+	trimmed := json.RawMessage(strings.TrimSpace(string(raw)))
+	if string(trimmed) == "null" {
+		return nil
+	}
+	return trimmed
+}
+
+// ollamaBalanceAmount accepts a JSON number or a decimal-string amount and bounds it
+// to a sane magnitude; every other shape is unusable.
+func ollamaBalanceAmount(fields map[string]json.RawMessage, key string) (float64, bool) {
+	raw, ok := ollamaBalanceField(fields, key)
+	if !ok {
+		return 0, false
+	}
+	var number float64
+	if err := json.Unmarshal(raw, &number); err == nil {
+		return number, validOllamaBalanceAmount(number)
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return 0, false
+	}
+	number, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if err != nil {
+		return 0, false
+	}
+	return number, validOllamaBalanceAmount(number)
+}
+
+func validOllamaBalanceAmount(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && math.Abs(value) <= 1e12
+}
+
+// ollamaLegacyBalanceWindow turns one remaining_percent entry into a window. A null
+// entry is absent; a present but unusable entry is a parse failure.
+func ollamaLegacyBalanceWindow(raw json.RawMessage, key string, durationSeconds int64) (Window, bool, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(ollamaTrimNull(raw), &fields); err != nil {
+		return Window{}, false, err
+	}
+	remaining, ok := ollamaBalanceAmount(fields, "remaining_percent")
+	if !ok || remaining < 0 || remaining > 100 {
+		return Window{}, false, errors.New("unusable remaining_percent")
+	}
+	var reset *time.Time
+	if resetRaw, hasReset := ollamaBalanceField(fields, "resets_at"); hasReset {
+		t, ok := ollamaBalanceTimestamp(resetRaw)
+		if !ok {
+			return Window{}, false, errors.New("unusable resets_at")
+		}
+		reset = &t
+	}
+	window := normalizedWindow(key, 100-remaining, reset, durationSeconds)
+	window.Pace = computeWindowPace(window, time.Now())
+	return window, true, nil
+}
+
+// ollamaBalanceTimestamp validates an RFC 3339 timestamp with a real calendar date.
+func ollamaBalanceTimestamp(raw json.RawMessage) (time.Time, bool) {
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return time.Time{}, false
+	}
+	t, ok := parseClaudeTime(text)
+	if !ok {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 func responseFinalURL(resp *http.Response) *url.URL {
@@ -441,6 +666,10 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 	html := string(data)
 	detail := &ErrorDetail{Fields: map[string]string{}}
 	plan := firstOllamaCapture(ollamaPlanAnchor, html)
+	if plan == "" {
+		plan = firstOllamaCapture(ollamaWalletPlanAnchor, html)
+	}
+	balance, hasBalance, sawWalletSpend := parseOllamaCreditWallet(html)
 
 	windows := make([]Window, 0, 3)
 	if w, ok := parseOllamaUsageBlock("session", []string{ollamaSessionAnchor, ollamaHourlyAnchor}, html, detail); ok {
@@ -453,14 +682,14 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 		w.Pace = computeWindowPace(w, time.Now())
 		windows = append(windows, w)
 	}
-	if w, ok := parseOllamaUsageBlock("monthly", []string{ollamaMonthlyAnchor}, html, detail); ok {
+	if w, ok := parseOllamaUsageBlock("monthly", []string{ollamaMonthlyAnchor, ollamaFreeAnchor}, html, detail); ok {
 		w.WindowDurationSeconds = ollamaMonthlyWindowSeconds
 		w.Pace = computeWindowPace(w, time.Now())
 		windows = append(windows, w)
 	}
 	windows = orderWindows(windows, []string{"session", "weekly", "monthly"})
 
-	if len(windows) == 0 {
+	if len(windows) == 0 && !hasBalance && !sawWalletSpend {
 		if ollamaSignedOutAnchor.MatchString(html) {
 			return Snapshot{}, fieldDetail("page", "signed_out"), errors.New("Ollama Cloud settings page requires sign in.")
 		}
@@ -471,16 +700,55 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 		return Snapshot{}, fieldDetail("page", "markup_drift"), errors.New("Ollama Cloud settings page did not include recognized usage data.")
 	}
 
-	return Snapshot{Status: StatusOK, Plan: strings.TrimSpace(plan), Windows: windows}, detailOrNil(detail), nil
+	snap := Snapshot{Status: StatusOK, Plan: strings.TrimSpace(plan), Windows: windows}
+	// A credit wallet is a balance, never a quota percentage: it shows as Credits even
+	// beside reported meters, and a wallet without a balance still counts as usage data
+	// so the reported spend is not dropped.
+	if hasBalance {
+		snap.Credits = &Credits{Label: "Credit balance", Balance: balance}
+	}
+	return snap, detailOrNil(detail), nil
+}
+
+// parseOllamaCreditWallet reads the current credit-wallet section: its balance and the
+// monthly credits used. Both values are reported dollar amounts; no percentage is inferred.
+func parseOllamaCreditWallet(html string) (balance float64, hasBalance, sawWalletSpend bool) {
+	heading := ollamaWalletHeadingAnchor.FindStringIndex(html)
+	if heading == nil {
+		return 0, false, false
+	}
+	section := html[heading[1]:]
+	if end := ollamaWalletSectionEnd.FindStringIndex(section); end != nil {
+		section = section[:end[0]]
+	}
+	if raw := firstOllamaCapture(ollamaWalletBalanceAnchor, section); raw != "" {
+		if value, ok := parseOllamaWalletAmount(raw); ok {
+			balance, hasBalance = value, true
+		}
+	}
+	if raw := firstOllamaCapture(ollamaWalletUsedAnchor, section); raw != "" {
+		if _, ok := parseOllamaWalletAmount(raw); ok {
+			sawWalletSpend = true
+		}
+	}
+	return balance, hasBalance, sawWalletSpend
+}
+
+func parseOllamaWalletAmount(raw string) (float64, bool) {
+	value, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimPrefix(raw, "$"), ",", ""), 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1e12 {
+		return 0, false
+	}
+	return value, true
 }
 
 func parseOllamaUsageBlock(key string, labels []string, html string, detail *ErrorDetail) (Window, bool) {
 	for _, label := range labels {
-		index := strings.Index(html, label)
-		if index < 0 {
+		match := ollamaLabelTextNode(label).FindStringIndex(html)
+		if match == nil {
 			continue
 		}
-		window := ollamaUsageBlock(html, label, index)
+		window := ollamaUsageBlock(html, label, match[0])
 		percent, ok := parseOllamaPercent(window)
 		if !ok {
 			continue
@@ -506,13 +774,12 @@ func ollamaUsageBlock(html string, currentLabel string, start int) string {
 		if label == currentLabel {
 			continue
 		}
-		next := strings.Index(html[start+1:], label)
-		if next < 0 {
+		loc := ollamaLabelTextNode(label).FindStringIndex(html[start+1:])
+		if loc == nil {
 			continue
 		}
-		next += start + 1
-		if next < end {
-			end = next
+		if boundary := start + 1 + loc[0]; boundary < end {
+			end = boundary
 		}
 	}
 	return html[start:end]

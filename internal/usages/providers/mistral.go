@@ -23,6 +23,10 @@ const (
 	mistralAdminOrigin         = "https://admin.mistral.ai"
 	mistralAdminReferer        = "https://admin.mistral.ai/organization/usage"
 	mistralMaxCreditAmount     = 1e12
+	// A missing or expired session answers with a redirect to this login flow; it means
+	// the cookie is invalid, not that the API failed.
+	mistralLoginHost = "auth.mistral.ai"
+	mistralLoginPath = "/self-service/login"
 )
 
 var mistralHTTPClient = newUsageHTTPClient()
@@ -212,6 +216,8 @@ func fetchMistralVibeUsage(ctx context.Context, cookies mistralCookies) (mistral
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
+	case isMistralLoginRedirect(resp):
+		return mistralVibeUsageRaw{}, fieldDetail("vibe_usage", "login_redirect"), StatusAuthMissing, errors.New("Mistral session has expired. Sign in again and paste a fresh Cookie request header.")
 	case resp.StatusCode == http.StatusOK:
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return mistralVibeUsageRaw{}, jsonShapeDetail("vibe_usage", data), StatusAuthMissing, errors.New("Mistral cookie was rejected.")
@@ -312,6 +318,9 @@ type mistralModelUsageData struct {
 type mistralUsageEntry struct {
 	BillingMetric string `json:"billing_metric"`
 	BillingGroup  string `json:"billing_group"`
+	EventType     string `json:"event_type"`
+	APIZone       string `json:"api_zone"`
+	ServiceTier   string `json:"service_tier"`
 	Value         int    `json:"value"`
 	ValuePaid     *int   `json:"value_paid"`
 }
@@ -319,7 +328,40 @@ type mistralUsageEntry struct {
 type mistralPrice struct {
 	BillingMetric string `json:"billing_metric"`
 	BillingGroup  string `json:"billing_group"`
+	EventType     string `json:"event_type"`
+	APIZone       string `json:"api_zone"`
+	ServiceTier   string `json:"service_tier"`
 	Price         string `json:"price"`
+}
+
+// mistralPriceKey is one price-table row: Mistral lists one price per event type,
+// metric, group, API zone, and service tier. The same metric and group can carry a far
+// higher per-second audio price or a priority-tier price, so every reported dimension is
+// part of the key.
+type mistralPriceKey struct {
+	EventType   string
+	Metric      string
+	Group       string
+	APIZone     string
+	ServiceTier string
+}
+
+// isMistralLoginRedirect reports a redirect to the Mistral login flow. The HTTP client
+// follows cross-origin redirects with credentials stripped, so an expired session lands
+// on the login page itself; a 3xx that was not followed carries the Location directly.
+func isMistralLoginRedirect(resp *http.Response) bool {
+	isLogin := func(u *url.URL) bool {
+		return u != nil && strings.EqualFold(u.Scheme, "https") && strings.EqualFold(u.Hostname(), mistralLoginHost) &&
+			(strings.EqualFold(u.EscapedPath(), mistralLoginPath) || strings.HasPrefix(strings.ToLower(u.EscapedPath()), mistralLoginPath+"/"))
+	}
+	if isLogin(responseFinalURL(resp)) {
+		return true
+	}
+	if resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return false
+	}
+	location, err := url.Parse(strings.TrimSpace(resp.Header.Get("Location")))
+	return err == nil && isLogin(location)
 }
 
 func fetchMistralAPISpend(ctx context.Context, cookies mistralCookies) (mistralBillingResponse, *ErrorDetail, Status, error) {
@@ -348,6 +390,8 @@ func fetchMistralAPISpend(ctx context.Context, cookies mistralCookies) (mistralB
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
+	case isMistralLoginRedirect(resp):
+		return mistralBillingResponse{}, fieldDetail("usage", "login_redirect"), StatusAuthMissing, errors.New("Mistral session has expired. Sign in again and paste a fresh Cookie request header.")
 	case resp.StatusCode == http.StatusOK:
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return mistralBillingResponse{}, jsonShapeDetail("usage", data), StatusAuthMissing, errors.New("Mistral API spend cookie was rejected.")
@@ -451,8 +495,8 @@ func mistralSpendModelGroups(raw mistralBillingResponse) []map[string]mistralMod
 	return groups
 }
 
-func mistralPriceIndex(prices []mistralPrice) map[string]float64 {
-	index := map[string]float64{}
+func mistralPriceIndex(prices []mistralPrice) map[mistralPriceKey]float64 {
+	index := map[mistralPriceKey]float64{}
 	for _, price := range prices {
 		if price.BillingMetric == "" || price.BillingGroup == "" || price.Price == "" {
 			continue
@@ -461,12 +505,18 @@ func mistralPriceIndex(prices []mistralPrice) map[string]float64 {
 		if err != nil || !validMistralCreditAmount(value) {
 			continue
 		}
-		index[price.BillingMetric+"::"+price.BillingGroup] = value
+		index[mistralPriceKey{
+			EventType:   price.EventType,
+			Metric:      price.BillingMetric,
+			Group:       price.BillingGroup,
+			APIZone:     price.APIZone,
+			ServiceTier: price.ServiceTier,
+		}] = value
 	}
 	return index
 }
 
-func aggregateMistralModel(model mistralModelUsageData, prices map[string]float64) (input, output, cached int, cost float64) {
+func aggregateMistralModel(model mistralModelUsageData, prices map[mistralPriceKey]float64) (input, output, cached int, cost float64) {
 	add := func(entries []mistralUsageEntry) (int, float64) {
 		var tokens int
 		var total float64
@@ -477,7 +527,7 @@ func aggregateMistralModel(model mistralModelUsageData, prices map[string]float6
 			}
 			tokens += value
 			if entry.BillingMetric != "" && entry.BillingGroup != "" {
-				cost := float64(value) * prices[entry.BillingMetric+"::"+entry.BillingGroup]
+				cost := float64(value) * mistralUnitPrice(entry, prices)
 				if !validMistralCreditAmount(cost) {
 					return tokens, math.NaN()
 				}
@@ -494,6 +544,29 @@ func aggregateMistralModel(model mistralModelUsageData, prices map[string]float6
 	cached, c = add(model.Cached)
 	cost += c
 	return input, output, cached, cost
+}
+
+// mistralUnitPrice prices one billed unit: the price row with the same event type,
+// metric, group, zone, and tier wins; a legacy table that omits both zone and tier is
+// matched through that explicitly unqualified row. Unmatched units are free rather
+// than wrongly priced at another tier's rate.
+func mistralUnitPrice(entry mistralUsageEntry, prices map[mistralPriceKey]float64) float64 {
+	exact := mistralPriceKey{
+		EventType:   entry.EventType,
+		Metric:      entry.BillingMetric,
+		Group:       entry.BillingGroup,
+		APIZone:     entry.APIZone,
+		ServiceTier: entry.ServiceTier,
+	}
+	if price, ok := prices[exact]; ok {
+		return price
+	}
+	zoneless := mistralPriceKey{
+		EventType: entry.EventType,
+		Metric:    entry.BillingMetric,
+		Group:     entry.BillingGroup,
+	}
+	return prices[zoneless]
 }
 
 func validMistralCreditAmount(value float64) bool {

@@ -240,7 +240,7 @@ type claudeUsageRaw struct {
 	SevenDayOAuthApps *claudeWindowRaw     `json:"seven_day_oauth_apps"`
 	SevenDayOpus      *claudeWindowRaw     `json:"seven_day_opus"`
 	SevenDaySonnet    *claudeWindowRaw     `json:"seven_day_sonnet"`
-	Limits            []claudeLimitRaw     `json:"limits"`
+	Limits            []json.RawMessage    `json:"limits"`
 	ExtraUsage        *claudeExtraUsageRaw `json:"extra_usage"`
 }
 
@@ -257,22 +257,101 @@ type claudeExtraUsageRaw struct {
 	Currency     string   `json:"currency"`
 }
 
+// claudeLimitRaw is one entry of the response's limits array. Index records the
+// entry's position in that array, so diagnostics name the original element even
+// when malformed siblings were skipped.
 type claudeLimitRaw struct {
-	Kind     string              `json:"kind"`
-	Group    string              `json:"group"`
-	Percent  *float64            `json:"percent"`
-	ResetsAt string              `json:"resets_at"`
-	Scope    claudeLimitScopeRaw `json:"scope"`
-	IsActive *bool               `json:"is_active"`
+	Index    int
+	Kind     string
+	Group    string
+	Percent  *float64
+	ResetsAt string
+	Scope    claudeLimitScopeRaw
+	IsActive *bool
+}
+
+// decodeClaudeLimits parses the limits array entry by entry: a malformed sibling, a
+// non-object entry, or a field of an unexpected type must not drop valid model rows.
+// A percent that is not a JSON number (a boolean or a string) reads as missing, never
+// as 0 or 100, and `is_active` is kept as reported.
+func decodeClaudeLimits(raw []json.RawMessage, detail *ErrorDetail) []claudeLimitRaw {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]claudeLimitRaw, 0, len(raw))
+	for i, entry := range raw {
+		trimmed := strings.TrimSpace(string(entry))
+		var fields map[string]json.RawMessage
+		if !strings.HasPrefix(trimmed, "{") || json.Unmarshal(entry, &fields) != nil {
+			if detail != nil {
+				detail.Fields[fmt.Sprintf("limits.%d", i)] = "invalid"
+			}
+			continue
+		}
+		limit := claudeLimitRaw{
+			Index:    i,
+			Kind:     claudeLimitString(fields["kind"]),
+			Group:    claudeLimitString(fields["group"]),
+			Percent:  claudeLimitNumber(fields["percent"]),
+			ResetsAt: claudeLimitString(fields["resets_at"]),
+		}
+		if model := claudeLimitModel(fields["scope"]); model != nil {
+			limit.Scope.Model = model
+		}
+		if raw, ok := fields["is_active"]; ok && string(raw) != "null" {
+			var active bool
+			if err := json.Unmarshal(raw, &active); err == nil {
+				limit.IsActive = &active
+			}
+		}
+		out = append(out, limit)
+	}
+	return out
+}
+
+func claudeLimitString(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return value
+}
+
+// claudeLimitNumber accepts only a JSON number: booleans and strings are not percentages.
+func claudeLimitNumber(raw json.RawMessage) *float64 {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var value float64
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+	return &value
+}
+
+func claudeLimitModel(raw json.RawMessage) *claudeLimitModelRaw {
+	var scope struct {
+		Model *struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"model"`
+	}
+	if err := json.Unmarshal(raw, &scope); err != nil || scope.Model == nil {
+		return nil
+	}
+	return &claudeLimitModelRaw{ID: scope.Model.ID, DisplayName: scope.Model.DisplayName}
 }
 
 type claudeLimitScopeRaw struct {
-	Model *claudeLimitModelRaw `json:"model"`
+	Model *claudeLimitModelRaw
 }
 
 type claudeLimitModelRaw struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
+	ID          string
+	DisplayName string
 }
 
 func (p claudeCodeProvider) fetchUsage(ctx context.Context, creds claudeCredentials) (claudeUsageRaw, *ErrorDetail, Status, bool, error) {
@@ -359,7 +438,7 @@ func (raw claudeUsageRaw) hasValues() bool {
 			return true
 		}
 	}
-	for _, limit := range raw.Limits {
+	for _, limit := range decodeClaudeLimits(raw.Limits, nil) {
 		if limit.Kind == "weekly_scoped" && limit.Group == "weekly" && limit.Percent != nil {
 			return true
 		}
@@ -415,7 +494,7 @@ func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot
 	addWindow("weekly", weeklyPath, weeklyWindow)
 	addWindow("weekly_opus", "seven_day_opus", raw.SevenDayOpus)
 	addWindow("weekly_sonnet", "seven_day_sonnet", raw.SevenDaySonnet)
-	windows = append(windows, claudeScopedWeeklyWindows(raw.Limits, detail)...)
+	windows = append(windows, claudeScopedWeeklyWindows(decodeClaudeLimits(raw.Limits, detail), detail)...)
 	ordered := orderWindows(windows, append([]string{"session", "weekly", "weekly_opus", "weekly_sonnet"}, claudeScopedWeeklyOrder(windows)...))
 	snap := Snapshot{
 		Status:  StatusOK,
@@ -434,10 +513,37 @@ func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot
 			snap.Credits = credits
 		}
 	}
-	if len(ordered) == 0 && snap.Credits == nil {
+	// A spend-only account (for example an Enterprise seat) reports no quota windows,
+	// only the extra-usage monthly cap. Give the cap the same meter treatment as a
+	// quota window: a monthly_spend display window with a calendar-month pace and a
+	// reset at midnight UTC on the 1st, as documented for Claude spend limits. The
+	// limit guard and the switcher read only the session and weekly windows and keep
+	// ignoring this one; threshold alerts treat it like any other window.
+	if len(ordered) == 0 && raw.ExtraUsage != nil && raw.ExtraUsage.MonthlyLimit != nil && *raw.ExtraUsage.MonthlyLimit > 0 {
+		var percent float64
+		switch {
+		case raw.ExtraUsage.Utilization != nil:
+			percent = *raw.ExtraUsage.Utilization
+		case raw.ExtraUsage.UsedCredits != nil:
+			percent = *raw.ExtraUsage.UsedCredits / *raw.ExtraUsage.MonthlyLimit * 100
+		}
+		reset := claudeMonthlySpendReset(time.Now())
+		spend := normalizedWindow("monthly_spend", percent, &reset, monthlyWindowDuration(reset))
+		spend.Pace = computeWindowPace(spend, time.Now())
+		snap.Windows = []Window{spend}
+	}
+	if len(snap.Windows) == 0 && snap.Credits == nil {
 		return Snapshot{}, detailOrNil(detail), errors.New("Claude usage response did not include recognized rate-limit windows.")
 	}
 	return snap, detailOrNil(detail), nil
+}
+
+// claudeMonthlySpendReset infers the monthly cap reset: midnight UTC on the first of
+// the next month, the documented Claude spend-limit period.
+func claudeMonthlySpendReset(now time.Time) time.Time {
+	now = now.UTC()
+	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return first.AddDate(0, 1, 0)
 }
 
 func claudeScopedWeeklyWindows(limits []claudeLimitRaw, detail *ErrorDetail) []Window {
@@ -446,11 +552,11 @@ func claudeScopedWeeklyWindows(limits []claudeLimitRaw, detail *ErrorDetail) []W
 	}
 	out := make([]Window, 0)
 	seen := map[string]bool{}
-	for i, limit := range limits {
+	for _, limit := range limits {
 		if limit.Kind != "weekly_scoped" || limit.Group != "weekly" {
 			continue
 		}
-		path := fmt.Sprintf("limits.%d", i)
+		path := fmt.Sprintf("limits.%d", limit.Index)
 		if limit.Percent == nil {
 			detail.Fields[path+".percent"] = "missing"
 			continue

@@ -12,7 +12,37 @@ export function percent(value) {
 
 export function windowLabel(key) {
   if (String(key || '').startsWith('weekly_scoped:')) return `Weekly (${key.slice('weekly_scoped:'.length).replaceAll('-', ' ')})`;
-  return ({ session: 'Session', weekly: 'Weekly', monthly: 'Monthly', weekly_opus: 'Weekly (Opus)', weekly_sonnet: 'Weekly (Sonnet)', codex_spark: 'Codex Spark', codex_spark_weekly: 'Codex Spark Weekly' })[key] || key.replaceAll('_', ' ');
+  return ({ session: 'Session', weekly: 'Weekly', monthly: 'Monthly', monthly_spend: 'Monthly spend', weekly_opus: 'Weekly (Opus)', weekly_sonnet: 'Weekly (Sonnet)', codex_spark: 'Codex Spark', codex_spark_weekly: 'Codex Spark Weekly' })[key] || key.replaceAll('_', ' ');
+}
+
+// A monthly window spans the calendar month it resets in (28 to 31 days; some providers report
+// a 30-day sentinel). Other durations are not monthly.
+export function isMonthlyWindow(window) {
+  const days = Number(window.window_duration_seconds) / 86400;
+  return Number.isFinite(days) && days >= 28 && days <= 31;
+}
+
+// A monthly window's daily target: the remaining share of the allowance divided by the local
+// calendar days left before the reset, counting today; a reset exactly at local midnight starts
+// the next allowance without adding a day. Unknown usage, a missing or expired reset, and
+// non-monthly windows show no target. The usage API carries percentages only, so the target is
+// a share per day, not an amount in the allowance's own unit.
+export function dailyTarget(window, now = new Date()) {
+  if (!isMonthlyWindow(window)) return null;
+  const used = Number(window.percent_used);
+  const reset = new Date(window.reset_at);
+  if (!Number.isFinite(used) || Number.isNaN(reset.getTime()) || reset <= now) return null;
+  const startOfDay = value => { const day = new Date(value); day.setHours(0, 0, 0, 0); return day; };
+  const resetDay = startOfDay(reset);
+  const days = Math.round((resetDay - startOfDay(now)) / 86400000);
+  const dayCount = Math.max(1, days + (reset > resetDay ? 1 : 0));
+  return (100 - Math.max(0, Math.min(100, used))) / dayCount;
+}
+
+export function dailyTargetText(window, now = new Date()) {
+  const target = dailyTarget(window, now);
+  if (target == null) return '';
+  return `≈ ${Number(target.toFixed(2))}% / day to last until reset`;
 }
 
 export function creditsText(credits) {
@@ -145,6 +175,10 @@ export function usageWindowRow(window, usedDisplay) {
       const explanation = paceExplanation(window.pace, usedDisplay);
       pace.title = explanation; pace.tabIndex = 0; pace.setAttribute('aria-label', `${state}. ${explanation}`);
       foot.append(pace);
+      // The daily target follows the pace: it appears with the same data the pace line needs
+      // and shares its visibility.
+      const target = dailyTargetText(window);
+      if (target) foot.append(element('span', 'usage-daily-target', target));
     }
     const spark = usageSparkline(window, usedDisplay);
     row.append(top, track, ...(spark ? [sparkFigure(spark, usedDisplay)] : []), foot);

@@ -58,6 +58,12 @@ func (copilotProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error
 		}
 		return snap, nil
 	}
+	// The response decodes fine when the subscription has ended, but it carries no quota
+	// windows. Report the reason instead of a generic shape error, and drop any stale
+	// snapshot of the ended subscription with it (auth_missing keeps none).
+	if strings.TrimSpace(raw.AccessTypeSKU) == "subscription_ended" {
+		return copilotStatus(StatusAuthMissing, "GitHub Copilot subscription has ended. Renew the subscription to see usage data again.", fieldDetail("usage", "subscription_ended")), nil
+	}
 	snap, detail, err := normalizeCopilotUsage(raw)
 	if err != nil {
 		snap = copilotStatus(StatusFetchError, err.Error(), detail)
@@ -130,6 +136,7 @@ func copilotUsageURL(apiBase string) (string, error) {
 type copilotUsageRaw struct {
 	QuotaSnapshots    *copilotQuotaSnapshotsRaw `json:"quota_snapshots"`
 	CopilotPlan       string                    `json:"copilot_plan"`
+	AccessTypeSKU     string                    `json:"access_type_sku"`
 	AssignedDate      string                    `json:"assigned_date"`
 	QuotaResetDate    string                    `json:"quota_reset_date"`
 	MonthlyQuotas     *copilotQuotaCountsRaw    `json:"monthly_quotas"`
