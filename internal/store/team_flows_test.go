@@ -627,8 +627,8 @@ func TestTeamFlowSpawnAuthority(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("dispatcher create task room: %v", err)
 	}
-	if task.ParentID == f.home.ID {
-		t.Fatalf("dispatcher task under home: %+v", task)
+	if task.ParentID != f.home.ID {
+		t.Fatalf("dispatcher task not under home by default: %+v", task)
 	}
 	var leaderInTask, dispatcherInTask int
 	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, task.ID, leader.ID).Scan(&leaderInTask); err != nil {

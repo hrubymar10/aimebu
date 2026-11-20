@@ -114,7 +114,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	routed.SpawnRules = []FlowSpawnRule{{"leader", []string{"dispatcher"}}, {"dispatcher", []string{"worker", "reviewer"}}}
 	routed.AutoJoinRoles = []string{"leader", "dispatcher"}
 	routed.CoreRoles = []string{"leader", "dispatcher"}
-	routed.TaskParentKey = "general"
+	routed.TaskParentKey = "home"
 	routed.GrantRoles = []string{"leader", "dispatcher"}
 	routed.RoleTextOverrides = map[string]string{
 		"leader":     "You are the project leader. Talk with the human and write specifications with goal, acceptance criteria, constraints, base, priority, and the team: how many workers and whether a reviewer is needed. Hand each specification to the dispatcher in routing. Do not spawn or manage workers and reviewers. Decide questions escalated by the dispatcher; report the outcome to the human in the home room. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + leadSafety + "\n\n" + roleCommunication,

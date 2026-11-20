@@ -130,7 +130,9 @@ Projects, rooms, people
   rules grant its task-room and agent-management authority. Team setup puts
   the dispatcher in routing and the keyed `general`, the project-wide room shared with
   the leader for announcements and coordination. It joins task rooms it
-  creates or explicitly joins, never home. The dispatcher manages what it
+  creates or explicitly joins, never home. Its `create_room` without a `parent_id`
+  places the task under the project's home room, as in the other flows (it may
+  still pass `general`'s ID); it need not be a member of either. The dispatcher manages what it
   starts: it may create, list and delete schedules in rooms it belongs to,
   `dm_agent` agents of its own project it manages, close task rooms it belongs
   to or created, and stop the agents in them. Any flow coordinator, the

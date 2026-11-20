@@ -322,14 +322,14 @@ func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title, purpose 
 		return Room{}, ErrForbidden
 	}
 	if !joined {
-		// In the dispatcher flow, general is a structural parent for new
-		// tasks, but the dispatcher starts only in routing. Creating a task
-		// beneath general does not add the dispatcher to that room.
+		// In the dispatcher flow, home is the default parent for new tasks
+		// (general stays an explicit choice), but the dispatcher joins
+		// neither. Creating a task beneath either does not add it to that room.
 		var mayCreate bool
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent a JOIN role ro ON ro.id=a.role_id
 			JOIN project p ON p.id=a.project_id WHERE a.id=? AND a.project_id=?
-			AND p.team_flow_key='leader-dispatcher' AND ro.role_key='dispatcher' AND ?='general')`,
-			agentID, projectID, parentKey).Scan(&mayCreate); err != nil {
+			AND p.team_flow_key='leader-dispatcher' AND ro.role_key='dispatcher' AND (?='general' OR ?='home'))`,
+			agentID, projectID, parentKey, parentKind).Scan(&mayCreate); err != nil {
 			return Room{}, err
 		}
 		if !mayCreate {

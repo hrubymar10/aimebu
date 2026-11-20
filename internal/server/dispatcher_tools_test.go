@@ -96,6 +96,7 @@ func TestDispatcherCanDispatch(t *testing.T) {
 	}
 	resp.Body.Close()
 	var routing store.Room
+	var homeID, generalID string
 	rooms, err := f.db.RoomsForProject(ctx, f.project.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +104,12 @@ func TestDispatcherCanDispatch(t *testing.T) {
 	for _, room := range rooms {
 		if room.TeamFlowRoomKey == "routing" {
 			routing = room
+		}
+		if room.Kind == "home" {
+			homeID = room.ID
+		}
+		if room.TeamFlowRoomKey == "general" {
+			generalID = room.ID
 		}
 	}
 	if routing.ID == "" {
@@ -117,6 +124,9 @@ func TestDispatcherCanDispatch(t *testing.T) {
 		t.Fatalf("dispatcher create_room: %d", statusOf(resp))
 	}
 	decodeInto(t, resp, &task)
+	if task.ParentID != homeID || task.ParentID == generalID || homeID == "" {
+		t.Fatalf("dispatcher create_room without parent_id: parent %q, want home %q (not general %q)", task.ParentID, homeID, generalID)
+	}
 	if task.MemberCount < 1 {
 		t.Fatalf("create_room response member_count=%d", task.MemberCount)
 	}
