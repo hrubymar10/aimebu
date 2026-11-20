@@ -130,7 +130,7 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Rev < 0 || req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "continue" && req.Choice != "override" && req.Choice != "approve" && req.Choice != "deny" {
+	if req.Rev < 0 || req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "continue" && req.Choice != "override" && req.Choice != "restart" && req.Choice != "approve" && req.Choice != "deny" {
 		apiError(w, 400, "invalid_request", "invalid recovery choice or revision")
 		return
 	}

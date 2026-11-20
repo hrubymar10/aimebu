@@ -428,8 +428,10 @@ with `room_closed`, and preserves room history and recovery items. Reopening
 restores the gate to the room's bulk control state without respawning agents
 or restoring withdrawn inbox items. Both mutations reject a stale
 `lifecycle_rev` with `stale_rev` (409).
-Inbox entries include `room_lifecycle` so recovery items in closed rooms can
-be labeled "in archived room".
+Inbox entries include `room_lifecycle` so items in a room that is closing can
+be labeled "Room is being archived". A **closed** room's items are never
+listed (nor counted): closing a room settles its recovery and delivery_failed
+items, and the list skips any that remain.
 Room and project control GETs return `desired`, `effective_state`, `rev`, and
 persisted `failures` (`agent_id`, `action`, `error`) when a Pause or Stop has
 not yet applied to an agent.
@@ -661,6 +663,39 @@ open ask's, and `POST /api/inbox/{item}/answer` still accepts the answer,
 resolves the item, and reaches the requester as usual. "No longer pending" in
 chat marks a resolved or withdrawn item only. Existing open asks with such a
 later message are superseded once by migration 117.
+A question with no structured `ask` (a message with `needs_attention`,
+`proposed_answers` or `open_questions`) is narrower, because it is a message
+in a conversation: it is superseded only by a reply in its thread, either a
+person's message anywhere in the thread, or the asking agent's own newer
+message replying to it. A message elsewhere in the room leaves it open. The
+`inbox_item_resolved` event carries `reason` (`answered in thread` or
+`newer message`).
+
+Items nobody can act on settle without a person. Closing a room (when it
+becomes `closed`) and stopping an agent resolve the open `recovery` and
+`delivery_failed` items concerned: a failed delivery is dismissed, a recovery
+is abandoned like a person's Abandon (notes aborted, recovery block lifted,
+turn settled) and a recovery waiting for the old process is dropped with its
+continuation. `resolved_by` is `system (room closed)` or `system (agent
+stopped)` and the event carries `reason`. A recovery for a turn that is `lost`
+with nothing proving its process gone stays for a person, since only a
+decision can accept that overlap. The dispatcher also runs this settling (and
+the answered-question check above) every ten seconds, which catches a turn
+whose kill raises its recovery only after the stop, and items opened before
+the rule existed. A worker's malformed final answer never reaches people first. The author gets
+the system note "Your previous reply was held: <error>. Send your final answer
+again…" (the error only, never the agent's text: the note is readable in the room) and is woken by it to resend, and no
+card is raised. When that does not settle it (the resent answer is held too)
+the failure goes to the project lead as a `delivery_failed` item with phase
+`answer_held` (choices Retry and Abandon, for the lead through `resolve_recovery` and for people after escalation), routed and
+escalated like any worker recovery. Two empty answers (`invalid_answer: EOF`) in
+a row from one agent, with no tool activity in either turn, are a broken
+session: the lead gets one `recovery` item with phase `broken_session`
+(choices `restart`, for the lead through `resolve_recovery` and for people after escalation, which clears the native session so the next turn starts
+fresh, and `abandon`), and no correction note is sent. Only a lead's own
+malformed answer, or a worker's with no lead to hand to, raises the card for
+people. Only invalid-answer holds go to the lead: `room_closed` and `not_member` holds are never re-asked and stay with people. A recovery the settle pass left open on purpose stays listed even when its room is closed. Every empty answer logs the harness exit code and the last stderr
+lines the server holds for the turn.
 Uncertain-turn recovery items carry Resume, Retry, and Abandon; loop-budget
 items carry Continue and Abandon. A turn that ended with an explicit error result
 before it did anything (Claude Code `is_error` with no tool run and no output, such
@@ -676,7 +711,7 @@ same `result_text` when both turns have one, else the same evidence when it says
 an exit code (two unrelated failures that both exited with code 1 are not a repeat). The
 decision endpoint refuses a choice the item was not stored with (`400 invalid_choice`),
 so Resume of a definite failure is refused through the API as well as not offered. `choice` is the lowercase form of the
-button label. A worker recovery first goes to the active project lead when enabled; the lead gets a `worker_recovery` note and may use `list_recoveries` and `resolve_recovery`. It stays out of the people's Inbox until the configured interval elapses or the lead becomes unavailable, when a human card and notification appear. The lead's own recovery goes to people immediately. Project owners and operators may decide human-routed recovery in every room.
+button label. A worker recovery first goes to the active project lead when enabled; the lead gets a `worker_recovery` note and may use `list_recoveries` and `resolve_recovery` (`restart` is the fresh-session choice of a broken session; a held answer takes `retry` or `abandon`). It stays out of the people's Inbox until the configured interval elapses or the lead becomes unavailable, when a human card and notification appear. The lead's own recovery goes to people immediately. Project owners and operators may decide human-routed recovery in every room.
 The human peer can view a private-chat recovery item, but only a project owner
 or operator may decide it. Owners and operators can see those recovery items
 without joining the private chat because recovery blocks the agent across

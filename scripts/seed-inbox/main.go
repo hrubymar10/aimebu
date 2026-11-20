@@ -106,12 +106,18 @@ func main() {
 				}
 				return nil
 			}
-			for _, item := range []struct{ id, ask string }{
-				{"inb_smoke_a", `{"text":"Approve this choice?","options":["Approve","Revise"],"free_text":true}`},
-				{"inb_smoke_b", `{"text":"Explain the choice","options":[],"free_text":true}`},
+			// Each question hangs off its own agent message, as an agent's attention question does: a person's reply in that message's thread
+			// answers it (and the settle pass closes a question whose thread was already answered), so the two must not share the person's message.
+			for _, item := range []struct{ id, text, ask string }{
+				{"inb_smoke_a", "Approve this choice?", `{"text":"Approve this choice?","options":["Approve","Revise"],"free_text":true}`},
+				{"inb_smoke_b", "Explain the choice", `{"text":"Explain the choice","options":[],"free_text":true}`},
 			} {
+				ask, err := tx.InsertMessage(store.Message{RoomID: os.Args[3], AuthorKind: "agent", AuthorID: "agt_smoke", AuthorHarness: "fake", AuthorModel: "test", Body: item.text})
+				if err != nil {
+					return err
+				}
 				if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,message_id,requester_kind,requester_id,kind,options_json,created_at)
-				VALUES (?,?,?,?,'agent','agt_smoke','question',?,datetime('now'))`, item.id, os.Args[2], os.Args[3], os.Args[4], item.ask); err != nil {
+				VALUES (?,?,?,?,'agent','agt_smoke','question',?,datetime('now'))`, item.id, os.Args[2], os.Args[3], ask.ID, item.ask); err != nil {
 					return err
 				}
 				if _, err := tx.AppendEvent(store.Event{Kind: "inbox_item_created", ProjectID: os.Args[2], RoomID: os.Args[3], PayloadJSON: fmt.Sprintf(`{"inbox_item_id":%q}`, item.id)}); err != nil {

@@ -29,6 +29,7 @@ func TestPiGemmaRehearsalCandidateDelivers(t *testing.T) {
 func TestUnavailableCorrectionCreatesVisibleDeliveryFailureOnce(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
+	asLead(t, s, f)
 	ctx := context.Background()
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Private DM code: cedar lake","ask":{"question":"Which team?","options":["Build team"]}}]}`, f.room.ID)
 	first, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
@@ -61,6 +62,7 @@ func TestUnavailableCorrectionCreatesVisibleDeliveryFailureOnce(t *testing.T) {
 func TestDismissDeliveryFailure(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
+	asLead(t, s, f)
 	ctx := context.Background()
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Draft held for review"}]}`, f.room.ID)
 	// A malformed candidate reaches the informational delivery-failure item.
@@ -93,6 +95,7 @@ func TestDismissDeliveryFailure(t *testing.T) {
 func TestDeliveryFailureNoticeOmitsPrivateParserField(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
+	asLead(t, s, f)
 	raw := `{"messages":[],"private cedar lake":true}`
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
 	if err != nil || receipt.Result != "held" || !strings.Contains(receipt.Error, "private cedar lake") {
@@ -103,8 +106,8 @@ func TestDeliveryFailureNoticeOmitsPrivateParserField(t *testing.T) {
 		t.Fatalf("private parser detail absent from Inbox: %+v err=%v", items, err)
 	}
 	messages, err := s.ListMessagesAfter(context.Background(), f.room.ID, 0)
-	if err != nil || len(messages) != 3 || strings.Contains(messages[1].Body, "private cedar lake") || strings.Contains(messages[2].Body, "private cedar lake") ||
-		!strings.Contains(messages[1].Body, "correction_unavailable") || !strings.Contains(messages[2].Body, "Your previous reply was held") {
+	if err != nil || len(messages) != 3 || strings.Contains(messages[1].Body, "private cedar lake") ||
+		!strings.Contains(messages[1].Body, "correction_unavailable") || !strings.Contains(messages[2].Body, "Your previous reply was held") || strings.Contains(messages[2].Body, "private cedar lake") {
 		t.Fatalf("room notice disclosed parser field: %+v err=%v", messages, err)
 	}
 }
@@ -214,6 +217,7 @@ func TestDismissClosesQuestionWithoutAnswer(t *testing.T) {
 func TestDismissNeedsAnOperatorInAnOrdinaryRoom(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
+	asLead(t, s, f)
 	ctx := context.Background()
 	if _, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, `{"messages":[{"room":"`+f.room.ID+`","body":"held"}`); err != nil {
 		t.Fatal(err)

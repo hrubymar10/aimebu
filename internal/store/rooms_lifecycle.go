@@ -372,6 +372,9 @@ func (s *Store) AdvanceRoomClosures(ctx context.Context, grace time.Duration) ([
 			if _, err := tx.Exec(`UPDATE room SET lifecycle='closed',lifecycle_rev=lifecycle_rev+1,closed_at=? WHERE id=?`, timestamp(), id); err != nil {
 				return err
 			}
+			if err := tx.settleRoomInbox(id); err != nil {
+				return err
+			}
 			_, err = tx.AppendEvent(Event{Kind: "room_closed", ProjectID: projectID, RoomID: id, PayloadJSON: payloadJSON(map[string]string{"room_id": id})})
 			return err
 		})

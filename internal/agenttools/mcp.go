@@ -45,7 +45,7 @@ var empty = map[string]any{"type": "object", "properties": map[string]any{}}
 var agentIDPattern = regexp.MustCompile(`^agt_[A-Za-z0-9_-]+$`)
 var catalog = []tool{
 	{"list_recoveries", "Active project lead only. List worker recoveries awaiting your decision.", empty},
-	{"resolve_recovery", "Active project lead only. Resolve a worker recovery with resume, retry, or abandon; retries are idempotent.", map[string]any{"type": "object", "properties": map[string]any{"item_id": map[string]string{"type": "string"}, "choice": map[string]any{"type": "string", "enum": []string{"resume", "retry", "abandon"}}, "note": map[string]string{"type": "string"}}, "required": []string{"item_id", "choice"}}},
+	{"resolve_recovery", "Active project lead only. Resolve a worker recovery with resume, retry, or abandon; retries are idempotent. A broken-session recovery takes restart (a fresh session) or abandon; a held answer takes retry (ask the agent to resend) or abandon.", map[string]any{"type": "object", "properties": map[string]any{"item_id": map[string]string{"type": "string"}, "choice": map[string]any{"type": "string", "enum": []string{"resume", "retry", "abandon", "restart"}}, "note": map[string]string{"type": "string"}}, "required": []string{"item_id", "choice"}}},
 	{"list_rooms", "List rooms where you are an active member, including archived rooms, without message previews.", empty},
 	{"list_agents", "List agents in your project, including their roles and current state.", empty},
 	{"room_history", "Read a page of messages in a project room. Private chats require current membership. Use before_no to page backward.", map[string]any{"type": "object", "properties": map[string]any{"room_id": map[string]string{"type": "string"}, "before_no": map[string]string{"type": "integer"}, "limit": map[string]string{"type": "integer"}}, "required": []string{"room_id"}}},
@@ -244,7 +244,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		path = "/api/agent/recoveries"
 	case "resolve_recovery":
 		itemID, choice := getString("item_id"), getString("choice")
-		if !strings.HasPrefix(itemID, "inb_") || len(itemID) > 100 || choice != "resume" && choice != "retry" && choice != "abandon" {
+		if !strings.HasPrefix(itemID, "inb_") || len(itemID) > 100 || choice != "resume" && choice != "retry" && choice != "abandon" && choice != "restart" {
 			return toolResult("valid item_id and choice required", true)
 		}
 		method, path = http.MethodPost, "/api/agent/recoveries/"+url.PathEscape(itemID)+"/decision"

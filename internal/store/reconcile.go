@@ -172,8 +172,11 @@ func (s *Store) ReconcileMachineHello(ctx context.Context, machineID, journalID 
 				}
 			}
 		}
+		// Every lost turn this hello can vouch for, not only one that already has a continuation: a person or lead usually decides Resume or Retry
+		// after the hello that found the turn lost, and the evidence recorded here is what lets that continuation start without a wait.
 		lostRows, err := tx.tx.QueryContext(tx.ctx, `SELECT t.id FROM turn t JOIN agent a ON a.id=t.agent_id
-			WHERE a.machine_id=? AND t.exec='lost' AND EXISTS(SELECT 1 FROM turn child WHERE child.parent_turn_id=t.id AND child.mode='normal' AND child.exec='pending')`, machineID)
+			WHERE a.machine_id=? AND t.exec='lost' AND (t.settle<>'settled'
+				OR EXISTS(SELECT 1 FROM turn child WHERE child.parent_turn_id=t.id AND child.mode='normal' AND child.exec='pending'))`, machineID)
 		if err != nil {
 			return err
 		}

@@ -209,11 +209,10 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 			var err error
 			if missedMentionHeld {
 				err = tx.missedMentionNote(parent, input, receipt.Error)
+			} else if invalidHeld {
+				err = tx.routeInvalidReply(parent, input, receipt.Error)
 			} else {
-				err = tx.deliveryFailedInbox(parent)
-				if err == nil && invalidHeld {
-					err = tx.invalidReplyNote(parent, receipt.Error)
-				}
+				err = tx.deliveryFailedInbox(parent, receipt.HeldReason == "invalid_after_correction")
 			}
 			if err != nil {
 				return err
@@ -445,24 +444,58 @@ const heldReplyNotePrefix = "Your previous reply was held: "
 const partialHeldNotePrefix = "Part of your previous reply was held: "
 const outsideProjectDetail = "room is outside the agent project"
 
-// invalidReplyNote tells an agent that cannot be asked for a correction why its
-// previous reply was held, as a system turn note only it can see.
-func (tx *Tx) invalidReplyNote(turn answerTurn, detail string) error {
-	// The note wakes the agent. A turn that was itself woken by such a note and held again gets none, so a repeating
-	// invalid shape ends in the delivery-failed card instead of a loop of notes and turns.
+// routeInvalidReply decides where a held, malformed final answer goes. A person never sees a worker's malformed answer first:
+//  1. two empty answers in a row, with no tool activity, are a broken session: a recovery to the lead (restart with a fresh session);
+//  2. otherwise the agent is told why (the error only: the note is readable in the room, and the agent has its own answer in its session) and
+//     woken to send it again (no card);
+//  3. when that note was already sent for this turn (the repair failed too), the failure goes to the lead.
+//
+// A lead (or a worker with no lead to hand to) has nobody above it, so its failure becomes the delivery_failed card for people.
+func (tx *Tx) routeInvalidReply(parent answerTurn, input AnswerInput, detail string) error {
+	var isLead bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, parent.agentID).Scan(&isLead); err != nil {
+		return err
+	}
+	if isLead {
+		if err := tx.deliveryFailedInbox(parent, false); err != nil {
+			return err
+		}
+		_, err := tx.invalidReplyNote(parent, input, detail)
+		return err
+	}
+	if strings.TrimSpace(string(input.Candidate)) == "" {
+		broken, err := tx.repeatedEmptyAnswer(parent)
+		if err != nil {
+			return err
+		}
+		if broken {
+			return tx.brokenSessionRecovery(parent)
+		}
+	}
+	sent, err := tx.invalidReplyNote(parent, input, detail)
+	if err != nil || sent {
+		return err
+	}
+	return tx.deliveryFailedInbox(parent, true)
+}
+
+// invalidReplyNote tells an agent why its previous reply was held, as a system turn note only it can see, and wakes it to resend it. It
+// reports false when the turn was itself woken by such a note (the repair failed too), so a repeating invalid shape ends with the lead
+// instead of a loop of notes and turns.
+func (tx *Tx) invalidReplyNote(turn answerTurn, input AnswerInput, detail string) (bool, error) {
 	var woken bool
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
 		WHERE tn.turn_id=? AND m.author_kind='system' AND (m.body LIKE ? OR m.body LIKE ?))`, turn.id, heldReplyNotePrefix+"%", partialHeldNotePrefix+"%").Scan(&woken); err != nil || woken {
-		return err
+		return false, err
 	}
 	// A parser error quotes what the agent wrote (a field name, a character); the room can read this note, so only the fixed
 	// validation texts go in as they are and a quoting one is described instead.
 	if strings.ContainsAny(detail, `"'`) || strings.Contains(detail, "json:") {
 		detail = "it was not one valid JSON answer object (malformed JSON, an unknown or misplaced field, or text around the object)"
 	}
-	body := heldReplyNotePrefix + detail
+	body := heldReplyNotePrefix + detail + ". Your previous answer is in your session; send your final answer again as exactly one JSON object with a messages array."
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
-	return err
+	return err == nil, err
 }
 
 func (tx *Tx) missedMentionNote(turn answerTurn, input AnswerInput, detail string) error {

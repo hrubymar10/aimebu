@@ -131,6 +131,8 @@ export function cardKey(item) {
 export function decisionOptions(item) {
   if (item.kind === 'usage_limit') return (item.options || []).map(label => [label, label.startsWith('Continue:') ? 'continue' : 'abandon']);
   if (item.recovery_phase === 'quiescence_wait') return [['Override', 'override'], ['Abandon', 'abandon']];
+  if (item.recovery_phase === 'broken_session') return [['Restart', 'restart'], ['Abandon', 'abandon']];
+  if (item.recovery_phase === 'answer_held') return [['Retry', 'retry'], ['Abandon', 'abandon']];
   // A turn that failed before it did anything has nothing to resume: Retry is the one way on.
   if (item.turn_id && item.definite_failure) return [['Retry', 'retry'], ['Abandon', 'abandon']];
   return item.turn_id ? [['Resume', 'resume'], ['Retry', 'retry'], ['Abandon', 'abandon']] : [['Continue', 'continue'], ['Abandon', 'abandon']];

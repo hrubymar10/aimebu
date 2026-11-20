@@ -831,6 +831,11 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 		} else {
 			input.Parsed = &parsed
 		}
+		if strings.TrimSpace(frame.Candidate) == "" {
+			// An empty answer says nothing about why: keep what the harness reported, so the next one can be diagnosed.
+			exitCode, stderrTail, _ := s.Store.TurnExitEvidence(ctx, frame.TurnID)
+			log.Printf("machine %s: empty answer: agent=%s turn=%s mode=%s exit_code=%s stderr_tail=%q", c.id, frame.AgentID, frame.TurnID, mode, exitCode, stderrTail)
+		}
 		receipt, err := s.Store.ApplyAnswer(ctx, input)
 		if errors.Is(err, store.ErrConflict) {
 			return c.send(protocol.Frame{V: protocol.Version, Type: protocol.Receipt, TurnID: frame.TurnID, AnswerRev: frame.AnswerRev, Digest: frame.Digest, Result: "conflict"})

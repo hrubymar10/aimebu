@@ -380,3 +380,29 @@ func TestCreateScheduleForwardsCron(t *testing.T) {
 		}
 	}
 }
+
+// A lead may pick restart (the fresh session of a broken-session recovery) through resolve_recovery.
+func TestMCPResolveRecoveryAcceptsRestart(t *testing.T) {
+	var gotPath, gotBody string
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotPath, gotBody = r.URL.Path, string(data)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer httpServer.Close()
+	server := Server{URL: httpServer.URL, Key: "aak_test"}
+	response, _ := server.Process(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"resolve_recovery","arguments":{"item_id":"inb_x","choice":"restart"}}}`))
+	if gotPath != "/api/agent/recoveries/inb_x/decision" || !strings.Contains(gotBody, `"restart"`) || bytes.Contains(response, []byte(`"isError":true`)) {
+		t.Fatalf("path=%q body=%q response=%s", gotPath, gotBody, response)
+	}
+	if !bytes.Contains(listTools(t, server), []byte(`"restart"`)) {
+		t.Fatal("restart is not in the resolve_recovery enum")
+	}
+}
+
+func listTools(t *testing.T, server Server) []byte {
+	t.Helper()
+	response, _ := server.Process(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	return response
+}

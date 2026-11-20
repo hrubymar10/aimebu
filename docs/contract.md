@@ -882,7 +882,17 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   answer_rev+1; **all** previous revision rows, including already-validated
   rows, → `superseded`); else, or if the
   correction is invalid too → all rows `held` + `delivery_failed` inbox item
-  with a bounded, redacted candidate preview. An open originating room also
+  with a bounded, redacted candidate preview, **except** that a worker's
+  malformed answer never goes to people first: the author gets the note below
+  (the error only; parser errors are described, not echoed) and a fresh turn to resend; if that turn's
+  answer is held too, the item is the project lead's (`delivery_failed`, phase
+  `answer_held`, routed and escalated like a worker recovery). Two empty
+  answers in a row from one agent with no tool activity raise a lead recovery
+  (phase `broken_session`, choices `restart` with a fresh native session or
+  `abandon`) and no card. Only a lead's own failure, or a worker's with no lead
+  to hand to, is a card for people; `room_closed` and `not_member` holds always
+  stay with people. Every empty answer logs the harness exit
+  code and the last stderr lines. An open originating room also
   receives a system notice for answers held during validation. When the answer
   was held because no correction could be requested (`no_action_mode` false),
   the author also gets a system note "Your previous reply was held: <reason>"
@@ -1722,9 +1732,13 @@ CC/Codex, prompt-only on pi):
    repeat an action. A Resume/Retry decision creates a linked continuation
    but dispatch waits for positive quiescence evidence: the supervisor reports
    the old process gone in hello, or its exit/kill is recorded. Journal
-   absence after replacement is insufficient. The owner sees a waiting item
-   and may explicitly override the overlap risk; that risk and actor are
-   recorded. An intact journal proving a continuation never started replaces
+   absence after replacement is insufficient. Every hello records that evidence
+   for each unsettled lost turn it covers, whether or not a continuation exists
+   yet, so a decision made after the hello does not wait for another one. The
+   waiting item says why nothing proved the process gone. The owner sees a
+   waiting item and may explicitly override the overlap risk; that risk and
+   actor are recorded. The lead never decides it: the overlap risk is a person's
+   call. An intact journal proving a continuation never started replaces
    it with another linked continuation carrying the same recovery context if
    the agent remains active. If Stop arrived first, its notes are aborted and
    the stop is confirmed.

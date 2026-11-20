@@ -33,6 +33,8 @@ const items = () => [
   { ...base, id: 'ro1', kind: 'question', question: 'Only the owner answers this', options: ['Yes'], can_decide: false },
   { ...base, id: 'rec1', kind: 'recovery', turn_id: 't1', question: 'Agent needs recovery', evidence: 'Work may have partially completed.', diagnostic_report: { status: 'clean', details: { checked: true, files: 3 } } },
   { ...base, id: 'rec2', kind: 'recovery', recovery_phase: 'quiescence_wait', question: 'Waiting for the old process to be confirmed gone', evidence: 'Still running.' },
+  { ...base, id: 'rec4', kind: 'recovery', recovery_phase: 'broken_session', turn_id: 't4', question: 'The agent answered twice in a row with an empty answer' },
+  { ...base, id: 'del2', kind: 'delivery_failed', recovery_phase: 'answer_held', held_reason: 'correction_unavailable', question: 'An agent reply could not be delivered.' },
   { ...base, id: 'rec3', kind: 'recovery', question: 'Recovery nobody here can decide', can_decide: false },
   { ...base, id: 'del1', kind: 'delivery_failed', question: 'An agent reply could not be delivered.', held_reason: 'room_closed', room_lifecycle: 'closed', candidate_preview: '{"messages":[{"body":"Hello there"}]}' },
   { ...base, id: 'bnd1', kind: 'approval', boundary_pending: true, boundary_machine: 'Remote', boundary_path: '/work', boundary_requester: 'lead', question: 'Approve agent on remote machine?' },
@@ -176,8 +178,8 @@ async function main() {
     {
       const page = await mount();
       await waitList(page);
-      assert.deepEqual(await page.$$eval('.inbox-group', groups => groups.map(group => [group.querySelector('h2').textContent, group.querySelectorAll('.inbox-card').length])), [['Alpha / Fix login', 10], ['Usages', 1], ['Beta / Docs', 1]]);
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-count').textContent, document.querySelector('#inbox-count').hidden, document.querySelector('#inbox-toggle').title, document.title]), ['12', false, 'Inbox, 12 waiting', '(12) aimebu']);
+      assert.deepEqual(await page.$$eval('.inbox-group', groups => groups.map(group => [group.querySelector('h2').textContent, group.querySelectorAll('.inbox-card').length])), [['Alpha / Fix login', 12], ['Usages', 1], ['Beta / Docs', 1]]);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-count').textContent, document.querySelector('#inbox-count').hidden, document.querySelector('#inbox-toggle').title, document.title]), ['14', false, 'Inbox, 14 waiting', '(14) aimebu']);
       const cards = await summary(page);
       const by = id => cards.find(card => card.id === id);
       assert.deepEqual([by('q1').kind, by('q1').buttons, by('q1').extra[5]], ['Question', ['View in room', 'Option A', 'Option B', 'Send answer', 'Dismiss'], true]);
@@ -186,6 +188,7 @@ async function main() {
       assert.deepEqual([by('rec1').kind, by('rec1').buttons, by('rec1').evidence, by('rec1').extra.slice(0, 3)], ['Recovery', ['View in room', 'Resume', 'Retry', 'Abandon'], ['Work may have partially completed.'],
         ['Resume may repeat an action if the diagnostic missed an effect. Retry repeats the task.', 'Details', 'status: clean\nchecked: Yes\nfiles: 3']]); // the diagnostic report is the first labelled text under Details
       assert.deepEqual([by('rec2').buttons, by('rec2').extra[0]], [['View in room', 'Override', 'Abandon'], 'The old process may still be running. Override can overlap it and repeat an action.']);
+      assert.deepEqual([by('rec4').buttons, by('del2').buttons], [['View in room', 'Restart', 'Abandon'], ['View in room', 'Retry', 'Abandon']], 'a broken session offers a fresh session, a held answer offers a retry');
       assert.deepEqual([by('rec3').buttons, by('rec3').evidence], [['View in room'], ['No diagnostic report is available yet.', 'A project owner or operator must decide this recovery item.']]);
       assert.deepEqual([by('del1').kind, by('del1').kindClass, by('del1').buttons, by('del1').evidence, by('del1').extra[3]], ['Delivery failed', 'inbox-kind-error', ['View in room', 'Dismiss'], ['The room was archived before this reply could be posted.', 'Hello there'], 'In archived room']);
       assert.deepEqual([by('bnd1').buttons, by('bnd1').evidence], [['Approve', 'Deny'], ['Requested by lead · Machine Remote · Folder /work']]);
@@ -231,7 +234,7 @@ async function main() {
       await page.evaluate(() => { window.__items = window.__items.filter(item => item.id !== 'q2').map(item => (item.id === 'rec1' ? { ...item, rev: 2 } : item)); window.__items.push({ project_id: 'p1', room_id: 'r1', id: 'new1', kind: 'question', question: 'Brand new', options: ['Ok'], rev: 1, state: 'open', can_decide: true }); return window.__inbox.refresh(); });
       assert.deepEqual(await page.evaluate(() => ({ kept: ['q1', 'ap1', 'ro1'].every(id => document.querySelector(`[data-inbox-id=${id}]`).__marked), typed: document.querySelector('[data-inbox-id=q1] .inbox-answer textarea').value, replaced: !document.querySelector('[data-inbox-id=rec1]').__marked,
         gone: !document.querySelector('[data-inbox-id=q2]'), groups: [...document.querySelectorAll('.inbox-group h2')].map(h => h.textContent), arrived: window.__arrived, count: document.querySelector('#inbox-count').textContent })),
-        { kept: true, typed: 'half an answer', replaced: true, gone: true, groups: ['Alpha / Fix login', 'Usages'], arrived: [['new1']], count: '12' });
+        { kept: true, typed: 'half an answer', replaced: true, gone: true, groups: ['Alpha / Fix login', 'Usages'], arrived: [['new1']], count: '14' });
       await page.close();
     }
     // Two reads answered out of order: the newer list is the one drawn.

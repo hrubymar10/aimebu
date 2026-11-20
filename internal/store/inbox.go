@@ -65,7 +65,12 @@ type inboxAsk struct {
 // agent asks that leave the Inbox but stay answerable in the chat.
 const inboxFromSQL = `FROM inbox_item i JOIN room r ON r.id=i.room_id JOIN membership member ON member.project_id=i.project_id
         AND member.user_id=?`
-const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')` + inboxVisibleSQL
+
+// A closed room's items never show: nothing in it can be acted on, and closing settles them (the usage kinds belong to the project, not the room).
+// A recovery still open there is one the settle pass left on purpose (a lost turn with no proof its process is gone): only a person can accept that
+// risk, so it stays visible.
+const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
+        AND (r.lifecycle<>'closed' OR i.kind IN ('usage_info','usage_limit','recovery'))` + inboxVisibleSQL
 const inboxSupersededWhereSQL = `WHERE i.state='superseded' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval') AND i.requester_kind='agent'` + inboxVisibleSQL
 const inboxVisibleSQL = `
 		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))

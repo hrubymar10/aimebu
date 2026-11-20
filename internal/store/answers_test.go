@@ -588,6 +588,7 @@ func TestStructuredAnswerHoldsUnavailableClosedAndCrossRoom(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s, f := answerFixture(t, test.noAction)
+			asLead(t, s, f)
 			raw := test.candidate(t, s, f)
 			receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
 			if err != nil || receipt.Result != test.reason && receipt.HeldReason != test.reason {
@@ -835,6 +836,7 @@ func TestAskWithAttentionControlsIsCommittedWithAWarning(t *testing.T) {
 func TestInvalidReplyWithoutCorrectionTellsTheAgentWhy(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
+	asLead(t, s, f)
 	ctx := context.Background()
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
@@ -859,6 +861,7 @@ func TestInvalidReplyWithoutCorrectionTellsTheAgentWhy(t *testing.T) {
 func TestCommittedReplyResolvesEarlierDeliveryFailuresInTheRoom(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
+	asLead(t, s, f)
 	ctx := context.Background()
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
 	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil || receipt.Result != "held" {
@@ -887,6 +890,7 @@ func TestCommittedReplyResolvesEarlierDeliveryFailuresInTheRoom(t *testing.T) {
 func TestHeldReplyNoteDoesNotChain(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
+	asLead(t, s, f)
 	ctx := context.Background()
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
 	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil || receipt.Result != "held" {

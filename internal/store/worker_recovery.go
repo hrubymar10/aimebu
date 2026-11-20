@@ -11,7 +11,7 @@ import (
 func (s *Store) SweepWorkerRecoveries(ctx context.Context) error {
 	return s.Tx(ctx, func(tx *Tx) error {
 		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT i.id FROM inbox_item i LEFT JOIN agent lead ON lead.id=i.recovery_lead_id LEFT JOIN settings_project sp ON sp.project_id=i.project_id
-			WHERE i.kind='recovery' AND i.state='open' AND i.lead_due_at IS NOT NULL
+			WHERE i.kind IN ('recovery','delivery_failed') AND i.state='open' AND i.lead_due_at IS NOT NULL
 			AND (i.lead_due_at<=? OR lead.id IS NULL OR lead.desired!='active' OR lead.recovery_block=1 OR lead.revoked_at IS NOT NULL OR sp.worker_recovery_to_lead=0) LIMIT 100`, timestamp())
 		if err != nil {
 			return err

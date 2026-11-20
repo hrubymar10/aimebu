@@ -63,7 +63,7 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 		} else if !role.Valid || role.String != "owner" && role.String != "operator" || leadDue.Valid {
 			return "", ErrForbidden
 		}
-		if kind != "recovery" {
+		if kind != "recovery" && kind != "delivery_failed" {
 			return "", ErrForbidden
 		}
 		if currentRev != rev {
@@ -91,7 +91,13 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 		}
 		decision := RecoveryDecision{ItemID: itemID, Choice: choice, Rev: rev + 1}
 		waitForQuiescence := false
-		if !source.Valid {
+		if ask.Phase == answerHeldReason || ask.Phase == brokenSessionReason {
+			if err := tx.decideAnswerRecovery(ask.Phase, source.String, projectID, roomID, agentID, choice); err != nil {
+				return "", err
+			}
+		} else if kind != "recovery" {
+			return "", ErrForbidden
+		} else if !source.Valid {
 			if choice != "continue" && choice != "abandon" {
 				return "", ErrInvalidTransition
 			}
@@ -283,4 +289,31 @@ func choiceOffered(options []string, choice string) bool {
 		}
 	}
 	return false
+}
+
+// decideAnswerRecovery applies a decision on a recovery raised for a worker's undeliverable answer (answer_held) or for a session that answers
+// with nothing (broken_session). Neither has a lost process to continue, so each has its own small set of choices.
+func (tx *Tx) decideAnswerRecovery(phase, turnID, projectID, roomID, agentID, choice string) error {
+	switch {
+	case phase == answerHeldReason && choice == "retry":
+		_, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", OnlyTargets: []string{agentID},
+			Body: heldReplyNotePrefix + "your last final answer could not be delivered. Send your final answer again as exactly one JSON object with a messages array."})
+		return err
+	case phase == brokenSessionReason && choice == "restart":
+		// The next turn starts a fresh native session (with the room's history) instead of resuming the one that answers with nothing.
+		if _, err := tx.Exec(`UPDATE session SET native_session_id=NULL,native_session_started_at=NULL,start_mode='fresh_with_history'
+			WHERE id=(SELECT session_id FROM turn WHERE id=?)`, turnID); err != nil {
+			return err
+		}
+		// The interrupted task runs again on it: the turn's notes go back to the queue (as a vanished native session does it).
+		if _, err := tx.Exec(`UPDATE note SET state='queued' WHERE id IN (SELECT note_id FROM turn_note WHERE turn_id=?) AND state IN ('dispatched','in_turn','done')`, turnID); err != nil {
+			return err
+		}
+		_, err := tx.AppendEvent(Event{Kind: "native_session_reset", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: turnID,
+			PayloadJSON: payloadJSON(map[string]string{"reason": brokenSessionReason})})
+		return err
+	case choice == "abandon":
+		return nil
+	}
+	return ErrInvalidTransition
 }

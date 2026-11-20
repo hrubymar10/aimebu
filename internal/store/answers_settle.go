@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -102,7 +103,9 @@ func (tx *Tx) ensureCorrectionTurn(parent answerTurn) error {
 	return err
 }
 
-func (tx *Tx) deliveryFailedInbox(parent answerTurn) error {
+// deliveryFailedInbox raises the card for a held answer. toLead is set only for invalid-answer holds, which a worker's lead settles first;
+// room_closed and not_member holds are never re-asked by an agent, so they stay with people.
+func (tx *Tx) deliveryFailedInbox(parent answerTurn, toLead bool) error {
 	var projectID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, parent.agentID).Scan(&projectID); err != nil {
 		return err
@@ -126,7 +129,18 @@ func (tx *Tx) deliveryFailedInbox(parent answerTurn) error {
 	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
 		return err
 	}
-	options, err := json.Marshal(inboxAsk{Text: "An agent reply could not be delivered.", Preview: candidatePreview(saved.CandidateRaw)})
+	ask := inboxAsk{Text: "An agent reply could not be delivered.", Preview: candidatePreview(saved.CandidateRaw)}
+	leadID := ""
+	if toLead {
+		var err error
+		if leadID, _, _, err = tx.workerRecoveryLead(projectID, parent.roomID, parent.agentID); err != nil {
+			return err
+		}
+	}
+	if leadID != "" {
+		ask.Phase, ask.Options = answerHeldReason, []string{"Retry", "Abandon"}
+	}
+	options, err := json.Marshal(ask)
 	if err != nil {
 		return err
 	}
@@ -136,6 +150,11 @@ func (tx *Tx) deliveryFailedInbox(parent answerTurn) error {
 	}
 	if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at)
 		VALUES (?,?,?,?,?,'agent',?,'delivery_failed',?,?)`, id, projectID, parent.roomID, parent.id, parent.agentID, parent.agentID, string(options), timestamp()); err != nil {
+		return err
+	}
+	if leadID != "" {
+		// A worker's undeliverable answer is the lead's to settle first; people see it only once the lead's interval passes (SweepWorkerRecoveries).
+		_, err := tx.handRecoveryToLead(id, projectID, parent.roomID, parent.agentID, parent.id, answerHeldReason)
 		return err
 	}
 	if _, err := tx.AppendEvent(Event{Kind: "inbox_item_created", ProjectID: projectID, RoomID: parent.roomID, AgentID: parent.agentID, TurnID: parent.id,
@@ -243,4 +262,88 @@ func (tx *Tx) partialHeldRow(parent answerTurn, input AnswerInput, receipt Answe
 	_, err = tx.InsertMessage(Message{RoomID: parent.roomID, AuthorKind: "system", AuthorID: "system",
 		Body: fmt.Sprintf("%s reply was only partly delivered: %s. The author was asked to resend it.", actor, partialHeldText(receipt.HeldMessages, len(input.Parsed.Messages)))})
 	return err
+}
+
+// repeatedEmptyAnswer says whether the agent's two latest answers were both empty (this turn's, already stored, and the one before) with no
+// tool activity in either turn: the session answers with nothing, and another correction note would only repeat it.
+func (tx *Tx) repeatedEmptyAnswer(parent answerTurn) (bool, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.turn_id,COALESCE(json_extract(r.result_json,'$.candidate_raw'),'') FROM receipt r JOIN turn t ON t.id=r.turn_id
+		WHERE t.agent_id=? AND r.answer_rev=0 AND r.turn_id<>? ORDER BY r.created_at DESC,r.id DESC LIMIT 1`, parent.agentID, parent.id)
+	if err != nil {
+		return false, err
+	}
+	var prevTurn, prevRaw string
+	found := false
+	for rows.Next() {
+		found = true
+		if err := rows.Scan(&prevTurn, &prevRaw); err != nil {
+			rows.Close()
+			return false, err
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || !found || strings.TrimSpace(prevRaw) != "" {
+		return false, err
+	}
+	var active bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM event WHERE turn_id IN (?,?) AND kind='supervisor_activity'
+		AND COALESCE(json_extract(payload_json,'$.summary'),'') NOT IN ('turn.started','system','rate_limit_event',''))`, parent.id, prevTurn).Scan(&active); err != nil {
+		return false, err
+	}
+	return !active, nil
+}
+
+// brokenSessionRecovery raises one recovery for the worker's lead: the session answers with nothing, restart it with a fresh session. A
+// worker with no lead to hand to gets a delivery_failed card for people instead.
+func (tx *Tx) brokenSessionRecovery(parent answerTurn) error {
+	var open bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM inbox_item WHERE agent_id=? AND state='open' AND kind='recovery' AND json_extract(options_json,'$.phase')=?)`, parent.agentID, brokenSessionReason).Scan(&open); err != nil || open {
+		return err
+	}
+	var projectID string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, parent.agentID).Scan(&projectID); err != nil {
+		return err
+	}
+	leadID, _, _, err := tx.workerRecoveryLead(projectID, parent.roomID, parent.agentID)
+	if err != nil {
+		return err
+	}
+	if leadID == "" {
+		return tx.deliveryFailedInbox(parent, false)
+	}
+	options, err := json.Marshal(inboxAsk{Text: "The agent answered twice in a row with an empty answer and no tool activity: its session looks broken.",
+		Options: []string{"Restart", "Abandon"}, Phase: brokenSessionReason})
+	if err != nil {
+		return err
+	}
+	id, err := newID("inb")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at)
+		VALUES (?,?,?,?,?,'agent',?,'recovery',?,?)`, id, projectID, parent.roomID, parent.id, parent.agentID, parent.agentID, string(options), timestamp()); err != nil {
+		return err
+	}
+	_, err = tx.handRecoveryToLead(id, projectID, parent.roomID, parent.agentID, parent.id, brokenSessionReason)
+	return err
+}
+
+// TurnExitEvidence returns the harness exit code and the last lines of its stderr that the turn's latest process-exit report carried, or
+// "unknown" and an empty tail while nothing has been reported yet (a warm process answers before it exits).
+func (s *Store) TurnExitEvidence(ctx context.Context, turnID string) (exitCode, stderrTail string, err error) {
+	var code, evidence sql.NullString
+	err = s.readDB.QueryRowContext(ctx, `SELECT json_extract(payload_json,'$.exit_code'),json_extract(payload_json,'$.evidence') FROM event
+		WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, turnID).Scan(&code, &evidence)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "unknown", "", err
+	}
+	if !code.Valid {
+		return "unknown", "", nil
+	}
+	lines := strings.Split(strings.TrimSpace(evidence.String), "\n")
+	if len(lines) > 5 {
+		lines = lines[len(lines)-5:]
+	}
+	return code.String, strings.Join(lines, "\n"), nil
 }

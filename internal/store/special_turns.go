@@ -76,7 +76,7 @@ func (tx *Tx) abandonSpecialTurn(id, reason string) error {
 		if err := tx.settleAnswerTurn(parent); err != nil {
 			return err
 		}
-		if err := tx.deliveryFailedInbox(parent); err != nil {
+		if err := tx.deliveryFailedInbox(parent, true); err != nil {
 			return err
 		}
 	}

@@ -928,6 +928,15 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 			return AgentCard{}, err
 		}
 	}
+	if desired == "stopped" {
+		// What waited on this agent in the Inbox cannot be acted on any more; settling it may be what confirms the stop, so the card reads it back.
+		if err := tx.settleAgentInbox(id); err != nil {
+			return AgentCard{}, err
+		}
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT observed FROM agent WHERE id=?`, id).Scan(&observed); err != nil {
+			return AgentCard{}, err
+		}
+	}
 	if _, err := tx.AppendEvent(Event{Kind: "agent_control_requested", ProjectID: projectID, AgentID: id,
 		PayloadJSON: payloadJSON(map[string]string{"desired": desired, "actor_kind": actorKind, "actor_id": actorID})}); err != nil {
 		return AgentCard{}, err

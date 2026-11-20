@@ -421,8 +421,18 @@ agent receives a recovery item without starting a diagnostic, and
 Resume/Retry are unavailable until it is active again. A continuation from a
 lost turn waits for positive process quiescence: a supervisor hello reporting
 that process gone, or its recorded exit/kill. Journal absence after replacement
-does not count. The owner sees a waiting item and may explicitly override the
-overlap risk; the actor and risk are recorded. An intact journal that proves a
+does not count. A hello records that evidence for every unsettled lost turn the
+journal vouches for (a turn lost in the same hello, with an intact journal that
+shows the process gone, counts too), whether or not a continuation exists yet:
+the decision usually comes after that hello, and a restart used to leave it
+waiting for a second hello that told it nothing new. When nothing proved the
+process gone, the waiting item says why (the journal was replaced, or no report
+has covered the turn since it was lost). The owner sees a waiting item and may
+explicitly override the overlap risk; the actor and risk are recorded. The lead
+never decides it: the overlap risk is a person's call. The supervisor does not
+confirm the old process by pid: an embedded supervisor's turns end with the
+server, and its journal says so on the next hello; a replaced journal has no
+record at all, which is why that case needs a decision. An intact journal that proves a
 continuation never started replaces it with another linked continuation and
 preserves the recovery evidence while the agent remains active. If the agent
 was stopped before hello, its notes are aborted and the stop is confirmed.

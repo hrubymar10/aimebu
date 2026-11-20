@@ -223,12 +223,14 @@ func TestStopAbandonsUnsentDiagnosticThroughParentCleanup(t *testing.T) {
 	if err := s.Tx(ctx, func(tx *Tx) error { _, err := tx.SetAgentDesired(f.agent.ID, owner, "stopped", 0); return err }); err != nil {
 		t.Fatal(err)
 	}
+	// The stop settles the recovery: nobody is left to continue the turn, so there is nothing for a person to decide.
 	items, err := s.InboxForUser(ctx, owner)
-	if err != nil || len(items) != 1 || items[0].TurnID != f.turn.ID {
-		t.Fatalf("stopped diagnostic recovery=%+v %v", items, err)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("stopped agent's recovery still listed=%+v %v", items, err)
 	}
-	if _, _, err := s.DecideRecovery(ctx, items[0].ID, owner, "abandon-stopped-diagnostic", "abandon", int(items[0].Rev)); err != nil {
-		t.Fatalf("decision after stop=%v", err)
+	var state, by string
+	if err := s.db.QueryRow(`SELECT state,resolved_by FROM inbox_item WHERE turn_id=? AND kind='recovery'`, f.turn.ID).Scan(&state, &by); err != nil || state != "resolved" || by != "system (agent stopped)" {
+		t.Fatalf("recovery state=%q by=%q %v", state, by, err)
 	}
 }
 

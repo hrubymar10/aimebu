@@ -46,7 +46,7 @@ func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" || len(req.Note) > 2000 {
+	if req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "restart" || len(req.Note) > 2000 {
 		apiError(w, 400, "invalid_request", "choice or note invalid")
 		return
 	}

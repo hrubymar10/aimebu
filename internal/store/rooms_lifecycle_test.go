@@ -76,15 +76,20 @@ func TestRoomCloseCascadeReopenAndInbox(t *testing.T) {
 	if _, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, ParentID: parent.ID, Kind: "task", Title: "late", CreatedBy: "usr_test"}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("created child under closed room: %v", err)
 	}
-	for _, check := range []struct{ kind, state string }{{"question", "withdrawn"}, {"approval", "withdrawn"}, {"recovery", "open"}} {
+	for _, check := range []struct{ kind, state string }{{"question", "withdrawn"}, {"approval", "withdrawn"}, {"recovery", "resolved"}} {
 		var state string
 		if err := s.db.QueryRow(`SELECT state FROM inbox_item WHERE id=?`, "inb_"+check.kind).Scan(&state); err != nil || state != check.state {
 			t.Fatalf("%s state=%q err=%v", check.kind, state, err)
 		}
 	}
 	inbox, err := s.InboxForUser(ctx, "usr_test")
-	if err != nil || len(inbox) != 1 || inbox[0].RoomLifecycle != "closed" || inbox[0].Kind != "recovery" {
-		t.Fatalf("archived recovery inbox=%+v err=%v", inbox, err)
+	// Closing the room settled the recovery, and a closed room's items are never listed.
+	if err != nil || len(inbox) != 0 {
+		t.Fatalf("archived room inbox=%+v err=%v", inbox, err)
+	}
+	var settledBy string
+	if err := s.db.QueryRow(`SELECT resolved_by FROM inbox_item WHERE id='inb_recovery'`).Scan(&settledBy); err != nil || settledBy != "system (room closed)" {
+		t.Fatalf("recovery resolved_by=%q err=%v", settledBy, err)
 	}
 	if _, err := s.ReopenRoom(ctx, parent.ID, "usr_test", 1); !errors.Is(err, ErrStaleRev) {
 		t.Fatalf("stale reopen error=%v", err)

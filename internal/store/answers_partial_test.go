@@ -119,6 +119,8 @@ func TestAllMessagesRefusedHoldsWholeAnswer(t *testing.T) {
 func TestStructuralErrorStillHoldsMixedReplyWhole(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
+	// As a lead, so the held reply also reaches people (a worker's goes back to it as a note only).
+	asLead(t, s, f)
 	other := otherProjectRoom(t, s)
 	// A bad target beside a bad reply reference is still a shape error: nothing is delivered.
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"ok"},{"room":%q,"body":"elsewhere"},{"room":%q,"body":"x","reply_to":"msg_nope"}]}`, f.room.ID, other.ID, f.room.ID)

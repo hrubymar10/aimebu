@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"net/http"
 	"testing"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
@@ -70,5 +73,50 @@ func TestAgentRecoveryToolRequiresAssignedProjectLead(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("lead replay status=%d", resp.StatusCode)
+	}
+}
+
+// The overlap risk of a recovery waiting for the old process is a person's call: a lead may not override it through the tool.
+func TestAgentRecoveryToolRefusesOverride(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	_, leadKey := f.createToolAgentNamed(t, "role_leader_default", "overridelead")
+	path := "/api/agent/recoveries/inb_missing/decision"
+	resp := f.toolPost(t, path, leadKey, "override-refused", map[string]string{"choice": "override"})
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("override status=%d, want 400", resp.StatusCode)
+	}
+	resp = f.toolPost(t, path, leadKey, "restart-missing", map[string]string{"choice": "restart"})
+	resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("restart on a missing item status=%d, want 404 (the choice is valid)", resp.StatusCode)
+	}
+}
+
+// A person may pick restart (the broken-session choice) on the Inbox decision route: it fails on the item that does not exist, not on the choice.
+func TestInboxDecisionAcceptsRestart(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	post := func(choice string) int {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"choice": choice, "rev": 0})
+		req, _ := http.NewRequest("POST", f.http.URL+"/api/inbox/inb_missing/decision", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", f.csrf)
+		req.Header.Set("Idempotency-Key", "restart-"+choice)
+		req.AddCookie(f.cookie)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if status := post("restart"); status != 404 {
+		t.Fatalf("restart on a missing item status=%d, want 404 (the choice is valid)", status)
+	}
+	if status := post("bogus"); status != 400 {
+		t.Fatalf("made-up choice status=%d, want 400", status)
 	}
 }

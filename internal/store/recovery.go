@@ -280,38 +280,51 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 		id, projectID, roomID, originID, agentID, agentID, string(optionsBytes), timestamp()); err != nil {
 		return err
 	}
-	leadID, leadRoom, due, err := tx.workerRecoveryLead(projectID, roomID, agentID)
-	if err != nil {
-		return err
-	}
-	if leadID != "" {
-		if _, err := tx.Exec(`UPDATE inbox_item SET recovery_lead_id=?,lead_due_at=? WHERE id=?`, leadID, due, id); err != nil {
-			return err
-		}
-		var evidence, exitCode sql.NullString
-		err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.evidence'),json_extract(payload_json,'$.exit_code') FROM event WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, originID).Scan(&evidence, &exitCode)
-		if err != nil && err != sql.ErrNoRows {
-			return err
-		}
-		body := fmt.Sprintf("Recovery handed to the lead for agent %s in room %s: %s (exit code %s). Evidence: %s. [Worker output](/api/rooms/%s/agents/%s/output). Item ID: %s.", agentID, roomID, reason, exitCode.String, evidence.String, roomID, agentID, id)
-		if leadRoom != roomID {
-			if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: "Recovery handed to the lead", OnlyTargets: []string{}}); err != nil {
-				return err
-			}
-		}
-		message, err := tx.InsertMessage(Message{RoomID: leadRoom, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{}})
-		if err != nil {
-			return err
-		}
-		if _, err := tx.InsertNote(Note{AgentID: leadID, MessageID: message.ID, RoomID: leadRoom, WakeReason: "worker_recovery"}); err != nil {
-			return err
-		}
-		_, err = tx.AppendEvent(Event{Kind: "recovery_handed_to_lead", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "lead_id": leadID, "reason": reason})})
+	handed, err := tx.handRecoveryToLead(id, projectID, roomID, agentID, originID, reason)
+	if err != nil || handed {
 		return err
 	}
 	_, err = tx.AppendEvent(Event{Kind: "inbox_item_created", ProjectID: projectID, RoomID: roomID,
 		AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "kind": "recovery", "reason": reason})})
 	return err
+}
+
+// handRecoveryToLead routes a just-inserted worker recovery item to the project lead (see workerRecoveryLead) and wakes it with a note.
+// It reports false when there is no lead to hand it to, and the item then stays with the people.
+func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reason string) (bool, error) {
+	leadID, leadRoom, due, err := tx.workerRecoveryLead(projectID, roomID, agentID)
+	if err != nil || leadID == "" {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE inbox_item SET recovery_lead_id=?,lead_due_at=? WHERE id=?`, leadID, due, id); err != nil {
+		return false, err
+	}
+	var evidence, exitCode sql.NullString
+	err = tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.evidence'),json_extract(payload_json,'$.exit_code') FROM event WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, originID).Scan(&evidence, &exitCode)
+	if err != nil && err != sql.ErrNoRows {
+		return false, err
+	}
+	body := fmt.Sprintf("Recovery handed to the lead for agent %s in room %s: %s (exit code %s). Evidence: %s. [Worker output](/api/rooms/%s/agents/%s/output). Item ID: %s.", agentID, roomID, reason, exitCode.String, evidence.String, roomID, agentID, id)
+	switch reason {
+	case answerHeldReason:
+		body = fmt.Sprintf("Agent %s in room %s sent a final answer that could not be delivered, and a correction note did not settle it. Item ID: %s. resolve_recovery with choice \"retry\" asks it once more to resend; \"abandon\" drops the held answer. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
+	case brokenSessionReason:
+		body = fmt.Sprintf("Agent %s in room %s answered twice in a row with an empty answer and no tool activity: its session looks broken. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session; \"abandon\" leaves it as it is. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
+	}
+	if leadRoom != roomID {
+		if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: "Recovery handed to the lead", OnlyTargets: []string{}}); err != nil {
+			return false, err
+		}
+	}
+	message, err := tx.InsertMessage(Message{RoomID: leadRoom, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{}})
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.InsertNote(Note{AgentID: leadID, MessageID: message.ID, RoomID: leadRoom, WakeReason: "worker_recovery"}); err != nil {
+		return false, err
+	}
+	_, err = tx.AppendEvent(Event{Kind: "recovery_handed_to_lead", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "lead_id": leadID, "reason": reason})})
+	return err == nil, err
 }
 
 func (tx *Tx) workerRecoveryLead(projectID, roomID, workerID string) (string, string, string, error) {
@@ -524,6 +537,16 @@ func (tx *Tx) createRecoveryContinuation(originID, choice, actorID, diagnosticID
 	return err
 }
 
+// quiescenceWaitReason is the reason a recovery item carries (and a lead is told) while a continuation waits for the old process to be confirmed gone.
+const quiescenceWaitReason = "quiescence_wait"
+
+// answerHeldReason and brokenSessionReason name the recoveries raised for a worker's undeliverable answer and for a session that answers
+// with nothing; each has its own phase and choices (see decideAnswerRecovery).
+const (
+	answerHeldReason    = "answer_held"
+	brokenSessionReason = "broken_session"
+)
+
 func (tx *Tx) createQuiescenceWaitingItem(originID, childID string) error {
 	var projectID, roomID, agentID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,t.room_id,t.agent_id FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, originID).
@@ -534,7 +557,17 @@ func (tx *Tx) createQuiescenceWaitingItem(originID, childID string) error {
 	if err != nil {
 		return err
 	}
-	options, err := json.Marshal(inboxAsk{Text: "Waiting for the old process to be confirmed gone before continuing. An owner may explicitly override the overlap risk or abandon the continuation.",
+	// Why nothing proved the old process gone, so the person or lead deciding sees it: a replaced journal has no record of the process at all,
+	// otherwise no supervisor hello or exit report has covered it since the turn was lost.
+	var replaced bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM event WHERE turn_id=? AND kind='supervisor_journal_changed')`, originID).Scan(&replaced); err != nil {
+		return err
+	}
+	why := "no supervisor report of the process ending has arrived since the turn was lost"
+	if replaced {
+		why = "the supervisor's journal was replaced, so nothing records whether the process is still running"
+	}
+	options, err := json.Marshal(inboxAsk{Text: "Waiting for the old process to be confirmed gone before continuing (" + why + "). Override the overlap risk or abandon the continuation.",
 		Options: []string{"Override", "Abandon"}, Phase: "quiescence_wait"})
 	if err != nil {
 		return err
@@ -543,8 +576,9 @@ func (tx *Tx) createQuiescenceWaitingItem(originID, childID string) error {
 		VALUES (?,?,?,?,?,'agent',?,'recovery',?,?)`, id, projectID, roomID, originID, agentID, agentID, string(options), timestamp()); err != nil {
 		return err
 	}
+	// The overlap risk (the old process may still be running) is a person's call, not the lead's: the item goes to people, never to the lead.
 	_, err = tx.AppendEvent(Event{Kind: "inbox_item_created", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: originID,
-		PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "kind": "recovery", "phase": "quiescence_wait", "continuation_turn_id": childID})})
+		PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "kind": "recovery", "phase": "quiescence_wait", "continuation_turn_id": childID, "why": why})})
 	return err
 }
 
