@@ -940,8 +940,9 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   rooms."; for a closed room, to use an open room of the project; otherwise,
   to send it to a room of the project the agent is a member of. A replay of
   the same digest returns the stored receipt, so the delivered part is never
-  delivered twice; the committed reply clears earlier delivery failures only
-  for the rooms it actually posted to. Release or retry of the held part needs
+  delivered twice; the committed reply clears earlier delivery failures as
+  described above (by parent turn, by the rooms it posted to, and by a
+  card's recorded intended target rooms, any of them). Release or retry of the held part needs
   the agent to resend just that message. Closing a room can move a still
   `proposed` row directly to `held(room_closed)`. Correction is only for
   repairable formatting/reference errors.

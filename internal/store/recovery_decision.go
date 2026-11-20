@@ -90,7 +90,7 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 				return "", ErrForbidden
 			}
 			if state == "resolved" || state == "withdrawn" {
-				return "", tx.settledRecoveryError(itemID, state)
+				return "", tx.settledRecoveryError(itemID, agentID, state)
 			}
 			if !leadDue.Valid {
 				return "", ErrForbidden
@@ -315,11 +315,11 @@ var ErrChoiceNotOffered = errors.New("choice_not_offered")
 
 // settledRecoveryError reads who settled an item and how, for the error a late lead decision gets (see AlreadySettledError). An item with no
 // recorded resolver (nothing should settle one without) still says it is over.
-func (tx *Tx) settledRecoveryError(itemID, state string) error {
+func (tx *Tx) settledRecoveryError(itemID, agentID, state string) error {
 	var by, how sql.NullString
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(resolved_by,''),
-		(SELECT json_extract(payload_json,'$.choice') FROM event WHERE kind='inbox_item_resolved' AND json_extract(payload_json,'$.inbox_item_id')=?
-			ORDER BY seq DESC LIMIT 1) FROM inbox_item WHERE id=?`, itemID, itemID).Scan(&by, &how)
+		(SELECT json_extract(payload_json,'$.choice') FROM event WHERE agent_id=? AND kind='inbox_item_resolved' AND json_extract(payload_json,'$.inbox_item_id')=?
+			ORDER BY seq DESC LIMIT 1) FROM inbox_item WHERE id=?`, agentID, itemID, itemID).Scan(&by, &how)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
