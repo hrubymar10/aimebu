@@ -355,6 +355,11 @@ func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title, purpose 
 		Body: fmt.Sprintf("%s created task room %s", actor, room.Title)}); err != nil {
 		return Room{}, err
 	}
+	// The response carries the real member count, so the creator can see it
+	// was joined and may brief the room from its final answer.
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT `+roomMemberCountSQL+` FROM room r WHERE r.id=?`, room.ID).Scan(&room.MemberCount); err != nil {
+		return Room{}, err
+	}
 	return room, nil
 }
 

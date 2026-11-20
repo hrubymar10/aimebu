@@ -1106,11 +1106,14 @@ with a short echo of the latest human message for local demos. See
 [the supervisor guide](supervisor.md).
 The supervisor also creates a private per-agent config for `aimebu
 agent-tools`, a stdio MCP server with `list_rooms`, `list_agents`,
-`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `run_command`, `list_commands`, `command_log`, `cancel_command`, `spawn_agent`, `stop_agent`, `set_role`,
+`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `delete_schedule`, `usage_left`, `run_command`, `list_commands`, `command_log`, `cancel_command`, `spawn_agent`, `stop_agent`, `set_role`,
 `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall`,
 `attachment_get`, `message_get` and `react`. Its HTTP routes use the agent's key and scope
-reads and mutations to that agent's project; only an active lead can manage
-rooms or agents, and only an active lead can start a private chat with an agent
+reads and mutations to that agent's project; only an active lead, or an
+active coordinator the flow lets manage agents (the dispatcher in the
+leader-dispatcher flow), can manage rooms, schedules or agents. The
+coordinator may `dm_agent` only agents of its own project that it manages;
+only an active lead can start a private chat with an agent
 of another project (`dm_agent`; the server checks that the people behind the
 turn may reach that project, see [the API](api.md)). Any active agent can
 message a person of its own project with `dm_human`.

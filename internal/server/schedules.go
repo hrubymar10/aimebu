@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -128,32 +129,71 @@ func scheduleError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "schedule_limit", "room has 20 active schedules")
 	case errors.Is(err, store.ErrStaleRev):
 		apiError(w, 409, "stale_rev", "schedule changed")
+	case errors.Is(err, store.ErrForbidden):
+		apiError(w, 403, "forbidden", "an agent may delete only a schedule an agent created")
+	case errors.Is(err, sql.ErrNoRows):
+		apiError(w, 404, "not_found", "schedule not found in this room")
 	default:
 		fail(w, err)
 	}
 }
 
-func (s *Server) agentToolSchedules(w http.ResponseWriter, r *http.Request) {
-	caller := agentToolCaller(r)
+// agentScheduleRoom checks that the caller may see a room's schedules: a task or home room of its own project that it belongs to.
+func (s *Server) agentScheduleRoom(w http.ResponseWriter, r *http.Request, caller store.AgentToolIdentity) (store.Room, bool) {
 	roomID := r.PathValue("room")
 	room, err := s.Store.RoomByID(r.Context(), roomID)
 	if err != nil {
 		fail(w, err)
-		return
+		return store.Room{}, false
 	}
 	if room.ProjectID != caller.ProjectID || !store.SchedulableRoomKind(room.Kind) {
 		apiError(w, 403, "forbidden", "task or home room in your project required")
-		return
+		return store.Room{}, false
 	}
 	joined, err := s.Store.AgentInRoom(r.Context(), caller.ID, roomID)
 	if err != nil {
 		fail(w, err)
-		return
+		return store.Room{}, false
 	}
 	if !joined {
 		apiError(w, 403, "forbidden", "room membership required")
+		return store.Room{}, false
+	}
+	return room, true
+}
+
+// scheduleManager is the active lead or an active flow coordinator (the dispatcher in the leader-dispatcher flow): the agents that may
+// create and delete schedules in the rooms they belong to.
+func scheduleManager(w http.ResponseWriter, caller store.AgentToolIdentity) bool {
+	if (caller.IsLead || caller.CanManage) && caller.Desired == "active" {
+		return true
+	}
+	apiError(w, 403, "forbidden", "active lead or coordinator required")
+	return false
+}
+
+// agentToolDeleteSchedule is the delete_schedule tool. An agent removes only schedules agents created; a person's schedule stays theirs.
+func (s *Server) agentToolDeleteSchedule(w http.ResponseWriter, r *http.Request) {
+	caller := agentToolCaller(r)
+	room, ok := s.agentScheduleRoom(w, r, caller)
+	if !ok || !scheduleManager(w, caller) {
 		return
 	}
+	id := r.PathValue("id")
+	if err := s.Store.Tx(r.Context(), func(tx *store.Tx) error { return tx.DeleteScheduleAsAgent(id, room.ID) }); err != nil {
+		scheduleError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"deleted": id})
+}
+
+func (s *Server) agentToolSchedules(w http.ResponseWriter, r *http.Request) {
+	caller := agentToolCaller(r)
+	room, ok := s.agentScheduleRoom(w, r, caller)
+	if !ok {
+		return
+	}
+	roomID := room.ID
 	if r.Method == http.MethodGet {
 		items, err := s.Store.ListSchedules(r.Context(), roomID)
 		if err != nil {
@@ -163,8 +203,7 @@ func (s *Server) agentToolSchedules(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"schedules": items})
 		return
 	}
-	if !caller.IsLead || caller.Desired != "active" {
-		apiError(w, 403, "forbidden", "active lead required")
+	if !scheduleManager(w, caller) {
 		return
 	}
 	key := r.Header.Get("Idempotency-Key")

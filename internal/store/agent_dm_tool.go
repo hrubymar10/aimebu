@@ -33,7 +33,8 @@ type AgentDMResult struct {
 }
 
 // DMAgentAsTool is a lead's dm_agent call: it opens (or finds) the chat with the target agent, whatever project the target is in, and posts
-// the message into it, which wakes the target. Everything is decided here, never by the model: only an active lead may start a chat; the
+// the message into it, which wakes the target. A flow coordinator that is not a lead (the dispatcher) may message only agents of its own
+// project that it may manage. Everything is decided here, never by the model: only an active lead or coordinator may start a chat; the
 // people who caused the lead's turn must reach the target's project (see leadMayReach); the target must be live and its project not
 // archived; and a lead opens only so many new chats an hour and a chat takes only so many turns.
 func (tx *Tx) DMAgentAsTool(callerID, targetID, body string) (AgentDMResult, error) {
@@ -46,21 +47,41 @@ func (tx *Tx) DMAgentAsTool(callerID, targetID, body string) (AgentDMResult, err
 		}
 		return AgentDMResult{}, err
 	}
-	if !lead || callerDesired != "active" {
+	if callerDesired != "active" {
 		return AgentDMResult{}, ErrForbidden
+	}
+	if !lead {
+		// A coordinator the flow lets manage agents (the dispatcher in the
+		// leader-dispatcher flow) may message agents of its own project that
+		// it may manage; only a lead reaches another project.
+		if err := tx.authorizeSpawnActor(callerProject, "agent", callerID, false); err != nil {
+			return AgentDMResult{}, err
+		}
 	}
 	if targetID == callerID {
 		return AgentDMResult{}, ErrInvalidTransition
 	}
-	var targetProject, targetDesired string
+	var targetProject, targetDesired, targetRole string
 	var targetRevoked, targetArchived bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.desired,a.revoked_at IS NOT NULL,p.archived_at IS NOT NULL FROM agent a JOIN project p ON p.id=a.project_id WHERE a.id=?`, targetID).
-		Scan(&targetProject, &targetDesired, &targetRevoked, &targetArchived); err != nil {
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.desired,a.revoked_at IS NOT NULL,p.archived_at IS NOT NULL,r.role_key
+		FROM agent a JOIN project p ON p.id=a.project_id JOIN role r ON r.id=a.role_id WHERE a.id=?`, targetID).
+		Scan(&targetProject, &targetDesired, &targetRevoked, &targetArchived, &targetRole); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// An agent that does not exist answers like one the lead may not reach, so an ID cannot be probed.
 			return AgentDMResult{}, ErrForbidden
 		}
 		return AgentDMResult{}, err
+	}
+	if !lead {
+		if targetProject != callerProject {
+			return AgentDMResult{}, ErrForbidden
+		}
+		if err := tx.flowActorMayTargetAgent(callerProject, callerID, targetID, targetRole); err != nil {
+			if errors.Is(err, ErrTeamFlowRule) {
+				return AgentDMResult{}, ErrForbidden
+			}
+			return AgentDMResult{}, err
+		}
 	}
 	allowed, err := tx.leadMayReach(callerID, callerProject, targetProject)
 	if err != nil {

@@ -149,7 +149,7 @@ func (s *Server) agentToolCloseRoom(w http.ResponseWriter, r *http.Request) {
 func toolRoomError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrForbidden):
-		apiError(w, 403, "forbidden", "lead is not a member of the parent or task room")
+		apiError(w, 403, "forbidden", "you must belong to the parent or task room, or have created the task room")
 	case errors.Is(err, sql.ErrNoRows):
 		apiError(w, 404, "not_found", "room not found")
 	case errors.Is(err, store.ErrConflict):

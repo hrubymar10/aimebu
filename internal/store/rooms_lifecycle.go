@@ -202,11 +202,14 @@ func (tx *Tx) roomLifecyclePermission(projectID, actor string) error {
 // A private chat belongs to its human peer. The project owner may also
 // archive or reopen it, but other project members may not manage it.
 func (tx *Tx) roomClosePermission(projectID, roomID, kind, actor string) error {
+	// An agent manages a task room it belongs to or one it created; a
+	// coordinator may have left a room it opened, or never been joined to it.
 	var joined, active bool
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT
-		EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=? AND m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL),
+		EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=? AND m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL)
+			OR EXISTS(SELECT 1 FROM room x WHERE x.id=? AND x.created_by=a.id),
 		a.desired='active' AND a.revoked_at IS NULL
-		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.project_id=?`, roomID, actor, projectID).
+		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.project_id=?`, roomID, roomID, actor, projectID).
 		Scan(&joined, &active)
 	if err == nil {
 		if kind == "task" && joined && active {

@@ -130,7 +130,14 @@ Projects, rooms, people
   rules grant its task-room and agent-management authority. Team setup puts
   the dispatcher in routing and the keyed `general`, the project-wide room shared with
   the leader for announcements and coordination. It joins task rooms it
-  creates or explicitly joins, never home. In flows A and B the leader belongs
+  creates or explicitly joins, never home. The dispatcher manages what it
+  starts: it may create, list and delete schedules in rooms it belongs to,
+  `dm_agent` agents of its own project it manages, close task rooms it belongs
+  to or created, and stop the agents in them. Any flow coordinator, the
+  leader included, may also stop an agent it spawned or whose home room it
+  created even when the current flow's spawn rules exclude that role, so
+  rooms and workers a leader started before a switch to this flow stay its to
+  close and stop. In flows A and B the leader belongs
   to `general`; in the dispatcher flow, specs still go through routing and
   task work stays in task rooms.
   In this flow, the leader's specification states worker count and whether

@@ -802,8 +802,12 @@ an active leader, or an active coordinator allowed by the selected flow's
 spawn rules. `spawn_agent` also requires the role's spawn capability and an
 allowed actor-to-target role pair. In Custom, the prior lead rules apply.
 `POST /api/agent/dms` (`{target_agent_id,body}`, `Idempotency-Key` required; the
-`dm_agent` tool, active lead only) sends a private message to any agent in any
-project and returns `{room_id,message_id,no,created}`. Who may is decided by the
+`dm_agent` tool) sends a private message and returns
+`{room_id,message_id,no,created}`. An active lead may message any agent in any
+project. An active flow coordinator that is not a lead (the dispatcher in the
+leader-dispatcher flow) may message only an agent of its own project that it
+manages: a role its flow's spawn rules let it target, an agent it spawned, or
+an agent whose home room it created; any other target answers 403. Who may is decided by the
 server in the same transaction, never the model: every person whose message
 caused the lead's current turn (and the turns it continues) must be an owner or
 operator of the target's project, or the instance owner; when no person caused
@@ -823,11 +827,24 @@ decides in the same transaction, never the model: a person who does not exist, i
 disabled or is not in the agent's project is 403 alike, so a login cannot be probed;
 409 `project_archived`; 429 `human_dm_cap` (20 messages from one agent into one chat
 per hour) and 429 `human_dm_fanout_cap` (10 new chats per agent per hour). Agent to
-agent stays `dm_agent`, lead only.
+agent stays `dm_agent`.
 `create_room` takes an optional `purpose` (`task`, the default, `research` or `general`; see `purpose` above; 400 `invalid_request` for another value), records the agent in `created_by` and joins eligible lead roles atomically (a project's leader is in every open room in Custom and Leader and workers; in Leader and dispatcher, the leader is confined to home and routing, while the dispatcher starts in routing and joins task rooms it creates or explicitly joins; general has no agent by default; private chats are not included), and
-posts one system notice in the parent room. `close_room` uses the same
+posts one system notice in the parent room. Its response carries the room's
+real `member_count`, which includes the creating agent. `close_room` accepts a
+task room the agent belongs to or created, and uses the same
 `lifecycle_rev`, child-room check, cascade option, grace period and control
-delivery as human archive. Repeated request keys replay the original result
+delivery as human archive. Stopping an agent (`stop_agent`, or the stops a
+room close makes) is allowed for a role the flow's spawn rules let the actor
+target, and also for an agent the actor spawned or whose home room it
+created, so a leader keeps control of its own pre-switch rooms and workers
+after a switch to the dispatcher flow; otherwise 409 `team_flow_rule`.
+`GET|POST /api/agent/rooms/{room}/schedules` (`list_schedules`,
+`create_schedule`) and `DELETE /api/agent/rooms/{room}/schedules/{id}`
+(`delete_schedule`, 200 `{deleted}`) require membership of a task or home room
+of the agent's project; creating and deleting also require an active lead or
+flow coordinator. An agent deletes only schedules agents created (403
+otherwise); an unknown schedule is 404 on both the agent and the people's
+delete route. Repeated request keys replay the original result
 without a second notice. Workers can list their rooms, check usage, and use
 memory, but cannot manage rooms and agents.
 The built-in lead role coordinates a home-room request through a new task room:

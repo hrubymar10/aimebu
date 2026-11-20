@@ -262,6 +262,28 @@ func (tx *Tx) flowActorMayTarget(projectID, actorID, targetRole string) error {
 	return ErrTeamFlowRule
 }
 
+// flowActorMayTargetAgent is flowActorMayTarget for an existing agent. An
+// actor that may manage agents under the current flow also keeps authority
+// over agents it spawned and agents whose home room it created, even when the
+// flow's spawn rules would not let it target that role. This keeps a leader's
+// pre-switch workers stoppable after a switch to the dispatcher flow, and lets
+// a coordinator wind down the task rooms it opened.
+func (tx *Tx) flowActorMayTargetAgent(projectID, actorID, targetID, targetRole string) error {
+	err := tx.flowActorMayTarget(projectID, actorID, targetRole)
+	if !errors.Is(err, ErrTeamFlowRule) {
+		return err
+	}
+	var own bool
+	if qerr := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent a LEFT JOIN room r ON r.id=a.home_room_id
+		WHERE a.id=? AND a.project_id=? AND (a.created_by=? OR r.created_by=?))`, targetID, projectID, actorID, actorID).Scan(&own); qerr != nil {
+		return qerr
+	}
+	if own {
+		return nil
+	}
+	return err
+}
+
 func flowRoomKind(kind, key, title string) string {
 	if kind == "home" {
 		return "home"

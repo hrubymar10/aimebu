@@ -51,9 +51,10 @@ var catalog = []tool{
 	{"room_history", "Read a page of messages in a project room. Private chats require current membership. Use before_no to page backward.", map[string]any{"type": "object", "properties": map[string]any{"room_id": map[string]string{"type": "string"}, "before_no": map[string]string{"type": "integer"}, "limit": map[string]string{"type": "integer"}}, "required": []string{"room_id"}}},
 	{"list_macros", "Read the shared composer macro key-to-text map. Macros are expanded only when a human selects one in the web composer.", empty},
 	{"list_schedules", "List schedules in a joined task room or the project home room, including their next run and last result.", map[string]any{"type": "object", "properties": map[string]any{"room_id": map[string]string{"type": "string"}}, "required": []string{"room_id"}}},
-	{"create_schedule", "Active lead only. Schedule a note to a room agent or the current lead. Kinds: once (at RFC3339), interval (at least 300 seconds), daily (HH:MM), weekly (HH:MM and weekday 0=Sunday), cron (cron: a 5-field expression `minute hour day-of-month month day-of-week` or @hourly/@daily/@weekly/@monthly/@yearly, with *, lists, ranges, steps and jan/mon names, for example `0 8,12,16,20 * * *`; when both day fields are restricted either one matches). Timezone is an IANA zone and civil times follow its DST: a skipped local time runs at the next valid minute, a repeated one runs once. Use a stable request_key.", map[string]any{"type": "object", "properties": map[string]any{
+	{"create_schedule", "Active lead, or the flow's coordinator (the dispatcher), in a room you belong to. Schedule a note to a room agent or the current lead. Kinds: once (at RFC3339), interval (at least 300 seconds), daily (HH:MM), weekly (HH:MM and weekday 0=Sunday), cron (cron: a 5-field expression `minute hour day-of-month month day-of-week` or @hourly/@daily/@weekly/@monthly/@yearly, with *, lists, ranges, steps and jan/mon names, for example `0 8,12,16,20 * * *`; when both day fields are restricted either one matches). Timezone is an IANA zone and civil times follow its DST: a skipped local time runs at the next valid minute, a repeated one runs once. Use a stable request_key.", map[string]any{"type": "object", "properties": map[string]any{
 		"room_id": map[string]string{"type": "string"}, "target_agent_id": map[string]string{"type": "string"}, "target_lead": map[string]string{"type": "boolean"}, "body": map[string]string{"type": "string"}, "kind": map[string]string{"type": "string"}, "timezone": map[string]string{"type": "string"}, "interval_seconds": map[string]string{"type": "integer"}, "local_time": map[string]string{"type": "string"}, "weekday": map[string]string{"type": "integer"}, "cron": map[string]string{"type": "string"}, "at": map[string]string{"type": "string"}, "request_key": map[string]string{"type": "string"},
 	}, "required": []string{"room_id", "body", "kind", "timezone", "request_key"}}},
+	{"delete_schedule", "Active lead, or the flow's coordinator (the dispatcher), in a room you belong to. Delete a schedule an agent created; a person's schedule stays theirs.", map[string]any{"type": "object", "properties": map[string]any{"room_id": map[string]string{"type": "string"}, "schedule_id": map[string]string{"type": "string"}}, "required": []string{"room_id", "schedule_id"}}},
 	{"usage_left", "Show remaining project agent slots, spawn rate capacity, and available provider quota.", empty},
 	{"run_command", "Start a long command that runs outside your turn, under the supervisor, in your own checkout: the same rights your own Bash has there, and nothing more. It keeps running while no turn runs; when it ends you are woken with a note carrying the exit code, the duration, the last lines of output and the path to the full log. At most two run at a time for you. Cwd stays inside your checkout. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"cmd": map[string]string{"type": "string"}, "cwd": map[string]string{"type": "string"},
@@ -68,14 +69,14 @@ var catalog = []tool{
 	{"cancel_command", "Cancel one of your running commands. Its end still wakes you with a note. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"job_id": map[string]string{"type": "string"}, "request_key": map[string]string{"type": "string"},
 	}, "required": []string{"job_id", "request_key"}}},
-	{"create_room", "Active lead only. Create a task room in your project. Omit parent_id to place it under the project home room. Set purpose to research for a read-only investigation that ends in a report (it shows with a magnifier and counts as done once the report is delivered), general for a project-wide or coordination room, or omit it for an ordinary task room. Join the room and announce it in the parent room. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"create_room", "Active lead, or the flow's coordinator (the dispatcher). Create a task room in your project. Omit parent_id to place it under the project home room (in the leader-dispatcher flow, under general). Set purpose to research for a read-only investigation that ends in a report (it shows with a magnifier and counts as done once the report is delivered), general for a project-wide or coordination room, or omit it for an ordinary task room. Join the room and announce it in the parent room. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"title": map[string]string{"type": "string"}, "parent_id": map[string]string{"type": "string"},
 		"purpose":     map[string]any{"type": "string", "enum": []string{"task", "research", "general"}, "description": "What the room is for; defaults to task. Fixed when the room is created"},
 		"worktree":    map[string]string{"type": "boolean", "description": "Create a Git worktree for this task room"},
 		"base_ref":    map[string]string{"type": "string", "description": "Committed base branch or ref; defaults to current HEAD"},
 		"request_key": map[string]string{"type": "string"},
 	}, "required": []string{"title", "request_key"}}},
-	{"dm_agent", "Active lead only. Send a private message to any agent, in this project or another, starting a chat with it the first time; the chat is shared by the two of you and its people, and kept apart from every project room. The target is woken under its own project and answers in the chat; its answer wakes you in the chat, where you may also report into your own project's rooms. The server decides whether you may message that agent from the people behind this turn, never the model. There is a limit on turns per chat and on new chats per hour. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"dm_agent", "Active lead: send a private message to any agent, in this project or another. The flow's coordinator (the dispatcher): send one to an agent of your project you manage, such as a worker you spawned. The first message starts a chat with it; the chat is shared by the two of you and its people, and kept apart from every project room. The target is woken under its own project and answers in the chat; its answer wakes you in the chat, where you may also report into your own project's rooms. The server decides whether you may message that agent from the people behind this turn, never the model. There is a limit on turns per chat and on new chats per hour. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"target_agent_id": map[string]string{"type": "string", "description": "Full agent ID of the agent to message"},
 		"body":            map[string]string{"type": "string"},
 		"request_key":     map[string]string{"type": "string"},
@@ -85,7 +86,7 @@ var catalog = []tool{
 		"body":        map[string]string{"type": "string"},
 		"request_key": map[string]string{"type": "string"},
 	}, "required": []string{"target_user", "body", "request_key"}}},
-	{"close_room", "Active lead only. Archive a task room you belong to using its lifecycle_rev; closure includes the normal grace period. Close children first or set cascade. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"close_room", "Active lead, or the flow's coordinator (the dispatcher). Archive a task room you belong to or created using its lifecycle_rev; closure includes the normal grace period. Close children first or set cascade. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"room_id": map[string]string{"type": "string"}, "lifecycle_rev": map[string]string{"type": "integer"},
 		"cascade": map[string]string{"type": "boolean"}, "request_key": map[string]string{"type": "string"},
 	}, "required": []string{"room_id", "lifecycle_rev", "request_key"}}},
@@ -126,7 +127,7 @@ var catalog = []tool{
 		"base_ref":    map[string]string{"type": "string", "description": "Committed base ref for a newly created worktree"},
 		"request_key": map[string]string{"type": "string", "description": "Stable idempotency key for this spawn request"},
 	}, "required": []string{"room_id", "request_key", "role_key"}}},
-	{"stop_agent", "Active lead only. Stop a non-lead agent in your project, or yourself, using the current desired_rev. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"stop_agent", "Active lead, or the flow's coordinator (the dispatcher). Stop a non-lead agent in your project that you manage (one the flow lets you manage, one you spawned, or one in a room you created), or yourself, using the current desired_rev. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"agent_id": map[string]string{"type": "string"}, "rev": map[string]string{"type": "integer"},
 		"request_key": map[string]string{"type": "string", "description": "Stable idempotency key for this stop request"},
 	}, "required": []string{"agent_id", "rev", "request_key"}}},
@@ -296,6 +297,12 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		delete(input, "room_id")
 		delete(input, "request_key")
 		body = input
+	case "delete_schedule":
+		roomID, scheduleID := getString("room_id"), getString("schedule_id")
+		if !strings.HasPrefix(roomID, "room_") || !strings.HasPrefix(scheduleID, "sch_") || len(scheduleID) > 100 {
+			return toolResult("valid room_id and schedule_id required", true)
+		}
+		method, path = http.MethodDelete, "/api/agent/rooms/"+roomID+"/schedules/"+url.PathEscape(scheduleID)
 	case "usage_left":
 		path = "/api/agent/usage-left"
 	case "run_command":

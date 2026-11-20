@@ -658,7 +658,7 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 			return AgentCard{}, err
 		}
 		if actorKind == "agent" && actorID != id {
-			if err := tx.flowActorMayTarget(projectID, actorID, roleKey); err != nil {
+			if err := tx.flowActorMayTargetAgent(projectID, actorID, id, roleKey); err != nil {
 				return AgentCard{}, err
 			}
 		}

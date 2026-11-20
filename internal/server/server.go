@@ -404,6 +404,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/agent/macros", s.requireAgentTool(http.HandlerFunc(s.agentToolMacros)))
 	mux.Handle("GET /api/agent/rooms/{room}/schedules", s.requireAgentTool(http.HandlerFunc(s.agentToolSchedules)))
 	mux.Handle("POST /api/agent/rooms/{room}/schedules", s.requireAgentTool(http.HandlerFunc(s.agentToolSchedules)))
+	mux.Handle("DELETE /api/agent/rooms/{room}/schedules/{id}", s.requireAgentTool(http.HandlerFunc(s.agentToolDeleteSchedule)))
 	mux.Handle("POST /api/agent/dms", s.requireAgentTool(http.HandlerFunc(s.agentToolDM)))
 	mux.Handle("POST /api/agent/human-dms", s.requireAgentTool(http.HandlerFunc(s.agentToolDMHuman)))
 	mux.Handle("GET /api/agent-dms", s.Auth.RequireUser(http.HandlerFunc(s.agentDMs)))

@@ -335,6 +335,18 @@ func (tx *Tx) DeleteSchedule(id, roomID string) error {
 	return err
 }
 
+// DeleteScheduleAsAgent is an agent's delete_schedule: it removes only a schedule an agent created, so a person's schedule stays theirs.
+func (tx *Tx) DeleteScheduleAsAgent(id, roomID string) error {
+	var creatorKind string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT creator_kind FROM schedule WHERE id=? AND room_id=?`, id, roomID).Scan(&creatorKind); err != nil {
+		return err
+	}
+	if creatorKind != "agent" {
+		return ErrForbidden
+	}
+	return tx.DeleteSchedule(id, roomID)
+}
+
 // AdvanceSchedules is a serial, transactional catch-up pass. One due instant
 // is processed per schedule, then next_run_at leaps to the future.
 func (s *Store) AdvanceSchedules(ctx context.Context, now time.Time) (int, error) {
