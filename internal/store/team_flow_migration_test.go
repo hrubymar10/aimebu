@@ -992,6 +992,10 @@ func TestFlowMigrationFinishPostsOneNoticeInHomeAndGeneral(t *testing.T) {
 	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The spawned fake dispatcher is settled (idle) first, so the migration is done within the passes whatever the timing.
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='idle' WHERE id IN (SELECT agent_id FROM team_flow_migration_agent WHERE action='spawn')`); err != nil {
+		t.Fatal(err)
+	}
 	for range 3 { // later passes find the migration done and must not announce it again
 		if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
 			t.Fatal(err)
