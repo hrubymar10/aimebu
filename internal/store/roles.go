@@ -22,7 +22,15 @@ func (tx *Tx) AuthorizeSpawn(roomID, actorKind, actorID string) error {
 	if lifecycle != "open" {
 		return ErrInvalidTransition
 	}
-	return tx.authorizeSpawnActor(projectID, actorKind, actorID, true)
+	if err := tx.authorizeSpawnActor(projectID, actorKind, actorID, true); err != nil {
+		return err
+	}
+	if actorKind == "agent" {
+		// A coordinator spawning into a task room under home or general it was never joined to (made before a flow switch) joins it, to brief there.
+		_, err := tx.joinSharedTaskRoom(projectID, roomID, actorID)
+		return err
+	}
+	return nil
 }
 
 type RoleDefinition struct {

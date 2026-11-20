@@ -87,6 +87,12 @@ func TestDispatcherCanDispatch(t *testing.T) {
 		t.Fatalf("lead create_room 2: %d", statusOf(resp))
 	}
 	decodeInto(t, resp, &otherRoom)
+	var briefRoom store.Room
+	resp = f.toolPost(t, "/api/agent/rooms", leadKey, "lead-room-3", map[string]any{"title": "before the switch, three"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("lead create_room 3: %d", statusOf(resp))
+	}
+	decodeInto(t, resp, &briefRoom)
 	ownWorker, _ := f.flowAgent(t, "role_worker_default", "ownworker", lead.ID, leadRoom)
 	roomWorker, _ := f.flowAgent(t, "role_worker_default", "roomworker", "test", leadRoom)
 
@@ -204,6 +210,17 @@ func TestDispatcherCanDispatch(t *testing.T) {
 	decodeInto(t, resp, &human)
 	if status := statusOf(f.toolDelete(t, schedules+"/"+human.ID, dispatcherKey)); status != 403 {
 		t.Fatalf("dispatcher deleted a person's schedule: %d", status)
+	}
+
+	// (3b) Spawning into a pre-switch room under home makes the dispatcher a member, so it can brief the worker there.
+	if joined, err := f.db.AgentInRoom(ctx, dispatcher.ID, briefRoom.ID); err != nil || joined {
+		t.Fatalf("dispatcher in the pre-switch room before acting on it: %v %v", joined, err)
+	}
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error { return tx.AuthorizeSpawn(briefRoom.ID, "agent", dispatcher.ID) }); err != nil {
+		t.Fatal(err)
+	}
+	if joined, err := f.db.AgentInRoom(ctx, dispatcher.ID, briefRoom.ID); err != nil || !joined {
+		t.Fatalf("dispatcher not joined to the pre-switch room it spawned into: %v %v", joined, err)
 	}
 
 	// (4) The dispatcher may close a task room under home that the leader made before the switch, but may not close the
