@@ -105,31 +105,49 @@ export const ALIASES = {
 // The ids a page's rows may have without being a setting of their own: the editors and dialogs a category opens (a role, a macro, an import box).
 export const TRANSIENT_ID_PREFIXES = ['role-', 'macro-', 'macros-'];
 
-const categoryOf = id => CATEGORIES.find(category => category.id === id);
-export const sectionOf = id => SECTIONS.find(section => section.id === id);
-export const categoryById = categoryOf;
-export const categoriesOf = section => CATEGORIES.filter(category => category.section === section);
+// A registry is one scope's list (the global Settings, a room's settings, a project's): its navigation, its addresses and its search read the same object.
+// `sectionInPath` says whether an address names the section (global: settings/<section>/<category>[/<sub>]) or only the category (room and project: the address
+// layer adds the room or project, and a category id is unique across the two sections of one dialog, so the category tells the section).
+export function createRegistry({ sections, categories, settings, aliases = {}, sectionInPath = true }) {
+  const categoryOf = id => categories.find(category => category.id === id);
+  const sectionOf = id => sections.find(section => section.id === id);
+  const categoryPath = (category, sub = '') => `settings/${sectionInPath ? `${category.section}/` : ''}${category.id}${sub ? `/${sub}` : ''}`;
+  const settingCategory = setting => categoryOf(setting.category);
+  const settingPath = setting => `${sectionOf(settingCategory(setting).section).title} › ${settingCategory(setting).title} › ${setting.name}`;
+  // The hash (or path) a person typed or followed, as {section, category, sub} -- each '' when it is not there; null when it is not a settings path at all.
+  const parsePath = value => {
+    const text = String(value || '').replace(/^#/, '');
+    if (text !== 'settings' && !text.startsWith('settings/')) return null;
+    const parts = text.split('/').slice(1).map(part => { try { return decodeURIComponent(part); } catch { return ''; } });
+    if (!sectionInPath) {
+      const [categoryId = '', sub = ''] = parts, category = categoryOf(categoryId);
+      return category ? { section: category.section, category: categoryId, sub } : { section: '', category: '', sub: '' };
+    }
+    const [sectionId = '', categoryId = '', sub = ''] = parts, category = categoryOf(categoryId);
+    if (!category || category.section !== sectionId) return { section: sectionOf(sectionId) ? sectionId : '', category: '', sub: '' };
+    return { section: sectionId, category: categoryId, sub };
+  };
+  // A page name from an old call (settings.open('usages')) or a path, as {section, category, sub}.
+  const resolveTarget = value => {
+    const parsed = parsePath(value);
+    if (parsed) return parsed;
+    const alias = aliases[value];
+    return alias ? parsePath(`settings/${alias}`) : { section: '', category: '', sub: '' };
+  };
+  return {
+    sections, categories, settings, aliases, sectionInPath, categoryById: categoryOf, sectionOf, categoriesOf: section => categories.filter(category => category.section === section),
+    categoryPath, settingCategory, settingPath, parsePath, resolveTarget,
+  };
+}
+
+const GLOBAL = createRegistry({ sections: SECTIONS, categories: CATEGORIES, settings: SETTINGS, aliases: ALIASES });
+export const categoryById = GLOBAL.categoryById;
+export const sectionOf = GLOBAL.sectionOf;
+export const categoriesOf = GLOBAL.categoriesOf;
 export const categoryRights = category => category.rights || category.page;
-
-// The path a category (and a sub) has in the address: settings/<section>/<category>[/<sub>].
-export const categoryPath = (category, sub = '') => `settings/${category.section}/${category.id}${sub ? `/${sub}` : ''}`;
-export const settingCategory = setting => categoryOf(setting.category);
-export const settingPath = setting => `${sectionOf(settingCategory(setting).section).title} › ${settingCategory(setting).title} › ${setting.name}`;
-
-// The hash (or path) a person typed or followed, as {section, category, sub} -- each '' when it is not there; null when it is not a settings path at all.
-export function parsePath(value) {
-  const text = String(value || '').replace(/^#/, '');
-  if (text !== 'settings' && !text.startsWith('settings/')) return null;
-  const [, sectionId = '', categoryId = '', sub = ''] = text.split('/').map(part => { try { return decodeURIComponent(part); } catch { return ''; } });
-  const category = categoryOf(categoryId);
-  if (!category || category.section !== sectionId) return { section: sectionOf(sectionId) ? sectionId : '', category: '', sub: '' };
-  return { section: sectionId, category: categoryId, sub };
-}
-
-// A page name from an old call (settings.open('usages')) or a path, as {section, category, sub}.
-export function resolveTarget(value) {
-  const parsed = parsePath(value);
-  if (parsed) return parsed;
-  const alias = ALIASES[value];
-  return alias ? parsePath(`settings/${alias}`) : { section: '', category: '', sub: '' };
-}
+export const categoryPath = GLOBAL.categoryPath;
+export const settingCategory = GLOBAL.settingCategory;
+export const settingPath = GLOBAL.settingPath;
+export const parsePath = GLOBAL.parsePath;
+export const resolveTarget = GLOBAL.resolveTarget;
+export const GLOBAL_REGISTRY = GLOBAL;

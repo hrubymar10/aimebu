@@ -71,3 +71,16 @@ export function notesView(room) {
 }
 
 export const closeBlockedLabel = reason => (reason === 'agent_stop_invalid_transition' ? 'an agent could not be stopped' : (reason || 'unknown reason').replaceAll('_', ' '));
+
+// What the viewer may see of the room's settings (the `when` of a registry entry names one of these): the room's own controls by the room and the role, the
+// project's by its lifecycle. `project` is lifecycleView() of the home room's project, or null before it has loaded (everything of it is then taken as shown, so a
+// link to the danger zone is not dropped before the answer comes).
+export function roomFacts(room, { renamable = false, role = '', worktreeHidden = true, project = null } = {}) {
+  if (!room) return {};
+  const life = lifecycleControl(room), remove = removeControl(room, role), loaded = !!project;
+  return {
+    home: room.kind === 'home', renamable, scope: room.kind !== 'dm', memory: !room.agent_chat, notes: !notesView(room).hidden, worktree: !worktreeHidden,
+    lifecycle: !life.hidden, leave: canLeave(room), remove_room: !remove.hidden,
+    importer: loaded ? project.importer : true, archive: loaded ? project.archive : true, reopen: loaded ? project.reopen : true, remove: loaded ? project.remove : true,
+  };
+}

@@ -1,5 +1,5 @@
 // scripts/test-settings-search.cjs runs this module in a vm after registry.js, with its import line cut.
-import { CATEGORIES, SETTINGS, categoryById, sectionOf, settingPath } from './registry.js';
+import { GLOBAL_REGISTRY } from './registry.js';
 //
 // Search over every setting, by name, description and keywords, in categories the person has not opened. A result carries its path ("Agents › Prompts › Mentions").
 // The caller says which categories the account may see, so a setting it may not open is never found (and its name never shown).
@@ -15,8 +15,10 @@ function fit(field, token) {
   return /[^a-z0-9]/.test(field[at - 1]) ? 3 : 1;
 }
 
+// `registry` is the scope searched (the global Settings by default); `visibleSetting(setting)` hides one setting of a category the account may open.
 // results: [{kind: 'setting'|'category', category, setting?, path, title, score}], best first. `visible(categoryId)` answers for the account.
-export function searchSettings(query, { visible = () => true } = {}) {
+export function searchSettings(query, { visible = () => true, visibleSetting = () => true, registry = GLOBAL_REGISTRY } = {}) {
+  const { categories, settings, categoryById, sectionOf, settingPath } = registry;
   const words = tokens(query);
   if (!words.length) return [];
   const results = [];
@@ -30,16 +32,16 @@ export function searchSettings(query, { visible = () => true } = {}) {
     }
     results.push({ kind, category, ...item, score });
   };
-  for (const category of CATEGORIES) {
+  for (const category of categories) {
     if (!visible(category.id)) continue;
     const section = sectionOf(category.section);
     consider({ path: `${section.title} › ${category.title}`, title: category.title }, 'category', category, [[8, fold(category.title)], [3, fold(section.title)], [2, fold(category.description)], [1, fold((category.subs || []).map(sub => sub.title).join(' '))]]);
   }
-  for (const setting of SETTINGS) {
-    if (!visible(setting.category)) continue;
+  for (const setting of settings) {
+    if (!visible(setting.category) || !visibleSetting(setting)) continue;
     const category = categoryById(setting.category), section = sectionOf(category.section);
     consider({ setting, path: settingPath(setting), title: setting.name }, 'setting', category,
-      [[8, fold(setting.name)], [5, fold(setting.keywords.join(' '))], [3, fold(`${category.title} ${section.title} ${setting.group}`)], [2, fold(setting.description)]]);
+      [[8, fold(setting.name)], [5, fold((setting.keywords || []).join(' '))], [3, fold(`${category.title} ${section.title} ${setting.group}`)], [2, fold(setting.description)]]);
   }
   return results.sort((a, b) => b.score - a.score || (a.kind === b.kind ? 0 : a.kind === 'category' ? -1 : 1) || a.path.localeCompare(b.path));
 }

@@ -46,6 +46,7 @@ node scripts/test-events-page.cjs
 node scripts/test-columns-page.cjs
 node scripts/test-settings-release-page.cjs
 node scripts/test-settings-nav-page.cjs
+node scripts/test-room-settings-nav-page.cjs
 node scripts/test-signin-page.cjs
 node scripts/test-setup-page.cjs
 node scripts/test-onboarding-page.cjs

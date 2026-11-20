@@ -1570,8 +1570,8 @@ async function main() {
     await page.evaluate(() => { window.__hidden = []; window.__chat.setRoomPreference = async (room, field, value) => { window.__hidden.push([room.id, field, value]); return true; }; window.__chat.showRoomInfo(); });
     await settle(page);
     // The pane is inset on a desktop (24px above and below, never under the top bar or off the bottom), and Hide room is a button that says what it is (an icon and its name), with a tooltip.
-    assert.deepEqual(await page.evaluate(() => { const pane = document.querySelector('#room-info-dialog').getBoundingClientRect(); return [Math.round(pane.top), Math.round(innerHeight - pane.bottom)]; }), [24, 24], 'the room settings pane is inset 24px from the top and the bottom of the window');
-    assert.deepEqual(await page.$eval('#room-hide', el => [el.textContent.trim(), !!el.querySelector('.icon-mask-eye-off'), el.title.length > 10, el.classList.contains('btn-icon')]), ['Hide room', true, true, false]);
+    assert.deepEqual(await page.evaluate(() => { const pane = document.querySelector('#room-info-dialog .settings-pane').getBoundingClientRect(); return [Math.round(pane.top), Math.round(innerHeight - pane.bottom)]; }), [24, 24], 'the room settings pane is inset 24px from the top and the bottom of the window');
+    assert.deepEqual(await page.$eval('#room-hide', el => [el.textContent.trim(), !!el.querySelector('.icon-mask-eye-off'), el.title.length > 10, el.classList.contains('btn-icon'), el.getAttribute('aria-label')]), ['', true, true, true, 'Hide room']);
     await page.$eval('#room-hide', node => node.click()); await settle(page);
     assert.deepEqual(await page.evaluate(() => [window.__hidden, document.querySelector('#room-info-dialog').open, document.querySelector('#room-hide').disabled]), [[['rm_a', 'hidden', true]], false, false]);
     await page.evaluate(() => { window.__chat.setRoomPreference = () => new Promise(resolve => { window.__hideDone = resolve; }); window.__chat.showRoomInfo(); });
@@ -1750,6 +1750,10 @@ async function main() {
     page = await show({ kind: 'dm' });
     state = await dialog(page);
     assert.deepEqual([state.rename[0], state.remove.shown, state.notes.shown, state.worktree.shown], [false, false, false, false], 'a private chat has no title field, removal, notes or worktree');
+    await page.$eval('#room-info-agents-tab', node => node.click()); await settle(page);
+    assert.deepEqual(await page.$$eval('#room-info-dialog .settings-sub-row', nodes => nodes.map(node => node.textContent.trim())), ['Schedules'], 'a private chat has no agent Control subcategory');
+    await page.$eval('#room-info-workspace-tab', node => node.click()); await settle(page);
+    assert.deepEqual(await page.$$eval('#room-info-dialog .settings-sub-row', nodes => nodes.map(node => node.textContent.trim())), ['Usage'], 'a private chat has no Git worktree subcategory');
     await page.close();
     page = await show({ agent_chat: true });
     state = await dialog(page);

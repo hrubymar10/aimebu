@@ -43,9 +43,9 @@ async function main() {
     await page.evaluate(sections => {
       const dialog = document.querySelector('#settings-dialog');
       dialog.setAttribute('open', ''); dialog.dataset.view = 'section';
-      for (const [key, markup] of Object.entries(sections)) { const section = document.querySelector(`#settings-${key}`) || Object.assign(document.createElement('section'), { id: `settings-${key}`, className: 'settings-section' }); if (!section.parentElement) document.querySelector('.settings-body').append(section); section.innerHTML = markup; }
+      for (const [key, markup] of Object.entries(sections)) { const section = dialog.querySelector(`#settings-${key}`) || Object.assign(document.createElement('section'), { id: `settings-${key}`, className: 'settings-section' }); if (!section.parentElement) dialog.querySelector('.settings-body').append(section); section.innerHTML = markup; }
     }, sections);
-    const show = key => page.evaluate(key => { for (const section of document.querySelectorAll('.settings-body > section')) { section.hidden = section.id !== `settings-${key}`; section.classList.toggle('active', section.id === `settings-${key}`); } document.querySelector('#settings-dialog').dataset.section = key; }, key);
+    const show = key => page.evaluate(key => { for (const section of document.querySelectorAll('#settings-dialog .settings-body > section')) { section.hidden = section.id !== `settings-${key}`; section.classList.toggle('active', section.id === `settings-${key}`); } document.querySelector('#settings-dialog').dataset.section = key; }, key);
     const tops = (selector) => page.$$eval(selector, nodes => nodes.map(node => { const rect = node.getBoundingClientRect(); return { top: Math.round(rect.top), bottom: Math.round(rect.bottom), left: Math.round(rect.left), right: Math.round(rect.right), height: Math.round(rect.height) }; }));
 
     // Users: the name gives way (with an ellipsis); the role and the remove button stay, on the same row, inside the card.

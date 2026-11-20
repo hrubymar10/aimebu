@@ -136,7 +136,7 @@ async function main() {
       const page = await mount();
       await ready(page);
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#project-settings-body').children].map(node => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}`)),
-        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section#project-role-defaults', 'section#project-team-flow', 'div', 'section#project-usage', 'div', 'div', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
+        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section#project-role-defaults', 'section#project-team-flow', 'div#project-reviewers', 'section#project-usage', 'div#project-home-room', 'div#project-recovery', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
       assert.deepEqual(await page.evaluate(() => ({ name: [document.querySelector('#project-details-name').value, document.querySelector('#project-details-name').disabled], folder: [document.querySelector('#project-details-folder').value, document.querySelector('#project-details-folder').disabled],
         save: document.querySelector('#project-details-save').disabled, status: document.querySelector('#project-details-status').textContent,
         flags: ['#project-auto-resume', '#project-worktrees', '#project-home-lead-only'].map(id => [document.querySelector(id).checked, document.querySelector(id).disabled]),

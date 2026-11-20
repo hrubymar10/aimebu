@@ -13,6 +13,7 @@ import { AgentsPanel } from './pages/agents/page.js';
 import { createAgentSource } from './agent-source.js';
 import { SettingsPanel } from './settings.js';
 import { parsePath } from './pages/shell/registry.js';
+import { settingsAddress } from './pages/shell/room-registry.js';
 import { TeamFlowHome } from './pages/project/team-flow-home.js';
 import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './pages/topbar/page.js';
@@ -111,7 +112,7 @@ chat.onLatest = room => { if (sidebar.active === room.id) sidebar.markSeen(sideb
 // A room that was open here is closed: no chat or project content, and no room in the address.
 function closeOpenRoom() {
   chat.reset(); teamFlowHome.reset(); knowledge.setRoom(null); handbook.setRoom(null);
-  if (!parsePath(location.hash)) history.replaceState(null, '', `${location.pathname}${location.search}`);
+  if (!ownsAddress()) history.replaceState(null, '', `${location.pathname}${location.search}`);
 }
 // A removed room is gone for everyone: refresh its project and, if it was open here, go to the project's home room.
 async function roomRemoved(projectID, roomID) {
@@ -398,7 +399,27 @@ function setRoomsOpen(open) {
 }
 // The room the address names, or '' when it names none (or is not a valid escape sequence).
 const TURN_STATE_EVENTS = new Set(['turn_dispatch_requested', 'turn_dispatch_cancelled', 'turn_never_started', 'turn_process_exit', 'turn_finished', 'turn_lost']);
-function roomInAddress() { try { const hash = decodeURIComponent(location.hash.slice(1)); return parsePath(hash) ? '' : hash; } catch { return ''; } } // a settings address is not a room
+// Settings, a room's settings and a project's settings each own an address of their own (#settings/..., #room/<id>/settings/..., #project/<id>/settings/...).
+function ownsAddress(room = chat.room) {
+  if (parsePath(location.hash)) return true;
+  const address = settingsAddress(location.hash);
+  return !!(address && room && (address.kind === 'room' ? address.id === room.id : room.kind === 'home' && address.id === room.project_id));
+}
+// History can return to another room's settings after the person has switched rooms. Keep the address in step with the room on screen.
+window.addEventListener('popstate', () => {
+  if (settingsAddress(location.hash) && chat.room && !ownsAddress(chat.room)) {
+    history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(chat.room.id)}`);
+  }
+});
+function roomInAddress() {
+  const room = settingsAddress(location.hash);
+  if (room) return room.kind === 'room' ? room.id : ''; // a project's settings address names its home room, found once the rooms are listed (addressProjectHome)
+  try { const hash = decodeURIComponent(location.hash.slice(1)); return parsePath(hash) ? '' : hash; } catch { return ''; } // a settings address is not a room
+}
+function addressProjectHome() {
+  const address = settingsAddress(location.hash);
+  return address?.kind === 'project' ? [...sidebar.rooms.values()].find(room => room.project_id === address.id && room.kind === 'home') : undefined;
+}
 function rememberedRoom() { try { return localStorage.getItem('aimebu2.lastRoom') || ''; } catch { return ''; } }
 // A person's click on a room (the list, a breadcrumb, a notification). A room that cannot be opened because the server cannot be reached says so on the
 // chat's error line, in words, and the person tries again; left to reject, it would be an unhandled error and no message at all.
@@ -437,7 +458,7 @@ async function openRoom(room, messageID, { listed = false } = {}) {
   // An older agent-list request must not restore spawn controls for the
   // previous room while this room's messages are still loading.
   agents.setRoomFacts(room);
-  if (!parsePath(location.hash)) history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(room.id)}`); // an open Settings owns the address
+  if (!ownsAddress(room)) history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(room.id)}`); // settings of this room own the address
   try { localStorage.setItem('aimebu2.lastRoom', room.id); } catch { /* private mode: nothing to remember */ }
   teamFlowHome.setRoom(room);
   try { await chat.open(room); } catch (error) {
@@ -488,7 +509,7 @@ async function snapshot(generation = sessionGeneration, cursor = request('/api/e
     // A room that is open here but gone from the lists gives way to its project's home room.
     const open = chat.room;
     const home = open && !sidebar.rooms.has(open.id) ? [...sidebar.rooms.values()].find(room => room.project_id === open.project_id && room.kind === 'home') : null;
-    const selected = home || sidebar.rooms.get(chat.room?.id || roomInAddress()) || sidebar.rooms.get(remembered);
+    const selected = home || sidebar.rooms.get(chat.room?.id || roomInAddress()) || addressProjectHome() || sidebar.rooms.get(remembered);
     // A room that is open and still listed is brought up to date where it is, not opened again: opening it again throws away the reader's place,
     // the history they loaded and the thread they have open. If it can no longer be read (removed, or taken away), the reopen below says so.
     const synced = selected && chat.room?.id === selected.id && !home ? await syncOpenRoom(selected, generation) : '';

@@ -483,6 +483,18 @@ address opens the nearest level the account may see. `web/js/pages/shell/registr
 category, and each setting with its name, description and keywords); `scripts/test-settings-registry.cjs` fails when a page draws a setting the registry does
 not know. The old page names (`settings.open('usages')`) still work.
 
+A room's settings and a project's are the same kind of dialog: the shell, registry and search are shared (`createRegistry` builds one registry per scope), and
+each scope has its own registry. **Room settings** (every room) has the categories General (title, details, hide room), Members, Notifications, Agents
+(Control, Schedules), Memory & notes, Workspace (Git worktree, Room usage, with a link to the project's usage in a home room) and Leave & remove. In the home
+room the dialog is **Project settings** and the project's categories come first: General (the project folder), Agents (control, role defaults, reviewers,
+home room), Team flow, Recovery & worktrees, Limits & usage, Claude Code sessions (when the importer applies) and Danger zone (archive, reopen, delete). A
+category with nothing the viewer may see is not listed. Subcategory links to controls hidden for this room are omitted too (for example, agent control and Git
+worktrees in a private chat). The addresses are `#room/<room id>/settings[/<category>[/<sub>]]` and `#project/<project id>/settings[/<category>[/<sub>]]`
+(a project's resolves to its home room); `#settings/...` stays the global Settings, and `#<room id>` is
+still a room. They behave like the global Settings' (Back and Forward walk the levels, a link opens the dialog once the room is open and closes onto the room).
+When another room is selected, a history entry for the previous room's settings gives way to the selected room's address.
+`web/js/pages/shell/room-registry.js` is the list they read; `scripts/test-room-registry.cjs` and `scripts/test-room-settings-nav-page.cjs` cover it.
+
 Open `http://127.0.0.1:9997/` for the embedded web UI. It currently supports
 owner sign-in, projects and nested task rooms, chat, replies, reactions, and
 live updates. Message text fills the whole bubble on every screen (there is no line-length cap). Message bodies render a safe Markdown subset, including GFM
@@ -662,9 +674,9 @@ shows the room kind glyph and a member-count chip, with the full count in its
 tooltip, with the Room settings button right beside it (on a phone it is the first entry of the room's overflow menu instead), and
 the room's icon buttons (task notes (v1's brain; in task rooms, and in the home room it
 opens the project's memory instead), go to
-message, raw Markdown, export). Every room has the same Room settings dialog, a full-height pane
-with a title bar and a close button (v1's settings pane), with
-the sections that apply to it. The home room title is **Project settings**;
+message, raw Markdown, export). Every room has the same Room settings dialog: the settings shell
+(categories on the left, one category on the right; on a phone a list, then a category with a back arrow), with
+the categories that apply to it (see Settings above). The home room title is **Project settings**;
 other rooms use **Room settings**. In the home room, project and room usage
 have separate headings, and the project danger zone is last. Default agent
 rows lead with harness and model, with the machine after them; their section

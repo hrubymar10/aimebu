@@ -1744,28 +1744,28 @@ async function main() {
       assert.deepEqual([...new Set(scopeIcons.map(icon => icon.action))].sort(), ['pause', 'resume', 'stop'], 'every scope control is present');
       assert.equal(/\bbtn-danger\b/.test(sizes.stop) && !/\bbtn-danger\b/.test(sizes.pause), true, 'Stop is the danger button, Pause is secondary');
     }
-    // Room settings is a pane inset from the window's edges (the top bar included, never off the bottom), 560px wide, a title bar that stays at the top while the sections scroll under it, and a close button in
-    // that bar (there is no Close button at the bottom).
+    // Room settings uses the shared settings shell: an inset two-column pane, with a fixed header above its scrolling category content.
     {
       const shape = () => first.evaluate(() => {
-        const dialog = document.querySelector('#room-info-dialog'), box = dialog.getBoundingClientRect(), close = document.querySelector('#room-info-close');
-        return { width: Math.round(box.width), full: box.top >= 16 && box.bottom <= innerHeight - 16 && box.left >= 16 && box.right <= innerWidth - 16, closeInHeader: !!close.closest('.room-info-header') && !!close.offsetParent, closeButtons: dialog.querySelectorAll('#room-info-close, .room-info-actions .btn').length, title: document.querySelector('#room-info-title').textContent };
+        const dialog = document.querySelector('#room-info-dialog'), box = dialog.querySelector('.settings-pane').getBoundingClientRect(), close = document.querySelector('#room-info-close');
+        return { width: Math.round(box.width), full: box.top >= 16 && box.bottom <= innerHeight - 16 && box.left >= 16 && box.right <= innerWidth - 16, closeInHeader: !!close.closest('.settings-body-header') && !!close.offsetParent, columns: !!dialog.querySelector('.settings-nav') && !!dialog.querySelector('.settings-body'), title: dialog.getAttribute('aria-label') };
       });
       const pane = await shape();
-      assert.deepEqual([pane.width > 420 && pane.width <= 620, pane.full, pane.closeInHeader, pane.closeButtons, pane.title], [true, true, true, 1, 'Room settings'], `Room settings is a pane with its close button in the title bar: ${JSON.stringify(pane)}`);
-      // The title bar stays at the top while the pane scrolls, and every section is still in it.
-      assert.deepEqual(await first.evaluate(() => { const dialog = document.querySelector('#room-info-dialog'); dialog.scrollTop = 120; const scrolled = dialog.scrollTop > 0, top = document.querySelector('.room-info-header').getBoundingClientRect().top - dialog.getBoundingClientRect().top; dialog.scrollTop = 0; return [scrolled, Math.abs(top) <= 1]; }), [true, true], 'the pane scrolls under its title bar');
+      assert.deepEqual([pane.width >= 700 && pane.width <= 920, pane.full, pane.closeInHeader, pane.columns, pane.title], [true, true, true, true, 'Room settings'], `Room settings uses the inset shell: ${JSON.stringify(pane)}`);
+      assert.deepEqual(await first.evaluate(() => { const dialog = document.querySelector('#room-info-dialog'), header = dialog.querySelector('.settings-body-header'), content = dialog.querySelector('#room-info-content'); return [header.parentElement === content.parentElement, getComputedStyle(content).overflowY, header.getBoundingClientRect().top < content.getBoundingClientRect().top]; }), [true, 'auto', true], 'the shell header stays above the scrolling category');
       assert.equal(await first.evaluate(() => ['#room-rename-title', '#room-member-list', '#room-schedules', '.room-info-actions'].every(selector => !!document.querySelector(`#room-info-dialog ${selector}`))), true, 'the pane has every section');
       await first.focus('#room-info-close'); await first.keyboard.press('Enter');
       await first.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
       await domClick(first, '#room-info');
       await first.waitForFunction(() => document.querySelector('#room-info-dialog').open);
     }
+    await domClick(first, '#room-info-memory-tab');
     await first.waitForFunction(() => !document.querySelector('.room-memory-setting select')?.disabled);
     await first.select('.room-memory-setting select', 'off');
     await first.waitForFunction(() => document.querySelector('.room-memory-setting p')?.textContent === 'Room message memory is off.');
     await first.select('.room-memory-setting select', 'inherit');
     await first.waitForFunction(() => document.querySelector('.room-memory-setting p')?.textContent === 'Room follows the project setting.');
+    await domClick(first, '#room-info-workspace-tab');
     await domClick(first, '.room-worktree button:first-of-type');
     await first.waitForFunction(() => document.querySelector('.room-worktree p')?.textContent.includes('.aimebu/worktrees/'));
     assert.match(await first.$eval('.room-worktree p', el => el.textContent), /ready:/);
@@ -2490,6 +2490,7 @@ async function main() {
       });
       await domClick(first, '#room-info');
       await first.waitForFunction(() => document.querySelector('#room-usage .usage-popover-rows dd'));
+      await domClick(first, '#room-info-workspace-tab');
       // The Range row's label and its hint are two lines, not one run of text ("RangeToday is the server's local day.").
       assert.equal(await first.$eval('#room-usage .settings-row', row => { const label = row.querySelector('.settings-label').getBoundingClientRect(), hint = row.querySelector('.settings-desc').getBoundingClientRect(); return hint.top >= label.bottom - 1; }), true, 'the Range label and its hint do not run together');
       const readUsage = () => first.$eval('#room-usage', el => ({ rows: [...el.querySelectorAll('.usage-popover-rows dt')].map((dt, i) => [dt.textContent, el.querySelectorAll('.usage-popover-rows dd')[i].textContent]), groups: [...el.querySelectorAll('.usage-summary-groups li')].map(li => li.textContent), notes: [...el.querySelectorAll('.usage-popover-note')].map(note => note.textContent), range: el.querySelector('select').value, title: el.querySelector('h3').textContent }));
@@ -3851,6 +3852,7 @@ async function main() {
     // The project's settings are the home room's: auto-resume is off by default, and the saved toggle is still there when they are opened again.
     const mockProjectID = await settingsPage.evaluate(async () => (await (await fetch('/api/projects')).json())[0].id);
     await openProjectSettings(settingsPage, mockProjectID);
+    await domClick(settingsPage, '#room-info-recovery-tab');
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await settingsPage.$eval('#project-auto-resume', el => el.checked), false, 'auto-resume must default off');
     assert.equal(await settingsPage.$eval('#room-project .settings-risk', el => el.textContent.includes('may repeat an action')), true);
@@ -3858,6 +3860,7 @@ async function main() {
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     await domClick(settingsPage, '#room-info-close');
     await openProjectSettings(settingsPage, mockProjectID);
+    await domClick(settingsPage, '#room-info-recovery-tab');
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await settingsPage.$eval('#project-auto-resume', el => el.checked), true, 'saved project toggle was lost');
     await settingsTab(settingsPage, '#settings-usages-tab');
@@ -5158,6 +5161,7 @@ async function main() {
     // Turned off (from the home room's Project section), the home room offers every role again; turned back on, only the lead.
     await domClick(first, '#room-info');
     await first.waitForFunction(() => !!document.querySelector('#room-project #project-home-lead-only') && !document.querySelector('#project-home-lead-only').disabled);
+    await domClick(first, '#room-info-general-tab');
     // Renaming: the title is a field of the room's settings and nowhere else. In the home room it is the project's name, so the project form's
     // own Name row is not shown a second time, and a rename reaches the header, the room list and the project.
     {
@@ -5174,6 +5178,7 @@ async function main() {
       await domClick(first, '#room-rename-save');
       await first.waitForFunction(title => document.querySelector('#room-title').textContent === title && document.querySelector('#room-rename-status').textContent === 'Saved.', {}, homeTitle);
     }
+    await domClick(first, '#room-info-project-agents-tab');
     assert.equal(await first.$eval('#project-home-lead-only', el => el.checked), true, 'Home room: lead only starts on');
     await domClick(first, '#project-home-lead-only');
     await first.waitForFunction(() => !document.querySelector('#project-home-lead-only').disabled);
@@ -5980,6 +5985,7 @@ async function main() {
       await first.click('#composer button[type=submit]');
       await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent.includes('I heard: Please summarise for the record')), {}, {});
       await domClick(first, '#room-info');
+      await domClick(first, '#room-info-leave-tab');
       assert.deepEqual(await first.$eval('#room-leave', el => [el.hidden, el.title]), [false, 'Leave chat'], 'a joined chat can be left');
       assert.equal(await first.$eval('#room-remove', el => el.hidden), true, 'a chat between agents is never removed from here');
       assert.equal(await first.$eval('.room-memory-setting', el => el.hidden), true, 'what is said in a chat between agents never feeds memory, so there is no memory setting');
@@ -6015,6 +6021,7 @@ async function main() {
       await domClick(first, `[data-room-id="${chatID}"] .room-item-name`);
       await first.waitForFunction(() => document.querySelector('#room-icon')?.textContent === '⇄', {}, {});
       await domClick(first, '#room-info');
+      await domClick(first, '#room-info-leave-tab');
       await domClick(first, '#room-leave');
       await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-item-icon')].some(el => el.dataset.roomType === 'agent-chat') && document.querySelector('.agent-chat-offers'), {}, {});
       assert.equal(await joinedChats(), 0, 'the chat is left again after the fault');
@@ -6058,6 +6065,7 @@ async function main() {
     await first.evaluate(() => { const input = document.querySelector('#project-details-name'); input.value = 'UI smoke'; input.dispatchEvent(new Event('input', { bubbles: true })); });
     await domClick(first, '#project-details-save');
     await first.waitForFunction(() => document.querySelector('#project-details-status').textContent === 'Saved.');
+    await domClick(first, '#room-info-recovery-tab');
     await domClick(first, '#project-auto-resume');
     await first.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     const recoverySetting = await first.evaluate(async projectID => (await (await fetch(`/api/projects/${projectID}/settings`)).json()).auto_resume_after_clean_diagnostic, actualProjectID);
@@ -6737,10 +6745,11 @@ async function main() {
     assert.equal(openCommands.includes('/archive'), true, 'slash picker offers archive in an open task room');
     await domClick(first, '#room-info');
     await first.waitForSelector('#room-info-dialog[open]');
+    await domClick(first, '#room-info-leave-tab');
     assert.deepEqual(await first.$eval('#room-lifecycle', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-archive'), el.textContent]), ['Archive room', 'Archive room', true, ''], 'Archive is an archive icon with a tooltip');
     assert.deepEqual(await first.$eval('#room-remove', el => [el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-trash'), el.textContent]), ['Delete room', true, ''], 'Delete room is a trash icon with an accessible name');
     assert.deepEqual(await first.$eval('#room-remove', el => [el.hidden, el.disabled, el.classList.contains('btn-danger')]), [false, false, true], 'Delete is available for an open task room');
-    assert.deepEqual(await first.$$eval('#room-lifecycle, #room-remove', nodes => nodes.map(el => getComputedStyle(el, '::after').content)), ['"Archive room"', '"Delete room"'], 'Room settings\' archive and delete controls show their names beside their icons');
+    assert.deepEqual(await first.$$eval('#room-lifecycle, #room-remove', nodes => nodes.map(el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()])), [['Archive room', 'Archive room', ''], ['Delete this room and its messages for good', 'Delete room', '']], 'Room actions are icons with tooltips and accessible names');
     await domClick(first, '#room-info-close');
     const archiveConfirmations = [];
     await answerDialogs(first, text => { archiveConfirmations.push(text); return { accept: true }; });
@@ -6768,6 +6777,7 @@ async function main() {
     await domClick(first, '#room-info');
     await first.waitForSelector('#room-info-dialog[open]');
     assert.deepEqual(await first.$eval('#room-lifecycle', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-reopen'), el.textContent]), ['Reopen room', 'Reopen room', true, ''], 'Reopen is a reopen icon with a tooltip');
+    await domClick(first, '#room-info-leave-tab');
     // The parent has an archived child, so it cannot be removed yet.
     assert.equal(await first.$eval('#room-remove', el => el.disabled), false, 'an archived room can be removed');
     await domClick(first, '#room-info-close');
@@ -6834,11 +6844,13 @@ async function main() {
       await domClick(first, `[data-room-id="${removeID}"] .room-item-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id, {}, removeID);
       await domClick(first, '#room-info'); await first.waitForSelector('#room-info-dialog[open]');
+      await domClick(first, '#room-info-leave-tab');
       await domClick(first, '#room-lifecycle');
       await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-item`)?.classList.contains('archived') && document.querySelector('#room-members')?.textContent.includes('Archived'), {}, removeID);
       // The dialog closes itself after the archive is applied, which can be after the row looks archived (see above).
       await first.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
       await domClick(first, '#room-info'); await first.waitForSelector('#room-info-dialog[open]');
+      await domClick(first, '#room-info-leave-tab');
       await first.waitForFunction(() => { const button = document.querySelector('#room-remove'); return !button.hidden && !button.disabled && button.getClientRects().length > 0; });
       await first.click('#room-remove');
       await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`) && !document.querySelector('#room-info-dialog').open, {}, removeID);
@@ -7313,6 +7325,7 @@ async function main() {
     const scopeDump = scope => { const root = document.querySelector(`#${scope}-scope-control`), pause = root?.querySelector('[data-scope-action="pause"]'), box = pause?.getBoundingClientRect(); return { status: root?.querySelector('.scope-control-status')?.textContent, error: root?.querySelector('.scope-control-error')?.textContent, results: root?.querySelector('.scope-control-results')?.textContent, desired: root?.dataset.desired, pauseDisabled: pause?.disabled, box: box && [box.x, box.y, box.width, box.height].map(Math.round), hit: box && document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.className }; };
     await first.click(`#room-info`);
     await first.waitForFunction(() => document.querySelector('#room-scope-control .scope-control-status')?.textContent === 'Room agents: Active');
+    await domClick(first, '#room-info-agents-tab');
     await domClick(first, '#room-scope-control [data-scope-action="pause"]');
     await waitDump(first, 'room scope paused', () => document.querySelector('#room-scope-control .scope-control-status')?.textContent === 'Room agents: Paused', scopeDump, 'room');
     assert.equal(await first.$eval('#room-scope-control [data-scope-action="pause"]', el => el.disabled), true);
@@ -7335,6 +7348,7 @@ async function main() {
     assert.deepEqual(await first.$eval('#room-schedules [data-action=toggle]', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-play'), el.textContent]), ['Resume', 'Resume', true, '']);
     await openProjectSettings(first, actualProjectID);
     await first.waitForFunction(() => [...document.querySelectorAll('.project-role-default h4')].some(item => item.textContent === 'Analyst'));
+    await domClick(first, '#room-info-project-agents-tab');
     const analystDefaults = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].find(item => item.querySelector('h4')?.textContent === 'Analyst')?.outerHTML);
     assert.ok(analystDefaults?.includes('Inherit global'), 'the project shows the global source');
     const analystIndex = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].findIndex(item => item.querySelector('h4')?.textContent === 'Analyst'));
@@ -7350,6 +7364,7 @@ async function main() {
     await waitDump(first, 'project scope paused', () => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'Project agents: Paused', scopeDump, 'project');
     await domClick(first, '#project-scope-control [data-scope-action="resume"]');
     await first.waitForFunction(() => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'Project agents: Active');
+    await domClick(first, '#room-info-limits-tab');
     await first.waitForFunction(() => document.querySelector('#project-usage-limit .usage-limit-summary')?.textContent.includes('turns /'));
     // A project inherits the default (Settings, Usages), sets its own value, or has no limit; each for cost and for turns.
     assert.equal(await first.$eval('#project-turn-mode', el => el.value), 'inherit', 'a project inherits by default');
@@ -7370,6 +7385,7 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('.usage-limit-default .settings-saved')?.textContent === 'Saved.');
     assert.deepEqual(await first.evaluate(async () => { const x = await (await fetch('/api/usage-limit-default')).json(); return [x.daily_cost_cap, x.daily_turn_cap]; }), [12.5, 40]);
     await openProjectSettings(first, actualProjectID);
+    await domClick(first, '#room-info-limits-tab');
     await first.waitForFunction(() => document.querySelector('#project-cost-mode option[value=inherit]')?.textContent.includes('$12.50'));
     await first.select('#project-turn-mode', 'inherit');
     await domClick(first, '#project-usage-limit button');
@@ -7405,9 +7421,11 @@ async function main() {
           wide: document.querySelector('#room-info-dialog').classList.contains('room-info-home'), archive: document.querySelector('#room-lifecycle').hidden,
         };
       });
-      assert.deepEqual(home, { schedules: true, lead: 'Current room leader', project: true, form: true, settingsEmpty: true, name: 'UI smoke', notes: 'Project memory', notesButton: 'Open project memory', notesShown: true,
-        worktree: 'The home room works in the project folder. Task rooms can have their own Git worktree.', worktreeButtons: 0, wide: true, archive: true }, 'the home room settings carry every room section plus the project');
+      assert.deepEqual(home, { schedules: false, lead: 'Current room leader', project: true, form: true, settingsEmpty: true, name: 'UI smoke', notes: 'Project memory', notesButton: 'Open project memory', notesShown: false,
+        worktree: 'The home room works in the project folder. Task rooms can have their own Git worktree.', worktreeButtons: 0, wide: true, archive: true }, 'the home room starts on Project General and contains the other category blocks');
       // A home-room schedule is created like a task room's.
+      await domClick(first, '#room-info-agents-tab');
+      assert.equal(await first.$eval('#room-schedules', el => el.getClientRects().length > 0), true, 'Schedules appear in Room Agents');
       await first.locator('#room-schedules [name=body]').fill('UI home note');
       await first.select('#room-schedules [name=kind]', 'interval');
       await first.locator('#room-schedules [name=minutes]').fill('5');
@@ -7416,6 +7434,10 @@ async function main() {
       await domClick(first, '#room-schedules [data-action=delete]');
       await first.waitForFunction(() => document.querySelector('#room-schedules .schedule-list')?.textContent.includes('No schedules'));
       // The project memory entry opens the Memory viewer on this project's facts.
+      await domClick(first, '#room-info-workspace-tab');
+      assert.equal(await first.$eval('.room-worktree', el => el.getClientRects().length > 0), true, 'the home room workspace shows its project-folder explanation');
+      await domClick(first, '#room-info-memory-tab');
+      assert.equal(await first.$eval('.room-notes', el => el.getClientRects().length > 0), true, 'the memory category shows the project memory entry');
       await domClick(first, '.room-notes button');
       await first.waitForFunction(() => document.querySelector('#knowledge-dialog').open && !document.querySelector('#room-info-dialog').open);
       assert.deepEqual(await first.evaluate(id => ({ scope: document.querySelector('#knowledge-scope').value, project: document.querySelector('#knowledge-project').value === id, title: document.querySelector('#knowledge-title').textContent }), actualProjectID),
@@ -7450,6 +7472,7 @@ async function main() {
       first.__dialogAnswer = text => { asked.push(text); return text.startsWith('Delete project') ? { accept: true, values: { name } } : { accept: true }; };
       try {
         await openProjectSettings(first, scratch.id);
+        await domClick(first, '#room-info-danger-tab');
         await first.waitForFunction(() => !document.querySelector('#project-archive-row').hidden);
         assert.deepEqual(await first.evaluate(() => ['project-archive', 'project-reopen', 'project-delete'].map(id => { const button = document.getElementById(id); return [button.getAttribute('aria-label'), button.title, !!button.querySelector('.icon-mask'), button.textContent, button.closest('.settings-row').hidden]; })),
           [['Archive project', 'Archive project', true, '', false], ['Reopen project', 'Reopen project', true, '', true], ['Delete project', 'Delete project', true, '', false]], 'a live project offers Archive and Delete as icons with names');
@@ -7472,6 +7495,7 @@ async function main() {
         assert.deepEqual(refused, [409, 'project_archived']);
         // Reopening puts it back in the list; archiving again and deleting needs the typed name, and takes it out of every list.
         await openProjectSettings(first, scratch.id);
+        await domClick(first, '#room-info-danger-tab');
         await first.waitForFunction(() => !document.querySelector('#project-reopen-row').hidden);
         await domClick(first, '#project-reopen');
         await first.waitForFunction(id => !document.querySelector(`.archived-projects .archived-project[data-room-id="${id}"]`) && !!document.querySelector(`#projects > [data-room-id="${id}"]`), {}, scratch.home);
@@ -7491,7 +7515,7 @@ async function main() {
     await domClick(first, '#room-info');
     assert.equal(await first.$('#room-pin'), null, 'room settings have no Pin room button');
     assert.equal(await first.$$eval(`[data-room-id="${roomID}"] > .room-item .room-pin, [data-room-id="${roomID}"] > .room-item .room-hide, [data-room-id="${roomID}"] > .room-item .room-pinned`, nodes => nodes.length), 0, 'the rows carry no pin or hide buttons and no star');
-    assert.deepEqual(await first.$eval('#room-hide', el => [el.textContent.trim(), el.title, !!el.querySelector('.icon-mask-eye-off'), el.classList.contains('btn-icon')]), ['Hide room', 'Hide this room from your list. It stays for everyone else.', true, false], 'Hide room is a labelled button (an eye-off icon and its name) with a tooltip saying what it does');
+    assert.deepEqual(await first.$eval('#room-hide', el => [el.textContent.trim(), el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-eye-off'), el.classList.contains('btn-icon')]), ['', 'Hide room', 'Hide this room from your list. It stays for everyone else.', true, true], 'Hide room is an icon with a tooltip and an accessible name');
     await domClick(first, '#room-hide');
     await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`) && !!document.querySelector('.hidden-rooms') && !document.querySelector('#room-info-dialog').open, {}, roomID);
     await first.click('.hidden-rooms summary');
@@ -7615,6 +7639,7 @@ async function main() {
       await domClick(first, `[data-room-id="${peopleDMID}"] .room-item-name`);
       await domClick(first, '#room-info');
       await first.waitForSelector('#room-info-dialog[open] .room-notify-setting');
+      await domClick(first, '#room-info-notifications-tab');
       assert.deepEqual(await first.evaluate(() => {
         const level = document.querySelector('#room-notify-level'), mute = document.querySelector('#room-notify-mute'), label = el => el.closest('label').textContent.trim();
         return { levels: [...level.options].map(option => option.textContent), level: level.value, mutes: [...mute.options].map(option => option.textContent), mute: mute.value,

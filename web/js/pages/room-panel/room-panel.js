@@ -17,7 +17,7 @@ export function RoomFacts({ store }) {
 }
 
 export function ViewActions({ store }) {
-  return html`<button id="room-hide" class="btn room-hide-btn" type="button" title="Hide this room from your list. It stays for everyone else." disabled=${store.busy.value.hide} onClick=${() => store.hide()}><span class="icon-mask icon-mask-eye-off" aria-hidden="true"></span>Hide room</button>`;
+  return html`<button id="room-hide" class="btn-icon room-hide-btn" type="button" title="Hide this room from your list. It stays for everyone else." aria-label="Hide room" disabled=${store.busy.value.hide} onClick=${() => store.hide()}><span class="icon-mask icon-mask-eye-off" aria-hidden="true"></span></button>`;
 }
 
 export function RoomActions({ store }) {

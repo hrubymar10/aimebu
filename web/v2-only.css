@@ -330,7 +330,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
   :is(.quiet-glyph, .room-crumbs .room-crumb, .thread-chip, .health-disk-clean) { position: relative; }
   :is(.quiet-glyph, .room-crumbs .room-crumb, .thread-chip, .health-disk-clean)::after { content: ""; position: absolute; inset: -10px -6px; }
   .btn:not(.btn-sm) { min-height: 40px; }
-  :is(#settings-dialog, #health-popover) :is(select, input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"])) { min-height: 40px; }
+  :is(#settings-dialog, #room-info-dialog, #health-popover) :is(select, input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"])) { min-height: 40px; }
 }
 /* v1 draws the code-block copy button's icon in #fff on --bg-tertiary, which is a pale grey in the light themes: the icon was invisible. */
 :is([data-theme="light"], [data-theme$="-light"]) :is(.chat-msg-body, .visual-plan-block-body, .answer-description, .inbox-question-body) .md-copy-btn { color: var(--text-primary); }
@@ -530,19 +530,19 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* Settings on a phone is two screens: the list of sections, then one section with a way back (data-view on the dialog, set by the shell). From 701px the
    dialog shows both, so the back arrow and the list's own close button are for a phone only. */
 .settings-nav-head { display: block; }
-#settings-dialog .settings-nav-close, #settings-dialog .settings-back-btn { display: none; }
+:is(#settings-dialog, #room-info-dialog) .settings-nav-close, :is(#settings-dialog, #room-info-dialog) .settings-back-btn { display: none; }
 .settings-body-header .settings-section-title { flex: 1 1 auto; min-width: 0; }
 @media (max-width: 700px) {
   .settings-nav-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  #settings-dialog .settings-nav-close { display: inline-flex; }
-  #settings-dialog[data-view="list"] .settings-body { display: none; }
-  #settings-dialog[data-view="list"] .settings-nav { width: 100%; padding: 12px 14px; border-right: 0; }
-  #settings-dialog[data-view="list"] .settings-nav-item { min-height: 48px; font-size: 0.95rem; }
-  #settings-dialog[data-view="section"] .settings-nav { display: none; }
-  #settings-dialog[data-view="section"] .settings-back-btn { display: inline-flex; flex: none; margin-right: 8px; }
+  :is(#settings-dialog, #room-info-dialog) .settings-nav-close { display: inline-flex; }
+  :is(#settings-dialog, #room-info-dialog)[data-view="list"] .settings-body { display: none; }
+  :is(#settings-dialog, #room-info-dialog)[data-view="list"] .settings-nav { width: 100%; padding: 12px 14px; border-right: 0; }
+  :is(#settings-dialog, #room-info-dialog)[data-view="list"] .settings-nav-item { min-height: 48px; font-size: 0.95rem; }
+  :is(#settings-dialog, #room-info-dialog)[data-view="section"] .settings-nav { display: none; }
+  :is(#settings-dialog, #room-info-dialog)[data-view="section"] .settings-back-btn { display: inline-flex; flex: none; margin-right: 8px; }
 }
 /* A select cut by its column says so with an ellipsis instead of clipping the last letter. */
-#settings-dialog select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+:is(#settings-dialog, #room-info-dialog) select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
 @media (max-width: 700px) {
   /* Users: a member is one row, the name giving way to the role and the remove button. */
   #settings-dialog .user-member-row { flex-wrap: nowrap; }
@@ -596,9 +596,8 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 #notification-sound-upload { color: var(--text-muted); }
 #notification-status[hidden] { display: none; }
 
-/* Room settings' archive, leave and remove controls name themselves (v1's danger zone has text buttons): the icon keeps its tooltip, and its label shows beside it. */
-#room-info-dialog .room-info-actions button.btn-icon { width: auto; min-width: 0; flex-basis: auto; padding: 0 12px; gap: 6px; }
-#room-info-dialog .room-info-actions button.btn-icon::after { content: attr(aria-label); font-size: 12px; font-weight: 500; line-height: 1; }
+/* Room actions stay icon-only, with an accessible name and a tooltip. */
+#room-info-dialog .room-info-actions { flex-wrap: wrap; }
 
 /* The two selects in a room's notification settings are one width, whatever their option text. */
 .room-notify-setting select { width: 220px; max-width: 60%; }
@@ -953,7 +952,6 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
    pane with a margin all round, on its backdrop, scrolling inside. A phone keeps the full-screen pane. */
 @media (min-width: 701px) {
   dialog.settings-modal .settings-pane { height: calc(100dvh - 48px); max-height: calc(100dvh - 48px); border: 1px solid var(--border); border-radius: var(--radius-lg); }
-  #room-info-dialog { height: calc(100dvh - 48px); max-height: calc(100dvh - 48px); margin: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow-y: auto; }
 }
 
 /* "Stop all agents on this machine" is a labelled danger button (icon and words), not a bare red square that reads as a checkbox; it asks before it stops anything. */
@@ -1013,10 +1011,10 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
 /* Settings as iPad and iPhone have it: a left column of sections and their categories, and on the right the chosen category's head (icon, name, one line), its
    subcategories as rows with a chevron, and its settings. A phone shows one level at a time, with a back arrow and a centred title (data-view on the dialog).
    The General page's blocks are shared by several categories, so the shell names the category (data-cat) and the rest of the blocks are hidden. */
-@media (min-width: 701px) { #settings-dialog .settings-pane { width: 900px; } }
-#settings-dialog .settings-nav { width: 240px; padding: 12px 10px 16px; gap: 2px; }
+@media (min-width: 701px) { :is(#settings-dialog, #room-info-dialog) .settings-pane { width: 900px; } }
+:is(#settings-dialog, #room-info-dialog) .settings-nav { width: 240px; padding: 12px 10px 16px; gap: 2px; }
 .settings-nav-section { display: flex; flex-direction: column; gap: 2px; }
-#settings-dialog .settings-nav-item { display: flex; align-items: center; gap: 10px; }
+:is(#settings-dialog, #room-info-dialog) .settings-nav-item { display: flex; align-items: center; gap: 10px; }
 .settings-nav-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-icon { flex: none; }
 .settings-nav-chevron { display: none; flex: none; color: var(--text-muted); }
@@ -1045,21 +1043,21 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
 #settings-general[data-cat="backup"] > .settings-subsection:not(#settings-backup) { display: none; }
 /* Wide: the category head names the category, so the top bar's title is for screen readers and the bar keeps only the close button. */
 @media (min-width: 701px) {
-  #settings-dialog .settings-body-header { justify-content: flex-end; border-bottom: 0; padding-bottom: 0; }
-  #settings-dialog .settings-body-header .settings-section-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  :is(#settings-dialog, #room-info-dialog) .settings-body-header { justify-content: flex-end; border-bottom: 0; padding-bottom: 0; }
+  :is(#settings-dialog, #room-info-dialog) .settings-body-header .settings-section-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 @media (max-width: 700px) {
-  #settings-dialog .settings-nav-chevron { display: inline-block; }
-  #settings-dialog[data-view="list"] .settings-nav { gap: 6px; }
+  :is(#settings-dialog, #room-info-dialog) .settings-nav-chevron { display: inline-block; }
+  :is(#settings-dialog, #room-info-dialog)[data-view="list"] .settings-nav { gap: 6px; }
   .settings-nav-section { gap: 0; margin: 0 0 8px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg-primary); }
   .settings-nav-section > .settings-nav-title { padding: 10px 14px 6px; background: transparent; }
-  #settings-dialog[data-view="list"] .settings-nav-section .settings-nav-item { border-radius: 0; border-top: 1px solid var(--border); }
-  #settings-dialog .settings-nav-group-title { margin-top: 0; }
-  #settings-dialog .settings-body-header { justify-content: space-between; }
-  #settings-dialog .settings-body-header .settings-section-title { position: static; width: auto; height: auto; clip: auto; flex: 1 1 auto; text-align: center; }
-  #settings-dialog[data-view="section"] .settings-back-btn { margin-right: 0; }
+  :is(#settings-dialog, #room-info-dialog)[data-view="list"] .settings-nav-section .settings-nav-item { border-radius: 0; border-top: 1px solid var(--border); }
+  :is(#settings-dialog, #room-info-dialog) .settings-nav-group-title { margin-top: 0; }
+  :is(#settings-dialog, #room-info-dialog) .settings-body-header { justify-content: space-between; }
+  :is(#settings-dialog, #room-info-dialog) .settings-body-header .settings-section-title { position: static; width: auto; height: auto; clip: auto; flex: 1 1 auto; text-align: center; }
+  :is(#settings-dialog, #room-info-dialog)[data-view="section"] .settings-back-btn { margin-right: 0; }
   /* On the list nothing is open yet, so the category a wide screen would show is not marked. */
-  :root:root #settings-dialog[data-view="list"] .settings-nav-item.active { background: none; color: var(--text-secondary); font-weight: 400; outline: 0; box-shadow: none; }
+  :root:root :is(#settings-dialog, #room-info-dialog)[data-view="list"] .settings-nav-item.active { background: none; color: var(--text-secondary); font-weight: 400; outline: 0; box-shadow: none; }
   .settings-cat-name { display: none; }
   .settings-cat-head { padding: 12px 14px 2px; }
   .settings-subs { margin: 10px 14px 0; }
@@ -1182,3 +1180,10 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
   .usages-c :is(.uc-provider-name, .uc-provider-status, .uc-affected) { white-space: nowrap; }
 }
 /* ==== Usages variant C ==== END */
+
+/* A settings dialog shows one category at a time: the blocks of the others stay in the page but are off (room-info-dialog, see room-panel/page.js applyBlocks). */
+.shell-off { display: none !important; }
+#room-info-dialog .room-usage-link { display: flex; justify-content: flex-end; margin: 0 0 6px; }
+#room-info-dialog .room-info-actions { display: flex; justify-content: flex-start; gap: 8px; }
+#room-info-dialog .room-view-actions { margin: 0 0 14px; }
+#room-info-dialog .room-view-actions button { border: 1px solid var(--border); }
