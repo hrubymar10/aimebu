@@ -120,6 +120,28 @@ func newCommandRunner() *commandRunner {
 	return &commandRunner{jobs: map[string]*commandJob{}}
 }
 
+func (c *Client) hasActiveWork() bool {
+	c.mu.Lock()
+	active := len(c.active) > 0 || len(c.running) > 0
+	runner := c.commands
+	c.mu.Unlock()
+	if active {
+		return true
+	}
+	if runner != nil {
+		runner.mu.Lock()
+		active = len(runner.jobs) > 0
+		runner.mu.Unlock()
+	}
+	if active || c.Journal == nil {
+		return active
+	}
+	// A replacement supervisor also watches commands left by its predecessor;
+	// those are journaled but are not children in its in-memory runner.
+	open, err := c.Journal.OpenCommands(context.Background())
+	return err != nil || len(open) > 0
+}
+
 // runner is the client's command table; a client built without NewClient gets one on first use.
 func (c *Client) runner() *commandRunner {
 	c.mu.Lock()
@@ -198,6 +220,12 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	fail := func(err error) protocol.Frame {
 		result.Result, result.Message = "error", err.Error()
 		return result
+	}
+	c.mu.Lock()
+	stopping := c.stopping
+	c.mu.Unlock()
+	if stopping {
+		return fail(errors.New("supervisor is retiring"))
 	}
 	if spec.JobID == "" || !strings.HasPrefix(spec.JobID, "cmd_") || spec.AgentID == "" || spec.Cmd == "" {
 		return fail(errors.New("job id, agent and cmd are required"))

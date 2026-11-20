@@ -3,13 +3,20 @@ package agenttools
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-json"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestAttachmentGetBoundsInlineContent(t *testing.T) {
 	for _, tc := range []struct {
@@ -41,6 +48,86 @@ func TestAttachmentGetBoundsInlineContent(t *testing.T) {
 			}
 			if len(response) > 2<<20 {
 				t.Fatalf("unbounded response: %d bytes", len(response))
+			}
+		})
+	}
+}
+
+func TestBridgeRetriesOnlyReplaySafeCalls(t *testing.T) {
+	for _, tc := range []struct {
+		label, name, arguments, retryAfter string
+		status                             int
+		wantCalls                          int
+	}{
+		{"deliberate unavailable read", "list_rooms", `{}`, "", http.StatusServiceUnavailable, 1},
+		{"deliberate bad gateway write", "run_command", `{"cmd":"true","request_key":"stable"}`, "", http.StatusBadGateway, 1},
+		{"maintenance read", "list_rooms", `{}`, "0", http.StatusServiceUnavailable, 2},
+		{"maintenance keyed write", "run_command", `{"cmd":"true","request_key":"stable"}`, "0", http.StatusServiceUnavailable, 2},
+		{"unkeyed write", "memory_add", `{"scope":"project","body":"note"}`, "0", http.StatusServiceUnavailable, 1},
+		{"revisioned write", "handbook_update", `{"section":"current_state","content":"note","rev":1}`, "0", http.StatusServiceUnavailable, 1},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					if tc.retryAfter != "" {
+						w.Header().Set("Retry-After", tc.retryAfter)
+					}
+					w.WriteHeader(tc.status)
+					return
+				}
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer server.Close()
+			(Server{URL: server.URL, Key: "aak_test"}).call(t.Context(), tc.name, json.RawMessage(tc.arguments))
+			if calls != tc.wantCalls {
+				t.Fatalf("requests=%d want=%d", calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestBridgeReturnsMaintenanceResponseAfterRetryWindow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"maintenance"}`))
+	}))
+	defer server.Close()
+	result := (Server{URL: server.URL, Key: "aak_test", retryWindow: 30 * time.Millisecond}).call(t.Context(), "list_rooms", nil).(map[string]any)
+	content := result["content"].([]map[string]string)
+	if result["isError"] != true || !strings.Contains(content[0]["text"], `HTTP 503: {"error":"maintenance"}`) {
+		t.Fatalf("maintenance response lost: %v", result)
+	}
+}
+
+func TestBridgeDoesNotLimitHealthyRequestToRetryWindow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(40 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"rooms":[]}`))
+	}))
+	defer server.Close()
+	result := (Server{URL: server.URL, Key: "aak_test", retryWindow: 10 * time.Millisecond}).call(t.Context(), "list_rooms", nil).(map[string]any)
+	if result["isError"] != false {
+		t.Fatalf("healthy request was cut short: %v", result)
+	}
+}
+
+func TestBridgeRetriesSafeConnectionFailures(t *testing.T) {
+	for _, firstError := range []error{syscall.ECONNREFUSED, io.EOF, io.ErrUnexpectedEOF} {
+		t.Run(firstError.Error(), func(t *testing.T) {
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					return nil, firstError
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+			})}
+			result := (Server{URL: "http://127.0.0.1:1", Key: "aak_test", Client: client}).call(t.Context(), "list_rooms", nil).(map[string]any)
+			if calls != 2 || result["isError"] != false {
+				t.Fatalf("calls=%d result=%v", calls, result)
 			}
 		})
 	}

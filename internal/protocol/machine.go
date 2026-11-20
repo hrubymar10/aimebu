@@ -23,6 +23,7 @@ const MaxMachineFrameBytes = 4 << 20
 const (
 	Hello                = "hello"
 	HelloAck             = "hello_ack"
+	RetireAtIdle         = "retire_at_idle"
 	Ping                 = "ping"
 	Pong                 = "pong"
 	Deliver              = "deliver"
@@ -132,6 +133,8 @@ type Frame struct {
 	MachineID             string `json:"machine_id,omitempty"`
 	JournalID             string `json:"journal_id,omitempty"`
 	SupervisorVersion     string `json:"supervisor_version,omitempty"`
+	SupervisorEnvironment string `json:"supervisor_environment,omitempty"`
+	SupportsRetireAtIdle  bool   `json:"supports_retire_at_idle,omitempty"`
 	SupportsPathProbe     bool   `json:"supports_path_probe,omitempty"`
 	SupportsDirectoryList bool   `json:"supports_directory_list,omitempty"`
 	// SupportsWarm says the supervisor keeps agents' harness processes warm and answers a retire_warm request. A server asks only one that does.

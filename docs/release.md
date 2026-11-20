@@ -164,6 +164,7 @@ launchd (`~/Library/LaunchAgents/dev.aimebu.server.plist`, loaded with `launchct
   <key>EnvironmentVariables</key><dict><key>AIMEBU_CONFIG_DIR</key><string>/Users/me/.aimebu</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>AbandonProcessGroup</key><true/>
   <key>ExitTimeOut</key><integer>60</integer>
 </dict></plist>
 ```
@@ -178,14 +179,28 @@ Description=aimebu v2 server
 ExecStart=/usr/local/bin/aimebu server
 Environment=AIMEBU_CONFIG_DIR=%h/.aimebu
 Restart=on-failure
+KillMode=process
 TimeoutStopSec=60
 
 [Install]
 WantedBy=default.target
 ```
 
-Stop such a service with its manager (`launchctl bootout`, `systemctl --user stop`), not with `aimebu server stop`, which would only
-have the manager start it again. Both give a clean shutdown a minute (the server stops its agents, closes event and machine WebSockets with 1001, waits for their handlers, and then closes the database before it exits). A Homebrew formula's
+With `AIMEBU_SUPERVISOR=detached`, these settings let the local supervisor
+survive a manager restart of the server. Without them, the manager may kill
+the server's child process group or service cgroup as well. Stop such a
+service with its manager (`launchctl bootout`, `systemctl --user stop`), not
+with `aimebu server stop`, which would only have the manager start it again.
+After upgrading the binary, the server detects the older supervisor and
+replaces it when running turns and commands finish. The owner may use Restart
+now in Machines to interrupt them and continue once. `aimebu supervisor
+restart` sends the same request to the running server so the replacement gets
+the service's environment.
+If the executable is upgraded before the running server, a new supervisor
+continues serving work and Machines, Health and `doctor --live` ask for a
+server restart. Restart the service to finish the upgrade.
+The server closes event and machine WebSockets, waits for their handlers,
+then closes the database; embedded mode also drains its local turns. A Homebrew formula's
 `service` block takes the same `aimebu server` command.
 
 Secondary options, none required for 2.0.0 and none verified here:

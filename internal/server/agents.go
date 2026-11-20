@@ -1300,7 +1300,7 @@ func (s *Server) ensureSpawnDelivery(w http.ResponseWriter, r *http.Request, car
 	if !needsSpawn {
 		return true
 	}
-	machine, err := s.machineForID(pending.MachineID)
+	machine, err := s.machineForDispatch(pending.MachineID)
 	if err != nil {
 		if errors.Is(err, ErrMachineUnavailable) {
 			apiError(w, 503, "machine_unavailable", "agent created but supervisor is disconnected; retry with the same key after it reconnects")

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -14,15 +15,18 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/goccy/go-json"
 )
 
 type Server struct {
-	URL    string
-	Key    string
-	Client *http.Client
+	URL         string
+	Key         string
+	Client      *http.Client
+	retryWindow time.Duration // tests shorten the default minute
 }
 
 type request struct {
@@ -554,7 +558,82 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
+	// Reads and keyed writes can be replayed after a restart. An unkeyed
+	// memory_add or revisioned write cannot: the first request may have landed.
+	retryable := method == http.MethodGet || method == http.MethodPost && requestKey != "" || name == "react"
+	var resp *http.Response
+	if retryable {
+		window := s.retryWindow
+		if window <= 0 {
+			window = time.Minute
+		}
+		retryCtx := ctx
+		var cancel context.CancelFunc
+		lastHTTPError := ""
+		for delay := 100 * time.Millisecond; ; {
+			attempt := req.Clone(retryCtx)
+			if req.GetBody != nil {
+				attempt.Body, err = req.GetBody()
+				if err != nil {
+					return toolResult(err.Error(), true)
+				}
+			}
+			resp, err = client.Do(attempt)
+			retryAfter := ""
+			if resp != nil {
+				retryAfter = resp.Header.Get("Retry-After")
+			}
+			maintenance := err == nil && resp.StatusCode == http.StatusServiceUnavailable && retryAfter != ""
+			if maintenance {
+				body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20+1))
+				_ = resp.Body.Close()
+				resp = nil
+				if readErr != nil {
+					if lastHTTPError != "" {
+						return toolResult(lastHTTPError, true)
+					}
+					return toolResult(readErr.Error(), true)
+				}
+				if len(body) > 1<<20 {
+					return toolResult("tool response exceeds 1 MB", true)
+				}
+				lastHTTPError = fmt.Sprintf("HTTP %d: %s", http.StatusServiceUnavailable, body)
+			} else if err == nil || !retryableConnectionError(err) {
+				break
+			}
+			if cancel == nil {
+				retryCtx, cancel = context.WithTimeout(ctx, window)
+				defer cancel()
+			}
+			if retryCtx.Err() != nil {
+				if lastHTTPError != "" {
+					return toolResult(lastHTTPError, true)
+				}
+				return toolResult(retryCtx.Err().Error(), true)
+			}
+			wait := delay
+			if maintenance {
+				if seconds, parseErr := strconv.Atoi(retryAfter); parseErr == nil && seconds >= 0 {
+					wait = max(wait, time.Duration(min(seconds, 3600))*time.Second)
+				} else if when, parseErr := http.ParseTime(retryAfter); parseErr == nil {
+					wait = max(wait, time.Until(when))
+				}
+			}
+			select {
+			case <-retryCtx.Done():
+				if lastHTTPError != "" {
+					return toolResult(lastHTTPError, true)
+				}
+				return toolResult(retryCtx.Err().Error(), true)
+			case <-time.After(wait):
+			}
+			if delay < 2*time.Second {
+				delay *= 2
+			}
+		}
+	} else {
+		resp, err = client.Do(req)
+	}
 	if err != nil {
 		return toolResult(err.Error(), true)
 	}
@@ -589,4 +668,8 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		return toolResult("tool response exceeds 1 MB", true)
 	}
 	return toolResult(string(data), false)
+}
+
+func retryableConnectionError(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }

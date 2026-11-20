@@ -36,6 +36,7 @@ var environment = []envVar{
 		"them in the agent's MCP config, you normally never do"}},
 	{[]string{"AIMEBU_OWNER_LOGIN", "AIMEBU_OWNER_PASSWORD"}, []string{"Bootstrap the owner account on first start (set both; without them the server prints a one-time setup token)"}},
 	{[]string{"AIMEBU_EMBEDDED_SUPERVISOR"}, []string{"Set to 0 to run the server without its local supervisor (remote-only)"}},
+	{[]string{"AIMEBU_SUPERVISOR"}, []string{"Local supervisor mode: embedded (default) or detached; detached keeps turns running across server restarts"}},
 	{[]string{"AIMEBU_ALLOW_NATIVE"}, []string{
 		"Set to 1 when migrating a database to enable host-native launchers; has no",
 		"effect afterwards"}},

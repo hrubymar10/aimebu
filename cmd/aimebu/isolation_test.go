@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 		return
 	}
 	root, cleanup := testenv.Isolate()
+	_ = os.Setenv("AIMEBU_SUPERVISOR", "embedded")
 	packageTestRoot = root
 	// The tests that start a server run its supervisor's harness discovery: without this they ran the real claude, codex, opencode, pi and vibe
 	// of whoever ran them, their docker launchers and docker itself. A test that needs a tool puts its own fake on PATH.

@@ -94,24 +94,27 @@ func (w WarmConfig) lifetime() time.Duration {
 
 // warmEntry is one live process and what it was started with.
 type warmEntry struct {
-	agentID       string
-	tool          string // the harness tool (claude, ...): an account switch retires by it
-	session       adapter.WarmSession
-	fp            string // what the process was started with (the adapter's fingerprint: command, arguments, environment, folder)
-	login         string // the login it works under (warmCredentials' stamp), taken again when a turn ends, see loginHolds
-	account       string // which account that login is (warmAccount); "" when it could not be told
-	loginNow      func() (stamp, account string, ok bool)
-	loginMoved    bool // a turn ended with another account's login on disk (guarded by the slot's lock)
-	started       time.Time
-	stderr        *swapWriter
-	containerized bool // runs through a Docker launcher: its memory is the container's, not the supervisor's
-	timer         *time.Timer
-	idleAt        time.Time
-	idleGen       int           // which idle window the timer belongs to: a timer of an earlier window, fired late, must not end the process of this one
-	idleStop      chan struct{} // closed when the process leaves the idle state, ending its crash watcher
-	retire        bool          // an end was asked for while it ran a turn: it ends when the turn does
-	gone          atomic.Bool   // its end was confirmed and counted (warmLive), once
-	kept          bool          // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
+	agentID             string
+	tool                string // the harness tool (claude, ...): an account switch retires by it
+	session             adapter.WarmSession
+	fp                  string // what the process was started with (the adapter's fingerprint: command, arguments, environment, folder)
+	login               string // the login it works under (warmCredentials' stamp), taken again when a turn ends, see loginHolds
+	account             string // which account that login is (warmAccount); "" when it could not be told
+	loginNow            func() (stamp, account string, ok bool)
+	loginMoved          bool // a turn ended with another account's login on disk (guarded by the slot's lock)
+	started             time.Time
+	stderr              *swapWriter
+	containerized       bool // runs through a Docker launcher: its memory is the container's, not the supervisor's
+	timer               *time.Timer
+	idleAt              time.Time
+	idleGen             int           // which idle window the timer belongs to: a timer of an earlier window, fired late, must not end the process of this one
+	idleStop            chan struct{} // closed when the process leaves the idle state, ending its crash watcher
+	retire              bool          // an end was asked for while it ran a turn: it ends when the turn does
+	gone                atomic.Bool   // its end was confirmed and counted (warmLive), once
+	unconfirmedReported atomic.Bool   // retries must not report the same uncertain end repeatedly
+	quarantineReported  atomic.Bool   // a still-live process past the quarantine is reported once
+	stuckAt             time.Time
+	kept                bool // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
 }
 
 // swapWriter is the stderr sink of a warm process: it writes to the output log of the turn that is running, and to nothing between turns (a
@@ -140,9 +143,9 @@ func (s *swapWriter) Write(p []byte) (int, error) {
 
 // warmSlot is the per-agent state machine: the one place a warm process of the agent lives, whatever it is doing. Everything that changes it
 // (a delivery taking it, a turn ending, the idle timer, a stop, a key change, the memory guard, the crash watcher) holds the slot's lock for
-// the whole change, including starting, handing a turn to and ending the process, so none of them can see it half-way: a stop that arrives while
+// the state change, including starting and handing a turn to the process, so none of them can see it half-way: a stop that arrives while
 // a delivery is starting the process waits for it and then finds it busy; a turn that ends while a stop lands is settled after it, against the
-// desired state the stop already set.
+// desired state the stop already set. A stuck process's background close runs outside the lock, then checks the slot again before releasing it.
 type warmSlot struct {
 	mu    sync.Mutex
 	idle  *warmEntry // the process between turns
@@ -232,7 +235,16 @@ func (c *Client) endWarm(entry *warmEntry, reason string, grace time.Duration) b
 	if entry == nil {
 		return true
 	}
-	pid := entry.session.Pid()
+	if !c.tryEndWarm(entry, reason, grace) {
+		return false
+	}
+	c.recordWarmEnd(entry, reason)
+	return true
+}
+
+// tryEndWarm only touches the session. A background retry can run it without
+// holding the slot lock and then check that it still owns the stuck entry.
+func (c *Client) tryEndWarm(entry *warmEntry, reason string, grace time.Duration) bool {
 	if entry.containerized && grace == 0 {
 		// `docker exec` does not pass a signal on, so a kill of the host side leaves the process in the container for up to about fifteen seconds:
 		// a process in a container is always closed first (its input is closed, `docker exec` returns and the wrapper cleans its session up).
@@ -246,9 +258,18 @@ func (c *Client) endWarm(entry *warmEntry, reason string, grace time.Duration) b
 		err = entry.session.Kill()
 	}
 	if err != nil {
-		c.report("a warm process is not confirmed gone", fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err))
-		return false
+		if entry.containerized || entry.session.Alive() {
+			if entry.unconfirmedReported.CompareAndSwap(false, true) {
+				c.report("a warm process is not confirmed gone", fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err))
+			}
+			return false
+		}
 	}
+	return true
+}
+
+func (c *Client) recordWarmEnd(entry *warmEntry, reason string) {
+	pid := entry.session.Pid()
 	if c.Journal != nil && pid > 0 {
 		_ = c.Journal.ForgetWarmProcess(context.Background(), pid)
 	}
@@ -259,7 +280,6 @@ func (c *Client) endWarm(entry *warmEntry, reason string, grace time.Duration) b
 		}
 	}
 	c.warmChanged()
-	return true
 }
 
 // noteWarmEnded tells the server a warm process that was kept idle has ended, and why. Best effort: not connected, nothing is sent (the warm picture the
@@ -280,23 +300,92 @@ func (c *Client) noteWarmEnded(agentID, reason string) {
 // finish ends a process the slot held and keeps hold of it as stuck when it is not confirmed gone, so that nothing starts another process on the
 // session until it is. The caller holds slot.mu.
 func (c *Client) finish(slot *warmSlot, entry *warmEntry, reason string, grace time.Duration) bool {
+	if entry != nil && entry.gone.Load() {
+		return true
+	}
+	if entry != nil && slot.stuck == entry {
+		return false // the background watcher owns this process's slow retries
+	}
 	if c.endWarm(entry, reason, grace) {
 		return true
 	}
 	if entry != nil {
 		slot.stuck = entry
+		entry.stuckAt = time.Now()
+		pool := c.pool()
+		telemetry.Go(context.Background(), func() { c.watchStuck(pool, slot, entry) })
 	}
 	return false
 }
 
-// clearStuck tries again to end a process an earlier attempt could not confirm gone. The caller holds slot.mu.
+// A host wrapper that was killed may no longer be able to confirm its
+// container's end. Keep its session quarantined for the wrapper's cleanup
+// window, then release only after the host process has been reaped.
+var warmStuckQuarantine = 2 * time.Minute
+
+func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
+	ticker := time.NewTicker(warmRetryEvery)
+	defer ticker.Stop()
+	exited := entry.session.Exited()
+	for {
+		select {
+		case <-pool.ctx.Done():
+			return
+		case <-exited:
+			exited = nil
+		case <-ticker.C:
+		}
+		slot.mu.Lock()
+		if slot.stuck != entry {
+			slot.mu.Unlock()
+			return
+		}
+		cleared := c.clearStuck(slot)
+		slot.mu.Unlock()
+		if cleared {
+			return
+		}
+		confirmed := c.tryEndWarm(entry, "a background retry", 0)
+		slot.mu.Lock()
+		if slot.stuck != entry {
+			slot.mu.Unlock()
+			return
+		}
+		if confirmed {
+			c.recordWarmEnd(entry, "a background retry")
+			slot.stuck = nil
+		} else {
+			confirmed = c.clearStuck(slot)
+		}
+		slot.mu.Unlock()
+		if confirmed {
+			return
+		}
+	}
+}
+
+// clearStuck makes only cheap checks so a delivery does not wait behind a
+// slow background Close or Kill. The caller holds slot.mu.
 func (c *Client) clearStuck(slot *warmSlot) bool {
 	if slot.stuck == nil {
 		return true
 	}
-	if c.endWarm(slot.stuck, "a second attempt", 0) {
+	entry := slot.stuck
+	if !entry.containerized && !entry.session.Alive() {
+		c.recordWarmEnd(entry, "its host process exited")
 		slot.stuck = nil
 		return true
+	}
+	if time.Since(entry.stuckAt) >= warmStuckQuarantine {
+		if !entry.session.Alive() && slot.busy != entry {
+			c.report("a warm process quarantine ended", fmt.Errorf("agent %s: host wrapper exited but its container end was not confirmed; releasing the session after quarantine", entry.agentID))
+			c.recordWarmEnd(entry, "quarantine ended after its host wrapper exited")
+			slot.stuck = nil
+			return true
+		}
+		if entry.quarantineReported.CompareAndSwap(false, true) {
+			c.report("a warm process remains alive after quarantine", fmt.Errorf("agent %s: its warm process is still alive, so the session remains quarantined", entry.agentID))
+		}
 	}
 	return false
 }

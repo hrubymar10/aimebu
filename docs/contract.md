@@ -1158,23 +1158,45 @@ the journal, for debugging (retention 14 d): see "Agent output" in
 
 ## 3d. Deployment
 
-`aimebu server` runs the local supervisor in-process by default. It uses the
+`aimebu server` runs the local supervisor in-process by default. Setting
+`AIMEBU_SUPERVISOR=detached` starts or adopts a separate local supervisor
+which authenticates with the host machine key and connects over loopback. It
+adds a loopback listener and admits that address even when `AIMEBU_ALLOW` is
+customized. The server verifies an adopted journal owner and waits for it to
+connect. The supervisor owns the journal flock and survives server shutdown;
+active turns and commands
+continue while the server is absent and reconcile over the machine WebSocket
+on reconnect. The detached supervisor exits after 24 hours without a server
+connection when it has no active turn or command. `aimebu supervisor status`
+and `restart` inspect or replace it; `aimebu server stop --with-supervisor`
+stops it explicitly. Restart interrupts active turns and waits up to 40
+seconds for their journal writes. The supervisor's hello includes its build
+version and a digest of the environment that affects turns. A mismatch marks
+restart pending, holds new local dispatch, and retires the supervisor after
+its running turns and commands finish. The server starts the replacement from
+its own environment. The owner can choose Restart now to interrupt current
+work and trigger the ordinary auto-continue. A crashed detached supervisor is
+respawned while the server runs. If the executable on disk is newer than the
+running server, its supervisor keeps dispatching and the server reports that
+it must restart to finish the upgrade. A restart request from the CLI fails
+when that server holds the writer lock but does not answer; it never replaces
+the child with the CLI environment. Both modes use the
 same versioned machine WebSocket and `supervisor/journal.sqlite` as the
 standalone `aimebu supervisor` process, so reconnect and crash recovery use
 one path. The server provisions an approved local machine and private key on
 first start; the key file is mode 0600. `AIMEBU_EMBEDDED_SUPERVISOR=0`
 disables the local instance for tests and remote-only installations.
-Shutdown stops new dispatch and HTTP requests, interrupts local turns, waits
-up to 40 seconds for their journal writes, closes the journal, then closes
-the server store. On timeout, the remaining turn IDs are logged before the
-journal closes.
+Shutdown stops new dispatch and HTTP requests. Embedded mode interrupts local
+turns, waits up to 40 seconds for their journal writes, then closes its journal.
+Detached mode leaves the supervisor and its turns alone. The server then closes
+its store. An embedded drain timeout logs the remaining turn IDs.
 An ungraceful process death still reconciles the durable journal on restart;
 it never silently reruns a turn with uncertain effects.
 
 ## 4. Wire protocol (versioned, `v:2`)
 
 ### 4.1 Machine-level frames (machine key)
-- M→S `hello{v, machine_id, journal_id, supervisor_version,
+- M→S `hello{v, machine_id, journal_id, supervisor_version, supervisor_environment?, supports_retire_at_idle?,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
@@ -1185,6 +1207,9 @@ it never silently reruns a turn with uncertain effects.
   log_bytes, tail_truncated?, tail?}]}` — `command_open` and `command_exits`
   are the long commands outside a turn this supervisor still runs and the ends
   it has not been acknowledged for.
+- S→M `retire_at_idle{v}` asks a detached supervisor to reject new work, finish
+  its running turns and commands, and exit. A server replacing an older
+  supervisor waits for its recorded work to finish before stopping it.
 - S→M `hello_ack{v, desired[{agent_id, generation, desired, desired_rev}],
   redeliver[...], resend_receipts[...], harness_settings[...],
   harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...], telemetry?}` — the optional probe directories are the

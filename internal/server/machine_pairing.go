@@ -25,6 +25,8 @@ type machineRow struct {
 	LastSeen          string `json:"last_seen,omitempty"`
 	SupervisorVersion string `json:"supervisor_version,omitempty"`
 	Connected         bool   `json:"connected"`
+	RestartPending    bool   `json:"restart_pending,omitempty"`
+	UpgradeRequired   bool   `json:"upgrade_required,omitempty"`
 	ProjectAllowed    bool   `json:"project_allowed,omitempty"`
 	// ProjectWorktree says whether a task room can have a worktree in the project folder: the check the server makes when a worktree is
 	// requested, with the reason when it cannot. Only the host machine can be asked from here, and only when a project is named; absent
@@ -135,6 +137,10 @@ func (s *Server) machineRow(m store.Machine) machineRow {
 	}
 	row := machineRow{ID: m.ID, Name: m.Name, IsHost: m.IsHost, Approved: m.Approved, RevokedAt: m.RevokedAt.String,
 		LastSeen: m.LastSeen.String, SupervisorVersion: m.SupervisorVersion.String, Connected: connected}
+	if m.ID == s.localSupervisorID() {
+		row.RestartPending = s.localSupervisorPending.Load()
+		row.UpgradeRequired = s.localSupervisorUpgradeRequired.Load()
+	}
 	if connected && conn.supportsWarm {
 		conn.warmMu.Lock()
 		report := conn.warm

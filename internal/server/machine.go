@@ -222,6 +222,33 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusPolicyViolation, "invalid hello")
 		return
 	}
+	localSupervisorID := s.localSupervisorID()
+	localSupervisor := machineID == localSupervisorID && localSupervisorID != ""
+	if localSupervisor && hello.SupportsRetireAtIdle && s.LocalSupervisorLegacyDrainCancel != nil {
+		s.LocalSupervisorLegacyDrainCancel()
+	}
+	restartPending := localSupervisor && (hello.SupervisorVersion != s.Version || hello.SupervisorEnvironment != s.LocalSupervisorEnvironment)
+	upgradeRequired := false
+	if restartPending && hello.SupervisorVersion != s.Version && s.LocalSupervisorDiskVersion != nil {
+		if diskVersion, probeErr := s.LocalSupervisorDiskVersion(); probeErr != nil {
+			log.Printf("local supervisor disk version check: %v", probeErr)
+		} else if diskVersion != s.Version && diskVersion == hello.SupervisorVersion {
+			upgradeRequired = true
+			restartPending = false
+		}
+	}
+	if localSupervisor {
+		s.localSupervisorCanInterrupt.Store(hello.SupportsRetireAtIdle)
+		s.localSupervisorUpgradeRequired.Store(upgradeRequired)
+		if upgradeRequired {
+			s.localSupervisorPending.Store(false)
+			log.Printf("local supervisor uses the upgraded binary; restart the server to finish the upgrade")
+		}
+		if restartPending {
+			s.localSupervisorPending.Store(true)
+			log.Printf("local supervisor restart pending: build or turn environment differs from server")
+		}
+	}
 	s.maintenanceMu.RLock()
 	handshakeLocked := true
 	defer func() {
@@ -393,14 +420,28 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Telemetry: s.telemetryForMachine(ctx, c), AgentKeys: grants, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
 		return
 	}
+	if localSupervisor && !restartPending {
+		s.localSupervisorPending.Store(false)
+	}
+	if restartPending {
+		if hello.SupportsRetireAtIdle {
+			if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.RetireAtIdle}); err != nil {
+				return
+			}
+		} else if s.LocalSupervisorLegacyDrain != nil {
+			s.LocalSupervisorLegacyDrain()
+		}
+	}
 	for _, job := range killCommands {
 		// Cancelled before its start was confirmed, yet the machine runs it: it must not outlive the cancel.
 		if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.CommandCancel, ReqID: newRequestNonce(), JobID: job.ID, AgentID: job.AgentID}); err != nil {
 			return
 		}
 	}
-	if err := s.enqueuePendingSpawns(ctx, c); err != nil {
-		return
+	if !restartPending {
+		if err := s.enqueuePendingSpawns(ctx, c); err != nil {
+			return
+		}
 	}
 	s.maintenanceMu.RUnlock()
 	handshakeLocked = false
@@ -646,9 +687,11 @@ func (s *Server) machinePinger(ctx context.Context, c *machineConn) {
 				c.stop()
 				return
 			}
-			if err := s.enqueuePendingSpawns(ctx, c); err != nil {
-				c.stop()
-				return
+			if _, err := s.machineForDispatch(c.id); err == nil {
+				if err := s.enqueuePendingSpawns(ctx, c); err != nil {
+					c.stop()
+					return
+				}
 			}
 			if time.Since(time.Unix(0, c.lastSeen.Load())) > 60*time.Second {
 				c.stop()
@@ -805,7 +848,11 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 		if frame.Exit == nil {
 			return errors.New("missing process exit")
 		}
-		if err := s.Store.RecordProcessInfo(ctx, frame.TurnID, frame.AgentID, frame.Generation, *frame.Exit); err != nil {
+		exit := *frame.Exit
+		if c.id == s.localSupervisorID() {
+			exit = s.localSupervisorRestartExit(frame.TurnID, exit)
+		}
+		if err := s.Store.RecordProcessInfo(ctx, frame.TurnID, frame.AgentID, frame.Generation, exit); err != nil {
 			return err
 		}
 		if err := s.Store.ConfirmAgentProcessExit(ctx, frame.AgentID); err != nil {
@@ -950,4 +997,11 @@ func (s *Server) machineForID(id string) (*machineConn, error) {
 		return nil, ErrMachineUnavailable
 	}
 	return c, nil
+}
+
+func (s *Server) machineForDispatch(id string) (*machineConn, error) {
+	if id == s.localSupervisorID() && s.localSupervisorPending.Load() {
+		return nil, ErrMachineUnavailable
+	}
+	return s.machineForID(id)
 }

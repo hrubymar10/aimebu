@@ -1,7 +1,39 @@
 # Supervisor and delivery log
 
 `aimebu server` starts a local supervisor in the same process by default.
-It auto-provisions the approved host machine and its private key, opens
+Set `AIMEBU_SUPERVISOR=detached` to start or adopt a separate local process.
+It uses `server/host-machine.key` and dials the server over loopback. The
+server can restart without interrupting active turns or commands: the
+supervisor reconnects and replays its durable journal state. A normal
+`aimebu server stop` leaves it running; `aimebu server stop --with-supervisor`
+stops both.
+The agent-tools bridge retries connection failures and maintenance responses
+for up to a minute; keyed writes retain their request key. Other server
+errors reach the agent immediately.
+`aimebu supervisor status` shows its PID, and `aimebu supervisor restart`
+asks the running server to replace it using the server's environment. If the
+server is absent, the command starts a replacement from the CLI environment.
+If a server holds the config directory but does not answer the request, the
+command fails; retry it or restart the server. It never replaces that server's
+supervisor from the CLI environment.
+The running server compares the supervisor's build and a fingerprint of PATH,
+turn limits, credential variables, and harness config homes. A mismatch shows
+"restart pending" in Machines, Health and `doctor --live`, holds new local
+dispatch, and replaces the supervisor after its active turns and commands
+finish. The owner's Restart now action interrupts them and gets the ordinary
+one auto-continue. A crashed detached supervisor is respawned with backoff.
+While the restart is pending, new local spawns wait for the replacement. If a
+retiring supervisor reconnects to a server that now matches it, it resumes
+accepting work after that server's acknowledgement.
+If the executable on disk is newer than the running server, the new supervisor
+keeps serving work. Machines, Health and `doctor --live` ask you to restart the
+server to finish the upgrade; repeated supervisor replacements would not help.
+After 24 hours without
+a server connection and with no active turn or command, it exits by itself.
+Its output is in `supervisor/aimebu.log`.
+
+In embedded mode, the server auto-provisions the approved host machine and
+its private key, opens
 `supervisor/journal.sqlite`, and connects through the same `/api/machine`
 WebSocket used by standalone supervisors. It starts once the server is
 listening (reading each tool's version takes seconds, and the web UI does not
@@ -15,8 +47,11 @@ One supervisor owns a journal at a time. A sibling `journal.sqlite.lock`
 file (0600) holds an exclusive process lock and its owner's PID. Opening the
 same journal from a second supervisor fails with a message naming that PID.
 Two live processes cannot safely share its turn records because each has a
-different in-memory process-liveness map. When testing standalone mode on the same
-host, set `AIMEBU_EMBEDDED_SUPERVISOR=0` on the server first.
+different in-memory process-liveness map. When testing a second standalone
+supervisor on the same host, set `AIMEBU_EMBEDDED_SUPERVISOR=0` on the server
+and stop any existing local supervisor first.
+When switching from detached to embedded mode, stop the old process with
+`aimebu server stop --with-supervisor` before starting the embedded server.
 
 The owner pairs a remote machine from the browser's **Add machine** action.
 It issues a one-use token valid for ten minutes and shows a command to paste
@@ -789,9 +824,12 @@ processes are never on one session.
   returns, the wrapper's session cleanup runs and it exits 0), or, with that capability, a
   terminate: the wrapper traps TERM, ends the session in the container, waits for it and only then
   exits 128+signal, so exactly 143 after our SIGTERM. Any other status, a kill, or no capability
-  is *unconfirmed*. An unconfirmed end follows the rules above (stop ack and key drop wait, no
-  replacement on the session) and is never cleared by elapsed time; it stays until the supervisor
-  restarts, whose start-up sweep and the harness's own heartbeat deal with the leftovers. A launcher
+  is *unconfirmed*. The supervisor retries the end periodically and on the next delivery. While the
+  host wrapper is alive, no replacement starts on the session and stop ack and key drop wait. If the
+  wrapper has been reaped but its container end remains unconfirmed, the session stays quarantined
+  for two minutes while kill is retried. The supervisor then reports the uncertainty once and
+  releases the session; the harness's session heartbeat cleans up a process left in the container.
+  A launcher
   without the capability runs its agents cold on every turn, as before. A process in a container is
   always closed first (input, then SIGTERM with about eight seconds for the wrapper's own cleanup, only
   then SIGKILL). A running container gets the faster in-container wrapper only after

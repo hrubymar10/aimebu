@@ -51,5 +51,5 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"stuck_minutes": int(stuckAfter() / time.Minute), "agents": ordered})
+	writeJSON(w, http.StatusOK, map[string]any{"stuck_minutes": int(stuckAfter() / time.Minute), "agents": ordered, "supervisor_restart_pending": s.localSupervisorPending.Load(), "supervisor_upgrade_required": s.localSupervisorUpgradeRequired.Load()})
 }

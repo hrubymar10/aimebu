@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
@@ -188,7 +190,7 @@ func TestJournalRejectsConcurrentSupervisorOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenJournal(ctx, path); !errors.Is(err, ErrJournalInUse) || !strings.Contains(err.Error(), "pid ") || !strings.Contains(err.Error(), "AIMEBU_EMBEDDED_SUPERVISOR=0") {
+	if _, err := OpenJournal(ctx, path); !errors.Is(err, ErrJournalInUse) || !strings.Contains(err.Error(), "pid ") {
 		t.Fatalf("second supervisor opened same journal: %v", err)
 	}
 	if info, err := os.Stat(path + ".lock"); err != nil || info.Mode().Perm() != 0600 {
@@ -204,6 +206,27 @@ func TestJournalRejectsConcurrentSupervisorOwner(t *testing.T) {
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestJournalOpenWaitsForShortStatusProbe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.sqlite")
+	probe, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer probe.Close()
+	if err := syscall.Flock(int(probe.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = syscall.Flock(int(probe.Fd()), syscall.LOCK_UN)
+	}()
+	journal, err := OpenJournal(t.Context(), path)
+	if err != nil {
+		t.Fatalf("probe briefly held the lock: %v", err)
+	}
+	defer journal.Close()
 }
 
 func TestJournalReplacementGetsNewIdentity(t *testing.T) {

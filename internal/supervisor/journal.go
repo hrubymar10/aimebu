@@ -24,6 +24,31 @@ import (
 var ErrJournalConflict = errors.New("journal conflict")
 var ErrJournalInUse = errors.New("supervisor journal already in use")
 
+// JournalOwner probes the journal's process lock without opening the database.
+// A free lock means no supervisor owns it; pid is advisory while it is held.
+func JournalOwner(path string) (held bool, pid string, err error) {
+	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return false, "", err
+	}
+	file, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return false, "", err
+	}
+	defer file.Close()
+	if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			data, readErr := os.ReadFile(path + ".lock")
+			if readErr != nil {
+				return true, "", readErr
+			}
+			return true, strings.TrimSpace(string(data)), nil
+		}
+		return false, "", err
+	}
+	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	return false, "", nil
+}
+
 type Journal struct {
 	db       *sql.DB
 	lockFile *os.File
@@ -53,16 +78,27 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 	if err := lockFile.Chmod(0600); err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			pidBytes, _ := os.ReadFile(path + ".lock")
-			pid := strings.TrimSpace(string(pidBytes))
-			if pid == "" {
-				pid = "unknown"
-			}
-			return nil, fmt.Errorf("%w by pid %s; is the server's embedded supervisor running? set AIMEBU_EMBEDDED_SUPERVISOR=0 on the server", ErrJournalInUse, pid)
+	// A status probe briefly owns this lock too. Wait a bounded moment so a
+	// supervisor racing that probe does not mistake it for a second owner.
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for {
+		err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
 		}
-		return nil, err
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, err
+		}
+		if time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		pidBytes, _ := os.ReadFile(path + ".lock")
+		pid := strings.TrimSpace(string(pidBytes))
+		if pid == "" {
+			pid = "unknown"
+		}
+		return nil, fmt.Errorf("%w by pid %s", ErrJournalInUse, pid)
 	}
 	if err := lockFile.Truncate(0); err != nil {
 		return nil, err

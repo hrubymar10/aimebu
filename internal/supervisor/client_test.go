@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,10 +62,135 @@ func TestRunOnceCancellationDoesNotWaitForCloseHandshake(t *testing.T) {
 	}
 }
 
+func TestMatchingReconnectClearsRetireState(t *testing.T) {
+	journal, err := OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		if _, err := readFrame(r.Context(), conn); err != nil {
+			return
+		}
+		ack, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck})
+		if err := conn.Write(r.Context(), websocket.MessageText, ack); err != nil {
+			return
+		}
+		for {
+			if _, err := readFrame(r.Context(), conn); err != nil {
+				return
+			}
+		}
+	}))
+	defer peer.Close()
+	client := NewClient("machine", "key", peer.URL, journal, adapter.NewFake())
+	client.retireRequested.Store(true)
+	client.stopping = true
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- client.RunOnce(ctx) }()
+	select {
+	case <-ready:
+	case <-time.After(waitGuard):
+		t.Fatal("supervisor did not reconnect")
+	}
+	client.mu.Lock()
+	stopping := client.stopping
+	client.mu.Unlock()
+	if stopping || client.retireRequested.Load() {
+		t.Fatal("matching reconnect kept the supervisor retiring")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(waitGuard):
+		t.Fatal("supervisor did not stop")
+	}
+}
+
 // waitGuard is how long a test waits for a state that stays once it is reached (a connection made, an ack sent, a run stopped). It only stops a
 // test that would otherwise hang for good: none of them depends on how soon the state arrives, so a loaded machine makes them slower, not red.
 // The one wait that is itself the property (a close that must not wait for the peer's handshake) keeps its own short limit.
 const waitGuard = 30 * time.Second
+
+func TestLongConnectionDoesNotCountTowardIdleDisconnect(t *testing.T) {
+	journal, err := OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	firstRelease := make(chan struct{})
+	var connections atomic.Int32
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		if _, err := readFrame(r.Context(), conn); err != nil {
+			return
+		}
+		ack, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck})
+		if err := conn.Write(r.Context(), websocket.MessageText, ack); err != nil {
+			return
+		}
+		if connections.Add(1) == 1 {
+			<-firstRelease
+			_ = conn.CloseNow()
+			return
+		}
+		for {
+			if _, err := readFrame(r.Context(), conn); err != nil {
+				return
+			}
+		}
+	}))
+	defer peer.Close()
+	defer func() {
+		select {
+		case <-firstRelease:
+		default:
+			close(firstRelease)
+		}
+	}()
+	client := NewClient("machine", "key", peer.URL, journal, adapter.NewFake())
+	client.IdleDisconnectLimit = 40 * time.Millisecond
+	client.ReconnectDelay = 5 * time.Millisecond
+	ready := make(chan struct{}, 2)
+	client.OnReady = func() { ready <- struct{}{} }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- client.Run(ctx) }()
+	select {
+	case <-ready:
+	case <-time.After(waitGuard):
+		t.Fatal("first connection was not ready")
+	}
+	time.Sleep(120 * time.Millisecond)
+	close(firstRelease)
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("supervisor retired on a brief disconnect after a long connection: %v", err)
+	case <-time.After(waitGuard):
+		t.Fatal("supervisor did not reconnect")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(waitGuard):
+		t.Fatal("supervisor did not stop")
+	}
+}
 
 func TestReconnectKeepsPausedWarmRefusal(t *testing.T) {
 	journal, err := OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
@@ -207,6 +333,14 @@ func TestReconnectDoesNotReplaySettledNativeSessionForRemovedAgent(t *testing.T)
 }
 
 func TestStopAcceptingAndDrainJournalsInterruptedTurn(t *testing.T) {
+	testStopAcceptingAndDrainJournalsTurn(t, false)
+}
+
+func TestOwnerRestartJournalsOneTimeContinuation(t *testing.T) {
+	testStopAcceptingAndDrainJournalsTurn(t, true)
+}
+
+func testStopAcceptingAndDrainJournalsTurn(t *testing.T, restart bool) {
 	ctx := context.Background()
 	journal, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
@@ -226,7 +360,12 @@ func TestStopAcceptingAndDrainJournalsInterruptedTurn(t *testing.T) {
 	client.active["agent"] = "turn-drain"
 	client.running["agent"] = turn
 	client.turns.Add(1)
-	go client.runTurn(ctx, protocol.Delivery{AgentID: "agent", TurnID: "turn-drain"}, turn)
+	runCtx, stopRun := context.WithCancel(ctx)
+	go client.runTurn(runCtx, protocol.Delivery{AgentID: "agent", TurnID: "turn-drain", Mode: adapter.ModeNormal}, turn)
+	if restart {
+		client.MarkRestartInterruption()
+	}
+	stopRun() // SIGTERM cancels the run context before the local drain starts.
 	drainCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if err := client.StopAcceptingAndDrain(drainCtx); err != nil {
@@ -236,7 +375,7 @@ func TestStopAcceptingAndDrainJournalsInterruptedTurn(t *testing.T) {
 		t.Fatal("supervisor still accepts deliveries")
 	}
 	exits, err := journal.PendingExits(ctx)
-	if err != nil || len(exits) != 1 || exits[0].TurnID != "turn-drain" || !exits[0].Exit.CancelIntent {
+	if err != nil || len(exits) != 1 || exits[0].TurnID != "turn-drain" || exits[0].Exit.CancelIntent == restart || exits[0].Exit.Interrupted != restart {
 		t.Fatalf("journaled exits=%+v %v", exits, err)
 	}
 }

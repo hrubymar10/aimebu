@@ -8,10 +8,12 @@ type DoctorLive struct {
 }
 
 type DoctorMachine struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Approved  bool   `json:"approved"`
-	Connected bool   `json:"connected"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Approved        bool   `json:"approved"`
+	Connected       bool   `json:"connected"`
+	RestartPending  bool   `json:"restart_pending,omitempty"`
+	UpgradeRequired bool   `json:"upgrade_required,omitempty"`
 	// Supports has one entry per capability flag of the hello, in a fixed order; it is empty for a machine that is not connected.
 	Supports  []DoctorSupport  `json:"supports,omitempty"`
 	Launchers []DoctorLauncher `json:"launchers"`

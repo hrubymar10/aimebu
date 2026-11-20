@@ -87,14 +87,26 @@ type Server struct {
 	// Tests override the settings migration's Codex process scan.
 	tokenSettingRunningCodex func() ([]string, string, error)
 	// TokenSettingClock is the clock of the setting's waiting backoff; nil is time.Now.
-	TokenSettingClock  func() time.Time
-	CopilotFlow        *providers.CopilotFlow
-	Switcher           *switcher.Manager
-	ImportV1Root       string
-	DataRoot           string           // the config root; falls back to ImportV1Root
-	Version            string           // the build's version string, shown in the page header (GET /api/buildinfo)
-	telemetryTransport sentry.Transport // tests replace the network transport; nil is the real one
-	CleanupClock       func() time.Time // tests set the clock of the daily cleanup; nil is time.Now
+	TokenSettingClock                func() time.Time
+	CopilotFlow                      *providers.CopilotFlow
+	Switcher                         *switcher.Manager
+	ImportV1Root                     string
+	DataRoot                         string // the config root; falls back to ImportV1Root
+	Version                          string // the build's version string, shown in the page header (GET /api/buildinfo)
+	localSupervisorIDMu              sync.RWMutex
+	LocalSupervisorID                string
+	LocalSupervisorEnvironment       string
+	LocalSupervisorDiskVersion       func() (string, error)
+	LocalSupervisorRestart           func() error
+	LocalSupervisorLegacyDrain       func()
+	LocalSupervisorLegacyDrainCancel func()
+	localSupervisorPending           atomic.Bool
+	localSupervisorUpgradeRequired   atomic.Bool
+	localSupervisorCanInterrupt      atomic.Bool
+	localRestartMu                   sync.Mutex
+	localRestartTurns                map[string]time.Time
+	telemetryTransport               sentry.Transport // tests replace the network transport; nil is the real one
+	CleanupClock                     func() time.Time // tests set the clock of the daily cleanup; nil is time.Now
 	// claudeModelsFetch gets the Anthropic SDK source Claude's model list is read from; tests replace it. nil is the real fetch.
 	claudeModelsFetch func(ctx context.Context, etag string) (body []byte, newETag string, notModified bool, err error)
 	claudeModels      claudeModelCache
@@ -227,6 +239,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/sounds/{sound}", s.Auth.RequireUser(http.HandlerFunc(s.deleteSound)))
 	mux.HandleFunc("GET /api/session", s.sessionProbe)
 	mux.Handle("GET /api/machines", s.Auth.RequireUser(http.HandlerFunc(s.machineList)))
+	mux.Handle("POST /api/machines/{id}/supervisor/restart", s.Auth.RequireUser(http.HandlerFunc(s.restartLocalSupervisorOwner)))
 	mux.Handle("GET /api/machines/directories", s.Auth.RequireUser(http.HandlerFunc(s.directoryList)))
 	mux.Handle("GET /api/machines/{id}/harnesses", s.Auth.RequireUser(http.HandlerFunc(s.machineHarnesses)))
 	mux.Handle("PUT /api/machines/{id}/harnesses/{tool}/{variant}", s.Auth.RequireUser(http.HandlerFunc(s.machineHarness)))
@@ -381,6 +394,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/events/cursor", s.Auth.RequireUser(http.HandlerFunc(s.eventCursor)))
 	mux.HandleFunc("GET /api/machine", s.machineSocket)
 	mux.HandleFunc("GET /api/doctor", s.doctorLive)
+	mux.HandleFunc("POST /api/local-supervisor/restart", s.restartLocalSupervisorDoctor)
 	mux.Handle("GET /api/inbox", s.Auth.RequireUser(http.HandlerFunc(s.inbox)))
 	mux.Handle("GET /api/agent/rooms", s.requireAgentTool(http.HandlerFunc(s.agentToolRooms)))
 	mux.Handle("GET /api/agent/agents", s.requireAgentTool(http.HandlerFunc(s.agentToolAgents)))

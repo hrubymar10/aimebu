@@ -99,7 +99,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 			d.Server.sendRoomControls(ctx, []store.AgentCard{card})
 			continue
 		}
-		if machine, err := d.Server.machineForID(card.MachineID); err == nil {
+		if machine, err := d.Server.machineForDispatch(card.MachineID); err == nil {
 			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
 				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
 					log.Printf("team flow migration spawn %s: %v", card.ID, err)
@@ -117,7 +117,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 			d.Server.sendRoomControls(ctx, []store.AgentCard{card})
 			continue
 		}
-		if machine, err := d.Server.machineForID(card.MachineID); err == nil {
+		if machine, err := d.Server.machineForDispatch(card.MachineID); err == nil {
 			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
 				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
 					log.Printf("agent switch spawn %s: %v", card.ID, err)
@@ -131,7 +131,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	for _, card := range clearControls {
-		if machine, err := d.Server.machineForID(card.MachineID); err == nil {
+		if machine, err := d.Server.machineForDispatch(card.MachineID); err == nil {
 			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
 				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
 					log.Printf("context clear spawn %s: %v", card.ID, err)
@@ -180,7 +180,7 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 		if err != nil {
 			return count, err
 		}
-		machine, err := d.Server.machineForID(agent.MachineID)
+		machine, err := d.Server.machineForDispatch(agent.MachineID)
 		if err != nil {
 			continue
 		}

@@ -44,13 +44,15 @@ type Fake struct {
 	started          map[string]bool
 	readonlyVerified bool
 	echoDefault      bool
+	echoGate         <-chan struct{}
 }
 
 func NewFake() *Fake { return &Fake{scripts: make(map[string][]Step), started: make(map[string]bool)} }
 func (f *Fake) Catalog() []CatalogEntry {
 	return []CatalogEntry{{Tool: "fake", Version: "test", Environment: Environment{Variant: "test"}}}
 }
-func (f *Fake) SetEchoDefault(value bool) { f.mu.Lock(); f.echoDefault = value; f.mu.Unlock() }
+func (f *Fake) SetEchoDefault(value bool)        { f.mu.Lock(); f.echoDefault = value; f.mu.Unlock() }
+func (f *Fake) SetEchoGate(gate <-chan struct{}) { f.mu.Lock(); f.echoGate = gate; f.mu.Unlock() }
 func (f *Fake) SetReadonlyVerified(value bool) {
 	f.mu.Lock()
 	f.readonlyVerified = value
@@ -110,6 +112,9 @@ func (f *Fake) Start(parent context.Context, spec TurnSpec) (Turn, error) {
 			}
 			answer, _ := json.Marshal(map[string]any{"messages": []map[string]string{{"room": notes[len(notes)-1].RoomID, "body": "I heard: " + body, "reply_to": notes[len(notes)-1].MessageID}}})
 			steps = []Step{{Kind: StepEmit, Event: Event{Kind: EventFinalAnswer, Answer: answer}}, {Kind: StepExit, Exit: ExitInfo{TerminalEvent: true}}}
+			if f.echoGate != nil {
+				steps = append([]Step{{Kind: StepGate, Gate: f.echoGate}}, steps...)
+			}
 			ok = true
 		}
 	}

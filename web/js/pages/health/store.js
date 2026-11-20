@@ -10,6 +10,8 @@ export class HealthStore {
     this.agents = agents;
     this.limitGuard = limitGuard;
     this.rows = signal(null);
+    this.supervisorRestartPending = signal(false);
+    this.supervisorUpgradeRequired = signal(false);
     this.guard = signal(null);
     this.guardUser = null;
     this.guardGone = false;
@@ -18,16 +20,16 @@ export class HealthStore {
     this.alive = true;
   }
 
-  badge() { return (this.rows.value?.length || 0) + heldTools(this.guard.value); }
+  badge() { return (this.rows.value?.length || 0) + heldTools(this.guard.value) + (this.supervisorRestartPending.value || this.supervisorUpgradeRequired.value ? 1 : 0); }
 
   async refresh() {
     if (!this.alive) return;
     const ticket = ++this.ticket;
-    let rows;
+    let rows, restartPending = false, upgradeRequired = false;
     try {
       if (new URLSearchParams(location.search).has('mock_agents')) {
         rows = [...this.agents.cards.values()].map(card => ({ id: card.id, name: card.name, room_ids: [card.room_id], flags: card.health_flags || [] }));
-      } else rows = (await request('/api/health')).agents || [];
+      } else { const result = await request('/api/health'); rows = result.agents || []; restartPending = !!result.supervisor_restart_pending; upgradeRequired = !!result.supervisor_upgrade_required; }
     } catch { return; }
     if (!this.alive || ticket !== this.ticket || document.querySelector('#app-view').hidden) return;
     const affected = rows.filter(row => row.flags?.length);
@@ -35,6 +37,8 @@ export class HealthStore {
     if (this.guardUser !== currentUser) { this.guard.value = null; this.guardGone = false; this.guardUser = currentUser; this.limitTicket++; await this.refreshLimits(); if (!this.alive || ticket !== this.ticket) return; }
     this.sidebar.setHealth(affected);
     this.rows.value = affected;
+    this.supervisorRestartPending.value = restartPending;
+    this.supervisorUpgradeRequired.value = upgradeRequired;
   }
 
   async refreshLimits() {

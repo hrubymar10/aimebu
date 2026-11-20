@@ -150,24 +150,35 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		fmt.Fprintln(stdout, resolveVersion())
 		return 0
 	case "server":
+		if len(args) == 3 && args[1] == "stop" && args[2] == "--with-supervisor" {
+			return serverDaemonStopWithSupervisor(stdout, stderr)
+		}
 		if len(args) == 2 {
 			return serverDaemonCommand(args[1], stdout, stderr)
 		}
 		if len(args) != 1 {
-			fmt.Fprintln(stderr, "usage: aimebu server [start|stop|status]")
+			fmt.Fprintln(stderr, "usage: aimebu server [start|stop [--with-supervisor]|status]")
 			return 2
 		}
 		return serverCommand(ctx, stdout, stderr)
 	case "supervisor":
 		rest, insecure := withoutFlag(args[1:], "--insecure")
+		rest, local := withoutFlag(rest, "--local")
+		if len(rest) == 1 && (rest[0] == "status" || rest[0] == "restart") && !local && !insecure {
+			return supervisorControl(rest[0], stdout, stderr)
+		}
 		if len(rest) == 3 && rest[0] == "--pair" {
+			if local {
+				fmt.Fprintln(stderr, "--local cannot be paired")
+				return 2
+			}
 			return pairSupervisorCommand(ctx, rest[1], rest[2], insecure, stderr)
 		}
-		if len(rest) != 0 {
-			fmt.Fprintln(stderr, "usage: aimebu supervisor [--insecure] [--pair <server-url> <token>]")
+		if len(rest) != 0 || local && insecure {
+			fmt.Fprintln(stderr, "usage: aimebu supervisor [--local|--insecure] [--pair <server-url> <token>] | status | restart")
 			return 2
 		}
-		return supervisorCommand(ctx, insecure, stderr)
+		return supervisorCommand(ctx, insecure, stderr, local)
 	case "agent-tools":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: aimebu agent-tools")
@@ -234,9 +245,10 @@ func printUsage(w io.Writer) {
 Usage: aimebu <command> [args]
 
 Server:
-  server                              Run the server in the foreground (embedded supervisor)
-  server start|stop|status            Run the server in the background (pid file, log in server/aimebu.log)
-  supervisor [--insecure] [--pair <url> <token>]   Run a standalone host supervisor, or pair it with a server (plain http to another machine needs --insecure)
+  server                              Run the server in the foreground
+  server start|stop [--with-supervisor]|status   Run the server in the background (pid file, log in server/aimebu.log)
+  supervisor [--local|--insecure] [--pair <url> <token>]   Run a host supervisor (--local uses the host key and loopback)
+  supervisor status|restart           Inspect or replace the detached local supervisor
   agent-tools                         Managed agent toolbox over stdio (needs AIMEBU_URL, AIMEBU_AGENT_KEY)
 
 Utilities:
@@ -272,7 +284,8 @@ func withoutFlag(args []string, flag string) ([]string, bool) {
 	return rest, found
 }
 
-func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int {
+func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer, localFlag ...bool) int {
+	local := len(localFlag) > 0 && localFlag[0]
 	if tlsclient.InsecureSkipVerify() {
 		fmt.Fprintln(stderr, "WARNING: AIMEBU_INSECURE_SKIP_VERIFY disables server certificate verification")
 	}
@@ -299,8 +312,11 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 		return 1
 	}
 	credentialPath := filepath.Join(config.root, "supervisor", "machine.key")
+	if local {
+		credentialPath = filepath.Join(config.root, "server", "host-machine.key")
+	}
 	credential, err := readHostMachineKey(credentialPath)
-	if os.IsNotExist(err) {
+	if os.IsNotExist(err) && !local {
 		credential, err = readHostMachineKey(filepath.Join(config.root, "server", "host-machine.key"))
 	}
 	if err != nil {
@@ -315,9 +331,17 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 	defer journal.Close()
 	serverURL := os.Getenv("AIMEBU_URL")
 	if serverURL == "" {
-		serverURL = credential.ServerURL
+		if !local {
+			serverURL = credential.ServerURL
+		}
 		if serverURL == "" {
 			serverURL = "http://127.0.0.1:" + strconv.Itoa(config.port)
+		}
+	}
+	if local {
+		if err := localDialURL(serverURL); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
 		}
 	}
 	if err := tlsclient.CheckTransport(serverURL, insecure); err != nil {
@@ -338,12 +362,17 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fake := adapter.NewFake()
-	fake.SetEchoDefault(true)
+	fake := localFakeAdapter()
 	client := supervisor.NewClient(credential.MachineID, credential.Key, serverURL, journal,
 		adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), opencode.NewDocker(), vibe.New(filepath.Join(config.root, "supervisor", "vibe")), vibe.NewDocker()))
 	client.OnError = func(err error) { fmt.Fprintln(stderr, err) }
 	client.AllowPlainHTTP = insecure
+	client.SupervisorVersion = resolveVersion()
+	client.EnvironmentFingerprint = supervisor.EnvironmentFingerprint(os.Environ())
+	if local {
+		client.IdleDisconnectLimit = 24 * time.Hour
+		client.ReconnectDelay = 5 * time.Second
+	}
 	client.TurnLimits = turnLimits
 	client.ConfigDir = config.root
 	// A standalone supervisor reports the way the server tells it to (unless its own AIMEBU_SENTRY_DSN says otherwise); the embedded one is the
@@ -360,8 +389,36 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer) int
 	if own, err := telemetry.FromEnv(os.LookupEnv, resolveVersion()); err == nil && own.EnvSet {
 		client.SetTelemetryEnv(telemetryEnvOf(own)) // this machine's own setting, for the bridge too, whatever the server says
 	}
-	if err := client.Run(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+	runCtx := ctx
+	if local {
+		var cancelRestart context.CancelFunc
+		runCtx, cancelRestart = context.WithCancel(ctx)
+		defer cancelRestart()
+		restartSignal := make(chan os.Signal, 1)
+		signal.Notify(restartSignal, syscall.SIGUSR1)
+		defer signal.Stop(restartSignal)
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-restartSignal:
+				client.MarkRestartInterruption()
+				cancelRestart()
+			}
+		}()
+	}
+	runErr := client.Run(runCtx)
+	if local {
+		drainCtx, cancelDrain := context.WithTimeout(context.Background(), 40*time.Second)
+		if err := client.StopAcceptingAndDrain(drainCtx); err != nil {
+			fmt.Fprintln(stderr, "supervisor drain:", err)
+			if runErr == nil {
+				runErr = err
+			}
+		}
+		cancelDrain()
+	}
+	if runErr != nil {
+		fmt.Fprintln(stderr, runErr)
 		return 1
 	}
 	return 0
@@ -394,6 +451,17 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	mode, err := supervisorMode()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if mode == "detached" && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0" {
+		if _, err := localSupervisorURL(config); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	// A root that still holds v1's files is about to have them moved: the log starts after that, so it is never in the way of the move.
 	moving, err := v1MovePending(config.root)
 	if err != nil {
@@ -425,6 +493,19 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		return 1
 	}
 	defer listener.Close()
+	var localListener net.Listener
+	if mode == "detached" && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0" {
+		localURL, _ := localSupervisorURL(config)
+		localAddress := strings.TrimPrefix(localURL, "http://")
+		if localAddress != listener.Addr().String() && !strings.HasPrefix(config.bind, "0.0.0.0") && config.bind != "::" {
+			localListener, err = listenTCP(localAddress)
+			if err != nil {
+				fmt.Fprintln(stderr, "detached supervisor loopback listener:", err)
+				return 1
+			}
+			defer localListener.Close()
+		}
+	}
 	if hook := listenerHook.Load(); hook != nil {
 		(*hook)(listener)
 	}
@@ -628,9 +709,11 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		// An owner now exists, so a token left by an earlier start without one is dead weight.
 		_ = os.Remove(setupPath)
 	}
-	embeddedEnabled := ctx.Err() == nil && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0"
+	localEnabled := ctx.Err() == nil && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0"
+	embeddedEnabled := localEnabled && mode == "embedded"
+	detachedEnabled := localEnabled && mode == "detached"
 	var turnLimits supervisor.TurnLimitOverrides
-	if embeddedEnabled {
+	if localEnabled {
 		turnLimits, err = supervisor.TurnLimitsFromEnv(os.Getenv)
 		if err != nil {
 			failStartup(stderr, err)
@@ -640,6 +723,10 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	embeddedAddress := ""
 	if embeddedEnabled {
 		embeddedAddress = allowEmbeddedSupervisor(&config)
+	} else if detachedEnabled {
+		localURL, _ := localSupervisorURL(config)
+		parsed, _ := url.Parse(localURL)
+		allowSupervisorAddress(&config, parsed.Hostname())
 	}
 	service := server.New(db)
 	service.Setup = ownerSetup
@@ -655,6 +742,19 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		fmt.Fprintln(stderr, "crash log:", err)
 	}
 	service.DataRoot = config.root
+	var localManager *detachedSupervisorManager
+	if detachedEnabled {
+		localManager = &detachedSupervisorManager{config: config, stderr: stderr, store: db, ctx: ctx, connected: service.LocalSupervisorConnected, canInterrupt: service.LocalSupervisorCanInterrupt}
+		service.LocalSupervisorEnvironment = supervisor.EnvironmentFingerprint(os.Environ())
+		service.LocalSupervisorDiskVersion = onDiskSupervisorVersion
+		service.LocalSupervisorRestart = localManager.restartNow
+		service.LocalSupervisorLegacyDrain = localManager.retireLegacyAtIdle
+		service.LocalSupervisorLegacyDrainCancel = localManager.cancelLegacyDrain
+		if credential, keyErr := readHostMachineKey(keyPath); keyErr == nil {
+			service.SetLocalSupervisorID(credential.MachineID)
+			localManager.machineID = credential.MachineID
+		}
+	}
 	// `aimebu doctor --live` reads this key from the config directory; the server works without it, only --live is then unavailable.
 	if removeDoctorKey, err := service.EnableDoctorKey(config.root); err != nil {
 		fmt.Fprintln(stderr, "doctor key:", err)
@@ -738,10 +838,25 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	// background) must not begin after that read, or it would be left running with nobody to stop it.
 	stopping := false
 	var preparedJournal *supervisor.Journal
+	detachedStarted := false
 	startEmbedded = func() error {
 		embeddedMu.Lock()
 		defer embeddedMu.Unlock()
-		if embedded != nil || stopping || ctx.Err() != nil {
+		if embedded != nil || detachedStarted || stopping || ctx.Err() != nil {
+			return nil
+		}
+		if detachedEnabled {
+			credential, keyErr := readHostMachineKey(keyPath)
+			if keyErr != nil {
+				return keyErr
+			}
+			service.SetLocalSupervisorID(credential.MachineID)
+			localManager.machineID = credential.MachineID
+			if err := startDetachedSupervisor(config); err != nil {
+				return err
+			}
+			detachedStarted = true
+			telemetry.Go(ctx, func() { localManager.run(ctx) })
 			return nil
 		}
 		credential, err := readHostMachineKey(keyPath)
@@ -756,8 +871,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 				return err
 			}
 		}
-		fake := adapter.NewFake()
-		fake.SetEchoDefault(true)
+		fake := localFakeAdapter()
 		client := newEmbeddedSupervisor(credential.MachineID, credential.Key, embeddedAddress, config.port, opened,
 			adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), opencode.NewDocker(), vibe.New(filepath.Join(config.root, "supervisor", "vibe")), vibe.NewDocker()))
 		client.OnError = func(err error) { fmt.Fprintln(stderr, "supervisor:", err) }
@@ -783,7 +897,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	// connecting) starts after the server is listening, because the pages should not wait for it; in first-run setup everything
 	// starts when the owner is created, because the key does not exist before that.
 	startSupervisorAfterServe := false
-	if embeddedEnabled && !ownerSetup.Open() {
+	if localEnabled && !ownerSetup.Open() {
 		if _, err := readHostMachineKey(keyPath); err != nil {
 			stopDispatch()
 			<-dispatchDone
@@ -791,21 +905,34 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		var journalErr error
-		if preparedJournal, journalErr = supervisor.OpenJournal(ctx, filepath.Join(config.root, "supervisor", "journal.sqlite")); journalErr != nil {
-			stopDispatch()
-			<-dispatchDone
-			listener.Close()
-			fmt.Fprintln(stderr, journalErr)
-			return 1
+		if embeddedEnabled {
+			var journalErr error
+			if preparedJournal, journalErr = supervisor.OpenJournal(ctx, filepath.Join(config.root, "supervisor", "journal.sqlite")); journalErr != nil {
+				stopDispatch()
+				<-dispatchDone
+				listener.Close()
+				fmt.Fprintln(stderr, journalErr, "If switching from detached mode, run `aimebu server stop --with-supervisor` before starting embedded mode.")
+				return 1
+			}
+		} else {
+			if _, _, err := supervisorPID(config.root); err != nil {
+				stopDispatch()
+				<-dispatchDone
+				listener.Close()
+				fmt.Fprintln(stderr, err, "Stop the server and run `aimebu server stop --with-supervisor` to clear the local supervisor before changing modes.")
+				return 1
+			}
 		}
 		startSupervisorAfterServe = true
 	}
-	if !embeddedEnabled {
+	if !localEnabled {
 		startEmbedded = nil
 	}
-	serveDone := make(chan error, 2)
+	serveDone := make(chan error, 3)
 	telemetry.Go(ctx, func() { serveDone <- httpServer.Serve(listener) })
+	if localListener != nil {
+		telemetry.Go(ctx, func() { serveDone <- httpServer.Serve(localListener) })
+	}
 	if startSupervisorAfterServe {
 		telemetry.Go(ctx, func() {
 			if hook := embeddedStartHook.Load(); hook != nil {
@@ -820,6 +947,9 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		})
 	}
 	remaining := 1
+	if localListener != nil {
+		remaining++
+	}
 	if httpsServer != nil {
 		remaining++
 		telemetry.Go(ctx, func() { serveDone <- httpsServer.Serve(tlsListener) })
@@ -992,7 +1122,7 @@ func logAllowStartup(w io.Writer, config serverConfig, address string) {
 	}
 	fmt.Fprintf(w, "Listening on %s; AIMEBU_ALLOW=%s\n", address, strings.Join(entries, ","))
 	if config.allowDefault && !net.ParseIP(config.bind).IsLoopback() {
-		fmt.Fprintln(w, "WARNING: AIMEBU_BIND is non-loopback but AIMEBU_ALLOW defaults to loopback (plus the embedded supervisor); remote clients will receive 403. Set AIMEBU_ALLOW to include their IPs or CIDRs.")
+		fmt.Fprintln(w, "WARNING: AIMEBU_BIND is non-loopback but AIMEBU_ALLOW defaults to loopback; remote clients will receive 403. Set AIMEBU_ALLOW to include their IPs or CIDRs.")
 	}
 }
 
@@ -1015,10 +1145,15 @@ func allowEmbeddedSupervisor(config *serverConfig) string {
 	case "::":
 		address = "::1"
 	}
+	allowSupervisorAddress(config, address)
+	return address
+}
+
+func allowSupervisorAddress(config *serverConfig, address string) {
 	ip := netip.MustParseAddr(address).Unmap()
 	for _, prefix := range config.allow {
 		if prefix.Contains(ip) {
-			return address
+			return
 		}
 	}
 	bits := 32
@@ -1026,7 +1161,6 @@ func allowEmbeddedSupervisor(config *serverConfig) string {
 		bits = 128
 	}
 	config.allow = append(config.allow, netip.PrefixFrom(ip, bits))
-	return address
 }
 
 func writeHostMachineKey(path, machineID, key string) error {

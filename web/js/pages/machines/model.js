@@ -29,11 +29,12 @@ export function cardView(machine, owner) {
   const open = !machine.revoked_at;
   return {
     title: machine.name + (machine.is_host ? ' · Host' : ''),
-    status: machine.revoked_at ? 'Revoked' : !machine.approved ? 'Pending approval' : machine.connected ? 'Connected' : 'Offline',
+    status: machine.revoked_at ? 'Revoked' : !machine.approved ? 'Pending approval' : machine.upgrade_required ? 'Restart server to finish upgrade' : machine.restart_pending ? 'Supervisor restart pending' : machine.connected ? 'Connected' : 'Offline',
     detail: [machine.supervisor_version && `Supervisor ${machine.supervisor_version}`, machine.last_seen && `Last seen ${ago(machine.last_seen)}`, warmLine(machine.warm)].filter(Boolean).join(' · '),
     approve: !machine.approved && open,
     revoke: !machine.is_host && open,
     stop: machine.approved && open,
+    restart: machine.is_host && machine.restart_pending && !machine.upgrade_required && owner,
     locked: !owner,
   };
 }

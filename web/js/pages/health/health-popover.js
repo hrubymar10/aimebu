@@ -18,5 +18,5 @@ export function HealthPopover({ store, disk, onEntry }) {
     <span class="health-item-title">${healthSentence(row.name, flag)}</span><span class="health-item-hint">${healthExplanation(flag)}</span></button>`));
   // A title, then what matters first: the verdict on the agents (it was the last line, under the disk and the limits), the disk, the limits, and the agents that need a look. "No agent needs
   // attention" says what the list is; it does not claim the agents are running (a stopped agent is not flagged).
-  return html`<header class="health-title"><strong>Health</strong></header>${!entries.length && html`<p class="health-ok">No agent needs attention</p>`}${disk && html`<${DiskSection} disk=${disk} />`}<${LimitRows} guard=${store.guard.value} />${entries}`;
+  return html`<header class="health-title"><strong>Health</strong></header>${store.supervisorUpgradeRequired?.value && html`<p class="health-warning">Restart the server to finish the local supervisor upgrade.</p>`}${store.supervisorRestartPending?.value && html`<p class="health-warning">Local supervisor restart pending; running work will finish first.</p>`}${!entries.length && html`<p class="health-ok">No agent needs attention</p>`}${disk && html`<${DiskSection} disk=${disk} />`}<${LimitRows} guard=${store.guard.value} />${entries}`;
 }

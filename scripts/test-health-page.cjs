@@ -129,6 +129,23 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#health-popover').hidden, document.querySelector('#health-toggle').getAttribute('aria-expanded'), document.activeElement.id]), [true, 'false', 'health-toggle']);
       await page.close();
     }
+    // A local supervisor waiting for its current work to finish is visible in Health.
+    {
+      const page = await mount({ auto: answerAll({ 'GET /api/health': { agents: [], supervisor_restart_pending: true }, 'GET /api/limit-guard': guard('ok'), 'GET /api/disk': { status: 403, body: { message: 'no' } } }) });
+      await page.evaluate(() => window.__refreshed);
+      assert.equal((await badge(page))[0], '1');
+      await open(page);
+      assert.match(await page.$eval('#health-popover .health-warning', el => el.textContent), /restart pending/);
+      await page.close();
+    }
+    {
+      const page = await mount({ auto: answerAll({ 'GET /api/health': { agents: [], supervisor_upgrade_required: true }, 'GET /api/limit-guard': guard('ok'), 'GET /api/disk': { status: 403, body: { message: 'no' } } }) });
+      await page.evaluate(() => window.__refreshed);
+      assert.equal((await badge(page))[0], '1');
+      await open(page);
+      assert.match(await page.$eval('#health-popover .health-warning', el => el.textContent), /Restart the server to finish/);
+      await page.close();
+    }
     // The owner's percent-left setting is honoured: the sentence, the bar and its marks all say what is left. (Both tools soft, so both
     // have a Health row here; an ok tool has none, wherever the display is turned.)
     {

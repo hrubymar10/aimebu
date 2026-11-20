@@ -45,6 +45,7 @@ type Client struct {
 	OnTelemetry             func(protocol.TelemetrySettings)
 	HTTPClient              *http.Client
 	SupervisorVersion       string
+	EnvironmentFingerprint  string
 	CapabilityReports       []protocol.CapabilityReport
 	Harnesses               []protocol.HarnessRow
 	Launchers               []protocol.LauncherRow
@@ -66,20 +67,27 @@ type Client struct {
 	PingInterval   time.Duration
 	TurnLimits     TurnLimitOverrides
 	ReconnectDelay time.Duration
-	OnError        func(error)
-	OnReady        func()
-	writeMu        sync.Mutex
-	detectMu       sync.Mutex
-	mu             sync.Mutex
-	desired        map[string]protocol.DesiredAgent
-	active         map[string]string
-	running        map[string]adapter.Turn
-	pendingStopAck map[string]protocol.Frame
-	agentKeys      map[string]string // each agent's key, in memory only (see agent_tools.go)
-	telemetryEnv   map[string]string // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
-	currentConn    *websocket.Conn
-	stopping       bool
-	turns          sync.WaitGroup
+	// IdleDisconnectLimit lets a detached supervisor retire after the server has
+	// been absent for a long time. Zero keeps the standalone behavior.
+	IdleDisconnectLimit time.Duration
+	lastDisconnected    atomic.Int64
+	retireRequested     atomic.Bool
+	shutdownRequested   atomic.Bool
+	restartInterrupted  atomic.Bool
+	OnError             func(error)
+	OnReady             func()
+	writeMu             sync.Mutex
+	detectMu            sync.Mutex
+	mu                  sync.Mutex
+	desired             map[string]protocol.DesiredAgent
+	active              map[string]string
+	running             map[string]adapter.Turn
+	pendingStopAck      map[string]protocol.Frame
+	agentKeys           map[string]string // each agent's key, in memory only (see agent_tools.go)
+	telemetryEnv        map[string]string // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
+	currentConn         *websocket.Conn
+	stopping            bool
+	turns               sync.WaitGroup
 	// Warm keeps an agent's harness process up for an idle window after a turn (see warm.go); the zero value is off.
 	Warm             WarmConfig
 	codexWarmEnabled bool
@@ -214,11 +222,24 @@ func (c *Client) Run(ctx context.Context) error {
 	telemetry.Go(ctx, func() { c.sweepAgentLogs(ctx) })
 	telemetry.Go(ctx, func() { c.warmGuard(ctx) })
 	failures := 0
+	started := time.Now()
 	for {
 		began := time.Now()
 		err := c.RunOnce(ctx)
 		if ctx.Err() != nil {
 			return nil
+		}
+		if c.retireRequested.Load() && !c.hasActiveWork() {
+			return nil
+		}
+		if c.IdleDisconnectLimit > 0 {
+			last := started
+			if stamp := c.lastDisconnected.Load(); stamp != 0 {
+				last = time.Unix(0, stamp)
+			}
+			if time.Since(last) >= c.IdleDisconnectLimit && !c.hasActiveWork() {
+				return nil
+			}
 		}
 		// A connection that drops now and then is the network; one that cannot be had again and again is a fault worth a report (once a day, like every cause).
 		if time.Since(began) > reconnectHealthy {
@@ -239,6 +260,13 @@ func (c *Client) Run(ctx context.Context) error {
 		case <-time.After(delay):
 		}
 	}
+}
+
+// MarkRestartInterruption distinguishes an owner-requested immediate
+// supervisor replacement from an ordinary stop of an agent. The affected
+// turns get the existing one-time interrupted-turn continuation.
+func (c *Client) MarkRestartInterruption() {
+	c.restartInterrupted.Store(true)
 }
 
 func (c *Client) RunOnce(ctx context.Context) error {
@@ -267,6 +295,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer func() { c.lastDisconnected.Store(time.Now().UnixNano()) }()
 	defer func() {
 		if ctx.Err() != nil {
 			_ = conn.CloseNow()
@@ -304,7 +333,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -313,6 +342,13 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	if ack.V != protocol.Version || ack.Type != protocol.HelloAck {
 		return fmt.Errorf("expected hello_ack, got %q", ack.Type)
+	}
+	// A retire request belongs to the previous server connection. The new
+	// server sends another retire frame after this ack if it still needs one.
+	if c.retireRequested.Swap(false) && !c.shutdownRequested.Load() {
+		c.mu.Lock()
+		c.stopping = false
+		c.mu.Unlock()
 	}
 	// New keys first, before anything that could start a turn: an agent that lost its key with a restart gets another here.
 	for _, grant := range ack.AgentKeys {
@@ -490,6 +526,26 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			return fmt.Errorf("unsupported protocol version %d", frame.V)
 		}
 		switch frame.Type {
+		case protocol.RetireAtIdle:
+			c.retireRequested.Store(true)
+			c.mu.Lock()
+			c.stopping = true
+			c.mu.Unlock()
+			go func() {
+				ticker := time.NewTicker(250 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					if !c.hasActiveWork() {
+						_ = conn.CloseNow()
+						return
+					}
+					select {
+					case <-probeCtx.Done():
+						return
+					case <-ticker.C:
+					}
+				}
+			}()
 		case protocol.WorktreeOp:
 			result := protocol.Frame{V: protocol.Version, Type: protocol.WorktreeResult, ReqID: frame.ReqID}
 			var info worktree.Result
@@ -1262,6 +1318,10 @@ func turnEventFrame(agentID string, generation int, turnID string, event adapter
 
 func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn adapter.Turn) {
 	defer c.turns.Done()
+	// The connection or process context may be cancelled while the harness is
+	// exiting. Keep its final journal writes possible so a replacement can
+	// replay the answer and exit after the socket is gone.
+	journalCtx := context.WithoutCancel(ctx)
 	release := func() {
 		c.mu.Lock()
 		if c.active[delivery.AgentID] == delivery.TurnID {
@@ -1332,7 +1392,7 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 			sum := sha256.Sum256(event.Answer)
 			frame.Digest = hex.EncodeToString(sum[:])
 			frame.Candidate = string(event.Answer)
-			if _, err := c.Journal.RecordAnswer(ctx, delivery.TurnID, frame.AnswerRev, frame.Digest, event.Answer); err != nil {
+			if _, err := c.Journal.RecordAnswer(journalCtx, delivery.TurnID, frame.AnswerRev, frame.Digest, event.Answer); err != nil {
 				abandon(err)
 				return
 			}
@@ -1342,7 +1402,7 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 		if event.Kind != adapter.EventFinalAnswer {
 			payload, err := json.Marshal(event)
 			if err == nil {
-				err = c.Journal.RecordEvent(ctx, delivery.TurnID, event.SourceEventID, string(event.Kind), event.Summary, payload)
+				err = c.Journal.RecordEvent(journalCtx, delivery.TurnID, event.SourceEventID, string(event.Kind), event.Summary, payload)
 			}
 			if err != nil {
 				abandon(err)
@@ -1416,10 +1476,20 @@ events:
 		// was interrupted, not answered badly: the empty answer is dropped (a clean exit 0 is the harness's own empty reply). Otherwise it goes to the server as it always did.
 		probe := exit
 		probe.TerminalEvent = false
-		if _, cut := interruptedReason(probe); cut && exit.ExitCode != 0 && stall == "" && journalErr == nil {
+		if c.restartInterrupted.Load() && exit.CancelIntent && delivery.Mode == adapter.ModeNormal {
+			exit.TerminalEvent = false
+		} else if _, cut := interruptedReason(probe); cut && exit.ExitCode != 0 && stall == "" && journalErr == nil {
 			exit.TerminalEvent = false
 		} else if journalErr == nil {
 			forward(*held)
+		}
+	}
+	if c.restartInterrupted.Load() && exit.CancelIntent && !exit.TerminalEvent && delivery.Mode == adapter.ModeNormal {
+		exit.CancelIntent = false
+		exit.Interrupted = true
+		exit.ErrorEvent = "local supervisor restarted by owner"
+		if exit.ExitCode == 0 {
+			exit.ExitCode = 130
 		}
 	}
 	if stall != "" && !exit.TerminalEvent {
@@ -1456,7 +1526,7 @@ events:
 		exit.ErrorEvent = reason
 		exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\n" + reason)
 	}
-	if err := c.Journal.RecordExitInfo(ctx, delivery.TurnID, exit); err != nil {
+	if err := c.Journal.RecordExitInfo(journalCtx, delivery.TurnID, exit); err != nil {
 		c.report("the exit info of a turn could not be recorded", err)
 		c.warmTurnEnded(turn, adapter.ExitInfo{})
 		c.keepAliveTurnEnded(delivery.AgentID, adapter.ExitInfo{})
@@ -1517,6 +1587,7 @@ func (c *Client) sendDeferredStopAck(ctx context.Context, agentID string) {
 // StopAcceptingAndDrain rejects new deliveries, interrupts active turns, and
 // waits for their journal writes to finish before the caller closes the journal.
 func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
+	c.shutdownRequested.Store(true)
 	c.mu.Lock()
 	c.stopping = true
 	turns := make([]adapter.Turn, 0, len(c.running))
@@ -1530,8 +1601,34 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 			c.report("a turn could not be cancelled on shutdown", err)
 		}
 	}
+	if c.restartInterrupted.Load() {
+		runner := c.runner()
+		runner.mu.Lock()
+		jobs := make([]string, 0, len(runner.jobs))
+		for id := range runner.jobs {
+			jobs = append(jobs, id)
+		}
+		runner.mu.Unlock()
+		for _, id := range jobs {
+			go c.commandKill(id, false)
+		}
+	}
 	done := make(chan struct{})
-	telemetry.Go(ctx, func() { c.turns.Wait(); close(done) })
+	telemetry.Go(ctx, func() {
+		c.turns.Wait()
+		if c.restartInterrupted.Load() {
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			for c.hasActiveWork() {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}
+		close(done)
+	})
 	select {
 	case <-done:
 		return nil

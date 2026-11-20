@@ -128,6 +128,10 @@ func (s *Server) doctorLive(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		item := protocol.DoctorMachine{ID: machine.ID, Name: machine.Name, Approved: machine.Approved, Launchers: []protocol.DoctorLauncher{}}
+		if machine.ID == s.localSupervisorID() {
+			item.RestartPending = s.localSupervisorPending.Load()
+			item.UpgradeRequired = s.localSupervisorUpgradeRequired.Load()
+		}
 		observed := map[string]protocol.LauncherRow{}
 		if conn, err := s.machineForID(machine.ID); err == nil {
 			select {

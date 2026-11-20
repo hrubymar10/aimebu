@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,36 @@ func commandTestClient(t *testing.T) (*Client, *Journal, string) {
 	c := NewClient("mch_test", "key", "http://127.0.0.1:1", j, adapter.NewFake())
 	c.OnError = func(error) {}
 	return c, j, dir
+}
+
+func TestIdleExitWaitsForAdoptedCommand(t *testing.T) {
+	c, journal, _ := commandTestClient(t)
+	if c.hasActiveWork() {
+		t.Fatal("idle supervisor reported work")
+	}
+	if _, err := journal.RecordCommandStart(t.Context(), CommandStartRecord{JobID: "job_adopted", AgentID: "agt_test", Pid: 1, Cmd: "sleep", LogPath: "log"}); err != nil {
+		t.Fatal(err)
+	}
+	if !c.hasActiveWork() {
+		t.Fatal("journaled command was ignored")
+	}
+	if err := journal.RecordCommandExit(t.Context(), protocol.CommandExit{JobID: "job_adopted", Lost: true}); err != nil {
+		t.Fatal(err)
+	}
+	if c.hasActiveWork() {
+		t.Fatal("finished command still held the supervisor")
+	}
+}
+
+func TestIdleDisconnectExit(t *testing.T) {
+	c, _, _ := commandTestClient(t)
+	c.IdleDisconnectLimit = 30 * time.Millisecond
+	c.ReconnectDelay = 5 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := c.Run(ctx); err != nil || ctx.Err() != nil {
+		t.Fatalf("idle disconnect exit: err=%v context=%v", err, ctx.Err())
+	}
 }
 
 func waitCommandExit(t *testing.T, sink chan protocol.CommandExit) protocol.CommandExit {

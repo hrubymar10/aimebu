@@ -375,6 +375,9 @@ func (c *machineConn) commandInContainer(spec protocol.CommandSpec) bool {
 
 // machineCommand asks the agent's machine one question and waits for its answer, like the worktree and agent-log requests do.
 func (s *Server) machineCommand(ctx context.Context, machineID string, frame protocol.Frame, timeout time.Duration) (protocol.Frame, error) {
+	if frame.Type == protocol.CommandRun && machineID == s.localSupervisorID() && s.localSupervisorPending.Load() {
+		return protocol.Frame{}, ErrMachineUnavailable
+	}
 	conn, err := s.machineForID(machineID)
 	if err != nil {
 		return protocol.Frame{}, err

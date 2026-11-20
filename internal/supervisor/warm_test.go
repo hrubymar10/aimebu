@@ -136,9 +136,12 @@ type warmFakeSession struct {
 	killFails atomic.Bool  // Kill and Close report that the process did not end
 	failKills atomic.Int32 // the first this many Kill calls fail (Close does too)
 	// lingers makes Close and Kill end the host side but report the container side unconfirmed, as a wrapper that was terminated or killed does.
-	lingers atomic.Bool
-	held    *sessionHeldTurn
-	closed  bool // ended by Close (input closed, then it went on its own) rather than Kill
+	lingers     atomic.Bool
+	slowKill    atomic.Bool
+	killEntered chan struct{}
+	killResume  chan struct{}
+	held        *sessionHeldTurn
+	closed      bool // ended by Close (input closed, then it went on its own) rather than Kill
 	// onKill runs when the session is killed (the supervisor's state at that moment is what a test looks at).
 	onKill func()
 }
@@ -188,6 +191,13 @@ func (s *warmFakeSession) Close(time.Duration) error {
 	return nil
 }
 func (s *warmFakeSession) Kill() error {
+	if s.slowKill.Load() {
+		select {
+		case s.killEntered <- struct{}{}:
+		default:
+		}
+		<-s.killResume
+	}
 	if s.lingers.Load() {
 		s.end()
 		return adapterContainerUnconfirmed
@@ -1385,6 +1395,9 @@ func TestWarmUnconfirmedEndWithholdsTheStopAndTheKey(t *testing.T) {
 
 // No process, warm or cold, starts on a session while the last one is not confirmed gone; once it is, the next delivery goes ahead.
 func TestWarmNoStartAfterAnUnconfirmedKill(t *testing.T) {
+	oldRetry := warmRetryEvery
+	warmRetryEvery = 10 * time.Millisecond
+	defer func() { warmRetryEvery = oldRetry }()
 	h := newWarmHarness(t)
 	h.spawn("agt_a")
 	h.run("agt_a", nil)
@@ -1403,6 +1416,12 @@ func TestWarmNoStartAfterAnUnconfirmedKill(t *testing.T) {
 		t.Fatalf("something started: cold=%d started=%d", h.f.cold, h.f.started)
 	}
 	h.f.sessions[0].killFails.Store(false)
+	slot := h.c.pool().slot("agt_a")
+	eventually(t, "the background retry confirming the old process ended", func() bool {
+		slot.mu.Lock()
+		defer slot.mu.Unlock()
+		return slot.stuck == nil
+	})
 	h.run("agt_a", func(s *adapter.TurnSpec) { s.Agent.Model = "opus" })
 	if h.f.started != 2 {
 		t.Fatalf("once the process is gone the next delivery runs: started=%d", h.f.started)
@@ -1477,8 +1496,8 @@ func TestWarmContainerNeedsALauncherThatConfirmsItsEnd(t *testing.T) {
 }
 
 // A containerized process whose host side ends on a terminate while the container side is not confirmed gone: the slot is stuck, nothing starts on
-// the session (not a cold turn, not a replacement), the stop's ack and the key's drop are deferred, and the stop completes only when the end is
-// finally confirmed, not before and not because time passed.
+// the session (not a cold turn, not a replacement), and the stop's ack and key drop wait during quarantine. An explicit later confirmation
+// releases it before the quarantine limit.
 func TestWarmContainerSideNeverConfirmedByTime(t *testing.T) {
 	old := warmRetryEvery
 	warmRetryEvery = 10 * time.Millisecond
@@ -1493,7 +1512,7 @@ func TestWarmContainerSideNeverConfirmedByTime(t *testing.T) {
 	if h.f.sessions[0].Alive() {
 		t.Fatal("the host side is gone")
 	}
-	time.Sleep(100 * time.Millisecond) // many retries: time passing confirms nothing
+	time.Sleep(100 * time.Millisecond) // many retries: the quarantine has not expired
 	if h.c.keyOf("agt_a") == "" {
 		t.Fatal("the key was dropped while the container side was unconfirmed")
 	}
@@ -1507,6 +1526,106 @@ func TestWarmContainerSideNeverConfirmedByTime(t *testing.T) {
 	}
 	h.f.sessions[0].lingers.Store(false) // the launcher (or an explicit check) now confirms it
 	eventually(t, "the stop completing once the end is confirmed", func() bool { return h.c.keyOf("agt_a") == "" })
+}
+
+func TestWarmStuckProcessExitsLaterAndNextTurnStarts(t *testing.T) {
+	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+	warmRetryEvery, warmStuckQuarantine = 10*time.Millisecond, 30*time.Millisecond
+	defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	old := h.f.sessions[0]
+	old.killFails.Store(true)
+	if h.c.retireWarm("agt_a", "test") {
+		t.Fatal("an alive process was treated as gone")
+	}
+	time.Sleep(80 * time.Millisecond)
+	slot := h.c.pool().slot("agt_a")
+	slot.mu.Lock()
+	stillStuck := slot.stuck != nil
+	slot.mu.Unlock()
+	if !stillStuck || h.c.warmLive.Load() != 1 {
+		t.Fatal("a provably live process was released after quarantine")
+	}
+	old.crash()
+	eventually(t, "reap of the old warm process", func() bool {
+		slot.mu.Lock()
+		stuck := slot.stuck != nil
+		slot.mu.Unlock()
+		return !stuck && h.c.warmLive.Load() == 0
+	})
+	if noted, err := h.c.Journal.WarmProcesses(context.Background()); err != nil || len(noted) != 0 {
+		t.Fatalf("warm journal still held the exited process: %+v %v", noted, err)
+	}
+	h.run("agt_a", nil)
+	if h.f.started != 2 {
+		t.Fatalf("next turn did not start a new warm process: %d", h.f.started)
+	}
+}
+
+func TestWarmContainerQuarantineReleasesReapedWrapper(t *testing.T) {
+	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+	warmRetryEvery, warmStuckQuarantine = 10*time.Millisecond, 40*time.Millisecond
+	defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	if h.c.retireWarm("agt_a", "test") {
+		t.Fatal("an unconfirmed container end was treated as confirmed")
+	}
+	slot := h.c.pool().slot("agt_a")
+	eventually(t, "release of the reaped wrapper after quarantine", func() bool {
+		slot.mu.Lock()
+		stuck := slot.stuck != nil
+		slot.mu.Unlock()
+		return !stuck && h.c.warmLive.Load() == 0
+	})
+	if noted, err := h.c.Journal.WarmProcesses(context.Background()); err != nil || len(noted) != 0 {
+		t.Fatalf("warm journal still held the reaped wrapper: %+v %v", noted, err)
+	}
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	if h.f.started != 2 {
+		t.Fatalf("next turn did not start a new container process: %d", h.f.started)
+	}
+}
+
+func TestWarmDeliveryDoesNotWaitForSlowStuckKill(t *testing.T) {
+	oldRetry := warmRetryEvery
+	warmRetryEvery = 10 * time.Millisecond
+	defer func() { warmRetryEvery = oldRetry }()
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	old := h.f.sessions[0]
+	old.killFails.Store(true)
+	old.killEntered = make(chan struct{}, 1)
+	old.killResume = make(chan struct{})
+	defer close(old.killResume)
+	if h.c.retireWarm("agt_a", "test") {
+		t.Fatal("an alive process was treated as gone")
+	}
+	old.slowKill.Store(true)
+	select {
+	case <-old.killEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the background kill did not start")
+	}
+	spec := adapter.TurnSpec{TurnID: "turn_delivery", Agent: adapter.AgentSpec{ID: "agt_a", Tool: "claude", Variant: "native", Model: "haiku"}, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`), ContextJSON: json.RawMessage(`{}`)}
+	result := make(chan error, 1)
+	go func() {
+		_, err := h.c.startTurn(context.Background(), spec, nil, h.cred)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if !errors.Is(err, errWarmUnconfirmed) {
+			t.Fatalf("delivery error = %v, want an unconfirmed warm process", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("delivery waited behind the background kill")
+	}
 }
 
 // The instance's window arrives with each delivery: it replaces the supervisor's own, nil leaves it, and 0 ends everything that is idle.

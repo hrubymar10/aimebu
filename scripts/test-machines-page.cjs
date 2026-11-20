@@ -101,6 +101,26 @@ async function main() {
       await none.waitForFunction(() => document.querySelector('#machines-list').textContent === 'No machines yet.');
       await none.close();
     }
+    // A pending local replacement is visible and only its owner can interrupt the drain.
+    {
+      const draining = { ...host, restart_pending: true };
+      const page = await mount({ auto: { [MACHINES]: { machines: [draining] }, 'POST /api/machines/mch_host/supervisor/restart': { status: 202, body: { restart_pending: true } } } });
+      await cards(page);
+      assert.equal(await page.$eval('.machine-status', el => el.textContent), 'Supervisor restart pending');
+      await page.$eval('.machine-card-actions button:last-child', el => el.click());
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      assert.match(await page.$eval('#app-dialog', el => el.textContent), /Running turns will be interrupted/);
+      await page.$eval('#app-dialog .app-dialog-cancel', el => el.click());
+      assert.equal((await calls(page, 'POST')).length, 0, 'cancelled restart sends no request');
+      await page.$eval('.machine-card-actions button:last-child', el => el.click());
+      await confirmOk(page);
+      await page.waitForFunction(() => window.__requests.some(request => request.path === '/api/machines/mch_host/supervisor/restart'));
+      await page.close();
+      const admin = await mount({ auto: { [MACHINES]: { machines: [draining] } }, owner: false });
+      await cards(admin);
+      assert.equal(await admin.$eval('.machine-card-actions', el => el.textContent.includes('Restart now')), false);
+      await admin.close();
+    }
     // An admin who is not the owner sees the machines with pairing, approving and revoking off and the reason on each; stopping stays on.
     {
       const page = await mount({ owner: false });

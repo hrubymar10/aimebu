@@ -16,6 +16,10 @@ assert.deepEqual(view({ name: 'Box', approved: false }), { title: 'Box', status:
 assert.deepEqual(view({ name: 'Box', approved: true, connected: false }), { title: 'Box', status: 'Offline', detail: '', approve: false, revoke: true, stop: true, locked: false });
 assert.deepEqual(view({ name: 'Old', approved: true, revoked_at: '2026-01-01T00:00:00Z' }), { title: 'Old', status: 'Revoked', detail: '', approve: false, revoke: false, stop: false, locked: false }, 'a revoked machine offers nothing');
 assert.equal(view(host, false).locked, true, 'an admin who is not the owner gets the pairing controls off');
+assert.deepEqual([view({ ...host, restart_pending: true }).status, view({ ...host, restart_pending: true }).restart, view({ ...host, restart_pending: true }, false).restart],
+  ['Supervisor restart pending', true, false], 'only the owner can interrupt a pending local drain');
+assert.deepEqual([view({ ...host, upgrade_required: true }).status, view({ ...host, upgrade_required: true }).restart],
+  ['Restart server to finish upgrade', undefined], 'a newer supervisor continues work until the server is upgraded');
 assert.match(view({ name: 'Box', approved: true, supervisor_version: '2.0', last_seen: '2026-02-03T04:05:06Z' }).detail, /^Supervisor 2\.0 · Last seen \d+d ago$/, 'last seen is relative, as elsewhere');
 assert.match(view({ name: 'Box', approved: true, last_seen: new Date(Date.now() - 120000).toISOString() }).detail, /^Last seen 2m ago$/);
 console.log('machines model tests passed');

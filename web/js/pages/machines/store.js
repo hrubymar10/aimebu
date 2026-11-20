@@ -60,6 +60,14 @@ export class MachinesStore {
     } catch (failure) { if (this.alive) this.error.value = failure.message; }
   }
 
+  async restartSupervisor(machine) {
+    if (!await confirmDialog('Restart the local supervisor now? Running turns will be interrupted and continued once.', { title: 'Restart supervisor', confirm: 'Restart now', danger: true })) return;
+    if (!this.alive) return;
+    this.error.value = '';
+    try { await request(`/api/machines/${encodeURIComponent(machine.id)}/supervisor/restart`, { method: 'POST' }); await this.load(); }
+    catch (failure) { if (this.alive) this.error.value = failure.message; }
+  }
+
   openPairing() {
     clearTimeout(this.copiedTimer);
     batch(() => { this.name.value = ''; this.pairing.value = null; this.pairError.value = ''; this.copied.value = false; this.pairOpen.value = true; });

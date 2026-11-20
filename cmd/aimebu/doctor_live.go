@@ -120,6 +120,12 @@ func liveMachineChecks(live protocol.DoctorLive) []doctorCheck {
 			label = machine.ID
 		}
 		name := "machine " + label
+		if machine.UpgradeRequired {
+			checks = append(checks, doctorCheck{Name: "local supervisor upgrade", Status: statusWarn, Description: "the supervisor is newer than the running server", Hint: "Restart the server to finish the upgrade."})
+		}
+		if machine.RestartPending {
+			checks = append(checks, doctorCheck{Name: "local supervisor restart", Status: statusWarn, Description: "pending until running turns and commands finish", Hint: "Wait for the drain, or use Restart now in Machines to interrupt and continue the current work."})
+		}
 		if !machine.Connected {
 			checks = append(checks, doctorCheck{Name: name, Status: statusOK, Description: "not connected right now"})
 			continue
