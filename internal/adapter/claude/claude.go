@@ -195,7 +195,8 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 	}
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--append-system-prompt", systemPromptFor(spec), "--json-schema", string(responseSchema)}
 	if warm {
-		args = append(args, "--input-format", "stream-json")
+		// --replay-user-messages: the CLI repeats each input line when it reads it, which is how a result is matched to the turn it answers.
+		args = append(args, "--input-format", "stream-json", "--replay-user-messages")
 	}
 	if spec.Agent.Model != "" {
 		args = append(args, "--model", spec.Agent.Model)
@@ -315,6 +316,9 @@ type turn struct {
 	next            int
 	stderrCapture   io.Writer
 	warm            *warmSession // set when the turn runs in a live process that outlives it
+	// echoMarker is how this turn's own input begins (`{"turn_id":"…"`), set for a turn in a live process: there the CLI repeats each input
+	// line it reads (--replay-user-messages), and only a result that follows that repeat answers this turn (see ignoreResult).
+	echoMarker string
 }
 
 // LastOutput is when the harness last wrote any stdout line, parsed or not.
@@ -431,6 +435,19 @@ type runState struct {
 	candidate                                                 json.RawMessage
 	errorResult, errorSummary                                 string
 	errorIsResult, toolStarted, producedOutput, haveCandidate bool
+	// echoed says the CLI has repeated this turn's input (a turn in a live process only); assistants counts the assistant events since the
+	// last result or since the repeat, whichever came later.
+	echoed     bool
+	assistants int
+}
+
+// forgetQuery drops what the API responses of a query that does not answer this turn spent and did: the CLI's own query about a background
+// task, which runs before this turn's input is read or after its answer.
+func (s *runState) forgetQuery() {
+	s.steps = map[string]claudeStep{}
+	s.lastAssistantContext = nil
+	s.assistants = 0
+	s.toolStarted = false
 }
 
 func newRunState() *runState { return &runState{steps: map[string]claudeStep{}} }
@@ -448,10 +465,16 @@ func (t *turn) handleLine(s *runState, line []byte) {
 	t.confirmSession(event.Raw)
 	switch event.Type {
 	case "assistant", "tool_progress", "system", "rate_limit_event", "user":
+		if event.Type == "user" && t.echoMarker != "" && !s.echoed && isEcho(event.Raw, t.echoMarker) {
+			// Everything before the repeat of this turn's input belongs to a query the CLI ran on its own.
+			s.echoed = true
+			s.forgetQuery()
+		}
 		if event.Type == "rate_limit_event" && strings.Contains(strings.ToLower(string(event.Raw)), "limit reached") {
 			s.errorResult = adapter.SanitizeStderr(string(event.Raw))
 		}
 		if event.Type == "assistant" {
+			s.assistants++
 			var assistant struct {
 				ParentToolUseID *string `json:"parent_tool_use_id"`
 				Message         struct {
@@ -492,9 +515,16 @@ func (t *turn) handleLine(s *runState, line []byte) {
 		t.emit(activity)
 	case "result":
 		var result struct {
-			Result  *string `json:"result"`
-			IsError bool    `json:"is_error"`
-			Usage   struct {
+			Result           *string         `json:"result"`
+			IsError          bool            `json:"is_error"`
+			Subtype          string          `json:"subtype"`
+			NumTurns         int64           `json:"num_turns"`
+			SessionID        string          `json:"session_id"`
+			StructuredOutput json.RawMessage `json:"structured_output"`
+			Origin           struct {
+				Kind string `json:"kind"`
+			} `json:"origin"`
+			Usage struct {
 				InputTokens              *int64 `json:"input_tokens"`
 				OutputTokens             *int64 `json:"output_tokens"`
 				CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
@@ -508,17 +538,17 @@ func (t *turn) handleLine(s *runState, line []byte) {
 		if json.Unmarshal(event.Raw, &result) != nil {
 			return
 		}
-		if result.IsError {
-			s.errorResult = adapter.SanitizeStderr(string(event.Raw))
-			s.errorIsResult = true
-			if result.Result != nil {
-				s.errorSummary = adapter.SanitizeStderr(*result.Result)
-			}
-			if result.Usage.OutputTokens != nil && *result.Usage.OutputTokens > 0 {
-				s.producedOutput = true
-			}
+		empty := (result.Result == nil || *result.Result == "") && isZero(result.Usage.InputTokens) && isZero(result.Usage.OutputTokens) &&
+			isZero(result.Usage.CacheReadInputTokens) && isZero(result.Usage.CacheCreationInputTokens)
+		ignore := t.ignoreResult(s, result.IsError, result.Origin.Kind, empty)
+		resultLen := 0
+		if result.Result != nil {
+			resultLen = len(*result.Result)
 		}
-		s.sawResult = true
+		structured := len(result.StructuredOutput) > 0 && string(result.StructuredOutput) != "null"
+		detail := fmt.Sprintf("result subtype=%s is_error=%t num_turns=%d result_len=%d structured_output=%t session_id=%s origin=%s assistant_events=%d",
+			result.Subtype, result.IsError, result.NumTurns, resultLen, structured, result.SessionID, result.Origin.Kind, s.assistants)
+		detail = adapter.SanitizeStderr(detail)
 		usage := &adapter.Usage{TokensIn: result.Usage.InputTokens, TokensOut: result.Usage.OutputTokens, TokensCacheRead: result.Usage.CacheReadInputTokens, TokensCacheWrite: result.Usage.CacheCreationInputTokens}
 		if result.Usage.InputTokens != nil {
 			used := *result.Usage.InputTokens
@@ -564,12 +594,89 @@ func (t *turn) handleLine(s *runState, line []byte) {
 		if windowKnown {
 			usage.ContextWindow = &window
 		}
-		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage})
+		if ignore != "" {
+			// The CLI's own query still spent tokens and money in the session: that is reported as a usage event of its own (the store
+			// keeps one record per usage event, and the cost is the session's running total either way). A result that reports no spend at
+			// all gets an activity event instead, so it leaves no empty usage record.
+			if !empty || usage.CostEstimate != nil && *usage.CostEstimate > 0 {
+				t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage, Detail: detail + " ignored: " + ignore})
+			} else {
+				t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: "result", Detail: detail + " ignored: " + ignore})
+			}
+			s.forgetQuery()
+			return
+		}
+		s.assistants = 0
+		if result.IsError {
+			s.errorResult = adapter.SanitizeStderr(string(event.Raw))
+			s.errorIsResult = true
+			if result.Result != nil {
+				s.errorSummary = adapter.SanitizeStderr(*result.Result)
+			}
+			if result.Usage.OutputTokens != nil && *result.Usage.OutputTokens > 0 {
+				s.producedOutput = true
+			}
+		}
+		s.sawResult = true
+		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage, Detail: detail})
 		if result.Result != nil && !result.IsError {
 			s.candidate = append(s.candidate[:0], (*result.Result)...)
 			s.haveCandidate = true
 		}
 	}
+}
+
+// ignoreResult says why a result event does not answer this turn, or "" when it does. Claude Code runs queries of its own in the same
+// session: when a background task of an earlier process ends or is found stopped, it reports it in a query that ends with a result of its own
+// (with `origin.kind` "task-notification"), before this turn's input is read or after this turn's answer. In a live process such a result
+// can come before this turn's input has been read at all, so there only a result after the CLI repeated the input counts. Wherever it comes,
+// a result with that origin (another origin is not known to mean anything and is accepted, and journaled), or an empty one that spent nothing and followed no assistant event, is not this turn's answer. An error result
+// always counts: it ends the process, and what it says (a provider limit, a failed sign-in) is the session's.
+func (t *turn) ignoreResult(s *runState, isError bool, origin string, empty bool) string {
+	switch {
+	case isError:
+		return ""
+	case t.echoMarker != "" && !s.echoed:
+		return "it came before the CLI read this turn's input"
+	case origin == "task-notification":
+		return "the CLI ran that query on its own (origin " + origin + ")"
+	case empty && s.assistants == 0:
+		return "it is empty, spent nothing and followed no assistant event"
+	}
+	return ""
+}
+
+func isZero(n *int64) bool { return n == nil || *n == 0 }
+
+// isEcho says whether a user event is the CLI's repeat of the input that begins with marker: a top-level user message with a text block that
+// begins with it.
+func isEcho(raw json.RawMessage, marker string) bool {
+	var event struct {
+		ParentToolUseID *string `json:"parent_tool_use_id"`
+		Message         struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(raw, &event) != nil || event.ParentToolUseID != nil {
+		return false
+	}
+	var text string
+	if json.Unmarshal(event.Message.Content, &text) == nil {
+		return strings.HasPrefix(text, marker)
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(event.Message.Content, &blocks) != nil {
+		return false
+	}
+	for _, block := range blocks {
+		if block.Type == "text" && strings.HasPrefix(block.Text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // conclude ends a turn's events: what it spent without a result, and its answer if it ended with one.

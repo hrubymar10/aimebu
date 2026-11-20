@@ -14,9 +14,16 @@ import (
 	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
-// fakeClaude is a harness that reads one stream-json user message per line and answers each the way claude does: an init, an assistant step
-// and a result. `body` is what it does with the n-th message (shell, with $n set).
+// fakeClaude is a harness that reads one stream-json user message per line and answers each the way claude does: it repeats the line (as
+// --replay-user-messages makes the CLI do), then an init, an assistant step and a result. `body` is what it does with the n-th message after
+// the repeat (shell, with $n set).
 func fakeClaude(t *testing.T, body string) string {
+	t.Helper()
+	return fakeClaudeScript(t, "printf '%s\\n' \"$line\"\n"+body)
+}
+
+// fakeClaudeScript is fakeClaude without the repeat of the input: body alone is what it does with the n-th message.
+func fakeClaudeScript(t *testing.T, body string) string {
 	t.Helper()
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")
@@ -307,7 +314,7 @@ func TestWarmProcessIsStartedForStreamInput(t *testing.T) {
 	_ = session.Close(2 * time.Second)
 	args, _ := os.ReadFile(argsPath)
 	env, _ := os.ReadFile(envPath)
-	for _, want := range []string{"--input-format\nstream-json", "--output-format\nstream-json", "--session-id\ns1", "--mcp-config\n", "--permission-mode\nbypassPermissions"} {
+	for _, want := range []string{"--input-format\nstream-json\n--replay-user-messages\n", "--output-format\nstream-json", "--session-id\ns1", "--mcp-config\n", "--permission-mode\nbypassPermissions"} {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("missing %q in:\n%s", want, args)
 		}

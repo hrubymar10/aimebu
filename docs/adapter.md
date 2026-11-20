@@ -170,7 +170,8 @@ its own temporary directory. The bearer is omitted from the supervisor journal
 and stops working when the turn ends.
 
 Its parser retains the result event's `result` string byte-for-byte as the
-final candidate. Assistant, tool-progress, system, user, and rate-limit
+final candidate (the last result that answers the turn; see "Which result is the
+turn's" under warm mode for the results the CLI's own queries produce). Assistant, tool-progress, system, user, and rate-limit
 records become activity; usage and context/cost fields are forwarded when
 reported. Claude context use adds input, cache-read, and cache-creation tokens
 from a reported result; its model costs are summed and flagged `cost_cumulative` (a resumed session's
@@ -211,12 +212,40 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   arguments, environment with the agent key only as a hash, directory) and leaves out which
   session is continued and the turn itself. A correction, a diagnostic or a fork returns
   `ErrNoWarm` and runs one process per turn as before.
-- `StartWarm(ctx, spec)` starts the process; `WarmSession.Run(spec)` writes one stream-json
-  user message (the same JSON a one-turn process reads on standard input). The returned
-  `Turn` ends at that turn's `result` event: a successful result with an answer is a
-  terminal exit with code 0 and the process stays up. Any other ending (an error result, a
-  crash, a cancel, input the CLI refuses) ends the process too, and the turn's exit is the
-  process's own. A live session takes one turn at a time (`ErrWarmBusy`).
+- `StartWarm(ctx, spec)` starts the process with `--replay-user-messages` too;
+  `WarmSession.Run(spec)` writes one stream-json user message (the same JSON a one-turn
+  process reads on standard input). The returned `Turn` ends at that turn's own `result`
+  event: a successful result with an answer is a terminal exit with code 0 and the process
+  stays up. Any other ending (an error result, a crash, a cancel, input the CLI refuses)
+  ends the process too, and the turn's exit is the process's own. A live session takes one
+  turn at a time (`ErrWarmBusy`).
+- **Which result is the turn's.** Claude Code runs queries of its own in the session: when
+  a background task (a `run_in_background` command) ends, or a resumed session finds one
+  that outlived its previous process (a deploy, the warm window's end), it reports it in a
+  query that ends with its own `result`, marked `origin.kind: "task-notification"`. On a
+  resume that happens before the CLI reads the turn's input (an empty result, no usage, no
+  assistant event; taken as the answer, it was an `invalid_answer: EOF`), and a task that
+  ends while the process is idle can run a full query (assistant events, a non-empty
+  result) just before it. So a live turn accepts a result only after the CLI has repeated
+  its input (the replayed user message whose text begins with `{"turn_id":"<this turn>"`).
+  On either path, a result with `origin.kind` `task-notification`, or an empty one that
+  spent nothing and followed no assistant event, is not an answer either (a result after
+  the repeat with any other origin is not known to mean anything, so it is accepted and
+  its origin journaled). Such a result is ignored: it does not end the turn or start the
+  kill that follows a result without an answer. What its query spent is still reported,
+  as a usage event of its own (its tokens, and the session's running cost, which the
+  store turns into that query's cost as for any result); one that reports no spend at
+  all gets no usage event. An error result always counts (it ends the process, and what it says, a provider
+  limit or a failed sign-in, is the session's). Recorded with CLI 2.1.329 against a local
+  stand-in for the API: `internal/adapter/claude/testdata/stream`.
+- **What the journal keeps.** Every `result` is summarized in an event's `detail`
+  (journal only; it is not in the frame sent to the server): `subtype`, `is_error`,
+  `num_turns`, the length of `result`, whether `structured_output` is present,
+  `session_id`, `origin`, and the count of assistant events before it. An answering
+  result's summary is on its usage event, and so is an ignored one's (with why it was
+  ignored); an ignored result that spent nothing gets an activity event `result` instead. Output a live process writes while no turn runs is not dropped
+  silently: its event types (up to 32) and the first three lines (300 bytes each,
+  redacted) are journaled with the next turn, as a `between_turns` activity event.
 - Measured with a real run (haiku, CLI 2.1.318): `--json-schema` gives `structured_output`
   on every result of a multi-turn stream; `total_cost_usd` stays cumulative per session (the
   existing delta logic applies); an interrupt and a malformed input line each make the CLI

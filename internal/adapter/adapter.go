@@ -190,6 +190,9 @@ type Event struct {
 	Exit                *ExitInfo       `json:"exit,omitempty"`
 	NativeSessionHandle string          `json:"native_session_handle,omitempty"`
 	Tools               []ToolEvent     `json:"tools,omitempty"`
+	// Detail is diagnostic text about the event (what a harness's result said, output that came between two turns), redacted. It is kept
+	// in the supervisor journal with the event and is not part of the frame sent to the server.
+	Detail string `json:"detail,omitempty"`
 }
 
 type Turn interface {

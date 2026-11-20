@@ -119,6 +119,65 @@ type warmSession struct {
 	termSent      bool // it was asked to terminate (after its input was closed)
 	exitCode      int
 	containerized bool
+	// stray is what the process wrote while no turn was running, reported with the next turn (see noteStray).
+	stray strayOutput
+}
+
+// strayOutput is a bounded record of the output a live process writes between turns: the type of each event and the start of the first few.
+// Nothing between turns belongs to a turn, but an answer that lands there was lost, so it is kept and journaled with the next turn.
+type strayOutput struct {
+	count    int
+	types    []string
+	excerpts []string
+}
+
+const (
+	strayTypesKept    = 32
+	strayExcerpts     = 3
+	strayExcerptBytes = 300
+)
+
+// noteStray records one line written between turns.
+func (w *warmSession) noteStray(line []byte) {
+	var head struct {
+		Type    string `json:"type"`
+		Subtype string `json:"subtype"`
+	}
+	kind := "unparsed"
+	if json.Unmarshal(line, &head) == nil && head.Type != "" {
+		kind = head.Type
+		if head.Subtype != "" {
+			kind += "/" + head.Subtype
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stray.count++
+	if len(w.stray.types) < strayTypesKept {
+		w.stray.types = append(w.stray.types, kind)
+	}
+	if len(w.stray.excerpts) < strayExcerpts {
+		excerpt := string(line)
+		if len(excerpt) > strayExcerptBytes {
+			excerpt = strings.ToValidUTF8(excerpt[:strayExcerptBytes], "") + "…"
+		}
+		w.stray.excerpts = append(w.stray.excerpts, excerpt)
+	}
+}
+
+// detail is the journal text for the stray output, "" when there was none.
+func (s strayOutput) detail() string {
+	if s.count == 0 {
+		return ""
+	}
+	text := fmt.Sprintf("%d events arrived between turns: %s", s.count, strings.Join(s.types, ","))
+	if s.count > len(s.types) {
+		text += fmt.Sprintf(",… (%d more)", s.count-len(s.types))
+	}
+	for _, excerpt := range s.excerpts {
+		text += "\n" + excerpt
+	}
+	return adapter.SanitizeStderr(text)
 }
 
 func (w *warmSession) Fingerprint() string     { return w.fp }
@@ -151,6 +210,11 @@ func (w *warmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The marker is worked out before the lock: nothing between taking it and releasing it returns early without releasing it.
+	marker, err := json.Marshal(spec.TurnID)
+	if err != nil {
+		return nil, err
+	}
 	w.mu.Lock()
 	if w.dead {
 		w.mu.Unlock()
@@ -160,14 +224,19 @@ func (w *warmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
 		w.mu.Unlock()
 		return nil, adapter.ErrWarmBusy
 	}
-	t := &turn{id: spec.TurnID, warm: w, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted || w.confirmed, events: make(chan adapter.Event, 32), done: make(chan struct{})}
+	t := &turn{id: spec.TurnID, warm: w, echoMarker: `{"turn_id":` + string(marker), expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted || w.confirmed, events: make(chan adapter.Event, 32), done: make(chan struct{})}
 	t.cmd = w.cmd
 	w.cur, w.state = t, newRunState()
 	if w.killTimer != nil {
 		w.killTimer.Stop()
 		w.killTimer = nil
 	}
+	stray := w.stray
+	w.stray = strayOutput{}
 	w.mu.Unlock()
+	if detail := stray.detail(); detail != "" {
+		t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: "between_turns", Detail: detail})
+	}
 	if _, err := w.stdin.Write(append(message, '\n')); err != nil {
 		// The process cannot take the turn; it is as good as gone. Its end finishes the turn like any crash.
 		_ = w.Kill()
@@ -192,7 +261,9 @@ func (w *warmSession) run(stdout, stderr io.Reader) {
 		t, s := w.cur, w.state
 		w.mu.Unlock()
 		if t == nil {
-			continue // between turns the process says nothing the supervisor needs
+			// Between turns the process should say nothing a turn needs; what it does say is kept for the next turn's journal.
+			w.noteStray(line)
+			continue
 		}
 		t.handleLine(s, line)
 		if s.sawResult {
