@@ -1,10 +1,10 @@
 import { html } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
-import { confirmDialog, promptDialog } from '../../dialogs.js';
 import { creditsText } from '../../usage-format.js';
 import { UsageWindow } from './usage-window.js';
 import { staleAge } from '../../usage-alerts.js';
-import { impactText, profileStatusLine, switchView } from './model.js';
+import { profileStatusLine, switchView } from './model.js';
+import { profileActions } from './profile-actions.js';
 
 const time = date => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -17,19 +17,7 @@ export function ProfileCard({ store, provider, profile, state, usedDisplay, refr
   const credits = profile.credits ? creditsText(profile.credits) : '';
   // Data older than twice the refresh interval is drawn grey and says so, with a Refresh for the owner.
   const age = staleAge(profile.last_refresh_at, refreshSec);
-  const use = async () => {
-    if (await confirmDialog(`${impactText(affected)}${profile.has_credentials ? '' : ' This profile needs a new login.'} Switch to ${name}?`, { title: 'Switch account', confirm: 'Switch' })) store.mutateSwitcher(() => store.source.use(tool, name));
-  };
-  const installAnyway = async () => {
-    if (await confirmDialog(`${impactText(affected)} Install ${name}'s stored credentials without refreshing? They may be expired; sign in again after switching.`, { title: 'Install expired account', confirm: 'Install anyway' })) store.mutateSwitcher(() => store.source.use(tool, name, true));
-  };
-  const rename = async () => {
-    const next = (await promptDialog(`Rename ${name} to`, { title: 'Rename profile', label: 'New name', value: name, required: true, confirm: 'Rename' }))?.trim();
-    if (next && next !== name) store.mutateSwitcher(() => store.source.rename(tool, name, next));
-  };
-  const remove = async () => {
-    if (await confirmDialog(`Delete ${name}?${profile.active ? ' This clears the live login.' : ''}`, { title: 'Delete profile', confirm: 'Delete', danger: true })) store.mutateSwitcher(() => store.source.remove(tool, name));
-  };
+  const { use, installAnyway, rename, remove } = profileActions({ store, tool, profile, affected });
   return html`<section class=${`usage-profile usages-popover-profile switcher-tile-profile${profile.active ? ' is-active' : ''}${age ? ' is-stale' : ''}`}>
     <div class="usage-profile-header switcher-tile-head">
       <strong class="usage-profile-name switcher-tile-name">${name || 'local'}</strong>

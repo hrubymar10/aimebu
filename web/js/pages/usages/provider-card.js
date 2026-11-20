@@ -5,11 +5,11 @@ import { toolOf, isSwitchable, providerStatus, affectedText, canEnable, provider
 import { ProfileCard } from './profile-card.js';
 
 // The verification address comes from GitHub (or an Enterprise host), and only an https address becomes a link.
-function httpsHref(address) {
+export function httpsHref(address) {
   try { const url = new URL(address); return url.protocol === 'https:' && !url.username && !url.password ? url.href : ''; } catch { return ''; }
 }
 
-function CopilotSetup({ store, provider }) {
+export function CopilotSetup({ store, provider }) {
   const host = useRef(null);
   const flow = store.flow.value;
   return html`
@@ -20,7 +20,7 @@ function CopilotSetup({ store, provider }) {
   `;
 }
 
-function MistralSetup({ store, provider }) {
+export function MistralSetup({ store, provider }) {
   const cookie = useRef(null);
   return html`
     <textarea class="settings-text-input settings-textarea" placeholder="Paste Mistral Cookie request header" rows="2" aria-label="Mistral Cookie header" ref=${cookie}></textarea>
@@ -29,7 +29,7 @@ function MistralSetup({ store, provider }) {
   `;
 }
 
-function OllamaSetup({ store, provider, configured }) {
+export function OllamaSetup({ store, provider, configured }) {
   const mode = useRef(null), cookie = useRef(null), key = useRef(null);
   return html`
     <select class="settings-select" aria-label="Ollama Cloud authentication mode" ref=${mode} value=${provider.auth_mode || 'auto'}><option value="auto">Auto</option><option value="cookie">Cookie</option><option value="api_key">API key</option></select>
