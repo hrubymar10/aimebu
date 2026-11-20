@@ -45,7 +45,7 @@ func (tx *Tx) settleCandidates(query string, args ...any) ([]settleCandidate, er
 }
 
 // SettleOrphanedInbox settles, in one pass: the open recovery and delivery_failed items of a stopped agent or a closed room, and the open
-// questions whose thread a person (or the asking agent) has since replied in. The room-close, stop and message hooks settle these as they
+// questions a person has since written in the room after (or the asking agent has replied to). The room-close, stop and message hooks settle these as they
 // happen; this catches what they cannot (a turn killed by the stop only ends, and raises its recovery, after it) and what was open before.
 func (s *Store) SettleOrphanedInbox(ctx context.Context) error {
 	return s.Tx(ctx, func(tx *Tx) error {
@@ -62,10 +62,12 @@ func (s *Store) SettleOrphanedInbox(ctx context.Context) error {
 				return err
 			}
 		}
-		answered, err := tx.settleCandidates(`SELECT i.id,'answered in thread' FROM inbox_item i JOIN message ask ON ask.id=i.message_id
+		answered, err := tx.settleCandidates(`SELECT i.id,CASE WHEN EXISTS(SELECT 1 FROM message t WHERE t.room_id=i.room_id AND t.seq>ask.seq AND t.author_kind='user'
+				AND (t.reply_to=ask.id OR t.thread_root=COALESCE(NULLIF(ask.thread_root,''),ask.id))) THEN 'answered in thread' ELSE 'answered in room' END
+			FROM inbox_item i JOIN message ask ON ask.id=i.message_id
 			WHERE i.state='open' AND i.kind IN ('question','approval') AND i.requester_kind='agent' AND ask.ask_json IS NULL
 			AND EXISTS(SELECT 1 FROM message m WHERE m.room_id=i.room_id AND m.seq>ask.seq AND (
-				m.author_kind='user' AND (m.reply_to=ask.id OR m.thread_root=COALESCE(NULLIF(ask.thread_root,''),ask.id))
+				m.author_kind='user' AND (m.reply_to=ask.id OR m.thread_root=COALESCE(NULLIF(ask.thread_root,''),ask.id) OR COALESCE(m.reply_to,'')='' AND `+onlyOpenAttentionSQL+`)
 				OR m.author_kind='agent' AND m.author_id=i.requester_id AND m.reply_to=ask.id))
 			ORDER BY i.id LIMIT ?`, settleItemLimit)
 		if err != nil {

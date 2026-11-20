@@ -5,26 +5,36 @@ package store
 // transaction so inbox state and message history cannot disagree.
 //
 // A question that carries no structured ask (a message flagged needs_attention
-// or offering proposed answers) is closed more narrowly, because it is a
-// message in a conversation rather than a form: only a reply in its thread
-// answers it. That is a person's message anywhere in the thread, or the asking
-// agent's own newer message replying to it. A message elsewhere in the room says
-// nothing about it.
+// or offering proposed answers) is a message in a conversation rather than a
+// form, so a person answers it by talking. A person's reply in the card's
+// thread settles it. A plain message in the room (the usual answer is typed in
+// the chat, not on the card) settles it only when it is the room's only open
+// card of this kind (a message that replies to something else, such as another card's answer, is not a plain one): with two or more open, a plain message cannot tell which it
+// answers and settles none. The asking agent closes it only narrowly, with its
+// own newer message replying to it.
+// inThreadSQL is whether the message being written (reply_to, reply_to, thread_root as parameters) belongs to the card message's thread.
+const inThreadSQL = `(?<>'' AND (?=ask.id OR ?=COALESCE(NULLIF(ask.thread_root,''),ask.id)))`
+
+// onlyOpenAttentionSQL is whether the card is the only open attention card of its room (the alias i is the card).
+const onlyOpenAttentionSQL = `(SELECT COUNT(*) FROM inbox_item o JOIN message om ON om.id=o.message_id
+	WHERE o.room_id=i.room_id AND o.state='open' AND o.kind IN ('question','approval') AND o.requester_kind='agent' AND om.ask_json IS NULL)=1`
+
 func (tx *Tx) supersedeAsks(message Message) error {
 	if message.AuthorKind != "user" && message.AuthorKind != "agent" {
 		return nil
 	}
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT i.id,i.project_id,i.agent_id,CASE WHEN ask.ask_json IS NULL THEN 'answered in thread' ELSE 'newer message' END
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT i.id,i.project_id,i.agent_id,CASE WHEN ask.ask_json IS NULL THEN CASE WHEN ?<>'' AND (?=ask.id OR ?=COALESCE(NULLIF(ask.thread_root,''),ask.id)) THEN 'answered in thread' ELSE 'answered in room' END ELSE 'newer message' END
 		FROM inbox_item i
 		JOIN message ask ON ask.id=i.message_id
 		WHERE i.room_id=? AND i.state='open' AND i.kind IN ('question','approval')
 		AND i.requester_kind='agent' AND ask.seq<?
 		AND (ask.ask_json IS NOT NULL AND (?='user' OR i.requester_id=?)
-			OR ask.ask_json IS NULL AND (?<>'' AND (?=ask.id OR ?=COALESCE(NULLIF(ask.thread_root,''),ask.id))
-				AND (?='user' OR i.requester_id=? AND ?=ask.id)))
+			OR ask.ask_json IS NULL AND (?='user' AND (`+inThreadSQL+` OR ?='' AND `+onlyOpenAttentionSQL+`) OR ?<>'' AND i.requester_id=? AND ?=ask.id))
 		ORDER BY i.id`,
+		message.ReplyTo, message.ReplyTo, message.ThreadRoot,
 		message.RoomID, message.Seq, message.AuthorKind, message.AuthorID,
-		message.ReplyTo, message.ReplyTo, message.ThreadRoot, message.AuthorKind, message.AuthorID, message.ReplyTo)
+		message.AuthorKind, message.ReplyTo, message.ReplyTo, message.ThreadRoot, message.ReplyTo,
+		message.ReplyTo, message.AuthorID, message.ReplyTo)
 	if err != nil {
 		return err
 	}

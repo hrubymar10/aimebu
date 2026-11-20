@@ -665,11 +665,13 @@ chat marks a resolved or withdrawn item only. Existing open asks with such a
 later message are superseded once by migration 117.
 A question with no structured `ask` (a message with `needs_attention`,
 `proposed_answers` or `open_questions`) is narrower, because it is a message
-in a conversation: it is superseded only by a reply in its thread, either a
-person's message anywhere in the thread, or the asking agent's own newer
-message replying to it. A message elsewhere in the room leaves it open. The
-`inbox_item_resolved` event carries `reason` (`answered in thread` or
-`newer message`).
+in a conversation, and a person usually answers it in the chat: any later
+message from a person in the same room supersedes it only when it replies in
+the card's thread (`answered in thread`) or when it is a plain message (a reply to nothing) and the room's only open
+card of this kind (`answered in room`); with two or more open, a plain message
+settles none of them. The asking agent supersedes it only with its own newer message replying to it. The
+`inbox_item_resolved` event carries `reason` (`answered in thread`,
+`answered in room` or `newer message`).
 
 Items nobody can act on settle without a person. Closing a room (when it
 becomes `closed`) and stopping an agent resolve the open `recovery` and

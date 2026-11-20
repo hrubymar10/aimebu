@@ -157,19 +157,87 @@ func attentionQuestion(t *testing.T, s *Store, f executionFixture) InboxEntry {
 	return items[0]
 }
 
-func TestAttentionQuestionSettlesOnlyWhenAnsweredInItsThread(t *testing.T) {
+// A message that needs attention outside the project's home room posts normally but raises no Inbox card.
+func TestAttentionMessageOutsideTheHomeRoomRaisesNoCard(t *testing.T) {
+	s, f := answerFixture(t, false)
+	if _, err := s.db.Exec(`UPDATE room SET kind='task' WHERE id=?`, f.room.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Which way?","needs_attention":true,"proposed_answers":["a","b"]}]}`, f.room.ID)
+	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+	if err != nil || receipt.Result != "committed" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	var posted, cards int
+	s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND body='Which way?' AND needs_attention=1`, f.room.ID).Scan(&posted)
+	s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item`).Scan(&cards)
+	if posted != 1 || cards != 0 {
+		t.Fatalf("posted=%d cards=%d", posted, cards)
+	}
+}
+
+// With two open attention cards in a room a plain message cannot tell which one it answers, so it settles neither; a reply in one card's
+// thread settles that card alone.
+func TestPlainMessageSettlesNothingWithTwoOpenAttentionCards(t *testing.T) {
+	s, f := answerFixture(t, false)
+	ctx := context.Background()
+	first := attentionQuestion(t, s, f)
+	second, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "agent", AuthorID: f.agent.ID, Body: "And this?", NeedsAttention: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO inbox_item(id,project_id,room_id,message_id,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at)
+		SELECT 'inb_second',project_id,room_id,?,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at FROM inbox_item WHERE id=?`, second.ID, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.InboxForUser(ctx, "usr_answers")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("open cards=%+v err=%v", items, err)
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_answers", Body: "plain chat"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if state, _, _ := inboxState(t, s, item.ID); state != "open" {
+			t.Fatalf("card %s state=%q after a plain message with two cards open", item.ID, state)
+		}
+	}
+	if err := s.SettleOrphanedInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if state, _, _ := inboxState(t, s, item.ID); state != "open" {
+			t.Fatalf("the sweep closed card %s (state=%q) with two open", item.ID, state)
+		}
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_answers", Body: "re first", ReplyTo: first.MessageID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		want := "open"
+		if item.ID == first.ID {
+			want = "superseded"
+		}
+		if state, _, _ := inboxState(t, s, item.ID); state != want {
+			t.Fatalf("card %s state=%q, want %q", item.ID, state, want)
+		}
+	}
+}
+
+func TestAttentionQuestionSettlesWhenAPersonAnswersInTheRoom(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		author  func(f executionFixture) (kind, id string)
 		replyTo bool
 		other   bool
 		settled bool
+		reason  string
 	}{
-		{"person replies to it", func(f executionFixture) (string, string) { return "user", "usr_answers" }, true, false, true},
-		{"person writes elsewhere in the room", func(f executionFixture) (string, string) { return "user", "usr_answers" }, false, false, false},
-		{"asker replies to it", func(f executionFixture) (string, string) { return "agent", f.agent.ID }, true, false, true},
-		{"asker writes without replying", func(f executionFixture) (string, string) { return "agent", f.agent.ID }, false, false, false},
-		{"person replies to another thread", func(f executionFixture) (string, string) { return "user", "usr_answers" }, true, true, false},
+		{"person replies to it", func(f executionFixture) (string, string) { return "user", "usr_answers" }, true, false, true, "answered in thread"},
+		{"person writes elsewhere in the room", func(f executionFixture) (string, string) { return "user", "usr_answers" }, false, false, true, "answered in room"},
+		{"asker replies to it", func(f executionFixture) (string, string) { return "agent", f.agent.ID }, true, false, true, "answered in thread"},
+		{"asker writes without replying", func(f executionFixture) (string, string) { return "agent", f.agent.ID }, false, false, false, ""},
+		{"person replies to another thread", func(f executionFixture) (string, string) { return "user", "usr_answers" }, true, true, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f := answerFixture(t, false)
@@ -196,7 +264,7 @@ func TestAttentionQuestionSettlesOnlyWhenAnsweredInItsThread(t *testing.T) {
 			}
 			if tc.settled {
 				var reason string
-				if err := s.db.QueryRow(`SELECT json_extract(payload_json,'$.reason') FROM event WHERE kind='inbox_item_resolved' AND json_extract(payload_json,'$.inbox_item_id')=?`, item.ID).Scan(&reason); err != nil || reason != "answered in thread" {
+				if err := s.db.QueryRow(`SELECT json_extract(payload_json,'$.reason') FROM event WHERE kind='inbox_item_resolved' AND json_extract(payload_json,'$.inbox_item_id')=?`, item.ID).Scan(&reason); err != nil || reason != tc.reason {
 					t.Fatalf("reason=%q err=%v", reason, err)
 				}
 			}
@@ -218,6 +286,22 @@ func TestSweepClosesAnAttentionQuestionAnsweredEarlier(t *testing.T) {
 		t.Fatal(err)
 	}
 	if state, _, by := inboxState(t, s, item.ID); state != "superseded" || by != "system (answered in thread)" {
+		t.Fatalf("state=%q by=%q", state, by)
+	}
+}
+
+// A person's chat message elsewhere in the room, written before this change was in place, settles the card on the sweep too.
+func TestSweepClosesAnAttentionQuestionAnsweredInTheRoom(t *testing.T) {
+	s, f := answerFixture(t, false)
+	item := attentionQuestion(t, s, f)
+	if _, err := s.db.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at)
+		VALUES ('msg_chat',(SELECT MAX(seq)+1 FROM message),?,'user','usr_answers','ok','[]',?)`, f.room.ID, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SettleOrphanedInbox(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if state, _, by := inboxState(t, s, item.ID); state != "superseded" || by != "system (answered in room)" {
 		t.Fatalf("state=%q by=%q", state, by)
 	}
 }
