@@ -257,7 +257,9 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   as a usage event of its own (its tokens, and the session's running cost, which the
   store turns into that query's cost as for any result), marked `background`: it can
   come before the CLI has read the turn's input, so it does not confirm the turn's
-  context delivery. One that reports no spend at all gets no usage event. An error result always counts (it ends the process, and what it says, a provider
+  context delivery. So is the partial spend of a turn that ends (killed, cancelled,
+  crashed) before the CLI repeated its input: those API responses belong to the CLI's own
+  query. One that reports no spend at all gets no usage event. An error result always counts (it ends the process, and what it says, a provider
   limit or a failed sign-in, is the session's). Recorded with CLI 2.1.329 against a local
   stand-in for the API: `internal/adapter/claude/testdata/stream`.
 - **What the journal keeps.** Every `result` is summarized in an event's `detail`

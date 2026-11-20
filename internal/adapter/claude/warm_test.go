@@ -208,12 +208,33 @@ exit 3
 		t.Fatal(err)
 	}
 	events, exit := drain(t, turn)
-	partial := false
+	partial, background := false, false
 	for _, event := range events {
-		partial = partial || (event.Kind == adapter.EventUsage && event.Usage != nil && event.Usage.Partial)
+		if event.Kind == adapter.EventUsage && event.Usage != nil && event.Usage.Partial {
+			partial, background = true, event.Usage.Background
+		}
 	}
-	if exit.TerminalEvent || exit.ExitCode != 3 || !partial {
-		t.Fatalf("exit = %+v partial=%v events=%v", exit, partial, kinds(events))
+	// The CLI had repeated the turn's input, so what it spent is the turn's own, not background.
+	if exit.TerminalEvent || exit.ExitCode != 3 || !partial || background {
+		t.Fatalf("exit = %+v partial=%v background=%v events=%v", exit, partial, background, kinds(events))
+	}
+}
+
+// A live process that dies, or a turn cancelled, before the CLI repeats the turn's input: what was spent belonged to a query the CLI ran on
+// its own (a background task's), so the partial usage is reported as background and confirms no context delivery.
+func TestWarmTurnEndedBeforeItsInputReportsBackgroundUsage(t *testing.T) {
+	body := `printf '%s\n' '{"type":"assistant","message":{"id":"bg1","usage":{"input_tokens":9}}}'
+exit 3
+`
+	_, events, exit := runWarmFixture(t, body, "t1")
+	var spent []*adapter.Usage
+	for _, event := range events {
+		if event.Kind == adapter.EventUsage {
+			spent = append(spent, event.Usage)
+		}
+	}
+	if exit.TerminalEvent || len(spent) != 1 || !spent[0].Partial || !spent[0].Background || spent[0].TokensIn == nil || *spent[0].TokensIn != 9 {
+		t.Fatalf("exit = %+v usage %+v events=%v", exit, spent, kinds(events))
 	}
 }
 

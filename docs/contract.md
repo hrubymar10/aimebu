@@ -1568,8 +1568,9 @@ it never silently reruns a turn with uncertain effects.
   the token figures are the harness session's running totals, which the store
   subtracts the session's previous totals from. `background` marks the spend
   of a result that is not the turn's answer (the Claude CLI's own query about
-  a background task, which can come before the CLI reads the turn's input): it
-  is recorded like any usage but does not confirm the turn's context delivery.
+  a background task, which can come before the CLI reads the turn's input, or
+  the partial spend of a turn that ended before the CLI read its input): it is
+  recorded like any usage but does not confirm the turn's context delivery.
 - M→S `answer{v, agent_id, generation, turn_id, answer_rev, digest,
   candidate}`. `candidate` is the raw final-answer string, including malformed
   output or an empty string. The digest covers its exact UTF-8 bytes. The

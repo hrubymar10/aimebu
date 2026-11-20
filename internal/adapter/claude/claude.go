@@ -718,7 +718,11 @@ func (t *turn) conclude(s *runState, scanError error) {
 	// A turn that ended with no result (killed, cancelled, crashed) still spent what its API responses used. The input and cache tokens of
 	// those responses are known; the output count and the cost are only in the result, so they stay unknown, and the record says it is partial.
 	if !s.sawResult && len(s.steps) > 0 {
-		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: partialUsage(s.steps)})
+		usage := partialUsage(s.steps)
+		// In a live process, steps before the repeat of this turn's input belong to a query the CLI ran on its own (see ignoreResult): what
+		// they spent is reported, but as background usage, which proves nothing about the turn's input.
+		usage.Background = t.echoMarker != "" && !s.echoed
+		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage})
 	}
 	if s.haveCandidate && scanError == nil {
 		t.emit(adapter.Event{Kind: adapter.EventFinalAnswer, Answer: s.candidate})
