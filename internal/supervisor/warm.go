@@ -114,7 +114,8 @@ type warmEntry struct {
 	unconfirmedReported atomic.Bool   // retries must not report the same uncertain end repeatedly
 	quarantineReported  atomic.Bool   // a still-live process past the quarantine is reported once
 	stuckAt             time.Time
-	stuckReason         string // why the process was ended and not confirmed gone (the reason its slot went stuck); a planned stop's quarantine release is not reported
+	stuckReason         string // why the process was ended and not confirmed gone (the reason its slot went stuck)
+	plannedEnd          bool   // the end was decided by a stop of the agent or the supervisor's shutdown, whatever reason text the path gave (guarded by the slot's lock)
 	kept                bool   // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
 }
 
@@ -405,7 +406,7 @@ func (c *Client) clearStuck(slot *warmSlot) bool {
 		if !entry.session.Alive() && slot.busy != entry {
 			// A released quarantine is a degraded state the supervisor recovers from by itself, and no news at all when the process was
 			// ended on purpose (a stop, a shutdown): its unconfirmed container end and the quarantine are that decision's own path.
-			if !plannedWarmEnd(entry.stuckReason) {
+			if !entry.plannedEnd && !plannedWarmEnd(entry.stuckReason) {
 				c.degraded("a warm process quarantine ended", fmt.Errorf("agent %s: host wrapper exited but its container end was not confirmed; releasing the session after quarantine", entry.agentID))
 			}
 			c.recordWarmEnd(entry, "quarantine ended after its host wrapper exited")
@@ -1048,6 +1049,9 @@ func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) (kept b
 		slot.busy = nil
 	}
 	if !keep {
+		c.mu.Lock()
+		entry.plannedEnd = c.desired[entry.agentID].Desired != "active" || c.stopping || exit.CancelIntent
+		c.mu.Unlock()
 		reason := "its turn did not end cleanly, or the agent was stopped, or its lifetime is over"
 		if entry.loginMoved {
 			reason = loginChangedReason

@@ -2225,3 +2225,38 @@ func TestWarmQuarantineReleaseAfterAnUnplannedStuckIsReported(t *testing.T) {
 		t.Fatalf("an unplanned stuck slot's quarantine release reported %d times, want once", n)
 	}
 }
+
+// A stop that lands while a warm turn runs ends that turn through warmTurnEnded with its generic reason, not the stop's own: the quarantine
+// release of the slot that leaves is still the stop's path and reports nothing.
+func TestWarmQuarantineReleaseAfterAStopDuringATurnIsNotReported(t *testing.T) {
+	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+	warmRetryEvery, warmStuckQuarantine = 10*time.Millisecond, 40*time.Millisecond
+	defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+	h := newWarmHarness(t)
+	reports := quarantineEndReports(h.c)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	spec := adapter.TurnSpec{TurnID: "turn_s", Agent: adapter.AgentSpec{ID: "agt_a", Tool: "claude", Variant: "native", Model: "haiku"}, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`), ContextJSON: json.RawMessage(`{}`), LauncherContainerized: true}
+	turn, err := h.c.startTurn(context.Background(), spec, nil, h.cred)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.c.mu.Lock()
+	h.c.desired["agt_a"] = protocol.DesiredAgent{AgentID: "agt_a", Generation: 1, Desired: "stopped", DesiredRev: 2}
+	h.c.mu.Unlock()
+	for range turn.Events() {
+	}
+	exit, _ := turn.Wait()
+	h.c.warmTurnEnded(turn, exit)
+	slot := h.c.pool().slot("agt_a")
+	eventually(t, "release of the slot a stop during a turn left stuck", func() bool {
+		slot.mu.Lock()
+		stuck := slot.stuck != nil
+		slot.mu.Unlock()
+		return !stuck && h.c.warmLive.Load() == 0
+	})
+	if n := reports.Load(); n != 0 {
+		t.Fatalf("a stop during a turn: quarantine release reported %d times, want none", n)
+	}
+}

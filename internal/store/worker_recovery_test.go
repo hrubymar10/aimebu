@@ -180,3 +180,34 @@ func TestLateLeadDecisionOnAResolvedRecoverySaysWhoResolvedIt(t *testing.T) {
 		t.Fatalf("settled=%+v text=%q", settled, settled.Error())
 	}
 }
+
+// A lead the item was not assigned to learns nothing about how a settled item ended: it gets the plain refusal, as for any item it never held.
+func TestOtherLeadGetsNoSettledMetadata(t *testing.T) {
+	s, f, owner, lead := workerRecoveryFixture(t)
+	ctx := context.Background()
+	other, err := s.CreateAgent(ctx, Agent{Slug: "otherlead", ProjectID: f.project.ID, RoleID: "role_leader_default", Tool: "fake", Variant: "test", Model: "test", Provider: "test", MachineID: f.agent.MachineID, CheckoutID: f.agent.CheckoutID, KeyHash: "other-lead-key", CreatedBy: owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 137, false, false); err != nil {
+		t.Fatal(err)
+	}
+	recoveries, err := s.ListLeadRecoveries(ctx, lead.ID, f.project.ID)
+	if err != nil || len(recoveries) != 1 {
+		t.Fatalf("lead items=%+v err=%v", recoveries, err)
+	}
+	item := recoveries[0]
+	if _, err := s.db.Exec(`UPDATE inbox_item SET lead_due_at=NULL WHERE id=?`, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.DecideRecovery(ctx, item.ID, owner, "person-retry", "retry", int(item.Rev)); err != nil {
+		t.Fatal(err)
+	}
+	rev, err := s.RecoveryItemRevision(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.DecideRecoveryAsAgent(ctx, item.ID, other.ID, "other-late", "retry", "", rev); err != ErrForbidden {
+		t.Fatalf("an unassigned lead on a settled item: %v", err)
+	}
+}

@@ -84,11 +84,15 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 			if !allowed {
 				return "", ErrForbidden
 			}
-			// A lead that lost the item to the sweep reads its end, not a refusal: the item was decided while nobody held it.
+			// Only the lead the item was assigned to learns how it ended (a late retry after the sweep handed it to people); any other lead
+			// gets the refusal it always got, so settled items leak no resolver or choice across leads.
+			if kind != "recovery" && kind != "delivery_failed" || !leadID.Valid || leadID.String != actorID {
+				return "", ErrForbidden
+			}
 			if state == "resolved" || state == "withdrawn" {
 				return "", tx.settledRecoveryError(itemID, state)
 			}
-			if !leadID.Valid || leadID.String != actorID || !leadDue.Valid {
+			if !leadDue.Valid {
 				return "", ErrForbidden
 			}
 		} else if !role.Valid || role.String != "owner" && role.String != "operator" || leadDue.Valid {
