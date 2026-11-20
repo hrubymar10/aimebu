@@ -3275,28 +3275,28 @@ async function main() {
         assert.equal(tabMoves.ys.length, 1, `settings tabs moved while opening: ${JSON.stringify(tabMoves)}`);
         assert.deepEqual([tabMoves.pending, tabMoves.usersHidden], [false, false], 'the Users tab must settle visible for the owner');
         await domClick(watchPage, '#settings-usages-tab');
-        const codexStatus = '.usage-provider[data-provider="codex"] .usage-provider-status';
-        await watchPage.waitForFunction(selector => document.querySelector(selector)?.textContent === 'Enabled', {}, codexStatus);
+        const codexStatus = '.usages-b-tile[data-provider="codex"] .usages-provider-updated';
+        await watchPage.waitForFunction(selector => document.querySelector(selector)?.textContent && document.querySelector(selector).textContent !== 'Not configured', {}, codexStatus);
         await watchPage.evaluate(() => { window.__usagesNoReload = true; });
         const toggleProvider = (provider, enabled = false) => actPage.evaluate(async (name, on) => { const { csrf_token } = await (await fetch('/api/me')).json(); const response = await fetch('/api/usages/providers', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ provider: name, enabled: on }) }); if (!response.ok) throw new Error(`provider toggle: ${response.status}`); }, provider, enabled);
         await toggleProvider('codex');
         await watchPage.waitForFunction(selector => document.querySelector(selector)?.textContent === 'Not configured', { timeout: 10000 }, codexStatus);
         assert.equal(await watchPage.evaluate(() => window.__usagesNoReload === true), true, 'the usages panel was reloaded instead of updated in place');
         // A push that arrives while a field in the panel has focus is held, then applied once focus leaves.
-        const claudeStatus = '.usage-provider[data-provider="claude-code"] .usage-provider-status';
-        assert.equal(await watchPage.$eval(claudeStatus, el => el.textContent), 'Enabled');
+        const claudeStatus = '.usages-b-tile[data-provider="claude-code"] .usages-provider-updated';
+        assert.notEqual(await watchPage.$eval(claudeStatus, el => el.textContent), 'Not configured');
         await watchPage.focus('#settings-usages input[type="number"]');
         await toggleProvider('claude-code');
         await new Promise(resolve => setTimeout(resolve, 800));
-        assert.equal(await watchPage.$eval(claudeStatus, el => el.textContent), 'Enabled', 'a focused field must not be re-rendered by a push');
+        assert.notEqual(await watchPage.$eval(claudeStatus, el => el.textContent), 'Not configured', 'a focused field must not be re-rendered by a push');
         await watchPage.$eval('#settings-usages input[type="number"]', el => el.blur());
         await watchPage.waitForFunction(selector => document.querySelector(selector)?.textContent === 'Not configured', { timeout: 10000 }, claudeStatus);
         // The top-bar popover follows the same push, and its Refresh is the rate-limited forced refresh.
         await domClick(watchPage, '#settings-close');
-        await domClick(watchPage, '#usages-toggle'); await watchPage.waitForSelector('#usages-popover:not([hidden]) .usages-popover-note');
-        assert.equal(await watchPage.$('#usages-popover [data-provider="codex"]'), null);
+        await domClick(watchPage, '#usages-toggle'); await watchPage.waitForSelector('#usages-popover:not([hidden]) .usages-b-tile');
+        assert.equal(await watchPage.$('#usages-popover [data-provider="codex"] .usages-b-profile'), null, 'a provider that is off shows its heading alone');
         await toggleProvider('codex', true);
-        await watchPage.waitForSelector('#usages-popover [data-provider="codex"]', { timeout: 10000 });
+        await watchPage.waitForSelector('#usages-popover [data-provider="codex"] .usages-b-profile', { timeout: 10000 });
         const popoverRefresh = async () => {
           const response = watchPage.waitForResponse(r => r.url().endsWith('/api/usages/refresh') && r.request().method() === 'POST');
           await domClick(watchPage, '#usages-popover .usages-popover-refresh');
@@ -3306,7 +3306,7 @@ async function main() {
         await watchPage.waitForFunction(() => !document.querySelector('#usages-popover .usages-popover-refresh').disabled);
         assert.equal(await popoverRefresh(), 429, 'a second popover refresh inside the cooldown should be refused');
         await watchPage.waitForFunction(() => /try again in \d+s/.test(document.querySelector('#usages-popover .usages-popover-status')?.textContent || ''), { timeout: 10000 });
-        assert.equal(await watchPage.$('#usages-popover [data-provider="codex"]') !== null, true, 'a refused refresh must keep the overview');
+        assert.equal(await watchPage.$('#usages-popover [data-provider="codex"] .usages-b-profile') !== null, true, 'a refused refresh must keep the overview');
         // The cooldown is shared: Settings -> Refresh now is refused too.
         await domClick(watchPage, '#settings-toggle');
         await watchPage.waitForSelector('#settings-dialog[open]');
@@ -3346,55 +3346,54 @@ async function main() {
     await login(settingsPage, `${origin}/?mock_usages=1&mock_project_settings=1`);
     await settingsPage.waitForSelector('.room-filter');
     await domClick(settingsPage, '#usages-toggle');
-    await settingsPage.waitForSelector('#usages-popover:not([hidden]) .usages-popover-provider[data-provider="codex"]');
+    await settingsPage.waitForSelector('#usages-popover:not([hidden]) .usages-b-tile[data-provider="codex"] .usages-b-profile');
     assert.equal(await settingsPage.$eval('#usages-toggle', el => el.getAttribute('aria-expanded')), 'true');
     assert.equal(await settingsPage.$eval('#settings-dialog', el => el.open), false, 'the usage indicator opens a popover, not Settings');
-    assert.deepEqual(await settingsPage.$$eval('#usages-popover .usages-popover-provider-name', els => els.map(el => el.textContent)), ['Codex', 'Claude Code'], 'only configured providers are listed');
-    assert.deepEqual(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-popover-profile-name', els => els.map(el => el.textContent)), ['main', 'backup'], 'the active profile comes first');
-    assert.equal(await settingsPage.$eval('#usages-popover [data-provider="codex"] .usages-popover-profile', el => el.classList.contains('is-active') && !!el.querySelector('.usage-profile-active')), true);
-    assert.equal(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-popover-profile.is-active .usage-window .usage-track', els => els.length), 3);
-    assert.equal(await settingsPage.$eval('#usages-popover [data-provider="codex"] .usage-profile-credits', el => el.textContent), 'Credits: 12.50');
+    assert.deepEqual(await settingsPage.$$eval('#usages-popover .usages-b-tile:has(.usages-b-profile) .usages-provider-name', els => els.map(el => el.textContent)), ['Codex', 'Claude Code'], 'the configured providers show their profiles');
+    assert.deepEqual(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .switcher-tile-name', els => els.map(el => el.textContent)), ['main', 'backup'], 'the active profile comes first');
+    assert.equal(await settingsPage.$eval('#usages-popover [data-provider="codex"] .usages-b-profile', el => el.classList.contains('is-active') && !!el.querySelector('.switcher-tile-active')), true);
+    assert.equal(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-b-profile.is-active .usages-window-row .usages-progress', els => els.length), 3);
+    assert.equal(await settingsPage.$eval('#usages-popover [data-provider="codex"] .usages-credits-row', el => el.textContent), 'Credits: 12.50');
     {
-      const spark = await settingsPage.$eval('#usages-popover [data-provider="codex"] .usages-popover-profile.is-active .usage-window:first-child .usage-spark', el => {
+      const spark = await settingsPage.$eval('#usages-popover [data-provider="codex"] .usages-b-profile.is-active .usages-window-row .usages-b-spark', el => {
         const box = el.getBoundingClientRect();
-        return { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), label: el.getAttribute('aria-label'), points: el.querySelector('polyline').getAttribute('points').trim().split(/\s+/).length, width: box.width, height: box.height, inside: !!el.closest('.usage-window') };
+        return { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), label: el.getAttribute('aria-label'), points: el.querySelector('polyline').getAttribute('points').trim().split(/\s+/).length, width: box.width, height: box.height, inside: !!el.closest('.usages-window-row') };
       });
       assert.equal(spark.tag, 'svg'); assert.equal(spark.role, 'img'); assert.equal(spark.points, 5, 'the sparkline plots every sample');
       assert.match(spark.label, /Session over the last 48 hours: \d+% to \d+% (used|left)/);
-      assert.equal(spark.inside && spark.width > 40 && spark.height >= 16, true, `sparkline geometry ${JSON.stringify(spark)}`);
-      assert.equal(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-popover-profile.is-active .usage-window:nth-child(2) .usage-spark', els => els.length), 0, 'a window without history draws no sparkline');
+      assert.equal(spark.inside && spark.width > 40 && spark.height >= 12, true, `sparkline geometry ${JSON.stringify(spark)}`);
+      assert.equal(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-b-profile.is-active .usages-window-row', rows => rows.filter(row => row.querySelector('.usages-b-spark')).length), 1, 'a window without history draws no sparkline');
       // The sparkline names its period and what it plots; the pace line explains itself (hover title, focusable, accessible name).
-      const labelled = await settingsPage.$eval('#usages-popover [data-provider="codex"] .usages-popover-profile.is-active .usage-window:first-child', row => {
-        const caption = [...row.querySelectorAll('.usage-spark-caption span')].map(el => el.textContent), pace = row.querySelector('.usages-pace-text');
-        return { caption, figure: !!row.querySelector('.usage-spark-figure .usage-spark'), title: pace?.title || '', focusable: pace?.tabIndex === 0, named: /^.+\. Pace compares/.test(pace?.getAttribute('aria-label') || '') };
+      const labelled = await settingsPage.$eval('#usages-popover [data-provider="codex"] .usages-b-profile.is-active .usages-window-row', row => {
+        const pace = row.querySelector('.usages-pace-text');
+        return { figure: !!row.querySelector('.usages-b-spark'), title: pace?.title || '', focusable: pace?.tabIndex === 0, named: /^.+\. Pace compares/.test(pace?.getAttribute('aria-label') || '') };
       });
-      assert.deepEqual(labelled.caption.length === 3 && labelled.caption[0] === '48 h ago' && labelled.caption[2] === 'now' && /^% (used|left), last 48 h$/.test(labelled.caption[1]), true, `sparkline caption ${JSON.stringify(labelled.caption)}`);
       assert.equal(labelled.figure && labelled.focusable && labelled.named && /In reserve|In deficit|On pace/.test(labelled.title) && /even spend/.test(labelled.title), true, `pace explanation ${JSON.stringify(labelled)}`);
     }
     // v1's usages column: toolbar on the left (close, refresh, group), the title on the right; provider cards with icon, age, active profile, plan, bars and pace.
     {
       const head = await settingsPage.$eval('#usages-popover > header', el => ({ labels: [...el.querySelectorAll('button')].map(button => button.getAttribute('aria-label')), titleAtRight: el.querySelector('strong').getBoundingClientRect().left > el.querySelector('button:last-of-type').getBoundingClientRect().right, title: el.querySelector('strong').textContent, size: [...el.querySelectorAll('button')].map(button => `${Math.round(button.getBoundingClientRect().width)}x${Math.round(button.getBoundingClientRect().height)}`) }));
       assert.deepEqual(head.labels, ['Close usages', 'Refresh usages', 'Show active profiles first']); assert.equal(head.titleAtRight, true); assert.equal(head.title, 'Usages'); assert.deepEqual(head.size, ['28x28', '28x28', '28x28'], 'the usages toolbar uses the shared framed icon button');
-      const card = await settingsPage.$eval('#usages-popover [data-provider="codex"]', el => ({ mask: !!el.querySelector('.usages-provider-mask-codex'), updated: el.querySelector('.usages-provider-updated')?.textContent, active: el.querySelector('.usage-profile-active')?.textContent, plan: el.querySelector('.usages-popover-profile.is-active .usage-profile-plan')?.textContent, meta: el.querySelector('.usages-window-meta strong')?.textContent, reset: el.querySelector('.usages-window-meta span')?.textContent, pace: el.querySelector('.usages-pace-text')?.textContent, tick: !!el.querySelector('.usages-progress .usages-pace-tick') }));
+      const card = await settingsPage.$eval('#usages-popover [data-provider="codex"]', el => ({ mask: !!el.querySelector('.usages-provider-mask-codex'), updated: el.querySelector('.usages-provider-updated')?.textContent, active: el.querySelector('.switcher-tile-active')?.textContent, plan: el.querySelector('.usages-b-profile.is-active .switcher-tile-plan')?.textContent, meta: el.querySelector('.usages-window-meta strong')?.textContent, reset: el.querySelector('.usages-window-meta span')?.textContent, pace: el.querySelector('.usages-pace-text')?.textContent, tick: !!el.querySelector('.usages-progress .usages-pace-tick') }));
       assert.match(card.updated, /^Updated (\d+[smhd]|just now) ago$|^just now$/); assert.deepEqual([card.mask, card.active, card.plan, card.tick], [true, 'Active', 'Pro', true]);
       assert.match(card.meta, /^\d+(\.\d)?% left$/); assert.match(card.reset, /^Resets in /); assert.match(card.pace, /in reserve|Lasts until reset/);
       // v1's token-expiry icon (healthy, expiring, expired) and SWITCH pill (inactive profiles only, after a confirmation).
-      assert.deepEqual(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-popover-profile', nodes => nodes.map(node => [node.querySelector('.usages-popover-profile-name').textContent, node.querySelector('.switcher-expiry-icon')?.dataset.level, !!node.querySelector('.switcher-switch-pill')])), [['main', 'ok', false], ['backup', 'expiring', true]]);
+      assert.deepEqual(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-b-profile', nodes => nodes.map(node => [node.querySelector('.switcher-tile-name').textContent, node.querySelector('.switcher-expiry-icon')?.dataset.level, !!node.querySelector('.usages-b-switch')])), [['main', 'ok', false], ['backup', 'expiring', true]]);
       assert.equal(await settingsPage.$eval('#usages-popover [data-provider="claude-code"] .switcher-expiry-icon', el => el.dataset.level + ':' + el.classList.contains('switcher-expiry-icon--expired') + ':' + /^Token expires: .* \(expired \d+m ago\)$/.test(el.title)), 'expired:true:true');
-      assert.equal(await settingsPage.$eval('#usages-popover [data-provider="codex"] .switcher-switch-pill', el => el.textContent), 'Switch');
+      assert.equal(await settingsPage.$eval('#usages-popover [data-provider="codex"] .usages-b-switch', el => el.title), 'Switch to backup');
       const confirmed = []; await answerDialogs(settingsPage, text => { confirmed.push(text); return { accept: true }; });
-      await domClick(settingsPage, '#usages-popover [data-provider="codex"] .switcher-switch-pill');
-      await settingsPage.waitForFunction(() => document.querySelector('#usages-popover [data-provider="codex"] .usages-popover-profile.is-active .usages-popover-profile-name')?.textContent === 'backup');
+      await domClick(settingsPage, '#usages-popover [data-provider="codex"] .usages-b-switch');
+      await settingsPage.waitForFunction(() => document.querySelector('#usages-popover [data-provider="codex"] .usages-b-profile.is-active .switcher-tile-name')?.textContent === 'backup');
       assert.match(confirmed[0], /Switch to backup\?$/);
-      assert.deepEqual(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-popover-profile', nodes => nodes.map(node => [node.querySelector('.usages-popover-profile-name').textContent, !!node.querySelector('.switcher-switch-pill')])), [['backup', false], ['main', true]], 'after the switch the other profile gets the pill');
+      assert.deepEqual(await settingsPage.$$eval('#usages-popover [data-provider="codex"] .usages-b-profile', nodes => nodes.map(node => [node.querySelector('.switcher-tile-name').textContent, !!node.querySelector('.usages-b-switch')])), [['backup', false], ['main', true]], 'after the switch the other profile gets the pill');
       // The group button shows each provider's active profile first, then a divider and the other profiles.
       await domClick(settingsPage, '#usages-popover .usages-popover-group');
       assert.equal(await settingsPage.$eval('#usages-popover .usages-popover-group', el => el.getAttribute('aria-pressed')), 'true');
-      assert.deepEqual(await settingsPage.$$eval('#usages-popover .usages-sidebar-list > :not(.usages-legend)', nodes => nodes.map(node => node.classList.contains('usages-group-divider') ? '—' : `${node.dataset.provider}:${[...node.querySelectorAll('.usages-popover-profile-name')].map(name => name.textContent).join(',')}`)), ['codex:backup', 'claude-code:local', '—', 'codex:main'], 'active profiles first (backup is active after the switch), then a divider and the rest');
+      assert.deepEqual(await settingsPage.$$eval('#usages-popover .usages-b > .usages-b-grid > .usages-b-tile, #usages-popover .usages-b > .usages-group-divider', nodes => nodes.map(node => node.classList.contains('usages-group-divider') ? '—' : `${node.dataset.provider}:${[...node.querySelectorAll('.switcher-tile-name')].map(name => name.textContent).join(',')}`)), ['codex:backup', 'claude-code:local', '—', 'codex:main', 'github-copilot:', 'mistral:', 'ollama-cloud:'], 'active profiles first (backup is active after the switch), then a divider, the rest and the providers that are off');
       await settingsPage.click('#usages-popover .usages-popover-group');
       assert.equal(await settingsPage.$eval('#usages-popover .usages-popover-group', el => el.getAttribute('aria-pressed')), 'false');
     }
-    assert.equal(await settingsPage.$('#usages-popover [data-provider="mistral"]'), null, 'unconfigured providers stay out of the popover');
+    assert.equal(await settingsPage.$('#usages-popover [data-provider="mistral"] .usages-b-profile'), null, 'an unconfigured provider is a heading alone in the panel');
     await settingsPage.setViewport({ width: 390, height: 780 });
     // The layout of a phone is finished a few frames after the viewport changes (the bar's height is measured in script), so wait for the popover
     // to fit rather than measure in the same instant: a page under load is slower to settle, and the claim is where it ends up.
@@ -3450,7 +3449,7 @@ async function main() {
     await domClick(settingsPage, '#usages-toggle'); await settingsPage.waitForSelector('#usages-popover:not([hidden])');
     await domClick(settingsPage, '#settings-toggle');
     await domClick(settingsPage, '#settings-usages-tab');
-    await settingsPage.waitForSelector('#settings-dialog[open] .usage-provider[data-provider="codex"]');
+    await settingsPage.waitForSelector('#settings-dialog[open] .usages-b-tile[data-provider="codex"]');
     assert.deepEqual(await settingsPage.$$eval('#usage-alert-warning, #usage-alert-critical', inputs => inputs.map(input => input.value)), ['20', '10'], 'the global usage alert thresholds default to 20 and 10 percent remaining');
     await settingsPage.click('#settings-notifications-tab');
     const secure = await settingsPage.evaluate(() => window.isSecureContext);
@@ -3527,7 +3526,7 @@ async function main() {
       const section = await settingsPage.evaluate(() => document.querySelector('#settings-dialog .settings-body > section:not([hidden])').id);
       rowAudit.push(await settingsPage.evaluate(id => {
         const root = document.getElementById(id);
-        const skip = '.usage-provider, .machine-harness, .user-members, .user-accounts, #machines-list, #harnesses-list, #usages-list, [aria-label="Invitation link"]';
+        const skip = '.usages-b-tile, .machine-harness, .user-members, .user-accounts, #machines-list, #harnesses-list, #usages-list, [aria-label="Invitation link"]';
         const blockShown = el => id !== 'settings-general' || getComputedStyle(el.closest('.settings-subsection')).display !== 'none';
         const fields = [...root.querySelectorAll('input:not([type=hidden]), select, textarea')].filter(el => !el.closest(skip) && blockShown(el));
         const rows = [...root.querySelectorAll('.settings-row')].filter(blockShown);
@@ -3551,7 +3550,7 @@ async function main() {
         const root = document.getElementById(id);
         const shown = el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden' && !el.closest('[hidden]') && !el.closest('details:not([open]) > :not(summary)');
         const name = el => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}.${[...el.classList].join('.')}[${el.textContent.trim().slice(0, 24)}]`;
-        const blocks = [...root.querySelectorAll('h3, h4, h5, .settings-group, .settings-card, .settings-actions, .dialog-actions, .usage-provider, .usage-profile, .machine-card, .quota-banner, .quota-reset')].filter(shown);
+        const blocks = [...root.querySelectorAll('h3, h4, h5, .settings-group, .settings-card, .settings-actions, .dialog-actions, .usages-b-tile, .usages-b-profile, .machine-card, .quota-banner, .quota-reset')].filter(shown);
         const touching = [];
         for (let i = 1; i < blocks.length; i++) {
           const a = blocks[i - 1], b = blocks[i];
@@ -3561,11 +3560,11 @@ async function main() {
           if (rb.top - ra.bottom < 4) touching.push(`${name(a)} -> ${name(b)}: gap ${(rb.top - ra.bottom).toFixed(1)}px`);
         }
         const cramped = [];
-        for (const card of [...root.querySelectorAll('.settings-group, .settings-card, .usage-provider, .machine-card')].filter(shown)) {
+        for (const card of [...root.querySelectorAll('.settings-group, .settings-card, .usages-b-tile, .machine-card')].filter(shown)) {
           const box = card.getBoundingClientRect(), walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
           for (let node; (node = walker.nextNode());) {
             if (!node.textContent.trim() || !shown(node.parentElement)) continue;
-            const host = node.parentElement.closest('button, input, select, textarea, .usage-profile, .settings-group');
+            const host = node.parentElement.closest('button, input, select, textarea, .usages-b-profile, .settings-group');
             if (host && host !== card && card.contains(host)) continue;
             const range = document.createRange(); range.selectNodeContents(node);
             const rect = [...range.getClientRects()].find(item => item.width > 0);
@@ -3609,16 +3608,17 @@ async function main() {
     const rem = await settingsPage.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), px = value => `${Math.round(value * 100) / 100}px`;
     assert.deepEqual(geometry, { left: true, label: px(.82 * rem), desc: px(.75 * rem), tall: true }, 'label and description sit left of the control, in the v1 type scale');
     await domClick(settingsPage, '#settings-usages-tab');
-    assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-profile', els => els.length), 2);
-    assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usages-pace-text', el => el.textContent.includes('reserve')), true);
-    assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usage-profile-credits', el => el.textContent), 'Credits: 12.50', 'credits line should render');
-    assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-window .usages-window-top span', els => els.map(el => el.textContent).includes('Codex Spark')), true, 'spark window label should render');
-    assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usage-switch:not([hidden])', el => el.disabled), false, 'configured profile switch should be available');
+    assert.equal(await settingsPage.$$eval('#usages-list .usages-b-tile[data-provider="codex"] .usages-b-profile', els => els.length), 2);
+    assert.equal(await settingsPage.$eval('#usages-list .usages-b-tile[data-provider="codex"] .usages-pace-text', el => el.textContent.includes('reserve')), true);
+    assert.equal(await settingsPage.$eval('#usages-list .usages-b-tile[data-provider="codex"] .usages-credits-row', el => el.textContent), 'Credits: 12.50', 'credits line should render');
+    assert.equal(await settingsPage.$$eval('#usages-list .usages-b-tile[data-provider="codex"] .usages-window-row .usages-window-top span', els => els.map(el => el.textContent).includes('Codex Spark')), true, 'spark window label should render');
+    assert.equal(await settingsPage.$eval('#usages-list .usages-b-tile[data-provider="codex"] .usages-b-switch', el => el.disabled), false, 'configured profile switch should be available');
     await answerDialogs(settingsPage, () => ({ accept: true, values: { value: 'reserve' } }));
-    assert.deepEqual(await settingsPage.evaluate(() => { const button = [...document.querySelectorAll('.usage-provider[data-provider="codex"] .usage-profile')].find(el => el.querySelector('.usage-profile-name').textContent === 'backup').querySelector('.usage-rename'); return [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-edit'), button.textContent]; }), ['Rename backup', 'Rename backup', true, ''], 'Rename is an edit icon with a tooltip');
-    await settingsPage.evaluate(() => [...document.querySelectorAll('.usage-provider[data-provider="codex"] .usage-profile')].find(el => el.querySelector('.usage-profile-name').textContent === 'backup').querySelector('.usage-rename').click());
-    await settingsPage.waitForFunction(() => [...document.querySelectorAll('.usage-provider[data-provider="codex"] .usage-profile-name')].some(el => el.textContent === 'reserve'));
-    assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-profile-name', els => els.some(el => el.textContent === 'backup')), false, 'renamed profile kept its old name');
+    await domClick(settingsPage, '#usages-list .usages-b-tile[data-provider="codex"] .usages-b-manage');
+    assert.deepEqual(await settingsPage.evaluate(() => { const button = [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="codex"] .usages-b-profile')].find(el => el.querySelector('.switcher-tile-name').textContent === 'backup').querySelector('.usages-b-rename'); return [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-edit'), button.textContent]; }), ['Rename backup', 'Rename backup', true, ''], 'Rename is an edit icon with a tooltip');
+    await settingsPage.evaluate(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="codex"] .usages-b-profile')].find(el => el.querySelector('.switcher-tile-name').textContent === 'backup').querySelector('.usages-b-rename').click());
+    await settingsPage.waitForFunction(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="codex"] .switcher-tile-name')].some(el => el.textContent === 'reserve'));
+    assert.equal(await settingsPage.$$eval('#usages-list .usages-b-tile[data-provider="codex"] .switcher-tile-name', els => els.some(el => el.textContent === 'backup')), false, 'renamed profile kept its old name');
     // Automatic account switching (mock source): defaults, order editing, limits, protected profiles, validation,
     // save/reopen, dry run, re-arm, keyboard focus, escaping, the paused banner, and a phone-width fit.
     {
@@ -3825,22 +3825,23 @@ async function main() {
       assert.equal(refused.reads, 1, 'a non-owner is asked once and then left alone');
       guardMock.forbidden = false;
     }
-    await settingsPage.$eval('.usage-provider[data-provider="mistral"] textarea', el => { el.value = 'Cookie: csrftoken=abc; ory_session_test=secret'; el.dispatchEvent(new Event('input', { bubbles: true })); });
-    await settingsPage.evaluate(() => [...document.querySelectorAll('.usage-provider[data-provider="mistral"] button')].find(el => el.textContent === 'Save cookie').click());
-    await settingsPage.waitForFunction(() => [...document.querySelectorAll('.usage-provider[data-provider="mistral"] button')].some(el => el.textContent === 'Clear cookie'));
-    assert.equal(await settingsPage.$eval('.usage-provider[data-provider="mistral"] textarea', el => el.value), '', 'saved cookie leaked into Settings');
-    await settingsPage.$eval('.usage-provider[data-provider="ollama-cloud"] input[type="password"]', el => { el.value = 'ollama-secret'; el.dispatchEvent(new Event('input', { bubbles: true })); });
-    await settingsPage.select('.usage-provider[data-provider="ollama-cloud"] select', 'api_key');
-    await settingsPage.evaluate(() => [...document.querySelectorAll('.usage-provider[data-provider="ollama-cloud"] button')].find(el => el.textContent === 'Save credentials').click());
-    await settingsPage.waitForFunction(() => [...document.querySelectorAll('.usage-provider[data-provider="ollama-cloud"] button')].some(el => el.textContent === 'Clear credentials'));
-    assert.equal(await settingsPage.$eval('.usage-provider[data-provider="ollama-cloud"] input[type="password"]', el => el.value), '', 'saved API key leaked into Settings');
-    await settingsPage.evaluate(() => [...document.querySelectorAll('.usage-provider[data-provider="mistral"] button')].find(el => el.textContent === 'Clear cookie').click());
-    await settingsPage.waitForFunction(() => ![...document.querySelectorAll('.usage-provider[data-provider="mistral"] button')].some(el => el.textContent === 'Clear cookie'));
-    await settingsPage.evaluate(() => [...document.querySelectorAll('.usage-provider[data-provider="ollama-cloud"] button')].find(el => el.textContent === 'Clear credentials').click());
-    await settingsPage.waitForFunction(() => ![...document.querySelectorAll('.usage-provider[data-provider="ollama-cloud"] button')].some(el => el.textContent === 'Clear credentials'));
-    await settingsPage.evaluate(() => [...document.querySelectorAll('.usage-provider[data-provider="github-copilot"] button')].find(el => el.textContent === 'Sign in with GitHub').click());
-    await settingsPage.waitForFunction(() => [...document.querySelectorAll('.usage-provider[data-provider="github-copilot"] button')].some(el => el.textContent === 'Sign out'));
-    assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usage-affected', el => el.textContent.includes('milo')), true, 'switch impact should name affected agents');
+    await settingsPage.evaluate(() => { for (const key of ['codex', 'mistral', 'ollama-cloud', 'github-copilot']) { const tile = document.querySelector(`#usages-list .usages-b-tile[data-provider="${key}"]`); if (!tile.querySelector('.usages-b-manage-panel')) tile.querySelector('.usages-b-manage').click(); } }); // the credential forms are behind each tile's gear
+    await settingsPage.$eval('#usages-list .usages-b-tile[data-provider="mistral"] textarea', el => { el.value = 'Cookie: csrftoken=abc; ory_session_test=secret'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+    await settingsPage.evaluate(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="mistral"] button')].find(el => el.textContent === 'Save cookie').click());
+    await settingsPage.waitForFunction(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="mistral"] button')].some(el => el.textContent === 'Clear cookie'));
+    assert.equal(await settingsPage.$eval('#usages-list .usages-b-tile[data-provider="mistral"] textarea', el => el.value), '', 'saved cookie leaked into Settings');
+    await settingsPage.$eval('#usages-list .usages-b-tile[data-provider="ollama-cloud"] input[type="password"]', el => { el.value = 'ollama-secret'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+    await settingsPage.select('#usages-list .usages-b-tile[data-provider="ollama-cloud"] select', 'api_key');
+    await settingsPage.evaluate(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="ollama-cloud"] button')].find(el => el.textContent === 'Save credentials').click());
+    await settingsPage.waitForFunction(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="ollama-cloud"] button')].some(el => el.textContent === 'Clear credentials'));
+    assert.equal(await settingsPage.$eval('#usages-list .usages-b-tile[data-provider="ollama-cloud"] input[type="password"]', el => el.value), '', 'saved API key leaked into Settings');
+    await settingsPage.evaluate(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="mistral"] button')].find(el => el.textContent === 'Clear cookie').click());
+    await settingsPage.waitForFunction(() => ![...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="mistral"] button')].some(el => el.textContent === 'Clear cookie'));
+    await settingsPage.evaluate(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="ollama-cloud"] button')].find(el => el.textContent === 'Clear credentials').click());
+    await settingsPage.waitForFunction(() => ![...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="ollama-cloud"] button')].some(el => el.textContent === 'Clear credentials'));
+    await settingsPage.evaluate(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="github-copilot"] button')].find(el => el.textContent === 'Sign in with GitHub').click());
+    await settingsPage.waitForFunction(() => [...document.querySelectorAll('#usages-list .usages-b-tile[data-provider="github-copilot"] button')].some(el => el.textContent === 'Sign out'));
+    assert.equal(await settingsPage.$eval('#usages-list .usages-b-tile[data-provider="codex"] .usage-affected', el => el.textContent.includes('milo')), true, 'switch impact should name affected agents');
     assert.deepEqual(await settingsPage.$$eval('#settings-usages [aria-label="Account maintenance"] .usage-token-state', els => els.map(el => el.textContent)), ['Claude: off', 'Codex: off'], 'Account maintenance shows each tool as off by default');
     await domClick(settingsPage, '#usage-token-auto-refresh');
     await settingsPage.waitForFunction(() => document.querySelector('#usage-token-auto-refresh')?.checked && [...document.querySelectorAll('.usage-token-state')].some(el => el.textContent === 'Codex: waiting: codex is running'));
@@ -4861,7 +4862,7 @@ async function main() {
     assert.deepEqual(await agentPage.evaluate(() => { const header = document.querySelector('.sidebar > header').getBoundingClientRect(), plus = document.querySelector('#project-open').getBoundingClientRect(), fold = document.querySelector('#rooms-fold').getBoundingClientRect(), collapse = document.querySelector('#edge-rooms').getBoundingClientRect(), filter = document.querySelector('.sidebar .room-filter').getBoundingClientRect(), input = document.querySelector('.sidebar .room-filter-input').getBoundingClientRect(); return { gap: Math.round(collapse.left - fold.right), rightPad: Math.round(header.right - collapse.right), band: Math.round(filter.top - header.bottom) <= 14, newProjectRightOfFilter: plus.left >= input.right && Math.abs((plus.top + plus.bottom) / 2 - (input.top + input.bottom) / 2) < 4 && document.querySelector('#project-open').parentElement.classList.contains('room-filter') }; }), { gap: 6, rightPad: 12, band: true, newProjectRightOfFilter: true }, 'the rooms header groups its buttons and leaves no empty band, and New project sits to the right of the room filter');
     // One button system: every visible button in the app shell is a .btn, an .btn-icon or a .row-btn, and a hover lights the
     // top bar's buttons up (the border and the text go to the primary text colour).
-    const strays = await agentPage.evaluate(() => [...document.querySelectorAll('#app-view button, .topbar button')].filter(el => el.getClientRects().length && !el.matches('.btn, .btn-icon, .row-btn, .usages-variant-option')).map(el => `${el.id || el.className || el.tagName}:${el.textContent.trim().slice(0, 16)}`));
+    const strays = await agentPage.evaluate(() => [...document.querySelectorAll('#app-view button, .topbar button')].filter(el => el.getClientRects().length && !el.matches('.btn, .btn-icon, .row-btn')).map(el => `${el.id || el.className || el.tagName}:${el.textContent.trim().slice(0, 16)}`));
     assert.deepEqual(strays, [], `buttons outside the button system: ${strays.join(', ')}`);
     const topBefore = await agentPage.$eval('#inbox-toggle', el => { const cs = getComputedStyle(el); return { border: cs.borderTopColor, colour: cs.color }; });
     await agentPage.hover('#inbox-toggle'); await new Promise(resolve => setTimeout(resolve, 400)); // past the colour transition
@@ -8080,7 +8081,7 @@ async function main() {
     // The navbar is v1's height and every control in it is one icon button: an svg or mask glyph, a tooltip and an accessible name,
     // no text of its own, one box size, and a count that is a corner pill that never widens its button.
     const navbar = await first.evaluate(() => {
-      const bar = document.querySelector('.topbar'), buttons = [...bar.querySelectorAll('nav button')].filter(button => !button.classList.contains('ui-variant-toggle') && !button.classList.contains('usages-variant-option') && button.getClientRects().length);
+      const bar = document.querySelector('.topbar'), buttons = [...bar.querySelectorAll('nav button')].filter(button => !button.classList.contains('ui-variant-toggle') && button.getClientRects().length);
       const widthOf = id => document.querySelector(id).getBoundingClientRect().width;
       const badge = document.querySelector('#inbox-count'), wasHidden = badge.hidden, text = badge.textContent, before = widthOf('#inbox-toggle');
       badge.hidden = false; badge.textContent = '99'; const withBadge = widthOf('#inbox-toggle'), badgeBox = badge.getBoundingClientRect(), buttonBox = document.querySelector('#inbox-toggle').getBoundingClientRect();

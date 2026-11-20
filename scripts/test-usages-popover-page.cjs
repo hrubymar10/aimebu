@@ -41,7 +41,6 @@ async function main() {
         source[name] = (...args) => { window.__calls.push(name); return name !== 'list' && !owner ? Promise.reject(Object.assign(new Error('owner required'), { status: 403 })) : original(...args); };
       }
       document.querySelector('#usages-toggle').hidden = false;
-      (await import('/js/pages/usages/variant-pill.js')).mountUsagesVariantPill(document.querySelector('#usages-variant-slot'));
       window.__popover = new UsagesPopover(source, () => {}, () => owner);
     }, owner);
     return page;
@@ -52,7 +51,7 @@ async function main() {
       await page.$eval('#usages-toggle', node => node.click());
       await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile'));
       const view = await page.evaluate(() => ({ refresh: [document.querySelector('.usages-popover-refresh').disabled, document.querySelector('.usages-popover-refresh').title], tiles: document.querySelectorAll('.usages-popover-body .usages-provider-tile').length > 0,
-        note: document.querySelector('.usages-popover-body')?.textContent.includes('limited to the instance owner'), switches: document.querySelectorAll('.switcher-switch-pill').length }));
+        note: document.querySelector('.usages-popover-body')?.textContent.includes('limited to the instance owner'), switches: document.querySelectorAll('.usages-b-switch').length }));
       assert.deepEqual([view.refresh, view.tiles, view.note, view.switches], owner ? [[false, 'Refresh usages'], true, false, view.switches] : [[true, 'Only the owner can refresh usages'], true, false, 0], `${owner ? 'owner' : 'admin'}: ${JSON.stringify(view)}`);
       // A profile whose data is older than twice the refresh interval keeps its numbers but is drawn grey (the bar and the figures), claims no pace and
       // shows no live countdown, while a fresh profile beside it is unchanged.
@@ -63,10 +62,10 @@ async function main() {
       });
       const stale = await page.evaluate(() => {
         const color = value => { const probe = document.createElement('i'); probe.style.color = value; document.body.append(probe); const out = getComputedStyle(probe).color; probe.remove(); return out; };
-        const card = document.querySelector('.usages-popover-profile.is-stale'), fresh = document.querySelector('.usages-popover-profile:not(.is-stale)');
-        const fill = node => node && getComputedStyle(node.querySelector('.usage-fill')).backgroundColor;
+        const card = document.querySelector('.usages-b-profile.is-stale'), fresh = document.querySelector('.usages-b-profile:not(.is-stale)');
+        const fill = node => node && getComputedStyle(node.querySelector('.usages-progress span')).backgroundColor;
         return { stale: !!card, fill: card && fill(card), muted: color(getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim()), freshFill: fresh && fill(fresh),
-          pace: card && card.querySelectorAll('.usages-pace-text, .usage-pace-marker').length, countdown: card && /Resets in/.test(card.textContent), reset: card && [...card.querySelectorAll('.usage-window-foot span')].map(node => node.textContent) };
+          pace: card && card.querySelectorAll('.usages-pace-text, .usages-pace-tick').length, countdown: card && /Resets in/.test(card.textContent), reset: card && [...card.querySelectorAll('.usages-window-meta span')].map(node => node.textContent) };
       });
       assert.ok(stale.stale, 'the old profile is stale');
       assert.equal(stale.fill, stale.muted, `a stale profile's bar is the muted grey: ${JSON.stringify(stale)}`);
@@ -82,17 +81,13 @@ async function main() {
       }
       await page.close();
     }
-    // The A/B/C pill sits in the top bar, left of Inbox, and switches the panel's own drawing at once.
-    for (const [variant, selector] of [['b', '.usages-popover-alt .usages-b .usages-b-tile'], ['c', '.usages-popover-alt .usages-c .uc-headline']]) {
+    // The panel draws the Usages view, read-only: the actions are the header's own and it opens on the first click.
+    {
       const page = await mount(true);
-      await page.bringToFront(); await page.evaluate(() => localStorage.removeItem('aimebu2.usages.variant'));
-      assert.equal(await page.evaluate(() => { const slot = document.querySelector('#usages-variant-slot'), inbox = document.querySelector('#inbox-toggle'); return slot.querySelectorAll('.usages-variant-option').length === 3 && slot.nextElementSibling === inbox && slot.parentElement.classList.contains('topbar-right') && !!slot.querySelector('.usages-variant-pill').title; }), true, 'the pill is three letters with a tooltip, directly left of Inbox in the top bar');
       await page.$eval('#usages-toggle', node => node.click());
       await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile'));
-      await page.$eval(`#usages-variant-slot .usages-variant-option[data-variant=${variant}]`, node => node.click());
-      await page.waitForSelector(selector);
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('.usages-popover-body').hidden, !document.querySelector('.usages-popover-alt').hidden, document.querySelector('#usages-variant-slot .active').textContent]), [true, true, variant.toUpperCase()], `${variant.toUpperCase()} replaces the cards in the panel`);
-      if (variant === 'b') {
+      await page.waitForSelector('.usages-popover-alt .usages-b .usages-b-tile');
+      {
         // The actions are the panel header's own (close, refresh, group, side by side), once: B draws no row of its own, and the bar and active name carry no border or underline.
         assert.deepEqual(await page.evaluate(() => { const head = document.querySelector('#usages-popover > header'), alt = document.querySelector('.usages-popover-alt'), btn = sel => head.querySelector(sel), bar = alt.querySelector('.usages-progress'), name = alt.querySelector('.usages-b-profile.is-active .switcher-tile-name');
           return { refresh: head.querySelectorAll('.usages-popover-refresh').length, group: !btn('.usages-popover-group').hidden, close: !!btn('.usages-popover-close'), row: !!alt.querySelector('.usages-b-bar, .usages-b-refresh-all, .usages-b-group, .usages-b-actions'), refreshes: document.querySelectorAll('#usages-popover [aria-label="Refresh usages"]').length,
@@ -114,16 +109,11 @@ async function main() {
         await page.$eval('#typing', node => node.blur()); await page.waitForFunction(n => window.__calls.filter(name => name === 'list').length > n, {}, before);
         await page.$eval('#typing', node => node.remove());
       }
-      await page.$eval('#usages-variant-slot .usages-variant-option[data-variant=a]', node => node.click());
-      await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile') && !document.querySelector('.usages-popover-body').hidden);
-      assert.equal(await page.evaluate(() => document.querySelector('.usages-popover-alt').hidden), true, 'A brings the cards back');
       await page.close();
     }
     {
       const page = await mount(true);
-      await page.evaluate(() => { window.__popover.source.switcher = () => Promise.reject(Object.assign(new Error('unavailable'), { status: 503 })); localStorage.setItem('aimebu2.usages.variant', 'b'); });
-      await page.evaluate(() => window.__popover.syncVariant());
-      await page.evaluate(() => { document.querySelector('#usages-variant-slot .usages-variant-option[data-variant=c]').click(); document.querySelector('#usages-variant-slot .usages-variant-option[data-variant=b]').click(); });
+      await page.evaluate(() => { window.__popover.source.switcher = () => Promise.reject(Object.assign(new Error('unavailable'), { status: 503 })); });
       await page.$eval('#usages-toggle', node => node.click());
       await page.waitForSelector('.usages-popover-alt .usages-b .usages-b-tile');
       await page.close();

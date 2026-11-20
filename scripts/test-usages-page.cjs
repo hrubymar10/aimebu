@@ -1,4 +1,4 @@
-// Settings -> Usages (the provider cards and the account switcher) in Chromium. The source is the app's own mock of the usages API, with
+// Settings -> Usages (the usages view and the account switcher) in Chromium. The source is the app's own mock of the usages API, with
 // every method that reads or writes recorded and, where a test asks, held until the test lets it go, so the order of answers is chosen.
 // web/ is served as is with its import map; no Go server. Part of `make test-ui`.
 'use strict';
@@ -12,7 +12,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css"><link rel="stylesheet" href="/v2-only.css">${importMap}</head>
 <body><dialog id="settings-dialog" class="settings-modal" aria-label="Settings" open><div class="settings-pane"><nav class="settings-nav" aria-label="Settings sections"></nav><div class="settings-body"><header class="settings-body-header"></header><section id="settings-usages" class="settings-section active"></section></div></div></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -67,7 +67,9 @@ async function main() {
   const settle = page => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
   const click = (page, selector) => page.$eval(selector, el => el.click());
   const dialog = page => page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
-  const cardOf = key => `#usages-list .usage-provider[data-provider="${key}"]`;
+  // Opens a tile's management panel (the gear), unless it is open already.
+  const manage = (page, key) => page.evaluate(selector => { const tile = document.querySelector(selector); if (!tile.querySelector('.usages-b-manage-panel')) tile.querySelector('.usages-b-manage').click(); }, cardOf(key));
+  const cardOf = key => `#usages-list .usages-b-tile[data-provider="${key}"]`;
   try {
     // The owner's page: the switcher and its forms above, the providers in order below, each with its profiles and their limit windows.
     {
@@ -75,19 +77,19 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => ({
         controls: [...document.querySelector('#usages-switcher').children].map(node => node.className || node.tagName.toLowerCase()),
         toggle: document.querySelector('#usage-switcher-disable').textContent,
-        providers: [...document.querySelectorAll('#usages-list .usage-provider')].map(card => [card.dataset.provider, card.querySelector('.usage-provider-name').textContent, card.querySelector('.usage-provider-status').textContent, card.querySelectorAll('.usage-profile').length]),
-        affected: document.querySelector('#usages-list .usage-provider .usage-affected').textContent,
+        providers: [...document.querySelectorAll('#usages-list .usages-b-tile')].map(card => [card.dataset.provider, card.querySelector('.usages-provider-name').textContent, card.querySelector('.usages-provider-updated').textContent.replace(/^Updated .*/, 'Updated'), card.querySelectorAll('.usages-b-profile').length]),
         settings: ['#usage-refresh-interval', '#usage-percent-display', '#usage-alert-warning', '#usage-alert-critical'].map(selector => document.querySelector(selector).value),
         synced: window.__synced })),
-      { controls: ['usage-config-controls', 'settings-actions usage-switcher-danger'], toggle: 'Disable account switcher', providers: [['codex', 'Codex', 'Enabled', 2], ['claude-code', 'Claude Code', 'Enabled', 1], ['github-copilot', 'GitHub Copilot', 'Not configured', 1], ['mistral', 'Mistral', 'Not configured', 1], ['ollama-cloud', 'Ollama Cloud', 'Not configured', 1]],
-        affected: 'Switch affects: milo@mock', settings: ['120', 'left', '20', '10'], synced: 2 });
+      { controls: ['usage-config-controls', 'settings-actions usage-switcher-danger'], toggle: 'Disable account switcher', providers: [['codex', 'Codex', 'Updated', 2], ['claude-code', 'Claude Code', 'ok', 1], ['github-copilot', 'GitHub Copilot', 'Not configured', 0], ['mistral', 'Mistral', 'Not configured', 0], ['ollama-cloud', 'Ollama Cloud', 'Not configured', 0]],
+        settings: ['120', 'left', '20', '10'], synced: 2 });
       assert.deepEqual(await page.evaluate(() => {
-        const card = document.querySelector('#usages-list [data-provider=codex] .usage-profile');
-        const window = card.querySelector('.usage-window');
-        return { name: card.querySelector('.usage-profile-name').textContent, active: card.querySelector('.usage-profile-active').hidden, windows: card.querySelectorAll('.usage-window').length, label: window.querySelector('.usage-track').getAttribute('aria-label'), now: window.querySelector('.usage-track').getAttribute('aria-valuenow'),
-          marker: !!window.querySelector('.usage-pace-marker'), spark: !!window.querySelector('svg.usage-spark polyline'), pace: window.querySelector('.usages-pace-text').textContent, credits: card.querySelector('.usage-profile-credits').textContent, switchHidden: card.querySelector('.usage-switch').hidden };
-      }), { name: 'main', active: false, windows: 3, label: 'Session left', now: '58', marker: true, spark: true, pace: '13% in reserve·Lasts until reset', credits: 'Credits: 12.50', switchHidden: true });
-      assert.equal(await page.$eval('#usages-list [data-provider=codex] .usage-profile', el => getComputedStyle(el).borderTopWidth), '1px', 'the first profile card keeps its top edge (v1 drew none above the first of a tile)');
+        const card = document.querySelector('#usages-list [data-provider=codex] .usages-b-profile');
+        const window = card.querySelector('.usages-window-row');
+        return { name: card.querySelector('.switcher-tile-name').textContent, active: !!card.querySelector('.switcher-tile-active'), windows: card.querySelectorAll('.usages-window-row').length, label: window.querySelector('.usages-progress').getAttribute('aria-label'), now: window.querySelector('.usages-progress').getAttribute('aria-valuenow'),
+          marker: !!window.querySelector('.usages-pace-tick'), spark: !!window.querySelector('svg.usages-b-spark polyline'), pace: window.querySelector('.usages-pace-text').textContent, credits: card.querySelector('.usages-credits-row').textContent, switchHidden: !card.querySelector('.usages-b-switch') };
+      }), { name: 'main', active: true, windows: 3, label: 'Session left', now: '58', marker: true, spark: true, pace: '13% in reserve·Lasts until reset', credits: 'Credits: 12.50', switchHidden: true });
+      await click(page, `${cardOf('codex')} .usages-b-manage`);
+      assert.equal(await page.$eval(`${cardOf('codex')} .usage-affected`, el => el.textContent), 'Switch affects: milo@mock', 'the gear opens the tile\'s management panel');
       assert.ok(/expected pace/.test(await page.$eval('#usages-list .usages-legend', el => el.textContent)) && /In reserve/.test(await page.$eval('#usages-list .usages-legend', el => el.textContent)), 'the marks on a card are explained');
       await page.close();
     }
@@ -97,8 +99,8 @@ async function main() {
       const page = await mount({ owner: false });
       assert.deepEqual(await page.evaluate(() => ({
         note: document.querySelector('#usages-readonly')?.textContent, switcherBox: document.querySelector('#usages-switcher'), quota: !!document.querySelector('.quota-settings'), guard: !!document.querySelector('.limit-guard-settings'),
-        cards: document.querySelectorAll('#usages-list .usage-provider').length > 0, actions: document.querySelectorAll('#usages-list .usage-provider-actions button').length, rename: document.querySelectorAll('#usages-list .usage-rename:not([hidden])').length,
-        remove: document.querySelectorAll('#usages-list .usage-remove:not([hidden])').length, switchButtons: document.querySelectorAll('#usages-list .usage-switch:not([hidden])').length, asked: window.__calls.filter(call => call[0] === 'switcher').length, error: document.querySelector('#usages-error').textContent })),
+        cards: document.querySelectorAll('#usages-list .usages-b-tile').length > 0, actions: document.querySelectorAll('#usages-list .usages-b-tile-actions button').length, rename: document.querySelectorAll('#usages-list .usages-b-rename').length,
+        remove: document.querySelectorAll('#usages-list .usages-b-remove').length, switchButtons: document.querySelectorAll('#usages-list .usages-b-switch').length, asked: window.__calls.filter(call => call[0] === 'switcher').length, error: document.querySelector('#usages-error').textContent })),
         { note: 'Only the owner can change Usages. You can see the limits here.', switcherBox: null, quota: false, guard: false, cards: true, actions: 0, rename: 0, remove: 0, switchButtons: 0, asked: 0, error: '' });
       await page.close();
       const owner = await mount();
@@ -108,27 +110,28 @@ async function main() {
     // Switching asks first and names who is affected; the switch, then a read, follows. A failure says why.
     {
       const page = await mount();
-      // Switch is a framed rectangular button, not the rounded status pill that ACTIVE is, and a bar track is outlined so it shows on a page of its own colour.
-      assert.deepEqual(await page.evaluate(card => { const button = document.querySelector(`${card} .usage-profile:nth-child(2) .usage-switch`), style = getComputedStyle(button), active = document.querySelector(`${card} .switcher-tile-active, ${card} .usage-profile-active`), track = getComputedStyle(document.querySelector('.usage-track'));
+      // Switch is a framed rectangular button, not the rounded status pill that ACTIVE is, and a bar track has no border, as in v1.
+      assert.deepEqual(await page.evaluate(card => { const button = document.querySelector(`${card} .usages-b-profile[data-profile=backup] .usages-b-switch`), style = getComputedStyle(button), active = document.querySelector(`${card} .switcher-tile-active, ${card} .switcher-tile-active`), track = getComputedStyle(document.querySelector('.usages-progress'));
         return { radius: style.borderTopLeftRadius, border: style.borderTopWidth, upper: style.textTransform, activeUpper: active ? getComputedStyle(active).textTransform : 'none', track: track.borderTopWidth }; }, cardOf('codex')),
-        { radius: '6px', border: '1px', upper: 'none', activeUpper: 'uppercase', track: '1px' }, 'Switch is a real button, the status pill is a different shape, and the track is outlined');
-      assert.deepEqual(await page.evaluate(card => { const [first, second] = [...document.querySelectorAll(`${card} .usage-profile`)]; const say = node => { const label = node.querySelector('.usage-profile-active:not([hidden]), .usage-profile-inactive:not([hidden])'); return label?.textContent; }; return [say(first), say(second)]; }, cardOf('codex')),
+        { radius: '6px', border: '1px', upper: 'none', activeUpper: 'uppercase', track: '0px' }, 'Switch is a real button, the status pill is a different shape, and the track has no border (v1)');
+      assert.deepEqual(await page.evaluate(card => { const [first, second] = [...document.querySelectorAll(`${card} .usages-b-profile`)]; const say = node => { const label = node.querySelector('.switcher-tile-active, .usages-b-inactive'); return label?.textContent; }; return [say(first), say(second)]; }, cardOf('codex')),
         ['Active', 'Inactive'], 'an account says in words whether it is the active one');
-      await click(page, `${cardOf('codex')} .usage-profile:nth-child(2) .usage-switch`);
+      await click(page, `${cardOf('codex')} .usages-b-profile[data-profile=backup] .usages-b-switch`);
       await dialog(page);
       assert.match(await page.$eval('#app-dialog .app-dialog-message', el => el.textContent), /Affected agents: milo@mock\. Switch to backup\?/);
       await click(page, '#app-dialog .app-dialog-cancel');
       await settle(page);
       assert.equal(await calls(page, 'use'), 0, 'declining switches nothing');
       const reads = await calls(page, 'list');
-      await click(page, `${cardOf('codex')} .usage-profile:nth-child(2) .usage-switch`);
+      await click(page, `${cardOf('codex')} .usages-b-profile[data-profile=backup] .usages-b-switch`);
       await dialog(page);
       await click(page, '#app-dialog .app-dialog-ok');
       await page.waitForFunction(() => window.__calls.some(call => call[0] === 'use'));
       await page.waitForFunction(reads => window.__calls.filter(call => call[0] === 'list').length > reads, {}, reads);
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'use')), ['use', 'codex', 'backup']);
       await page.evaluate(() => { window.__source.use = async () => { throw new Error('The switch was refused'); }; });
-      await click(page, `${cardOf('claude-code')} .usage-rename`);
+      await manage(page, 'claude-code');
+      await click(page, `${cardOf('claude-code')} .usages-b-rename`);
       await dialog(page);
       await page.$eval('#app-dialog input', el => { el.value = 'renamed'; el.dispatchEvent(new Event('input', { bubbles: true })); });
       await click(page, '#app-dialog .app-dialog-ok');
@@ -147,8 +150,8 @@ async function main() {
         window.__source.list = async () => ({ ...(await list()), credential_alerts: [{ kind: 'reauth_required', tool: 'codex', profile: 'backup', role: 'store', message: 'Sign in again' }] });
         await window.__usages.load();
       });
-      const selector = `${cardOf('codex')} .usage-profile:nth-child(2) .usage-switch-force`;
-      assert.equal(await page.$eval(selector, el => el.textContent), 'Install anyway');
+      const selector = `${cardOf('codex')} .usages-b-profile[data-profile=backup] .usages-b-install-anyway`;
+      assert.match(await page.$eval(selector, el => el.title), /^Install anyway/);
       await click(page, selector);
       await dialog(page);
       assert.match(await page.$eval('#app-dialog .app-dialog-message', el => el.textContent), /without refreshing/);
@@ -180,11 +183,12 @@ async function main() {
       });
       if (external) await page.evaluate(() => window.__removeOutsidePage());
       else {
-        await click(page, `${cardOf('codex')} .usage-profile:nth-child(2) .usage-remove`);
+        await manage(page, 'codex');
+        await click(page, `${cardOf('codex')} .usages-b-profile[data-profile=backup] .usages-b-remove`);
         await dialog(page);
         await click(page, '#app-dialog .app-dialog-ok');
       }
-      await page.waitForFunction(() => ![...document.querySelectorAll('[data-provider="codex"] .usage-profile-name')].some(node => node.textContent === 'backup'));
+      await page.waitForFunction(() => ![...document.querySelectorAll('[data-provider="codex"] .switcher-tile-name')].some(node => node.textContent === 'backup'));
       assert.equal(await page.evaluate(() => window.__usages.store.switcher.value.profiles.some(item => item.tool === 'codex' && item.name === 'backup')), false);
       if (!external) assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'remove')), ['remove', 'codex', 'backup']);
       await page.close();
@@ -197,9 +201,9 @@ async function main() {
       await page.waitForFunction(() => window.__waiting.list?.length === 2);
       await page.evaluate(() => { window.__source.preferences.percent_display = 'used'; window.__release('list'); }); // the first read
       await settle(page);
-      assert.equal(await page.evaluate(() => document.querySelectorAll('#usages-list .usage-provider').length), 0, 'a read superseded by a later one draws nothing, even answered first');
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#usages-list .usages-b-tile').length), 0, 'a read superseded by a later one draws nothing, even answered first');
       await page.evaluate(() => window.__release('list'));
-      await page.waitForFunction(() => document.querySelectorAll('#usages-list .usage-provider').length === 5);
+      await page.waitForFunction(() => document.querySelectorAll('#usages-list .usages-b-tile').length === 5);
       await page.close();
     }
     // A push from the event stream: applied at once, held while a field has focus (and applied when focus leaves), and held while a read runs.
@@ -273,12 +277,14 @@ async function main() {
         window.__polls = 0;
         window.__source.copilotPoll = async () => { window.__polls++; return window.__polls < 2 ? { status: 'pending', interval: 1 } : { status: 'success' }; };
       });
+      await manage(page, 'github-copilot');
       await click(page, `${cardOf('github-copilot')} .btn-primary`);
       await page.waitForFunction(() => document.querySelector('.usage-copilot-flow span'));
       assert.deepEqual(await page.evaluate(() => [document.querySelector('.usage-copilot-flow span').textContent, document.querySelector('.usage-copilot-flow a').href, document.querySelector('.usage-copilot-flow a').rel]), ['Code: ABCD-1234 · pending', 'https://github.com/login/device', 'noopener noreferrer']);
       await page.waitForFunction(() => !document.querySelector('.usage-copilot-flow span'), { timeout: 8000 });
       assert.equal(await page.evaluate(() => window.__polls), 2);
       await page.evaluate(() => { window.__polls = 0; window.__source.copilotPoll = async () => { window.__polls++; return { status: 'pending', interval: 1 }; }; });
+      await manage(page, 'github-copilot');
       await click(page, `${cardOf('github-copilot')} .btn-primary`);
       await page.waitForFunction(() => window.__polls === 1);
       await page.evaluate(() => window.__usages.destroy());
@@ -293,6 +299,7 @@ async function main() {
         window.__source.copilotStart = async () => ({ flow_id: 'mock-flow', user_code: 'ABCD-1234', verification_uri: uri, interval: 60, expires_at: new Date(Date.now() + 600000).toISOString() });
         window.__source.copilotPoll = async () => ({ status: 'pending', interval: 60 });
       }, address);
+      await manage(page, 'github-copilot');
       await click(page, `${cardOf('github-copilot')} .btn-primary`);
       await page.waitForFunction(() => document.querySelector('.usage-copilot-flow span'));
       assert.equal(await page.evaluate(() => document.querySelector('.usage-copilot-flow a')), null, `${address} became a link`);
@@ -301,6 +308,7 @@ async function main() {
     // GitHub sign-in started and the page destroyed before the start is answered: nothing is drawn and no poll is sent.
     {
       const page = await mount({ held: ['copilotStart'] });
+      await manage(page, 'github-copilot');
       await click(page, `${cardOf('github-copilot')} .btn-primary`);
       await page.waitForFunction(() => window.__waiting.copilotStart?.length === 1);
       await page.evaluate(() => window.__usages.destroy());
@@ -365,7 +373,7 @@ async function main() {
       assert.equal(await page.evaluate(() => document.querySelector('#usages-page, .usages-page').textContent.includes('main@example.test')), true, 'the owner sees the e-mail of a login');
       await page.evaluate(() => { window.__source.list = async () => { throw new Error('boom'); }; window.__usages.setOwner(false); window.__usages.forget(); });
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => { const text = document.querySelector('.usages-page').textContent; return { email: text.includes('main@example.test'), alerts: document.querySelectorAll('.usage-credential-alert').length, cards: document.querySelectorAll('#usages-list .usage-provider').length, switcher: !!document.querySelector('#usages-switcher'), plans: /Pro\b/.test(text) }; }),
+      assert.deepEqual(await page.evaluate(() => { const text = document.querySelector('.usages-page').textContent; return { email: text.includes('main@example.test'), alerts: document.querySelectorAll('.usage-credential-alert').length, cards: document.querySelectorAll('#usages-list .usages-b-tile').length, switcher: !!document.querySelector('#usages-switcher'), plans: /Pro\b/.test(text) }; }),
         { email: false, alerts: 0, cards: 0, switcher: false, plans: false });
       await page.close();
     }
@@ -393,14 +401,14 @@ async function main() {
           window.__source.list = async () => { const out = await list(); out.providers[0].profiles[0].last_refresh_at = new Date(Date.now() - 2 * 86400000).toISOString(); return out; };
           await window.__usages.load();
         });
-        const view = await page.evaluate(() => ({ stale: document.querySelectorAll('.usage-profile.is-stale').length, fresh: document.querySelectorAll('.usage-profile:not(.is-stale)').length > 0, text: document.querySelector('.usage-profile-stale')?.textContent.replace(/\s+/g, ' ').trim(),
-          refresh: !!document.querySelector('.usage-profile-stale .usage-refresh'), color: getComputedStyle(document.querySelector('.usage-profile.is-stale .usage-fill')).backgroundColor }));
-        assert.deepEqual([view.stale, view.fresh, view.text, view.refresh], [1, true, owner ? 'Stale, last update 2d ago Refresh' : 'Stale, last update 2d ago', owner], `${owner ? 'owner' : 'admin'}: ${JSON.stringify(view)}`);
+        const view = await page.evaluate(() => ({ stale: document.querySelectorAll('.usages-b-profile.is-stale').length, fresh: document.querySelectorAll('.usages-b-profile:not(.is-stale)').length > 0, text: document.querySelector('.usages-stale-line')?.textContent.replace(/\s+/g, ' ').trim(),
+          refresh: !!document.querySelector('.usages-stale-line .usages-b-refresh'), color: getComputedStyle(document.querySelector('.usages-b-profile.is-stale .usages-progress span')).backgroundColor }));
+        assert.deepEqual([view.stale, view.fresh, view.text, view.refresh], [1, true, owner ? 'Stale, last update 2d ago' : 'Stale, last update 2d ago', owner], `${owner ? 'owner' : 'admin'}: ${JSON.stringify(view)}`);
         const look = await page.evaluate(() => {
           const color = value => { const probe = document.createElement('i'); probe.style.color = value; document.body.append(probe); const out = getComputedStyle(probe).color; probe.remove(); return out; };
-          const card = document.querySelector('.usage-profile.is-stale'), fresh = document.querySelector('.usage-profile:not(.is-stale)');
-          return { fill: getComputedStyle(card.querySelector('.usage-fill')).backgroundColor, muted: color(getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim()), freshFill: getComputedStyle(fresh.querySelector('.usage-fill')).backgroundColor,
-            pace: card.querySelectorAll('.usages-pace-text, .usage-pace-marker').length, reset: [...card.querySelectorAll('.usage-window-foot span')].map(node => node.textContent) };
+          const card = document.querySelector('.usages-b-profile.is-stale'), fresh = document.querySelector('.usages-b-profile:not(.is-stale)');
+          return { fill: getComputedStyle(card.querySelector('.usages-progress span')).backgroundColor, muted: color(getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim()), freshFill: getComputedStyle(fresh.querySelector('.usages-progress span')).backgroundColor,
+            pace: card.querySelectorAll('.usages-pace-text, .usages-pace-tick').length, reset: [...card.querySelectorAll('.usages-window-meta span')].map(node => node.textContent) };
         });
         assert.equal(look.fill, look.muted, `a stale card's bars are the muted grey: ${JSON.stringify(look)}`);
         assert.notEqual(look.freshFill, look.muted, 'a fresh card keeps its colour');
@@ -408,7 +416,7 @@ async function main() {
         assert.ok(look.reset.every(text => /^(Reset passed|Resets .+)$/.test(text) && !/ in /.test(text)), `a stale card's reset is a fact, not a countdown: ${JSON.stringify(look.reset)}`);
         if (owner) {
           const before = await calls(page, 'refresh');
-          await click(page, '.usage-profile-stale .usage-refresh'); await settle(page);
+          await click(page, '.usages-stale-line .usages-b-refresh'); await settle(page);
           assert.equal(await calls(page, 'refresh'), before + 1, 'the stale card refreshes its provider');
         }
         await page.close();
@@ -433,11 +441,13 @@ async function main() {
     // Mistral and Ollama credentials: what is typed is sent, and clearing appears once something is stored.
     {
       const page = await mount();
+      await manage(page, 'mistral');
       await page.$eval(`${cardOf('mistral')} textarea`, el => { el.value = 'cookie=1'; });
       await click(page, `${cardOf('mistral')} .btn-primary`);
       await page.waitForFunction(() => window.__calls.some(call => call[0] === 'mistral'));
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'mistral')), ['mistral', 'cookie=1']);
       await page.waitForFunction(() => [...document.querySelectorAll('[data-provider=mistral] button')].some(button => button.textContent === 'Clear cookie'));
+      await manage(page, 'ollama-cloud');
       await page.$eval(`${cardOf('ollama-cloud')} input[type=password]`, el => { el.value = 'sk-1'; });
       await page.select(`${cardOf('ollama-cloud')} select`, 'api_key');
       await click(page, `${cardOf('ollama-cloud')} .btn-primary`);
@@ -452,29 +462,30 @@ async function main() {
       const under = (direction, offset) => page.evaluate((direction, offset) => {
         const section = document.querySelector('#settings-usages'), card = section.querySelector('[data-provider="claude-code"]');
         section.scrollTop += card.getBoundingClientRect().top - section.getBoundingClientRect().top - offset;
-        const button = [...card.querySelectorAll('.usage-provider-actions button')].find(node => (node.getAttribute('aria-label') || '').endsWith(direction));
+        const button = [...card.querySelectorAll('.usages-b-manage-row button')].find(node => (node.getAttribute('aria-label') || '').endsWith(direction));
         const box = button.getBoundingClientRect();
         return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       }, direction, offset);
       const drawn = () => page.evaluate(() => {
         const section = document.querySelector('#settings-usages'), card = section.querySelector('[data-provider="claude-code"]');
         const box = card.getBoundingClientRect(), frame = section.getBoundingClientRect();
-        return { order: [...section.querySelectorAll('.usage-provider')].map(item => item.dataset.provider), top: Math.round(box.top - frame.top), scrollTop: section.scrollTop, inView: box.top >= frame.top && box.bottom <= frame.bottom, focus: document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName };
+        return { order: [...section.querySelectorAll('.usages-b-tile')].map(item => item.dataset.provider), top: Math.round(box.top - frame.top), scrollTop: section.scrollTop, inView: box.top >= frame.top && box.bottom <= frame.bottom, focus: document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName };
       });
+      await manage(page, 'claude-code');
       const at = await under('up', 40);
       const before = await drawn();
       await page.mouse.click(at.x, at.y);
-      await page.waitForFunction(() => document.querySelector('#usages-list .usage-provider')?.dataset.provider === 'claude-code');
+      await page.waitForFunction(() => document.querySelector('#usages-list .usages-b-tile')?.dataset.provider === 'claude-code');
       await settle(page);
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'settings')), ['settings', { provider_order: ['claude-code', 'codex', 'github-copilot', 'mistral', 'ollama-cloud'] }]);
       const after = await drawn();
       assert.deepEqual(after.order, ['claude-code', 'codex', 'github-copilot', 'mistral', 'ollama-cloud']);
-      assert.equal(after.inView, true, 'the moved card is still on screen');
+      assert.equal(after.inView, true, 'the moved card is still on screen ' + JSON.stringify([before, after]));
       assert.ok(Math.abs(after.top - before.top) <= 2, `the moved card stays where it was pressed, the scroll never jumps to the top (top ${before.top} -> ${after.top}, scrollTop ${before.scrollTop} -> ${after.scrollTop})`);
       // Moving it back: the same gesture keeps working, and focus stays on the pressed button.
       const back = await under('down', 40);
       await page.mouse.click(back.x, back.y);
-      await page.waitForFunction(() => document.querySelector('#usages-list .usage-provider')?.dataset.provider === 'codex');
+      await page.waitForFunction(() => document.querySelector('#usages-list .usages-b-tile')?.dataset.provider === 'codex');
       await settle(page);
       const restored = await drawn();
       assert.deepEqual(restored.order, ['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud']);

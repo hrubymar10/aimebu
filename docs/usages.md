@@ -1,6 +1,6 @@
 # Usage snapshots
 
-Settings → Server → Accounts & usage shows five provider cards: Codex, Claude Code, GitHub
+Settings → Server → Accounts & usage shows five provider tiles: Codex, Claude Code, GitHub
 Copilot, Mistral, and Ollama Cloud. The owner can enable providers, change
 their order, set the refresh interval (default 120 seconds, minimum 15),
 choose percent left or used, and refresh snapshots on demand. The cards are visible to the
@@ -287,12 +287,12 @@ in this browser. Each profile shows v1's token-expiry icon (healthy, expiring, e
 `GET /api/credentials/targets`, owner only) and, when the account switcher is on, a SWITCH pill on
 the inactive ones that confirms and calls `POST /api/switcher/{tool}/use`.
 
-An A | B | C pill in the top bar, directly left of Inbox (hidden on phone widths), chooses how every usages view is drawn, the
-Usages page and this panel alike, and is remembered in this browser. A is the cards described above. B and C draw the Usages
-page's own variant B (v1's tiles) in the panel, from a store of the panel's own, view-only as v1's panel was: no provider gear, add,
-rename, delete or credential setup (those stay in Settings → Usages), only Switch on an inactive profile, and a failed action's
-message shows above the view. A switcher that cannot be read counts as none and the figures still show. A push is held while a field
-in the panel has focus, so a setup form being typed is not redrawn.
+The panel and Settings → Server → Accounts & usage draw the same view (v1's tiles: a tile per provider, its accounts one under the other, each limit a
+bar with the expected-pace tick, a hairline of the last 48 hours, the numbers, the pace words and the daily target, the credits under the account),
+from a store of the panel's own. In Settings the owner also gets a gear on each tile (Enable, order, Add profile, Import, the credential setup forms),
+rename and delete on an account, and Install anyway for an account that needs re-authentication. The panel is view-only as v1's was: none of those, only
+Switch on an inactive profile, the header's refresh and group-by buttons, and a failed action's message above the view. A switcher that cannot be read
+counts as none and the figures still show. A push is held while a field has focus, so a setup form being typed is not redrawn.
 
 The top-bar usages column (the owner and global admins; Refresh and Switch are the owner's) follows the same push while it is
 open, and its Refresh button calls the same forced refresh as Settings → Server → Accounts & usage

@@ -471,22 +471,14 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .harness-detail-roles-hint { margin: 0; font-size: 11px; }
 .usages-legend { margin: 8px 0 0; font-size: 11px; color: var(--text-muted); }
 
-/* Usages A | B | C pill, in the section's header line (the same outlined segmented look as v1's percent toggle). */
+/* Usages: the section's header line (the intro, and the view's refresh and group buttons). */
 .usages-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .usages-head .settings-intro { flex: 1 1 auto; min-width: 0; }
-.usages-variant-slot { display: inline-flex; align-items: center; }
-@media (max-width: 700px) { .usages-variant-slot { display: none; } } /* a phone keeps its bar for the controls it has; the choice stays what was last made */
-.usages-variant-pill { display: inline-flex; flex: 0 0 auto; margin: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.usages-variant-option { height: 28px; min-width: 26px; padding: 0 6px; border: 0; border-right: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
 .usages-popover-alt { min-width: 0; padding: 8px 8px 0; }
 .usages-popover-alt .usages-b-grid { grid-template-columns: minmax(0, 1fr); }
-.usages-popover-alt :is(.usages-b, .usages-c) { min-width: 0; }
-.usages-variant-option:last-child { border-right: 0; }
-.usages-variant-option:is(:hover, :focus-visible) { color: var(--text-primary); background: var(--bg-tertiary); }
-.usages-variant-option.active { background: var(--accent); color: var(--button-text); }
-[data-theme^="high-contrast"] .usages-variant-pill .usages-variant-option.active { background: var(--bg-primary); color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+.usages-popover-alt .usages-b { min-width: 0; }
 
-/* Usages variant B: v1's tiles (a provider per tile, its accounts one under the other, a limit as a bar and its numbers), as dense as v1's panel. The
+/* Usages view: v1's tiles (a provider per tile, its accounts one under the other, a limit as a bar and its numbers), as dense as v1's panel. The
    tiles sit in a grid that gives each at least a v1 sidebar's width, so one column on a phone and several in a wide window. */
 .usages-b { display: grid; gap: 8px; }
 .usages-b-actions { display: inline-flex; flex: 0 0 auto; gap: 4px; }
@@ -1088,96 +1080,6 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
 .harness-model-empty { display: flex; align-items: center; gap: 8px; }
 @media (max-width: 700px), (pointer: coarse) { .harness-model-filter select { height: 40px; } }
 
-/* ==== Usages variant C (web/js/pages/usages/variant-c.js) ==== BEGIN
-   Headroom rows: a one-line headline naming the tightest limit, then one row per account with a thin bar per main window. A row's left edge, a bar's fill
-   and the headline take the level colour (ok, warning, critical, stale) from the Inbox alert thresholds. Colours are theme variables only; the
-   high-contrast themes draw outlines instead of tints, as v1 did. Every selector starts with .usages-c so nothing here reaches variant A or B. */
-.usages-c { --uc-level: var(--green-text); display: grid; gap: 14px; }
-.usages-c .uc-level-ok { --uc-level: var(--green-text); }
-.usages-c .uc-level-warning { --uc-level: var(--orange); }
-.usages-c .uc-level-critical { --uc-level: var(--red); }
-.usages-c :is(.uc-level-stale, .uc-level-none) { --uc-level: var(--text-muted); }
-.usages-c .uc-headline { display: flex; align-items: center; gap: 10px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-left: 4px solid var(--uc-level); border-radius: 8px; background: var(--bg-secondary); }
-.usages-c .uc-headline-icon { flex: 0 0 auto; width: 16px; height: 16px; color: var(--uc-level); }
-.usages-c .uc-headline-text { flex: 1 1 auto; min-width: 0; padding: 0; border: 0; background: none; color: var(--text-primary); font-size: 13px; font-weight: 600; line-height: 1.4; text-align: left; white-space: normal; }
-.usages-c button.uc-headline-text:hover, .usages-c button.uc-headline-text:focus-visible { background: none; border-color: transparent; text-decoration: underline; text-underline-offset: 3px; }
-.usages-c .uc-provider { display: grid; gap: 6px; }
-.usages-c .uc-provider-head { display: flex; align-items: center; gap: 8px; min-height: 30px; }
-.usages-c .uc-provider-icon { display: inline-flex; flex: 0 0 18px; width: 18px; height: 18px; align-items: center; justify-content: center; color: var(--text-secondary); font-size: 10px; }
-.usages-c .uc-provider-icon .usages-provider-mask { width: 16px; height: 16px; }
-.usages-c .uc-provider-name { margin: 0; color: var(--text-primary); font-size: 13px; font-weight: 700; }
-.usages-c :is(.uc-provider-status, .uc-affected) { color: var(--text-muted); font-size: 11px; }
-.usages-c .uc-affected:not(:empty)::before { content: '·'; margin-right: 6px; }
-.usages-c .uc-provider-actions { display: flex; gap: 4px; margin-left: auto; }
-.usages-c :is(.uc-provider-actions, .uc-row-actions, .uc-detail-actions) .btn-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; }
-.usages-c .uc-provider.is-idle .uc-provider-head :is(.uc-provider-icon, .uc-provider-name) { color: var(--text-muted); }
-.usages-c .uc-idle { margin: 0 0 0 26px; color: var(--text-muted); font-size: 11.5px; }
-.usages-c .uc-setup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: 26px; }
-.usages-c .uc-setup :is(input, textarea, select) { flex: 1 1 220px; min-width: 0; }
-.usages-c .uc-setup .usage-copilot-flow { flex-basis: 100%; margin: 0; color: var(--text-secondary); font-size: 12px; }
-.usages-c .uc-rows { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.usages-c .uc-row { border: 1px solid var(--border); border-left: 3px solid var(--uc-level); border-radius: 8px; background: var(--bg-secondary); }
-.usages-c .uc-row-main { display: grid; grid-template-columns: minmax(130px, 190px) minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 6px 8px 6px 4px; }
-.usages-c .uc-row-toggle { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 4px 6px; text-align: left; }
-.usages-c .uc-chevron { flex: 0 0 auto; width: 12px; height: 12px; color: var(--text-muted); transition: transform .15s; }
-.usages-c .uc-row.is-open .uc-chevron { transform: rotate(90deg); }
-.usages-c .uc-dot { flex: 0 0 auto; width: 8px; height: 8px; border: 1.5px solid var(--text-muted); border-radius: 50%; }
-.usages-c .uc-row.is-active .uc-dot { border-color: var(--green-text); background: var(--green-text); }
-.usages-c .uc-name { overflow: hidden; color: var(--text-primary); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.usages-c .uc-plan { flex: 0 1 auto; overflow: hidden; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.usages-c .uc-lanes { display: grid; gap: 5px; min-width: 0; }
-.usages-c .uc-lane { display: grid; grid-template-columns: minmax(56px, 112px) minmax(60px, 1fr) 40px minmax(64px, auto); align-items: center; gap: 10px; font-size: 11.5px; }
-.usages-c .uc-lane-label { overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
-.usages-c .uc-bar { position: relative; height: 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-primary); }
-.usages-c .uc-fill { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--uc-level); }
-.usages-c .uc-pace { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--text-primary); transform: translateX(-50%); cursor: help; }
-.usages-c .uc-lane-value { color: var(--text-primary); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
-.usages-c .uc-lane.uc-level-critical .uc-lane-value, .usages-c .uc-lane.uc-level-warning .uc-lane-value { color: var(--uc-level); }
-.usages-c .uc-lane-reset { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.usages-c .uc-lane-reset .icon-mask { width: 10px; height: 10px; }
-.usages-c .uc-empty { color: var(--text-muted); font-size: 11.5px; }
-.usages-c .uc-row-actions { display: flex; align-items: center; gap: 6px; min-width: 28px; justify-content: flex-end; }
-.usages-c .uc-stale-badge { padding: 1px 6px; border: 1px dashed var(--border-hover); border-radius: 999px; color: var(--text-muted); font-size: 10px; white-space: nowrap; }
-.usages-c .uc-row.is-stale :is(.uc-name, .uc-lane-value) { color: var(--text-muted); }
-.usages-c .uc-detail { display: grid; gap: 10px; padding: 4px 12px 12px 30px; border-top: 1px solid var(--border); }
-.usages-c .uc-windows { display: grid; gap: 12px; padding-top: 8px; }
-.usages-c .uc-window { display: grid; gap: 3px; }
-.usages-c .uc-spark { margin: 0 0 0 calc(min(112px, 30%) + 10px); max-width: calc(100% - 200px); }
-.usages-c .uc-spark svg { display: block; width: 100%; height: 22px; }
-.usages-c .uc-spark-line { stroke: var(--accent); stroke-width: 1.5; }
-.usages-c .uc-spark-dot { fill: var(--accent); }
-.usages-c .uc-spark figcaption { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 9px; }
-.usages-c .uc-pace-text { justify-self: start; margin: 0 0 0 calc(min(112px, 30%) + 10px); color: var(--text-muted); font-size: 11px; cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
-.usages-c .uc-pace-text.uc-pace-reserve { color: var(--green-text); }
-.usages-c .uc-pace-text.uc-pace-deficit { color: var(--red); }
-.usages-c .uc-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0; font-size: 12px; }
-.usages-c .uc-facts dt { color: var(--text-muted); }
-.usages-c .uc-facts dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; }
-.usages-c .uc-detail-actions { display: flex; gap: 6px; }
-.usages-c .uc-detail-actions:empty { display: none; }
-.usages-c .uc-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; color: var(--text-muted); font-size: 11px; }
-.usages-c .uc-legend > span { display: inline-flex; align-items: center; gap: 5px; }
-.usages-c .uc-key { display: inline-block; width: 14px; height: 6px; border-radius: 999px; background: var(--uc-level); }
-.usages-c .uc-key-tick { display: inline-block; width: 2px; height: 10px; background: var(--text-primary); }
-/* High contrast, v1's way: no tints, a solid outline marks what is active, and every bar has a visible frame. */
-[data-theme^="high-contrast"] .usages-c :is(.uc-row, .uc-headline) { background: var(--bg-primary); }
-[data-theme^="high-contrast"] .usages-c .uc-row.is-active { outline: 1px solid var(--accent); outline-offset: -1px; }
-[data-theme^="high-contrast"] .usages-c .uc-bar { border-color: var(--text-primary); }
-[data-theme^="high-contrast"] .usages-c .uc-row-toggle:hover { background: transparent; outline: 1px dotted var(--accent); }
-/* A phone: the name line on top with the actions at its end, the bars under it at full width, the reset under each bar's figure. */
-@media (max-width: 700px) {
-  .usages-c .uc-row-main { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 6px 8px 8px 4px; }
-  .usages-c .uc-lanes { grid-column: 1 / -1; grid-row: 2; padding-left: 8px; }
-  .usages-c .uc-lane { grid-template-columns: 64px minmax(0, 1fr) 38px; row-gap: 0; }
-  .usages-c .uc-lane-reset { grid-column: 2 / -1; font-size: 10.5px; }
-  .usages-c .uc-detail { padding-left: 12px; }
-  .usages-c :is(.uc-spark, .uc-pace-text) { max-width: none; margin-left: 0; }
-  .usages-c .uc-provider-actions .btn-icon, .usages-c .uc-row-actions .btn-icon { width: 36px; height: 36px; }
-  .usages-c .uc-headline-text { font-size: 12.5px; }
-  .usages-c .uc-provider-head { flex-wrap: wrap; row-gap: 4px; }
-  .usages-c :is(.uc-provider-name, .uc-provider-status, .uc-affected) { white-space: nowrap; }
-}
-/* ==== Usages variant C ==== END */
 
 /* A settings dialog shows one category at a time: the blocks of the others stay in the page but are off (room-info-dialog, see room-panel/page.js applyBlocks). */
 .shell-off { display: none !important; }

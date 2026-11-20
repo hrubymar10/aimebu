@@ -173,7 +173,7 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   reads of the sound list answered out of order and a failed read; upload and delete one at a time, each followed by a read,
   with the uploaded sound chosen; a non-admin without the upload row; an answer after destroy) and
   `scripts/test-notifications-model.cjs` (the pure rules, in `make test-web`).
-- `make test-ui` also runs `scripts/test-usages-page.cjs` (Settings → Usages' cards and switcher, over the app's mock of the usages
+- `make test-ui` also runs `scripts/test-usages-page.cjs` (Settings → Usages' view and switcher, over the app's mock of the usages
   API with calls recorded and chosen ones held: the cards, profiles and limit windows; a person who is not the switcher's owner
   seeing no controls; switching and renaming asking first and naming who is affected, a refused action saying why; two reads
   answered out of order drawing the later; a push from the event stream applied at once, waiting while a field has focus or a

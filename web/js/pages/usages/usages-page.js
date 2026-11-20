@@ -4,10 +4,7 @@ import { SwitcherControls } from './switcher-controls.js';
 import { QuotaBlock } from './quota-block.js';
 import { GuardBlock } from './guard-block.js';
 import { LimitDefault } from './limit-default.js';
-import { UsagesList } from './usages-list.js';
-import { UsagesVariantB, UsagesBActions } from './variant-b.js';
-import { UsagesVariantC } from './variant-c.js';
-import { usagesVariant } from './variant.js';
+import { UsagesView, UsagesActions } from './usages-view.js';
 
 const TEXT_TYPES = new Set(['', 'text', 'number', 'url', 'password', 'search', 'email', 'tel']);
 const isTyping = event => (event.target instanceof HTMLTextAreaElement) || (event.target instanceof HTMLInputElement && TEXT_TYPES.has(event.target.type));
@@ -18,17 +15,17 @@ const isTyping = event => (event.target instanceof HTMLTextAreaElement) || (even
 // quota and guard blocks) leaves the mark: the section then stays in the page when Settings closes, which costs nodes and loses nothing.
 export function UsagesPage({ page, onDirty = () => {} }) {
   const [typed, setTyped] = useState(false);
-  const revision = page.store.revision.value, defaults = page.limitDefault.state.value, owner = page.store.owner.value, variant = usagesVariant.value;
+  const revision = page.store.revision.value, defaults = page.limitDefault.state.value, owner = page.store.owner.value;
   useLayoutEffect(() => { setTyped(false); }, [revision, defaults]);
   useDirty(onDirty, 'usages-typed', typed);
   return html`<div class="usages-page" style="display: contents" onInput=${event => { if (isTyping(event)) setTyped(true); }}>
-    <div class="usages-head"><p class="settings-intro">Provider limits and account profiles</p>${variant === 'b' && html`<${UsagesBActions} store=${page.store} />`}</div>
+    <div class="usages-head"><p class="settings-intro">Provider limits and account profiles</p><${UsagesActions} store=${page.store} /></div>
     ${!owner && html`<p id="usages-readonly" class="settings-intro usages-readonly" role="note">Only the owner can change Usages. You can see the limits here.</p>`}
     <p id="usages-error" class="error" role="alert">${page.store.error.value}</p>
     ${owner && html`<div class="usage-switcher-controls" id="usages-switcher"><${SwitcherControls} store=${page.store} /></div>
     <${QuotaBlock} store=${page.quota} />
     <${GuardBlock} store=${page.guard} />`}
     <${LimitDefault} store=${page.limitDefault} />
-    <div id="usages-list" data-variant=${variant}>${variant === 'b' ? html`<${UsagesVariantB} store=${page.store} />` : variant === 'c' ? html`<${UsagesVariantC} store=${page.store} page=${page} />` : html`<${UsagesList} store=${page.store} />`}</div>
+    <div id="usages-list"><${UsagesView} store=${page.store} /></div>
   </div>`;
 }

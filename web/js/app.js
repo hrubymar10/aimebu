@@ -15,7 +15,6 @@ import { SettingsPanel } from './settings.js';
 import { parsePath } from './pages/shell/registry.js';
 import { settingsAddress } from './pages/shell/room-registry.js';
 import { TeamFlowHome } from './pages/project/team-flow-home.js';
-import { mountUsagesVariantPill } from './pages/usages/variant-pill.js';
 import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './pages/topbar/page.js';
 import { createUsagesSource } from './usages-source.js';
@@ -346,7 +345,6 @@ settings.harnessSettings.onReady = harnessSeen;
 const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.owner, onSkip: () => setHarnessSkipped(true), onReady: harnessSeen });
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
 importWizard.dialog.addEventListener('close', () => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
-mountUsagesVariantPill(document.querySelector('#usages-variant-slot'));
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'), () => rights.owner);
 const topbarMenu = new TopbarMenu();
 new ColumnResize();
