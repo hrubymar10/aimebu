@@ -364,6 +364,10 @@ async function main() {
       await page.waitForFunction(() => !document.querySelector('#team-flow-progress .team-wizard-interrupt'), { timeout: 8000 });
       await page.evaluate(agent => { window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg-flip', state: 'draining', can_cancel: true, agents: [agent] } }; }, agentRow(true));
       await page.waitForSelector('#team-flow-progress .team-wizard-interrupt', { timeout: 8000 });
+      // An interrupted kept agent the change is waiting to see restart says so, with a tooltip.
+      await page.evaluate(agent => { window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg-flip', state: 'draining', can_cancel: true, agents: [{ ...agent, restarting: true }] } }; }, agentRow(false));
+      await page.waitForSelector('#team-flow-progress .team-wizard-restarting', { timeout: 8000 });
+      assert.deepEqual(await page.$eval('#team-flow-progress .team-wizard-restarting', node => [node.textContent, node.title]), ['Waiting for restart', 'ada was interrupted; it starts again by itself and the change waits for it']);
       await page.close();
     }
     // A finished change shows its outcome in settings after a remount, until it is dismissed; the dismissal is remembered for the project.
@@ -455,11 +459,11 @@ async function main() {
     }
     // Leaving a role: the banner says what happens to it and nothing asks for a model; the disabled combined flow cannot be chosen.
     {
-      const agent = (id, slug) => ({ agent_id: id, slug, machine_id: 'm1', tool: 'claude', variant: 'native', launcher_id: 'l1', launcher_label: 'Claude', model: 'm1' });
+      const agent = (id, slug, extra = {}) => ({ agent_id: id, slug, machine_id: 'm1', tool: 'claude', variant: 'native', launcher_id: 'l1', launcher_label: 'Claude', model: 'm1', ...extra });
       const auto = base();
       auto['GET /api/projects/p1/team-flow'] = { key: 'leader-dispatcher', rev: 3, review_pending: false, template: flows[1], conflicts: [] };
       auto['POST /api/projects/p1/team-flow/migration/preview'] = { from_key: 'leader-dispatcher', to_key: 'leader-workers', can_apply: true, created_rooms: [], conflicts: [], roles: [
-        { role_key: 'leader', status: 'kept', agents: [agent('agt_l', 'ada')] }, { role_key: 'dispatcher', status: 'leaving', agents: [agent('agt_d', 'dax')] }, { role_key: 'worker', status: 'kept', agents: [] }] };
+        { role_key: 'leader', status: 'kept', agents: [agent('agt_l', 'ada')] }, { role_key: 'dispatcher', status: 'leaving', agents: [agent('agt_d', 'dax'), agent('agt_ds1', 'old1', { state: 'stopped' }), agent('agt_ds2', 'old2', { state: 'stopped' })] }, { role_key: 'worker', status: 'kept', agents: [] }] };
       const page = await mount({ auto });
       await ready(page);
       await page.waitForSelector('#project-team-flow .btn-primary');
@@ -476,6 +480,7 @@ async function main() {
       await next('Dispatcher');
       assert.equal(await page.$eval('#team-flow-modal .team-wizard-banner', node => node.textContent), "Dispatcher isn't used in A. It will hand off its context to the leader and will be stopped");
       assert.deepEqual(await page.$eval('#team-flow-modal', node => [node.querySelectorAll('.team-setup-target').length, node.querySelector('.team-wizard-leaving').textContent]), [0, 'dax · Box · Claude · Opus']);
+      assert.equal(await page.$eval('#team-flow-modal .team-wizard-stopped', node => node.textContent), '2 stopped agents, unchanged', 'the leaving role lists active agents and counts the stopped ones');
       assert.equal(await page.$('#team-flow-modal .team-wizard-recommended'), null, 'the recommendations panel is hidden while the table has no row');
       await page.close();
     }

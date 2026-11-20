@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/goccy/go-json"
@@ -209,11 +210,21 @@ func (s *Server) teamFlowMigrationInterrupt(w http.ResponseWriter, r *http.Reque
 		teamFlowMigrationError(w, err)
 		return
 	}
-	if machine, err := s.machineForID(updated.MachineID); err == nil {
+	// The card the transaction returned does not name the machine: reload it, as the agent control endpoint does, and say when the stop cannot be sent.
+	card, err := s.Store.AgentCardByID(r.Context(), updated.ID)
+	if err != nil {
+		teamFlowMigrationError(w, err)
+		return
+	}
+	if machine, err := s.machineForID(card.MachineID); err != nil {
+		log.Printf("team flow migration interrupt: stop for agent %s not sent: %v", card.ID, err)
+	} else {
 		machine.boundMu.Lock()
-		machine.bound[updated.ID] = updated.Generation
+		machine.bound[card.ID] = card.Generation
 		machine.boundMu.Unlock()
-		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: updated.ID, Generation: updated.Generation, DesiredRev: updated.DesiredRev, DesiredState: updated.Desired})
+		if err := machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: card.ID, Generation: card.Generation, DesiredRev: card.DesiredRev, DesiredState: card.Desired}); err != nil {
+			log.Printf("team flow migration interrupt: stop for agent %s not sent: %v", card.ID, err)
+		}
 	}
 	progress, err := s.Store.TeamFlowMigrationProgress(r.Context(), projectID, userID(r))
 	if err != nil {

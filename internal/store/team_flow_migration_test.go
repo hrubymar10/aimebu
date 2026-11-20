@@ -1355,3 +1355,44 @@ func TestInterruptIsIdempotentAndStopsBlocking(t *testing.T) {
 		}
 	}
 }
+
+// Progress says which kept agent the change is waiting to see restart, and the restart cards carry their machine so the spawn goes out at once.
+func TestInterruptedAgentIsRestartingAndItsRestartCardNamesItsMachine(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	turnID := openTurn(t, f, leaderID)
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarting := false
+	for _, agent := range progress.Agents {
+		restarting = restarting || agent.AgentID == leaderID && agent.Restarting
+	}
+	if !restarting {
+		t.Fatalf("an interrupted kept agent is not reported as restarting: %+v", progress.Agents)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turnID); err != nil {
+		t.Fatal(err)
+	}
+	controls, err := f.s.AdvanceTeamFlowMigrations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, card := range controls {
+		if card.ID == leaderID {
+			if card.MachineID == "" {
+				t.Fatalf("the restart card has no machine, so its spawn waits for the next tick: %+v", card)
+			}
+			return
+		}
+	}
+	t.Fatalf("no restart card for the leader: %+v", controls)
+}

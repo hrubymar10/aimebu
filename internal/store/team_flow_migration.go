@@ -68,6 +68,8 @@ type TeamFlowMigrationAgentProgress struct {
 	Blocking bool `json:"blocking,omitempty"`
 	// Keeps is true when the new flow keeps this agent running: interrupting it only stops its turn, and the migration starts it again.
 	Keeps bool `json:"keeps,omitempty"`
+	// Restarting is true while the migration waits for an interrupted kept agent to start again.
+	Restarting bool `json:"restarting,omitempty"`
 }
 
 type TeamFlowMigrationProgress struct {
@@ -388,6 +390,9 @@ func flowMigrationProgressByID(ctx context.Context, db rowQuerier, id string) (T
 		for i := range out.Agents {
 			// An agent already told to stop is on its way out of the turn: nothing more to interrupt.
 			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.agent_id=? AND a.desired<>'stopped' AND `+openFlowTurnPredicate+`)`, out.Agents[i].AgentID).Scan(&out.Agents[i].Blocking); err != nil {
+				return out, err
+			}
+			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_interrupt WHERE migration_id=? AND agent_id=?)`, out.ID, out.Agents[i].AgentID).Scan(&out.Agents[i].Restarting); err != nil {
 				return out, err
 			}
 		}
@@ -1661,6 +1666,10 @@ func (tx *Tx) flowMigrationRestartInterrupted() ([]AgentCard, error) {
 				continue
 			}
 			if _, err := tx.Exec(`RELEASE flow_migration_restart`); err != nil {
+				return nil, err
+			}
+			// The card setAgentDesired returns has no machine; the dispatcher needs it to send the spawn at once.
+			if card, err = tx.agentCardByID(a.agentID); err != nil {
 				return nil, err
 			}
 			cards = append(cards, card)
