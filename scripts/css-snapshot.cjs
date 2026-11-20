@@ -12,8 +12,8 @@ const PROPS = ['display', 'position', 'color', 'backgroundColor', 'fontSize', 'f
 
 // Elements are forced visible while measured so hidden popovers and dialogs report real styles.
 const FIXTURE = async () => {
-  const [{ renderMarkdown }, { renderVisualPlan }, { SettingsRow, SettingsGroup }, { usageWindowRow }, { MentionIndex, highlightMentions }] = await Promise.all([
-    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/components/settings-row.js'), import('/js/usage-format.js'), import('/js/mentions.js')]);
+  const [{ renderMarkdown }, { renderVisualPlan }, { SettingsRow, SettingsGroup }, { MentionIndex, highlightMentions }] = await Promise.all([
+    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/components/settings-row.js'), import('/js/mentions.js')]);
   const freeze = document.createElement('style'); freeze.textContent = '*,*::before,*::after{transition:none!important;animation:none!important}'; document.head.append(freeze);
   document.querySelector('#login-view').hidden = true;
   document.querySelector('#app-view').hidden = false;
@@ -54,10 +54,6 @@ const FIXTURE = async () => {
     <${SettingsRow} label="Fixture toggle" desc="A description for the toggle" id="fx-check" className="settings-row-toggle"><input type="checkbox" /><//>
     <${SettingsRow} label="Fixture area" desc="A stacked row" id="fx-area" className="settings-row-stack"><textarea></textarea><//>
   <//>`, fixtureRows);
-  const usage = make('div', 'usages-popover-body-fixture', '', document.querySelector('#usages-popover .usages-popover-body') || document.body);
-  usage.append(usageWindowRow({ key: 'session', percent_used: 42, reset_at: new Date(Date.now() + 7200000).toISOString(), pace: { expected_percent: 55, delta_percent: -13, state: 'reserve' } }, false));
-  const providerSection = make('section', 'usages-popover-provider', '', usage); providerSection.dataset.provider = 'codex'; make('h4', 'usages-popover-provider-name', 'Codex', providerSection);
-  const profile = make('div', 'usages-popover-profile is-active', '', providerSection); const head = make('div', 'usages-popover-profile-head', '', profile); make('strong', 'usages-popover-profile-name', 'main', head); make('span', 'usage-profile-active', 'Active', head);
 };
 
 const TARGETS = [
@@ -69,8 +65,7 @@ const TARGETS = [
   '.chat-msg-body table', '.chat-msg-body th', '.chat-msg-body td', '.md-codeblock', '.md-codeblock pre', '.md-copy-btn', '.message-actions', '.message-actions button', '.quick-reaction', '.reaction-pill',
   '.visual-plan', '.visual-plan-block', '.visual-plan-block-header', '.visual-plan-block-type', '.visual-plan-block-title', '.visual-plan-block-body', '.visual-plan-check-row', '.visual-plan-file-tree',
   '.agents-panel', '.agent-card', '.agent-name', '.agent-id', '.agent-online-dot', '.agent-role', '.agent-state', '.agent-state-badge', '.agent-actions button',
-  '#health-popover', '#usages-popover', '#usages-popover > header', '#usages-popover button', '.usages-popover-provider-name', '.usages-popover-profile', '.usages-popover-profile.is-active', '.usages-popover-profile-name', '.usage-profile-active',
-  '.usage-window', '.usage-track', '.usage-fill', '.usage-window-top strong', '.usage-window-foot',
+  '#health-popover', '#usages-popover', '#usages-popover > header', '#usages-popover button',
   '#system-events-popover', '.system-events-popover', '#system-events-toggle',
   '#settings-dialog', '#settings-dialog .settings-body-header', '#settings-dialog nav', '#settings-dialog nav button', '#settings-dialog nav .settings-nav-item.active', '#settings-dialog .settings-section.active', '#settings-dialog h3',
   '#settings-general .settings-group', '#settings-general .settings-row', '#settings-general .settings-row-info', '#settings-general .settings-label', '#settings-general .settings-desc', '#settings-general .settings-control', '#settings-general .settings-control select', '#settings-general .settings-row-toggle input', '#settings-general .settings-row-stack', '#settings-general textarea',

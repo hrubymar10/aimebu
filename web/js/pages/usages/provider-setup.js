@@ -17,11 +17,11 @@ function useDraft(store, name, stored) {
 export function CopilotSetup({ store, provider }) {
   const [host, setHost] = useDraft(store, 'copilotHost', provider.enterprise_host || '');
   const flow = store.flow.value;
-  const signIn = () => { delete store.drafts.copilotHost; return store.startCopilot(host); };
+  const signIn = () => store.startCopilot(host);
   return html`
     <input class="settings-text-input" type="url" placeholder="GitHub Enterprise host (optional)" value=${host} onInput=${event => setHost(event.currentTarget.value)} />
     <button type="button" class="btn btn-primary" onClick=${signIn}>Sign in with GitHub</button>
-    ${provider.token_configured && html`<button type="button" class="btn" onClick=${() => store.mutateUsage(() => store.source.copilotLogout())}>Sign out</button>`}
+    ${provider.token_configured && html`<button type="button" class="btn" onClick=${() => store.mutateUsage(async () => { await store.source.copilotLogout(); delete store.drafts.copilotHost; })}>Sign out</button>`}
     <div class="usage-copilot-flow">${flow && html`<${Fragment}><span>${flowText(flow)}</span>${httpsHref(flow.verification_uri) && html`<a href=${httpsHref(flow.verification_uri)} target="_blank" rel="noopener noreferrer">Open GitHub verification</a>`}<//>`}</div>
   `;
 }

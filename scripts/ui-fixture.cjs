@@ -52,8 +52,8 @@ const server = http.createServer((req, res) => {
 
 // Elements are forced visible while measured so hidden popovers and dialogs report real styles.
 const FIXTURE = async () => {
-  const [{ renderMarkdown }, { renderVisualPlan }, { SettingsRow, SettingsGroup }, { usageWindowRow }, { MentionIndex, highlightMentions }, { HttpQuotaSource }, { drawMessageActions, wakeMessageActions, messageActionsProps }] = await Promise.all([
-    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/components/settings-row.js'), import('/js/usage-format.js'), import('/js/mentions.js'), import('/js/quota-source.js'), import('/js/message-actions.js')]);
+  const [{ renderMarkdown }, { renderVisualPlan }, { SettingsRow, SettingsGroup }, { MentionIndex, highlightMentions }, { HttpQuotaSource }, { drawMessageActions, wakeMessageActions, messageActionsProps }] = await Promise.all([
+    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/components/settings-row.js'), import('/js/mentions.js'), import('/js/quota-source.js'), import('/js/message-actions.js')]);
   const freeze = document.createElement('style'); freeze.textContent = '*,*::before,*::after{transition:none!important;animation:none!important}'; document.head.append(freeze);
   document.querySelector('#login-view').hidden = true;
   document.querySelector('#app-view').hidden = false;

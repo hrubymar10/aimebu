@@ -371,19 +371,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 #usages-error:empty { display: none; }
 #usages-list { display: grid; gap: 12px; }
 .usages-provider-tile { --usage-color: var(--usage-provider-color); }
-.usage-provider.usages-provider-tile { box-sizing: border-box; min-width: 0; }
-.usage-profiles { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
-.usage-profile { min-width: 0; }
-.usage-profile .switcher-tile-head { flex-wrap: wrap; row-gap: 4px; }
-.usage-profile .switcher-tile-plan { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; } /* a long plan name wraps whole, it is not cut */
-.usage-profile-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
-.usage-profile-actions[hidden] { display: none; }
-.usage-profile-email, .usage-profile-credits, .usage-profile-status { margin: 3px 0; color: var(--text-muted); font-size: 10px; }
-.usage-windows { display: grid; gap: 10px; margin-top: 10px; }
-.usage-track { position: relative; height: 7px; margin: 5px 0; border: 1px solid var(--border); box-sizing: content-box; border-radius: 99px; background: var(--bg-primary); overflow: hidden; } /* outlined, so the track shows where the page and the track are the same colour (light and high-contrast) */
-.usage-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: inherit; background: var(--usage-color); }
-.usage-pace-marker { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text-muted); }
-.usage-switch:disabled { opacity: .65; }
 .usage-switcher-controls, .usage-provider-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .usage-config-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; width: 100%; }
 .usage-config-controls label { display: grid; gap: 4px; color: var(--text-secondary); font-size: 11px; }
@@ -394,7 +381,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .usage-copilot-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; color: var(--text-secondary); font-size: 11px; }
 .usage-copilot-flow a { color: var(--accent); }
 .usage-affected { color: var(--text-muted); font-size: 11px; margin: 4px 0 8px; }
-.usage-remove { margin-top: 6px; font-size: 10px; }
 .usage-empty { color: var(--text-muted); }
 
 @media (max-width: 700px) {
@@ -682,10 +668,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .btn.switcher-switch-pill:hover:not(:disabled), .btn.switcher-switch-pill:focus-visible { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 .switcher-switch-pill:hover:not(:disabled), .switcher-switch-pill:focus-visible { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 .switcher-tile-active { padding: 0 5px; border: 1px solid currentColor; border-radius: 999px; color: var(--green-text); font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; }
-.usages-popover-profile .usage-windows { display: flex; flex-direction: column; gap: 10px; margin-top: 0; }
-.usages-popover-profile .usage-track { position: relative; height: 6px; margin: 0; overflow: hidden; border: 1px solid var(--border); box-sizing: content-box; border-radius: 999px; background: var(--bg-primary); }
-.usages-popover-profile .switcher-tile-plan { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; } /* a plan name wraps whole, it is not cut */
-.usages-popover-profile .usage-fill { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: inherit; background: var(--usage-provider-color); }
 .usages-empty button { margin-top: 10px; font-style: normal; }
 .chat.usages-open > .agents-panel { display: none; }
 .chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
@@ -848,9 +830,6 @@ body:has(.import-v1-dialog[open]) #app-view { visibility: hidden; }
 @media (hover: none) and (pointer: coarse) {
   .thread-panel header button, .send-bar .send-form button { min-width: 40px; min-height: 40px; }
 }
-.usage-spark { display: block; width: 100%; height: 20px; margin: 2px 0 3px; color: var(--usage-color); }
-.usage-spark-line { stroke: currentColor; stroke-width: 1.25; stroke-linejoin: round; stroke-linecap: round; opacity: 0.85; }
-.usage-spark-dot { fill: currentColor; }
 
 /* Seen-by markers sit under every message at its right edge, 22px each (a deliberate change from v1, which right-aligns only the viewer's own): big
    enough to read the two initials without squinting. The tooltip names who saw it. */
@@ -1085,10 +1064,6 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .agent-action-hint { color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
 .agent-action-hint[hidden] { display: none; }
 :is(#settings-dialog, #onboarding-harnesses) .machine-harness { margin: 10px 0; }
-/* Usages: the sparkline names its period and what it plots; the pace line explains itself on hover or focus. */
-.usage-spark-figure { margin: 4px 0 2px; }
-.usage-spark-figure .usage-spark { display: block; width: 100%; }
-.usage-spark-caption { display: flex; justify-content: space-between; gap: 6px; margin-top: 1px; color: var(--text-muted); font-size: 9px; line-height: 1.3; }
 .usage-pace-text[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
 
 /* Room settings: one control size, one heading size, and the debugging facts hidden unless the inspector is on. */
@@ -1935,17 +1910,9 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .usage-credential-alert summary, .usages-credential-alert summary { cursor: pointer; }
 .usage-credential-alert details p, .usages-credential-alert details p { overflow-wrap: anywhere; font-size: 0.68rem; }
 /* Data older than twice the refresh interval is grey, and says how old it is. */
-.usage-profile.is-stale, .usages-popover-profile.is-stale { --usage-color: var(--text-muted); }
-.usage-profile.is-stale .usage-fill, .usages-popover-profile.is-stale .usage-fill { background: var(--text-muted); }
-.usage-profile.is-stale .usages-window-meta, .usages-popover-profile.is-stale .usages-window-meta, .usage-profile.is-stale .usages-window-meta strong, .usages-popover-profile.is-stale .usages-window-meta strong { color: var(--text-muted); }
-.usage-profile.is-stale .usage-pace-marker, .usages-popover-profile.is-stale .usage-pace-marker, .usage-profile.is-stale .usage-spark-line, .usages-popover-profile.is-stale .usage-spark-line { opacity: .45; }
-.usage-profile-stale { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
-.usage-profile-stale .usage-refresh { min-height: 0; height: auto; padding: 1px 8px; font-size: 11px; }
 
 /* v1 draws the profiles of a tile with only a line between them and none above the first (`:first-of-type`); v2's profile is a card with all four edges, so the first one
    lost its top edge (and the active one its green). */
-.usages-popover-profile.switcher-tile-profile { border-top: 1px solid var(--border); margin-top: 0; }
-.usages-popover-profile.switcher-tile-profile.is-active { border-color: var(--green); }
 
 /* The thread panel (desktop). Its title sits in the row of the room's header, as the right part of the same bar: the panel runs from the top of the chat, the room header ends where
    the panel begins, and the close button follows the title. The reply box is the room's box (js/chat.js fitDraft), so the two composers match. */

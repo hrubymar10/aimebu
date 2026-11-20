@@ -75,7 +75,7 @@ export class UsagesStore {
     try {
       const result = await this.source.copilotPoll(flow.flow_id);
       if (!this.alive || token !== this.flowToken) return;
-      if (result.status === 'success') { this.flowToken++; this.flow.value = null; await this.load(); return; }
+      if (result.status === 'success') { this.flowToken++; this.flow.value = null; delete this.drafts.copilotHost; await this.load(); return; }
       this.flow.value = { ...flow, status: result.status };
       if (result.status === 'denied' || result.status === 'expired') { await this.load(); return; }
       this.pollTimer = setTimeout(() => { if (this.alive && token === this.flowToken) this.pollCopilot(); }, pollDelay(result, flow) * 1000);

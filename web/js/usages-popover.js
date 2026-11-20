@@ -1,8 +1,9 @@
-import { element } from './usage-format.js';
 import { focusPopover, returnFocus } from './popover-focus.js';
 import { html, render, effect } from './ui.js';
 import { UsagesStore } from './pages/usages/store.js';
 import { UsagesView, usagesGroup, toggleUsagesGroup } from './pages/usages/usages-view.js';
+
+const element = (tag, className, value = '') => { const node = document.createElement(tag); node.className = className; node.textContent = value; return node; };
 
 // A glanceable overview of every configured provider and profile, so usage can be checked
 // without opening Settings. Like v1's panel it is view-only apart from Refresh and switching the active profile: management stays in Settings → Usages.

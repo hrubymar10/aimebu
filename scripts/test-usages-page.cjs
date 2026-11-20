@@ -278,11 +278,15 @@ async function main() {
         window.__source.copilotPoll = async () => { window.__polls++; return window.__polls < 2 ? { status: 'pending', interval: 1 } : { status: 'success' }; };
       });
       await manage(page, 'github-copilot');
+      await page.$eval(`${cardOf('github-copilot')} input[type=url]`, node => { node.value = 'https://github.example.test'; node.dispatchEvent(new Event('input', { bubbles: true })); });
       await click(page, `${cardOf('github-copilot')} .btn-primary`);
       await page.waitForFunction(() => document.querySelector('.usage-copilot-flow span'));
+      assert.deepEqual(await page.evaluate(() => [window.__usages.store.drafts.copilotHost, document.querySelector('[data-provider=github-copilot] input[type=url]').value]),
+        ['https://github.example.test', 'https://github.example.test'], 'sign-in keeps the host draft while polling');
       assert.deepEqual(await page.evaluate(() => [document.querySelector('.usage-copilot-flow span').textContent, document.querySelector('.usage-copilot-flow a').href, document.querySelector('.usage-copilot-flow a').rel]), ['Code: ABCD-1234 · pending', 'https://github.com/login/device', 'noopener noreferrer']);
       await page.waitForFunction(() => !document.querySelector('.usage-copilot-flow span'), { timeout: 8000 });
       assert.equal(await page.evaluate(() => window.__polls), 2);
+      assert.equal(await page.evaluate(() => window.__usages.store.drafts.copilotHost), undefined, 'success clears the host draft');
       await page.evaluate(() => { window.__polls = 0; window.__source.copilotPoll = async () => { window.__polls++; return { status: 'pending', interval: 1 }; }; });
       await manage(page, 'github-copilot');
       await click(page, `${cardOf('github-copilot')} .btn-primary`);
@@ -290,6 +294,17 @@ async function main() {
       await page.evaluate(() => window.__usages.destroy());
       await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1500)));
       assert.equal(await page.evaluate(() => window.__polls), 1, 'a destroyed page stops polling');
+      await page.close();
+    }
+    // Signing out clears a saved Copilot host draft after the request succeeds.
+    {
+      const page = await mount();
+      await page.evaluate(async () => { window.__source.flags['github-copilot'].token_configured = true; await window.__usages.load(); });
+      await manage(page, 'github-copilot');
+      await page.$eval(`${cardOf('github-copilot')} input[type=url]`, node => { node.value = 'https://github.example.test'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+      await click(page, `${cardOf('github-copilot')} .usage-provider-actions button:not(.btn-primary)`);
+      await page.waitForFunction(() => window.__calls.some(call => call[0] === 'copilotLogout') && window.__usages.store.drafts.copilotHost === undefined);
+      assert.equal(await page.evaluate(() => window.__usages.store.drafts.copilotHost), undefined, 'sign-out clears the host draft');
       await page.close();
     }
     // A verification address that is not https is shown as no link at all.
@@ -370,7 +385,8 @@ async function main() {
     {
       const page = await mount();
       await page.evaluate(async () => { window.__source.preferences.token_auto_refresh = true; await window.__usages.load(); });
-      assert.equal(await page.evaluate(() => document.querySelector('#usages-page, .usages-page').textContent.includes('main@example.test')), true, 'the owner sees the e-mail of a login');
+      assert.deepEqual(await page.evaluate(() => ({ visible: document.querySelector('.usages-page').textContent.includes('main@example.test'), tooltip: document.querySelector('.usages-b-profile[data-profile=main] .switcher-tile-plan').title })),
+        { visible: false, tooltip: 'main@example.test' }, 'the owner sees the e-mail only in the plan tooltip');
       await page.evaluate(() => { window.__source.list = async () => { throw new Error('boom'); }; window.__usages.setOwner(false); window.__usages.forget(); });
       await settle(page);
       assert.deepEqual(await page.evaluate(() => { const text = document.querySelector('.usages-page').textContent; return { email: text.includes('main@example.test'), alerts: document.querySelectorAll('.usage-credential-alert').length, cards: document.querySelectorAll('#usages-list .usages-b-tile').length, switcher: !!document.querySelector('#usages-switcher'), plans: /Pro\b/.test(text) }; }),
