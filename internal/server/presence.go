@@ -155,14 +155,21 @@ func (s *Server) announcePresence(parent context.Context, userID string, online 
 		log.Printf("presence: payload of %s: %v", userID, err)
 		return
 	}
-	for _, projectID := range projects {
-		err := s.Store.Tx(ctx, func(tx *store.Tx) error {
-			_, err := tx.AppendEvent(store.Event{Kind: "human_presence_changed", ProjectID: projectID, PayloadJSON: string(payload)})
-			return err
-		})
-		if err != nil {
-			log.Printf("presence: announce %s %s in %s: %v", userID, onlineWord, projectID, err)
-			telemetry.ReportError(ctx, "presence", err)
+	if len(projects) == 0 {
+		return
+	}
+	// One transaction for every project: coming online is announced inside the request that showed the activity (the auth service's
+	// ActivityHook), so it costs that request one write, not one per project.
+	err = s.Store.Tx(ctx, func(tx *store.Tx) error {
+		for _, projectID := range projects {
+			if _, err := tx.AppendEvent(store.Event{Kind: "human_presence_changed", ProjectID: projectID, PayloadJSON: string(payload)}); err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("presence: announce %s %s in %d projects: %v", userID, onlineWord, len(projects), err)
+		telemetry.ReportError(ctx, "presence", err)
 	}
 }
