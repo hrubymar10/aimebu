@@ -172,16 +172,21 @@ export function treeOf(state) {
   const focus = active || (provisional ? expected : '');
   for (let room = focus && rooms.get(focus), guard = 0; room && guard < 64; room = rooms.get(displayParentID(room)), guard++) holders.add(room.id);
   if (focus) holders.add(focus);
+  // A room nested under a project row (opts.nest) or under another nested room (opts.deep) lists its open child rooms, at any depth, and
+  // gets an expander when it has any. Only the project-level rows take part in the first-seen folding (`collapsible`, `nested`, `holdsActive`).
   const view = (room, opts) => {
-    const children = opts.nest && room.lifecycle !== 'closed' ? orderRooms([...rooms.values()].filter(other => displayParentID(other) === room.id && other.lifecycle !== 'closed' && !other.hidden && other.kind !== 'dm' && matchesRoom(other, filter, projects)), sort) : [];
+    const expands = opts.nest || opts.deep;
+    const children = expands && room.lifecycle !== 'closed' ? orderRooms([...rooms.values()].filter(other => displayParentID(other) === room.id && other.lifecycle !== 'closed' && !other.hidden && other.kind !== 'dm' && matchesRoom(other, filter, projects)), sort) : [];
     const tail = opts.tail || [];
     const kids = children.length + tail.length;
     if (opts.nest) nested.add(room.id);
     if (opts.nest && holders.has(room.id)) holdsActive.add(room.id);
     if (opts.nest && kids) collapsible.add(room.id);
     const folded = kids > 0 && (collapsed.has(room.id) || (provisional && opts.nest && !seen.has(room.id) && !holders.has(room.id)));
-    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: children.map(child => view(child, { chip: false, nest: false })), tail, collapsible: opts.nest && kids > 0, folded,
-      unread: rowUnread(room, children, folded, active) };
+    const childViews = children.map(child => view(child, { chip: false, nest: false, deep: true }));
+    // A folded row stands for everything under it, so its badge adds each child's own (a folded child already includes its own children).
+    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, tail, collapsible: expands && kids > 0, folded,
+      unread: roomUnread(room, active) + (folded ? childViews.reduce((sum, child) => sum + child.unread, 0) : 0) };
   };
   const place = (room, nest, extra) => {
     const tail = room.kind === 'home' && tails.get(room.project_id)?.length && !tailed.has(room.project_id) ? tails.get(room.project_id) : null;

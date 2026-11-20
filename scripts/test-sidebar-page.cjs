@@ -1471,6 +1471,20 @@ async function main() {
     await page.close();
   }
 
+  // A room nested two levels down (a task under general) is drawn under its parent with an expander of its own; folding it hides the grandchild
+  // and its unread joins the folded row's badge.
+  {
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': [room('rm_dh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }), room('rm_dg', 'prj_a', 'general', { parent_id: 'rm_dh' }),
+      room('rm_dt', 'prj_a', 'deep-task', { parent_id: 'rm_dg', unread_count: 4 })] }) });
+    await settle(page);
+    await page.evaluate(() => { const group = document.querySelector('[data-room-id=rm_dh]'); if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse').click(); });
+    const state = () => page.evaluate(() => { const deep = document.querySelector('[data-room-id=rm_dh] [data-room-id=rm_dg] [data-room-id=rm_dt]'), parent = document.querySelector('[data-room-id=rm_dg]'); return { nested: !!deep, visible: !!deep?.getClientRects().length, expander: !!parent.querySelector(':scope > .room-item > .room-collapse'), folded: parent.classList.contains('collapsed'), badge: parent.querySelector(':scope > .room-item .room-item-unread')?.textContent || '' }; });
+    assert.deepEqual(await state(), { nested: true, visible: true, expander: true, folded: false, badge: '' });
+    await page.$eval('[data-room-id=rm_dg] > .room-item > .room-collapse', node => node.click());
+    assert.deepEqual(await state(), { nested: true, visible: false, expander: true, folded: true, badge: '4' });
+    await page.close();
+  }
+
   // Marking a task room read keeps its addressed count in step with the server's answer.
   {
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': [room('rm_kh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }), room('rm_t', 'prj_a', 'task', { parent_id: 'rm_kh', purpose: 'task', unread_count: 6, unread_addressed: 2 })] }) });
