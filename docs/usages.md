@@ -289,9 +289,9 @@ the inactive ones that confirms and calls `POST /api/switcher/{tool}/use`.
 
 An A | B | C pill in the top bar, directly left of Inbox (hidden on phone widths), chooses how every usages view is drawn, the
 Usages page and this panel alike, and is remembered in this browser. A is the cards described above. B and C draw the Usages
-page's own variant B (v1's tiles) and variant C (headroom rows) in the panel, from a store of the panel's own, so for the owner
-they carry the page's management controls (the provider gear, add, rename, delete, credential setup) and show a failed action's
-message above the view. A switcher that cannot be read counts as none and the figures still show. A push is held while a field
+page's own variant B (v1's tiles) in the panel, from a store of the panel's own, view-only as v1's panel was: no provider gear, add,
+rename, delete or credential setup (those stay in Settings → Usages), only Switch on an inactive profile, and a failed action's
+message shows above the view. A switcher that cannot be read counts as none and the figures still show. A push is held while a field
 in the panel has focus, so a setup form being typed is not redrawn.
 
 The top-bar usages column (the owner and global admins; Refresh and Switch are the owner's) follows the same push while it is

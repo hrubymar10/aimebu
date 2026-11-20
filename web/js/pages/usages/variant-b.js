@@ -1,4 +1,4 @@
-import { html, useState, useEffect, useRef, useLayoutEffect } from '../../ui.js';
+import { html, signal, useState, useEffect, useRef, useLayoutEffect } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
 import { promptDialog } from '../../dialogs.js';
 import { creditsText, percent, windowLabel, paceExplanation, sparkGeometry, countdown, shown, staleResetText, age as ageOf, USAGE_LEGEND } from '../../usage-format.js';
@@ -13,6 +13,15 @@ import { profileActions } from './profile-actions.js';
 // pace words under the numbers, credits under the account, who is active in the account's own line. What changes a provider or an account hides behind one
 // gear on the tile, so the tiles stay as quiet as v1's.
 const groupKey = 'aimebu2.usages.group';
+// The group-by choice is one signal, so the panel header's button and the Usages page's own read and change the same thing.
+const readGroup = () => { try { return localStorage.getItem(groupKey) === 'active' ? 'active' : 'providers'; } catch { return 'providers'; } };
+export const usagesGroup = signal(readGroup());
+export function toggleUsagesGroup() {
+  const next = usagesGroup.value === 'active' ? 'providers' : 'active';
+  try { localStorage.setItem(groupKey, next); } catch { /* storage may be denied */ }
+  usagesGroup.value = next;
+}
+export const groupLabel = groupBy => (groupBy === 'active' ? 'Group usages by provider' : 'Show active profiles first');
 const MASKS = new Set(['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud']);
 const time = date => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const GROUP_ICON = html`<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 1h2v1H2v12h1.5v1h-2l-.5-.5v-13l.5-.5zm6 6h-2L5 6.5v-2l.5-.5h2l.5.5v2l-.5.5zM6 6h1V5H6v1zm7.5 1h-3l-.5-.5v-3l.5-.5h3l.5.5v3l-.5.5zM11 6h2V4h-2v2zm-3.5 6h-2l-.5-.5v-2l.5-.5h2l.5.5v2l-.5.5zM6 11h1v-1H6v1zm7.5 2h-3l-.5-.5v-3l.5-.5h3l.5.5v3l-.5.5zM11 12h2v-2h-2v2zm-1-2H8v1h2v-1zm0-5H8v1h2V5z"/></svg>`;
@@ -45,7 +54,7 @@ function WindowRow({ window, usedDisplay, fetchedAt, stale }) {
   </div>`;
 }
 
-function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, tool, affected, eligible, hasActive, token, manage }) {
+function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, tool, affected, eligible, hasActive, token, manage, readOnly }) {
   const name = profile.profile_name || 'local';
   const switchable = isSwitchable(tool);
   const configured = (state.profiles || []).some(item => item.tool === tool && item.name === profile.profile_name);
@@ -70,11 +79,11 @@ function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, 
       : profile.has_credentials === false ? html`<div class="usages-empty usages-empty-compact">Needs login</div>` : html`<div class="usages-empty usages-empty-compact">No usage data yet.</div>`}
     ${credits && html`<div class="usages-credits-row"><span>${credits}</span></div>`}
     ${status && html`<div class="usages-error-line usages-b-status">${status}</div>`}
-    ${stale && html`<div class="usages-stale-line">Stale, last update ${stale} ago${state.owner && html` <${IconButton} name="refresh" label="Refresh now" className="usages-b-refresh" onClick=${() => store.mutateUsage(() => store.source.refresh(provider.provider_name))} />`}</div>`}
+    ${stale && html`<div class="usages-stale-line">Stale, last update ${stale} ago${state.owner && !readOnly && html` <${IconButton} name="refresh" label="Refresh now" className="usages-b-refresh" onClick=${() => store.mutateUsage(() => store.source.refresh(provider.provider_name))} />`}</div>`}
   </div>`;
 }
 
-function Tile({ store, provider, profiles, order, providers, state, usedDisplay, refreshSec, tokens, revision, alone }) {
+function Tile({ store, provider, profiles, order, providers, state, usedDisplay, refreshSec, tokens, revision, readOnly }) {
   const key = provider.provider_name, tool = toolOf(key);
   const [manage, setManage] = useState(false);
   const refocus = useRef(null);
@@ -85,7 +94,7 @@ function Tile({ store, provider, profiles, order, providers, state, usedDisplay,
     refocus.current = null;
     if (pending.node.isConnected) pending.node.focus({ preventScroll: true });
   });
-  const owner = !!state.owner, switchable = isSwitchable(tool), configured = providerConfigured(provider);
+  const owner = !!state.owner && !readOnly, switchable = isSwitchable(tool), configured = providerConfigured(provider);
   const affected = (state.affected_agents || {})[tool] || [];
   const eligible = (state.eligibility || []).find(item => item.tool === tool);
   const hasActive = (state.profiles || []).some(item => item.tool === tool && item.active);
@@ -118,13 +127,15 @@ function Tile({ store, provider, profiles, order, providers, state, usedDisplay,
       ${key === 'ollama-cloud' && html`<div class="usage-provider-actions"><${OllamaSetup} store=${store} provider=${provider} configured=${configured} key=${`ollama-${revision}`} /></div>`}
     </div>`}
     ${profiles.map(profile => html`<${ProfileRow} key=${profileKey(key, profile)} store=${store} provider=${provider} profile=${profile} state=${state} usedDisplay=${usedDisplay} refreshSec=${refreshSec} tool=${tool}
-      affected=${affected} eligible=${eligible} hasActive=${hasActive} manage=${manage} token=${tokens.find(item => item.tool === tool && item.profile === profile.profile_name && item.role === 'store')} />`)}
+      affected=${affected} eligible=${eligible} hasActive=${hasActive} manage=${manage} readOnly=${readOnly} token=${tokens.find(item => item.tool === tool && item.profile === profile.profile_name && item.role === 'store')} />`)}
   </article>`;
 }
 
-export function UsagesVariantB({ store }) {
+// readOnly is the side panel's view: v1's panel only showed, so every control that changes a provider or an account is left out and Switch (and the panel
+// header's own refresh and group buttons) remain; Settings → Usages draws the same view with its management controls.
+export function UsagesVariantB({ store, readOnly = false }) {
   const usage = store.usage.value, state = store.switcher.value, revision = store.revision.value;
-  const [groupBy, setGroupBy] = useState(() => { try { return localStorage.getItem(groupKey) === 'active' ? 'active' : 'providers'; } catch { return 'providers'; } });
+  const groupBy = usagesGroup.value;
   const [tokens, setTokens] = useState([]);
   // The token-expiry icons come from the credential targets, which are the owner's and may be absent: the numbers never wait for them.
   useEffect(() => {
@@ -137,7 +148,6 @@ export function UsagesVariantB({ store }) {
   const providers = sortProviders(usage?.providers);
   const shown_ = state || { enabled: false, profiles: [], eligibility: [], affected_agents: {} };
   const usedDisplay = usage?.settings?.percent_display === 'used', refreshSec = usage?.settings?.refresh_interval_sec;
-  const toggleGroup = () => { const next = groupBy === 'active' ? 'providers' : 'active'; try { localStorage.setItem(groupKey, next); } catch { /* storage may be denied */ } setGroupBy(next); };
   // A provider that is off is a tile with its heading alone (v1's inactive tile), so it can be switched on from here.
   const groups = providers.map((provider, order) => ({ provider, order, profiles: !provider.enabled ? [] : provider.profiles?.length ? provider.profiles : [{ profile_name: 'local', active: true }] }));
   const sorted = list => [...list].sort((a, b) => Number(!!b.active) - Number(!!a.active));
@@ -146,13 +156,8 @@ export function UsagesVariantB({ store }) {
   const secondary = groupBy === 'active' ? part(profile => !profile.active, true) : [];
   const alerts = mergeAlerts(usage?.credential_alerts);
   const tile = group => html`<${Tile} key=${group.provider.provider_name} store=${store} provider=${group.provider} profiles=${sorted(group.profiles)} order=${group.order} providers=${providers} state=${shown_}
-    usedDisplay=${usedDisplay} refreshSec=${refreshSec} tokens=${tokens} revision=${revision} />`;
-  const activeFirst = groupBy === 'active', groupLabel = activeFirst ? 'Group usages by provider' : 'Show active profiles first';
+    usedDisplay=${usedDisplay} refreshSec=${refreshSec} tokens=${tokens} revision=${revision} readOnly=${readOnly} />`;
   return html`<div class="usages-b">
-    <div class="usages-b-bar">
-      ${shown_.owner && html`<${IconButton} name="refresh" label="Refresh usages" className="usages-b-refresh-all" onClick=${() => store.mutateUsage(() => store.source.refresh())} />`}
-      <button type="button" class=${`btn-icon usages-b-group${activeFirst ? ' active' : ''}`} title=${groupLabel} aria-label=${groupLabel} aria-pressed=${String(activeFirst)} onClick=${toggleGroup}>${GROUP_ICON}</button>
-    </div>
     ${alerts.length > 0 && html`<div class="usages-credential-alerts" role="alert">${alerts.map(alert => html`<div class=${`usages-credential-alert usages-credential-alert-${String(alert.kind || '').replace(/[^a-z_]/g, '')}`}><p>${alert.text}</p>
       ${alert.details.length > 0 && html`<details><summary>Details</summary>${alert.details.map(line => html`<p>${line}</p>`)}</details>`}</div>`)}</div>`}
     <div class="usages-b-grid">${primary.map(tile)}</div>
@@ -160,4 +165,13 @@ export function UsagesVariantB({ store }) {
     ${!providers.length && html`<p class="usage-empty">No usage providers are available yet.</p>`}
     ${providers.length > 0 && html`<p class="settings-desc usages-legend">${USAGE_LEGEND}</p>`}
   </div>`;
+}
+
+// B's two actions for the Usages page's header, where the panel's own header already holds them (refresh, and the group button).
+export function UsagesBActions({ store }) {
+  const activeFirst = usagesGroup.value === 'active', label = groupLabel(usagesGroup.value);
+  return html`<span class="usages-b-actions">
+    ${store.owner.value && html`<${IconButton} name="refresh" label="Refresh usages" className="usages-b-refresh-all" onClick=${() => store.mutateUsage(() => store.source.refresh())} />`}
+    <button type="button" class=${`btn-icon usages-b-group${activeFirst ? ' active' : ''}`} title=${label} aria-label=${label} aria-pressed=${String(activeFirst)} onClick=${toggleUsagesGroup}>${GROUP_ICON}</button>
+  </span>`;
 }

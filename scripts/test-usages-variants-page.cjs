@@ -121,6 +121,10 @@ async function main() {
       await click(again, `${tile('claude-code')} .usages-b-profile .usages-b-rename`);
       await dialog(again);
       await click(again, '#app-dialog .app-dialog-cancel');
+      // The actions sit in the page's header, beside its intro; the active name has no underline and the bar track no border (v1's look: 6px, rounded).
+      assert.deepEqual(await again.evaluate(() => { const head = document.querySelector('.usages-head'), bar = document.querySelector('.usages-b .usages-progress'), name = document.querySelector('.usages-b-profile.is-active .switcher-tile-name'), cs = getComputedStyle(bar);
+        return { refresh: !!head.querySelector('.usages-b-refresh-all'), group: !!head.querySelector('.usages-b-group'), row: !!document.querySelector('.usages-b-bar'), underline: getComputedStyle(name).textDecorationLine, border: cs.borderTopWidth, height: cs.height, radius: cs.borderTopLeftRadius }; }),
+        { refresh: true, group: true, row: false, underline: 'none', border: '0px', height: '6px', radius: '999px' });
       // Group by active first: the active accounts, a divider, then the rest.
       await click(again, '.usages-b-group');
       assert.deepEqual(await again.evaluate(() => ({ grids: document.querySelectorAll('.usages-b-grid').length, divider: !!document.querySelector('.usages-group-divider'), pressed: document.querySelector('.usages-b-group').getAttribute('aria-pressed'), stored: localStorage.getItem('aimebu2.usages.group') })),

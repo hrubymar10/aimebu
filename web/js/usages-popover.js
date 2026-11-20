@@ -5,13 +5,12 @@ import { mergeAlerts, staleAge } from './usage-alerts.js';
 import { confirmDialog } from './dialogs.js';
 import { html, render, effect } from './ui.js';
 import { UsagesStore } from './pages/usages/store.js';
-import { UsagesVariantB } from './pages/usages/variant-b.js';
+import { UsagesVariantB, usagesGroup, toggleUsagesGroup } from './pages/usages/variant-b.js';
 import { UsagesVariantC } from './pages/usages/variant-c.js';
 import { usagesVariant } from './pages/usages/variant.js';
 
 // A glanceable overview of every configured provider and profile, so usage can be checked
-// without opening Settings. Variant A (the cards) is read-only apart from Refresh and Switch; variants B and C of the top-bar A/B/C pill
-// are the Usages page's own components and carry its management controls (provider gear, add, rename, delete) for the owner.
+// without opening Settings. Like v1's panel it is view-only apart from Refresh and switching the active profile: management stays in Settings → Usages.
 const groupKey = 'aimebu2.usages.group';
 const PROVIDER_MASKS = new Set(['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud']);
 const TOOLS = { 'claude-code': 'claude', codex: 'codex' };
@@ -19,7 +18,7 @@ const TOOLS = { 'claude-code': 'claude', codex: 'codex' };
 
 // What a failed owner action says goes above the variant, as on the Usages page.
 function AltView({ store, variant }) {
-  return html`<p class="error usages-popover-error" role="alert">${store.error.value}</p>${variant === 'c' ? html`<${UsagesVariantC} store=${store} />` : html`<${UsagesVariantB} store=${store} />`}`;
+  return html`<p class="error usages-popover-error" role="alert">${store.error.value}</p>${variant === 'c' ? html`<${UsagesVariantC} store=${store} />` : html`<${UsagesVariantB} store=${store} readOnly />`}`;
 }
 
 export class UsagesPopover {
@@ -47,13 +46,15 @@ export class UsagesPopover {
     this.status = element('p', 'usages-popover-note usages-popover-status'); this.status.setAttribute('role', 'status'); this.status.hidden = true;
     this.popover.querySelector('header').after(this.status);
     this.groupButton = this.popover.querySelector('.usages-popover-group'); this.groupBy = localStorage.getItem(groupKey) === 'active' ? 'active' : 'providers'; this.usage = null; this.state = null; this.tokens = [];
-    this.groupButton.onclick = () => { this.groupBy = this.groupBy === 'active' ? 'providers' : 'active'; try { localStorage.setItem(groupKey, this.groupBy); } catch { /* storage may be denied */ } this.syncGroupButton(); if (this.usage) this.render(this.usage); };
+    // In B the header's button is the variant's own group control (one shared choice); in A it groups the cards.
+    effect(() => { usagesGroup.value; this.syncGroupButton(); });
+    this.groupButton.onclick = () => { if (this.variant === 'b') { toggleUsagesGroup(); return; } this.groupBy = this.groupBy === 'active' ? 'providers' : 'active'; try { localStorage.setItem(groupKey, this.groupBy); } catch { /* storage may be denied */ } this.syncGroupButton(); if (this.usage) this.render(this.usage); };
     this.syncGroupButton();
     this.popover.querySelector('.usages-popover-close').onclick = () => { this.close(); this.toggle.focus(); };
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && !this.popover.hidden) { this.close(); this.toggle.focus(); } });
   }
   // Nothing of what was drawn stays after a sign-out: the tiles, the cached usage, switcher state and credential tokens.
-  syncVariant() { const alt = this.variant !== 'a'; this.body.hidden = alt; this.alt.hidden = !alt; this.groupButton.hidden = alt; this.popover.dataset.variant = this.variant; if (!alt) render(null, this.alt); }
+  syncVariant() { const alt = this.variant !== 'a'; this.body.hidden = alt; this.alt.hidden = !alt; this.groupButton.hidden = this.variant === 'c'; if (this.variant === 'a') this.groupBy = usagesGroup.peek(); this.syncGroupButton(); this.popover.dataset.variant = this.variant; if (!alt) render(null, this.alt); }
   reset() { this.store.forget(); render(null, this.alt); this.ticket++; this.usage = null; this.state = null; this.tokens = []; this.refreshSec = undefined; this.body.replaceChildren(); this.status.hidden = true; }
   open() { this.syncRefresh(); this.status.hidden = true; this.popover.hidden = false; this.chat.classList.add('usages-open'); this.toggle.setAttribute('aria-expanded', 'true'); focusPopover(this.popover); this.load(); }
   close() { this.ticket++; returnFocus(this.popover, this.toggle); this.popover.hidden = true; this.chat.classList.remove('usages-open'); this.toggle.setAttribute('aria-expanded', 'false'); }
@@ -105,7 +106,7 @@ export class UsagesPopover {
     }
   }
   syncGroupButton() {
-    const activeFirst = this.groupBy === 'active', label = activeFirst ? 'Group usages by provider' : 'Show active profiles first';
+    const activeFirst = (this.variant === 'b' ? usagesGroup.value : this.groupBy) === 'active', label = activeFirst ? 'Group usages by provider' : 'Show active profiles first';
     this.groupButton.classList.toggle('active', activeFirst); this.groupButton.setAttribute('aria-pressed', String(activeFirst)); this.groupButton.setAttribute('aria-label', label); this.groupButton.title = label;
   }
   render(usage) {

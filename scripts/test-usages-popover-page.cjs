@@ -93,6 +93,16 @@ async function main() {
       await page.waitForSelector(selector);
       assert.deepEqual(await page.evaluate(() => [document.querySelector('.usages-popover-body').hidden, !document.querySelector('.usages-popover-alt').hidden, document.querySelector('#usages-variant-slot .active').textContent]), [true, true, variant.toUpperCase()], `${variant.toUpperCase()} replaces the cards in the panel`);
       if (variant === 'b') {
+        // The actions are the panel header's own (close, refresh, group, side by side), once: B draws no row of its own, and the bar and active name carry no border or underline.
+        assert.deepEqual(await page.evaluate(() => { const head = document.querySelector('#usages-popover > header'), alt = document.querySelector('.usages-popover-alt'), btn = sel => head.querySelector(sel), bar = alt.querySelector('.usages-progress'), name = alt.querySelector('.usages-b-profile.is-active .switcher-tile-name');
+          return { refresh: head.querySelectorAll('.usages-popover-refresh').length, group: !btn('.usages-popover-group').hidden, close: !!btn('.usages-popover-close'), row: !!alt.querySelector('.usages-b-bar, .usages-b-refresh-all, .usages-b-group, .usages-b-actions'), refreshes: document.querySelectorAll('#usages-popover [aria-label="Refresh usages"]').length,
+            underline: name ? getComputedStyle(name).textDecorationLine : 'none', border: getComputedStyle(bar).borderTopWidth }; }),
+          { refresh: 1, group: true, close: true, row: false, refreshes: 1, underline: 'none', border: '0px' }, 'B uses the panel header toolbar; no second row; no underline; no bar border');
+        // The panel is view-only, as v1's was: no gear or management buttons, only Switch on an inactive profile.
+        assert.deepEqual(await page.evaluate(() => { const alt = document.querySelector('.usages-popover-alt'); return { manage: alt.querySelectorAll('.usages-b-manage, .usages-b-manage-panel, .usages-b-rename, .usages-b-remove, .usages-b-toggle, .usages-b-add, .usages-b-import, .usages-b-refresh').length, switches: alt.querySelectorAll('.usages-b-profile:not(.is-active) .usages-b-switch').length > 0 }; }), { manage: 0, switches: true }, 'B in the panel is read-only apart from Switch');
+        await page.$eval('#usages-popover .usages-popover-group', node => node.click());
+        assert.equal(await page.evaluate(() => [document.querySelector('#usages-popover .usages-popover-group').getAttribute('aria-pressed'), document.querySelectorAll('.usages-popover-alt .usages-b-grid').length].join()), 'true,2', 'the header group button groups B');
+        await page.$eval('#usages-popover .usages-popover-group', node => node.click());
         // An error from an owner action shows above the view; a push is held while a field has focus; a switcher that cannot be read leaves the figures.
         await page.evaluate(() => window.__popover.store.setError('Account switch failed'));
         await page.waitForFunction(() => document.querySelector('.usages-popover-alt .usages-popover-error')?.textContent === 'Account switch failed');

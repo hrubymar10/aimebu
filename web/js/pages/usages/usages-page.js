@@ -5,7 +5,7 @@ import { QuotaBlock } from './quota-block.js';
 import { GuardBlock } from './guard-block.js';
 import { LimitDefault } from './limit-default.js';
 import { UsagesList } from './usages-list.js';
-import { UsagesVariantB } from './variant-b.js';
+import { UsagesVariantB, UsagesBActions } from './variant-b.js';
 import { UsagesVariantC } from './variant-c.js';
 import { usagesVariant } from './variant.js';
 
@@ -22,7 +22,7 @@ export function UsagesPage({ page, onDirty = () => {} }) {
   useLayoutEffect(() => { setTyped(false); }, [revision, defaults]);
   useDirty(onDirty, 'usages-typed', typed);
   return html`<div class="usages-page" style="display: contents" onInput=${event => { if (isTyping(event)) setTyped(true); }}>
-    <div class="usages-head"><p class="settings-intro">Provider limits and account profiles</p></div>
+    <div class="usages-head"><p class="settings-intro">Provider limits and account profiles</p>${variant === 'b' && html`<${UsagesBActions} store=${page.store} />`}</div>
     ${!owner && html`<p id="usages-readonly" class="settings-intro usages-readonly" role="note">Only the owner can change Usages. You can see the limits here.</p>`}
     <p id="usages-error" class="error" role="alert">${page.store.error.value}</p>
     ${owner && html`<div class="usage-switcher-controls" id="usages-switcher"><${SwitcherControls} store=${page.store} /></div>
