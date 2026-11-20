@@ -135,10 +135,7 @@ func RequireDockerFeature(ctx context.Context, tool, command string, args []stri
 	if err != nil {
 		return err
 	}
-	if !features[feature] {
-		return fmt.Errorf("the Docker launcher %s is too old for %s: it does not %s (update harness-docker, then retry)", command, tool, featureDescription(feature))
-	}
-	return nil
+	return CheckDockerFeature(features, tool, command, feature)
 }
 
 func featureDescription(feature string) string {

@@ -33,17 +33,33 @@ const (
 )
 
 // commandRunFeature is the harness-docker capability a Docker launcher must report before a command runs in its container.
-const commandRunFeature = "run_command"
+const commandRunFeature = adapter.FeatureRunCommand
+
+// Exit statuses of a Docker launcher in command mode (harness-docker's docs/lifecycle.md). 143 follows a TERM only once the launcher has
+// confirmed the session in the container is gone; 125 says it could not confirm that. 126 without an exit marker is the launcher refusing
+// the command before it ran, because the container still runs an image from before command runs.
+const (
+	dockerStopConfirmed = 128 + int(syscall.SIGTERM)
+	dockerRefusedOld    = 126
+)
+
+// ErrCommandDockerImageTooOld is the end of a command a Docker launcher refused because its container runs an image from before command
+// runs: nothing of the person's command ran.
+var ErrCommandDockerImageTooOld = errors.New("the command never ran: the agent's harness container runs an image from before commands " +
+	"outside a turn; rebuild the harness image (`bin/harness-docker-ctrl rebuild` in harness-docker), then retry")
+
+// dockerOutputGrace is how long a Docker launcher's output is still read once it has exited, before what it left behind on the host is cut
+// off from the log.
+const dockerOutputGrace = 5 * time.Second
+
+// commandFeatureTimeout bounds the feature probe of a Docker launcher: it prints its features before it touches Docker, but Codex's also
+// reads the running container's configuration.
+const commandFeatureTimeout = 10 * time.Second
 
 // ErrCommandDockerUnsupported is what a supervisor says when the agent runs in Docker and its launcher cannot run a command in the
 // container. It names the update, because that is what the person has to do.
 var ErrCommandDockerUnsupported = errors.New("a command outside a turn for an agent in Docker needs a Docker launcher with the run_command " +
 	"feature: run `HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version`, and it must print `run_command`; update harness-docker, then retry")
-
-// ErrCommandContainerUnsupported is what a supervisor says when the launcher has the feature but this aimebu does not run container
-// commands yet (the Docker side lands with the wrapper support).
-var ErrCommandContainerUnsupported = errors.New("this aimebu build runs commands outside a turn for agents on a native launcher only: " +
-	"the Docker side is not in this build")
 
 // commandJob is one long command this supervisor runs for an agent, outside any turn. Its flags are written by the kill path and read when
 // the process ends, so they are guarded.
@@ -64,6 +80,9 @@ type commandJob struct {
 	adopted bool
 	// notOurs is set when a kill finds an adopted job's pid owned by another process: its watcher then reports it lost.
 	notOurs bool
+	// container says the process is a Docker launcher running the command in the agent's container: a kill is confirmed only by the
+	// launcher's own exit status (or the command's exit marker), and a launcher that refused the command is not the command's end.
+	container bool
 }
 
 func (j *commandJob) markKilled(timedOut bool) {
@@ -206,17 +225,25 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 		return fail(errors.New("the job log must live inside the agent's checkout"))
 	}
 	// A command runs where the agent's own Bash runs: in its container for a Docker launcher, on this machine for a native one. The
-	// container path is the wrapper's to provide, so a launcher that cannot run one is refused with what to update.
+	// container path is the wrapper's to provide, so a launcher that cannot run one is refused with what to update, and never falls back
+	// to the host.
 	visible := spec.CheckoutPath
-	if spec.LauncherID != "" {
-		row := c.launcherRow(spec.LauncherID)
-		if row.Containerized {
-			if !slices.Contains(row.Features, commandRunFeature) {
-				return fail(ErrCommandDockerUnsupported)
-			}
-			return fail(ErrCommandContainerUnsupported)
+	docker, err := c.commandLauncher(spec)
+	if err != nil {
+		return fail(err)
+	}
+	if docker != nil {
+		probe, cancel := context.WithTimeout(ctx, commandFeatureTimeout)
+		features, err := adapter.CachedDockerFeatures(probe, docker.command, docker.args, spec.CheckoutPath, adapter.DockerControlEnv(docker.refs))
+		cancel()
+		// A probe that fails now falls back to what the launcher said when its row was made; a launcher that cannot run the command still
+		// fails it by itself, in the container, never on the host.
+		if err != nil && !slices.Contains(docker.features, commandRunFeature) || err == nil && !features[commandRunFeature] {
+			return fail(ErrCommandDockerUnsupported)
 		}
-		if mapped, err := launcherCheckout(row.LauncherDefinition, spec.CheckoutPath); err == nil {
+		visible = docker.visible
+	} else if spec.LauncherID != "" {
+		if mapped, err := launcherCheckout(c.launcherRow(spec.LauncherID).LauncherDefinition, spec.CheckoutPath); err == nil {
 			visible = mapped
 		}
 	}
@@ -234,25 +261,33 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	visibleMarker, _ := adapter.VisiblePath(specPath, marker)
 	// The wrapper writes its exit code beside the log before it exits: a supervisor that restarts (and cannot wait for a process it did not
 	// start) still learns how the command ended.
-	wrapped := `( eval "$2" ); rc=$?; printf %s "$rc" > "$1"; exit $rc`
-	cmd := exec.Command("sh", "-c", wrapped, "sh", visibleMarker, spec.Cmd)
-	cmd.Dir = filepath.Join(spec.CheckoutPath, spec.Cwd)
+	var cmd *exec.Cmd
+	if docker == nil {
+		wrapped := `( eval "$2" ); rc=$?; printf %s "$rc" > "$1"; exit $rc`
+		cmd = exec.Command("sh", "-c", wrapped, "sh", visibleMarker, spec.Cmd)
+		cmd.Dir = filepath.Join(spec.CheckoutPath, spec.Cwd)
+	} else {
+		cmd = dockerCommand(docker, spec, visibleMarker)
+		// The launcher's exit is the command's end: a host-side process it left in its group (a `docker exec` client that outlived it) may
+		// still hold the log's pipe, and must not hold the end with it.
+		cmd.WaitDelay = dockerOutputGrace
+	}
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		log.CloseTail()
 		return fail(fmt.Errorf("the command could not be started: %w", err))
 	}
-	job := &commandJob{spec: spec, pid: cmd.Process.Pid, started: time.Now(), logPath: spec.LogPath, marker: marker, log: log}
+	job := &commandJob{spec: spec, pid: cmd.Process.Pid, started: time.Now(), logPath: spec.LogPath, marker: marker, log: log,
+		container: docker != nil}
 	// The start time tells this process from a later one that reuses its pid, for a supervisor that adopts the job after a restart.
 	job.pidStart = c.identityOf(job.pid)
 	already, err := c.Journal.RecordCommandStart(ctx, CommandStartRecord{JobID: spec.JobID, AgentID: spec.AgentID,
 		Generation: spec.Generation, Pid: job.pid, PidStart: job.pidStart, Cmd: spec.Cmd, LogPath: spec.LogPath,
-		StartedAt: job.started.UTC().Format(commandTimeLayout), TimeoutSeconds: spec.TimeoutSeconds})
+		StartedAt: job.started.UTC().Format(commandTimeLayout), TimeoutSeconds: spec.TimeoutSeconds, Container: job.container})
 	if err != nil || already {
 		// No command runs without its journal record: kill it now rather than leave one this machine cannot account for.
-		_ = adapter.SignalGroup(job.pid, syscall.SIGKILL, func() bool { return false })
-		_ = cmd.Wait()
+		stopUnjournaled(job, cmd)
 		log.CloseTail()
 		if err != nil {
 			return fail(fmt.Errorf("the command's journal record could not be written: %w", err))
@@ -286,10 +321,35 @@ func (c *Client) waitCommand(ctx context.Context, job *commandJob, cmd *exec.Cmd
 	case errors.As(err, &exitErr):
 		code := exitErr.ExitCode()
 		exit.ExitCode = &code
+	case errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil:
+		// The process ended, but something it left behind still held its output (a Docker launcher's WaitDelay): its status stands.
+		code := cmd.ProcessState.ExitCode()
+		exit.ExitCode = &code
 	default:
 		exit.Lost = true
 	}
+	if job.container {
+		settleContainerExit(job, &exit)
+	}
 	c.finishCommand(ctx, job, exit)
+}
+
+// settleContainerExit reads a Docker launcher's exit status for what it says about the command in the container. A kill is confirmed only
+// by 143 (the launcher ended the session and saw it gone) or by the command's own exit marker; anything else (125, a SIGKILL after the
+// grace, a launcher killed before it could trap the signal) may have left the command running. 126 with no marker is the launcher refusing
+// the command before it ran, not the command's exit code.
+func settleContainerExit(job *commandJob, exit *protocol.CommandExit) {
+	_, marked := readExitMarker(job.marker)
+	if exit.Killed {
+		if !marked && (exit.ExitCode == nil || *exit.ExitCode != dockerStopConfirmed) {
+			exit.Unconfirmed = true
+		}
+		return
+	}
+	if !marked && exit.ExitCode != nil && *exit.ExitCode == dockerRefusedOld {
+		exit.ExitCode = nil
+		exit.Refused = ErrCommandDockerImageTooOld.Error()
+	}
 }
 
 // finishCommand writes the end of one command this process started and reports it. The end is journaled before the job is let go, so a
@@ -341,13 +401,40 @@ func (c *Client) commandKill(jobID string, timedOut bool) {
 	}
 	job.markKilled(timedOut)
 	notReaped := func() bool { return false }
-	_ = adapter.SignalGroup(job.pid, syscall.SIGTERM, notReaped)
+	if job.container {
+		// The launcher alone gets the TERM: it ends the session in the container and exits 143 only once that is confirmed. Its own
+		// `docker exec` client must stay up meanwhile; the SIGKILL below, after the grace, takes the whole group.
+		_ = syscall.Kill(job.pid, syscall.SIGTERM)
+	} else {
+		_ = adapter.SignalGroup(job.pid, syscall.SIGTERM, notReaped)
+	}
 	deadline := time.Now().Add(commandKillGrace)
 	for commandProcessAlive(job.pid) && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if commandProcessAlive(job.pid) {
 		_ = adapter.SignalGroup(job.pid, syscall.SIGKILL, notReaped)
+	}
+}
+
+// stopUnjournaled ends a command whose start could not be journaled, before the start is reported failed. A native one is killed with its
+// group. A Docker launcher may already have started the command in the container, out of reach of a host signal: it gets the TERM alone
+// first, as on a cancel, so it ends the session there, and its group is killed only after the grace.
+func stopUnjournaled(job *commandJob, cmd *exec.Cmd) {
+	notReaped := func() bool { return false }
+	if !job.container {
+		_ = adapter.SignalGroup(job.pid, syscall.SIGKILL, notReaped)
+		_ = cmd.Wait()
+		return
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	_ = syscall.Kill(job.pid, syscall.SIGTERM)
+	select {
+	case <-done:
+	case <-time.After(commandKillGrace):
+		_ = adapter.SignalGroup(job.pid, syscall.SIGKILL, notReaped)
+		<-done
 	}
 }
 
@@ -399,7 +486,7 @@ func (c *Client) reconcileCommands(ctx context.Context) {
 		}
 		job := &commandJob{spec: protocol.CommandSpec{JobID: item.JobID, AgentID: item.AgentID, Generation: item.Generation,
 			TimeoutSeconds: item.TimeoutSeconds}, pid: item.Pid, pidStart: item.PidStart, marker: commandExitMarker(item.LogPath),
-			logPath: item.LogPath, adopted: true}
+			logPath: item.LogPath, adopted: true, container: item.Container}
 		if started, err := time.Parse(commandTimeLayout, item.StartedAt); err == nil {
 			job.started = started
 		} else {
@@ -477,6 +564,9 @@ func (c *Client) finishAdoptedCommand(ctx context.Context, job *commandJob, exit
 		exit.Killed, exit.TimedOut = true, timedOut
 		if exit.ExitCode == nil {
 			exit.Lost = false
+			// A launcher this process did not start leaves no exit status to read: without the command's marker, nothing confirms
+			// that the command in the container is gone.
+			exit.Unconfirmed = job.container
 		}
 	}
 	if tail, written, truncated, err := tailFile(job.logPath, commandTailBytes); err == nil {
@@ -530,4 +620,91 @@ func commandProcessAlive(pid int) bool {
 func withinDir(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// commandDocker is the Docker launcher a command runs through: the agent's own, as its turns run it.
+type commandDocker struct {
+	command string
+	args    []string
+	refs    map[string]string
+	// features is what the launcher said when its row was made: the fallback when the probe cannot be asked now.
+	features []string
+	// visible is the checkout as the container sees it.
+	visible string
+}
+
+// commandLauncher says how one agent's command runs: nil for this machine (a native launcher, or an agent with none), the Docker launcher
+// otherwise. An agent whose launcher is not here, or whose Docker harness is unavailable, is refused: it never falls back to the host.
+func (c *Client) commandLauncher(spec protocol.CommandSpec) (*commandDocker, error) {
+	if spec.LauncherID != "" {
+		row := c.launcherRow(spec.LauncherID)
+		if row.ID == "" {
+			return nil, errors.New("the agent's launcher is not configured on this machine")
+		}
+		if !row.Containerized {
+			return nil, nil
+		}
+		if row.ResolvedCommand == "" {
+			reason := row.UnavailableReason
+			if reason == "" {
+				reason = "its command was not found"
+			}
+			return nil, fmt.Errorf("the agent's Docker launcher is unavailable on this machine: %s", reason)
+		}
+		visible, err := launcherCheckout(row.LauncherDefinition, spec.CheckoutPath)
+		if err != nil {
+			return nil, err
+		}
+		return &commandDocker{command: row.ResolvedCommand, args: append([]string(nil), row.Args...), refs: row.EnvRefs,
+			features: row.Features, visible: visible}, nil
+	}
+	if spec.Variant != "docker" {
+		return nil, nil
+	}
+	c.mu.Lock()
+	row := c.harnessRow(harnessKey(spec.Tool, "docker"))
+	c.mu.Unlock()
+	if !row.Available {
+		reason := row.UnavailableReason
+		if reason == "" {
+			reason = "this machine does not list it"
+		}
+		return nil, fmt.Errorf("the agent's Docker harness is unavailable on this machine: %s", reason)
+	}
+	command := row.LauncherPath
+	if command == "" {
+		command = spec.Tool + "-docker"
+	}
+	return &commandDocker{command: command, visible: spec.CheckoutPath}, nil
+}
+
+// commandInContainer says whether a command would run through a Docker launcher, whose feature probe may take a while: its start is then
+// answered aside from the frame loop.
+func (c *Client) commandInContainer(spec protocol.CommandSpec) bool {
+	if spec.LauncherID != "" {
+		return c.launcherRow(spec.LauncherID).Containerized
+	}
+	return spec.Variant == "docker"
+}
+
+// dockerCommand is the launcher in command mode (docs/design/harness-docker-run-command.md): the command line goes in
+// HARNESS_DOCKER_RUN_COMMAND, by name only, and like a native one it writes its exit code to the marker before it exits. The working
+// directory is relative to the checkout, from which the launcher is run. Nothing is forwarded into the container: no agent key, no
+// toolbox.
+func dockerCommand(docker *commandDocker, spec protocol.CommandSpec, marker string) *exec.Cmd {
+	line := "aimebu_exit_marker=" + shellQuote(marker) + "; ( eval " + shellQuote(spec.Cmd) + ` ); rc=$?; printf %s "$rc" > "$aimebu_exit_marker"; exit $rc`
+	cwd := spec.Cwd
+	if cwd == "." {
+		cwd = ""
+	}
+	cmd := exec.Command(docker.command, docker.args...)
+	cmd.Dir = spec.CheckoutPath
+	cmd.Env = append(adapter.DockerControlEnv(docker.refs), "HARNESS_DOCKER_RUN_COMMAND="+line, "HARNESS_DOCKER_CWD="+cwd,
+		"HARNESS_DOCKER_EXIT_MARKER="+marker, "HARNESS_DOCKER_TIMEOUT_SECONDS="+strconv.Itoa(spec.TimeoutSeconds))
+	return cmd
+}
+
+// shellQuote makes one word of a value for sh: single quotes, with each quote in it closed, escaped and reopened.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }

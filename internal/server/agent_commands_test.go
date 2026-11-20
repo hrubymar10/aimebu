@@ -17,6 +17,12 @@ import (
 // dialCommandMachine connects a supervisor that runs commands, with what its hello says it still runs and still owes.
 func (f *fixture) dialCommandMachine(t *testing.T, open []protocol.CommandOpen, exits []protocol.CommandExit) *websocket.Conn {
 	t.Helper()
+	return f.dialCommandMachineCaps(t, open, exits, true)
+}
+
+// dialCommandMachineCaps is dialCommandMachine for a supervisor that may predate commands in a container (containers false).
+func (f *fixture) dialCommandMachineCaps(t *testing.T, open []protocol.CommandOpen, exits []protocol.CommandExit, containers bool) *websocket.Conn {
+	t.Helper()
 	header := http.Header{}
 	header.Set("X-Machine-ID", f.machineID)
 	header.Set("Authorization", "Bearer "+f.machineKey)
@@ -28,7 +34,7 @@ func (f *fixture) dialCommandMachine(t *testing.T, open []protocol.CommandOpen, 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	raw, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: f.machineID, JournalID: "journal-commands",
-		SupportsStopReplay: true, SupportsCommands: true, CommandOpen: open, CommandExits: exits})
+		SupportsStopReplay: true, SupportsCommands: true, SupportsContainerCommands: containers, CommandOpen: open, CommandExits: exits})
 	if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
 		t.Fatal(err)
 	}
@@ -427,5 +433,110 @@ func TestCancelOfAnUnconfirmedJobKeepsItsRealEnd(t *testing.T) {
 	}
 	if commandNotes(t, f, agent.ID) != 1 {
 		t.Fatal("the real end must wake the agent")
+	}
+}
+
+// A Docker agent whose launcher lacks run_command: the machine refuses the start, and run_command answers 409 command_refused with the
+// machine's message (what to update), the job failed and nobody woken. The run frame names the agent's tool and variant, so an agent
+// without a launcher record still runs through its Docker harness.
+func TestDockerCommandRefusedByTheMachineIs409(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	conn := f.dialCommandMachine(t, nil, nil)
+	answer, run := f.startCommandCall(t, conn, key, "docker-refused")
+	if run.Command.Tool == "" || run.Command.Variant == "" {
+		t.Fatalf("the run frame does not name the agent's harness: %+v", run.Command)
+	}
+	refusal := "a command outside a turn for an agent in Docker needs a Docker launcher with the run_command feature"
+	writeCommandFrame(t, conn, protocol.Frame{V: protocol.Version, Type: protocol.CommandStarted, ReqID: run.ReqID, JobID: run.JobID,
+		AgentID: run.AgentID, Generation: run.Generation, Result: "error", Message: refusal})
+	call := waitCommandCall(t, answer)
+	if call.status != 409 || !strings.Contains(string(call.body), `"command_refused"`) || !strings.Contains(string(call.body), "run_command feature") {
+		t.Fatalf("run_command %d %s", call.status, call.body)
+	}
+	if job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID); err != nil || job.State != "failed" || commandNotes(t, f, agent.ID) != 0 {
+		t.Fatalf("job %+v err=%v", job, err)
+	}
+}
+
+// How a Docker command's end is recorded: a launcher refusal (an old image) fails the job with its message and no exit code, and a kill
+// the launcher could not confirm is cancelled_unconfirmed even when the kill was the timeout.
+func TestDockerCommandEndsRefusedAndUnconfirmed(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		exit  func(*protocol.CommandExit)
+		state string
+		error string
+	}{
+		{"refused", func(e *protocol.CommandExit) { e.Refused = "the command never ran: rebuild the harness image" }, "failed", "rebuild the harness image"},
+		{"unconfirmed cancel", func(e *protocol.CommandExit) { e.Killed, e.Unconfirmed = true, true }, "cancelled_unconfirmed", ""},
+		{"unconfirmed timeout", func(e *protocol.CommandExit) { e.Killed, e.TimedOut, e.Unconfirmed = true, true, true }, "cancelled_unconfirmed", "timeout"},
+		{"confirmed cancel", func(e *protocol.CommandExit) { e.Killed = true }, "cancelled", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.seed()
+			agent, key := f.createToolAgent(t, "role_worker_default")
+			conn := f.dialCommandMachine(t, nil, nil)
+			answer, run := f.startCommandCall(t, conn, key, "docker-end")
+			writeCommandFrame(t, conn, commandStartedFrame(run))
+			if call := waitCommandCall(t, answer); call.status != 201 {
+				t.Fatalf("run_command %d %s", call.status, call.body)
+			}
+			frame := commandEndedFrame(run, run.Generation, 126)
+			tc.exit(frame.CommandExit)
+			writeCommandFrame(t, conn, frame)
+			waitCommandAck(t, conn, run.JobID)
+			job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID)
+			if err != nil || job.State != tc.state || !strings.Contains(job.Error, tc.error) {
+				t.Fatalf("job %+v err=%v", job, err)
+			}
+			if tc.name == "refused" && job.ExitCode != nil {
+				t.Fatalf("a refusal is not the command's exit code: %+v", job)
+			}
+			if commandNotes(t, f, agent.ID) != 1 {
+				t.Fatal("the agent was not woken")
+			}
+		})
+	}
+}
+
+// A docker-variant agent's command is never sent to a supervisor that does not run commands in a container: an older one would ignore the
+// variant and run it on the host. run_command answers 409 command_refused with the update to make; a current supervisor gets the frame.
+func TestDockerVariantCommandNeedsAContainerCapableSupervisor(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE agent SET variant='docker',launcher_id=NULL WHERE id=?`, agent.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	conn := f.dialCommandMachineCaps(t, nil, nil, false)
+	resp := f.toolPost(t, "/api/agent/commands", key, "docker-old-supervisor", map[string]any{"cmd": "make test", "room_id": f.room.ID})
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 409 || !strings.Contains(string(body), `"command_refused"`) || !strings.Contains(string(body), "supports_container_commands") {
+		t.Fatalf("run_command %d %s", resp.StatusCode, body)
+	}
+	if commandNotes(t, f, agent.ID) != 0 {
+		t.Fatal("a refused start woke the agent")
+	}
+	_ = conn.CloseNow()
+	// The same agent on a supervisor that runs commands in a container gets the run frame, naming its variant.
+	conn = f.dialCommandMachineCaps(t, nil, nil, true)
+	answer, run := f.startCommandCall(t, conn, key, "docker-new-supervisor")
+	if run.Command.Variant != "docker" {
+		t.Fatalf("run frame %+v", run.Command)
+	}
+	writeCommandFrame(t, conn, commandStartedFrame(run))
+	if call := waitCommandCall(t, answer); call.status != 201 {
+		t.Fatalf("run_command %d %s", call.status, call.body)
 	}
 }

@@ -184,6 +184,10 @@ type Frame struct {
 	SupportsAgentKeys bool `json:"supports_agent_keys,omitempty"`
 	// SupportsCommands says the supervisor runs long commands outside a turn for an agent (CommandRun) and reports their end (CommandEnded).
 	SupportsCommands bool `json:"supports_commands,omitempty"`
+	// SupportsContainerCommands says the supervisor runs an agent's command in its container (a containerized launcher, or a docker variant
+	// through its tool's Docker harness) and never on the host. An older one ignores CommandSpec.Tool and Variant and would run a
+	// docker-variant agent's command on the host, so the server sends it no command that belongs in a container.
+	SupportsContainerCommands bool `json:"supports_container_commands,omitempty"`
 	// CommandOpen and CommandExits, in hello, are the commands this supervisor still runs and the ends it has not been acknowledged for.
 	CommandOpen  []CommandOpen `json:"command_open,omitempty"`
 	CommandExits []CommandExit `json:"command_exits,omitempty"`
@@ -319,7 +323,11 @@ type CommandSpec struct {
 	AgentID    string `json:"agent_id"`
 	Generation int    `json:"generation"`
 	// LauncherID names the agent's launcher: a containerized one runs the command in the agent's container, never on the host.
-	LauncherID     string `json:"launcher_id,omitempty"`
+	LauncherID string `json:"launcher_id,omitempty"`
+	// Tool and Variant name the agent's harness for an agent without a launcher record: a "docker" variant runs the command through that
+	// tool's Docker harness, never on the host. An older server sends neither.
+	Tool           string `json:"tool,omitempty"`
+	Variant        string `json:"variant,omitempty"`
 	CheckoutPath   string `json:"checkout_path"`
 	Cmd            string `json:"cmd"`
 	Cwd            string `json:"cwd"`
@@ -336,10 +344,13 @@ type CommandExit struct {
 	// TimedOut says the supervisor killed the process at its timeout, Killed that it killed it on a cancel or a stop, and Unconfirmed that
 	// an end in a container could not be confirmed (the process may still be running there). Lost says a restart found neither the process
 	// nor an exit marker: its exit code is unknown.
-	TimedOut      bool   `json:"timed_out,omitempty"`
-	Killed        bool   `json:"killed,omitempty"`
-	Unconfirmed   bool   `json:"unconfirmed,omitempty"`
-	Lost          bool   `json:"lost,omitempty"`
+	TimedOut    bool `json:"timed_out,omitempty"`
+	Killed      bool `json:"killed,omitempty"`
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	Lost        bool `json:"lost,omitempty"`
+	// Refused says the command never ran, and why: a Docker launcher whose container runs an image from before command runs refuses it
+	// (exit 126, no exit marker). The job then fails with this message instead of reporting an exit code of the person's command.
+	Refused       string `json:"refused,omitempty"`
 	StartedAt     string `json:"started_at"`
 	EndedAt       string `json:"ended_at"`
 	LogBytes      int64  `json:"log_bytes"`

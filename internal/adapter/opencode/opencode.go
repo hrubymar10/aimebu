@@ -211,16 +211,28 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	// The prompt arrives on stdin, which must reach EOF: OpenCode appends piped
 	// stdin to the message and otherwise waits for it forever.
 	cmd.Stdin = bytes.NewReader(input)
+	var activity *adapter.DockerActivity
 	if docker {
 		env, forwarded := dockerEnv(filepath.Join(visibleRuntime, "config"), filepath.Join(visibleRuntime, "opencode.db"), string(configJSON), append(providerKeys[:len(providerKeys):len(providerKeys)], ownEnv...), spec.LauncherEnvRefs)
 		// An older launcher would run the harness without any of this: refuse it here, before the turn starts, not after a spawn that looked fine.
 		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := adapter.RequireDockerFeature(probe, "OpenCode", command, spec.LauncherArgs, spec.CheckoutPath, env, adapter.FeatureForwardEnv)
+		features, err := adapter.DockerFeatures(probe, command, spec.LauncherArgs, spec.CheckoutPath, env)
 		cancel()
+		if err == nil {
+			err = adapter.CheckDockerFeature(features, "OpenCode", command, adapter.FeatureForwardEnv)
+		}
 		if err != nil {
 			return nil, err
 		}
 		cmd.Env = adapter.LauncherEnv(env, launcherRefs(spec.LauncherEnvRefs, forwarded))
+		// OpenCode announces a tool only once it has finished: a launcher with turn_activity says, on request, which exec session is this
+		// turn's, and is asked about it from the idle check (ToolProcessSince).
+		if features[adapter.FeatureTurnActivity] {
+			activity = &adapter.DockerActivity{Command: command, Args: append([]string(nil), spec.LauncherArgs...), Dir: spec.CheckoutPath,
+				Env: adapter.DockerControlEnv(spec.LauncherEnvRefs)}
+			activity.Bind(ctx)
+			cmd.Env = append(cmd.Env, adapter.DockerReportExecIDEnv+"=1")
+		}
 	} else {
 		cmd.Env = adapter.LauncherEnv(childEnv(configHome, filepath.Join(runtimeDir, "opencode.db"), string(configJSON), append(providerKeys[:len(providerKeys):len(providerKeys)], ownEnv...)), spec.LauncherEnvRefs)
 	}
@@ -237,7 +249,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted,
-		docker: docker, cmd: cmd, events: make(chan adapter.Event, 64), done: make(chan struct{}), stderrCapture: spec.StderrSink}
+		docker: docker, activity: activity, cmd: cmd, events: make(chan adapter.Event, 64), done: make(chan struct{}), stderrCapture: spec.StderrSink}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -329,7 +341,7 @@ func launcherRefs(refs map[string]string, forwarded []string) map[string]string 
 	}
 	kept := make(map[string]string, len(refs))
 	for target, source := range refs {
-		if !dockerProtected[target] && !named[target] {
+		if !dockerProtected[target] && !named[target] && !adapter.DockerControlEnvName(target) {
 			kept[target] = source
 		}
 	}
@@ -454,16 +466,18 @@ type turn struct {
 	id, expectedSession string
 	started             bool
 	docker              bool
-	cmd                 *exec.Cmd
-	events              chan adapter.Event
-	done                chan struct{}
-	mu                  sync.Mutex
-	cancel              bool
-	cancelSignaled      bool
-	reap                adapter.Reaper // set as soon as the process has been waited for, before the exit is reported
-	exit                adapter.ExitInfo
-	err                 error
-	next                int
+	// activity answers ToolProcessSince for a Docker turn whose launcher has turn_activity; nil otherwise.
+	activity       *adapter.DockerActivity
+	cmd            *exec.Cmd
+	events         chan adapter.Event
+	done           chan struct{}
+	mu             sync.Mutex
+	cancel         bool
+	cancelSignaled bool
+	reap           adapter.Reaper // set as soon as the process has been waited for, before the exit is reported
+	exit           adapter.ExitInfo
+	err            error
+	next           int
 	// stderrCapture receives the harness's stderr as it is written (the per-agent output log); see adapter.TurnSpec.StderrSink.
 	stderrCapture io.Writer
 }
@@ -474,14 +488,22 @@ func (t *turn) LastOutput() time.Time { return time.Unix(0, t.lastOutput.Load())
 
 // ToolProcessSince says whether a tool call is running: OpenCode reports a tool part only once it has finished (its JSON output has no
 // event for the start), so a long silent command is visible only as a process under the harness that began after its last output. A Docker
-// turn runs its tools in a container, out of reach of the process table, and reports nothing.
+// turn runs its tools in a container, out of reach of the process table: its launcher is asked instead when it has turn_activity, and
+// otherwise it reports nothing.
 func (t *turn) ToolProcessSince(since time.Time) bool {
-	return !t.docker && t.cmd.Process != nil && !t.reap.Reaped() && adapter.ToolProcessSince(t.cmd.Process.Pid, since)
+	if t.cmd.Process == nil || t.reap.Reaped() {
+		return false
+	}
+	if t.docker {
+		return t.activity != nil && t.activity.Busy(since)
+	}
+	return adapter.ToolProcessSince(t.cmd.Process.Pid, since)
 }
 
 func (t *turn) Events() <-chan adapter.Event { return t.events }
 
 func (t *turn) Cancel() error {
+	t.activity.Stop() // a probe in flight answers nothing a cancelled turn needs
 	select {
 	case <-t.done:
 		return nil
@@ -584,13 +606,15 @@ func (u *usageTotals) add(e ocEvent) {
 func (t *turn) run(stdout, stderr io.Reader) {
 	defer close(t.events)
 	defer close(t.done)
+	defer t.activity.Stop()
 	var tail adapter.StderrTail
 	output := io.Writer(&tail)
 	if capture := adapter.JoinWriters(t.stderrCapture); capture != nil {
 		output = io.MultiWriter(&tail, capture)
 	}
 	stderrDone := make(chan struct{})
-	go func() { _, _ = io.Copy(output, stderr); close(stderrDone) }()
+	filtered := t.activity.Filter(output) // the launcher's exec ID line is the activity's, not the harness's output
+	go func() { _, _ = io.Copy(filtered, stderr); _ = filtered.Close(); close(stderrDone) }()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	var candidate []byte

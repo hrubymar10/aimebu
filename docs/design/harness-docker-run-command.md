@@ -1,7 +1,9 @@
 # harness-docker: running a command outside a turn (`run_command`)
 
 This is the contract aimebu works against (aimebu v2, `run_command` support,
-and the second feature below, `turn_activity`). It is written for the
+and the second feature below, `turn_activity`). harness-docker implements both
+(its `docs/lifecycle.md`); the differences agreed with it are folded in below
+and summed up in "As implemented" at the end. It is written for the
 harness-docker wrapper (the `claude-docker`, `codex-docker`,
 `pi-docker`, … launchers, and `harness-docker-ctrl`), which lives in its own
 repository. aimebu already calls a Docker launcher for every turn; this adds
@@ -47,7 +49,7 @@ these variables in its environment:
 
 | variable | meaning |
 |---|---|
-| `HARNESS_DOCKER_RUN_COMMAND` | the command to run, a single string for `sh -c`. Set only for this mode; when it is set the wrapper must **not** start the harness. |
+| `HARNESS_DOCKER_RUN_COMMAND` | the command to run, a single string for `sh -c`. Set only for this mode; when it is set the wrapper must **not** start the harness. An empty value is refused. |
 | `HARNESS_DOCKER_CWD` | a path **relative to the checkout**, the working directory of the command. Empty means the checkout itself. It may not leave the checkout (`..` is refused by aimebu before the call). The wrapper maps it through its path mapping and runs the command there. |
 | `HARNESS_DOCKER_EXIT_MARKER` | an absolute path, in the container's spelling of the checkout, of a file the **command itself** writes its exit code to before it exits (aimebu's command line does that; the wrapper needs only to make sure the path resolves inside the mounted checkout). |
 | `HARNESS_DOCKER_TIMEOUT_SECONDS` | advisory only: aimebu kills the wrapper at this wall-clock time and the wrapper may use it as a backstop. |
@@ -70,6 +72,13 @@ own Bash has in that container, and nothing more.
    passes the inner status through already, so the wrapper must not replace it
    with its own cleanup status. A command killed by a signal reports 128+N as
    usual.
+   A container still on an image from before command runs has a session
+   wrapper that would start the harness instead, so the launcher checks it
+   first and, when it lacks support, starts nothing and exits **126** with a
+   message asking for `bin/harness-docker-ctrl rebuild`. aimebu reads 126
+   **with no exit marker** as that refusal (the person's command never ran)
+   and fails the job with "rebuild the harness image", never as the command's
+   exit code (a command that itself exits 126 has written its marker).
 4. **The exit marker** is written by the command line aimebu passes (it ends
    with `printf %s "$rc" > "$1"; exit $rc`). The wrapper must leave that file
    alone and must not delete the checkout's `.aimebu/commands/` directory: it
@@ -83,16 +92,23 @@ leaves the command running there. The wrapper therefore traps SIGTERM the way
 it already does for a warm session:
 
 - on SIGTERM, end the command's process **in the container** (kill it and wait
-  for it), then exit `128+signal` — exactly 143 after SIGTERM;
-- a wrapper that cannot confirm the end exits any other status, and aimebu
-  records the job as `cancelled_unconfirmed` (its wake note says the process
-  may still be running), never as done;
+  for it), then exit `128+signal` — exactly 143 after SIGTERM, and **only once
+  the stop is confirmed**;
+- a wrapper that cannot confirm the end exits **125** (harness-docker leaves
+  its watchdog to end it later); aimebu confirms a kill only by 143 or by the
+  command's exit marker, and records anything else (125, its own SIGKILL
+  after the grace, a launcher killed before it trapped the signal) as
+  `cancelled_unconfirmed` (its wake note says the process may still be
+  running), never as done — also when the kill was the job's timeout;
 - if the wrapper dies without cleaning up, the session watchdog must end the
   orphaned process in the shared container as it does for a harness process
   (about fifteen seconds is fine).
 
-aimebu signals SIGTERM first and SIGKILL after 8 seconds; the SIGKILL lands on
-the host side only, which is why the TERM path has to do the real work.
+aimebu signals SIGTERM to the launcher alone first and SIGKILL to its process
+group after 8 seconds; the SIGKILL lands on the host side only, which is why
+the TERM path has to do the real work. A supervisor that adopts a running
+Docker command after a restart cannot read the launcher's exit status, so its
+kill of one is unconfirmed unless the exit marker turns up.
 
 ## What aimebu guarantees
 
@@ -161,15 +177,18 @@ turn_activity
 
 ### The exec token
 
-At turn start the wrapper prints one line to stderr, before any harness
-output:
+At turn start, **when `HARNESS_DOCKER_REPORT_EXEC_ID=1` is set**, the wrapper
+prints one line to stderr, before `docker exec` starts (without the variable
+nothing is printed):
 
 ```
-HARNESS_DOCKER_EXEC_ID=<token>
+HARNESS_DOCKER_EXEC_ID=<container id>:<session id>
 ```
 
-`<token>` is opaque to aimebu — for the wrapper it names one exec session
-(its container and the inner pid of its harness, say). It is unique among the
+aimebu sets the variable on the turns that use the probe (OpenCode and Vibe
+in Docker; Claude, Codex and Pi announce a tool's start themselves) when the
+launcher lists `turn_activity`, and takes the line out of the agent's output
+log. The token names one exec session; aimebu checks only its shape. It is unique among the
 turns that run at the same time and it stays resolvable until the turn ends.
 aimebu stores it for the turn and hands it back on the probe.
 
@@ -180,10 +199,16 @@ HARNESS_DOCKER_PROBE=<token> HARNESS_DOCKER_SINCE=<unix seconds> <launcher>
 ```
 
 - starts no harness and changes nothing; it answers in well under a second;
-- prints exactly `busy\n` or `idle\n` and exits 0;
-- a token it does not know (the turn ended, or the token belongs to another
-  wrapper) → a message on stderr, nothing on stdout, a non-zero exit. aimebu
-  keeps the old meaning of the idle deadline then; it never guesses.
+- prints exactly `busy\n`, `idle\n` or `starting\n` and exits 0. `starting`
+  means the session's `docker exec` is still pending (no pidfile yet, the
+  launcher's `docker exec` still running on the host): aimebu treats it like
+  `busy`;
+- a malformed (including empty) or unknown token (the turn ended, or the
+  token belongs to another wrapper), or a container that is not running → a
+  message on stderr, nothing on stdout, exit 1; a missing or non-numeric
+  `HARNESS_DOCKER_SINCE` (it must be 1–18 digits) → exit 2. aimebu keeps the
+  old meaning of the idle deadline then; it never guesses. It bounds a probe
+  at 5 seconds and passes no forwarded variable and no agent key.
 
 ### Semantics
 
@@ -246,12 +271,28 @@ either case.
 1. harness-docker gains the modes and prints their feature lines: `run_command`
    (this document's first half) and `turn_activity` (above). This document is
    the contract for both.
-2. aimebu already refuses a launcher without `run_command` with the message
-   above; the Docker execution path in aimebu (`command_run` for a
-   containerized launcher) lands next, behind the same feature check. The
-   aimebu side of `turn_activity` — using it in the `ToolProcessSince` hook
-   for Docker turns — is follow-up work on aimebu's side and is not part of
-   this contract.
+2. aimebu runs `command_run` for a containerized launcher (and for a
+   `docker`-variant agent's Docker harness) through the command mode when the
+   launcher lists `run_command`, and asks the probe from the `ToolProcessSince`
+   hook of OpenCode and Vibe Docker turns when it lists `turn_activity`. The
+   feature answer for commands is cached per launcher file (path and
+   arguments, device, inode, size, modification time) for at most 5 minutes;
+   a turn reads it with the `forward_env` check it already makes.
 
-Until step 1 ships, agents on a native launcher can use `run_command`, and
-agents in Docker get the refusal message naming what to update.
+A launcher without `run_command` still gets the refusal message naming what to
+update, and one without `turn_activity` is never probed.
+
+## As implemented (harness-docker 85ac096)
+
+- The exec ID line is opt-in (`HARNESS_DOCKER_REPORT_EXEC_ID=1`) and has the
+  shape `<container id>:<session id>`.
+- The probe also answers `starting`; failures exit 1, a bad
+  `HARNESS_DOCKER_SINCE` exits 2.
+- A stop exits 143 only once confirmed, 125 otherwise.
+- An image from before command runs makes `run_command` exit 126 with a
+  rebuild message, before anything runs.
+- An empty `HARNESS_DOCKER_RUN_COMMAND` or `HARNESS_DOCKER_PROBE` is refused.
+- `HARNESS_DOCKER_CWD` must be relative, without `..`, and an existing
+  directory; `HARNESS_DOCKER_EXIT_MARKER` must be absolute and inside the
+  current directory (the launcher compares it with the host path, which is the
+  container's too, since harness-docker mounts folders at the same path).

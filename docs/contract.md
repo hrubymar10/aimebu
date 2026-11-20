@@ -1176,7 +1176,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_warm?, held_keys?[agent_id],
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}], command_open?[{job_id, agent_id, generation, pid, pid_start?,
@@ -1375,8 +1375,8 @@ it never silently reruns a turn with uncertain effects.
   bytes in the machine's `supervisor/agent-logs` and how many agents have
   output there; `code` is `no_log` when the machine keeps none. Only the size
   crosses the wire.
-- S→M `command_run{v,req_id,job_id,agent_id,generation,launcher_id?,
-  checkout_path,cmd,cwd,timeout_seconds,log_path}`; M→S
+- S→M `command_run{v,req_id,job_id,agent_id,generation,launcher_id?,tool?,
+  variant?,checkout_path,cmd,cwd,timeout_seconds,log_path}`; M→S
   `command_started{v,req_id,job_id,agent_id,generation,result[ok|error],
   message?,log_path?,visible_log_path?,visible_cwd?}`. One long command
   outside a turn, started by the agent's own toolbox (`run_command`); the
@@ -1385,19 +1385,33 @@ it never silently reruns a turn with uncertain effects.
   is relative to it and may not leave it), captures stdout and stderr into the
   job's log (redacted, capped, in `<checkout>/.aimebu/commands/`), and records
   `command_start` before anything else may claim it. The wrapper writes its
-  exit code beside the log before it exits. A containerized launcher needs the
-  `run_command` feature (`HARNESS_DOCKER_PRINT_FEATURES=1`); one without it is
-  refused with the update to make (harness-docker), and never falls back to
-  the host. The command gets none of the agent's keys.
+  exit code beside the log before it exits. A containerized launcher (or,
+  without `launcher_id`, a `docker` `variant`: that `tool`'s Docker harness)
+  runs it in the agent's container through harness-docker's command mode and
+  needs the `run_command` feature (`HARNESS_DOCKER_PRINT_FEATURES=1`); one
+  without it is refused with the update to make (harness-docker), and never
+  falls back to the host, nor does an unknown `launcher_id`. A command that
+  belongs in a container (a `docker` `variant`, or a `launcher_id` the hello
+  reports containerized or does not report) is sent only when the hello also
+  advertised `supports_container_commands`: an older supervisor ignores
+  `tool`/`variant` and would run it on the host, so the server refuses it
+  instead (`409 command_refused`, naming the update). A Docker start may be
+  answered after later frames. The command gets none of the agent's keys.
 - M→S `command_ended{v, job_id, agent_id, generation, command_exit:{exit_code?,
-  timed_out?, killed?, unconfirmed?, lost?, started_at, ended_at, log_bytes,
-  tail_truncated?, tail?}}`; S→M `ack{v, job_id, level=command_exit}` after the
+  timed_out?, killed?, unconfirmed?, lost?, refused?, started_at, ended_at,
+  log_bytes, tail_truncated?, tail?}}`; S→M `ack{v, job_id, level=command_exit}` after the
   end commits. The end is replayed until it is acknowledged, like a turn's
   process exit. `tail` is the last lines of the job's output, redacted before
-  it is sent; it is what the wake note shows.
+  it is sent; it is what the wake note shows. `unconfirmed` (a kill in a
+  container the launcher did not confirm) makes the job
+  `cancelled_unconfirmed`, whatever the reason for the kill; `refused` (the
+  Docker launcher refused the command before it ran: an image from before
+  command runs) makes it `failed` with that message and no exit code.
 - S→M `command_cancel{v,req_id,job_id}`; M→S `command_cancel_result{v,req_id,
   job_id,result[ok|error],message?}` — SIGTERM to the process group, SIGKILL
-  after a grace; the end still arrives as `command_ended`.
+  after a grace; for a command in a container the SIGTERM goes to the Docker
+  launcher alone (it ends the command in the container), and the group gets
+  the SIGKILL after the grace. The end still arrives as `command_ended`.
 - S→M `command_log_read{v,req_id,log_path,log_max_bytes?}`; M→S
   `command_log_result{v,req_id,log_path,log?,log_truncated?,result,
   message?}` — a bounded tail of one job's log (default 64 KiB, never more

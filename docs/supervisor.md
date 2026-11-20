@@ -822,10 +822,25 @@ process's age) is a tool call in flight, and suspends the idle deadline like an
 announced tool. A helper the harness started earlier, such as a person's own MCP
 server, began before the last output and does not count. When the process ends the
 harness gets one fresh idle period. The process table is read with `ps`, on Linux
-and macOS. A **Docker turn reports nothing this way**: its tools run in a container
-that is shared by every agent, out of reach of the harness's process tree on the
-host, so there a long silent command still waits for `AIMEBU_TURN_IDLE` (and
-`AIMEBU_TURN_MAX` bounds a hung tool in every case).
+and macOS. A **Docker turn** runs its tools in a container that is shared by every
+agent, out of reach of the harness's process tree on the host, so there the
+launcher is asked instead, when it has harness-docker's `turn_activity` feature
+(its `HARNESS_DOCKER_PRINT_FEATURES=1` answer, read once per turn with the
+`forward_env` check): the turn's launcher is started with
+`HARNESS_DOCKER_REPORT_EXEC_ID=1`, prints `HARNESS_DOCKER_EXEC_ID=<container>:<session>`
+on stderr before the harness starts (the adapter takes that line out of the
+agent's output log), and at the same moments as above (when the idle deadline
+falls due, then every 30 seconds, or every idle limit if that is shorter, while
+the answer is busy) the supervisor runs
+`HARNESS_DOCKER_PROBE=<id> HARNESS_DOCKER_SINCE=<last output, unix seconds> <launcher>`
+(5-second limit, under the turn's context so a cancelled or ended turn
+interrupts it, no forwarded variable, no agent key). `busy`, and `starting`
+(the session's `docker exec` is still pending), suspend the idle deadline;
+`idle`, and any failure (no exec ID yet, an unknown or ended session, a timeout),
+do not, so the deadline keeps its old meaning rather than a guess. A Docker
+launcher without `turn_activity` is not asked, and there a long silent command
+still waits for `AIMEBU_TURN_IDLE` (`AIMEBU_TURN_MAX` bounds a hung tool in
+every case). Claude, Codex and Pi announce a tool's start, so they need neither.
 `AIMEBU_TURN_MAX` is a
 wall-clock cap for the whole turn, tools included. The defaults are the same
 for every harness: 30 minutes idle and a 90-minute cap. Setting either
@@ -891,12 +906,45 @@ agent's keys is in its environment. It is not a turn: no turn row, no usage,
 and the turn limits do not apply to it.
 
 - **Where it runs.** On the machine, for an agent on a native launcher. A
-  containerized launcher runs commands in the agent's container through a
-  `run_command` feature of harness-docker (`HARNESS_DOCKER_PRINT_FEATURES=1
-  <launcher> --version` must print `run_command`); one without it is refused
-  with the update to make, and never falls back to running the command on the
-  host (the container is shared and its paths differ). The contract for that
-  mode is `docs/design/harness-docker-run-command.md`.
+  containerized launcher (or an agent on the `docker` variant without a
+  launcher record, through that tool's Docker harness) runs commands in the
+  agent's container through harness-docker's command mode: the feature probe
+  (`HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version`) must print
+  `run_command`; its answer is cached per launcher file (path and arguments,
+  device, inode, size and modification time) for at most 5 minutes, and a
+  failed probe falls back to the features the launcher row reported. A
+  launcher without it is refused with the update to make (409
+  `command_refused`), and a command never falls back to the host (the
+  container is shared and its paths differ); neither does one whose launcher
+  record is not on the machine or whose Docker harness is unavailable. The
+  hello reports `supports_container_commands`, and the server sends no
+  container command to a supervisor that does not (an older one would run a
+  `docker`-variant agent's command on the host). The
+  launcher is run from the checkout with `HARNESS_DOCKER_RUN_COMMAND` (the
+  same wrapper line as natively, quoted into one `sh -c` string, so the
+  command writes its exit marker), `HARNESS_DOCKER_CWD` (relative to the
+  checkout, empty for the checkout itself), `HARNESS_DOCKER_EXIT_MARKER` (the
+  container's spelling of `<log>.exit`) and `HARNESS_DOCKER_TIMEOUT_SECONDS`;
+  its environment is the launcher's base one and the owner's references,
+  never a forwarded variable, the agent key, or a mode switch from a
+  reference. Its output streams into the job log as for a native command; the
+  launcher's exit is the command's end, and a host-side process it left behind
+  holding that output (a `docker exec` client that outlived it) is cut off from
+  the log after 5 seconds rather than holding the end. A Docker start is
+  answered aside from the frame loop, since the probe may take seconds. **Ends:** a cancel, stop or timeout sends the launcher alone a TERM
+  (the whole group gets SIGKILL after 8 seconds); the kill is confirmed only
+  by exit 143 or the command's exit marker, and anything else (125, the
+  SIGKILL, a launcher killed before it could trap the signal) is
+  `cancelled_unconfirmed`, which outranks `timed_out`. An adopted Docker
+  command (the journal records `container`) has no exit status to read, so
+  its kill is unconfirmed without the marker. Exit 126 with no marker is the
+  launcher refusing the command because its container runs an image from
+  before command runs: the job ends `failed` with "rebuild the harness image"
+  (`bin/harness-docker-ctrl rebuild`), not with an exit code of the command.
+  A start whose journal record cannot be written is ended the same way (the
+  launcher's TERM first, the group's SIGKILL only after the grace) before it
+  is reported failed.
+  The contract is `docs/design/harness-docker-run-command.md`.
 - **Output.** The process's stdout and stderr are captured into the job's log
   at `<checkout>/.aimebu/commands/<job>.log` — beside the checkout's runtime
   state, so the path the wake note quotes is one the agent can open from its

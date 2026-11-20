@@ -86,33 +86,6 @@ func TestCommandRunsOutsideATurnAndReportsItsEnd(t *testing.T) {
 	}
 }
 
-// A command is refused with what to update when the agent runs in Docker and its launcher cannot run one in the container: most agents run
-// in Docker, so the message has to say exactly that.
-func TestCommandRefusesDockerLauncherWithoutTheFeature(t *testing.T) {
-	c, _, _ := commandTestClient(t)
-	c.Launchers = []protocol.LauncherRow{{LauncherDefinition: protocol.LauncherDefinition{ID: "ln_docker", Tool: "claude",
-		Name: "harness-docker", Containerized: true}, Available: true}}
-	checkout := t.TempDir()
-	result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_docker", AgentID: "agt_one", Generation: 1,
-		LauncherID: "ln_docker", CheckoutPath: checkout, Cmd: "true", TimeoutSeconds: 60})
-	if result.Result != "error" {
-		t.Fatalf("a Docker launcher without the feature must be refused: %+v", result)
-	}
-	if result.Message != ErrCommandDockerUnsupported.Error() {
-		t.Fatalf("wrong refusal: %q", result.Message)
-	}
-	if !strings.Contains(result.Message, "update harness-docker") || !strings.Contains(result.Message, "run_command") {
-		t.Fatalf("the refusal does not say what to update: %q", result.Message)
-	}
-	// The same launcher with the feature is not silently run on the host: this build has no container path yet.
-	c.Launchers[0].Features = []string{commandRunFeature}
-	result = c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_docker2", AgentID: "agt_one", Generation: 1,
-		LauncherID: "ln_docker", CheckoutPath: checkout, Cmd: "true", TimeoutSeconds: 60})
-	if result.Result != "error" || result.Message != ErrCommandContainerUnsupported.Error() {
-		t.Fatalf("a container command must not fall back to the host: %+v", result)
-	}
-}
-
 // A command that never ends is killed at its timeout, and says so.
 func TestCommandTimeoutKillsTheProcess(t *testing.T) {
 	c, _, _ := commandTestClient(t)

@@ -21,6 +21,11 @@ import (
 // errCommandUnsupported is a machine whose supervisor predates commands outside a turn.
 var errCommandUnsupported = errors.New("commands outside a turn need an updated supervisor on that machine (it does not report supports_commands)")
 
+// errContainerCommandUnsupported is a machine whose supervisor runs commands, but not in an agent's container: it would run a docker-variant
+// agent's command on the host, so the command is refused instead.
+var errContainerCommandUnsupported = errors.New("this agent runs in Docker, and the supervisor on its machine cannot run a command in its " +
+	"container (it does not report supports_container_commands): update aimebu on that machine, then retry")
+
 // commandTimeLayout matches the store's timestamps.
 const commandTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
@@ -99,7 +104,7 @@ func (s *Server) agentToolCommandRun(w http.ResponseWriter, r *http.Request) {
 	result, err := s.machineCommand(r.Context(), agent.MachineID, protocol.Frame{V: protocol.Version,
 		Type: protocol.CommandRun, ReqID: created.ID, JobID: created.ID, AgentID: caller.ID, Generation: agent.Generation,
 		Command: &protocol.CommandSpec{JobID: created.ID, AgentID: caller.ID, Generation: agent.Generation,
-			LauncherID: agent.LauncherID, CheckoutPath: checkout, Cmd: created.Cmd, Cwd: created.Cwd,
+			LauncherID: agent.LauncherID, Tool: agent.Tool, Variant: agent.Variant, CheckoutPath: checkout, Cmd: created.Cmd, Cwd: created.Cwd,
 			TimeoutSeconds: created.TimeoutSeconds, LogPath: created.LogPath}}, 30*time.Second)
 	// The request was sent, but no answer came (a timeout, a disconnect, the caller gone): that does not prove the machine refused it, so the
 	// job stays queued. Its late start, its end, or the machine's next hello settles it, and its end still wakes the agent.
@@ -321,23 +326,51 @@ func (s *Server) handleCommandEnd(ctx context.Context, conn *machineConn, frame 
 	} else if err != nil {
 		return err
 	}
-	state := "done"
+	state, message := "done", ""
 	switch {
+	case exit.Refused != "":
+		// The launcher refused the command before it ran (an image from before command runs): not an exit of the person's command.
+		state, message = "failed", exit.Refused
+		exit.ExitCode = nil
 	case exit.Lost:
 		state = "lost"
+	case exit.Unconfirmed:
+		// A kill whose end in the container is not confirmed may have left the process running: that outranks why it was killed.
+		state = "cancelled_unconfirmed"
+		if exit.TimedOut {
+			message = "it reached its timeout; the kill could not be confirmed"
+		}
 	case exit.TimedOut:
 		state = "timed_out"
-	case exit.Killed && exit.Unconfirmed:
-		state = "cancelled_unconfirmed"
 	case exit.Killed:
 		state = "cancelled"
 	}
-	if _, err := s.Store.FinishCommand(ctx, exit.JobID, store.CommandResult{State: state, ExitCode: exit.ExitCode,
+	if _, err := s.Store.FinishCommand(ctx, exit.JobID, store.CommandResult{State: state, ExitCode: exit.ExitCode, Error: message,
 		StartedAt: exit.StartedAt, EndedAt: exit.EndedAt, Reported: true, LogBytes: exit.LogBytes, TailTruncated: exit.TailTruncated, Tail: exit.Tail}); err != nil &&
 		!errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	return conn.send(protocol.Frame{V: protocol.Version, Type: protocol.Ack, JobID: exit.JobID, Level: "command_exit"})
+}
+
+// commandInContainer says whether a command belongs in the agent's container: a docker variant, or a launcher the machine reports as
+// containerized or does not report at all.
+func (c *machineConn) commandInContainer(spec protocol.CommandSpec) bool {
+	if spec.Variant == "docker" {
+		return true
+	}
+	if spec.LauncherID == "" {
+		return false
+	}
+	c.harnessMu.Lock()
+	defer c.harnessMu.Unlock()
+	for _, row := range c.launchers {
+		if row.ID == spec.LauncherID {
+			return row.Containerized
+		}
+	}
+	// A launcher the machine does not report: an older supervisor would run the command on the host, a current one refuses it.
+	return true
 }
 
 // machineCommand asks the agent's machine one question and waits for its answer, like the worktree and agent-log requests do.
@@ -348,6 +381,9 @@ func (s *Server) machineCommand(ctx context.Context, machineID string, frame pro
 	}
 	if !conn.supportsCommands {
 		return protocol.Frame{}, errCommandUnsupported
+	}
+	if frame.Type == protocol.CommandRun && frame.Command != nil && !conn.supportsContainerCommands && conn.commandInContainer(*frame.Command) {
+		return protocol.Frame{}, errContainerCommandUnsupported
 	}
 	if frame.ReqID == "" {
 		frame.ReqID = newRequestNonce()

@@ -304,7 +304,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -759,8 +759,22 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			if frame.Command == nil {
 				return errors.New("missing command")
 			}
-			result := c.commandStart(ctx, *frame.Command)
-			result.ReqID = frame.ReqID
+			spec, reqID := *frame.Command, frame.ReqID
+			if c.commandInContainer(spec) {
+				// A Docker launcher is asked for its features first, which may take seconds: answered aside, so the frame loop goes on.
+				// The server takes the answer whenever it comes (applyCommandStarted).
+				go func() {
+					defer telemetry.Recover(ctx)
+					result := c.commandStart(context.WithoutCancel(ctx), spec)
+					result.ReqID = reqID
+					if err := c.send(ctx, conn, result); err != nil {
+						c.report("a command's start could not be answered", fmt.Errorf("job %s: %w", spec.JobID, err))
+					}
+				}()
+				break
+			}
+			result := c.commandStart(ctx, spec)
+			result.ReqID = reqID
 			if err := c.send(ctx, conn, result); err != nil {
 				return err
 			}

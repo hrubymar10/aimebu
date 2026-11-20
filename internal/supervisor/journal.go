@@ -142,6 +142,16 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		db.Close()
 		return nil, err
 	}
+	// A command run through a Docker launcher: a restarted supervisor that kills it cannot read the launcher's exit status, so it must
+	// not take that kill as confirmed.
+	if err := ensureColumn(ctx, db, "command_start", "container", `ALTER TABLE command_start ADD COLUMN container INTEGER NOT NULL DEFAULT 0`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureColumn(ctx, db, "command_exit", "refused", `ALTER TABLE command_exit ADD COLUMN refused TEXT NOT NULL DEFAULT ''`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	random := make([]byte, 16)
 	if _, err := rand.Read(random); err != nil {
 		db.Close()
@@ -601,6 +611,8 @@ type CommandStartRecord struct {
 	// TimeoutSeconds is the job's own timeout, so a supervisor that adopts it after a restart still enforces it (0 in a record written
 	// before it was kept).
 	TimeoutSeconds int
+	// Container says the process is a Docker launcher running the command in the agent's container.
+	Container bool
 }
 
 func (j *Journal) RecordCommandStart(ctx context.Context, record CommandStartRecord) (already bool, err error) {
@@ -608,9 +620,9 @@ func (j *Journal) RecordCommandStart(ctx context.Context, record CommandStartRec
 		record.StartedAt = timestamp()
 	}
 	result, err := j.db.ExecContext(ctx, `INSERT OR IGNORE INTO command_start
-		(job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at,timeout_seconds) VALUES (?,?,?,?,?,?,?,?,?)`,
+		(job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at,timeout_seconds,container) VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		record.JobID, record.AgentID, record.Generation, record.Pid, record.PidStart, record.Cmd, record.LogPath, record.StartedAt,
-		record.TimeoutSeconds)
+		record.TimeoutSeconds, record.Container)
 	if err != nil {
 		return false, err
 	}
@@ -624,16 +636,16 @@ func (j *Journal) RecordCommandStart(ctx context.Context, record CommandStartRec
 // CommandStart reads the start record of one job (for a restart that must decide what became of it).
 func (j *Journal) CommandStart(ctx context.Context, jobID string) (CommandStartRecord, error) {
 	var record CommandStartRecord
-	err := j.db.QueryRowContext(ctx, `SELECT job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at,timeout_seconds
+	err := j.db.QueryRowContext(ctx, `SELECT job_id,agent_id,generation,pid,pid_start,cmd,log_path,started_at,timeout_seconds,container
 		FROM command_start WHERE job_id=?`, jobID).Scan(&record.JobID, &record.AgentID, &record.Generation,
-		&record.Pid, &record.PidStart, &record.Cmd, &record.LogPath, &record.StartedAt, &record.TimeoutSeconds)
+		&record.Pid, &record.PidStart, &record.Cmd, &record.LogPath, &record.StartedAt, &record.TimeoutSeconds, &record.Container)
 	return record, err
 }
 
 // OpenCommandStarts are the start records of the jobs this journal has not seen end: what a restarted supervisor adopts.
 func (j *Journal) OpenCommandStarts(ctx context.Context) ([]CommandStartRecord, error) {
-	rows, err := j.db.QueryContext(ctx, `SELECT s.job_id,s.agent_id,s.generation,s.pid,s.pid_start,s.cmd,s.log_path,s.started_at,s.timeout_seconds
-		FROM command_start s LEFT JOIN command_exit e ON e.job_id=s.job_id WHERE e.job_id IS NULL ORDER BY s.started_at,s.job_id`)
+	rows, err := j.db.QueryContext(ctx, `SELECT s.job_id,s.agent_id,s.generation,s.pid,s.pid_start,s.cmd,s.log_path,s.started_at,s.timeout_seconds,
+		s.container FROM command_start s LEFT JOIN command_exit e ON e.job_id=s.job_id WHERE e.job_id IS NULL ORDER BY s.started_at,s.job_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -642,7 +654,7 @@ func (j *Journal) OpenCommandStarts(ctx context.Context) ([]CommandStartRecord, 
 	for rows.Next() {
 		var record CommandStartRecord
 		if err := rows.Scan(&record.JobID, &record.AgentID, &record.Generation, &record.Pid, &record.PidStart, &record.Cmd,
-			&record.LogPath, &record.StartedAt, &record.TimeoutSeconds); err != nil {
+			&record.LogPath, &record.StartedAt, &record.TimeoutSeconds, &record.Container); err != nil {
 			return nil, err
 		}
 		records = append(records, record)
@@ -666,9 +678,9 @@ func (j *Journal) RecordCommandExit(ctx context.Context, exit protocol.CommandEx
 		exit.EndedAt = timestamp()
 	}
 	result, err := j.db.ExecContext(ctx, `INSERT OR REPLACE INTO command_exit
-		(job_id,exit_code,timed_out,killed,unconfirmed,lost,started_at,ended_at,log_bytes,tail_truncated,tail,exit_acked)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,0)`, exit.JobID, nullableInt(exit.ExitCode), exit.TimedOut, exit.Killed,
-		exit.Unconfirmed, exit.Lost, exit.StartedAt, exit.EndedAt, exit.LogBytes, exit.TailTruncated, exit.Tail)
+		(job_id,exit_code,timed_out,killed,unconfirmed,lost,started_at,ended_at,log_bytes,tail_truncated,tail,refused,exit_acked)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)`, exit.JobID, nullableInt(exit.ExitCode), exit.TimedOut, exit.Killed,
+		exit.Unconfirmed, exit.Lost, exit.StartedAt, exit.EndedAt, exit.LogBytes, exit.TailTruncated, exit.Tail, exit.Refused)
 	if err != nil {
 		return err
 	}
@@ -713,7 +725,7 @@ func (j *Journal) OpenCommands(ctx context.Context) ([]protocol.CommandOpen, err
 // PendingCommandExits are the ends the server has not acknowledged yet; they are replayed with every connection.
 func (j *Journal) PendingCommandExits(ctx context.Context) ([]protocol.CommandExit, error) {
 	rows, err := j.db.QueryContext(ctx, `SELECT e.job_id,s.agent_id,s.generation,e.exit_code,e.timed_out,e.killed,e.unconfirmed,e.lost,
-		e.started_at,e.ended_at,e.log_bytes,e.tail_truncated,e.tail FROM command_exit e JOIN command_start s ON s.job_id=e.job_id
+		e.started_at,e.ended_at,e.log_bytes,e.tail_truncated,e.tail,e.refused FROM command_exit e JOIN command_start s ON s.job_id=e.job_id
 		WHERE e.exit_acked=0 ORDER BY e.ended_at,e.job_id`)
 	if err != nil {
 		return nil, err
@@ -724,7 +736,7 @@ func (j *Journal) PendingCommandExits(ctx context.Context) ([]protocol.CommandEx
 		var exit protocol.CommandExit
 		var exitCode sql.NullInt64
 		if err := rows.Scan(&exit.JobID, &exit.AgentID, &exit.Generation, &exitCode, &exit.TimedOut, &exit.Killed,
-			&exit.Unconfirmed, &exit.Lost, &exit.StartedAt, &exit.EndedAt, &exit.LogBytes, &exit.TailTruncated, &exit.Tail); err != nil {
+			&exit.Unconfirmed, &exit.Lost, &exit.StartedAt, &exit.EndedAt, &exit.LogBytes, &exit.TailTruncated, &exit.Tail, &exit.Refused); err != nil {
 			return nil, err
 		}
 		if exitCode.Valid {
