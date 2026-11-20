@@ -118,6 +118,27 @@ async function main() {
       await page.waitForSelector('.usages-popover-alt .usages-b .usages-b-tile');
       await page.close();
     }
+    // Strictly read-only: a reauth_required profile gets no Install anyway in the panel; with every provider off the panel offers Open Settings.
+    {
+      const page = await mount(true);
+      await page.evaluate(() => {
+        const list = window.__popover.source.list.bind(window.__popover.source);
+        window.__popover.source.list = async () => ({ ...(await list()), credential_alerts: [{ kind: 'reauth_required', tool: 'codex', profile: 'backup', role: 'store', message: 'Sign in again' }] });
+        window.__opened = 0; window.__popover.openSettings = () => { window.__opened++; };
+      });
+      await page.$eval('#usages-toggle', node => node.click());
+      await page.waitForSelector('.usages-popover-alt .usages-b-profile[data-profile=backup]');
+      assert.equal(await page.evaluate(() => document.querySelectorAll('.usages-popover-alt .usages-b-install-anyway').length), 0, 'no Install anyway in the panel');
+      await page.evaluate(async () => {
+        const list = window.__popover.source.list.bind(window.__popover.source);
+        window.__popover.source.list = async () => { const out = await list(); out.providers.forEach(provider => { provider.enabled = false; }); return out; };
+        await window.__popover.load();
+      });
+      await page.waitForSelector('.usages-popover-alt .usages-popover-settings');
+      await page.$eval('.usages-popover-alt .usages-popover-settings', node => node.click());
+      assert.deepEqual(await page.evaluate(() => [window.__opened, document.querySelector('#usages-popover').hidden]), [1, true], 'Open Settings closes the panel and opens Usages');
+      await page.close();
+    }
     assert.deepEqual(errors, [], 'no page errors');
     console.log('usages popover page: ok');
   } finally { await browser.close(); server.close(); }

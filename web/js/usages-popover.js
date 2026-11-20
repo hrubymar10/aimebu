@@ -9,8 +9,8 @@ import { UsagesView, usagesGroup, toggleUsagesGroup } from './pages/usages/usage
 // It draws the Usages page's own view (read-only) from a store of the panel's own.
 
 // What a failed action says goes above the view, as on the Usages page.
-function PanelView({ store }) {
-  return html`<p class="error usages-popover-error" role="alert">${store.error.value}</p><${UsagesView} store=${store} readOnly />`;
+function PanelView({ store, openSettings }) {
+  return html`<p class="error usages-popover-error" role="alert">${store.error.value}</p><${UsagesView} store=${store} readOnly openSettings=${openSettings} />`;
 }
 
 export class UsagesPopover {
@@ -73,7 +73,7 @@ export class UsagesPopover {
       await this.store.load();
       if (ticket !== this.ticket) return;
       this.store.setError(''); this.body.querySelector('.usages-popover-note')?.remove();
-      render(html`<${PanelView} store=${this.store} />`, this.body);
+      render(html`<${PanelView} store=${this.store} openSettings=${() => { this.close(); this.openSettings(); }} />`, this.body);
     } catch (error) {
       if (ticket === this.ticket) { render(null, this.body); this.body.replaceChildren(element('p', 'usages-popover-note', error.status === 403 ? 'Usage details are limited to the instance owner.' : error.message || 'Could not load usage snapshots')); }
     }

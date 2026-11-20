@@ -291,8 +291,8 @@ The panel and Settings → Server → Accounts & usage draw the same view (v1's 
 bar with the expected-pace tick, a hairline of the last 48 hours, the numbers, the pace words and the daily target, the credits under the account),
 from a store of the panel's own. In Settings the owner also gets a gear on each tile (Enable, order, Add profile, Import, the credential setup forms),
 rename and delete on an account, and Install anyway for an account that needs re-authentication. The panel is view-only as v1's was: none of those, only
-Switch on an inactive profile, the header's refresh and group-by buttons, and a failed action's message above the view. A switcher that cannot be read
-counts as none and the figures still show. A push is held while a field has focus, so a setup form being typed is not redrawn.
+Switch on an inactive profile (no Install anyway either), the header's refresh and group-by buttons, and a failed action's message above the view. A switcher that cannot be read
+counts as none and the figures still show. With every provider off the panel offers an Open Settings → Usages button. A push is held while a field has focus, so a setup form being typed is not redrawn.
 
 The top-bar usages column (the owner and global admins; Refresh and Switch are the owner's) follows the same push while it is
 open, and its Refresh button calls the same forced refresh as Settings → Server → Accounts & usage

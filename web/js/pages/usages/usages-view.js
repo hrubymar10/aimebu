@@ -71,7 +71,7 @@ function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, 
       <span class="switcher-tile-name" title=${badge?.title || profile.email || ''}>${name}</span>
       ${badge && html`<span class=${badge.className} title=${badge.title} data-level=${badge.dataset.level} dangerouslySetInnerHTML=${{ __html: badge.innerHTML }}></span>`}
       ${!view.hidden && html`<${IconButton} name="switch" label=${view.title || `Switch to ${name}`} className="usages-b-switch" disabled=${view.disabled} onClick=${use} />`}
-      ${reauth && profile.has_credentials && !view.hidden && html`<${IconButton} name="key-off" label="Install anyway: use the stored credentials without refreshing them" className="usages-b-install-anyway" disabled=${view.disabled} onClick=${installAnyway} />`}
+      ${reauth && !readOnly && profile.has_credentials && !view.hidden && html`<${IconButton} name="key-off" label="Install anyway: use the stored credentials without refreshing them" className="usages-b-install-anyway" disabled=${view.disabled} onClick=${installAnyway} />`}
       ${managed && html`<${IconButton} name="edit" label=${`Rename ${name}`} className="usages-b-rename" onClick=${rename} />`}
       ${managed && html`<${IconButton} name="trash" label=${`Delete ${name}`} danger className="usages-b-remove" onClick=${remove} />`}
       ${profile.active ? html`<span class="switcher-tile-active">Active</span>` : html`<span class="usages-b-inactive">Inactive</span>`}
@@ -141,7 +141,7 @@ function Tile({ store, provider, profiles, order, providers, state, usedDisplay,
 
 // readOnly is the side panel's view: v1's panel only showed, so every control that changes a provider or an account is left out and Switch (and the panel
 // header's own refresh and group buttons) remain; Settings → Usages draws the same view with its management controls.
-export function UsagesView({ store, readOnly = false }) {
+export function UsagesView({ store, readOnly = false, openSettings }) {
   const usage = store.usage.value, state = store.switcher.value, revision = store.revision.value;
   const groupBy = usagesGroup.value;
   const [tokens, setTokens] = useState([]);
@@ -162,7 +162,7 @@ export function UsagesView({ store, readOnly = false }) {
   const part = (keep, off) => groups.map(group => ({ ...group, profiles: group.profiles.filter(keep) })).filter(group => group.profiles.length || (off && !group.provider.enabled));
   const primary = groupBy === 'active' ? part(profile => profile.active, false) : groups;
   const secondary = groupBy === 'active' ? part(profile => !profile.active, true) : [];
-  // The page draws the owner's alerts in its own switcher block; the side panel has no such block, so the view draws them there.
+  // The Settings page already draws the owner's credential alerts in its switcher block, so only the read-only panel (which has no such block) draws them here.
   const alerts = readOnly ? mergeAlerts(usage?.credential_alerts) : [];
   const tile = group => html`<${Tile} key=${group.provider.provider_name} store=${store} provider=${group.provider} profiles=${sorted(group.profiles)} order=${group.order} providers=${providers} state=${shown_}
     usedDisplay=${usedDisplay} refreshSec=${refreshSec} tokens=${tokens} revision=${revision} readOnly=${readOnly} alerts=${usage?.credential_alerts || []} />`;
@@ -172,6 +172,7 @@ export function UsagesView({ store, readOnly = false }) {
     <div class="usages-b-grid">${primary.map(tile)}</div>
     ${secondary.length > 0 && html`<div class="usages-group-divider" role="separator" aria-label="Other profiles"></div><div class="usages-b-grid">${secondary.map(tile)}</div>`}
     ${!providers.length && html`<p class="usage-empty">No usage providers are available yet.</p>`}
+    ${readOnly && providers.length > 0 && !providers.some(provider => provider.enabled) && html`<div class="usages-empty"><div>No usage providers enabled.</div>${openSettings && html`<button type="button" class="btn usages-popover-settings" onClick=${openSettings}>Open Settings → Usages</button>`}</div>`}
     ${providers.length > 0 && html`<p class="settings-desc usages-legend">${USAGE_LEGEND}</p>`}
   </div>`;
 }

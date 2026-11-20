@@ -805,7 +805,7 @@ one first with an ACTIVE badge; every profile with its token-expiry icon, a SWIT
 inactive ones, and its plan), Session/Weekly bars with the expected-pace
 tick, "N% left" with the reset countdown, and the reserve/deficit line. The group button lists
 each provider's active profile first, then a divider and the other profiles (remembered in this
-browser); with no provider enabled the column offers Open Settings → Server → Accounts & usage. Settings → Server → Accounts & usage and this column draw the same view: v1's tiles (the layout above, in a grid on the page), with the 48-hour line as a hairline under each bar; on the page each tile has a gear that holds Enable, order, Add profile and the credential forms, and the column is view-only apart from Switch. The one-row composer
+browser); with no provider enabled the column offers an Open Settings → Usages button. Settings → Server → Accounts & usage and this column draw the same view: v1's tiles (the layout above, in a grid on the page), with the 48-hour line as a hairline under each bar; on the page each tile has a gear that holds Enable, order, Add profile and the credential forms, and the column is view-only apart from Switch. The one-row composer
 grows as text is entered, sends with Enter, and
 inserts a newline with Shift+Enter. On a phone or an iPad with no fine pointer (touch only: `(hover: none) and (pointer: coarse)`, read at every key, so an iPad with a trackpad or keyboard acts like a desktop) Enter makes a new line in the room and the thread composers and only the send button sends; an open picker still takes Enter. Pressing ↑ in an empty composer (or with the
 caret at its start) recalls your earlier messages in that room, newest first;
