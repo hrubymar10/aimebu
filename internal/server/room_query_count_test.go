@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/internal/store"
 	"modernc.org/sqlite"
@@ -355,6 +356,9 @@ func TestRoomMembersResponseIsUnchanged(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
+	// The pinned bytes must not depend on when the test's writes happened: the
+	// clock is pinned far after them, so nobody is online in the pinned answer.
+	f.srv.Presence.now = func() time.Time { return time.Unix(1<<40, 0) }
 	drew, _ := f.createToolAgentNamed(t, "role_worker_default", "drew")
 	tessa, _ := f.createToolAgentNamed(t, "role_leader_default", "tessa")
 	owner, err := f.db.UserByLogin(t.Context(), "owner")
@@ -367,7 +371,7 @@ func TestRoomMembersResponseIsUnchanged(t *testing.T) {
 	if err != nil || response.StatusCode != 200 {
 		t.Fatalf("members: %d %v", response.StatusCode, err)
 	}
-	want := `{"humans":[{"id":"OWNER","login":"owner","role":"owner"}],"agents":[` +
+	want := `{"humans":[{"id":"OWNER","login":"owner","role":"owner","online":false}],"agents":[` +
 		`{"id":"DREW","slug":"drew","role_key":"worker","role_label":"Worker","role_emoji":"🛠️","singleton":false,"desired":"active","observed":"idle"},` +
 		`{"id":"TESSA","slug":"tessa","role_key":"leader","role_label":"Leader","role_emoji":"👑","singleton":true,"desired":"active","observed":"idle"}],` +
 		`"singletons":[{"role_key":"advisor","label":"Advisor","emoji":"💡","held_by":null},{"role_key":"dispatcher","label":"Dispatcher","emoji":"📨","held_by":null},{"role_key":"leader","label":"Leader","emoji":"👑","held_by":{"agent_id":"TESSA","slug":"tessa","in_this_room":true}}]}` + "\n"

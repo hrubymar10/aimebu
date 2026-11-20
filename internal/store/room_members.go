@@ -7,11 +7,14 @@ import (
 
 // RoomMemberHuman is one person in a room's member list. Role is the person's project role
 // (owner, operator or viewer); it is empty for someone who is a room member without a project
-// membership.
+// membership. Online says whether one of the person's browser sessions has shown real activity
+// in the last ten minutes (see the server's human presence tracker); the store does not track
+// presence, so it leaves the field false and the server fills it before the answer is written.
 type RoomMemberHuman struct {
-	ID    string `json:"id"`
-	Login string `json:"login"`
-	Role  string `json:"role"`
+	ID     string `json:"id"`
+	Login  string `json:"login"`
+	Role   string `json:"role"`
+	Online bool   `json:"online"`
 }
 
 // RoomMemberAgent is one agent in a room's member list, with the role it was spawned under.

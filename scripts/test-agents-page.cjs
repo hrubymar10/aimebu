@@ -126,6 +126,24 @@ async function main() {
     await page.close();
   }
 
+  // A person's presence: the card's dot is green only while the server says the person is online (real activity in the last ten minutes), and
+  // a `human_presence_changed` event re-reads the members so the dot switches live, without a reload.
+  {
+    const page = await mount();
+    const present = { humans: [{ id: 'usr_me', login: 'me', role: 'owner', online: true }, { id: 'usr_bob', login: 'bob', role: 'viewer', online: false }] };
+    await show(page, 'r1', [agent('a1', 'ada')], present);
+    const dots = page => page.$$eval('#agents-humans .human-card', nodes => nodes.map(node => node.querySelector('.agent-online-dot').className));
+    assert.deepEqual(await dots(page), ['agent-online-dot active', 'agent-online-dot offline'], 'the dot says who is online');
+    // The event asks for the members again; the answer flips both, so both dots switch without a reload.
+    const before = await page.evaluate(() => window.__requests.length);
+    await page.evaluate(() => window.__panel.store.refreshPresence());
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/members'), 200, { humans: [{ id: 'usr_me', login: 'me', role: 'owner', online: false }, { id: 'usr_bob', login: 'bob', role: 'viewer', online: true }] });
+    await settle(page);
+    assert.deepEqual(await dots(page), ['agent-online-dot offline', 'agent-online-dot active'], 'the dot follows the new answer');
+    assert.equal(await page.evaluate(before => window.__requests.slice(before).length, before), 1, 'a presence event costs one members read, no reload');
+    await page.close();
+  }
+
   // Legacy writer metadata does not disable Start.
   {
     const page = await mount();

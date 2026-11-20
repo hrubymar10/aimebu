@@ -45,10 +45,14 @@ import { UpdateBar } from './update-bar.js';
 import { ColumnResize } from './column-resize.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
 import { trackInputModality } from './input-modality.js';
+import { PresenceHeartbeat } from './presence.js';
 
 initUIVariants();
 
 trackInputModality();
+// The presence heartbeat: while the person uses the page it keeps the server
+// counting them online (see presence.js); a signed-out page stays silent.
+const presence = new PresenceHeartbeat();
 const loginView = document.querySelector('#login-view'), appView = document.querySelector('#app-view');
 const bootView = document.querySelector('#boot-view');
 const startupStatus = document.createElement('div');
@@ -363,6 +367,7 @@ function resetWorkspace() {
   cancelStartup();
   sessionGeneration++;
   stream?.stop(); stream = null;
+  presence.stop();
   sidebar.reset(); chat.reset(); teamFlowHome.reset(); inbox.reset(); agents.reset(); knowledge.setRoom(null); handbook.setRoom(null);
   health.ticket++;
   systemEvents.reset(); messageDebug.reset();
@@ -522,7 +527,7 @@ async function signedIn(session) {
   // before it could miss. (The first sign-in waits behind the welcome, which can take long, so it starts nothing early.)
   const cursor = session.first_run ? undefined : request('/api/events/cursor');
   cursor?.then(() => chat.prefetchLatest(roomInAddress() || rememberedRoom()), () => {});
-  setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); void agentIsolation.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
+  setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); void agentIsolation.load(); presence.start(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   // The owner is asked about error reports once (after the welcome on a new install, or on the first sign-in after an update brought them).
@@ -582,6 +587,7 @@ async function signedIn(session) {
         }
       }
       else if (event.kind === 'reaction_changed' && chat.nodes.has(payload.message_id)) await chat.refreshReactions(payload.message_id);
+      else if (event.kind === 'human_presence_changed') agents.refreshPresence();
       if ((event.kind === 'project_member_changed' || event.kind === 'user_invite_redeemed') && chat.room && chat.room.project_id === event.project_id) chat.loadMentionLogins(chat.room, true);
       if (!active()) return;
       if (event.room_id && event.room_id === chat.room?.id && ['room_read_changed', 'message_created', 'turn_recorded', 'turn_process_exit', 'turn_finished'].includes(event.kind)) receipts.schedule();

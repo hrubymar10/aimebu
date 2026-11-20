@@ -142,7 +142,10 @@ export class AgentCard extends Component {
 
 function Human({ human, kind, api }) {
   const mine = human.id === currentUser;
-  return html`<article class=${mine ? 'agent-card agent-card-compact human-card is-you' : 'agent-card agent-card-compact human-card'} data-human-id=${human.id}><div class="agent-id agent-title"><span class="agent-online-dot active" aria-hidden="true" data-state="idle"></span>
+  // The dot is the server's presence answer: green while one of the person's browser sessions has shown real activity in the last ten minutes,
+  // grey after it (a `human_presence_changed` event re-reads the list, so the switch happens live, without a reload).
+  const dot = human.online ? 'active' : 'offline';
+  return html`<article class=${mine ? 'agent-card agent-card-compact human-card is-you' : 'agent-card agent-card-compact human-card'} data-human-id=${human.id}><div class="agent-id agent-title"><span class=${`agent-online-dot ${dot}`} aria-hidden="true" data-state=${human.online ? 'idle' : 'offline'} title=${human.online ? 'Online · active in the last 10 minutes' : 'Offline · no activity in the last 10 minutes'}></span>
     <img class="harness-icon agent-harness-icon" src="/icons/human.svg" alt="" title="human" aria-hidden="true" /><span class="agent-id-text agent-name human-name" ...${mine ? { title: 'You' } : {}}>${human.login}</span><div class="agent-card-actions agent-quick">${!mine && kind !== 'dm' && html`<${QuickButton} className="human-dm" label=${`Message ${human.login} privately`} icon="dm" onClick=${() => api.onPrivateHuman?.(human)} />`}</div><small class="human-role">${human.role || ''}</small></div></article>`;
 }
 

@@ -140,6 +140,8 @@ type Server struct {
 	usageAlerts          *usages.AlertTracker
 	usageAlertWake       chan struct{}
 	telemetryIDs         sync.Map // user id -> the id that person's reports carry (see telemetry_identity.go)
+	// Presence tracks when a person's browser sessions last showed real activity; nil in tests that build a Server by hand.
+	Presence *humanPresence
 }
 
 func New(db *store.Store) *Server {
@@ -147,6 +149,8 @@ func New(db *store.Store) *Server {
 	s := &Server{Store: db, Auth: auth.NewService(db), PollInterval: 50 * time.Millisecond, WriteTimeout: 5 * time.Second, QueueSize: 32, MachinePingInterval: 15 * time.Second, SessionCheckInterval: 30 * time.Second,
 		Allow: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}, machines: make(map[string]*machineConn), spawnKeys: make(map[string]string), CopilotFlow: providers.NewCopilotFlow(), socketCtx: socketCtx, socketCancel: socketCancel, sockets: make(map[*websocket.Conn]struct{})}
 	s.Auth.UserHook = s.noteTelemetryUser
+	s.Presence = newHumanPresence()
+	s.Auth.ActivityHook = s.Presence.Touch
 	if db != nil {
 		if value, _, err := db.GlobalSettingValue(context.Background(), codexWarmEnabledKey); err == nil {
 			s.codexWarmOn.Store(value == "1")
@@ -341,6 +345,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/rooms/{room}/task-notes/{id}", s.Auth.RequireUser(http.HandlerFunc(s.taskNote)))
 	mux.Handle("GET /api/rooms/{room}/mention-users", s.Auth.RequireUser(http.HandlerFunc(s.roomMentionUsers)))
 	mux.Handle("GET /api/rooms/{room}/members", s.Auth.RequireUser(http.HandlerFunc(s.roomMembers)))
+	mux.Handle("POST /api/presence", s.Auth.RequireUser(http.HandlerFunc(s.touchPresence)))
 	mux.Handle("GET /api/rooms/{room}/agents", s.Auth.RequireUser(http.HandlerFunc(s.roomAgents)))
 	mux.Handle("GET /api/rooms/{room}/agent-name", s.Auth.RequireUser(http.HandlerFunc(s.agentNameSuggestion)))
 	mux.Handle("GET /api/rooms/{room}/agents/{agent}/profile", s.Auth.RequireUser(http.HandlerFunc(s.agentProfile)))
@@ -1480,7 +1485,19 @@ func (s *Server) roomMembers(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	// Presence is the server's, not the store's: each person is online while one
+	// of their browser sessions showed real activity in the last ten minutes.
+	for i := range members.Humans {
+		members.Humans[i].Online = s.Presence.Online(members.Humans[i].ID)
+	}
 	writeJSON(w, 200, members)
+}
+
+// touchPresence is the browser's presence heartbeat: the page sends it only
+// while it is visible and the person has interacted with it, so the hook the
+// auth service runs for this request records real activity. Nothing else to do.
+func (s *Server) touchPresence(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	room, ok := s.roomAccess(w, r, r.PathValue("room"))

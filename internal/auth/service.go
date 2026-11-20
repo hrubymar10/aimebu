@@ -29,9 +29,15 @@ type Service struct {
 	Store *store.Store
 	// UserHook, when set, is called with each authenticated request's context and user id before the handler runs (telemetry names the request's
 	// person with it). It must be quick and must not fail the request.
-	UserHook   func(ctx context.Context, userID string)
-	Policy     PasswordPolicy
-	SessionTTL time.Duration
+	UserHook func(ctx context.Context, userID string)
+	// ActivityHook, when set, is called with the user id of every authenticated
+	// request that changes something (a method other than GET, HEAD and OPTIONS,
+	// after its CSRF token checked out). It records a person's real activity for
+	// presence; reads, which background polling also makes, do not call it. It
+	// must be quick and must not fail the request.
+	ActivityHook func(userID string)
+	Policy       PasswordPolicy
+	SessionTTL   time.Duration
 	// MaxSessionAge is the absolute lifetime of a session, counted from when it was made: the sliding expiry never carries it past this, so a
 	// stolen session token stops working after it however steadily it is used.
 	MaxSessionAge time.Duration

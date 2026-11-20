@@ -72,6 +72,13 @@ export class AgentsStore {
     this.humans.value = members?.humans || [];
   }
 
+  // A person came online or went offline (a `human_presence_changed` event): the members of the room on show are read again, so their
+  // cards switch without a reload. A room change or reset between the event and the read drops the answer, as refreshHumans always has.
+  refreshPresence() {
+    if (!this.alive || !this.room) return;
+    void this.refreshHumans(this.room.id, this.generation);
+  }
+
   toggleProfile(id) { if (this.profileId.peek() === id) this.closeProfile(); else this.openProfile(id); }
 
   openProfile(id) {

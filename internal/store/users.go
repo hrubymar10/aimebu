@@ -121,6 +121,28 @@ func (tx *Tx) canManageMembers(actorID, projectID string) error {
 	return err
 }
 
+// UserProjectIDs lists the ids of the projects the person is a member of, in id order.
+// The presence tracker reads it to tell a presence change to each project's members.
+func (s *Store) UserProjectIDs(ctx context.Context, userID string) ([]string, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id FROM membership WHERE user_id=? ORDER BY project_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // AllProjects lists every project (id and name) for the owner and the admins, who manage people in projects they are not members of.
 func (s *Store) AllProjects(ctx context.Context, actorID string) ([]Project, error) {
 	if err := s.checkTxReentry(ctx); err != nil {

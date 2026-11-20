@@ -49,6 +49,9 @@ func (service *Service) RequireUser(next http.Handler) http.Handler {
 		if service.UserHook != nil {
 			service.UserHook(ctx, session.UserID)
 		}
+		if service.ActivityHook != nil && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			service.ActivityHook(session.UserID)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

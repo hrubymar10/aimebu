@@ -711,6 +711,9 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	stopTokenCopies := func() { cancelTokenCopies(); joinTokenCopies(service) }
 	defer stopTokenCopies()
 	service.StartTokenCopies(tokenCtx)
+	// Human presence: the sweep that announces online/offline transitions of people (their member cards go grey ten minutes after their
+	// last real activity). It shares the server's lifetime context.
+	service.StartHumanPresence(ctx)
 	service.StartQuotaSwitcher(ctx)
 	handler := service.Handler()
 	// With https configured the plain listener sends other machines to it; this machine's own clients (the embedded supervisor, the command
