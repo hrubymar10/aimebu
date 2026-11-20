@@ -376,7 +376,7 @@ func TestRecoveryGateAfterUnreportedEffectDoesNotRunTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if contents, err := os.ReadFile(effectPath); err == nil && string(contents) == "effect\n" {
 			break

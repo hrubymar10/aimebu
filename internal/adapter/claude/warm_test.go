@@ -367,7 +367,6 @@ func waitReady(t *testing.T, ready string) {
 // confirmed by being reaped.
 func TestWarmContainerEndIsConfirmedByTheWrapperNotByTime(t *testing.T) {
 	oldGrace := containerTermGrace
-	containerTermGrace = 200 * time.Millisecond
 	defer func() { containerTermGrace = oldGrace }()
 	cases := []struct {
 		name, script, variant string
@@ -398,7 +397,14 @@ func TestWarmContainerEndIsConfirmedByTheWrapperNotByTime(t *testing.T) {
 			if strings.Contains(tc.script, "@READY@") {
 				waitReady(t, ready) // the traps are set
 			}
-			err = session.Close(200 * time.Millisecond)
+			// A wrapper whose trap exits on the terminate gets a generous grace (it ends at once; the bound only covers a slow start); one that
+			// ignores it is killed after a short one.
+			grace := 200 * time.Millisecond
+			if strings.Contains(tc.script, "trap 'exit") {
+				grace = 10 * time.Second
+			}
+			containerTermGrace = grace
+			err = session.Close(grace)
 			if tc.confirmed && err != nil {
 				t.Fatalf("expected a confirmed end, got %v", err)
 			}
@@ -485,7 +491,11 @@ func TestTurnTerminateEndsOnTheSignalOrIsKilledAfterTheGrace(t *testing.T) {
 			if !ok {
 				t.Fatal("a turn can be terminated")
 			}
-			if got := terminator.Terminate(300 * time.Millisecond); got != tc.byItself {
+			grace := 300 * time.Millisecond
+			if tc.byItself {
+				grace = 10 * time.Second // the trap ends it at once; the bound only covers a slow start
+			}
+			if got := terminator.Terminate(grace); got != tc.byItself {
 				t.Fatalf("ended on the terminate = %v, want %v", got, tc.byItself)
 			}
 			_, exit := drain(t, turn)

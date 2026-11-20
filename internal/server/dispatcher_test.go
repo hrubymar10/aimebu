@@ -268,9 +268,17 @@ func TestDispatcherRunReportsAFailingPassOnce(t *testing.T) {
 	}
 	var said int
 	var mu sync.Mutex
-	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), machineWaitGuard)
 	defer cancel()
-	NewDispatcher(f.srv).Run(ctx, 5*time.Millisecond, func(error) { mu.Lock(); said++; mu.Unlock() })
+	// Stop on the second failed pass: a fixed run time raced a slow start that let fewer than two passes happen.
+	NewDispatcher(f.srv).Run(ctx, 5*time.Millisecond, func(error) {
+		mu.Lock()
+		said++
+		if said >= 2 {
+			cancel()
+		}
+		mu.Unlock()
+	})
 	mu.Lock()
 	heard := said
 	mu.Unlock()

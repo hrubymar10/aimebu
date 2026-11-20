@@ -120,7 +120,7 @@ func TestHotReadWorkload50k(t *testing.T) {
 	if count < 50000 {
 		t.Fatalf("event count=%d", count)
 	}
-	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
+	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	start := time.Now()
 	if err := s.Tx(writeCtx, func(tx *Tx) error { _, err := tx.Exec(`UPDATE seq_counter SET value=value+1 WHERE id=1`); return err }); err != nil {

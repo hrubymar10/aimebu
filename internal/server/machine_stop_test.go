@@ -61,7 +61,7 @@ func TestOfflineStopIsReplayedOnReconnectBeforeProjectDelete(t *testing.T) {
 	}
 
 	conn := f.dialMachine(t, nil)
-	readCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+	readCtx, cancel := context.WithTimeout(t.Context(), machineWaitGuard)
 	_, body, err := conn.Read(readCtx)
 	cancel()
 	if err != nil {
@@ -72,12 +72,12 @@ func TestOfflineStopIsReplayedOnReconnectBeforeProjectDelete(t *testing.T) {
 		t.Fatalf("replayed control: %+v %v", control, err)
 	}
 	ack, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.Ack, AgentID: card.ID, Generation: stopped.Generation, Level: "control", Ref: fmt.Sprint(stopped.DesiredRev)})
-	writeCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+	writeCtx, cancel := context.WithTimeout(t.Context(), machineWaitGuard)
 	if err := conn.Write(writeCtx, websocket.MessageText, ack); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(machineWaitGuard)
 	for {
 		pending, err := f.db.PendingStopControlsForMachine(t.Context(), f.machineID)
 		if err != nil {
@@ -492,7 +492,7 @@ func TestStopAllAgentsOnAMachine(t *testing.T) {
 			if frame.Type == protocol.Control && frame.DesiredState == "stopped" {
 				told[frame.AgentID] = true
 			}
-		case <-time.After(time.Second):
+		case <-time.After(machineWaitGuard):
 			t.Fatalf("the machine was told about %v", told)
 		}
 	}

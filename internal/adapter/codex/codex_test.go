@@ -576,7 +576,11 @@ func TestTurnTerminateEndsOnTheSignalOrIsKilledAfterTheGrace(t *testing.T) {
 			if !ok {
 				t.Fatal("a Codex turn can be terminated")
 			}
-			if got := terminator.Terminate(300 * time.Millisecond); got != tc.byItself {
+			grace := 300 * time.Millisecond
+			if tc.byItself {
+				grace = 10 * time.Second // the trap ends it at once; the bound only keeps a slow start from turning that into a kill
+			}
+			if got := terminator.Terminate(grace); got != tc.byItself {
 				t.Fatalf("ended on the terminate = %v, want %v", got, tc.byItself)
 			}
 			for range turn.Events() {

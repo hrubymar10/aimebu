@@ -272,7 +272,7 @@ func TestReactivateQueuesSpawnWithoutWaitingForMachinePing(t *testing.T) {
 		select {
 		case frame := <-machine.sendQueue:
 			return frame
-		case <-time.After(time.Second):
+		case <-time.After(machineWaitGuard):
 			t.Fatal("expected immediate machine frame")
 			return protocol.Frame{}
 		}

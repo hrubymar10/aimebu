@@ -114,7 +114,14 @@ func TestDockerActivityProbeStopsWithTheTurn(t *testing.T) {
 	activity := &DockerActivity{Command: launcher, Dir: dir, Env: DockerControlEnv(nil), Timeout: 20 * time.Second}
 	activity.setToken("c:hung")
 	activity.Bind(t.Context())
-	time.AfterFunc(300*time.Millisecond, activity.Stop)
+	go func() { // stop once the probe is really in flight (the launcher has recorded that it was asked)
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if asked, _ := os.ReadFile(filepath.Join(dir, "asked")); len(asked) > 0 {
+				break
+			}
+		}
+		activity.Stop()
+	}()
 	started := time.Now()
 	if activity.Busy(time.Now()) {
 		t.Fatal("an interrupted probe answered busy")

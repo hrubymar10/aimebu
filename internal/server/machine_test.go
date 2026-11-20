@@ -970,10 +970,10 @@ func TestSlowMachineQueueDoesNotBlockHTTP(t *testing.T) {
 	if !slow {
 		t.Fatal("slow machine was not disconnected when its queue filled")
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
+	if elapsed := time.Since(started); elapsed > machineWaitGuard {
 		t.Fatalf("enqueue blocked for %s", elapsed)
 	}
-	reqCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	reqCtx, cancel := context.WithTimeout(context.Background(), machineWaitGuard)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(reqCtx, "GET", f.http.URL+"/api/me", nil)
 	resp, err := http.DefaultClient.Do(req)

@@ -375,9 +375,13 @@ func TestWriteTargetKeepsItsLockAliveWhileWriting(t *testing.T) {
 	w := &Writer{HeartbeatInterval: 20 * time.Millisecond, afterLock: func() {
 		info, _ := os.Stat(lockDir)
 		before = info.ModTime()
-		time.Sleep(250 * time.Millisecond) // a slow disk
-		info, _ = os.Stat(lockDir)
-		after = info.ModTime()
+		// A slow disk: wait for the heartbeat to move the mtime rather than guess how long that takes.
+		after = before
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && !after.After(before); time.Sleep(10 * time.Millisecond) {
+			if info, err := os.Stat(lockDir); err == nil {
+				after = info.ModTime()
+			}
+		}
 	}}
 	if err := w.WriteTarget(target, []byte(fullClaudeA)); err != nil {
 		t.Fatal(err)
