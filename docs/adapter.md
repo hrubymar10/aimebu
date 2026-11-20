@@ -37,9 +37,11 @@ when members are omitted. A `#N` in a delivered note is a message number: the me
 it names (at most five, not ones the delivery already carries, code spans ignored) are
 listed in the context as `referenced_messages` (`{no, available, room_id?, room?, from?,
 body?, created_at?}`, the body cut to 1500 characters). Only rooms of the agent's own
-project qualify (a private chat only for a member of it); anything else is `{no,
-available:false}` with nothing more, so another project's messages and unknown numbers look
-alike. The roster is read at dispatch time, so a later
+project qualify (a private chat only for a member of it), plus a message of another
+project that a person who can read it cited (`#N`) in a message of a room the agent is in:
+it carries `project`, the source project's name, and the person's access is re-checked on
+each read; anything else is `{no, available:false}` with nothing more, so another project's
+uncited messages and unknown numbers look alike. The roster is read at dispatch time, so a later
 turn reflects joins, leaves, and role changes. A recipient may be absent from
 the roster after leaving a room but is still identified by `you_are` for a
 recovery turn. The roster is a snapshot, not an access grant; room membership

@@ -353,3 +353,105 @@ func TestLeadAutoJoinIsQuietAndNotWokenByUnaddressedMessages(t *testing.T) {
 		t.Fatalf("the lead's membership of the other room is not marked automatic: %d", auto)
 	}
 }
+
+// A person's "#N" into another project grants that one message to the agents of the room it is written in, only while the person still reads
+// the target room. Agents grant nothing across projects, an uncited number stays unavailable, and a private chat is never granted.
+func TestPersonCitationReachesAcrossProjects(t *testing.T) {
+	t.Parallel()
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	f.role(t, "role_w", f.project.ID, "worker", "Worker", "w", "multi")
+	worker := f.agent(t, "wanda", "role_w", &f.home)
+	other, err := f.s.CreateProject(ctx, Project{Name: "elsewhere", Folder: "/tmp/elsewhere"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRoom, err := f.s.CreateRoom(ctx, Room{ProjectID: other.ID, Kind: "home", Title: "Elsewhere", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert := func(room Room, kind, author, body string) Message {
+		t.Helper()
+		message, err := f.s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: kind, AuthorID: author, Body: body})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return message
+	}
+	cited := insert(otherRoom, "system", "system", "the cited one")
+	uncited := insert(otherRoom, "system", "system", "the neighbour")
+	dm, err := f.s.CreateRoom(ctx, Room{ProjectID: other.ID, Kind: "dm", DMKey: "users:x:y", Title: "dm", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	private := insert(dm, "system", "system", "private")
+	get := func(no int64) AgentMessage {
+		t.Helper()
+		got, err := f.s.AgentMessageByNo(ctx, worker.ID, f.project.ID, no)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	ref := func(no int64) string { return "look at #" + strconv.Itoa(int(no)) }
+
+	// An agent's citation grants nothing.
+	insert(f.home, "agent", worker.ID, ref(cited.No))
+	if got := get(cited.No); got.Available {
+		t.Fatalf("an agent's citation across projects granted: %+v", got)
+	}
+	// A person who does not read the room grants nothing either.
+	insert(f.home, "user", f.alice, ref(cited.No))
+	if got := get(cited.No); got.Available {
+		t.Fatalf("a person without access granted: %+v", got)
+	}
+	if _, err := f.s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,'viewer')`, other.ID, f.alice); err != nil {
+		t.Fatal(err)
+	}
+	// A person who reads the room grants that number, and the project name shows.
+	insert(f.home, "user", f.alice, ref(cited.No)+" and "+ref(private.No))
+	got := get(cited.No)
+	if !got.Available || got.Body != "the cited one" || got.Project != "elsewhere" || got.Room != "Elsewhere" {
+		t.Fatalf("a person's citation did not reach the agent: %+v", got)
+	}
+	// The same excerpt shows up in a delivery's references.
+	var refs []AgentMessage
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		var err error
+		refs, err = tx.referencedMessages(worker.ID, f.project.ID, []string{ref(cited.No)}, map[int64]bool{})
+		return err
+	}); err != nil || len(refs) != 1 || !refs[0].Available || refs[0].Project != "elsewhere" {
+		t.Fatalf("referenced_messages: %+v %v", refs, err)
+	}
+	// Nothing else of that project opens, and a private chat is never granted.
+	for name, no := range map[string]int64{"uncited": uncited.No, "private chat": private.No} {
+		if got := get(no); !reflect.DeepEqual(got, AgentMessage{No: no}) {
+			t.Fatalf("%s: %+v", name, got)
+		}
+	}
+	// A restricted room needs oversight or a seat: the viewer does not get it.
+	restricted, err := f.s.CreateRoom(ctx, Room{ProjectID: other.ID, Kind: "task", Title: "Closed", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE room SET restricted=1 WHERE id=?`, restricted.ID); err != nil {
+		t.Fatal(err)
+	}
+	hidden := insert(restricted, "system", "system", "restricted")
+	insert(f.home, "user", f.alice, ref(hidden.No))
+	if got := get(hidden.No); got.Available {
+		t.Fatalf("a viewer's citation of a restricted room granted: %+v", got)
+	}
+	// An agent not in the citing room does not see the grant.
+	outsider := f.agent(t, "olga", "role_w", &f.other)
+	if got, err := f.s.AgentMessageByNo(ctx, outsider.ID, f.project.ID, cited.No); err != nil || got.Available {
+		t.Fatalf("an agent outside the citing room: %+v %v", got, err)
+	}
+	// Losing access to the target room revokes the grant.
+	if _, err := f.s.db.Exec(`DELETE FROM membership WHERE project_id=? AND user_id=?`, other.ID, f.alice); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(cited.No); got.Available {
+		t.Fatalf("the grant survived the person losing access: %+v", got)
+	}
+}

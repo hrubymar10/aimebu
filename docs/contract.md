@@ -676,6 +676,11 @@ Inbox, usage, events, settings
   read, by number, any message of any room of its own project (rooms it is not
   in and archived ones included; a private chat only as a member), for
   `referenced_messages`, `message_get`, and paginated `room_history`. Another project's messages never,
+  except one a person cited: when a person (never an agent) writes `#N` for a message of another
+  project's non-private room they can read at that moment, the agents of the citing room may read
+  that message alone (`referenced_messages`, `message_get`, with `project` naming its project), for
+  as long as the person keeps that access; the grant opens neither the room nor `room_history`,
+  and an uncited number stays `{no,available:false}`;
   except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, preserves role cardinality, and refuses reviewer-lineage roles while reviewers are disabled.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
@@ -1438,7 +1443,7 @@ it never silently reruns a turn with uncertain effects.
   context{role_body, rooms[{room_id, title, kind}],
   you_are:{id,name,role,harness,model},
   team_roster:[{id,name,role,harness,model}],
-  team_roster_more?:string, referenced_messages?:[{no, available, room_id?, room?, from?, body?, created_at?}],
+  team_roster_more?:string, referenced_messages?:[{no, available, room_id?, room?, project?, from?, body?, created_at?}],
   knowledge?:{project_memory_enabled, project_memory[], user_profiles[],
   agent_shared_notes[], task_notes[]},
   control_changes?, recovery_evidence?, correction_error?}, desired_rev,

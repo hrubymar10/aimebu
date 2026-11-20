@@ -608,6 +608,18 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 			}
 		}
 	}
+	if message.AuthorKind == "user" {
+		// A person's "#N" into another project is a grant for the agents of this room, if the person reads the target room now. Agents never
+		// grant across projects, and the read re-checks the person's access, so losing it revokes the grant.
+		for _, ref := range extractMessageRefs([]string{message.Body}, nil, 100) {
+			if _, err := tx.tx.ExecContext(tx.ctx, `INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
+				SELECT ?,target.no FROM message target JOIN room tr ON tr.id=target.room_id JOIN room sr ON sr.id=?
+				WHERE target.no=? AND target.no>0 AND tr.project_id<>sr.project_id AND sr.kind<>'dm' AND `+personReadsRoomSQL("?"),
+				message.ID, message.RoomID, ref, message.AuthorID, message.AuthorID, message.AuthorID); err != nil {
+				return Message{}, err
+			}
+		}
+	}
 	var projectID, roomKind string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,kind FROM room WHERE id = ?`,
 		message.RoomID).Scan(&projectID, &roomKind); err != nil {

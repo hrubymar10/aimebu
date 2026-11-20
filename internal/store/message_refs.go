@@ -62,6 +62,17 @@ type AgentMessage struct {
 	From      string `json:"from,omitempty"`
 	Body      string `json:"body,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
+	// Project names the target's project when it is not the agent's own (a person's citation across projects); empty otherwise.
+	Project string `json:"project,omitempty"`
+}
+
+// personReadsRoomSQL is true when the user given by the SQL expression user may read the room aliased tr right now, for a citation across
+// projects: a normal (non-chat) room of a project the user belongs to, where a restricted one needs oversight or a seat in it. A private
+// chat is never covered. It mirrors Store.UserRoomAccess for those rooms.
+func personReadsRoomSQL(user string) string {
+	return `(tr.kind<>'dm' AND tr.project_id<>` + agentDMProjectSQL + ` AND EXISTS (SELECT 1 FROM membership pm WHERE pm.project_id=tr.project_id AND pm.user_id=` + user + `)
+	AND (tr.restricted=0 OR EXISTS (SELECT 1 FROM membership oversight WHERE oversight.project_id=tr.project_id AND oversight.user_id=` + user + ` AND oversight.role IN ('owner','operator'))
+		OR EXISTS (SELECT 1 FROM room_member um WHERE um.room_id=tr.id AND um.member_kind='user' AND um.member_id=` + user + ` AND um.left_at IS NULL)))`
 }
 
 func excerptRunes(text string, limit int) string {
@@ -73,26 +84,38 @@ func excerptRunes(text string, limit int) string {
 
 func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectID string, no int64, limit int) (AgentMessage, error) {
 	unavailable := AgentMessage{No: no}
-	var roomID, title, kind, authorKind, authorID, body, createdAt string
+	var roomID, title, kind, authorKind, authorID, body, createdAt, targetProject, targetProjectName string
 	// System citation grants come from server-created missed-mention pointers.
 	// Their persisted targets_json records the sole agent allowed to follow one.
-	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at
-		FROM message m JOIN room r ON r.id=m.room_id
-		WHERE m.no=? AND m.no>0 AND r.project_id IN (?,`+agentDMProjectSQL+`) AND (
+	// A person's citation reaches across projects: the grant row is the person's message in a room the agent sits in, and the person must
+	// still read the target room now (a private chat never qualifies).
+	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at,r.project_id,COALESCE(p.name,'')
+		FROM message m JOIN room r ON r.id=m.room_id LEFT JOIN project p ON p.id=r.project_id
+		WHERE m.no=? AND m.no>0 AND (EXISTS (SELECT 1 FROM message_reference_grant xg JOIN message xs ON xs.id=xg.source_message_id AND xs.author_kind='user'
+				JOIN room xr ON xr.id=xs.room_id AND xr.project_id=?
+				JOIN room_member xo ON xo.room_id=xr.id AND xo.member_kind='agent' AND xo.member_id=? AND xo.left_at IS NULL
+				JOIN room tr ON tr.id=r.id
+				WHERE xg.target_no=m.no AND r.project_id<>xr.project_id AND `+personReadsRoomSQL("xs.author_id")+`)
+		OR r.project_id IN (?,`+agentDMProjectSQL+`) AND (
 			(r.kind<>'dm' AND r.restricted=0)
 			OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL)
 			OR EXISTS (SELECT 1 FROM message_reference_grant g JOIN message source ON source.id=g.source_message_id
 				JOIN room_member own ON own.room_id=source.room_id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL
 				WHERE g.target_no=m.no AND r.kind<>'dm' AND source.room_id<>r.id AND source.room_id IN (SELECT id FROM room WHERE project_id=r.project_id)
-				AND (source.author_kind<>'system' OR EXISTS (SELECT 1 FROM json_each(source.targets_json) WHERE value=?))))`, no, projectID, agentID, agentID, agentID).
-		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt)
+				AND (source.author_kind<>'system' OR EXISTS (SELECT 1 FROM json_each(source.targets_json) WHERE value=?)))))`,
+		no, projectID, agentID, projectID, agentID, agentID, agentID).
+		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt, &targetProject, &targetProjectName)
 	if err == sql.ErrNoRows {
 		return unavailable, nil
 	}
 	if err != nil {
 		return AgentMessage{}, err
 	}
-	return AgentMessage{No: no, Available: true, RoomID: roomID, Room: title, From: authorLabel(ctx, q, authorKind, authorID), Body: excerptRunes(body, limit), CreatedAt: createdAt}, nil
+	out := AgentMessage{No: no, Available: true, RoomID: roomID, Room: title, From: authorLabel(ctx, q, authorKind, authorID), Body: excerptRunes(body, limit), CreatedAt: createdAt}
+	if targetProject != projectID && targetProject != AgentDMProjectID {
+		out.Project = targetProjectName
+	}
+	return out, nil
 }
 
 // authorLabel is how an agent is shown who wrote a message: a person's login, an agent's name (its old one when it was removed), "system".
