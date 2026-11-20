@@ -75,7 +75,7 @@ function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, 
       ${managed && html`<${IconButton} name="edit" label=${`Rename ${name}`} className="usages-b-rename" onClick=${rename} />`}
       ${managed && html`<${IconButton} name="trash" label=${`Delete ${name}`} danger className="usages-b-remove" onClick=${remove} />`}
       ${profile.active ? html`<span class="switcher-tile-active">Active</span>` : html`<span class="usages-b-inactive">Inactive</span>`}
-      ${profile.plan && html`<span class="switcher-tile-plan" title=${profile.email || ''}>${profile.plan}</span>`}
+      ${profile.plan && html`<span class="switcher-tile-plan" title=${profile.email ? `${profile.plan} · ${profile.email}` : profile.plan}>${profile.plan}</span>`}
     </div>
     ${windows.length ? windows.map((window, index) => html`<${WindowRow} window=${window} usedDisplay=${usedDisplay} fetchedAt=${profile.last_refresh_at} stale=${!!stale} key=${`${window.key}:${index}`} />`)
       : profile.has_credentials === false ? html`<div class="usages-empty usages-empty-compact">Needs login</div>` : html`<div class="usages-empty usages-empty-compact">No usage data yet.</div>`}

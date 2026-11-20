@@ -386,7 +386,7 @@ async function main() {
       const page = await mount();
       await page.evaluate(async () => { window.__source.preferences.token_auto_refresh = true; await window.__usages.load(); });
       assert.deepEqual(await page.evaluate(() => ({ visible: document.querySelector('.usages-page').textContent.includes('main@example.test'), tooltip: document.querySelector('.usages-b-profile[data-profile=main] .switcher-tile-plan').title })),
-        { visible: false, tooltip: 'main@example.test' }, 'the owner sees the e-mail only in the plan tooltip');
+        { visible: false, tooltip: 'Pro · main@example.test' }, 'the owner sees the e-mail only in the plan tooltip');
       await page.evaluate(() => { window.__source.list = async () => { throw new Error('boom'); }; window.__usages.setOwner(false); window.__usages.forget(); });
       await settle(page);
       assert.deepEqual(await page.evaluate(() => { const text = document.querySelector('.usages-page').textContent; return { email: text.includes('main@example.test'), alerts: document.querySelectorAll('.usage-credential-alert').length, cards: document.querySelectorAll('#usages-list .usages-b-tile').length, switcher: !!document.querySelector('#usages-switcher'), plans: /Pro\b/.test(text) }; }),

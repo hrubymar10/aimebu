@@ -74,7 +74,7 @@ async function main() {
       const again = await mount();
       assert.equal(await again.evaluate(() => !!document.querySelector('.usages-b')), true, 'the page draws the view');
       assert.deepEqual(await again.evaluate(() => { const text = document.querySelector('.usages-b').textContent, plan = [...document.querySelectorAll('.usages-b-profile')].find(p => p.dataset.profile === 'main')?.querySelector('.switcher-tile-plan'); return { visible: text.includes('main@example.test'), planTitle: plan?.title, nameTitles: [...document.querySelectorAll('.usages-b-profile .switcher-tile-name')].some(n => n.title.includes('@')) }; }),
-        { visible: false, planTitle: 'main@example.test', nameTitles: false }, 'the e-mail is absent from visible text and appears only on the plan label');
+        { visible: false, planTitle: 'Pro · main@example.test', nameTitles: false }, 'the e-mail is absent from visible text and appears only on the plan label');
       // B draws from the same data as A: a tile per provider, in the same order, each profile under its provider.
       assert.deepEqual(await again.evaluate(() => [...document.querySelectorAll('#usages-list .usages-b-tile')].map(tile => [tile.dataset.provider, tile.querySelector('.usages-provider-name').textContent, tile.querySelector('.usages-provider-updated').textContent.replace(/^Updated .*/, 'Updated'), tile.querySelectorAll('.usages-b-profile').length])),
         [['codex', 'Codex', 'Updated', 2], ['claude-code', 'Claude Code', 'ok', 1], ['github-copilot', 'GitHub Copilot', 'Not configured', 0], ['mistral', 'Mistral', 'Not configured', 0], ['ollama-cloud', 'Ollama Cloud', 'Not configured', 0]]);
@@ -140,7 +140,7 @@ async function main() {
         const rows = document.querySelectorAll('.usages-b-profile');
         return { text: document.querySelector('.usages-b').textContent.includes('m***@example.test'), masked: rows[0].querySelector('.switcher-tile-plan')?.title,
           absent: rows[1].querySelector('.switcher-tile-plan') === null };
-      }), { text: false, masked: 'm***@example.test', absent: true });
+      }), { text: false, masked: 'Pro · m***@example.test', absent: true });
       await page.close();
     }
     // An admin who is not the owner reads the limits: no gear, no switch, no rename.

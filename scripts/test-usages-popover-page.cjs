@@ -55,7 +55,7 @@ async function main() {
         const plan = view.querySelector('.usages-b-profile[data-profile=main] .switcher-tile-plan');
         return { visible: view.textContent.includes('main@example.test'), tooltip: plan.title,
           nameHasEmail: view.querySelector('.usages-b-profile[data-profile=main] .switcher-tile-name').title.includes('@') };
-      }), { visible: false, tooltip: 'main@example.test', nameHasEmail: false }, 'the panel shows email only on the plan label tooltip');
+      }), { visible: false, tooltip: 'Pro · main@example.test', nameHasEmail: false }, 'the panel shows email only on the plan label tooltip');
       const view = await page.evaluate(() => ({ refresh: [document.querySelector('.usages-popover-refresh').disabled, document.querySelector('.usages-popover-refresh').title], tiles: document.querySelectorAll('.usages-popover-body .usages-provider-tile').length > 0,
         note: document.querySelector('.usages-popover-body')?.textContent.includes('limited to the instance owner'), switches: document.querySelectorAll('.usages-b-switch').length }));
       assert.deepEqual([view.refresh, view.tiles, view.note, view.switches], owner ? [[false, 'Refresh usages'], true, false, view.switches] : [[true, 'Only the owner can refresh usages'], true, false, 0], `${owner ? 'owner' : 'admin'}: ${JSON.stringify(view)}`);
