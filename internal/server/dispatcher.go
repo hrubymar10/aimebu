@@ -305,6 +305,11 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 			failure.count++
 			failure.retryAt = time.Now().Add(dispatchBackoff(failure.count))
 			d.failures[id] = failure
+			// Said once per run of failures: the agent is retried with a backoff and nothing else shows why its messages wait
+			// (a stale generation, for one, leaves both the server's and the supervisor's logs empty).
+			if failure.count == 1 {
+				log.Printf("dispatch to %s failed, retrying with a backoff: %v", id, err)
+			}
 			if delivery.Mode == "normal" && delivery.ParentTurnID == "" {
 				if cancelErr := d.Server.Store.CancelPreparedDispatch(ctx, delivery.TurnID); cancelErr != nil {
 					return count, errors.Join(err, cancelErr)

@@ -155,32 +155,23 @@ func TestDetachedSupervisorRestartNowContinuesTurn(t *testing.T) {
 
 func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, restartNow bool) {
 	root, _ := daemonFixture(t)
-	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
 	t.Setenv("AIMEBU_SUPERVISOR", "detached")
 	t.Setenv("AIMEBU_ALLOW", "192.0.2.0/24") // The host loopback address must be admitted even when people set a LAN-only list.
 	gate := filepath.Join(t.TempDir(), "release-fake-answer")
 	t.Setenv("AIMEBU_TEST_FAKE_GATE", gate)
+	// The agent is seeded straight into the store, behind the server's back. A
+	// supervisor connection binds the agents that exist when its hello is
+	// read (AgentsForMachine); a real spawn binds a later agent on the live
+	// connection, a row written by the test does not. Were the supervisor to
+	// say hello before the seed, every delivery would end in
+	// ErrStaleGeneration and nothing would run (it did, under load). So the
+	// first start, without a local supervisor (daemonFixture's
+	// AIMEBU_EMBEDDED_SUPERVISOR=0), only creates the store and the host key;
+	// the seed is written while no supervisor can be connected, and the
+	// detached supervisor starts with the server after it.
 	if code, out, errOut := runServerAction("start"); code != 0 {
-		t.Fatalf("start: %d %q %q", code, out, errOut)
+		t.Fatalf("start without a supervisor: %d %q %q", code, out, errOut)
 	}
-	var supervisorPIDAtStart int
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		pid, held, err := supervisorPID(root)
-		if err == nil && held {
-			supervisorPIDAtStart = pid
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if supervisorPIDAtStart == 0 {
-		t.Fatalf("detached supervisor never held the lock: %s", tailOfFile(filepath.Join(root, "supervisor", "aimebu.log"), 20))
-	}
-	t.Cleanup(func() {
-		if pid, held, err := supervisorPID(root); err == nil && held {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-	})
 	credential, err := readHostMachineKey(filepath.Join(root, "server", "host-machine.key"))
 	if err != nil {
 		t.Fatal(err)
@@ -223,6 +214,31 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 	if err != nil {
 		t.Fatal(err)
 	}
+	if code, out, errOut := runServerAction("stop"); code != 0 {
+		t.Fatalf("stop after seeding: %d %q %q", code, out, errOut)
+	}
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
+	if code, out, errOut := runServerAction("start"); code != 0 {
+		t.Fatalf("start: %d %q %q", code, out, errOut)
+	}
+	var supervisorPIDAtStart int
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		pid, held, err := supervisorPID(root)
+		if err == nil && held {
+			supervisorPIDAtStart = pid
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if supervisorPIDAtStart == 0 {
+		t.Fatalf("detached supervisor never held the lock: %s", tailOfFile(filepath.Join(root, "supervisor", "aimebu.log"), 20))
+	}
+	t.Cleanup(func() {
+		if pid, held, err := supervisorPID(root); err == nil && held {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
 	probe, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +254,10 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 	}
 	var running int
 	if err := probe.QueryRow(`SELECT COUNT(*) FROM turn WHERE agent_id=? AND exec='running'`, agent.ID).Scan(&running); err != nil || running == 0 {
-		t.Fatalf("fake turn did not start: running=%d err=%v; supervisor log: %s", running, err, tailOfFile(filepath.Join(root, "supervisor", "aimebu.log"), 20))
+		var turns, notes string
+		_ = probe.QueryRow(`SELECT COALESCE(group_concat(id||':'||exec,','),'') FROM turn WHERE agent_id=?`, agent.ID).Scan(&turns)
+		_ = probe.QueryRow(`SELECT COALESCE(group_concat(state,','),'') FROM note WHERE agent_id=?`, agent.ID).Scan(&notes)
+		t.Fatalf("fake turn did not start: running=%d err=%v turns=%q notes=%q; server log: %s; supervisor log: %s", running, err, turns, notes, tailOfFile(serverLogPath(root), 40), tailOfFile(filepath.Join(root, "supervisor", "aimebu.log"), 20))
 	}
 	if restartNow {
 		var out, errOut bytes.Buffer
