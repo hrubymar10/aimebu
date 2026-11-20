@@ -3,6 +3,11 @@ import { focusPopover, returnFocus } from './popover-focus.js';
 import { expiryBadge } from './usage-expiry.js';
 import { mergeAlerts, staleAge } from './usage-alerts.js';
 import { confirmDialog } from './dialogs.js';
+import { html, render, effect } from './ui.js';
+import { UsagesStore } from './pages/usages/store.js';
+import { UsagesVariantB } from './pages/usages/variant-b.js';
+import { UsagesVariantC } from './pages/usages/variant-c.js';
+import { usagesVariant } from './pages/usages/variant.js';
 
 // A glanceable overview of every configured provider and profile, so usage can be checked
 // without opening Settings. Read-only: all management stays in Settings -> Usages.
@@ -21,6 +26,11 @@ export class UsagesPopover {
     this.chat = document.querySelector('.chat'); this.chat.append(this.popover);
     this.body = this.popover.querySelector('.usages-popover-body');
     this.ticket = 0;
+    // Variants B and C of the A/B/C choice in the top bar are the Usages page's own components, drawn here from a store of this panel's own.
+    this.alt = element('div', 'usages-popover-alt'); this.alt.hidden = true; this.body.after(this.alt);
+    this.store = new UsagesStore({ source, section: this.alt, isOpen: () => !this.popover.hidden, isShown: () => !this.popover.hidden });
+    this.variant = usagesVariant.peek();
+    effect(() => { const next = usagesVariant.value; if (next === this.variant) return; this.variant = next; this.ticket++; if (!this.popover.hidden) this.load(); else this.syncVariant(); });
     this.toggle.setAttribute('aria-haspopup', 'dialog'); this.toggle.setAttribute('aria-expanded', 'false');
     this.toggle.onclick = event => { event.stopPropagation(); if (this.popover.hidden) this.open(); else this.close(); };
     this.refreshButton = this.popover.querySelector('.usages-popover-refresh');
@@ -35,7 +45,8 @@ export class UsagesPopover {
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && !this.popover.hidden) { this.close(); this.toggle.focus(); } });
   }
   // Nothing of what was drawn stays after a sign-out: the tiles, the cached usage, switcher state and credential tokens.
-  reset() { this.ticket++; this.usage = null; this.state = null; this.tokens = []; this.refreshSec = undefined; this.body.replaceChildren(); this.status.hidden = true; }
+  syncVariant() { const alt = this.variant !== 'a'; this.body.hidden = alt; this.alt.hidden = !alt; this.groupButton.hidden = alt; this.popover.dataset.variant = this.variant; if (!alt) render(null, this.alt); }
+  reset() { this.store.forget(); render(null, this.alt); this.ticket++; this.usage = null; this.state = null; this.tokens = []; this.refreshSec = undefined; this.body.replaceChildren(); this.status.hidden = true; }
   open() { this.syncRefresh(); this.status.hidden = true; this.popover.hidden = false; this.chat.classList.add('usages-open'); this.toggle.setAttribute('aria-expanded', 'true'); focusPopover(this.popover); this.load(); }
   close() { this.ticket++; returnFocus(this.popover, this.toggle); this.popover.hidden = true; this.chat.classList.remove('usages-open'); this.toggle.setAttribute('aria-expanded', 'false'); }
   // Ask the server to fetch fresh snapshots (rate limited to one forced refresh per cooldown
@@ -58,6 +69,8 @@ export class UsagesPopover {
   changed() { if (!this.popover.hidden) this.load(); }
   async load() {
     const ticket = ++this.ticket;
+    this.syncVariant();
+    if (this.variant !== 'a') return this.loadAlt(ticket);
     if (!this.body.children.length) this.body.replaceChildren(element('p', 'usages-popover-note', 'Loading…'));
     try {
       // The switcher state and the credential tokens are owner data that may be absent; the usage numbers never depend on them.
@@ -65,6 +78,17 @@ export class UsagesPopover {
       if (ticket === this.ticket) { this.state = state; this.tokens = tokens?.targets || []; this.render(usage); }
     } catch (error) {
       if (ticket === this.ticket) this.body.replaceChildren(element('p', 'usages-popover-note', error.status === 403 ? 'Usage details are limited to the instance owner.' : error.message || 'Could not load usage snapshots'));
+    }
+  }
+  async loadAlt(ticket) {
+    this.store.owner.value = !!this.canChange();
+    try {
+      await this.store.load();
+      if (ticket !== this.ticket) return;
+      this.store.setError(''); this.alt.querySelector('.usages-popover-note')?.remove();
+      render(this.variant === 'c' ? html`<${UsagesVariantC} store=${this.store} />` : html`<${UsagesVariantB} store=${this.store} />`, this.alt);
+    } catch (error) {
+      if (ticket === this.ticket) { render(null, this.alt); this.alt.replaceChildren(element('p', 'usages-popover-note', error.status === 403 ? 'Usage details are limited to the instance owner.' : error.message || 'Could not load usage snapshots')); }
     }
   }
   syncGroupButton() {

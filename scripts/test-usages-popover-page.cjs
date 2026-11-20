@@ -41,6 +41,7 @@ async function main() {
         source[name] = (...args) => { window.__calls.push(name); return name !== 'list' && !owner ? Promise.reject(Object.assign(new Error('owner required'), { status: 403 })) : original(...args); };
       }
       document.querySelector('#usages-toggle').hidden = false;
+      (await import('/js/pages/usages/variant-pill.js')).mountUsagesVariantPill(document.querySelector('#usages-variant-slot'));
       window.__popover = new UsagesPopover(source, () => {}, () => owner);
     }, owner);
     return page;
@@ -79,6 +80,21 @@ async function main() {
         await page.$eval('.usages-popover-refresh', node => node.click());
         assert.equal(await page.evaluate(() => window.__calls.filter(name => name === 'refresh').length), 0, 'a refresh the admin may not make is not asked for');
       }
+      await page.close();
+    }
+    // The A/B/C pill sits in the top bar, left of Inbox, and switches the panel's own drawing at once.
+    for (const [variant, selector] of [['b', '.usages-popover-alt .usages-b .usages-b-tile'], ['c', '.usages-popover-alt .usages-c .uc-headline']]) {
+      const page = await mount(true);
+      await page.evaluate(() => localStorage.removeItem('aimebu2.usages.variant'));
+      assert.equal(await page.evaluate(() => { const slot = document.querySelector('#usages-variant-slot'), inbox = document.querySelector('#inbox-toggle'); return slot.querySelectorAll('.usages-variant-option').length === 3 && slot.nextElementSibling === inbox && slot.parentElement.classList.contains('topbar-right') && !!slot.querySelector('.usages-variant-pill').title; }), true, 'the pill is three letters with a tooltip, directly left of Inbox in the top bar');
+      await page.$eval('#usages-toggle', node => node.click());
+      await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile'));
+      await page.$eval(`#usages-variant-slot .usages-variant-option[data-variant=${variant}]`, node => node.click());
+      await page.waitForSelector(selector);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('.usages-popover-body').hidden, !document.querySelector('.usages-popover-alt').hidden, document.querySelector('#usages-variant-slot .active').textContent]), [true, true, variant.toUpperCase()], `${variant.toUpperCase()} replaces the cards in the panel`);
+      await page.$eval('#usages-variant-slot .usages-variant-option[data-variant=a]', node => node.click());
+      await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile') && !document.querySelector('.usages-popover-body').hidden);
+      assert.equal(await page.evaluate(() => document.querySelector('.usages-popover-alt').hidden), true, 'A brings the cards back');
       await page.close();
     }
     assert.deepEqual(errors, [], 'no page errors');

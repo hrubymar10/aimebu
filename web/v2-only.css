@@ -478,8 +478,13 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* Usages A | B | C pill, in the section's header line (the same outlined segmented look as v1's percent toggle). */
 .usages-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .usages-head .settings-intro { flex: 1 1 auto; min-width: 0; }
-.usages-variant-pill { display: inline-flex; flex: 0 0 auto; margin: 0 0 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.usages-variant-option { height: 26px; min-width: 34px; padding: 0 8px; border: 0; border-right: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
+.usages-variant-slot { display: inline-flex; align-items: center; }
+@media (max-width: 700px) { .usages-variant-slot { display: none; } } /* a phone keeps its bar for the controls it has; the choice stays what was last made */
+.usages-variant-pill { display: inline-flex; flex: 0 0 auto; margin: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.usages-variant-option { height: 28px; min-width: 26px; padding: 0 6px; border: 0; border-right: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
+.usages-popover-alt { min-width: 0; padding: 8px 8px 0; }
+.usages-popover-alt .usages-b-grid { grid-template-columns: minmax(0, 1fr); }
+.usages-popover-alt :is(.usages-b, .usages-c) { min-width: 0; }
 .usages-variant-option:last-child { border-right: 0; }
 .usages-variant-option:is(:hover, :focus-visible) { color: var(--text-primary); background: var(--bg-tertiary); }
 .usages-variant-option.active { background: var(--accent); color: var(--button-text); }
