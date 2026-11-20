@@ -884,6 +884,10 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .team-wizard-summary-role ul { padding-left: 20px; }
 .team-wizard-notice { margin: 12px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; }
 .team-wizard-progress ul { margin: 8px 0 12px; padding-left: 20px; }
+.team-wizard-progress li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.team-wizard-progress-actions { display: flex; align-items: center; gap: 8px; }
+.team-wizard-stopped { margin: 8px 0 0; color: var(--text-secondary); font-size: 12px; }
+.team-flow-background-progress { margin: 8px 0 12px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); }
 .team-wizard-progress-failed { color: var(--danger, var(--text-primary)); }
 @media (max-width: 720px) { .team-setup-target, .team-setup-defaults { grid-template-columns: 1fr; } #team-flow-home:not([hidden]) { padding: 8px 10px; } }
 .chat-references { display: grid; gap: 6px; margin-top: 10px; }

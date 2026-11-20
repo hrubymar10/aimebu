@@ -160,7 +160,7 @@ async function main() {
       const agent = (id, slug, extra = {}) => ({ agent_id: id, slug, machine_id: 'm1', tool: 'claude', variant: 'native', launcher_id: 'l1', launcher_label: 'Claude', model: 'm1', ...extra });
       const plan = { from_key: 'custom', to_key: 'leader-dispatcher', roles: [
         { role_key: 'leader', status: 'kept', agents: [agent('agt_l', 'ada')] }, { role_key: 'dispatcher', status: 'new', agents: [] },
-        { role_key: 'worker', status: 'kept', agents: [agent('agt_w', 'bo'), agent('agt_s', 'iris', { state: 'stopped' })] }, { role_key: 'reviewer', status: 'kept', agents: [] }] };
+        { role_key: 'worker', status: 'kept', agents: [agent('agt_w', 'bo'), agent('agt_s', 'iris', { state: 'stopped' }), ...Array.from({ length: 27 }, (_, index) => agent(`agt_s${index}`, `idle${index}`, { state: 'stopped' }))] }, { role_key: 'reviewer', status: 'kept', agents: [] }] };
       const auto = base();
       auto['GET /api/rooms/r1/agent-name'] = { name: 'cy' };
       auto['GET /api/team-flows/recommended-models'] = { rows: [{ role_key: 'dispatcher', flow_key: 'leader-dispatcher', tool: 'claude', models: [{ model: 'm2', why: 'cheap and quick routing' }, { model: 'not-offered-yet', why: 'the strongest model for rare advice' }] },
@@ -231,8 +231,10 @@ async function main() {
       await next('Workers and reviewers');
       assert.equal(await banner(), 'Workers are kept between D → B migration');
       assert.match(await page.$eval('#team-flow-modal .team-wizard-kept-list', node => node.textContent), /Workers.*bo · Box · Claude · Opus/s);
-      assert.match(await page.$eval('#team-flow-modal .team-wizard-kept-list', node => node.textContent), /iris · Box · Claude · Opus \(stopped, unchanged\)/);
-      assert.equal(await page.$$eval('#team-flow-modal .team-wizard-kept-list .team-wizard-kept', rows => rows.find(row => row.textContent.includes('iris'))?.querySelector('button') || null), null, 'a stopped worker cannot pick a switch that the server refuses');
+      // Stopped agents are not listed one by one: the active ones are, and the stopped ones are one line.
+      assert.deepEqual(await page.$$eval('#team-flow-modal .team-wizard-kept-list .team-wizard-kept', rows => rows.map(row => row.textContent.split(' · ')[0])), ['bo'], 'only the active worker is listed');
+      assert.equal(await page.$eval('#team-flow-modal .team-wizard-kept-list .team-wizard-stopped', node => node.textContent), '28 stopped agents, unchanged');
+      assert.equal(await page.$eval('#team-flow-modal .team-wizard-kept-list', node => node.textContent.includes('iris')), false, 'no stopped agent is named');
       assert.deepEqual(await page.$$eval('#team-flow-modal .team-wizard-recommended', nodes => nodes.map(node => node.textContent)), ['💡 Recommended models for workersClaude · SelectedSonnet — executes: speed and cost matter'], 'workers get their row; reviewers have no offered recommendation, so that panel stays hidden');
       // Opening "Change model or harness" on a worker and leaving the choice alone is not a change: it must not reach the server as one.
       await page.$eval('#team-flow-modal .team-wizard-kept-list .team-wizard-kept .btn', node => node.click());
@@ -255,7 +257,8 @@ async function main() {
       assert.match(summary, /Leader.*ada: switches to the chosen model after its current turn \(Box · Claude · Sonnet\)/s);
       assert.match(summary, /Dispatcher.*cy · Box · Claude · Opus is added/s);
       assert.match(summary, /Worker.*bo: keeps running with the new rules \(not restarted\)/s);
-      assert.match(summary, /iris: stopped, unchanged/);
+      assert.match(summary, /28 stopped agents, unchanged/);
+      assert.doesNotMatch(summary, /iris|idle0/, 'the summary does not name the stopped agents');
       assert.match(summary, /Rooms to create: routing/);
       assert.match(summary, /This can take a while: each agent first finishes its current turn before the change applies; you will have to wait until then\./);
       assert.equal(await page.$eval('#team-flow-modal .team-flow-removal input', node => node.checked), false, 'membership removal is opt-in');
@@ -265,10 +268,25 @@ async function main() {
       assert.equal(await page.evaluate(index => !!window.__requests[index].headers['Idempotency-Key'], migrate), true, 'apply uses an idempotency key');
       assert.deepEqual(await page.evaluate(index => window.__requests[index].body.remove_memberships, migrate), [{ agent_id: 'agt_old', room_id: 'rm_general' }], 'only ticked memberships are removed');
       const running = { id: 'mg1', state: 'draining', can_cancel: true, agents: [
-        { agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'switch', state: 'draining' }, { agent_id: 'agt_w', slug: 'bo', role_key: 'worker', action: 'notice', state: 'waiting' }, { agent_id: 'new', slug: 'cy', role_key: 'dispatcher', action: 'spawn', state: 'waiting' }] };
+        { agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'switch', state: 'draining', blocking: true, keeps: true }, { agent_id: 'agt_w', slug: 'bo', role_key: 'worker', action: 'notice', state: 'waiting' }, { agent_id: 'new', slug: 'cy', role_key: 'dispatcher', action: 'spawn', state: 'waiting' }] };
       await answer(page, migrate, 202, { migration: running });
       await page.waitForSelector('#team-flow-modal .team-wizard-progress');
       assert.match(await page.$eval('#team-flow-modal .team-wizard-progress', node => node.textContent), /Changing the team flow….*ada \(leader\) switches model: Finishing its current turn.*bo \(worker\) keeps running with the new rules: Waiting.*cy \(dispatcher\) is added: Waiting/s);
+      // An agent the change waits for can be interrupted, after a confirmation; the others cannot.
+      assert.deepEqual(await page.$$eval('#team-flow-modal .team-wizard-interrupt', nodes => nodes.map(node => [node.title, node.getAttribute('aria-label'), node.closest('li').textContent.includes('ada')])), [['Interrupt ada now', 'Interrupt ada now', true]], 'only the blocking agent has Interrupt now, with a tooltip');
+      assert.equal(await page.$eval('#team-flow-modal .team-wizard-background', node => node.title), 'Continue in background');
+      await page.$eval('#team-flow-modal .team-wizard-interrupt', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open && document.querySelector('#app-dialog-title').textContent === 'Interrupt agent');
+      assert.match(await page.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Interrupt ada now\? Its current turn is cut off; ada stops the turn and restarts once the switch is through\./);
+      await page.$eval('#app-dialog .app-dialog-cancel', node => node.click());
+      await settle(page);
+      assert.equal(await page.evaluate(() => window.__requests.some(request => request.path.endsWith('/migration/interrupt'))), false, 'declining the confirmation interrupts nothing');
+      await page.$eval('#team-flow-modal .team-wizard-interrupt', node => node.click());
+      await confirmOk(page);
+      const interrupt = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/interrupt');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, interrupt), { agent_id: 'agt_l' });
+      await answer(page, interrupt, 200, { migration: { ...running, agents: running.agents.map(agent => agent.agent_id === 'agt_l' ? { ...agent, blocking: false } : agent) } });
+      await page.waitForFunction(() => !document.querySelector('#team-flow-modal .team-wizard-interrupt'));
       // Cancel is offered while the server allows it, and answers with the migration as it stands.
       await page.$eval('#team-flow-modal .team-wizard-progress .btn', node => node.click());
       const cancel = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/cancel');
@@ -291,6 +309,46 @@ async function main() {
       await settle(page); await settle(page);
       assert.equal(await page.$eval('#null-state', node => node.textContent), '', 'no flow state: nothing is drawn');
       assert.deepEqual(errors.splice(0), [], 'rendering the wizard without a flow state throws nothing');
+      await page.close();
+    }
+    // Continue in background: the dialog closes, the change keeps going and its progress shows in Settings -> Team flow, where an agent it waits for can be interrupted.
+    {
+      const running = { id: 'mg-bg', state: 'draining', can_cancel: true, agents: [
+        { agent_id: 'agt_x', slug: 'dax', role_key: 'dispatcher', action: 'handoff_stop', state: 'draining', blocking: true },
+        { agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'switch', state: 'draining', blocking: true, keeps: true }, { agent_id: 'new', slug: 'cy', role_key: 'dispatcher', action: 'spawn', state: 'waiting' }] };
+      const auto = base(); auto['GET /api/projects/p1/team-flow/migration'] = { migration: running };
+      const page = await mount({ auto });
+      await ready(page);
+      await page.waitForSelector('#team-flow-modal .team-wizard-progress');
+      await page.$eval('#team-flow-modal .team-wizard-background', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('.team-flow-modal')?.open);
+      await page.waitForSelector('#project-team-flow #team-flow-progress .team-wizard-progress');
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#team-flow-modal')?.open, document.querySelector('#room-info-dialog').open]), [false, true], 'the wizard is closed and settings is back');
+      assert.match(await page.$eval('#team-flow-progress', node => node.textContent), /Changing the team flow….*ada \(leader\) switches model: Finishing its current turn.*cy \(dispatcher\) is added: Waiting/s);
+      assert.equal(await page.$('#team-flow-progress .team-wizard-background'), null, 'it is already in the background');
+      await settle(page);
+      assert.equal(await page.$eval('.team-flow-modal', node => node.open), false, 'the poll does not bring the wizard back');
+      // Interrupt now, next to the agent that blocks the change.
+      assert.deepEqual(await page.$$eval('#team-flow-progress .team-wizard-interrupt', nodes => nodes.map(node => node.title)), ['Interrupt dax now', 'Interrupt ada now']);
+      // An agent the new flow does not keep is stopped; a kept one restarts after the switch: the confirmation says which.
+      await page.$eval('#team-flow-progress .team-wizard-interrupt', node => node.click());
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      assert.match(await page.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Interrupt dax now\? Its current turn is cut off and dax stops; the new flow does not keep it\./);
+      await page.$eval('#app-dialog .app-dialog-cancel', node => node.click());
+      await page.$eval('#team-flow-progress li:nth-child(2) .team-wizard-interrupt', node => node.click());
+      await confirmOk(page);
+      const interrupt = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/interrupt');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, interrupt), { agent_id: 'agt_l' });
+      await answer(page, interrupt, 200, { migration: { ...running, agents: [running.agents[0], { ...running.agents[1], blocking: false }, running.agents[2]] } });
+      await page.waitForFunction(() => document.querySelectorAll('#team-flow-progress .team-wizard-interrupt').length === 1);
+      // It goes on by itself and finishes: the flow is reloaded and the outcome stays until dismissed.
+      await page.evaluate(() => {
+        window.__auto['GET /api/projects/p1/team-flow/migration'] = { migration: { id: 'mg-bg', state: 'done', can_cancel: false, agents: [{ agent_id: 'agt_l', slug: 'ada', role_key: 'leader', action: 'switch', state: 'done' }] } };
+        window.__auto['GET /api/projects/p1/team-flow'] = { key: 'leader-dispatcher', rev: 2, review_pending: false, conflicts: [] };
+      });
+      await page.waitForFunction(() => document.querySelector('#team-flow-progress')?.textContent.includes('Team flow changed.') && document.querySelector('#project-team-flow .team-flow-current')?.textContent.includes('B · Leader and dispatcher'), { timeout: 8000 });
+      await page.$eval('#team-flow-progress [aria-label=Dismiss]', node => node.click());
+      await page.waitForFunction(() => !document.querySelector('#team-flow-progress'));
       await page.close();
     }
     // A background refresh must not pull a running migration over the main page or reopen settings.

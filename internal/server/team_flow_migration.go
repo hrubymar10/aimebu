@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
@@ -183,6 +184,38 @@ func (s *Server) teamFlowMigrationProgress(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) teamFlowMigrationCancel(w http.ResponseWriter, r *http.Request) {
 	progress, err := s.Store.CancelTeamFlowMigration(r.Context(), r.PathValue("project"), userID(r))
+	if err != nil {
+		teamFlowMigrationError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"migration": progress})
+}
+
+// teamFlowMigrationInterrupt cuts the current turn of an agent the running migration is waiting for (see Store.InterruptFlowMigrationAgent).
+func (s *Server) teamFlowMigrationInterrupt(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AgentID string `json:"agent_id"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.AgentID == "" {
+		apiError(w, 400, "invalid_request", "agent_id required")
+		return
+	}
+	projectID := r.PathValue("project")
+	updated, err := s.Store.InterruptFlowMigrationAgent(r.Context(), projectID, userID(r), req.AgentID)
+	if err != nil {
+		teamFlowMigrationError(w, err)
+		return
+	}
+	if machine, err := s.machineForID(updated.MachineID); err == nil {
+		machine.boundMu.Lock()
+		machine.bound[updated.ID] = updated.Generation
+		machine.boundMu.Unlock()
+		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: updated.ID, Generation: updated.Generation, DesiredRev: updated.DesiredRev, DesiredState: updated.Desired})
+	}
+	progress, err := s.Store.TeamFlowMigrationProgress(r.Context(), projectID, userID(r))
 	if err != nil {
 		teamFlowMigrationError(w, err)
 		return

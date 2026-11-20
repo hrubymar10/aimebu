@@ -210,8 +210,16 @@ Projects, rooms, people
   progress report `stalled_since`, with Cancel still available while draining.
   The leader joins the departing agent's open task rooms. Handoff details go
   to their shared restricted routing or advice room, or an agent DM; general
-  gets only a short notice without the handoff content. One general-room
-  system message summarizes the switch. Room conflicts still require an
+  gets only a short notice without the handoff content. When a migration
+  finishes (and when a flow is applied directly), one system message
+  (`Team flow changed: a → b. Added: … Stopped: …`) is posted in the
+  project's home and general rooms. `POST /team-flow/migration/interrupt`
+  `{agent_id}` (owner or operator, while draining) stops an agent the
+  migration waits for (`blocking` in its progress) to cut its turn. A kept
+  agent (`keeps`) is recorded in `team_flow_migration_interrupt` (migration
+  127), started again once its turn is gone and waited for until it runs, and
+  also started again when the change is cancelled or fails; an agent the
+  flow stops anyway stays stopped. Room conflicts still require an
   explicit removal choice, and existing restricted rooms remain restricted.
   Archived projects refuse flow changes. The template catalog includes a
   card recommendation, and the role/flow/harness model recommendation table

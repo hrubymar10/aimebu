@@ -1406,7 +1406,7 @@ async function main() {
       room('rm_res', 'prj_a', 'compare', { parent_id: 'rm_kh', purpose: 'research', user_message_count: 2, unread_count: 9 }),
       room('rm_resnew', 'prj_a', 'compare-new', { parent_id: 'rm_kh', purpose: 'research' }),
       room('rm_gen2', 'prj_a', 'general', { parent_id: 'rm_kh', purpose: 'general', unread_count: 6, working: true, member_count: 5 }),
-      room('rm_route', 'prj_a', 'routing', { parent_id: 'rm_kh', purpose: 'general', restricted: true }),
+      room('rm_route', 'prj_a', 'routing', { parent_id: 'rm_kh', purpose: 'general', restricted: true, team_flow_room_key: 'routing' }),
       room('rm_dm2', 'prj_a', 'ada', { kind: 'dm', purpose: 'task', unread_count: 2, member_count: 2 })];
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': kindRooms, 'GET /api/projects/prj_b/rooms': [], 'GET /api/projects/prj_c/rooms': [], 'GET /api/agent-dms': { project_id: 'prj_agentdm', rooms: [room('rm_chat2', 'prj_agentdm', 'ada & bert', { kind: 'dm', agent_chat: true, unread_count: 1 })], joinable: [] } }) });
     await page.setViewport({ width: 1280, height: 700 }); await settle(page);
@@ -1423,7 +1423,7 @@ async function main() {
       ['rm_task', 'task', 'icon-mask-list-checks', 'list-checks.svg', 'Task room', 'Task room', ''],
       ['rm_res', 'research', 'icon-mask-search', 'search.svg', 'Research room', 'Research room', ''],
       ['rm_gen2', 'general', 'icon-mask-hash', 'hash.svg', 'General room', 'General room', ''],
-      ['rm_route', 'general', 'icon-mask-hash', 'hash.svg', 'General room', 'General room', ''],
+      ['rm_route', 'routing', 'icon-mask-route', 'route.svg', 'Routing room', 'Routing room', ''],
       ['rm_dm2', 'dm', 'icon-mask-human', 'human.svg', 'Direct message', 'Direct message', ''],
       ['rm_chat2', 'agent-chat', 'icon-mask-switch', 'switch.svg', 'Chat between agents', 'Chat between agents', '']], 'every kind of room has its own SVG icon with a tooltip and no text glyph');
     // Task rooms: no grey count, and the unread chip counts only what addresses the person (so chatter alone leaves none).

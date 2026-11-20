@@ -65,7 +65,7 @@ export function placeProject(projects, manual, id, targetID, after) {
 // never hides new activity: its badge is its own unread count plus its children's. The open room counts as read.
 // A task or research room is told by its status, not by a count: most of what is unread in one is agents talking to each other, which nobody reads to
 // catch up. Its badge counts only the unread messages that name the person or reply to them (`unread_addressed`); every other room counts them all.
-export const tracksStatus = room => room.kind === 'task' && room.purpose !== 'general';
+export const tracksStatus = room => room.kind === 'task' && room.purpose !== 'general' && room.team_flow_room_key !== 'routing';
 export function roomUnread(room, activeID) {
   if (room.id === activeID || room.lifecycle === 'closed') return 0;
   return Math.max(0, (tracksStatus(room) ? room.unread_addressed : room.unread_count) || 0);
@@ -75,6 +75,7 @@ export function roomUnread(room, activeID) {
 export function roomType(room) {
   if (room.kind === 'home') return { key: 'home', icon: 'house', label: 'Project home room' };
   if (room.kind === 'dm') return room.agent_chat ? { key: 'agent-chat', icon: 'switch', label: 'Chat between agents' } : { key: 'dm', icon: 'human', label: 'Direct message' };
+  if (room.team_flow_room_key === 'routing') return { key: 'routing', icon: 'route', label: 'Routing room' };
   if (room.kind === 'lobby' || room.purpose === 'general') return { key: 'general', icon: 'hash', label: 'General room' };
   if (room.purpose === 'research') return { key: 'research', icon: 'search', label: 'Research room' };
   return { key: 'task', icon: 'list-checks', label: 'Task room' };

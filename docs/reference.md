@@ -361,7 +361,9 @@ context to the leader and will be stopped", "Workers are kept between B → A
 migration"). A kept agent shows what it runs now and an owner or operator can
 switch it to another harness or model; a new agent gets the same machine, tool,
 model and name pickers as Spawn; the Workers step lists the kept workers and
-reviewers and sets the defaults for new ones. A 💡 panel groups recommended
+reviewers and sets the defaults for new ones. Stopped agents stay as they are,
+so the steps and the summary list only the active agents and count the stopped
+ones in one line ("28 stopped agents, unchanged"). A 💡 panel groups recommended
 models for the role and flow by every available harness on the selected
 machine, checks each against its live catalog, and highlights the selected
 harness. It is hidden when none is offered. The summary previews the
@@ -372,7 +374,15 @@ Archived rooms do not appear as conflicts or get reused for new flow rooms.
 Switching waits for current turns and any departing role's handoff; the
 progress view shows each agent (waiting, finishing its current turn, done),
 warns when a turn has stalled for fifteen minutes, offers **Cancel** until
-applying starts, and reopens by itself if a change is already running. The
+applying starts, and reopens by itself if a change is already running. A change
+that waits for a long turn can **Continue in background** (an icon button in the
+progress view): the dialog closes, the change keeps going, and Project settings →
+Team flow shows its progress (and the outcome, until dismissed). Next to an agent
+the change is waiting for, **Interrupt now** (after a confirmation) cuts its turn
+by stopping it, so the change goes on; a kept agent is started again once the
+switch is through, an agent the new flow stops anyway stays stopped (the
+confirmation says which). When a change finishes, one system message (`Team flow changed: a → b.
+Added: … Stopped: …`) is posted in the project's home and general rooms. The
 drain marks idle kept agents ready and tells them the change is pending even
 while another agent is still finishing. A departing agent that is stopped or
 blocked by recovery uses an automatic handoff instead of waiting for a turn
@@ -734,7 +744,7 @@ behind a new-replies control until the latest page is opened.
 Archived rooms move into a collapsible sidebar section with
 Reopen actions, name filtering, and message search with direct jump to a hit.
 Every room row starts with an SVG icon and a tooltip that name its kind: a house for a project's home room, a checklist for a task room, a
-magnifier for a research room, `#` for a general or coordination room, a person for a direct message and two arrows for a chat between agents
+magnifier for a research room, `#` for a general room, a route for the team flow's routing room (told by its `team_flow_room_key`), a person for a direct message and two arrows for a chat between agents
 (the room's `kind`, `purpose` and `agent_chat` decide, never who is in it). A task or research room shows no blue count of everything unread (most of
 it is agents talking): the count is only of the messages that name you or reply to you, and in its place a small status says Working (an agent has a
 running turn), Waiting (an open Inbox item needs an answer), Idle, Done (a research room that has been written in and is quiet) or Closing…; its

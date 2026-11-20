@@ -2054,6 +2054,14 @@ UPDATE room SET purpose='research' WHERE kind='task' AND purpose='task'
     WHERE m.room_id=room.id AND m.member_kind='agent' AND m.left_at IS NULL AND ro.role_key='researcher')
   AND NOT EXISTS (SELECT 1 FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role ro ON ro.id=a.role_id
     WHERE m.room_id=room.id AND m.member_kind='agent' AND m.left_at IS NULL AND ro.cap_is_lead=0 AND ro.role_key<>'researcher');
+`}, {127, `
+-- The agents a person interrupted while a team flow change waited for its turn (the agent is stopped to cut the turn). A kept agent is started
+-- again by the migration once the turn is gone; an agent the flow stops anyway is not.
+CREATE TABLE IF NOT EXISTS team_flow_migration_interrupt (
+  migration_id TEXT NOT NULL REFERENCES team_flow_migration(id),
+  agent_id TEXT NOT NULL REFERENCES agent(id),
+  PRIMARY KEY(migration_id,agent_id)
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

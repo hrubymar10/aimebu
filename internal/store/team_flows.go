@@ -482,8 +482,17 @@ func (s *Store) ApplyTeamFlow(ctx context.Context, projectID, userID, key string
 	var out TeamFlowApplied
 	err = s.Tx(ctx, func(tx *Tx) error {
 		var err error
+		var current string
+		_ = tx.tx.QueryRowContext(tx.ctx, `SELECT team_flow_key FROM project WHERE id=?`, projectID).Scan(&current)
 		out, err = tx.applyTeamFlow(projectID, userID, key, rev, removals)
-		return err
+		if err != nil || current == key {
+			return err
+		}
+		rooms := []string{}
+		for _, room := range out.CreatedRooms {
+			rooms = append(rooms, room.Title)
+		}
+		return tx.postFlowNotice(projectID, flowChangedBody(current, key, nil, nil, rooms))
 	})
 	return out, err
 }

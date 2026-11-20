@@ -5,7 +5,7 @@ import { SpawnDefaults } from '../../components/spawn-defaults.js';
 import { TeamFlowCards, TeamFlowPreview } from './team-flow-page.js';
 import {
   projectPath, cleanTarget, roleLabel, flowLetter, loadChoices, initialTarget, initialDefaults, describeTarget,
-  TargetPicker, StatusBanner, RecommendedModels, KeptAgent, MigrationSummary, MigrationProgress, isModelChange, MIGRATION_TERMINAL,
+  TargetPicker, StatusBanner, RecommendedModels, KeptAgent, MigrationSummary, MigrationProgress, isModelChange, MIGRATION_TERMINAL, activeAgents, StoppedLine, interruptAgent,
 } from './team-wizard-parts.js';
 import { captureError } from '../../telemetry.js';
 import { OFFERED_ROLES, LegacyOffer, legacyOptions, legacyTarget, withLegacy, legacyBlocked } from './legacy-offer.js';
@@ -40,7 +40,7 @@ export function TeamSetupPage({ flow, canEditProject, projectForID, onRetry }) {
 
 // One wizard for both jobs. Setup (a project with no flow yet) starts a fresh team; a switch (the project already has a flow) keeps
 // the leader, adds or hands off the other core roles, and asks the server for a plan before it changes anything.
-export function TeamWizard({ flow, canEdit, project, embedded = false, onClose = () => {} }) {
+export function TeamWizard({ flow, canEdit, project, embedded = false, onClose = () => {}, onBackground = null }) {
   const state = flow.state.value, templates = flow.templates.value, selected = flow.selected.value;
   // The store is emptied while another project loads and this component may render once more before its parent removes it, so state can be null.
   const setupMode = !state?.key;
@@ -52,7 +52,7 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   const [settings, setSettings] = useState({ worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10, reviewer_agents: 'inherit', reviewer_agents_global_enabled: true });
   const [preview, setPreview] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [plan, setPlan] = useState(null), [changes, setChanges] = useState({}), [recommended, setRecommended] = useState([]);
-  const [migration, setMigration] = useState(null), [cancelling, setCancelling] = useState(false);
+  const [migration, setMigration] = useState(null), [cancelling, setCancelling] = useState(false), [interrupting, setInterrupting] = useState(false);
   // The v1 agents that held a core role and are not started yet, by role; what the person picked for the role ('new' or a v1 id; nothing yet means the first); whether v1 no longer runs it.
   const [legacy, setLegacy] = useState({}), [legacyPick, setLegacyPick] = useState({}), [legacyConfirmed, setLegacyConfirmed] = useState({});
   const commitKey = useRef(''), generation = useRef(0), settingsTouched = useRef(false);
@@ -238,6 +238,13 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
     catch (failure) { setError(failure.message); }
     finally { setCancelling(false); }
   };
+  const interrupt = async agent => {
+    const projectID = flow.projectID;
+    setInterrupting(true); setError('');
+    try { const latest = await interruptAgent(flow.source, projectID, agent); if (latest?.id && projectID === flow.projectID) setMigration(latest); }
+    catch (failure) { setError(failure.message); }
+    finally { setInterrupting(false); }
+  };
   const finishCustom = async () => { await flow.apply(); if (!flow.error.peek()) onClose(); };
   const optionsList = options.map(item => ({ launcher_id: item.launcher_id, model: item.model, label: `${item.machine_name} · ${item.tool_label} · ${item.model_label}` }));
   const from = state.key, fromLetter = flowLetter(templates, from), toLetter = flowLetter(templates, selected);
@@ -254,7 +261,7 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
   return html`<section class=${`team-flow-home-card team-setup-wizard${embedded ? ' team-setup-embedded' : ''}`} aria-labelledby="team-flow-home-title">
     <div class="team-flow-heading"><small>${heading}${step > 1 && !switching ? ` · Step ${step} of ${steps.length}` : ''}</small><h2 id="team-flow-home-title">${switching ? migration.state === 'done' ? 'Team flow changed' : 'Changing your team flow' : step === 1 ? (setupMode ? 'Choose how your AI team works' : 'Choose a team flow') : stepLabel}</h2>
       ${step === 1 && !switching && html`<p>${state.key === 'custom' && state.review_pending ? 'Your existing setup is kept. Choose another flow, or keep the current custom setup.' : setupMode ? 'Pick a starting team flow. You can change it later in Project settings.' : 'Switching keeps the leader and your rooms and messages; other agents are kept, added, or hand off and stop.'}</p>`}</div>
-    ${switching ? html`<${MigrationProgress} migration=${migration} onCancel=${cancel} cancelling=${cancelling} />${migration.state === 'done' ? html`<div class="team-flow-actions"><button type="button" class="btn btn-primary" disabled=${busy} onClick=${finishMigration}>${busy ? 'Closing…' : 'Done'}</button></div>` : TERMINAL.includes(migration.state) && html`<div class="team-flow-actions"><button type="button" class="btn" onClick=${() => { setMigration(null); setStep(1); setPlan(null); }}>Back to the wizard</button></div>`}` : html`
+    ${switching ? html`<${MigrationProgress} migration=${migration} onCancel=${cancel} cancelling=${cancelling} onInterrupt=${interrupt} interrupting=${interrupting} onBackground=${embedded && onBackground ? () => onBackground(migration) : null} />${migration.state === 'done' ? html`<div class="team-flow-actions"><button type="button" class="btn btn-primary" disabled=${busy} onClick=${finishMigration}>${busy ? 'Closing…' : 'Done'}</button></div>` : TERMINAL.includes(migration.state) && html`<div class="team-flow-actions"><button type="button" class="btn" onClick=${() => { setMigration(null); setStep(1); setPlan(null); }}>Back to the wizard</button></div>`}` : html`
     ${step === 1 && html`<${TeamFlowCards} templates=${templates} selected=${selected} currentKey=${state.key} onSelect=${key => flow.select(key)} disabled=${flow.applying.value || !canEdit} />
       <${TeamFlowPreview} preview=${flow.preview.value} busy=${flow.previewing.value} selectedRemovals=${flow.removals.value} onToggleRemoval=${(item, checked) => flow.toggleRemoval(item, checked)} />`}
     ${step > 1 && roleKey && html`${!setupMode && roleStatus && html`<${StatusBanner} status=${roleStatus} role=${roleKey} from=${fromLetter} to=${toLetter} reactivate=${!!reuse} />`}
@@ -266,11 +273,11 @@ export function TeamWizard({ flow, canEdit, project, embedded = false, onClose =
           confirmed=${legacyConfirmed[roleKey]} onConfirm=${value => setLegacyConfirmed(old => ({ ...old, [roleKey]: value }))} options=${options} />`}
         ${options.length > 0 && html`<${TargetPicker} label=${stepLabel} prefix=${`team-setup-${roleKey}`} options=${continuing(roleKey)?.resumable ? legacyOptions(options, continuing(roleKey)) : options} value=${roleTargets[roleKey]} withName=${!reuse && !continuing(roleKey)} onChange=${setters[roleKey]}
           name=${names[roleKey]} nameBusy=${!!nameBusy[roleKey]} nameError=${nameErrors[roleKey] || ''} onName=${value => typeName(roleKey, value)} onDice=${() => suggestName(roleKey, names[roleKey] || '')} />`}`}
-      ${roleStatus === 'kept' && html`<div class="team-wizard-kept-list">${(entryOf(roleKey)?.agents || []).map(agent => renderKept(agent, `team-setup-${roleKey}`))}</div>`}
+      ${roleStatus === 'kept' && html`<div class="team-wizard-kept-list">${activeAgents(entryOf(roleKey)?.agents).map(agent => renderKept(agent, `team-setup-${roleKey}`))}<${StoppedLine} agents=${entryOf(roleKey)?.agents} /></div>`}
       ${roleStatus === 'leaving' && html`<ul class="team-wizard-leaving">${(entryOf(roleKey)?.agents || []).map(agent => html`<li key=${agent.agent_id}><strong>${agent.slug || agent.agent_id}</strong> · ${describeTarget(options, agent)}</li>`)}</ul>`}
       <${RecommendedModels} rows=${recommended} role=${roleKey} flowKey=${selected} options=${options} target=${stepTarget} />`}
     ${(stepLabel === 'Workers and reviewers' || stepLabel === 'Workers') && html`${!setupMode && (keptOf('worker').length > 0 || reviewersEnabled && keptOf('reviewer').length > 0) && html`<${StatusBanner} status="kept" role="workers" plural=${true} from=${fromLetter} to=${toLetter} />
-        <div class="team-wizard-kept-list">${(reviewersEnabled ? ['worker', 'reviewer'] : ['worker']).map(role => keptOf(role).length > 0 && html`<div key=${role}><h3>${roleLabel(role)}s</h3>${keptOf(role).map(agent => renderKept(agent, `team-setup-${role}`))}</div>`)}</div>`}
+        <div class="team-wizard-kept-list">${(reviewersEnabled ? ['worker', 'reviewer'] : ['worker']).map(role => keptOf(role).length > 0 && html`<div key=${role}><h3>${roleLabel(role)}s</h3>${activeAgents(keptOf(role)).map(agent => renderKept(agent, `team-setup-${role}`))}<${StoppedLine} agents=${keptOf(role)} /></div>`)}</div>`}
       ${choices && html`<p>${setupMode ? 'These defaults are saved for future spawns. No agents start now.' : 'Defaults for workers started from now on.'}</p><div class="team-setup-defaults"><div><h3>${setupMode ? 'Workers' : 'Default for new workers'}</h3><${SpawnDefaults} items=${worker?.items || []} mode=${worker?.mode || 'in_turn'} options=${optionsList} onChange=${setWorker} /></div>${reviewersEnabled && html`<div><h3>${setupMode ? 'Reviewers' : 'Default for new reviewers'}</h3><${SpawnDefaults} items=${reviewer?.items || []} mode=${reviewer?.mode || 'in_turn'} options=${optionsList} onChange=${setReviewer} /></div>`}</div>`}
       ${(reviewersEnabled ? [['worker', worker, 'workers'], ['reviewer', reviewer, 'reviewers']] : [['worker', worker, 'workers']]).map(([role, picked, label]) => html`<${RecommendedModels} key=${role} rows=${recommended} role=${role} flowKey=${selected} label=${label} target=${options.find(item => item.launcher_id === picked?.items?.[0]?.launcher_id && item.model === picked.items[0].model)} options=${options} />`)}`}
     ${stepLabel === 'Project settings' && html`<div class="team-setup-settings">

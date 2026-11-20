@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -101,17 +102,14 @@ func TestFlowMigrationAtoBKeepsLeaderAndWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	notices, summaries := 0, 0
+	notices := 0
 	for _, message := range messages {
 		if strings.Contains(message.Body, "The team flow changed from") {
 			notices++
 		}
-		if strings.Contains(message.Body, "Team flow changed from") {
-			summaries++
-		}
 	}
-	if notices == 0 || summaries != 1 {
-		t.Fatalf("notices=%d summaries=%d", notices, summaries)
+	if notices == 0 {
+		t.Fatalf("notices=%d", notices)
 	}
 	for _, message := range messages {
 		if strings.Contains(message.Body, "You remain the project leader") || strings.Contains(message.Body, "Your role rules on the next turn") {
@@ -961,5 +959,277 @@ func TestFlowModelRecommendationShape(t *testing.T) {
 		if template.Recommendation == "" {
 			t.Fatalf("missing recommendation for %s", template.Key)
 		}
+	}
+}
+
+func flowBodies(t *testing.T, f *membersFixture, roomID string) []string {
+	t.Helper()
+	messages, err := f.s.ListMessagesAfter(t.Context(), roomID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, message := range messages {
+		if message.AuthorKind == "system" && strings.HasPrefix(message.Body, "Team flow changed:") {
+			out = append(out, message.Body)
+		}
+	}
+	return out
+}
+
+func TestFlowMigrationFinishPostsOneNoticeInHomeAndGeneral(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-workers")
+	ctx := t.Context()
+	var generalID string
+	if err := f.s.db.QueryRow(`SELECT id FROM room WHERE project_id=? AND team_flow_room_key='general'`, f.project.ID).Scan(&generalID); err != nil {
+		t.Fatal(err)
+	}
+	in := TeamFlowMigrationInput{FlowKey: "leader-dispatcher", FlowRev: setup.Flow.Rev,
+		Dispatcher: &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake", Name: "zeno"}}
+	if err := f.s.Tx(ctx, func(tx *Tx) error { _, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, in); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 { // later passes find the migration done and must not announce it again
+		if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "Team flow changed: leader-workers → leader-dispatcher. Added: zeno (dispatcher)."
+	for _, room := range []string{f.home.ID, generalID} {
+		if got := flowBodies(t, f, room); len(got) != 1 || got[0] != want {
+			t.Fatalf("room %s notices = %q, want one %q", room, got, want)
+		}
+	}
+}
+
+func TestApplyTeamFlowPostsNoticeOnlyWhenTheFlowChanges(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := t.Context()
+	state, err := f.s.TeamFlowState(ctx, f.project.ID, f.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", state.Rev, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := flowBodies(t, f, f.home.ID)
+	if len(got) != 1 || !strings.HasPrefix(got[0], "Team flow changed: "+state.Key+" → leader-dispatcher.") || !strings.Contains(got[0], "Rooms created: ") {
+		t.Fatalf("home notices = %q", got)
+	}
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", applied.Rev, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := flowBodies(t, f, f.home.ID); len(got) != 1 {
+		t.Fatalf("a re-apply of the same flow announced again: %q", got)
+	}
+}
+
+func TestFlowRoutingRoomIsAGeneralPurposeRoomWithItsKey(t *testing.T) {
+	f, _ := flowMigrationFixture(t, "leader-dispatcher")
+	var purpose, key string
+	if err := f.s.db.QueryRow(`SELECT purpose,team_flow_room_key FROM room WHERE project_id=? AND team_flow_room_key='routing'`, f.project.ID).Scan(&purpose, &key); err != nil {
+		t.Fatal(err)
+	}
+	if purpose != RoomPurposeGeneral || key != "routing" {
+		t.Fatalf("routing room purpose=%q key=%q", purpose, key)
+	}
+	rooms, err := f.s.RoomsForUserProject(t.Context(), f.project.ID, f.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, room := range rooms {
+		if room.TeamFlowRoomKey == "routing" && room.Purpose == RoomPurposeGeneral {
+			return
+		}
+	}
+	t.Fatal("the room list does not carry the routing room's key and purpose, which the sidebar draws its icon from")
+}
+
+func TestInterruptFlowMigrationAgentStopsOnlyABlockingAgent(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-workers")
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	in := TeamFlowMigrationInput{FlowKey: "leader-dispatcher", FlowRev: setup.Flow.Rev,
+		Dispatcher: &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"}}
+	var sessionID string
+	if err := f.s.db.QueryRow(`SELECT id FROM session WHERE agent_id=? LIMIT 1`, leaderID).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("no migration: %v", err)
+	}
+	if err := f.s.Tx(ctx, func(tx *Tx) error { _, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, in); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); !errors.Is(err, ErrTeamFlowMigration) {
+		t.Fatalf("agent with no open turn: %v", err)
+	}
+	if _, err := f.s.RecordTurn(ctx, Turn{AgentID: leaderID, SessionID: sessionID, Generation: 0, RoomID: f.home.ID, Attempt: 1, Mode: "normal", Exec: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.bob, leaderID); err == nil {
+		t.Fatal("a member who may not control agents interrupted one")
+	}
+	card, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID)
+	if err != nil || card.Desired != "stopped" {
+		t.Fatalf("interrupt: %+v %v", card, err)
+	}
+}
+
+func interruptFixture(t *testing.T, from, to string, withDispatcher bool) (*membersFixture, TeamSetupResult, string) {
+	t.Helper()
+	f, setup := flowMigrationFixture(t, from)
+	target := &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"}
+	in := TeamFlowMigrationInput{FlowKey: to, FlowRev: setup.Flow.Rev}
+	if withDispatcher {
+		in.Dispatcher = target
+	}
+	if err := f.s.Tx(t.Context(), func(tx *Tx) error { _, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, in); return err }); err != nil {
+		t.Fatal(err)
+	}
+	return f, setup, to
+}
+
+func openTurn(t *testing.T, f *membersFixture, agentID string) string {
+	t.Helper()
+	var sessionID string
+	if err := f.s.db.QueryRow(`SELECT id FROM session WHERE agent_id=? LIMIT 1`, agentID).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := f.s.RecordTurn(t.Context(), Turn{AgentID: agentID, SessionID: sessionID, Generation: 0, RoomID: f.home.ID, Attempt: 1, Mode: "normal", Exec: "running"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return turn.ID
+}
+
+// A kept agent that was interrupted is stopped to cut its turn, started again by the change once the turn is gone, and the change then waits for it to run.
+func TestInterruptedKeptAgentRestartsBeforeTheChangeApplies(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	turnID := openTurn(t, f, leaderID)
+	progress, err := f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range progress.Agents {
+		if agent.AgentID == leaderID && (!agent.Blocking || !agent.Keeps) {
+			t.Fatalf("the leader is a kept agent the change waits for: %+v", agent)
+		}
+	}
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	var marked bool
+	if err := f.s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM team_flow_migration_interrupt WHERE agent_id=?)`, leaderID).Scan(&marked); err != nil || !marked {
+		t.Fatalf("interrupted mark=%v %v", marked, err)
+	}
+	// The supervisor cut the turn and the agent is down: nothing restarts it while the turn is still open.
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if controls, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil || len(controls) != 0 {
+		t.Fatalf("restarted before the turn was gone: %+v %v", controls, err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turnID); err != nil {
+		t.Fatal(err)
+	}
+	controls, err := f.s.AdvanceTeamFlowMigrations(ctx)
+	restarted := false
+	for _, card := range controls {
+		restarted = restarted || card.ID == leaderID && card.Desired == "active"
+	}
+	if err != nil || !restarted {
+		t.Fatalf("the interrupted leader was not started again: %+v %v", controls, err)
+	}
+	var key string
+	for range 3 {
+		if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var desired string
+	if err := f.s.db.QueryRow(`SELECT team_flow_key FROM project WHERE id=?`, f.project.ID).Scan(&key); err != nil || key != "leader-dispatcher" {
+		t.Fatalf("the change did not apply once the agent ran: %q %v", key, err)
+	}
+	if err := f.s.db.QueryRow(`SELECT desired FROM agent WHERE id=?`, leaderID).Scan(&desired); err != nil || desired != "active" {
+		t.Fatalf("the leader's desired state = %q %v", desired, err)
+	}
+	if err := f.s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM team_flow_migration_interrupt WHERE agent_id=?)`, leaderID).Scan(&marked); err != nil || marked {
+		t.Fatalf("the mark is not cleared: %v %v", marked, err)
+	}
+}
+
+// An agent the new flow stops anyway is not restarted: it is stopped by the interrupt and stays so.
+func TestInterruptedLeavingAgentStaysStopped(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-dispatcher", "leader-workers", false)
+	ctx := t.Context()
+	dispatcherID := setup.Agents[1].AgentID
+	turnID := openTurn(t, f, dispatcherID)
+	progress, err := f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range progress.Agents {
+		if agent.AgentID == dispatcherID && (!agent.Blocking || agent.Keeps) {
+			t.Fatalf("the dispatcher leaves and is waited for: %+v", agent)
+		}
+	}
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	var marked bool
+	if err := f.s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM team_flow_migration_interrupt WHERE agent_id=?)`, dispatcherID).Scan(&marked); err != nil || marked {
+		t.Fatalf("a leaving agent is not marked for a restart: %v %v", marked, err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turnID); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		controls, err := f.s.AdvanceTeamFlowMigrations(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, card := range controls {
+			if card.ID == dispatcherID && card.Desired == "active" {
+				t.Fatal("a leaving agent was started again")
+			}
+		}
+	}
+	var desired string
+	if err := f.s.db.QueryRow(`SELECT desired FROM agent WHERE id=?`, dispatcherID).Scan(&desired); err != nil || desired != "stopped" {
+		t.Fatalf("dispatcher desired=%q %v", desired, err)
+	}
+}
+
+// A change that is cancelled after an interrupt does not leave the kept agent stopped.
+func TestCancelledChangeRestartsAnInterruptedKeptAgent(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	turnID := openTurn(t, f, leaderID)
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turnID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.CancelTeamFlowMigration(ctx, f.project.ID, f.alice); err != nil {
+		t.Fatal(err)
+	}
+	controls, err := f.s.AdvanceTeamFlowMigrations(ctx)
+	if err != nil || len(controls) != 1 || controls[0].ID != leaderID || controls[0].Desired != "active" {
+		t.Fatalf("restart after cancel: %+v %v", controls, err)
 	}
 }

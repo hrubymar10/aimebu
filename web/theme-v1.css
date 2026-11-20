@@ -1375,6 +1375,8 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-reopen { -webkit-mask-image: url("/icons/reopen.svg"); mask-image: url("/icons/reopen.svg"); }
 .icon-mask-list-checks { -webkit-mask-image: url("/icons/list-checks.svg"); mask-image: url("/icons/list-checks.svg"); }
 .icon-mask-hash { -webkit-mask-image: url("/icons/hash.svg"); mask-image: url("/icons/hash.svg"); }
+.icon-mask-route { -webkit-mask-image: url("/icons/route.svg"); mask-image: url("/icons/route.svg"); }
+.icon-mask-minimize { -webkit-mask-image: url("/icons/minimize.svg"); mask-image: url("/icons/minimize.svg"); }
 .icon-mask-search { -webkit-mask-image: url("/icons/search.svg"); mask-image: url("/icons/search.svg"); }
 .icon-mask-human { -webkit-mask-image: url("/icons/human.svg"); mask-image: url("/icons/human.svg"); }
 .icon-mask-house { -webkit-mask-image: url("/icons/house.svg"); mask-image: url("/icons/house.svg"); }

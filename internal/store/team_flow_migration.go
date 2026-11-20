@@ -63,6 +63,10 @@ type TeamFlowMigrationAgentProgress struct {
 	Action  string `json:"action"`
 	State   string `json:"state"`
 	Error   string `json:"error,omitempty"`
+	// Blocking is true while a draining migration waits for this agent to finish a turn, which a person may interrupt.
+	Blocking bool `json:"blocking,omitempty"`
+	// Keeps is true when the new flow keeps this agent running: interrupting it only stops its turn, and the migration starts it again.
+	Keeps bool `json:"keeps,omitempty"`
 }
 
 type TeamFlowMigrationProgress struct {
@@ -373,12 +377,18 @@ func flowMigrationProgressByID(ctx context.Context, db rowQuerier, id string) (T
 		if err := rows.Scan(&item.AgentID, &item.Slug, &item.RoleKey, &item.Action, &item.State, &item.Error); err != nil {
 			return out, err
 		}
+		item.Keeps = item.Action == "notice" || item.Action == "switch"
 		out.Agents = append(out.Agents, item)
 	}
 	if err := rows.Err(); err != nil {
 		return out, err
 	}
 	if out.State == "draining" {
+		for i := range out.Agents {
+			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM turn t WHERE t.agent_id=? AND `+openFlowTurnPredicate+`)`, out.Agents[i].AgentID).Scan(&out.Agents[i].Blocking); err != nil {
+				return out, err
+			}
+		}
 		var saved flowMigrationStored
 		if err := json.Unmarshal([]byte(input), &saved); err != nil {
 			return out, err
@@ -745,6 +755,11 @@ func (s *Store) AdvanceTeamFlowMigrations(ctx context.Context) ([]AgentCard, err
 		if err != nil {
 			return err
 		}
+		restarted, err := tx.flowMigrationRestartInterrupted()
+		if err != nil {
+			return err
+		}
+		controls = append(controls, restarted...)
 		for _, m := range items {
 			if m.state == "draining" {
 				if _, err := tx.Exec(`SAVEPOINT flow_migration_drain`); err != nil {
@@ -929,6 +944,20 @@ func (tx *Tx) flowMigrationDrainReady(migrationID, projectID, fromKey, toKey str
 		}
 		if open != 0 {
 			ready = false
+		}
+		var interrupted bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_interrupt WHERE migration_id=? AND agent_id=?)`, migrationID, a.id).Scan(&interrupted); err != nil {
+			return false, err
+		}
+		if interrupted {
+			// An interrupted kept agent is started again first; the change waits until it runs, so a switch or notice applies to a running agent.
+			if a.desired == "active" && a.observed == "idle" && open == 0 {
+				if _, err := tx.Exec(`DELETE FROM team_flow_migration_interrupt WHERE migration_id=? AND agent_id=?`, migrationID, a.id); err != nil {
+					return false, err
+				}
+			} else {
+				ready = false
+			}
 		}
 		if a.action == "notice" && open == 0 && a.state != "done" && a.desired == "active" && a.observed == "idle" && !a.blocked && a.machineReady {
 			readyNotices = append(readyNotices, a)
@@ -1209,12 +1238,6 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 			return nil, err
 		}
 	}
-	if generalID != "" {
-		if _, err := tx.InsertMessage(Message{RoomID: generalID, AuthorKind: "system", AuthorID: "system",
-			Body: fmt.Sprintf("Team flow changed from %s to %s. Kept agents received updated rules; new roles are starting and departing roles are handing off and stopping.", fromKey, toKey)}); err != nil {
-			return nil, err
-		}
-	}
 	if _, err := tx.Exec(`UPDATE team_flow_migration SET state='applying',applied_at=? WHERE id=?`, timestamp(), id); err != nil {
 		return nil, err
 	}
@@ -1420,5 +1443,176 @@ func (tx *Tx) flowMigrationSettle(id, projectID string) error {
 	if _, err := tx.Exec(`UPDATE team_flow_migration SET state='done',finished_at=? WHERE id=?`, timestamp(), id); err != nil {
 		return err
 	}
+	if err := tx.postFlowChangedNotice(projectID, id); err != nil {
+		return err
+	}
 	return tx.appendFlowMigrationEvent(projectID, id)
+}
+
+// flowChangeRooms are the rooms a finished flow change is announced in: the project's home room and its general room (when it has one).
+func (tx *Tx) flowChangeRooms(projectID string) ([]string, error) {
+	var rooms []string
+	for _, query := range []string{
+		`SELECT id FROM room WHERE project_id=? AND kind='home' AND lifecycle='open' ORDER BY created_at,id LIMIT 1`,
+		`SELECT id FROM room WHERE project_id=? AND kind='task' AND lifecycle='open' AND (team_flow_room_key='general' OR title='` + GeneralRoomTitle + `') ORDER BY CASE WHEN team_flow_room_key='general' THEN 0 ELSE 1 END,created_at,id LIMIT 1`,
+	} {
+		var id string
+		err := tx.tx.QueryRowContext(tx.ctx, query, projectID).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		rooms = append(rooms, id)
+	}
+	return rooms, nil
+}
+
+// postFlowChangedNotice says in the home and general rooms that a migration has finished: from which flow to which, and the agents it
+// added and stopped.
+func (tx *Tx) postFlowChangedNotice(projectID, migrationID string) error {
+	var fromKey, toKey string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT from_key,to_key FROM team_flow_migration WHERE id=?`, migrationID).Scan(&fromKey, &toKey); err != nil {
+		return err
+	}
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug,role_key,action FROM team_flow_migration_agent WHERE migration_id=? AND action IN ('spawn','reactivate','handoff_stop') ORDER BY role_key,slug,agent_id`, migrationID)
+	if err != nil {
+		return err
+	}
+	var added, stopped []string
+	for rows.Next() {
+		var slug, role, action string
+		if err := rows.Scan(&slug, &role, &action); err != nil {
+			rows.Close()
+			return err
+		}
+		if action == "handoff_stop" {
+			stopped = append(stopped, slug+" ("+role+")")
+		} else {
+			added = append(added, slug+" ("+role+")")
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	return tx.postFlowNotice(projectID, flowChangedBody(fromKey, toKey, added, stopped, nil))
+}
+
+func flowChangedBody(fromKey, toKey string, added, stopped, rooms []string) string {
+	body := fmt.Sprintf("Team flow changed: %s → %s.", fromKey, toKey)
+	if len(added) > 0 {
+		body += " Added: " + strings.Join(added, ", ") + "."
+	}
+	if len(stopped) > 0 {
+		body += " Stopped: " + strings.Join(stopped, ", ") + "."
+	}
+	if len(rooms) > 0 {
+		body += " Rooms created: " + strings.Join(rooms, ", ") + "."
+	}
+	return body
+}
+
+func (tx *Tx) postFlowNotice(projectID, body string) error {
+	rooms, err := tx.flowChangeRooms(projectID)
+	if err != nil {
+		return err
+	}
+	for _, roomID := range rooms {
+		if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// InterruptFlowMigrationAgent cuts the current turn of an agent that a draining migration is waiting for, by stopping it (the supervisor
+// interrupts a turn it is told to stop), so the change does not wait for the turn to end by itself. The agent stays stopped until a person
+// starts it again.
+func (s *Store) InterruptFlowMigrationAgent(ctx context.Context, projectID, actorID, agentID string) (AgentCard, error) {
+	var out AgentCard
+	err := s.Tx(ctx, func(tx *Tx) error {
+		if err := tx.authorizeDefinitionActor(projectID, actorID, false); err != nil {
+			return err
+		}
+		var id, state string
+		if err := tx.tx.QueryRowContext(ctx, `SELECT id,state FROM team_flow_migration WHERE project_id=? ORDER BY created_at DESC,id DESC LIMIT 1`, projectID).Scan(&id, &state); err != nil {
+			return err
+		}
+		if state != "draining" {
+			return ErrTeamFlowMigrationFinal
+		}
+		var blocking bool
+		if err := tx.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_agent ma JOIN turn t ON t.agent_id=ma.agent_id
+			WHERE ma.migration_id=? AND ma.agent_id=? AND `+openFlowTurnPredicate+`)`, id, agentID).Scan(&blocking); err != nil {
+			return err
+		}
+		if !blocking {
+			return ErrTeamFlowMigration
+		}
+		var rev int64
+		if err := tx.tx.QueryRowContext(ctx, `SELECT desired_rev FROM agent WHERE id=?`, agentID).Scan(&rev); err != nil {
+			return err
+		}
+		var err error
+		out, err = tx.SetAgentDesired(agentID, actorID, "stopped", rev)
+		if err != nil {
+			return err
+		}
+		// A kept agent is started again once its turn is gone; one the flow stops anyway stays stopped.
+		_, err = tx.Exec(`INSERT OR IGNORE INTO team_flow_migration_interrupt(migration_id,agent_id) SELECT migration_id,agent_id FROM team_flow_migration_agent WHERE migration_id=? AND agent_id=? AND action IN ('notice','switch')`, id, agentID)
+		return err
+	})
+	return out, err
+}
+
+// flowMigrationRestartInterrupted starts again the kept agents a person interrupted during a change, once their turn is gone: during the drain (so
+// the switch or notice applies to a running agent) and after a change that was cancelled or failed (so nothing is left stopped by it).
+func (tx *Tx) flowMigrationRestartInterrupted() ([]AgentCard, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT m.id,m.state,m.actor_id,ma.agent_id,a.desired,a.observed,a.desired_rev FROM team_flow_migration_agent ma
+		JOIN team_flow_migration m ON m.id=ma.migration_id JOIN agent a ON a.id=ma.agent_id
+		WHERE EXISTS(SELECT 1 FROM team_flow_migration_interrupt i WHERE i.migration_id=ma.migration_id AND i.agent_id=ma.agent_id) AND m.state IN ('draining','cancelled','failed')
+		AND NOT EXISTS(SELECT 1 FROM turn t WHERE t.agent_id=ma.agent_id AND `+openFlowTurnPredicate+`)`)
+	if err != nil {
+		return nil, err
+	}
+	type item struct {
+		migrationID, state, actorID, agentID, desired, observed string
+		rev                                                     int64
+	}
+	var items []item
+	for rows.Next() {
+		var a item
+		if err := rows.Scan(&a.migrationID, &a.state, &a.actorID, &a.agentID, &a.desired, &a.observed, &a.rev); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		items = append(items, a)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	var cards []AgentCard
+	for _, a := range items {
+		restarted := false
+		if a.desired == "stopped" && a.observed == "stopped" {
+			card, err := tx.setAgentDesired(a.agentID, "user", a.actorID, "active", a.rev, false, false)
+			if err != nil {
+				return nil, err
+			}
+			cards = append(cards, card)
+			restarted = true
+		}
+		// A finished change forgets the mark once the agent runs again; a running one forgets it in the drain, when the agent is idle.
+		if a.state != "draining" && (restarted || a.desired != "stopped") {
+			if _, err := tx.Exec(`DELETE FROM team_flow_migration_interrupt WHERE migration_id=? AND agent_id=?`, a.migrationID, a.agentID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return cards, nil
 }

@@ -302,6 +302,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/projects/{project}/team-flow/migrate", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowMigrate)))
 	mux.Handle("GET /api/projects/{project}/team-flow/migration", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowMigrationProgress)))
 	mux.Handle("POST /api/projects/{project}/team-flow/migration/cancel", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowMigrationCancel)))
+	mux.Handle("POST /api/projects/{project}/team-flow/migration/interrupt", s.Auth.RequireUser(http.HandlerFunc(s.teamFlowMigrationInterrupt)))
 	mux.Handle("POST /api/projects/{project}/team-setup/preview", s.Auth.RequireUser(http.HandlerFunc(s.teamSetupPreview)))
 	mux.Handle("POST /api/projects/{project}/team-setup", s.Auth.RequireUser(http.HandlerFunc(s.teamSetupCreate)))
 	mux.Handle("POST /api/projects/{project}/archive", s.Auth.RequireUser(http.HandlerFunc(s.archiveProject)))

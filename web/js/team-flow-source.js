@@ -8,5 +8,6 @@ export const teamFlowSource = {
   recommendedModels: () => request('/api/team-flows/recommended-models'),
   migration: projectID => request(`/api/projects/${encodeURIComponent(projectID)}/team-flow/migration`),
   cancelMigration: projectID => request(`/api/projects/${encodeURIComponent(projectID)}/team-flow/migration/cancel`, { method: 'POST' }),
+  interruptMigration: (projectID, agentID) => request(`/api/projects/${encodeURIComponent(projectID)}/team-flow/migration/interrupt`, { method: 'POST', body: { agent_id: agentID } }),
   referenced: (no, sourceMessageID) => request(`/api/messages/referenced/${encodeURIComponent(no)}?source_message_id=${encodeURIComponent(sourceMessageID)}`),
 };
