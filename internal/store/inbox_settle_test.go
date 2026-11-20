@@ -157,9 +157,11 @@ func attentionQuestion(t *testing.T, s *Store, f executionFixture) InboxEntry {
 	return items[0]
 }
 
-// A message that needs attention outside the project's home room posts normally but raises no Inbox card.
-func TestAttentionMessageOutsideTheHomeRoomRaisesNoCard(t *testing.T) {
+// A message that needs attention outside the project's home room keeps its item (the chat shows the card's controls) but the Inbox neither
+// lists nor counts it; a real ask in the same room is still listed.
+func TestAttentionCardOutsideTheHomeRoomIsNotInTheInbox(t *testing.T) {
 	s, f := answerFixture(t, false)
+	ctx := context.Background()
 	if _, err := s.db.Exec(`UPDATE room SET kind='task' WHERE id=?`, f.room.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -168,11 +170,18 @@ func TestAttentionMessageOutsideTheHomeRoomRaisesNoCard(t *testing.T) {
 	if err != nil || receipt.Result != "committed" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
-	var posted, cards int
-	s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND body='Which way?' AND needs_attention=1`, f.room.ID).Scan(&posted)
-	s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item`).Scan(&cards)
-	if posted != 1 || cards != 0 {
-		t.Fatalf("posted=%d cards=%d", posted, cards)
+	var open int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE room_id=? AND state='open' AND kind='question'`, f.room.ID).Scan(&open); err != nil || open != 1 {
+		t.Fatalf("the item is kept for the chat: open=%d err=%v", open, err)
+	}
+	if items, err := s.InboxForUser(ctx, "usr_answers"); err != nil || len(items) != 0 {
+		t.Fatalf("inbox=%+v err=%v", items, err)
+	}
+	if counts, err := s.openAttentionByRoom(ctx, "usr_answers"); err != nil || counts[f.room.ID] != 0 {
+		t.Fatalf("open count=%v err=%v", counts, err)
+	}
+	if counts, err := s.attentionByRoom(ctx, "usr_answers"); err != nil || counts[f.room.ID] != 0 {
+		t.Fatalf("unseen count=%v err=%v", counts, err)
 	}
 }
 
@@ -290,19 +299,34 @@ func TestSweepClosesAnAttentionQuestionAnsweredEarlier(t *testing.T) {
 	}
 }
 
-// A person's chat message elsewhere in the room, written before this change was in place, settles the card on the sweep too.
-func TestSweepClosesAnAttentionQuestionAnsweredInTheRoom(t *testing.T) {
+// The room rule is live-only. Cards A and B are open, a plain message arrives (it settled neither), then A is answered in its thread: the sweep
+// must not read the old plain message as an answer to B, which is still unanswered.
+func TestSweepDoesNotSettleAnUnansweredCardByAnEarlierPlainMessage(t *testing.T) {
 	s, f := answerFixture(t, false)
-	item := attentionQuestion(t, s, f)
-	if _, err := s.db.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at)
-		VALUES ('msg_chat',(SELECT MAX(seq)+1 FROM message),?,'user','usr_answers','ok','[]',?)`, f.room.ID, timestamp()); err != nil {
+	ctx := context.Background()
+	first := attentionQuestion(t, s, f)
+	second, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "agent", AuthorID: f.agent.ID, Body: "And this?", NeedsAttention: true})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SettleOrphanedInbox(context.Background()); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO inbox_item(id,project_id,room_id,message_id,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at)
+		SELECT 'inb_second',project_id,room_id,?,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at FROM inbox_item WHERE id=?`, second.ID, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if state, _, by := inboxState(t, s, item.ID); state != "superseded" || by != "system (answered in room)" {
-		t.Fatalf("state=%q by=%q", state, by)
+	if _, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_answers", Body: "plain chat"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_answers", Body: "re first", ReplyTo: first.MessageID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SettleOrphanedInbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if state, _, _ := inboxState(t, s, first.ID); state != "superseded" {
+		t.Fatalf("A state=%q", state)
+	}
+	if state, _, _ := inboxState(t, s, "inb_second"); state != "open" {
+		t.Fatalf("B state=%q: the sweep settled an unanswered card", state)
 	}
 }
 

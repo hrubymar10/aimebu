@@ -1,5 +1,12 @@
 package store
 
+// inThreadSQL is whether the message being written (reply_to, reply_to, thread_root as parameters) belongs to the card message's thread.
+const inThreadSQL = `(?<>'' AND (?=ask.id OR ?=COALESCE(NULLIF(ask.thread_root,''),ask.id)))`
+
+// onlyOpenAttentionSQL is whether the card is the only open attention card of its room (the alias i is the card).
+const onlyOpenAttentionSQL = `(SELECT COUNT(*) FROM inbox_item o JOIN message om ON om.id=o.message_id
+	WHERE o.room_id=i.room_id AND o.state='open' AND o.kind IN ('question','approval') AND o.requester_kind='agent' AND om.ask_json IS NULL)=1`
+
 // supersedeAsks closes ordinary agent asks when a person, or the agent that
 // asked, writes a later message in the same room. It runs in InsertMessage's
 // transaction so inbox state and message history cannot disagree.
@@ -9,16 +16,12 @@ package store
 // form, so a person answers it by talking. A person's reply in the card's
 // thread settles it. A plain message in the room (the usual answer is typed in
 // the chat, not on the card) settles it only when it is the room's only open
-// card of this kind (a message that replies to something else, such as another card's answer, is not a plain one): with two or more open, a plain message cannot tell which it
-// answers and settles none. The asking agent closes it only narrowly, with its
-// own newer message replying to it.
-// inThreadSQL is whether the message being written (reply_to, reply_to, thread_root as parameters) belongs to the card message's thread.
-const inThreadSQL = `(?<>'' AND (?=ask.id OR ?=COALESCE(NULLIF(ask.thread_root,''),ask.id)))`
-
-// onlyOpenAttentionSQL is whether the card is the only open attention card of its room (the alias i is the card).
-const onlyOpenAttentionSQL = `(SELECT COUNT(*) FROM inbox_item o JOIN message om ON om.id=o.message_id
-	WHERE o.room_id=i.room_id AND o.state='open' AND o.kind IN ('question','approval') AND o.requester_kind='agent' AND om.ask_json IS NULL)=1`
-
+// card of this kind (a message that replies to something else, such as another
+// card's answer, is not a plain one): with two or more open, a plain message
+// cannot tell which it answers and settles none. This room rule is decided here,
+// when the message is written, and never by the sweep (which cannot tell a card
+// that was unanswered when the message came from one answered since). The asking
+// agent closes a card only narrowly, with its own newer message replying to it.
 func (tx *Tx) supersedeAsks(message Message) error {
 	if message.AuthorKind != "user" && message.AuthorKind != "agent" {
 		return nil

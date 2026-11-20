@@ -2787,13 +2787,14 @@ async function main() {
     const page = await mount({ rooms: { rm_a: 1 } });
     const result = await page.evaluate(async () => {
       const { MentionIndex } = await import('/js/mentions.js'), { setProjectNames } = await import('/js/sender-identity.js');
-      setProjectNames(id => id === 'prj_a' ? 'demo' : '');
+      setProjectNames(id => ({ prj_a: 'demo', prj_b: 'My Project', prj_c: 'other' })[id] || '');
       const card = (id, slug) => ({ id, slug, project_id: 'prj_a', role_key: 'worker', tool: 'codex', model: 'm' });
-      const index = new MentionIndex([card('agt_1', 'wren'), card('agt_1', 'wren'), card('agt_2', 'ada'), card('agt_3', 'ada')], 'prj_a', ['bert'], []);
-      const out = { items: index.candidates('').filter(item => /@(wren|ada)/.test(item.insertText)).map(item => item.insertText), byName: index.resolve('ada@demo'), byID: index.resolve('ada@prj_a'), other: index.resolve('ada@nope') };
+      const index = new MentionIndex([card('agt_1', 'wren'), card('agt_1', 'wren'), card('agt_2', 'ada'), { ...card('agt_3', 'ada'), project_id: 'prj_b' }, { ...card('agt_4', 'kim'), project_id: 'prj_c' }, { ...card('agt_5', 'kim'), project_id: 'prj_a' }], 'prj_a', ['bert'], []);
+      const out = { items: index.candidates('').filter(item => /@(wren|ada|kim)/.test(item.insertText)).map(item => item.insertText), byName: index.resolve('ada@demo'), byID: index.resolve('ada@prj_a'), unparseable: index.resolve('ada@prj_b'), perCard: index.resolve('kim@other'), other: index.resolve('ada@nope') };
       setProjectNames(() => ''); return out;
     });
-    assert.deepEqual(result.items, ['@ada@demo', '@ada@demo', '@wren'], 'an agent is listed once per id and the disambiguation suffix is the project name, not its id');
+    assert.deepEqual(result.items, ['@ada@demo', '@ada@prj_b', '@kim@other', '@kim@demo', '@wren'], 'an agent is listed once per id and each one is suffixed with its own project name, or its id when the name is not a valid qualifier');
+    assert.deepEqual([result.unparseable, result.perCard], ['mention', 'mention'], 'the id of a project whose name is unusable, and a name of another card, are read back');
     assert.deepEqual([result.byName, result.byID, result.other], ['mention', 'mention', null], 'the qualifier is read as the project name or id');
     await page.close();
   }

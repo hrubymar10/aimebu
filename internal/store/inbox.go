@@ -72,8 +72,14 @@ const inboxFromSQL = `FROM inbox_item i JOIN room r ON r.id=i.room_id JOIN membe
 // A closed room's items never show: nothing in it can be acted on, and closing settles them (the usage kinds belong to the project, not the room).
 // A recovery still open there is one the settle pass left on purpose (a lost turn with no proof its process is gone): only a person can accept that
 // risk, so it stays visible.
+// An attention message (needs_attention, proposed answers, open questions; no structured ask) keeps its item in every room, so the chat shows the
+// card's live controls, but only the project's home room lists it in the Inbox and counts it: a person who is in another room reads it there.
+// attentionInbox marks such an item (options_json "attention"); a real ask, a recovery and the rest are listed wherever they come from, and an
+// attention item stored before the mark was added stays listed until it settles.
+const inboxHomeOnlySQL = `
+        AND NOT (i.kind IN ('question','approval') AND r.kind<>'home' AND COALESCE(json_extract(i.options_json,'$.attention'),0)=1)`
 const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
-        AND (r.lifecycle<>'closed' OR i.kind IN ('usage_info','usage_limit','recovery'))` + inboxVisibleSQL
+        AND (r.lifecycle<>'closed' OR i.kind IN ('usage_info','usage_limit','recovery'))` + inboxHomeOnlySQL + inboxVisibleSQL
 const inboxSupersededWhereSQL = `WHERE i.state='superseded' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval') AND i.requester_kind='agent'` + inboxVisibleSQL
 const inboxVisibleSQL = `
 		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))

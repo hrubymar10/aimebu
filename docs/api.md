@@ -664,13 +664,15 @@ resolves the item, and reaches the requester as usual. "No longer pending" in
 chat marks a resolved or withdrawn item only. Existing open asks with such a
 later message are superseded once by migration 117.
 A message with `needs_attention`, `proposed_answers` or `open_questions` and no
-`ask` raises an Inbox card only in the project's home room; in any other room it
-posts normally and creates no card. A question with no structured `ask` is narrower, because it is a message
+`ask` creates its item in any room (the chat shows the card's controls), but the
+Inbox list and its counts include it only for the project's home room; a real
+`ask`, a recovery and the other kinds are listed wherever they come from. A question with no structured `ask` is narrower, because it is a message
 in a conversation, and a person usually answers it in the chat: any later
 message from a person in the same room supersedes it only when it replies in
 the card's thread (`answered in thread`) or when it is a plain message (a reply to nothing) and the room's only open
 card of this kind (`answered in room`); with two or more open, a plain message
-settles none of them. The asking agent supersedes it only with its own newer message replying to it. The
+settles none of them. Only a message as it is written applies the room rule; the
+startup sweep settles by thread reply alone. The asking agent supersedes it only with its own newer message replying to it. The
 `inbox_item_resolved` event carries `reason` (`answered in thread`,
 `answered in room` or `newer message`).
 
