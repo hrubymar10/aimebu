@@ -488,8 +488,9 @@ Roles, agents
   additionally rides in the `--append-system-prompt` argument of every turn
   (`role_body_system` in the context, stripped from the turn JSON), so the
   system prompt and the warm process fingerprint stay stable. A full delivery
-  counts as seen once the turn reports a usage event; an earlier activity
-  event proves nothing about the session's persistence, and the turn's own
+  counts as seen once the turn reports a usage event that is not `background`;
+  an earlier activity event proves nothing about the session's persistence,
+  and neither does a background usage, and the turn's own
   outcome settles through the process exit, not here.
 - **agent_switch**(agent_id UNIQUE, room_id, tool, variant, launcher_id?, model,
   provider, machine_id?, checkout_path?, state[draining|starting|failed],
@@ -1559,12 +1560,16 @@ it never silently reruns a turn with uncertain effects.
 - M→S `activity{…, turn_id, source_event_id, kind, summary}`,
   `usage{…, source_event_id, tokens_in?, tokens_out?, tokens_cache_read?,
   tokens_cache_write?, context_used?, context_window?, cost_est?,
-  cost_source?, cost_cumulative?, tokens_cumulative?, model?, partial?}`,
+  cost_source?, cost_cumulative?, tokens_cumulative?, model?, partial?,
+  background?}`,
   `compaction{…,
   pre_tokens, post_tokens}`. `cost_source=estimated` marks a price-list cost;
   an omitted source means the harness reported it. `tokens_cumulative` says
   the token figures are the harness session's running totals, which the store
-  subtracts the session's previous totals from.
+  subtracts the session's previous totals from. `background` marks the spend
+  of a result that is not the turn's answer (the Claude CLI's own query about
+  a background task, which can come before the CLI reads the turn's input): it
+  is recorded like any usage but does not confirm the turn's context delivery.
 - M→S `answer{v, agent_id, generation, turn_id, answer_rev, digest,
   candidate}`. `candidate` is the raw final-answer string, including malformed
   output or an empty string. The digest covers its exact UTF-8 bytes. The

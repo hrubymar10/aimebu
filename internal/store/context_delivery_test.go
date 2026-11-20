@@ -356,3 +356,52 @@ func TestDeliveryConfirmationNeedsAUsageOrTerminalEvent(t *testing.T) {
 	}
 	settle(turn2)
 }
+
+// The Claude CLI can answer its own query about a background task before it reads the turn's input; that result's spend reaches the store
+// as background usage. If the turn is then cancelled or killed, the session never read the role or knowledge it carried: the background
+// usage is recorded but confirms nothing, so the next wake on the same session carries the full text again.
+func TestBackgroundUsageDoesNotConfirmDelivery(t *testing.T) {
+	t.Parallel()
+	s, _, room, one, _ := wakeFixture(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`UPDATE agent SET tool='claude' WHERE id=?`, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@one handle this"}); err != nil {
+		t.Fatal(err)
+	}
+	first, ready, err := s.PrepareDispatch(ctx, one.ID, "")
+	if err != nil || !ready {
+		t.Fatalf("prepare ready=%t err=%v", ready, err)
+	}
+	if err := s.RecordTurnEvent(ctx, first.TurnID, one.ID, "use-bg", "usage", "", usageFrame(map[string]any{"tokens_out": 7, "cost_estimate": 0.02, "cost_cumulative": true, "background": true})); err != nil {
+		t.Fatal(err)
+	}
+	var confirmed, records int
+	if err := s.db.QueryRow(`SELECT role_confirmed FROM session_context_delivery WHERE session_id='ses_one'`).Scan(&confirmed); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM usage_record WHERE turn_id=?`, first.TurnID).Scan(&records); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed != 0 || records != 1 {
+		t.Fatalf("background usage: role_confirmed=%d usage records=%d, want unconfirmed and its spend recorded", confirmed, records)
+	}
+	// The turn is cancelled before the harness reads its input: it ends with no usage of its own.
+	if _, err := s.db.Exec(`UPDATE turn SET exec='exited',settle='settled' WHERE id=?`, first.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET observed='idle' WHERE id=?`, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@one again"}); err != nil {
+		t.Fatal(err)
+	}
+	second, ready, err := s.PrepareDispatch(ctx, one.ID, "")
+	if err != nil || !ready {
+		t.Fatalf("second prepare ready=%t err=%v", ready, err)
+	}
+	if fullRole, markedRole, _, _ := blockRoles(second.Context); !fullRole || markedRole {
+		t.Fatalf("the wake after a cancelled turn with only background usage carries the unchanged marker: %s", second.Context)
+	}
+}

@@ -56,7 +56,8 @@ changes, and whenever the delivery that carried it may not have reached the
 harness (a turn whose dispatch was never confirmed, such as a lost turn): when
 in doubt, the full text goes out. A delivery counts as seen once the turn
 reports a usage event; an earlier activity event proves nothing about the
-session's persistence. The marker is only sent to Claude:
+session's persistence, and neither does a background usage (the spend of a
+result that is not the turn's answer, below). The marker is only sent to Claude:
 its compaction events are reported and its session loss is detected, so its
 session is provably still holding what an earlier turn delivered in full. Every
 other harness can compact without reporting it, or silently start a new session
@@ -254,8 +255,9 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   its origin journaled). Such a result is ignored: it does not end the turn or start the
   kill that follows a result without an answer. What its query spent is still reported,
   as a usage event of its own (its tokens, and the session's running cost, which the
-  store turns into that query's cost as for any result); one that reports no spend at
-  all gets no usage event. An error result always counts (it ends the process, and what it says, a provider
+  store turns into that query's cost as for any result), marked `background`: it can
+  come before the CLI has read the turn's input, so it does not confirm the turn's
+  context delivery. One that reports no spend at all gets no usage event. An error result always counts (it ends the process, and what it says, a provider
   limit or a failed sign-in, is the session's). Recorded with CLI 2.1.329 against a local
   stand-in for the API: `internal/adapter/claude/testdata/stream`.
 - **What the journal keeps.** Every `result` is summarized in an event's `detail`

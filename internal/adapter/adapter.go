@@ -138,6 +138,10 @@ type Usage struct {
 	TokensCumulative bool `json:"tokens_cumulative,omitempty"`
 	// Partial marks what a turn spent before it ended without a final report (killed, crashed, cancelled): what was seen, not a total.
 	Partial bool `json:"partial,omitempty"`
+	// Background marks the spend of a result that is not the turn's answer (the Claude CLI's own query about a background task, which can
+	// come before the CLI has read the turn's input). Its spend is recorded like any usage, but it proves nothing about the turn's input,
+	// so it does not confirm the turn's context delivery.
+	Background bool `json:"background,omitempty"`
 }
 
 type Compaction struct {

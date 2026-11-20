@@ -138,6 +138,11 @@ func TestWarmTurnIgnoresTheCLIsOwnQueryBeforeItsInput(t *testing.T) {
 		spent[1].CostEstimate == nil || *spent[1].CostEstimate <= *spent[0].CostEstimate {
 		t.Fatalf("usage %+v", spent)
 	}
+	// The query's usage is marked background (it is not the turn's answer and came before the input was read, so it confirms no context
+	// delivery); the answer's is not.
+	if !spent[0].Background || spent[1].Background {
+		t.Fatalf("background marks: query %t, answer %t", spent[0].Background, spent[1].Background)
+	}
 }
 
 // Only the origin the CLI is known to give its own queries is ignored: a result after the repeat with any other origin is the turn's answer

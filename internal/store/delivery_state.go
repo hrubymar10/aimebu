@@ -674,8 +674,10 @@ func (s *Store) RecordTurnEvent(ctx context.Context, turnID, agentID, sourceID, 
 		// A usage event proves the turn got far enough for its harness to have taken the context in: the turn's full context
 		// deliveries count as seen, and a later wake may carry the unchanged marker. An early activity event (a turn that
 		// started and died before anything was measured or saved) proves nothing about the session's persistence, so it
-		// confirms nothing. The process exit is settled by RecordProcessInfo, not here, so usage is the only confirming kind.
-		if kind == "usage" {
+		// confirms nothing. The process exit is settled by RecordProcessInfo, not here, so usage is the only confirming kind. A background
+		// usage (the spend of a result that is not the turn's answer, which the Claude CLI can report before it has read the turn's input)
+		// proves nothing about the input either: its spend is recorded, but it confirms nothing.
+		if kind == "usage" && !backgroundUsage(payload) {
 			if err := tx.confirmContextDelivery(turnID); err != nil {
 				return err
 			}
@@ -695,4 +697,14 @@ func errorEvidenceLabel(tool string) string {
 		return "Codex error event"
 	}
 	return "Harness error event"
+}
+
+// backgroundUsage says whether a usage frame reports the spend of a result that is not the turn's answer (usage.background).
+func backgroundUsage(payload []byte) bool {
+	var frame struct {
+		Usage struct {
+			Background bool `json:"background"`
+		} `json:"usage"`
+	}
+	return json.Unmarshal(payload, &frame) == nil && frame.Usage.Background
 }

@@ -632,6 +632,7 @@ func (t *turn) handleLine(s *runState, line []byte) {
 			// keeps one record per usage event, and the cost is the session's running total either way). A result that reports no spend at
 			// all gets an activity event instead, so it leaves no empty usage record.
 			if !empty || usage.CostEstimate != nil && *usage.CostEstimate > 0 {
+				usage.Background = true
 				t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage, Detail: detail + " ignored: " + ignore})
 			} else {
 				t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: "result", Detail: detail + " ignored: " + ignore})
