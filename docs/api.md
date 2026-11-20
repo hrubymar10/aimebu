@@ -663,8 +663,9 @@ open ask's, and `POST /api/inbox/{item}/answer` still accepts the answer,
 resolves the item, and reaches the requester as usual. "No longer pending" in
 chat marks a resolved or withdrawn item only. Existing open asks with such a
 later message are superseded once by migration 117.
-A question with no structured `ask` (a message with `needs_attention`,
-`proposed_answers` or `open_questions`) is narrower, because it is a message
+A message with `needs_attention`, `proposed_answers` or `open_questions` and no
+`ask` raises an Inbox card only in the project's home room; in any other room it
+posts normally and creates no card. A question with no structured `ask` is narrower, because it is a message
 in a conversation, and a person usually answers it in the chat: any later
 message from a person in the same room supersedes it only when it replies in
 the card's thread (`answered in thread`) or when it is a plain message (a reply to nothing) and the room's only open

@@ -261,6 +261,15 @@ func nullableList[T any](items []T, encoded []byte) any {
 }
 
 func (tx *Tx) attentionInbox(turn answerTurn, message Message, item answer.Message) error {
+	// Only the project's home room raises a card for a message without an ask: elsewhere the message just posts, and a person who is in
+	// that room reads it there. Real asks, recovery and delivery-failed cards are not affected.
+	var kind string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind FROM room WHERE id=?`, message.RoomID).Scan(&kind); err != nil {
+		return err
+	}
+	if kind != "home" {
+		return nil
+	}
 	options := struct {
 		Text            string                `json:"text"`
 		Options         []string              `json:"options"`

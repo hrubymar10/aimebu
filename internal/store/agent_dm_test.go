@@ -573,7 +573,6 @@ func TestAgentDMQuestionReachesTheAskingAgentsProject(t *testing.T) {
 	ctx := context.Background()
 	room := f.open(t, f.lead1, f.worker2)
 	ask := `{"messages":[{"room":"` + room.ID + `","body":"Which one?","ask":{"kind":"question","text":"Which one?","options":["A","B"],"free_text":true}}]}`
-	attention := `{"messages":[{"room":"` + room.ID + `","body":"May I proceed?","needs_attention":true,"proposed_answers":["Yes","No"]}]}`
 	if got := f.answer(t, f.worker2, room.ID, ask); got.Result == "committed" {
 		t.Fatalf("a question with nobody in the chat committed: %+v", got)
 	}
@@ -582,10 +581,8 @@ func TestAgentDMQuestionReachesTheAskingAgentsProject(t *testing.T) {
 		t.Fatalf("a question nobody in the chat could answer committed: %+v", got)
 	}
 	f.join(t, room.ID, f.bob) // operator of the asking agent's project
-	for _, request := range []struct{ name, raw string }{{"question", ask}, {"needs attention", attention}} {
-		if got := f.answer(t, f.worker2, room.ID, request.raw); got.Result != "committed" {
-			t.Fatalf("%s someone in the chat can answer: %+v", request.name, got)
-		}
+	if got := f.answer(t, f.worker2, room.ID, ask); got.Result != "committed" {
+		t.Fatalf("question someone in the chat can answer: %+v", got)
 	}
 	// (The two answers refused above left delivery notices of their own; only the questions matter here.)
 	items := func(user string) []InboxEntry {
@@ -603,12 +600,8 @@ func TestAgentDMQuestionReachesTheAskingAgentsProject(t *testing.T) {
 		return questions
 	}
 	got := items(f.bob)
-	if len(got) != 1 || got[0].Question != "May I proceed?" {
-		t.Fatalf("bob sees %+v, want only the newest request for attention", got)
-	}
-	var earlierState string
-	if err := f.s.db.QueryRow(`SELECT i.state FROM inbox_item i JOIN message m ON m.id=i.message_id WHERE m.room_id=? AND m.body='Which one?'`, room.ID).Scan(&earlierState); err != nil || earlierState != "superseded" {
-		t.Fatalf("earlier question state=%q err=%v", earlierState, err)
+	if len(got) != 1 || got[0].Question != "Which one?" {
+		t.Fatalf("bob sees %+v, want the question", got)
 	}
 	for _, item := range got {
 		if item.ProjectID != f.p2.ID || item.RoomID != room.ID || !item.CanDecide {
