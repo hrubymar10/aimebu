@@ -216,12 +216,17 @@ const (
 	reconnectPersistent = 5
 )
 
+// reconnectOutage is how long a server unreachable (with the failures in a row) must last to be reported; a shorter outage only reaches the local log.
+var reconnectOutage = 10 * time.Minute
+
 func (c *Client) Run(ctx context.Context) error {
 	c.SweepLegacyKeys()
 	c.SweepWarmOrphans(ctx)
 	telemetry.Go(ctx, func() { c.sweepAgentLogs(ctx) })
 	telemetry.Go(ctx, func() { c.warmGuard(ctx) })
 	failures := 0
+	var outageSince time.Time
+	outageReported := false
 	started := time.Now()
 	for {
 		began := time.Now()
@@ -247,7 +252,16 @@ func (c *Client) Run(ctx context.Context) error {
 		}
 		failures++
 		c.reportLocal(err)
-		if failures == reconnectPersistent {
+		// A server that is down for a while (a deliberate stop, a deploy) is the network's business and only logged; one that stays unreachable past
+		// reconnectOutage, with the failures in a row, is reported.
+		if outageSince.IsZero() {
+			outageSince = began
+		}
+		if failures == 1 && time.Since(began) > reconnectHealthy {
+			outageSince, outageReported = time.Now(), false // a connection that worked ended: a new outage starts now
+		}
+		if failures >= reconnectPersistent && time.Since(outageSince) >= reconnectOutage && !outageReported {
+			outageReported = true
 			telemetry.ReportWarning(ctx, "supervisor", fmt.Errorf("the server connection failed %d times in a row: %w", failures, err))
 		}
 		delay := c.ReconnectDelay
@@ -440,6 +454,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	sessions, err := c.Journal.NativeSessionEvents(ctx)
 	if err != nil {
+		c.report("the journal could not be read to replay it after reconnecting", err)
 		return err
 	}
 	for _, session := range sessions {
@@ -454,6 +469,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	// follows every event of the turn.
 	usage, err := c.Journal.PendingUsageEvents(ctx)
 	if err != nil {
+		c.report("the journal could not be read to replay it after reconnecting", err)
 		return err
 	}
 	for _, pending := range usage {
@@ -463,6 +479,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	exits, err := c.Journal.PendingExits(ctx)
 	if err != nil {
+		c.report("the journal could not be read to replay it after reconnecting", err)
 		return err
 	}
 	for _, exit := range exits {
@@ -481,6 +498,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	c.reconcileCommands(ctx)
 	pending, err := c.Journal.PendingAnswers(ctx)
 	if err != nil {
+		c.report("the journal could not be read to replay it after reconnecting", err)
 		return err
 	}
 	for _, answer := range pending {
@@ -1008,6 +1026,19 @@ func encodeMachineFrame(frame protocol.Frame) ([]byte, error) {
 	return raw, nil
 }
 
+// unsent is what a failed send of something the supervisor keeps and delivers again (a journaled turn frame or exit, the warm state) gets: the local log
+// only. The server being down is not a fault of the supervisor's; a replay that fails after the reconnect is reported where it fails.
+func (c *Client) unsent(err error) {
+	c.reportLocal(err)
+}
+
+// serverUnreachable says whether the supervisor has no live server connection right now.
+func (c *Client) serverUnreachable() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.currentConn == nil
+}
+
 func (c *Client) sendCurrent(ctx context.Context, frame protocol.Frame) error {
 	c.mu.Lock()
 	conn := c.currentConn
@@ -1410,7 +1441,7 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 			}
 		}
 		if err := c.sendCurrent(ctx, frame); err != nil {
-			c.report("a turn frame could not be sent to the server", err)
+			c.unsent(err) // journaled before this send: the reconnect replays it
 		}
 	}
 	events := turn.Events()
@@ -1542,7 +1573,7 @@ events:
 	// process state first so that refresh sees its idle warm process immediately.
 	if _, warmTurn := turn.(*warmTurn); warmTurn {
 		if err := c.sendWarmReport(ctx); err != nil {
-			c.report("the warm state after a turn could not be sent to the server", err)
+			c.unsent(err) // the warm state is sent whole again when the connection returns
 		}
 	}
 	if delivery.Mode == adapter.ModeNormal {
@@ -1554,7 +1585,7 @@ events:
 		c.processSink(delivery.TurnID, exit)
 	}
 	if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.Process, AgentID: delivery.AgentID, Generation: delivery.Generation, TurnID: delivery.TurnID, Exit: &exit}); err != nil {
-		c.report("the process exit of a turn could not be sent to the server", err)
+		c.unsent(err) // journaled (RecordExitInfo) before this send: the reconnect replays it
 	}
 }
 

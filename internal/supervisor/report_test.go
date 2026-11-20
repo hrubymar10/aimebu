@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 
+	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
@@ -128,5 +130,48 @@ func TestServerUnauthorizedForStoppedAgentIsNotReported(t *testing.T) {
 	got := transport.sent()
 	if len(got) != 1 || got[0].Exception[0].Value != "server error frame: unauthorized" {
 		t.Fatalf("an unauthorized for an active agent must still be reported: %+v", got)
+	}
+}
+
+// What the supervisor journals or re-sends (a turn frame, an exit, the warm state) and could not send while the server is down is only logged.
+func TestUnsentJournaledFramesAreOnlyLogged(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := startReporting(t)
+	var logged int
+	c := &Client{OnError: func(error) { logged++ }}
+	c.unsent(errors.New("machine socket disconnected"))
+	telemetry.Current().Flush(time.Second)
+	if got := transport.sent(); len(got) != 0 || logged != 1 {
+		t.Fatalf("an unsent journaled frame must reach the local log only: events=%+v logged=%d", got, logged)
+	}
+}
+
+// A server that stays unreachable is reported once, and only after the outage has lasted reconnectOutage; a short outage is only logged.
+func TestReconnectOutageIsReportedOnlyWhenLong(t *testing.T) {
+	journal, err := OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	run := func(outage time.Duration, wait time.Duration) []*sentry.Event {
+		telemetry.ResetCaptured()
+		transport := startReporting(t)
+		old := reconnectOutage
+		reconnectOutage = outage
+		defer func() { reconnectOutage = old }()
+		c := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+		c.ReconnectDelay = 5 * time.Millisecond
+		c.OnError = func(error) {}
+		ctx, cancel := context.WithTimeout(t.Context(), wait)
+		defer cancel()
+		_ = c.Run(ctx)
+		telemetry.Current().Flush(time.Second)
+		return transport.sent()
+	}
+	if got := run(time.Hour, 300*time.Millisecond); len(got) != 0 {
+		t.Fatalf("a short outage was reported: %+v", got)
+	}
+	if got := run(50*time.Millisecond, 400*time.Millisecond); len(got) != 1 {
+		t.Fatalf("a long outage must be reported once: %+v", got)
 	}
 }

@@ -2302,3 +2302,21 @@ func TestWarmUnconfirmedContainerEndIsAWarningButAliveIsAnError(t *testing.T) {
 		t.Fatalf("an alive, unkillable process stays an error: %+v", got)
 	}
 }
+
+// A warm process the server could not be asked to keep (no connection: an outage) is ended and only logged; the end is the right outcome, as an
+// unconfirmed process would outlive what the server counts.
+func TestWarmNotKeptDuringServerOutageIsOnlyLogged(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := startReporting(t)
+	h := newWarmHarness(t)
+	h.c.warmClaim = func(context.Context, uint64, int) error { return errors.New("machine socket disconnected") }
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	telemetry.Current().Flush(time.Second)
+	if got := transport.sent(); len(got) != 0 {
+		t.Fatalf("a warm process not kept for lack of a server was reported: %+v", got)
+	}
+	if h.c.warmLive.Load() != 0 {
+		t.Fatal("a process the server could not confirm was kept")
+	}
+}

@@ -88,7 +88,9 @@ transport inside a test binary.
     protocol working and are only logged; nor is an `unauthorized` for a late frame, an ack, of an agent the supervisor already stopped), a warm process not confirmed gone
     (a warning when it is a containerized process whose host side ended and whose container end the launcher never confirmed, the known Docker path that the quarantine
     releases by itself; an error when the process is still alive), keep-alive and detection problems,
-    a server connection that failed five times in a row). Each call site names its cause with a **fixed phrase** and only that goes out; the error behind it (a
+    a server connection that failed five times in a row and stayed unreachable for ten minutes: a shorter outage, and what the journal or the next
+    connection delivers again (a turn frame, a turn's exit, the warm state, a warm process that could not be kept for lack of a server) is only logged;
+    a journal that cannot be read to replay after reconnecting is reported). Each call site names its cause with a **fixed phrase** and only that goes out; the error behind it (a
     harness's own words, a path, a name) stays in the local log.
   - `machine`, `event-stream`: a failure while a supervisor connects (machine state, reconciliation, harness and launcher state, agent keys), an agent frame
     that fails for a reason that is not a classified refusal, a refused frame (a warning, with its code; not one for an agent that is already stopped or removed on that machine, a late ack), a write the server used to ignore (that the machine is

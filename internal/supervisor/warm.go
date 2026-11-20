@@ -1064,7 +1064,14 @@ func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) (kept b
 			reason = loginChangedReason
 		}
 		if claimErr != nil {
-			c.degraded("a warm process is not kept", fmt.Errorf("agent %s: its warm process is not kept: %w", entry.agentID, claimErr))
+			// The server confirms a kept process (its cap); one that cannot be asked is ended, which is right: an unconfirmed process would
+			// outlive what the server counts. During an outage that is expected and only logged; a server that answered and refused is a warning.
+			kerr := fmt.Errorf("agent %s: its warm process is not kept: %w", entry.agentID, claimErr)
+			if c.serverUnreachable() {
+				c.reportLocal(kerr)
+			} else {
+				c.degraded("a warm process is not kept", kerr)
+			}
 			reason = "the server did not confirm that it is kept"
 		}
 		c.finish(slot, entry, reason, 0)
@@ -1495,7 +1502,7 @@ func (c *Client) sendWarmReports(ctx context.Context) {
 			return
 		case <-c.warmReports:
 			if err := c.sendWarmReport(ctx); err != nil && ctx.Err() == nil {
-				c.report("the warm state could not be sent to the server", err)
+				c.unsent(err)
 			}
 		}
 	}
