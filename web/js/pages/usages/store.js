@@ -22,6 +22,10 @@ export class UsagesStore {
     this.flow = signal(null);
     // Counts the answers that were drawn: the forms rebuild from the server's values each time, as a page redraw always did.
     this.revision = signal(0);
+    // A choice made in a provider's setup form and not saved yet (the Ollama mode, the Copilot host). The forms rebuild on every read, and
+    // a read can come between choosing and saving (a push, another provider's save): the rebuilt form starts from the draft, not the stored
+    // value. A save that goes through, a clear, or a sign-out drops it.
+    this.drafts = {};
     this.generation = 0;
     this.flowToken = 0;
     this.pushLoading = false;
@@ -41,7 +45,7 @@ export class UsagesStore {
   setError(text) { this.error.value = text; }
 
   // Nothing of the owner's snapshot (e-mails, alerts, profiles) stays for whoever signs in next on this tab, or for an owner who became an admin.
-  forget() { this.generation++; batch(() => { this.usage.value = null; this.switcher.value = null; this.error.value = ''; this.flow.value = null; this.revision.value++; }); }
+  forget() { this.generation++; this.drafts = {}; batch(() => { this.usage.value = null; this.switcher.value = null; this.error.value = ''; this.flow.value = null; this.revision.value++; }); }
 
   async mutate(action, failed) {
     this.error.value = '';

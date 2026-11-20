@@ -182,8 +182,8 @@ const FIXTURE = async () => {
   // The usages column, rendered by the real popover over the mock snapshots (open, so the audits see it).
   const { UsagesPopover } = await import('/js/usages-popover.js'), { MockUsagesSource } = await import('/js/usages-source.js');
   const mockUsages = new MockUsagesSource(), usagesColumn = new UsagesPopover(mockUsages, () => {});
-  usagesColumn.state = await mockUsages.switcher(); usagesColumn.tokens = (await mockUsages.credentialTargets()).targets;
-  usagesColumn.popover.hidden = false; usagesColumn.chat.classList.add('usages-open'); usagesColumn.render(await mockUsages.list());
+  usagesColumn.popover.hidden = false; usagesColumn.chat.classList.add('usages-open'); usagesColumn.toggle.setAttribute('aria-expanded', 'true');
+  await usagesColumn.load();
   // The import wizard's blocking notice (a missed number reservation: only the skip is offered), rendered by the real wizard.
   const { ImportV1Wizard } = await import('/js/import-v1.js');
   const blocked = new ImportV1Wizard(); blocked.dialog.id = 'import-v1-blocked';

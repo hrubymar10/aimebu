@@ -448,8 +448,14 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'mistral')), ['mistral', 'cookie=1']);
       await page.waitForFunction(() => [...document.querySelectorAll('[data-provider=mistral] button')].some(button => button.textContent === 'Clear cookie'));
       await manage(page, 'ollama-cloud');
-      await page.$eval(`${cardOf('ollama-cloud')} input[type=password]`, el => { el.value = 'sk-1'; });
       await page.select(`${cardOf('ollama-cloud')} select`, 'api_key');
+      // A refresh of the panel between choosing and saving (a live push, another provider's save) rebuilds the form, and the rebuilt form
+      // keeps the mode the person chose instead of the stored one.
+      const reads = await calls(page, 'list');
+      await page.evaluate(() => window.__usages.load());
+      await page.waitForFunction(reads => window.__calls.filter(call => call[0] === 'list').length > reads, {}, reads);
+      assert.equal(await page.$eval(`${cardOf('ollama-cloud')} select`, el => el.value), 'api_key', 'a refresh put the stored mode back over the chosen one');
+      await page.$eval(`${cardOf('ollama-cloud')} input[type=password]`, el => { el.value = 'sk-1'; });
       await click(page, `${cardOf('ollama-cloud')} .btn-primary`);
       await page.waitForFunction(() => window.__calls.some(call => call[0] === 'ollama'));
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'ollama')[1]), { auth_mode: 'api_key', api_key: 'sk-1' });
