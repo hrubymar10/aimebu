@@ -4,6 +4,8 @@ import { promptDialog } from '../../dialogs.js';
 import { creditsText, percent, windowLabel, paceExplanation, sparkGeometry, dailyTargetText, countdown, shown, staleResetText, age as ageOf, USAGE_LEGEND } from '../../usage-format.js';
 import { mergeAlerts, staleAge } from '../../usage-alerts.js';
 import { expiryBadge } from '../../usage-expiry.js';
+import { usagesPorts } from '../../usages-ports.js';
+import { maskEmail, maskName, usagePrivacy, toggleUsagePrivacy } from '../../usage-privacy.js';
 import { toolOf, isSwitchable, sortProviders, providerConfigured, canEnable, movedOrder, profileKey, profileStatusLine, switchView, affectedText } from './model.js';
 import { CopilotSetup, MistralSetup, OllamaSetup } from './provider-setup.js';
 import { profileActions } from './profile-actions.js';
@@ -56,7 +58,7 @@ function WindowRow({ window, usedDisplay, fetchedAt, stale }) {
 }
 
 function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, tool, affected, eligible, hasActive, token, manage, readOnly, reauth }) {
-  const name = profile.profile_name || 'local';
+  const name = maskName(profile.profile_name || 'local');
   const switchable = isSwitchable(tool);
   const configured = (state.profiles || []).some(item => item.tool === tool && item.name === profile.profile_name);
   const view = switchView({ switchable, enabled: state.enabled, owner: state.owner, configured, profile, hasActive, eligible });
@@ -75,7 +77,7 @@ function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, 
       ${managed && html`<${IconButton} name="edit" label=${`Rename ${name}`} className="usages-b-rename" onClick=${rename} />`}
       ${managed && html`<${IconButton} name="trash" label=${`Delete ${name}`} danger className="usages-b-remove" onClick=${remove} />`}
       ${profile.active ? html`<span class="switcher-tile-active">Active</span>` : html`<span class="usages-b-inactive">Inactive</span>`}
-      ${profile.plan && html`<span class="switcher-tile-plan" title=${profile.email ? `${profile.plan} · ${profile.email}` : profile.plan}>${profile.plan}</span>`}
+      ${profile.plan && html`<span class="switcher-tile-plan" title=${profile.email ? `${profile.plan} · ${maskEmail(profile.email)}` : profile.plan}>${profile.plan}</span>`}
     </div>
     ${windows.length ? windows.map((window, index) => html`<${WindowRow} window=${window} usedDisplay=${usedDisplay} fetchedAt=${profile.last_refresh_at} stale=${!!stale} key=${`${window.key}:${index}`} />`)
       : profile.has_credentials === false ? html`<div class="usages-empty usages-empty-compact">Needs login</div>` : html`<div class="usages-empty usages-empty-compact">No usage data yet.</div>`}
@@ -165,7 +167,7 @@ export function UsagesView({ store, readOnly = false, openSettings }) {
   const alerts = readOnly ? mergeAlerts(usage?.credential_alerts) : [];
   const tile = group => html`<${Tile} key=${group.provider.provider_name} store=${store} provider=${group.provider} profiles=${sorted(group.profiles)} order=${group.order} providers=${providers} state=${shown_}
     usedDisplay=${usedDisplay} refreshSec=${refreshSec} tokens=${tokens} revision=${revision} readOnly=${readOnly} alerts=${usage?.credential_alerts || []} />`;
-  return html`<div class="usages-b">
+  return html`<div class=${`usages-b${usagesPorts.value === 'b' ? ' usages-b-ports' : ''}`}>
     ${alerts.length > 0 && html`<div class="usages-credential-alerts" role="alert">${alerts.map(alert => html`<div class=${`usages-credential-alert usages-credential-alert-${String(alert.kind || '').replace(/[^a-z_]/g, '')}`}><p>${alert.text}</p>
       ${alert.details.length > 0 && html`<details><summary>Details</summary>${alert.details.map(line => html`<p>${line}</p>`)}</details>`}</div>`)}</div>`}
     <div class="usages-b-grid">${primary.map(tile)}</div>
@@ -176,11 +178,14 @@ export function UsagesView({ store, readOnly = false, openSettings }) {
   </div>`;
 }
 
-// B's two actions for the Usages page's header, where the panel's own header already holds them (refresh, and the group button).
+// B's actions for the Usages page's header, where the panel's own header already holds them (refresh, and the group button).
+// B of the usages-ports experiment adds the privacy toggle, which masks account emails and profile names for screen sharing.
 export function UsagesActions({ store }) {
   const activeFirst = usagesGroup.value === 'active', label = groupLabel(usagesGroup.value);
+  const ports = usagesPorts.value === 'b', masked = usagePrivacy.value;
   return html`<span class="usages-b-actions">
     ${store.owner.value && html`<${IconButton} name="refresh" label="Refresh usages" className="usages-b-refresh-all" onClick=${() => store.mutateUsage(() => store.source.refresh())} />`}
+    ${ports && html`<${IconButton} name=${masked ? 'eye-off' : 'eye'} label=${masked ? 'Show account names and emails' : 'Mask account names and emails'} className="usages-b-privacy" aria-pressed=${String(masked)} onClick=${toggleUsagePrivacy} />`}
     <button type="button" class=${`btn-icon usages-b-group${activeFirst ? ' active' : ''}`} title=${label} aria-label=${label} aria-pressed=${String(activeFirst)} onClick=${toggleUsagesGroup}>${GROUP_ICON}</button>
   </span>`;
 }

@@ -399,7 +399,7 @@ func paceAlertWindow(provider, key string) bool {
 }
 
 func expiryBaseKey(provider, account string) string {
-	return "expiry\x00" + alertHash("account\x00" + provider + "\x00" + account)
+	return "expiry\x00" + alertHash("account\x00"+provider+"\x00"+account)
 }
 
 func alertHash(value string) string {

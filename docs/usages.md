@@ -157,6 +157,13 @@ Inbox visibility, dismissal, and the corrupt-state recovery. An active limit
 guard hides the threshold and pace notices of its tool, but never the reset
 notice or the expiry alert.
 
+In B the Usages view itself changes, in A it does not: usage and cost figures
+draw with fixed-width digits (`font-variant-numeric: tabular-nums`), the
+header actions gain a privacy toggle that masks account emails and profile
+names in the view (kept in this browser, like the group-by choice), and the
+whole view draws at a compact density. Switching the pill switches all of
+that live, without a reload.
+
 ## Auto-refresh tokens (Account maintenance)
 
 Settings → Server → Accounts & usage → Account maintenance has an **Auto-refresh tokens** toggle

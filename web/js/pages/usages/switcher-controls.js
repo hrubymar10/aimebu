@@ -2,6 +2,7 @@ import { html, useRef } from '../../ui.js';
 import { SettingsGroup, SettingsRow } from '../../components/settings-row.js';
 import { mergeAlerts } from '../../usage-alerts.js';
 import { confirmDialog } from '../../dialogs.js';
+import { usagesPorts } from '../../usages-ports.js';
 import { alertKind, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenAutoRefreshOn, tokenAutoRefreshAvailable, tokenStateLine } from './model.js';
 
 const AUTO_REFRESH = 'aimebu becomes the only thing that refreshes your Claude and Codex logins. While on, aimebu must stay running whenever you use Claude or Codex, also outside aimebu: if it is stopped for more than about an hour around a token\'s expiry, sessions get auth errors until it runs again. Turn this off before stopping aimebu for long or uninstalling it.';
@@ -38,6 +39,23 @@ function AccountMaintenance({ store, settings }) {
   <//>`;
 }
 
+// The opt-in alert toggles of the usages-ports experiment's B: each posts its
+// own change, and the server-side alerts fire only while their toggle is on.
+function UsageAlertToggles({ store, settings }) {
+  const toggle = key => event => store.mutateUsage(() => store.source.settings({ [key]: event.currentTarget.checked }));
+  return html`<${SettingsGroup} label="Usage alerts">
+    <${SettingsRow} label="Predictive pace alerts" desc="Warn in the Inbox when a Codex or Claude session or weekly window is projected to run out before it resets. One alert per episode; it re-arms only after the window recovers." id="usage-alert-pace">
+      <input type="checkbox" checked=${!!settings?.alert_pace_enabled} onChange=${toggle('alert_pace_enabled')} />
+    <//>
+    <${SettingsRow} label="Reset notices" desc="Add an Inbox note when a usage window resets and its allowance starts over. The next reset closes it again." id="usage-alert-reset">
+      <input type="checkbox" checked=${!!settings?.alert_reset_notice_enabled} onChange=${toggle('alert_reset_notice_enabled')} />
+    <//>
+    <${SettingsRow} label="Credential expiry alerts" desc="Alert when a stored Claude or Codex credential is close to expiry or has expired, from the same data as the token-expiry badge. One alert per credential until it is renewed." id="usage-alert-expiry">
+      <input type="checkbox" checked=${!!settings?.alert_expiry_enabled} onChange=${toggle('alert_expiry_enabled')} />
+    <//>
+  <//>`;
+}
+
 function UsageConfig({ store, settings }) {
   const interval = useRef(null), display = useRef(null), warning = useRef(null), critical = useRef(null);
   const save = () => store.mutateUsage(() => store.source.settings(usageSettingsBody({ interval: interval.current.value, display: display.current.value, warning: warning.current.value, critical: critical.current.value })));
@@ -60,6 +78,7 @@ function UsageConfig({ store, settings }) {
       <//>
     <//>
     <div class="settings-actions"><button type="button" class="btn btn-primary" onClick=${save}>Save usage settings</button><button type="button" class="btn" onClick=${refresh}>Refresh now</button></div>
+    ${usagesPorts.value === 'b' && html`<${UsageAlertToggles} store=${store} settings=${settings} />`}
     <${AccountMaintenance} store=${store} settings=${settings} />
   </div>`;
 }

@@ -103,3 +103,9 @@ export function initUIVariant(button = document.querySelector('#ui-variant-toggl
   choosers[key] = show;
   button.addEventListener('click', () => show(variants[(variants.indexOf(variant) + 1) % variants.length], true));
 }
+
+// The usages-ports experiment: B carries the upstream UI ports (the opt-in
+// usage alerts, fixed-width digits, the privacy toggle and the compact
+// density); A is the current state.
+defineExperiment('usages-ports', 'Usages ports', ['current', 'ports']);
+ACTIVE.push('usages-ports');
