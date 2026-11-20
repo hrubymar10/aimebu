@@ -85,16 +85,37 @@ async function main() {
     // The A/B/C pill sits in the top bar, left of Inbox, and switches the panel's own drawing at once.
     for (const [variant, selector] of [['b', '.usages-popover-alt .usages-b .usages-b-tile'], ['c', '.usages-popover-alt .usages-c .uc-headline']]) {
       const page = await mount(true);
-      await page.evaluate(() => localStorage.removeItem('aimebu2.usages.variant'));
+      await page.bringToFront(); await page.evaluate(() => localStorage.removeItem('aimebu2.usages.variant'));
       assert.equal(await page.evaluate(() => { const slot = document.querySelector('#usages-variant-slot'), inbox = document.querySelector('#inbox-toggle'); return slot.querySelectorAll('.usages-variant-option').length === 3 && slot.nextElementSibling === inbox && slot.parentElement.classList.contains('topbar-right') && !!slot.querySelector('.usages-variant-pill').title; }), true, 'the pill is three letters with a tooltip, directly left of Inbox in the top bar');
       await page.$eval('#usages-toggle', node => node.click());
       await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile'));
       await page.$eval(`#usages-variant-slot .usages-variant-option[data-variant=${variant}]`, node => node.click());
       await page.waitForSelector(selector);
       assert.deepEqual(await page.evaluate(() => [document.querySelector('.usages-popover-body').hidden, !document.querySelector('.usages-popover-alt').hidden, document.querySelector('#usages-variant-slot .active').textContent]), [true, true, variant.toUpperCase()], `${variant.toUpperCase()} replaces the cards in the panel`);
+      if (variant === 'b') {
+        // An error from an owner action shows above the view; a push is held while a field has focus; a switcher that cannot be read leaves the figures.
+        await page.evaluate(() => window.__popover.store.setError('Account switch failed'));
+        await page.waitForFunction(() => document.querySelector('.usages-popover-alt .usages-popover-error')?.textContent === 'Account switch failed');
+        const lists = () => page.evaluate(() => window.__calls.filter(name => name === 'list').length);
+        await page.evaluate(() => { const input = document.createElement('input'); input.id = 'typing'; document.querySelector('.usages-popover-alt').append(input); input.focus(); });
+        const before = await lists();
+        await page.evaluate(() => { document.querySelector('#boot-view')?.setAttribute('hidden', ''); document.querySelector('#app-view').hidden = false; }); await page.focus('#typing'); await page.evaluate(() => window.__popover.changed()); await new Promise(resolve => setTimeout(resolve, 150));
+        assert.equal(await lists(), before, 'a push is held while a field in the panel has focus');
+        await page.$eval('#typing', node => node.blur()); await page.waitForFunction(n => window.__calls.filter(name => name === 'list').length > n, {}, before);
+        await page.$eval('#typing', node => node.remove());
+      }
       await page.$eval('#usages-variant-slot .usages-variant-option[data-variant=a]', node => node.click());
       await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile') && !document.querySelector('.usages-popover-body').hidden);
       assert.equal(await page.evaluate(() => document.querySelector('.usages-popover-alt').hidden), true, 'A brings the cards back');
+      await page.close();
+    }
+    {
+      const page = await mount(true);
+      await page.evaluate(() => { window.__popover.source.switcher = () => Promise.reject(Object.assign(new Error('unavailable'), { status: 503 })); localStorage.setItem('aimebu2.usages.variant', 'b'); });
+      await page.evaluate(() => window.__popover.syncVariant());
+      await page.evaluate(() => { document.querySelector('#usages-variant-slot .usages-variant-option[data-variant=c]').click(); document.querySelector('#usages-variant-slot .usages-variant-option[data-variant=b]').click(); });
+      await page.$eval('#usages-toggle', node => node.click());
+      await page.waitForSelector('.usages-popover-alt .usages-b .usages-b-tile');
       await page.close();
     }
     assert.deepEqual(errors, [], 'no page errors');

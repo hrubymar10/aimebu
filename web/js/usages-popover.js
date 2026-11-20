@@ -10,11 +10,17 @@ import { UsagesVariantC } from './pages/usages/variant-c.js';
 import { usagesVariant } from './pages/usages/variant.js';
 
 // A glanceable overview of every configured provider and profile, so usage can be checked
-// without opening Settings. Read-only: all management stays in Settings -> Usages.
+// without opening Settings. Variant A (the cards) is read-only apart from Refresh and Switch; variants B and C of the top-bar A/B/C pill
+// are the Usages page's own components and carry its management controls (provider gear, add, rename, delete) for the owner.
 const groupKey = 'aimebu2.usages.group';
 const PROVIDER_MASKS = new Set(['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud']);
 const TOOLS = { 'claude-code': 'claude', codex: 'codex' };
 
+
+// What a failed owner action says goes above the variant, as on the Usages page.
+function AltView({ store, variant }) {
+  return html`<p class="error usages-popover-error" role="alert">${store.error.value}</p>${variant === 'c' ? html`<${UsagesVariantC} store=${store} />` : html`<${UsagesVariantB} store=${store} />`}`;
+}
 
 export class UsagesPopover {
   // canChange says whether this person may change usages (the owner): an admin reads them, and the refresh, which asks the providers again, is the owner's.
@@ -28,7 +34,9 @@ export class UsagesPopover {
     this.ticket = 0;
     // Variants B and C of the A/B/C choice in the top bar are the Usages page's own components, drawn here from a store of this panel's own.
     this.alt = element('div', 'usages-popover-alt'); this.alt.hidden = true; this.body.after(this.alt);
-    this.store = new UsagesStore({ source, section: this.alt, isOpen: () => !this.popover.hidden, isShown: () => !this.popover.hidden });
+    // A switcher that cannot be read (no switcher, a 503) counts as none, so the figures still show.
+    const altSource = Object.create(source); altSource.switcher = () => Promise.resolve(source.switcher?.()).catch(() => null);
+    this.store = new UsagesStore({ source: altSource, section: this.alt, isOpen: () => !this.popover.hidden, isShown: () => !this.popover.hidden });
     this.variant = usagesVariant.peek();
     effect(() => { const next = usagesVariant.value; if (next === this.variant) return; this.variant = next; this.ticket++; if (!this.popover.hidden) this.load(); else this.syncVariant(); });
     this.toggle.setAttribute('aria-haspopup', 'dialog'); this.toggle.setAttribute('aria-expanded', 'false');
@@ -66,7 +74,12 @@ export class UsagesPopover {
   }
   // Live push from the event stream: re-read in place while the popover is open. A closed
   // popover loads fresh on its next open, so there is nothing to keep current.
-  changed() { if (!this.popover.hidden) this.load(); }
+  // In B and C the store holds a push while an input has focus (a setup form being typed), instead of redrawing it.
+  changed() {
+    if (this.popover.hidden) return;
+    if (this.variant === 'a') { this.load(); return; }
+    this.store.owner.value = !!this.canChange(); this.store.changed();
+  }
   async load() {
     const ticket = ++this.ticket;
     this.syncVariant();
@@ -86,7 +99,7 @@ export class UsagesPopover {
       await this.store.load();
       if (ticket !== this.ticket) return;
       this.store.setError(''); this.alt.querySelector('.usages-popover-note')?.remove();
-      render(this.variant === 'c' ? html`<${UsagesVariantC} store=${this.store} />` : html`<${UsagesVariantB} store=${this.store} />`, this.alt);
+      render(html`<${AltView} store=${this.store} variant=${this.variant} />`, this.alt);
     } catch (error) {
       if (ticket === this.ticket) { render(null, this.alt); this.alt.replaceChildren(element('p', 'usages-popover-note', error.status === 403 ? 'Usage details are limited to the instance owner.' : error.message || 'Could not load usage snapshots')); }
     }

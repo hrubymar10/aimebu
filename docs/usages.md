@@ -280,12 +280,19 @@ The top-bar Usages icon opens the same data (every configured provider and
 profile, active profile first) in the right-hand column of the chat, where the
 room-members column normally sits, as in v1. The icon, the ✕ in the panel header
 or Escape closes it and the members column comes back; clicking elsewhere leaves
-it open. It re-reads when opened or refreshed and never changes anything. The panel header holds v1's
+it open. It re-reads when opened or refreshed. The panel header holds v1's
 toolbar (✕ close, ↻ refresh, group by) with the title on the right; the group-by button puts
 each provider's active profile first, then a divider and the other profiles, and is remembered
 in this browser. Each profile shows v1's token-expiry icon (healthy, expiring, expired; from
 `GET /api/credentials/targets`, owner only) and, when the account switcher is on, a SWITCH pill on
 the inactive ones that confirms and calls `POST /api/switcher/{tool}/use`.
+
+An A | B | C pill in the top bar, directly left of Inbox (hidden on phone widths), chooses how every usages view is drawn, the
+Usages page and this panel alike, and is remembered in this browser. A is the cards described above. B and C draw the Usages
+page's own variant B (v1's tiles) and variant C (headroom rows) in the panel, from a store of the panel's own, so for the owner
+they carry the page's management controls (the provider gear, add, rename, delete, credential setup) and show a failed action's
+message above the view. A switcher that cannot be read counts as none and the figures still show. A push is held while a field
+in the panel has focus, so a setup form being typed is not redrawn.
 
 The top-bar usages column (the owner and global admins; Refresh and Switch are the owner's) follows the same push while it is
 open, and its Refresh button calls the same forced refresh as Settings → Server → Accounts & usage
