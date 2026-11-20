@@ -142,7 +142,7 @@ func TestAgentRecoveryToolOnAResolvedItemSaysWhoResolvedIt(t *testing.T) {
 		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at='2026-01-02T00:00:00.000000000Z' WHERE id=?`, ownerID, itemID); err != nil {
 			return err
 		}
-		_, err := tx.AppendEvent(store.Event{ProjectID: f.project.ID, RoomID: f.room.ID, Kind: "inbox_item_resolved",
+		_, err := tx.AppendEvent(store.Event{ProjectID: f.project.ID, RoomID: f.room.ID, AgentID: worker.ID, Kind: "inbox_item_resolved",
 			PayloadJSON: `{"inbox_item_id":"` + itemID + `","choice":"abandon","actor":"` + ownerID + `"}`})
 		return err
 	})
