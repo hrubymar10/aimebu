@@ -73,7 +73,8 @@ async function main() {
     {
       const again = await mount();
       assert.equal(await again.evaluate(() => !!document.querySelector('.usages-b')), true, 'the page draws the view');
-      assert.equal(await again.evaluate(() => [...document.querySelectorAll('.usages-b-profile .usage-profile-email')].some(node => node.textContent === 'main@example.test')), true, 'an account shows its e-mail, as the cards did');
+      assert.deepEqual(await again.evaluate(() => { const text = document.querySelector('.usages-b').textContent, plan = [...document.querySelectorAll('.usages-b-profile')].find(p => p.dataset.profile === 'main')?.querySelector('.switcher-tile-plan'); return { visible: text.includes('main@example.test'), planTitle: plan?.title, nameTitles: [...document.querySelectorAll('.usages-b-profile .switcher-tile-name')].some(n => n.title.includes('@')) }; }),
+        { visible: false, planTitle: 'main@example.test', nameTitles: false }, 'the e-mail is absent from visible text and appears only on the plan label');
       // B draws from the same data as A: a tile per provider, in the same order, each profile under its provider.
       assert.deepEqual(await again.evaluate(() => [...document.querySelectorAll('#usages-list .usages-b-tile')].map(tile => [tile.dataset.provider, tile.querySelector('.usages-provider-name').textContent, tile.querySelector('.usages-provider-updated').textContent.replace(/^Updated .*/, 'Updated'), tile.querySelectorAll('.usages-b-profile').length])),
         [['codex', 'Codex', 'Updated', 2], ['claude-code', 'Claude Code', 'ok', 1], ['github-copilot', 'GitHub Copilot', 'Not configured', 0], ['mistral', 'Mistral', 'Not configured', 0], ['ollama-cloud', 'Ollama Cloud', 'Not configured', 0]]);
@@ -121,6 +122,26 @@ async function main() {
       assert.deepEqual(await again.evaluate(() => { const grid = document.querySelector('.usages-b-grid'); return { columns: getComputedStyle(grid).gridTemplateColumns.split(' ').length, overflow: document.documentElement.scrollWidth > window.innerWidth }; }), { columns: 1, overflow: false });
       if (process.env.USAGES_SHOTS) for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light', 'blue-dark', 'blue-light', 'green-dark', 'green-light', 'red-dark', 'red-light']) { await again.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme); await again.setViewport({ width: 900, height: 1100 }); await settle(again); await new Promise(resolve => setTimeout(resolve, 700)); await again.screenshot({ path: path.join(process.env.USAGES_SHOTS, `usages-b-${theme}.png`) }); }
       await again.close();
+    }
+    // The server's masked value stays masked; a profile without a plan gets no email tooltip.
+    {
+      const page = await mount();
+      await page.evaluate(async () => {
+        const list = window.__source.list.bind(window.__source);
+        window.__source.list = async () => {
+          const data = await list();
+          data.providers[0].profiles[0].email = 'm***@example.test';
+          data.providers[0].profiles[1].plan = '';
+          return data;
+        };
+        await window.__usages.load();
+      });
+      assert.deepEqual(await page.evaluate(() => {
+        const rows = document.querySelectorAll('.usages-b-profile');
+        return { text: document.querySelector('.usages-b').textContent.includes('m***@example.test'), masked: rows[0].querySelector('.switcher-tile-plan')?.title,
+          absent: rows[1].querySelector('.switcher-tile-plan') === null };
+      }), { text: false, masked: 'm***@example.test', absent: true });
+      await page.close();
     }
     // An admin who is not the owner reads the limits: no gear, no switch, no rename.
     {

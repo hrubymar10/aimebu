@@ -68,16 +68,15 @@ function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, 
   const windows = profile.windows || [];
   return html`<div class=${`switcher-tile-profile usages-b-profile${profile.active ? ' is-active' : ''}${stale ? ' is-stale' : ''}`} data-profile=${name}>
     <div class="switcher-tile-head">
-      <span class="switcher-tile-name" title=${badge?.title || profile.email || ''}>${name}</span>
+      <span class="switcher-tile-name" title=${badge?.title || ''}>${name}</span>
       ${badge && html`<span class=${badge.className} title=${badge.title} data-level=${badge.dataset.level} dangerouslySetInnerHTML=${{ __html: badge.innerHTML }}></span>`}
       ${!view.hidden && html`<${IconButton} name="switch" label=${view.title || `Switch to ${name}`} className="usages-b-switch" disabled=${view.disabled} onClick=${use} />`}
       ${reauth && !readOnly && profile.has_credentials && !view.hidden && html`<${IconButton} name="key-off" label="Install anyway: use the stored credentials without refreshing them" className="usages-b-install-anyway" disabled=${view.disabled} onClick=${installAnyway} />`}
       ${managed && html`<${IconButton} name="edit" label=${`Rename ${name}`} className="usages-b-rename" onClick=${rename} />`}
       ${managed && html`<${IconButton} name="trash" label=${`Delete ${name}`} danger className="usages-b-remove" onClick=${remove} />`}
       ${profile.active ? html`<span class="switcher-tile-active">Active</span>` : html`<span class="usages-b-inactive">Inactive</span>`}
-      ${profile.plan && html`<span class="switcher-tile-plan" title=${profile.email ? `${profile.plan} · ${profile.email}` : profile.plan}>${profile.plan}</span>`}
+      ${profile.plan && html`<span class="switcher-tile-plan" title=${profile.email || ''}>${profile.plan}</span>`}
     </div>
-    ${profile.email && html`<div class="usage-profile-email">${profile.email}</div>`}
     ${windows.length ? windows.map((window, index) => html`<${WindowRow} window=${window} usedDisplay=${usedDisplay} fetchedAt=${profile.last_refresh_at} stale=${!!stale} key=${`${window.key}:${index}`} />`)
       : profile.has_credentials === false ? html`<div class="usages-empty usages-empty-compact">Needs login</div>` : html`<div class="usages-empty usages-empty-compact">No usage data yet.</div>`}
     ${credits && html`<div class="usages-credits-row"><span>${credits}</span></div>`}

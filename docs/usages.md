@@ -95,6 +95,9 @@ cap keeps its credit row (used / limit) beside the window. Pace is computed for 
 session and weekly windows. When
 extra usage is enabled the monthly cap shows as credits (`Extra usage monthly
 cap`, used / limit). The plan is the subscription type, or the rate-limit tier.
+The account e-mail is shown only as the plan label's tooltip, never as visible
+text. An account with no plan has no e-mail tooltip. The server's masked e-mail
+is used as received.
 Codex windows: `session`, `weekly` and `monthly` by their reported duration,
 plus `codex_spark` and `codex_spark_weekly` from the additional Spark limits,
 the credit balance when the account has one, and a plan name derived from
