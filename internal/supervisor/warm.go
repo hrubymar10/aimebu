@@ -262,7 +262,14 @@ func (c *Client) tryEndWarm(entry *warmEntry, reason string, grace time.Duration
 	if err != nil {
 		if entry.containerized || entry.session.Alive() {
 			if entry.unconfirmedReported.CompareAndSwap(false, true) {
-				c.report("a warm process is not confirmed gone", fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err))
+				werr := fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err)
+				if entry.containerized && !entry.session.Alive() {
+					// The known Docker path: the host side ended and the launcher never confirmed the process in the container. The quarantine
+					// handles it and releases it by itself, so it is a warning; a process that is still alive stays an error.
+					c.degraded("a warm process is not confirmed gone", werr)
+				} else {
+					c.report("a warm process is not confirmed gone", werr)
+				}
 			}
 			return false
 		}

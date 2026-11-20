@@ -1717,7 +1717,21 @@ func (c *Client) handleServerError(frame protocol.Frame) {
 	case "stale_generation", "stale_rev", "conflict", "forbidden", "invalid_transition":
 		return
 	}
+	if frame.Code == "unauthorized" && c.agentStopped(frame.AgentID) {
+		return // a late frame (an ack) for an agent this supervisor already stopped: the server refuses it, as expected
+	}
 	telemetry.ReportCause(context.Background(), "supervisor", "server error frame: "+frame.Code)
+}
+
+// agentStopped says whether the supervisor has an agent on record that is no longer desired active.
+func (c *Client) agentStopped(agentID string) bool {
+	if agentID == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	item, ok := c.desired[agentID]
+	return ok && item.Desired != "active"
 }
 
 // report says what went wrong: to the local log (OnError), with the whole error, and, while telemetry is on, to Sentry, once per cause, with `cause` alone: a fixed

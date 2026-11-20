@@ -111,3 +111,22 @@ func TestServerErrorFramesAreReportedOnlyWhenTheyAreFailures(t *testing.T) {
 		t.Fatalf("every error frame stays in the local log, got %d", logged)
 	}
 }
+
+// An unauthorized refusal of a late frame for an agent this supervisor already stopped is expected: logged only. Any other unauthorized is reported.
+func TestServerUnauthorizedForStoppedAgentIsNotReported(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := startReporting(t)
+	c := &Client{desired: map[string]protocol.DesiredAgent{
+		"agt_stopped": {AgentID: "agt_stopped", Desired: "stopped"},
+		"agt_active":  {AgentID: "agt_active", Desired: "active"},
+	}}
+	c.handleServerError(protocol.Frame{Type: protocol.Error, Code: "unauthorized", AgentID: "agt_stopped"})
+	if got := transport.sent(); len(got) != 0 {
+		t.Fatalf("an expected late-ack refusal was reported: %+v", got)
+	}
+	c.handleServerError(protocol.Frame{Type: protocol.Error, Code: "unauthorized", AgentID: "agt_active"})
+	got := transport.sent()
+	if len(got) != 1 || got[0].Exception[0].Value != "server error frame: unauthorized" {
+		t.Fatalf("an unauthorized for an active agent must still be reported: %+v", got)
+	}
+}

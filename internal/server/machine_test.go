@@ -1664,3 +1664,39 @@ func TestLaunchSpellingTurnWaitsForASupervisorThatKnowsIt(t *testing.T) {
 		t.Fatalf("an agent switched away from Claude is still held for a spelling: %v %v", pending, err)
 	}
 }
+
+// A late frame (an ack after a stop) for an agent that is already stopped is refused as unauthorized but is expected: no Sentry report. An unauthorized
+// frame for anything else (an agent the store does not know, another machine's agent) is still reported. Not parallel: the reporter is process-wide.
+func TestMachineLateFrameForStoppedAgentIsExpected(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := &captureTransport{}
+	tel, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test", Release: "v1", TracesSampleRate: 1}, transport)
+	if err != nil || tel == nil {
+		t.Fatalf("telemetry.Init: %v %v", tel, err)
+	}
+	t.Cleanup(tel.Close)
+	f := newFixture(t)
+	agent, _, _, _ := f.execution(t)
+	ctx := context.Background()
+	conn := &machineConn{id: f.machineID, bound: map[string]int{agent.ID: 0, "agt_unknown": 0}}
+	frame := protocol.Frame{Type: protocol.Ack, AgentID: agent.ID, Generation: 0}
+	if code, _ := f.srv.authorizeAgentFrame(ctx, conn, frame); code != "" {
+		t.Fatalf("an active agent's frame was refused: %q", code)
+	}
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE agent SET revoked_at='2026-10-13T00:00:00.000000000Z' WHERE id=?`, agent.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, expected := f.srv.authorizeAgentFrame(ctx, conn, frame); code != "unauthorized" || !expected {
+		t.Fatalf("a stopped agent's late frame: code=%q expected=%v", code, expected)
+	}
+	if code, expected := f.srv.authorizeAgentFrame(ctx, conn, protocol.Frame{Type: protocol.Ack, AgentID: "agt_unknown"}); code != "unauthorized" || expected {
+		t.Fatalf("an unknown agent's frame must stay a reported unauthorized: code=%q expected=%v", code, expected)
+	}
+	other := &machineConn{id: "mch_other", bound: map[string]int{agent.ID: 0}}
+	if code, expected := f.srv.authorizeAgentFrame(ctx, other, frame); code != "unauthorized" || expected {
+		t.Fatalf("another machine's frame must stay a reported unauthorized: code=%q expected=%v", code, expected)
+	}
+}

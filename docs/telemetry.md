@@ -85,11 +85,13 @@ transport inside a test binary.
   text stays in the local log. A cancelled context (a client that went away) is not a failure and is not reported. The local log lines are unchanged.
   - `supervisor`: the supervisor's own failures (a harness that would not start, a failed journal write, a stalled turn, an error frame from the server that is
     not one of the classified refusals (a stale generation or desired revision, a conflict, a forbidden or invalid transition: those are the
-    protocol working and are only logged), a warm process not confirmed gone, keep-alive and detection problems,
+    protocol working and are only logged; nor is an `unauthorized` for a late frame, an ack, of an agent the supervisor already stopped), a warm process not confirmed gone
+    (a warning when it is a containerized process whose host side ended and whose container end the launcher never confirmed, the known Docker path that the quarantine
+    releases by itself; an error when the process is still alive), keep-alive and detection problems,
     a server connection that failed five times in a row). Each call site names its cause with a **fixed phrase** and only that goes out; the error behind it (a
     harness's own words, a path, a name) stays in the local log.
   - `machine`, `event-stream`: a failure while a supervisor connects (machine state, reconciliation, harness and launcher state, agent keys), an agent frame
-    that fails for a reason that is not a classified refusal, a refused frame (a warning, with its code), a write the server used to ignore (that the machine is
+    that fails for a reason that is not a classified refusal, a refused frame (a warning, with its code; not one for an agent that is already stopped or removed on that machine, a late ack), a write the server used to ignore (that the machine is
     alive, its harnesses, capabilities and last warm report), a failed event replay or poll. A normal restart closes WebSockets with 1001 before the database;
     event-stream cancellation during shutdown does not report an error.
   - `dispatcher`: any failure of a pass (it runs every 100ms), a room that failed to close, a team-flow migration or agent switch whose spawn could not be sent,

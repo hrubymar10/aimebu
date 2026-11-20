@@ -594,9 +594,11 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		if code := s.authorizeAgentFrame(ctx, c, frame); code != "" {
+		if code, expected := s.authorizeAgentFrame(ctx, c, frame); code != "" {
 			log.Printf("machine %s: agent frame rejected: type=%s agent_id=%s code=%s", c.id, frame.Type, frame.AgentID, code)
-			telemetry.ReportWarning(ctx, "machine", fmt.Errorf("agent frame rejected: type=%s code=%s", frame.Type, code))
+			if !expected {
+				telemetry.ReportWarning(ctx, "machine", fmt.Errorf("agent frame rejected: type=%s code=%s", frame.Type, code))
+			}
 			_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: frame.AgentID, TurnID: frame.TurnID, Code: code, Message: "agent frame rejected"})
 			continue
 		}
@@ -704,32 +706,35 @@ func (s *Server) machinePinger(ctx context.Context, c *machineConn) {
 	}
 }
 
-func (s *Server) authorizeAgentFrame(ctx context.Context, c *machineConn, frame protocol.Frame) string {
+func (s *Server) authorizeAgentFrame(ctx context.Context, c *machineConn, frame protocol.Frame) (string, bool) {
 	if frame.AgentID == "" {
-		return "forbidden"
+		return "forbidden", false
 	}
 	c.boundMu.RLock()
 	generation, ok := c.bound[frame.AgentID]
 	c.boundMu.RUnlock()
 	if !ok {
-		return "forbidden"
+		return "forbidden", false
 	}
 	agent, err := s.Store.AgentRuntimeByID(ctx, frame.AgentID)
 	if err != nil {
-		return "unauthorized"
+		return "unauthorized", false
 	}
 	if agent.Revoked || agent.MachineID != c.id {
-		return "unauthorized"
+		// A late frame (the supervisor's ack of a stop it applied) for an agent that is already stopped or removed is the protocol
+		// racing itself, not a fault: expected, so it is refused without a report. Any other unauthorized frame still reports.
+		stopped := agent.MachineID == c.id && (agent.Revoked || agent.Desired != "active")
+		return "unauthorized", stopped
 	}
 	if frame.Generation != generation || agent.Generation != generation {
 		if frame.Type == protocol.Answer || frame.Type == protocol.NativeSessionStarted {
 			if old, ok := c.journaled[frame.TurnID]; ok && old.agentID == frame.AgentID && old.generation == frame.Generation {
-				return ""
+				return "", false
 			}
 		}
-		return "stale_generation"
+		return "stale_generation", false
 	}
-	return ""
+	return "", false
 }
 
 func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame protocol.Frame) error {

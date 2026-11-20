@@ -2260,3 +2260,45 @@ func TestWarmQuarantineReleaseAfterAStopDuringATurnIsNotReported(t *testing.T) {
 		t.Fatalf("a stop during a turn: quarantine release reported %d times, want none", n)
 	}
 }
+
+// The known Docker path (the host side ended, the launcher never confirmed the container side) is a degraded state the quarantine settles by itself: a
+// warning. A process that is still alive and cannot be killed stays an error.
+func TestWarmUnconfirmedContainerEndIsAWarningButAliveIsAnError(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := startReporting(t)
+	old := warmRetryEvery
+	warmRetryEvery = 10 * time.Millisecond
+	defer func() { warmRetryEvery = old }()
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	if h.c.retireWarm("agt_a", "test") {
+		t.Fatal("an unconfirmed container end was treated as gone")
+	}
+	telemetry.Current().Flush(time.Second)
+	got := transport.sent()
+	if len(got) != 1 || got[0].Level != sentry.LevelWarning || got[0].Exception[0].Value != "a warm process is not confirmed gone" {
+		t.Fatalf("the Docker path must be one warning: %+v", got)
+	}
+	h.f.sessions[0].lingers.Store(false)
+	eventually(t, "released", func() bool { return h.c.warmLive.Load() == 0 })
+
+	telemetry.ResetCaptured()
+	h.spawn("agt_b")
+	h.run("agt_b", nil)
+	alive := h.f.sessions[len(h.f.sessions)-1]
+	alive.killFails.Store(true)
+	if h.c.retireWarm("agt_b", "test") {
+		t.Fatal("an alive process was treated as gone")
+	}
+	defer func() { // the background retry must be done before warmRetryEvery is restored
+		alive.killFails.Store(false)
+		eventually(t, "the stuck slot settling", func() bool { return h.c.warmLive.Load() == 0 })
+	}()
+	telemetry.Current().Flush(time.Second)
+	got = transport.sent()
+	if len(got) != 2 || got[1].Level != sentry.LevelError {
+		t.Fatalf("an alive, unkillable process stays an error: %+v", got)
+	}
+}
