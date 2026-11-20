@@ -187,6 +187,27 @@ records, and project facts reach agents only once you enable the project's
 memory), check **Settings → Agents → Harnesses & models** for each harness and its models (the v1 import does not carry model lists), and run
 `aimebu doctor` to confirm the database and listener are healthy.
 
+## After the cutover
+
+The v1 `aimebu mcp` server (the `bus_*` tools) is unused once v2 runs: v2
+passes its own toolbox to every session itself, so no global MCP entry is
+needed. Remove the v1 entry per harness, or its stale instructions keep
+reaching your agents:
+
+- **Claude:** `claude mcp remove aimebu -s user`, and remove `"aimebu"` from
+  any project's `disabledMcpServers` in the Claude configuration
+  `.claude.json`. Such an entry used to hide the v2 toolbox too, because both
+  servers were named `aimebu`; v2 renamed its toolbox to `aimebu-agent`, so a
+  leftover entry now only keeps dead v1 instructions in place.
+- **Codex:** `codex mcp remove aimebu`, which drops the
+  `[mcp_servers.aimebu]` section from `config.toml`.
+- **Pi:** remove `aimebu` from `~/.pi/agent/mcp.json` and delete
+  `~/.pi/agent/mcp-cache.json`, which keeps the old v1 instructions.
+
+Docker images must install aimebu from the v2 line; see
+[adapter interface](adapter.md#docker-variants) for how a Docker turn reaches
+the managed toolbox.
+
 ## If the wizard reports a changed backup
 
 If the import status answers `409 backup_changed` ("the v1 backup was modified

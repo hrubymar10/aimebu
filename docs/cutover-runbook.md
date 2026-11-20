@@ -180,7 +180,9 @@ as your rollback window requires and remove it only after an independent
 archive is verified. v2 writes new state beside that backup, and v2 activity
 does not flow back into v1. See [`backupV1Layout`](../cmd/aimebu/migration_v1.go),
 [`importV1Status`](../internal/server/import_v1.go), and
-[migration checks](migrating-from-v1.md#4-check-the-result).
+[migration checks](migrating-from-v1.md#4-check-the-result). When the checks
+are done, remove the unused v1 MCP server per harness
+([after the cutover](migrating-from-v1.md#after-the-cutover)).
 
 ## 5. Roll back if v2 cannot continue
 
