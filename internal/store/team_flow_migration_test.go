@@ -1396,3 +1396,27 @@ func TestInterruptedAgentIsRestartingAndItsRestartCardNamesItsMachine(t *testing
 	}
 	t.Fatalf("no restart card for the leader: %+v", controls)
 }
+
+// An agent that is already stopped, with no turn left, has nothing to interrupt: 400, not a second success.
+func TestInterruptOfAnAlreadyStoppedAgentIsRefused(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	turnID := openTurn(t, f, leaderID)
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	// While the turn is open or the agent is interrupting, a repeat is the idempotent success.
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); err != nil {
+		t.Fatalf("repeat while the turn is open: %v", err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='killed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turnID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET observed='stopped' WHERE id=?`, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.InterruptFlowMigrationAgent(ctx, f.project.ID, f.alice, leaderID); !errors.Is(err, ErrTeamFlowMigration) {
+		t.Fatalf("an already stopped agent with no open turn: %v", err)
+	}
+}

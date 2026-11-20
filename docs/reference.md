@@ -381,8 +381,8 @@ Team flow shows its progress (and the outcome, until dismissed; the dismissal
 is remembered per project in the browser, so the outcome is still there after
 a reload). Next to an agent
 the change is waiting for, **Interrupt now** (after a confirmation) cuts its turn
-by stopping it, so the change goes on; a kept agent is started again once the
-switch is through, an agent the new flow stops anyway stays stopped (the
+by stopping it, so the change goes on; a kept agent is started again once its
+turn is gone and the change waits for that restart, an agent the new flow stops anyway stays stopped (the
 confirmation says which). When a change finishes, one system message (`Team flow changed: a → b.
 Added: … Stopped: …`) is posted in the project's home and general rooms. The
 drain marks idle kept agents ready and tells them the change is pending even

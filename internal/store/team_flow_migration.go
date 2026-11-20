@@ -1575,23 +1575,21 @@ func (s *Store) InterruptFlowMigrationAgent(ctx context.Context, projectID, acto
 		if state != "draining" {
 			return ErrTeamFlowMigrationFinal
 		}
-		// A repeat is a success: the agent is already stopping.
-		var inMigration, stopping bool
-		if err := tx.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_agent ma JOIN agent a ON a.id=ma.agent_id WHERE ma.migration_id=? AND ma.agent_id=?),
-			COALESCE((SELECT desired='stopped' FROM agent WHERE id=?),0)`, id, agentID, agentID).Scan(&inMigration, &stopping); err != nil {
+		var inMigration, stopping, interrupting, open bool
+		if err := tx.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_agent ma WHERE ma.migration_id=? AND ma.agent_id=?),
+			COALESCE((SELECT desired='stopped' FROM agent WHERE id=?),0), COALESCE((SELECT observed='interrupting' FROM agent WHERE id=?),0),
+			EXISTS(SELECT 1 FROM team_flow_migration_agent ma JOIN turn t ON t.agent_id=ma.agent_id WHERE ma.migration_id=? AND ma.agent_id=? AND `+openFlowTurnPredicate+`)`,
+			id, agentID, agentID, agentID, id, agentID).Scan(&inMigration, &stopping, &interrupting, &open); err != nil {
 			return err
 		}
-		if inMigration && stopping {
+		// A repeat is a success while the agent is still stopping (its turn is open, or it is interrupting); an agent that is already
+		// down has nothing left to interrupt.
+		if inMigration && stopping && (open || interrupting) {
 			card, err := tx.agentCardByID(agentID)
 			out = card
 			return err
 		}
-		var blocking bool
-		if err := tx.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_agent ma JOIN turn t ON t.agent_id=ma.agent_id
-			WHERE ma.migration_id=? AND ma.agent_id=? AND `+openFlowTurnPredicate+`)`, id, agentID).Scan(&blocking); err != nil {
-			return err
-		}
-		if !blocking {
+		if stopping || !open {
 			return ErrTeamFlowMigration
 		}
 		var rev int64

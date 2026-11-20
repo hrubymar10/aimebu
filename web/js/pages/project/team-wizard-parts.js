@@ -162,7 +162,7 @@ const AGENT_ACTION = { notice: 'keeps running with the new rules', switch: 'swit
 export async function interruptAgent(source, projectID, agent) {
   const name = agent.slug || agent.agent_id;
   const message = agent.keeps
-    ? `Interrupt ${name} now? Its current turn is cut off; ${name} stops the turn and restarts once the switch is through.`
+    ? `Interrupt ${name} now? Its current turn is cut off; ${name} stops the turn, is started again once the turn is gone, and the change waits for it.`
     : `Interrupt ${name} now? Its current turn is cut off and ${name} stops; the new flow does not keep it.`;
   if (!await confirmDialog(message, { title: 'Interrupt agent', confirm: 'Interrupt', danger: true })) return null;
   const answer = await source.interruptMigration(projectID, agent.agent_id);

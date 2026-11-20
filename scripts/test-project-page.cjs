@@ -277,7 +277,7 @@ async function main() {
       assert.equal(await page.$eval('#team-flow-modal .team-wizard-background', node => node.title), 'Continue in background');
       await page.$eval('#team-flow-modal .team-wizard-interrupt', node => node.click());
       await page.waitForFunction(() => document.querySelector('#app-dialog')?.open && document.querySelector('#app-dialog-title').textContent === 'Interrupt agent');
-      assert.match(await page.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Interrupt ada now\? Its current turn is cut off; ada stops the turn and restarts once the switch is through\./);
+      assert.match(await page.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Interrupt ada now\? Its current turn is cut off; ada stops the turn, is started again once the turn is gone, and the change waits for it\./);
       await page.$eval('#app-dialog .app-dialog-cancel', node => node.click());
       await settle(page);
       assert.equal(await page.evaluate(() => window.__requests.some(request => request.path.endsWith('/migration/interrupt'))), false, 'declining the confirmation interrupts nothing');
