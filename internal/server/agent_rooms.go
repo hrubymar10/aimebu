@@ -47,9 +47,14 @@ func (s *Server) agentToolCreateRoom(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Title    string          `json:"title"`
 		ParentID string          `json:"parent_id"`
+		Purpose  string          `json:"purpose,omitempty"`
 		Worktree worktreeRequest `json:"worktree"`
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	if !store.ValidRoomPurpose(req.Purpose) {
+		apiError(w, 400, "invalid_request", "purpose must be task, research or general")
 		return
 	}
 	req.Title = strings.TrimSpace(req.Title)
@@ -59,7 +64,7 @@ func (s *Server) agentToolCreateRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	result, _, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: "agent", ActorID: caller.ID,
 		Kind: "room_create", Key: key, Digest: toolDigest(req)}, func(tx *store.Tx) (string, error) {
-		room, err := tx.CreateTaskRoomAsTool(caller.ID, caller.ProjectID, req.ParentID, req.Title)
+		room, err := tx.CreateTaskRoomAsTool(caller.ID, caller.ProjectID, req.ParentID, req.Title, req.Purpose)
 		if err != nil {
 			return "", err
 		}

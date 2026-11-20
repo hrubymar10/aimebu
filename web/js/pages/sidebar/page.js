@@ -43,6 +43,7 @@ export class Sidebar {
   firstRoom() { return this.store.firstRoom(); }
   addProject(project) { return this.store.addProject(project); }
   refreshProject(id) { return this.store.refreshProject(id); }
+  scheduleRefresh(id) { this.store.scheduleRefresh(id); }
   refreshAgentChats() { return this.store.refreshAgentChats(); }
   forgetRoom(id) { this.store.forgetRoom(id); }
   forgetProject(id) { this.store.forgetProject(id); }

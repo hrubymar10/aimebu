@@ -90,7 +90,7 @@ func (s *Store) RoomByID(ctx context.Context, id string) (Room, error) {
 	var r Room
 	var parent, dm, closed sql.NullString
 	var memory sql.NullBool
-	err := s.db.QueryRowContext(ctx, `SELECT id,project_id,parent_id,depth,kind,dm_key,title,created_by,lifecycle,gate,lifecycle_rev,closed_at,memory_enabled,team_flow_room_key,restricted FROM room WHERE id=?`, id).Scan(&r.ID, &r.ProjectID, &parent, &r.Depth, &r.Kind, &dm, &r.Title, &r.CreatedBy, &r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted)
+	err := s.db.QueryRowContext(ctx, `SELECT id,project_id,parent_id,depth,kind,dm_key,title,created_by,lifecycle,gate,lifecycle_rev,closed_at,memory_enabled,team_flow_room_key,restricted,purpose FROM room WHERE id=?`, id).Scan(&r.ID, &r.ProjectID, &parent, &r.Depth, &r.Kind, &dm, &r.Title, &r.CreatedBy, &r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.Purpose)
 	r.ParentID = parent.String
 	r.DMKey = dm.String
 	r.ClosedAt = closed.String
@@ -148,7 +148,7 @@ func (s *Store) RoomsForProject(ctx context.Context, projectID string) ([]Room, 
 		return nil, err
 	}
 	rows, err := s.readDB.QueryContext(ctx, `SELECT r.id,r.project_id,r.parent_id,r.depth,r.kind,r.dm_key,r.title,r.created_by,
-		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,r.team_flow_room_key,r.restricted,
+		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,r.team_flow_room_key,r.restricted,r.purpose,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system'),
@@ -165,7 +165,7 @@ func (s *Store) RoomsForProject(ctx context.Context, projectID string) ([]Room, 
 		var parent, dm, closed sql.NullString
 		var memory sql.NullBool
 		if err := rows.Scan(&r.ID, &r.ProjectID, &parent, &r.Depth, &r.Kind, &dm, &r.Title, &r.CreatedBy,
-			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.MemberCount, &r.MessageCount, &r.UserMessageCount, &r.LastMessageBody, &r.LastActivityAt); err != nil {
+			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.Purpose, &r.MemberCount, &r.MessageCount, &r.UserMessageCount, &r.LastMessageBody, &r.LastActivityAt); err != nil {
 			return nil, err
 		}
 		r.ParentID = parent.String
@@ -201,7 +201,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		return nil, err
 	}
 	rows, err := s.readDB.QueryContext(ctx, `SELECT r.id,r.project_id,r.parent_id,r.depth,r.kind,r.dm_key,r.title,r.created_by,
-		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,r.team_flow_room_key,r.restricted,
+		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,r.team_flow_room_key,r.restricted,r.purpose,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system'),
@@ -209,7 +209,10 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		COALESCE((SELECT m.created_at FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),r.created_at),
 		COALESCE(v.hidden,0),COALESCE(v.notify,'default'),COALESCE(v.muted_until,''),COALESCE(c.last_read_seq,0),
 		(SELECT COUNT(*) FROM message um WHERE um.room_id=r.id AND um.seq>COALESCE(c.last_read_seq,0)
-			AND (COALESCE(v.notify,'default')<>'mentions' OR EXISTS (SELECT 1 FROM json_each(um.targets_json) WHERE value=?)))
+			AND (COALESCE(v.notify,'default')<>'mentions' OR EXISTS (SELECT 1 FROM json_each(um.targets_json) WHERE value=?))),
+		(SELECT COUNT(*) FROM message am WHERE am.room_id=r.id AND am.seq>COALESCE(c.last_read_seq,0)
+			AND EXISTS (SELECT 1 FROM json_each(am.targets_json) WHERE value=?)),
+		EXISTS (SELECT 1 FROM turn t WHERE t.room_id=r.id AND t.exec IN ('pending','running'))
 		FROM room r LEFT JOIN room_view_preference v ON v.room_id=r.id AND v.user_id=?
 		LEFT JOIN room_read_cursor c ON c.room_id=r.id AND c.user_id=?
 		WHERE r.project_id=? AND (?='' OR r.id=?) AND (
@@ -218,7 +221,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 				AND oversight.user_id=? AND oversight.role IN ('owner','operator'))))
 			OR EXISTS (
 			SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user'
-			AND own.member_id=? AND own.left_at IS NULL)) ORDER BY r.depth,r.created_at,r.id`, userID, userID, userID, projectID, roomID, roomID, userID, userID)
+			AND own.member_id=? AND own.left_at IS NULL)) ORDER BY r.depth,r.created_at,r.id`, userID, userID, userID, userID, projectID, roomID, roomID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +232,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		var parent, dm, closed sql.NullString
 		var memory sql.NullBool
 		if err := rows.Scan(&r.ID, &r.ProjectID, &parent, &r.Depth, &r.Kind, &dm, &r.Title, &r.CreatedBy,
-			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.MemberCount, &r.MessageCount, &r.UserMessageCount, &r.LastMessageBody, &r.LastActivityAt, &r.Hidden, &r.Notify, &r.MutedUntil, &r.ReadCursor, &r.UnreadCount); err != nil {
+			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.Purpose, &r.MemberCount, &r.MessageCount, &r.UserMessageCount, &r.LastMessageBody, &r.LastActivityAt, &r.Hidden, &r.Notify, &r.MutedUntil, &r.ReadCursor, &r.UnreadCount, &r.UnreadAddressed, &r.Working); err != nil {
 			return nil, err
 		}
 		r.ParentID, r.DMKey, r.ClosedAt = parent.String, dm.String, closed.String
@@ -246,8 +249,13 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 	if err != nil {
 		return nil, err
 	}
+	open, err := s.openAttentionByRoom(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
 		out[i].AttentionCount = attention[out[i].ID]
+		out[i].AttentionOpen = open[out[i].ID]
 	}
 	if err := s.showPeerTitles(ctx, out, userID); err != nil {
 		return nil, err

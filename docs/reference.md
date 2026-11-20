@@ -723,6 +723,13 @@ New replies while viewing that older context update the count and appear
 behind a new-replies control until the latest page is opened.
 Archived rooms move into a collapsible sidebar section with
 Reopen actions, name filtering, and message search with direct jump to a hit.
+Every room row starts with an SVG icon and a tooltip that name its kind: a house for a project's home room, a checklist for a task room, a
+magnifier for a research room, `#` for a general or coordination room, a person for a direct message and two arrows for a chat between agents
+(the room's `kind`, `purpose` and `agent_chat` decide, never who is in it). A task or research room shows no blue count of everything unread (most of
+it is agents talking): the count is only of the messages that name you or reply to you, and in its place a small status says Working (an agent has a
+running turn), Waiting (an open Inbox item needs an answer), Idle, Done (a research room that has been written in and is quiet) or Closing…; its
+member count is in the row's tooltip instead of a grey number. General, coordination, home and direct-message rooms keep the count of all unread
+messages and the member count. The warning and bell badges stay on every row. A turn starting or ending redraws the status.
 Unread counts come from per-user read cursors; the 🔔 counts open Inbox items
 this person has not seen. Both states live on the server and follow you across
 browsers. Opening a room marks visible messages read and visible Inbox items

@@ -622,7 +622,7 @@ func TestTeamFlowSpawnAuthority(t *testing.T) {
 	var task Room
 	if err := f.s.Tx(ctx, func(tx *Tx) error {
 		var err error
-		task, err = tx.CreateTaskRoomAsTool(dispatcherID, f.project.ID, "", "delegated")
+		task, err = tx.CreateTaskRoomAsTool(dispatcherID, f.project.ID, "", "delegated", "")
 		return err
 	}); err != nil {
 		t.Fatalf("dispatcher create task room: %v", err)

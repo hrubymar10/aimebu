@@ -68,8 +68,9 @@ var catalog = []tool{
 	{"cancel_command", "Cancel one of your running commands. Its end still wakes you with a note. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"job_id": map[string]string{"type": "string"}, "request_key": map[string]string{"type": "string"},
 	}, "required": []string{"job_id", "request_key"}}},
-	{"create_room", "Active lead only. Create a task room in your project. Omit parent_id to place it under the project home room. Join the room and announce it in the parent room. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"create_room", "Active lead only. Create a task room in your project. Omit parent_id to place it under the project home room. Set purpose to research for a read-only investigation that ends in a report (it shows with a magnifier and counts as done once the report is delivered), general for a project-wide or coordination room, or omit it for an ordinary task room. Join the room and announce it in the parent room. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"title": map[string]string{"type": "string"}, "parent_id": map[string]string{"type": "string"},
+		"purpose":     map[string]any{"type": "string", "enum": []string{"task", "research", "general"}, "description": "What the room is for; defaults to task. Fixed when the room is created"},
 		"worktree":    map[string]string{"type": "boolean", "description": "Create a Git worktree for this task room"},
 		"base_ref":    map[string]string{"type": "string", "description": "Committed base branch or ref; defaults to current HEAD"},
 		"request_key": map[string]string{"type": "string"},
@@ -344,7 +345,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		if title == "" {
 			return toolResult("title is required", true)
 		}
-		body = map[string]any{"title": title, "parent_id": getString("parent_id"),
+		body = map[string]any{"title": title, "parent_id": getString("parent_id"), "purpose": getString("purpose"),
 			"worktree": map[string]any{"enabled": getBool("worktree"), "base_ref": getString("base_ref")}}
 	case "dm_agent":
 		method, path = http.MethodPost, "/api/agent/dms"

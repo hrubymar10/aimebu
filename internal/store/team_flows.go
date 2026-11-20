@@ -519,7 +519,7 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 				return err
 			}
 			if id != "" {
-				if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET team_flow_room_key=?,restricted=restricted OR ? WHERE id=?`, spec.Key, spec.Restricted, id); err != nil {
+				if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET team_flow_room_key=?,restricted=restricted OR ?,purpose=CASE WHEN ? THEN 'general' ELSE purpose END WHERE id=?`, spec.Key, spec.Restricted, flowRoomIsGeneral(spec.Key), id); err != nil {
 					return err
 				}
 				continue
@@ -528,7 +528,11 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home' ORDER BY created_at,id LIMIT 1`, projectID).Scan(&homeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			room, err := tx.CreateRoom(Room{ProjectID: projectID, ParentID: homeID, Kind: spec.Kind, Title: spec.Title, CreatedBy: userID})
+			purpose := RoomPurposeTask
+			if flowRoomIsGeneral(spec.Key) {
+				purpose = RoomPurposeGeneral
+			}
+			room, err := tx.CreateRoom(Room{ProjectID: projectID, ParentID: homeID, Kind: spec.Kind, Title: spec.Title, CreatedBy: userID, Purpose: purpose})
 			if err != nil {
 				return err
 			}
@@ -568,4 +572,10 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 		return err
 	}()
 	return out, err
+}
+
+// flowRoomIsGeneral says whether a team flow's room key names a project-wide or coordination room (general, routing or advice), which has
+// the general purpose rather than being a task room.
+func flowRoomIsGeneral(key string) bool {
+	return key == "general" || key == "routing" || key == "advice"
 }

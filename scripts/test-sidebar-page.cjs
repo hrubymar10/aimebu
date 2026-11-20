@@ -25,7 +25,9 @@ const server = http.createServer((req, res) => {
 
 const at = '2026-01-01T10:00:00Z', future = '2099-01-01T00:00:00Z';
 const project = (id, name, patch = {}) => ({ id, name, role: 'owner', archived_at: '', ...patch });
-const room = (id, projectID, title, patch = {}) => ({ id, project_id: projectID, title, kind: 'task', parent_id: '', lifecycle: 'open', unread_count: 0, hidden: false, notify: 'default', muted_until: '', member_count: 2, last_activity_at: at, agent_chat: false, lifecycle_rev: 1, ...patch });
+const room = (id, projectID, title, patch = {}) => ({ id, project_id: projectID, title, kind: 'task', purpose: 'general', parent_id: '', lifecycle: 'open', unread_count: 0, hidden: false, notify: 'default', muted_until: '', member_count: 2, last_activity_at: at, agent_chat: false, lifecycle_rev: 1, ...patch });
+// The icon of a row is a mask with a tooltip, not text: the tests name each kind by one character so a row reads as "<kind> <title>".
+const GLYPHS = { home: '⌂', general: '#', task: '☑', research: '?', dm: '@', 'agent-chat': '⇄' };
 // A time in an answer that is `ms` after the page gives the answer. A time worked out here, in Node, before the page is opened, runs out while the
 // page is still starting when the machine is busy (a browser launch, a navigation and the modules take longer under load), and a test that waits for a
 // mute to run out then never sees it running, or takes an expired one for a pending one.
@@ -104,7 +106,7 @@ async function main() {
   // The rules that answered the first load stop answering: the next read of these paths is held.
   const hold = (page, ...keys) => page.evaluate(keys => { for (const key of keys) delete window.__auto[key]; }, keys);
   // The rows as the list shows them, in order: [id, text, unread badge, nested].
-  const rows = page => page.$$eval('#projects .room-group', groups => groups.map(group => { const row = group.querySelector(':scope > .room-item'); return [group.dataset.roomId, `${row.querySelector('.room-item-icon').textContent} ${row.querySelector('.room-item-name').textContent}`, row.querySelector('.room-item-unread:not([hidden])')?.textContent || '', !!group.closest('.room-children')]; }));
+  const rows = page => page.$$eval('#projects .room-group', (groups, glyphs) => groups.map(group => { const row = group.querySelector(':scope > .room-item'); return [group.dataset.roomId, `${glyphs[row.querySelector('.room-item-icon').dataset.roomType]} ${row.querySelector('.room-item-name').textContent}`, row.querySelector('.room-item-unread:not([hidden])')?.textContent || '', !!group.closest('.room-children')]; }), GLYPHS);
   const tops = page => page.$$eval('#projects > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase()));
 
   // Owners see restricted routing rooms with a lock, while ordinary rooms have no lock.
@@ -143,7 +145,7 @@ async function main() {
     await answer(page, list, 200, projects);
     for (const id of ['prj_a', 'prj_b', 'prj_c']) await waitRequest(page, 'GET', `/api/projects/${id}/rooms`);
     await settle(page);
-    const places = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.projectId ? ['placeholder', node.dataset.projectId, `${node.querySelector('.room-item-icon').textContent} ${node.querySelector('.room-item-name').textContent.trim()}`] : ['rooms', node.dataset.roomId, node.classList.contains('collapsed')]));
+    const places = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.projectId ? ['placeholder', node.dataset.projectId, `${node.querySelector('.room-item-icon').dataset.roomType === 'home' ? '⌂' : '?'} ${node.querySelector('.room-item-name').textContent.trim()}`] : ['rooms', node.dataset.roomId, node.classList.contains('collapsed')]));
     assert.deepEqual(await places(), [['placeholder', 'prj_a', '⌂ Alpha'], ['placeholder', 'prj_b', '⌂ Beta']], 'each live project waits in its place (the archived one is not drawn yet)');
     const height = await page.$eval('.project-placeholder', node => Math.round(node.getBoundingClientRect().height));
     // The second project lands first: it is drawn below the first one's placeholder, and folded as it will be once the app has opened a room.
@@ -253,8 +255,8 @@ async function main() {
     await page.$eval('.archived-projects > summary', node => node.click());
     await page.$eval('.archived-project > .room-item .room-collapse', node => node.click());
     await page.waitForFunction(() => !document.querySelector('.archived-project').classList.contains('collapsed'));
-    assert.deepEqual(await page.$eval('.archived-project', node => [node.classList.contains('collapsed'), node.querySelector('.room-item-icon').textContent, !!node.querySelector('.room-children [data-room-id=rm_cg]'), !!node.querySelector('.room-children .room-children')]),
-      [false, '⌂', true, false], 'archived project uses the live project row and child tree');
+    assert.deepEqual(await page.$eval('.archived-project', node => [node.classList.contains('collapsed'), node.querySelector('.room-item-icon').dataset.roomType, !!node.querySelector('.room-children [data-room-id=rm_cg]'), !!node.querySelector('.room-children .room-children')]),
+      [false, 'home', true, false], 'archived project uses the live project row and child tree');
     await page.evaluate(() => document.documentElement.dataset.theme = 'high-contrast-dark');
     assert.equal(await page.$eval('.archived-project > .room-item', node => getComputedStyle(node).opacity), '1', 'archived row stays legible in high contrast');
     assert.deepEqual(await tops(page), ['room-filter', 'room-group collapsed', 'room-group collapsed', 'archived-projects', 'direct-rooms']);
@@ -356,6 +358,18 @@ async function main() {
     // The hand-written list stores the new record for every room of a refreshed project; the page keeps the one it holds for an unchanged room.
     if (REPLACED) assert.equal(state.kept, true);
     assert.deepEqual((await rows(page)).filter(row => ['rm_gen', 'rm_api', 'rm_new'].includes(row[0])).map(row => row.slice(0, 3)), [['rm_gen', '# general', ''], ['rm_api', '# api-work', '14'], ['rm_new', '# zeta', '']]);
+    await page.close();
+  }
+
+  // A turn raises several events in a row: scheduling a refresh of one project many times fetches its rooms once.
+  {
+    const page = await mount();
+    await settle(page);
+    const before = await count(page, 'GET', '/api/projects/prj_a/rooms');
+    await page.evaluate(() => { for (let i = 0; i < 6; i++) window.__sidebar.scheduleRefresh('prj_a'); });
+    await page.waitForFunction(n => window.__requests.filter(request => request.path.startsWith('/api/projects/prj_a/rooms')).length > n, {}, before);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.equal(await count(page, 'GET', '/api/projects/prj_a/rooms'), before + 1, 'six scheduled refreshes of a project make one request');
     await page.close();
   }
 
@@ -1376,6 +1390,96 @@ async function main() {
     await page.$eval('#projects', node => { node.scrollTop = 700; }); await settle(page);
     const phoneAfter = await geometry();
     assert.deepEqual([phone.listScrolls, phoneAfter.scrollTop > 300, phoneAfter.header, phoneAfter.filter], [true, true, phone.header, phone.filter], 'the phone drawer keeps its header and filter too');
+    await page.close();
+  }
+
+  // Room kinds and task-room status: an icon (a mask with a tooltip, never text) per kind; a task or research room has no grey member count and no
+  // blue count of everything unread but a count of what addresses the person and a small status; other rooms keep their counts.
+  {
+    const kindRooms = [room('rm_kh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task', member_count: 3, unread_count: 2 }),
+      room('rm_task', 'prj_a', 'build', { parent_id: 'rm_kh', purpose: 'task', unread_count: 40, unread_addressed: 0, member_count: 4 }),
+      room('rm_taskn', 'prj_a', 'build-addressed', { parent_id: 'rm_kh', purpose: 'task', unread_count: 40, unread_addressed: 3 }),
+      room('rm_work', 'prj_a', 'working', { parent_id: 'rm_kh', purpose: 'task', working: true }),
+      room('rm_wait', 'prj_a', 'waiting', { parent_id: 'rm_kh', purpose: 'task', working: true, attention_open: 1, attention_count: 0 }),
+      room('rm_bell', 'prj_a', 'belled', { parent_id: 'rm_kh', purpose: 'task', attention_open: 2, attention_count: 2 }),
+      room('rm_close', 'prj_a', 'closing', { parent_id: 'rm_kh', purpose: 'task', lifecycle: 'closing' }),
+      room('rm_res', 'prj_a', 'compare', { parent_id: 'rm_kh', purpose: 'research', user_message_count: 2, unread_count: 9 }),
+      room('rm_resnew', 'prj_a', 'compare-new', { parent_id: 'rm_kh', purpose: 'research' }),
+      room('rm_gen2', 'prj_a', 'general', { parent_id: 'rm_kh', purpose: 'general', unread_count: 6, working: true, member_count: 5 }),
+      room('rm_route', 'prj_a', 'routing', { parent_id: 'rm_kh', purpose: 'general', restricted: true }),
+      room('rm_dm2', 'prj_a', 'ada', { kind: 'dm', purpose: 'task', unread_count: 2, member_count: 2 })];
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': kindRooms, 'GET /api/projects/prj_b/rooms': [], 'GET /api/projects/prj_c/rooms': [], 'GET /api/agent-dms': { project_id: 'prj_agentdm', rooms: [room('rm_chat2', 'prj_agentdm', 'ada & bert', { kind: 'dm', agent_chat: true, unread_count: 1 })], joinable: [] } }) });
+    await page.setViewport({ width: 1280, height: 700 }); await settle(page);
+    const view = id => page.$eval(`[data-room-id=${id}] > .room-item`, row => {
+      const icon = row.querySelector('.room-item-icon'), mask = icon.querySelector('.icon-mask'), status = row.querySelector('.room-status');
+      return { type: icon.dataset.roomType, mask: mask?.className.replace('icon-mask ', ''), tooltip: icon.title, label: icon.getAttribute('aria-label'), text: icon.textContent.trim(), image: mask ? getComputedStyle(mask).webkitMaskImage.replace(/^url\("?|"?\)$/g, '').replace(/^.*\/icons\//, '') : '',
+        status: status ? [status.textContent, status.className.replace('room-state room-status room-status-', ''), status.title] : null, count: !!row.querySelector('.room-item-count'), unread: row.querySelector('.room-item-unread')?.textContent || '',
+        bell: row.querySelector('.room-item-attention')?.textContent || '', name: row.querySelector('.room-item-name').title };
+    });
+    const kinds = {};
+    for (const id of ['rm_kh', 'rm_task', 'rm_res', 'rm_gen2', 'rm_route', 'rm_dm2', 'rm_chat2']) kinds[id] = await view(id);
+    assert.deepEqual(Object.entries(kinds).map(([id, item]) => [id, item.type, item.mask, item.image, item.tooltip, item.label, item.text]), [
+      ['rm_kh', 'home', 'icon-mask-house', 'house.svg', 'Project home room', 'Project home room', ''],
+      ['rm_task', 'task', 'icon-mask-list-checks', 'list-checks.svg', 'Task room', 'Task room', ''],
+      ['rm_res', 'research', 'icon-mask-search', 'search.svg', 'Research room', 'Research room', ''],
+      ['rm_gen2', 'general', 'icon-mask-hash', 'hash.svg', 'General room', 'General room', ''],
+      ['rm_route', 'general', 'icon-mask-hash', 'hash.svg', 'General room', 'General room', ''],
+      ['rm_dm2', 'dm', 'icon-mask-human', 'human.svg', 'Direct message', 'Direct message', ''],
+      ['rm_chat2', 'agent-chat', 'icon-mask-switch', 'switch.svg', 'Chat between agents', 'Chat between agents', '']], 'every kind of room has its own SVG icon with a tooltip and no text glyph');
+    // Task rooms: no grey count, and the unread chip counts only what addresses the person (so chatter alone leaves none).
+    const task = kinds.rm_task, addressed = await view('rm_taskn');
+    assert.deepEqual([task.count, task.unread, task.name], [false, '', 'build · 4 members'], 'a task room hides its member count (it is in the tooltip) and shows no count for chatter');
+    assert.deepEqual([addressed.count, addressed.unread], [false, '3'], 'a task room still counts what addresses the person');
+    assert.equal(await page.$eval('[data-room-id=rm_taskn] .room-item-unread', node => node.title), '3 unread messages');
+    assert.deepEqual([kinds.rm_res.count, kinds.rm_res.unread, kinds.rm_res.name], [false, '', 'compare · 2 members'], 'a research room is told like a task room');
+    // General and coordination rooms, the home room and direct messages keep the member count and the count of everything unread.
+    assert.deepEqual([kinds.rm_gen2.count, kinds.rm_gen2.unread, kinds.rm_gen2.status], [true, '6', null], 'a general room keeps its counts and has no status (an agent working does not change that)');
+    assert.deepEqual([kinds.rm_kh.count, kinds.rm_kh.unread, kinds.rm_kh.status], [true, '11', null], 'the folded home keeps its member count and totals its own 2, the 3 addressed to the person in a task room (not its 40) and the 6 of the general room');
+    assert.deepEqual([kinds.rm_dm2.count, kinds.rm_dm2.unread, kinds.rm_dm2.status], [true, '2', null]);
+    assert.deepEqual([kinds.rm_chat2.count, kinds.rm_chat2.unread], [true, '1']);
+    // The status.
+    const statuses = {};
+    for (const id of ['rm_task', 'rm_work', 'rm_wait', 'rm_bell', 'rm_close', 'rm_res', 'rm_resnew']) statuses[id] = (await view(id)).status;
+    assert.deepEqual(statuses, {
+      rm_task: ['Idle', 'idle', 'Nothing is running in this room'], rm_work: ['Working', 'working', 'An agent in this room is working'],
+      rm_wait: ['Waiting', 'waiting', 'Waiting for a person: an item needs an answer'], rm_bell: ['Waiting', 'waiting', 'Waiting for a person: an item needs an answer'],
+      rm_close: ['Closing…', 'closing', 'This room is closing'], rm_res: ['Done', 'done', 'Quiet: no agent is working here'], rm_resnew: ['Idle', 'idle', 'Nothing is running in this room'] });
+    // The warning and bell badges stay.
+    assert.equal((await view('rm_bell')).bell, '🔔 2', 'the bell badge stays beside the status');
+    assert.equal(await page.$eval('[data-room-id=rm_work] .room-health, [data-room-id=rm_bell] .room-item-attention', node => !!node), true);
+    // A status is a bordered word in the current colour, legible in every theme; high contrast has no colour left to carry it.
+    await page.evaluate(() => document.querySelectorAll('.room-group.collapsed').forEach(group => group.classList.remove('collapsed'))); // nested rows of a folded home are not drawn
+    for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
+      await page.evaluate(theme => document.documentElement.setAttribute('data-theme', theme), theme);
+      const look = await page.evaluate(() => [...document.querySelectorAll('.room-status')].map(node => { const style = getComputedStyle(node); return [node.classList[2], style.borderTopWidth, style.borderTopStyle, style.color, style.backgroundColor, node.getBoundingClientRect().width > 0]; }));
+      assert.ok(look.length >= 6 && look.every(item => item[1] === '1px' && item[2] === 'solid' && item[5]), `${theme}: every status is a drawn, bordered word ${JSON.stringify(look)}`);
+      if (theme.startsWith('high-contrast')) {
+        const [text, back] = await page.evaluate(() => [getComputedStyle(document.body).color, getComputedStyle(document.body).backgroundColor]);
+        const hc = Object.fromEntries(look.map(item => [item[0], [item[3], item[4]]]));
+        assert.deepEqual(hc['room-status-working'], [text, back], `${theme}: working is the page's text on the page's background`);
+        assert.deepEqual(hc['room-status-waiting'], [text, back], `${theme}: waiting is the page's text on the page's background`);
+      } else {
+        const colours = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.room-status')].map(node => [node.classList[2], getComputedStyle(node).color])));
+        assert.notEqual(colours['room-status-working'], colours['room-status-idle'], `${theme}: working reads apart from idle`);
+        assert.notEqual(colours['room-status-waiting'], colours['room-status-idle'], `${theme}: waiting reads apart from idle`);
+      }
+    }
+    await page.evaluate(() => document.documentElement.removeAttribute('data-theme'));
+    // The status follows the server: a refreshed list that says an agent started working changes the word.
+    await page.evaluate(() => { const room = window.__sidebar.rooms.get('rm_task'); room.working = true; window.__sidebar.render(); }); await settle(page);
+    assert.equal((await view('rm_task')).status[0], 'Working', 'the status redraws when the room says an agent is working');
+    await page.close();
+  }
+
+  // Marking a task room read keeps its addressed count in step with the server's answer.
+  {
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': [room('rm_kh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }), room('rm_t', 'prj_a', 'task', { parent_id: 'rm_kh', purpose: 'task', unread_count: 6, unread_addressed: 2 })] }) });
+    await settle(page);
+    assert.equal(await page.$eval('[data-room-id=rm_t] .room-item-unread', node => node.textContent), '2');
+    await page.evaluate(() => { window.__shown = { rm_t: 40 }; window.__sidebar.setActive('rm_t'); window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_t')); });
+    const mark = await waitRequest(page, 'POST', '/api/rooms/rm_t/read');
+    await answer(page, mark, 200, { unread_count: 1, unread_addressed: 0, read_cursor: 40, attention_count: 0 }); await settle(page);
+    assert.deepEqual(await page.evaluate(() => { const room = window.__sidebar.rooms.get('rm_t'); return [room.unread_count, room.unread_addressed]; }), [1, 0]);
     await page.close();
   }
 

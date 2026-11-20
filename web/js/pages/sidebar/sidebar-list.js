@@ -2,7 +2,7 @@ import { html, useEffect, useLayoutEffect, useRef, useState } from '../../ui.js'
 import { previewText } from '../../preview.js';
 import { formDialog } from '../../dialogs.js';
 import { roomSilenced, mutedNow } from '../../room-notify.js';
-import { leafView, treeOf } from './model.js';
+import { leafView, roomStatus, roomType, tracksStatus, treeOf } from './model.js';
 import { loadPreviewAll } from './store.js';
 
 const CHEVRONS = { down: '6 9 12 15 18 9', right: '9 18 15 12 9 6' };
@@ -84,7 +84,7 @@ function Row({ view, store, ctx, preview, onToggle }) {
   const affected = store.health.get(room.id) || [], quiet = roomSilenced(room),
     attention = room.kind === 'home' ? ctx.projectAttention.get(room.project_id) || 0 : room.attention_count || 0,
     members = room.member_count || 0;
-  const isActive = ctx.active === room.id, glyph = room.kind === 'home' ? '⌂' : room.agent_chat ? '⇄' : room.kind === 'dm' ? '@' : '#';
+  const isActive = ctx.active === room.id, type = roomType(room), status = roomStatus(room), counted = !tracksStatus(room);
   const classes = ['room-item', isActive ? 'active' : '', room.kind === 'dm' ? 'dm' : '', view.unread > 0 && !isActive ? 'has-unread' : '', attention > 0 ? 'has-attention' : '', room.lifecycle === 'closed' ? 'archived' : '', room.lifecycle === 'closing' ? 'closing' : '', controls && manual ? 'project-draggable' : ''].filter(Boolean).join(' ');
   const select = () => store.onSelect(store.rooms.get(room.id) || room);
   const label = `${view.collapsible && view.folded ? 'Expand' : 'Collapse'} ${room.title}`;
@@ -102,7 +102,7 @@ function Row({ view, store, ctx, preview, onToggle }) {
   const drag = controls ? dragHandlers(room, store) : {};
   const row = html`<div class=${classes} onClick=${event => { if (!event.target.closest('button, input, select, a')) select(); }} ...${drag}>
     ${view.collapsible ? html`<button type="button" class="row-btn branch room-collapse" title=${label} aria-label=${label} aria-expanded=${String(!view.folded)} onClick=${onToggle || (() => store.toggleCollapsed(room.id))}><${Chevron} direction=${view.folded ? 'right' : 'down'} /></button>` : view.nest && html`<span class="branch-spacer" aria-hidden="true"></span>`}
-    <span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">${glyph}</span></span>
+    <span class="room-item-icon-group"><span class=${`room-item-icon room-type-${type.key}`} data-room-type=${type.key} role="img" aria-label=${type.label} title=${type.label}><span class=${`icon-mask icon-mask-${type.icon}`} aria-hidden="true"></span></span></span>
     <div class="room-item-info"><div class="room-item-top">
     <button type="button" class="row-btn room-item-name" aria-current=${isActive ? 'true' : undefined} title=${`${room.title} · ${members} ${members === 1 ? 'member' : 'members'}`} onClick=${select}>${room.title}</button>
     ${room.restricted && html`<span class="room-restricted" role="img" aria-label="Restricted room" title="Restricted room"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg></span>`}
@@ -111,8 +111,8 @@ function Row({ view, store, ctx, preview, onToggle }) {
     ${view.chip && projectName && !(room.kind === 'home' && room.title.trim().toLowerCase() === projectName.trim().toLowerCase()) && html`<span class=${ctx.filtering ? 'room-project room-project-needed' : 'room-project'} title=${`Project ${projectName}`}>${projectName}</span>`}
     ${(affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`}
     ${quiet && html`<span class="room-muted" role="img" title=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'} aria-label=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'}><span class="icon-mask icon-mask-bell-disabled" aria-hidden="true"></span></span>`}
-    ${room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
-    <span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>
+    ${status ? html`<span class=${`room-state room-status room-status-${status.key}`} role="img" title=${status.title} aria-label=${`${status.label}: ${status.title}`}>${status.label}</span>` : room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
+    ${counted && html`<span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>`}
     ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`}
     ${view.unread > 0 && html`<span class="room-item-unread" role="img" title=${`${view.unread} unread ${view.unread === 1 ? 'message' : 'messages'}`} aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
     </div>${preview && html`<div class="room-item-preview">${previewText(room.last_message_body) || (room.user_message_count > 0 ? '📎 Attachment' : room.message_count > 0 ? 'Only system messages' : 'No messages yet')}</div>`}</div>
@@ -130,7 +130,7 @@ function Group({ view, store, ctx, className = '', onToggle }) {
 // A project whose rooms have not arrived: its name where its row will be, the same height as the folded row that replaces it.
 function Placeholder({ project, preview }) {
   // With every row's last message on, a project row carries a preview line too: an empty one keeps the height.
-  return html`<div class="room-group project-placeholder" data-project-id=${project.id} aria-busy="true"><div class="room-item"><span class="branch-spacer" aria-hidden="true"></span><span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">⌂</span></span><div class="room-item-info"><div class="room-item-top"><span class="row-btn room-item-name">${project.name || ''}</span></div>${preview && html`<div class="room-item-preview" aria-hidden="true">\u00a0</div>`}</div></div></div>`;
+  return html`<div class="room-group project-placeholder" data-project-id=${project.id} aria-busy="true"><div class="room-item"><span class="branch-spacer" aria-hidden="true"></span><span class="room-item-icon-group"><span class="room-item-icon room-type-home" data-room-type="home" aria-hidden="true"><span class="icon-mask icon-mask-house" aria-hidden="true"></span></span></span><div class="room-item-info"><div class="room-item-top"><span class="row-btn room-item-name">${project.name || ''}</span></div>${preview && html`<div class="room-item-preview" aria-hidden="true">\u00a0</div>`}</div></div></div>`;
 }
 
 function Fold({ id, className, open, store, children, summary, heading = false, ...rest }) {
@@ -168,7 +168,7 @@ function Tail({ node, store, ctx }) {
 
 function Offer({ offer, store }) {
   const [joining, setJoining] = useState(false);
-  return html`<div class="room-item agent-chat-offer" data-offer-id=${offer.id}><span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">⇄</span></span><div class="room-item-info"><div class="room-item-top"><span class="room-item-name" title=${`${offer.title} · ${offer.message_count} ${offer.message_count === 1 ? 'message' : 'messages'}`}>${offer.title}</span></div></div>
+  return html`<div class="room-item agent-chat-offer" data-offer-id=${offer.id}><span class="room-item-icon-group"><span class="room-item-icon room-type-agent-chat" data-room-type="agent-chat" role="img" aria-label="Chat between agents" title="Chat between agents"><span class="icon-mask icon-mask-switch" aria-hidden="true"></span></span></span><div class="room-item-info"><div class="room-item-top"><span class="room-item-name" title=${`${offer.title} · ${offer.message_count} ${offer.message_count === 1 ? 'message' : 'messages'}`}>${offer.title}</span></div></div>
     <${GlyphButton} name="person-plus" label=${`Join ${offer.title}`} className="row-btn agent-chat-join" disabled=${joining} onClick=${async () => { setJoining(true); await store.join(offer); setJoining(false); }} /></div>`;
 }
 

@@ -2,11 +2,12 @@ package store
 
 import "testing"
 
-// rewindWorkerRecoveryMigration restores the pre-120 schema for tests that
+// rewindWorkerRecoveryMigration (also drops room.purpose, which a later migration adds) restores the pre-120 schema for tests that
 // construct an older database from a current fixture before replaying upgrades.
 func rewindWorkerRecoveryMigration(t *testing.T, s *Store) {
 	t.Helper()
 	for _, statement := range []string{
+		`ALTER TABLE room DROP COLUMN purpose`,
 		`DROP INDEX inbox_lead_recovery_due`,
 		`ALTER TABLE inbox_item DROP COLUMN lead_due_at`,
 		`ALTER TABLE inbox_item DROP COLUMN recovery_lead_id`,

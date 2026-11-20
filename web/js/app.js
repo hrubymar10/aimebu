@@ -397,6 +397,7 @@ function setRoomsOpen(open) {
   if (open) agents.setMobileOpen(false);
 }
 // The room the address names, or '' when it names none (or is not a valid escape sequence).
+const TURN_STATE_EVENTS = new Set(['turn_dispatch_requested', 'turn_dispatch_cancelled', 'turn_never_started', 'turn_process_exit', 'turn_finished', 'turn_lost']);
 function roomInAddress() { try { const hash = decodeURIComponent(location.hash.slice(1)); return parsePath(hash) ? '' : hash; } catch { return ''; } } // a settings address is not a room
 function rememberedRoom() { try { return localStorage.getItem('aimebu2.lastRoom') || ''; } catch { return ''; } }
 // A person's click on a room (the list, a breadcrumb, a notification). A room that cannot be opened because the server cannot be reached says so on the
@@ -586,6 +587,8 @@ async function signedIn(session) {
           if (event.kind === 'message_created') await chat.fetchMessage(payload.message_id);
         }
       }
+      // A task room's status says whether an agent is working in it, so a turn starting or ending redraws that project's rooms.
+      else if (TURN_STATE_EVENTS.has(event.kind) && event.project_id && (!event.room_id || sidebar.rooms.get(event.room_id)?.kind === 'task')) sidebar.scheduleRefresh(event.project_id);
       else if (event.kind === 'reaction_changed' && chat.nodes.has(payload.message_id)) await chat.refreshReactions(payload.message_id);
       else if (event.kind === 'human_presence_changed') agents.refreshPresence();
       if ((event.kind === 'project_member_changed' || event.kind === 'user_invite_redeemed') && chat.room && chat.room.project_id === event.project_id) chat.loadMentionLogins(chat.room, true);

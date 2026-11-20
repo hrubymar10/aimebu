@@ -7,7 +7,8 @@ import (
 )
 
 // rewindUsageTotalMigration rewinds the schema to before migration 124 the way a database that already ran it looks after the version
-// rows are deleted: the total columns and the context-delivery table are dropped, so the migrations run again over them.
+// rows are deleted: the total columns and the context-delivery table are dropped, so the migrations run again over them. Deleting the
+// version rows from 124 also replays the room purpose migration (126), which adds a column, so that column is dropped too.
 func rewindUsageTotalMigration(t *testing.T, s *Store) {
 	t.Helper()
 	for _, statement := range []string{
@@ -17,6 +18,7 @@ func rewindUsageTotalMigration(t *testing.T, s *Store) {
 		`ALTER TABLE usage_record DROP COLUMN tokens_cache_write_total`,
 		`DROP TABLE cost_reset_marker`,
 		`DROP TABLE session_context_delivery`,
+		`ALTER TABLE room DROP COLUMN purpose`,
 		`DELETE FROM schema_version WHERE version>=124`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -67,6 +69,10 @@ func TestMigrationRepairsLifetimeCostRowsAndTotalPings(t *testing.T) {
 	insertUsageRow(t, s, "ping-codex", "", "ses_codex", f.agent.ID, f.room.ID, f.project.ID, 50000, 13960000, floatPtr(3.50), nil, "keep_alive", "2026-11-19T10:05:00.000000000Z")
 	// A ping whose figures are its own small delta stays.
 	insertUsageRow(t, s, "ping-small", "", "ses_codex", f.agent.ID, f.room.ID, f.project.ID, 10, 50, floatPtr(0.001), nil, "keep_alive", "2026-11-19T10:06:00.000000000Z")
+	// Replaying from 124 also replays the room purpose migration (126), which adds a column.
+	if _, err := s.db.Exec(`ALTER TABLE room DROP COLUMN purpose`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=124`); err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +178,10 @@ func TestMigrationLeavesWarmAndColdTurnRowsIntact(t *testing.T) {
 		t.Fatal(err)
 	}
 	insertUsageRow(t, s, "lifetime-turn", lifetime.ID, "ses_lifetime", f.agent.ID, f.room.ID, f.project.ID, 5, 4000, func() *float64 { v := 3012.88; return &v }(), func() *float64 { v := 3012.88; return &v }(), "measured", "2026-11-19T10:07:00.000000000Z")
+	// Replaying from 124 also replays the room purpose migration (126), which adds a column.
+	if _, err := s.db.Exec(`ALTER TABLE room DROP COLUMN purpose`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=124`); err != nil {
 		t.Fatal(err)
 	}

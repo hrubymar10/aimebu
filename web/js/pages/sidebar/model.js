@@ -63,7 +63,34 @@ export function placeProject(projects, manual, id, targetID, after) {
 
 // The unread badge of a room row. A collapsed root also stands for the rooms nested under it, so collapsing
 // never hides new activity: its badge is its own unread count plus its children's. The open room counts as read.
-export function roomUnread(room, activeID) { return room.id === activeID || room.lifecycle === 'closed' ? 0 : Math.max(0, room.unread_count || 0); }
+// A task or research room is told by its status, not by a count: most of what is unread in one is agents talking to each other, which nobody reads to
+// catch up. Its badge counts only the unread messages that name the person or reply to them (`unread_addressed`); every other room counts them all.
+export const tracksStatus = room => room.kind === 'task' && room.purpose !== 'general';
+export function roomUnread(room, activeID) {
+  if (room.id === activeID || room.lifecycle === 'closed') return 0;
+  return Math.max(0, (tracksStatus(room) ? room.unread_addressed : room.unread_count) || 0);
+}
+
+// What kind of room a row is, as the server's `kind`, `purpose` and `agent_chat` say, never guessed from who is in it: the glyph (an icon-mask name) and the tooltip.
+export function roomType(room) {
+  if (room.kind === 'home') return { key: 'home', icon: 'house', label: 'Project home room' };
+  if (room.kind === 'dm') return room.agent_chat ? { key: 'agent-chat', icon: 'switch', label: 'Chat between agents' } : { key: 'dm', icon: 'human', label: 'Direct message' };
+  if (room.kind === 'lobby' || room.purpose === 'general') return { key: 'general', icon: 'hash', label: 'General room' };
+  if (room.purpose === 'research') return { key: 'research', icon: 'search', label: 'Research room' };
+  return { key: 'task', icon: 'list-checks', label: 'Task room' };
+}
+
+// The small status a task or research room shows instead of a count; null for any other room (and an archived one). Closing comes first, then a person
+// being waited on (an open attention item, seen or not), then an agent working (a pending or running turn). What is left is idle; a research room that
+// has been written in reads as done (the server has no separate report-delivered mark, so it is the quiet room after the work).
+export function roomStatus(room) {
+  if (!tracksStatus(room) || room.lifecycle === 'closed') return null;
+  if (room.lifecycle === 'closing') return { key: 'closing', label: 'Closing…', title: 'This room is closing' };
+  if ((room.attention_open || 0) > 0) return { key: 'waiting', label: 'Waiting', title: 'Waiting for a person: an item needs an answer' };
+  if (room.working) return { key: 'working', label: 'Working', title: 'An agent in this room is working' };
+  if (room.purpose === 'research' && (room.user_message_count || 0) > 0) return { key: 'done', label: 'Done', title: 'Quiet: no agent is working here' };
+  return { key: 'idle', label: 'Idle', title: 'Nothing is running in this room' };
+}
 
 export function rowUnread(room, children, collapsed, activeID) {
   return roomUnread(room, activeID) + (collapsed ? children.reduce((sum, child) => sum + roomUnread(child, activeID), 0) : 0);

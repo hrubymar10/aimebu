@@ -1425,7 +1425,7 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 			if err != nil {
 				return report, err
 			}
-			if _, err := tx.ExecContext(ctx, "INSERT INTO room(id,project_id,parent_id,depth,kind,title,created_by,created_at) VALUES (?,?,?,1,'task',?,?,?)", generalID, id, homeID, GeneralRoomTitle, ownerID, timestamp()); err != nil {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO room(id,project_id,parent_id,depth,kind,title,created_by,created_at,purpose) VALUES (?,?,?,1,'task',?,?,?,'general')", generalID, id, homeID, GeneralRoomTitle, ownerID, timestamp()); err != nil {
 				return report, err
 			}
 			if err := addImportMap(ctx, tx, mapping.SourceKey, "room", v1SubRoomKey(alias, GeneralRoomTitle), generalID); err != nil {

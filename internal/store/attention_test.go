@@ -94,6 +94,14 @@ func TestAttentionCountsMatchTheInboxEachPersonSees(t *testing.T) {
 	if open == 0 || seen != open {
 		t.Fatalf("room Inbox should stay open and seen: open=%d seen=%d", open, seen)
 	}
+	// The open count a room's "waiting for a person" status reads stays up after the bell is seen, and equals the entries the inbox lists.
+	openNow, err := s.openAttentionByRoom(ctx, "usr_owner")
+	if err != nil || openNow[room.ID] != open || openNow[room.ID] == 0 {
+		t.Fatalf("open attention after the bell was seen: %v (inbox lists %d) err=%v", openNow, open, err)
+	}
+	if viewerOpen, err := s.openAttentionByRoom(ctx, "usr_viewer"); err != nil || viewerOpen[room.ID] != 0 {
+		t.Fatalf("a viewer's open attention: %v err=%v", viewerOpen, err)
+	}
 	operator, err := s.attentionByRoom(ctx, "usr_operator")
 	if err != nil || operator[room.ID] == 0 {
 		t.Fatalf("another person's bell changed: %v err=%v", operator, err)

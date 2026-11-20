@@ -1891,7 +1891,7 @@ async function main() {
       count: [22, 'rgb(28, 33, 40)', '9.1px'],
       bar: [43, 30, 'rgba(0, 0, 0, 0)', '8.4px', '0.6'],
     }, 'desktop panels retain the v1 measurements');
-    await second.evaluate(() => [...document.querySelectorAll('.room-item')].find(row => row.querySelector('.room-item-icon')?.textContent === '⌂')?.querySelector('.room-item-name').click());
+    await second.evaluate(() => [...document.querySelectorAll('.room-item')].find(row => row.querySelector('.room-item-icon')?.dataset.roomType === 'home')?.querySelector('.room-item-name').click());
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
     assert.equal(await second.$eval('#room-icon', el => el.textContent), '⌂', 'the home room shows its glyph');
     await second.locator('#composer textarea').fill('Unread preview'); await second.locator('#composer button[type=submit]').click();
@@ -5968,7 +5968,7 @@ async function main() {
       if (chatSeed.status !== 0) throw new Error(`agent chat seed failed: ${chatSeed.stderr}`);
       await first.waitForFunction(() => document.querySelector('.agent-chat-offers .agent-chat-join'), {}, {});
       assert.equal(await first.$eval('.agent-chat-offers summary', el => el.textContent), 'Agent chats you can join (1)');
-      const joinedChats = () => first.$$eval('.direct-rooms .room-group .room-item-icon', els => els.filter(el => el.textContent === '⇄').length);
+      const joinedChats = () => first.$$eval('.direct-rooms .room-group .room-item-icon', els => els.filter(el => el.dataset.roomType === 'agent-chat').length);
       assert.equal(await joinedChats(), 0, 'a chat that was not joined is already listed');
       await domClick(first, '.agent-chat-offers summary');
       await domClick(first, '.agent-chat-offers .agent-chat-join');
@@ -5985,7 +5985,7 @@ async function main() {
       assert.equal(await first.$eval('.room-memory-setting', el => el.hidden), true, 'what is said in a chat between agents never feeds memory, so there is no memory setting');
       assert.equal(await first.$eval('#room-info-error', el => el.textContent), '', 'the settings of a chat between agents showed an error');
       await domClick(first, '#room-leave');
-      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-item-icon')].some(el => el.textContent === '⇄') && document.querySelector('.agent-chat-offers'), {}, {});
+      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-item-icon')].some(el => el.dataset.roomType === 'agent-chat') && document.querySelector('.agent-chat-offers'), {}, {});
       assert.equal(await joinedChats(), 0, 'a chat that was left is still listed');
       // A chat that goes away while it is being opened: its list and its messages both fail. Only that chat leaves, never the reserved project it
       // is filed under or the real project beside it, and the person lands on a home room.
@@ -6016,7 +6016,7 @@ async function main() {
       await first.waitForFunction(() => document.querySelector('#room-icon')?.textContent === '⇄', {}, {});
       await domClick(first, '#room-info');
       await domClick(first, '#room-leave');
-      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-item-icon')].some(el => el.textContent === '⇄') && document.querySelector('.agent-chat-offers'), {}, {});
+      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-item-icon')].some(el => el.dataset.roomType === 'agent-chat') && document.querySelector('.agent-chat-offers'), {}, {});
       assert.equal(await joinedChats(), 0, 'the chat is left again after the fault');
       await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
       await first.waitForFunction(id => document.querySelector('.room-item.active')?.parentElement.dataset.roomId === id, {}, roomID);
@@ -7593,7 +7593,7 @@ async function main() {
     assert.equal(await invitedPage.$eval('.human-dm', el => el.getAttribute('aria-label')), 'Message owner privately', 'the person card offers the private chat');
     assert.equal(await invitedPage.$eval('.human-dm', el => { const role = el.closest('.human-card').querySelector('.human-role').getBoundingClientRect(), box = el.getBoundingClientRect(); return box.right <= role.left + 0.5 || box.left >= role.right - 0.5; }), true, 'the private-chat button does not lie over the role');
     await domClick(invitedPage, '.human-dm');
-    await waitDump(invitedPage, 'new DM', () => document.querySelector('.room-item.active .room-item-name')?.textContent.trim() === 'owner' && document.querySelector('.room-item.active .room-item-icon')?.textContent === '@', () => ({
+    await waitDump(invitedPage, 'new DM', () => document.querySelector('.room-item.active .room-item-name')?.textContent.trim() === 'owner' && document.querySelector('.room-item.active .room-item-icon')?.dataset.roomType === 'dm', () => ({
       hash: decodeURIComponent(location.hash),
       title: document.querySelector('#room-title')?.textContent, active: [...document.querySelectorAll('.room-item.active')].map(row => row.textContent.trim()),
       rows: [...document.querySelectorAll('.room-item')].map(row => row.textContent.trim()).slice(0, 12),
@@ -8967,8 +8967,8 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"]`)?.checkVisibility(), {}, alpha.id);
       // Nothing is pinned. The sort button orders the projects (and the rooms inside them); in the manual order a project is dragged or
       // moved with its buttons, and the order is a stored personal preference.
-      const projectOrder = () => listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.textContent === '⌂').map(node => node.querySelector(':scope > .room-item .room-item-name')?.textContent || ''));
-      const homeIDs = () => listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.textContent === '⌂').map(node => node.dataset.roomId));
+      const projectOrder = () => listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.dataset.roomType === 'home').map(node => node.querySelector(':scope > .room-item .room-item-name')?.textContent || ''));
+      const homeIDs = () => listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.dataset.roomType === 'home').map(node => node.dataset.roomId));
       const roomOrder = () => listPage.$$eval(`[data-room-id="${home2.id}"] > .room-children > .room-group`, nodes => nodes.map(node => node.querySelector('.room-item-name').textContent.replace(/^#\s*/, '')).filter(title => title !== 'general')); // general: every project's own task room, not under test here
       const setSort = async key => { await domClick(listPage, '#rooms-sort'); await domClick(listPage, `#rooms-sort-menu .sort-item[data-sort="${key}"]`); await listPage.waitForFunction(() => document.querySelector('#rooms-sort-menu').hidden); };
       assert.deepEqual(await listPage.$$eval('#room-pin, .project-pin, .room-pin, .room-pinned', nodes => nodes.length), 0, 'there is no pin anywhere: not on a room, not on a project');
@@ -8977,7 +8977,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       assert.equal((await api('GET', '/api/projects')).some(item => 'pinned' in item), false, 'the project list carries no pin');
       assert.deepEqual(await projectOrder(), ['UI smoke', 'Second project'], 'manual with nothing saved is creation order');
       // Every project row carries the chevron or an invisible spacer, so the names of all roots start at the same x.
-      const rootX = await listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.textContent === '⌂').map(node => Math.round(node.querySelector(':scope > .room-item .room-item-name').getBoundingClientRect().left)));
+      const rootX = await listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.dataset.roomType === 'home').map(node => Math.round(node.querySelector(':scope > .room-item .room-item-name').getBoundingClientRect().left)));
       assert.equal(new Set(rootX).size, 1, `project names do not start at the same x: ${rootX}`);
       // The sort button: by name, by latest activity, manual. Rooms inside a project follow the sort.
       const sortState = () => listPage.evaluate(() => ({ expanded: document.querySelector('#rooms-sort').getAttribute('aria-expanded'), hidden: document.querySelector('#rooms-sort-menu').hidden, checked: [...document.querySelectorAll('#rooms-sort-menu .sort-item')].filter(item => item.getAttribute('aria-checked') === 'true').map(item => item.dataset.sort), roles: [...document.querySelectorAll('#rooms-sort-menu .sort-item')].map(item => item.getAttribute('role')) }));

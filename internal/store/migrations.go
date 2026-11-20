@@ -2043,6 +2043,17 @@ CREATE TABLE IF NOT EXISTS cost_reset_marker (
   turn_id TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+`}, {126, `
+-- A room's purpose is what the sidebar draws its icon and status from, set when the room is made and never worked out from who is in it.
+-- Every room starts as a task; a flow's general, routing and advice rooms and a project's room named general are general rooms (the
+-- lobby and the other kinds that are not task rooms stay task, as CreateRoom leaves them); a task room whose only agents besides leads are researchers is a research room.
+ALTER TABLE room ADD COLUMN purpose TEXT NOT NULL DEFAULT 'task' CHECK (purpose IN ('task','research','general'));
+UPDATE room SET purpose='general' WHERE kind='task' AND (team_flow_room_key IN ('general','routing','advice') OR title='general');
+UPDATE room SET purpose='research' WHERE kind='task' AND purpose='task'
+  AND EXISTS (SELECT 1 FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role ro ON ro.id=a.role_id
+    WHERE m.room_id=room.id AND m.member_kind='agent' AND m.left_at IS NULL AND ro.role_key='researcher')
+  AND NOT EXISTS (SELECT 1 FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role ro ON ro.id=a.role_id
+    WHERE m.room_id=room.id AND m.member_kind='agent' AND m.left_at IS NULL AND ro.cap_is_lead=0 AND ro.role_key<>'researcher');
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

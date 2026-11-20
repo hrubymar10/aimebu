@@ -26,7 +26,7 @@ function loadCollapsed() { try { const list = JSON.parse(localStorage.getItem(co
 export class SidebarStore {
   constructor({ onSelect }) {
     this.onSelect = onSelect;
-    this.projects = new Map(); this.rooms = new Map();
+    this.projects = new Map(); this.rooms = new Map(); this.refreshTimers = new Map();
     this.version = signal(0);
     this.shown = signal(false); this.collapsible = signal(new Set()); this.seenHealth = new Set();
     this.filter = signal(''); this.sort = signal(DEFAULT_SORT); this.manual = signal([]); this.active = signal('');
@@ -76,6 +76,8 @@ export class SidebarStore {
     this.reads.reset();
     this.generation++;
     clearTimeout(this.muteTimer);
+    for (const timer of this.refreshTimers.values()) clearTimeout(timer);
+    this.refreshTimers.clear();
     for (const timer of this.archiveTimers.values()) clearTimeout(timer);
     for (const controller of this.archiveRequests.values()) controller.abort();
     for (const controller of this.roomRequests) controller.abort();
@@ -215,6 +217,17 @@ export class SidebarStore {
     this.touch();
   }
 
+  // Refreshes a project's rooms once, a moment from now, however many times it is asked for in between: a turn raises several events in a row and each
+  // would otherwise refetch the whole list.
+  scheduleRefresh(id, delay = 250) {
+    if (this.refreshTimers.has(id)) return;
+    const generation = this.generation;
+    this.refreshTimers.set(id, setTimeout(() => {
+      this.refreshTimers.delete(id);
+      if (this.owns(generation)) this.refreshProject(id).catch(() => {});
+    }, delay));
+  }
+
   // A room removed on the server is dropped here by name: a project refresh only adds and updates.
   forgetRoom(id) { if (this.rooms.delete(id)) this.touch(); }
 
@@ -247,6 +260,7 @@ export class SidebarStore {
     this.reads.mark(room.id, seq, state => {
       if (this.rooms.get(room.id) !== room) return;
       if (Number.isInteger(state?.unread_count)) room.unread_count = state.unread_count;
+      if (Number.isInteger(state?.unread_addressed)) room.unread_addressed = state.unread_addressed;
       if (Number.isInteger(state?.read_cursor)) room.read_cursor = state.read_cursor;
       if (Number.isInteger(state?.attention_count)) room.attention_count = state.attention_count;
       this.touch();

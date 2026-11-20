@@ -110,11 +110,14 @@ func (tx *Tx) updateProject(id string, name, folder *string, actorID string, ren
 }
 
 type Room struct {
-	ID              string `json:"id"`
-	ProjectID       string `json:"project_id"`
-	ParentID        string `json:"parent_id,omitempty"`
-	Depth           int    `json:"depth"`
-	Kind            string `json:"kind"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	ParentID  string `json:"parent_id,omitempty"`
+	Depth     int    `json:"depth"`
+	Kind      string `json:"kind"`
+	// Purpose says what a task room is for: task (the default), research (a read-only investigation that ends in a report) or general
+	// (the project-wide and coordination rooms). It is set when the room is made; the sidebar reads it and never infers it from members.
+	Purpose         string `json:"purpose"`
 	TeamFlowRoomKey string `json:"team_flow_room_key,omitempty"`
 	Restricted      bool   `json:"restricted,omitempty"`
 	DMKey           string `json:"dm_key,omitempty"`
@@ -127,17 +130,24 @@ type Room struct {
 	MemberCount     int    `json:"member_count"`
 	MessageCount    int    `json:"message_count"`
 	// UserMessageCount counts the messages that are not system notices: a room whose newest such message has no text (only an attachment) still has them, which the preview cannot show.
-	UserMessageCount int           `json:"user_message_count"`
-	MemoryEnabled    *bool         `json:"memory_enabled"`
-	LastMessageBody  string        `json:"last_message_body,omitempty"`
-	LastActivityAt   string        `json:"last_activity_at,omitempty"`
-	Hidden           bool          `json:"hidden"`
-	Notify           string        `json:"notify"`
-	MutedUntil       string        `json:"muted_until,omitempty"`
-	ReadCursor       int64         `json:"read_cursor"`
-	UnreadCount      int           `json:"unread_count"`
-	AttentionCount   int           `json:"attention_count"`
-	Worktree         *RoomWorktree `json:"worktree,omitempty"`
+	UserMessageCount int    `json:"user_message_count"`
+	MemoryEnabled    *bool  `json:"memory_enabled"`
+	LastMessageBody  string `json:"last_message_body,omitempty"`
+	LastActivityAt   string `json:"last_activity_at,omitempty"`
+	Hidden           bool   `json:"hidden"`
+	Notify           string `json:"notify"`
+	MutedUntil       string `json:"muted_until,omitempty"`
+	ReadCursor       int64  `json:"read_cursor"`
+	UnreadCount      int    `json:"unread_count"`
+	// UnreadAddressed counts the unread messages that name this person or reply to them (the ones in UnreadCount that target them), and
+	// Working is true while an agent has a pending or running turn in the room. Both are set only on a person's room list.
+	UnreadAddressed int  `json:"unread_addressed"`
+	Working         bool `json:"working"`
+	AttentionCount  int  `json:"attention_count"`
+	// AttentionOpen counts every open inbox entry this person can see in the room, seen or not (AttentionCount is the unseen ones): the
+	// room is waiting for a person while it is above 0.
+	AttentionOpen int           `json:"attention_open"`
+	Worktree      *RoomWorktree `json:"worktree,omitempty"`
 	// AgentChat marks a private chat between two agents, which belongs to no project (ProjectID is the reserved one). CanWrite, set when
 	// a person's room list is read, says whether that person may post in it: they need a role to write in an agent's project, and the
 	// chat must not be archived.
@@ -152,6 +162,9 @@ func (r Room) MarshalJSON() ([]byte, error) {
 	if r.Notify == "" {
 		r.Notify = "default"
 	}
+	if r.Purpose == "" {
+		r.Purpose = RoomPurposeTask
+	}
 	r.AgentChat = IsAgentDM(r)
 	return json.Marshal(plain(r))
 }
@@ -163,6 +176,18 @@ func (s *Store) CreateRoom(ctx context.Context, room Room) (Room, error) {
 		return err
 	})
 	return room, err
+}
+
+// The purposes of a room (see Room.Purpose).
+const (
+	RoomPurposeTask     = "task"
+	RoomPurposeResearch = "research"
+	RoomPurposeGeneral  = "general"
+)
+
+// ValidRoomPurpose reports whether purpose is one a room can have; the empty string means the default, task.
+func ValidRoomPurpose(purpose string) bool {
+	return purpose == "" || purpose == RoomPurposeTask || purpose == RoomPurposeResearch || purpose == RoomPurposeGeneral
 }
 
 // GeneralRoomTitle is the task room every project starts with beside its home room.
@@ -202,11 +227,17 @@ func (tx *Tx) CreateRoom(room Room) (Room, error) {
 			return Room{}, err
 		}
 	}
+	if !ValidRoomPurpose(room.Purpose) {
+		return Room{}, fmt.Errorf("invalid room purpose %q", room.Purpose)
+	}
+	if room.Purpose == "" || room.Kind != "task" {
+		room.Purpose = RoomPurposeTask // only a task room has another purpose
+	}
 	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO room
-		(id, project_id, parent_id, depth, kind, dm_key, title, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, room.ID, room.ProjectID,
+		(id, project_id, parent_id, depth, kind, dm_key, title, created_by, created_at, purpose)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, room.ID, room.ProjectID,
 		nullable(room.ParentID), room.Depth, room.Kind, nullable(room.DMKey),
-		room.Title, room.CreatedBy, timestamp())
+		room.Title, room.CreatedBy, timestamp(), room.Purpose)
 	if err != nil {
 		return Room{}, err
 	}

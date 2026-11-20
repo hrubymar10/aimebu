@@ -1208,7 +1208,7 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		// Nearly all work happens in a task room, and the home room is the lead's: every project starts with a "general" one beside it.
-		_, err = tx.CreateRoom(store.Room{ProjectID: p.ID, ParentID: home.ID, Kind: "task", Title: store.GeneralRoomTitle, CreatedBy: userID(r)})
+		_, err = tx.CreateRoom(store.Room{ProjectID: p.ID, ParentID: home.ID, Kind: "task", Title: store.GeneralRoomTitle, CreatedBy: userID(r), Purpose: store.RoomPurposeGeneral})
 		return err
 	})
 	if err != nil {
@@ -1398,9 +1398,14 @@ func (s *Server) rooms(w http.ResponseWriter, r *http.Request) {
 		ParentID string          `json:"parent_id"`
 		Kind     string          `json:"kind"`
 		Title    string          `json:"title"`
+		Purpose  string          `json:"purpose"`
 		Worktree worktreeRequest `json:"worktree"`
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	if !store.ValidRoomPurpose(req.Purpose) {
+		apiError(w, 400, "invalid_request", "purpose must be task, research or general")
 		return
 	}
 	if strings.TrimSpace(req.Title) == "" {
@@ -1439,7 +1444,7 @@ func (s *Server) rooms(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	room, err := s.Store.CreateRoom(r.Context(), store.Room{ProjectID: project, ParentID: req.ParentID, Kind: req.Kind, Title: req.Title, CreatedBy: userID(r)})
+	room, err := s.Store.CreateRoom(r.Context(), store.Room{ProjectID: project, ParentID: req.ParentID, Kind: req.Kind, Title: req.Title, CreatedBy: userID(r), Purpose: req.Purpose})
 	if err != nil {
 		if errors.Is(err, store.ErrDepthExceeded) {
 			apiError(w, 400, "depth_exceeded", "room depth exceeded")

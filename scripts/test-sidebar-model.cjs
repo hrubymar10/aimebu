@@ -9,10 +9,12 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'sidebar', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { matchesRoom, treeOf, leafView, activityOrder, AGENT_CHAT_PROJECT };', context);
-const { matchesRoom, treeOf, leafView, activityOrder, AGENT_CHAT_PROJECT } = context.api;
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT };', context);
+const { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT } = context.api;
 
-const room = (id, project, extra = {}) => ({ id, project_id: project, title: id, kind: 'task', lifecycle: 'open', unread_count: 0, last_activity_at: '', ...extra });
+// A general room by default: it counts every unread message, which is what the nesting and folding checks below are about. Task and research rooms
+// (told by their status, counting only what addresses the person) are checked further down.
+const room = (id, project, extra = {}) => ({ id, project_id: project, title: id, kind: 'task', purpose: 'general', lifecycle: 'open', unread_count: 0, last_activity_at: '', ...extra });
 const projects = new Map([['a', { id: 'a', name: 'Alpha' }], ['b', { id: 'b', name: 'Beta' }], ['x', { id: 'x', name: 'Old', archived_at: '2026-01-01T00:00:00Z' }]]);
 const map = list => new Map(list.map(item => [item.id, item]));
 const state = (list, extra = {}) => ({ projects, rooms: map(list), filter: '', sort: 'name', manual: [], collapsed: new Set(), active: '', archiveFilter: new Map(), offers: [], ...extra });
@@ -99,4 +101,47 @@ same(tree.offers.map(offer => offer.id), ['o1']);
 same(leafView(room('l', 'a', { unread_count: 3 }), 'other', true), { room: room('l', 'a', { unread_count: 3 }), nest: false, chip: true, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: 3 });
 assert.equal(leafView(room('l', 'a', { unread_count: 3 }), 'l').unread, 0);
 assert.equal(leafView(room('old', 'a', { lifecycle: 'closed', unread_count: 3 }), 'other').unread, 0, 'archived history does not advertise unread activity');
+
+// What a room is: an icon and tooltip from the server's kind, purpose and agent_chat, never from who is in it.
+const typeOf = extra => { const { key, icon, label } = roomType({ kind: 'task', ...extra }); return [key, icon, label]; };
+same(typeOf({ kind: 'home' }), ['home', 'house', 'Project home room']);
+same(typeOf({}), ['task', 'list-checks', 'Task room'], 'a task room without a purpose is a task room');
+same(typeOf({ purpose: 'task' }), ['task', 'list-checks', 'Task room']);
+same(typeOf({ purpose: 'research' }), ['research', 'search', 'Research room']);
+same(typeOf({ purpose: 'general' }), ['general', 'hash', 'General room']);
+same(typeOf({ kind: 'lobby' }), ['general', 'hash', 'General room']);
+same(typeOf({ kind: 'dm' }), ['dm', 'human', 'Direct message']);
+same(typeOf({ kind: 'dm', agent_chat: true }), ['agent-chat', 'switch', 'Chat between agents']);
+same(typeOf({ kind: 'dm', purpose: 'research' }), ['dm', 'human', 'Direct message'], 'a private chat is a chat whatever its purpose says');
+same(typeOf({ kind: 'home', purpose: 'general' }), ['home', 'house', 'Project home room']);
+
+// A task or research room shows a status in place of a count; every other room shows no status.
+const statusOf = extra => { const status = roomStatus({ kind: 'task', lifecycle: 'open', ...extra }); return status && [status.key, status.label]; };
+same(statusOf({}), ['idle', 'Idle']);
+same(statusOf({ working: true }), ['working', 'Working']);
+same(statusOf({ attention_open: 1 }), ['waiting', 'Waiting']);
+same(statusOf({ attention_open: 2, working: true }), ['waiting', 'Waiting'], 'a person being waited on outranks an agent working');
+same(statusOf({ attention_open: 1, attention_count: 0 }), ['waiting', 'Waiting'], 'an item the person has seen is still open');
+same(statusOf({ lifecycle: 'closing', working: true, attention_open: 1 }), ['closing', 'Closing…'], 'closing outranks the rest');
+same(statusOf({ purpose: 'research' }), ['idle', 'Idle'], 'a research room nobody wrote in has no report yet');
+same(statusOf({ purpose: 'research', user_message_count: 3 }), ['done', 'Done'], 'a quiet research room that has been written in is done');
+same(statusOf({ purpose: 'research', user_message_count: 3, working: true }), ['working', 'Working']);
+assert.equal(statusOf({ lifecycle: 'closed' }), null, 'an archived room shows no status');
+for (const extra of [{ purpose: 'general' }, { kind: 'home' }, { kind: 'dm' }, { kind: 'lobby' }]) assert.equal(statusOf(extra), null, `${JSON.stringify(extra)} shows no status`);
+assert.deepEqual([{}, { purpose: 'research' }, { purpose: 'general' }, { kind: 'home' }, { kind: 'dm' }].map(extra => tracksStatus({ kind: 'task', ...extra })), [true, true, false, false, false]);
+
+// The unread badge: a task or research room counts only the messages that name the person or reply to them; the others count all.
+const unreadOf = (extra, active = '') => roomUnread({ id: 'r', kind: 'task', lifecycle: 'open', unread_count: 9, unread_addressed: 2, ...extra }, active);
+assert.equal(unreadOf({}), 2, 'a task room counts what addresses the person');
+assert.equal(unreadOf({ purpose: 'research' }), 2);
+assert.equal(unreadOf({ unread_addressed: 0 }), 0, 'agent chatter alone leaves a task room with no count');
+assert.equal(unreadOf({ unread_addressed: undefined }), 0, 'an older server that sends no addressed count shows none');
+assert.equal(unreadOf({ purpose: 'general' }), 9, 'a general room counts every unread message');
+assert.equal(unreadOf({ kind: 'dm' }), 9, 'a direct message counts every unread message');
+assert.equal(unreadOf({ kind: 'home' }), 9);
+assert.equal(unreadOf({}, 'r'), 0, 'the open room is read');
+// A folded home adds its task children's addressed counts, not their chatter.
+tree = treeOf(state([room('home', 'a', { kind: 'home' }), room('t1', 'a', { parent_id: 'home', purpose: 'task', unread_count: 20, unread_addressed: 1 }), room('t2', 'a', { parent_id: 'home', purpose: 'research', unread_count: 5 }),
+  room('g', 'a', { parent_id: 'home', unread_count: 3 })], { collapsed: new Set(['home']) }));
+assert.equal(tree.sections[0].unread, 4, 'the folded home stands for the addressed messages of its tasks (1) and the unread of its general room (3)');
 console.log('sidebar model: ok');

@@ -266,7 +266,7 @@ func (s *Store) RoomsForAgent(ctx context.Context, agentID, projectID string) ([
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.project_id,r.parent_id,r.depth,r.kind,r.dm_key,r.title,r.created_by,
-		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,
+		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.purpose,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id AND m.author_kind!='system')
@@ -283,7 +283,7 @@ func (s *Store) RoomsForAgent(ctx context.Context, agentID, projectID string) ([
 		var parent, dm, closed sql.NullString
 		if err := rows.Scan(&room.ID, &room.ProjectID, &parent, &room.Depth, &room.Kind, &dm,
 			&room.Title, &room.CreatedBy, &room.Lifecycle, &room.Gate, &room.LifecycleRev,
-			&closed, &room.MemberCount, &room.MessageCount, &room.UserMessageCount); err != nil {
+			&closed, &room.Purpose, &room.MemberCount, &room.MessageCount, &room.UserMessageCount); err != nil {
 			return nil, err
 		}
 		room.ParentID, room.DMKey, room.ClosedAt = parent.String, dm.String, closed.String
@@ -294,7 +294,7 @@ func (s *Store) RoomsForAgent(ctx context.Context, agentID, projectID string) ([
 
 // CreateTaskRoomAsTool makes the coordinating agent a member before any turn can address the
 // new room. The parent notice and room creation share the request transaction.
-func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title string) (Room, error) {
+func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title, purpose string) (Room, error) {
 	if err := tx.authorizeSpawnActor(projectID, "agent", agentID, false); err != nil {
 		return Room{}, err
 	}
@@ -339,7 +339,7 @@ func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title string) (
 	if parentLifecycle != "open" {
 		return Room{}, ErrInvalidTransition
 	}
-	room, err := tx.CreateRoom(Room{ProjectID: projectID, ParentID: parentID, Kind: "task", Title: title, CreatedBy: agentID})
+	room, err := tx.CreateRoom(Room{ProjectID: projectID, ParentID: parentID, Kind: "task", Title: title, CreatedBy: agentID, Purpose: purpose})
 	if err != nil {
 		return Room{}, err
 	}

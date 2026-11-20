@@ -6,9 +6,11 @@ import (
 
 // ReadState is one user's read position in one room.
 type ReadState struct {
-	ReadCursor     int64 `json:"read_cursor"`
-	UnreadCount    int   `json:"unread_count"`
-	AttentionCount int   `json:"attention_count"`
+	ReadCursor  int64 `json:"read_cursor"`
+	UnreadCount int   `json:"unread_count"`
+	// UnreadAddressed is the part of the unread messages that name this person or reply to them.
+	UnreadAddressed int `json:"unread_addressed"`
+	AttentionCount  int `json:"attention_count"`
 }
 
 // MarkRoomRead advances the user's read cursor to seq (the room's newest
@@ -69,11 +71,36 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 			roomID, state.ReadCursor, userID, roomID, userID).Scan(&state.UnreadCount); err != nil {
 			return err
 		}
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?
+			AND EXISTS (SELECT 1 FROM json_each(message.targets_json) WHERE value=?)`,
+			roomID, state.ReadCursor, userID).Scan(&state.UnreadAddressed); err != nil {
+			return err
+		}
 		return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+`
 			AND i.room_id=? AND NOT EXISTS (SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)`,
 			userID, userID, roomID, userID).Scan(&state.AttentionCount)
 	})
 	return state, err
+}
+
+// openAttentionByRoom counts every open inbox entry the user can see per room, seen or not: a room still waits for a person while an
+// entry is open, whether or not they have looked at it.
+func (s *Store) openAttentionByRoom(ctx context.Context, userID string) (map[string]int, error) {
+	rows, err := s.readDB.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+` GROUP BY i.room_id`, userID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var room string
+		var n int
+		if err := rows.Scan(&room, &n); err != nil {
+			return nil, err
+		}
+		counts[room] = n
+	}
+	return counts, rows.Err()
 }
 
 // attentionByRoom counts the unseen open inbox entries the user can see per room,
