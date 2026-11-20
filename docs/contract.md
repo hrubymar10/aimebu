@@ -455,6 +455,38 @@ Roles, agents
   requesting user; a harness-reported compaction records a notable
   `agent_context_compacted` event. Each also posts a one-line system notice in
   the agent's room.
+- **cost_reset_marker**(id PRIMARY KEY, session_id UNIQUE → session, turn_id,
+  created_at) — written when a harness session's native thread is reset (the
+  harness lost the session it was to resume; the event
+  `native_session_reset` carries `cost_reset:"1"` and a one-line room notice
+  posts). The reset also clears the session's `session_context_delivery` row
+  and nulls `cost_total` and the `tokens_*_total` of its usage rows, while
+  the rows themselves remain. Until a report follows, the baseline checks
+  read the session as fresh: the first report after the reset — its own
+  tokens and cost, or a warm turn's deltas that seed the totals — is recorded
+  as its own spend, and recording a turn report consumes the marker. A
+  keep-alive ping never consumes it: a ping with no baseline records nothing
+  and leaves the fresh treatment standing for the session's next real turn.
+- **session_context_delivery**(session_id PRIMARY KEY → session,
+  role_revision, role_turn_id, role_confirmed, knowledge_revision,
+  knowledge_turn_id, knowledge_confirmed) — the role body and knowledge
+  revisions a harness session last received in full, and the turns that
+  carried them. A wake whose session already holds the current text (same
+  revision, the carrying turn confirmed by a supervisor event, no compaction
+  in the session since) delivers `{"unchanged":true,"rev":…}` instead of the
+  block; the full text returns on a new session, after a compaction or a
+  changed revision, and whenever the carrying turn was never confirmed. The
+  marker applies only to Claude: its compaction events are reported and its
+  session loss is detected, so its session is provably still holding what an
+  earlier turn delivered in full. Every other harness can compact without
+  reporting it, or silently start a new session when its session files are
+  gone, so it always receives the full text. For Claude the role body
+  additionally rides in the `--append-system-prompt` argument of every turn
+  (`role_body_system` in the context, stripped from the turn JSON), so the
+  system prompt and the warm process fingerprint stay stable. A full delivery
+  counts as seen once the turn reports a usage event; an earlier activity
+  event proves nothing about the session's persistence, and the turn's own
+  outcome settles through the process exit, not here.
 - **agent_switch**(agent_id UNIQUE, room_id, tool, variant, launcher_id?, model,
   provider, machine_id?, checkout_path?, state[draining|starting|failed],
   error, requested_at) — durable target for an in-place tool, model, or
@@ -629,14 +661,28 @@ Inbox, usage, events, settings
   open agent asks with a later qualifying room message.
 - **usage_record**(id, source_event_id UNIQUE, turn_id, agent_id, room_id,
   project_id, tokens_in?, tokens_out?, tokens_cache_read?, tokens_cache_write?,
-  context_used?, context_window?, cost_est?, cost_total?, model?, partial,
+  context_used?, context_window?, cost_est?, cost_total?, tokens_in_total?,
+  tokens_out_total?, tokens_cache_read_total?, tokens_cache_write_total?,
+  model?, partial,
   source[measured|estimated|unavailable], created_at) — `cost_est` is what one
   turn cost and is the only cost anything sums (limits, cards, totals). Claude
   reports a resumed session's whole spend in every result, so the store keeps
   that running total in `cost_total` and prices a turn as the difference from
   the native session's previous total, including across a stopped/start
   generation boundary (a fresh session's first report is its own cost; a
-  total that went down is an unknown cost, never zero). `partial` marks what a
+  total that went down is an unknown cost, never zero). The first report of a
+  session that continues history the store never measured (a native resume of
+  a v1 legacy session, a fork) has no baseline: it records no cost and is
+  marked `estimated`, never the whole lifetime. The four `tokens_*_total`
+  columns remember a session's last reported token totals the same way
+  `cost_total` remembers its cost total: a cold Codex turn reports the
+  thread's running token totals (earlier turns included), so the store prices
+  the tokens as the difference from the session's previous totals, under the
+  same fresh/resumed/unknown rules, and a native session that is lost takes
+  its remembered totals with it. A row of own per-turn deltas (a warm Codex
+  turn) remembers the totals the session is left at — the previous totals
+  plus its own — so the next cold report subtracts the warm turns too.
+  `partial` marks what a
   turn spent before it ended without a report (killed, crashed): Claude gives
   its input and cache tokens only (its output tokens and cost stay unknown),
   opencode its steps' totals, and vibe the session's totals less what they were
@@ -645,7 +691,8 @@ Inbox, usage, events, settings
   cumulative cost; a killed turn that left the totals unchanged reports nothing).
   Codex uses the dated model price list when its model
   and token counts permit; those rows have `source=estimated`, while a cost
-  reported by a harness has `source=measured`. `model` is the one the harness
+  reported by a harness has `source=measured` (a report the store cannot turn
+  into the turn's own spend is marked `estimated` too). `model` is the one the harness
   named, else the agent's.
   Indexed by
   (agent_id, created_at), (room_id, created_at), (project_id, created_at) and (turn_id) (migration 75),
@@ -1498,9 +1545,12 @@ it never silently reruns a turn with uncertain effects.
 - M→S `activity{…, turn_id, source_event_id, kind, summary}`,
   `usage{…, source_event_id, tokens_in?, tokens_out?, tokens_cache_read?,
   tokens_cache_write?, context_used?, context_window?, cost_est?,
-  cost_source?, cost_cumulative?, model?, partial?}`, `compaction{…,
+  cost_source?, cost_cumulative?, tokens_cumulative?, model?, partial?}`,
+  `compaction{…,
   pre_tokens, post_tokens}`. `cost_source=estimated` marks a price-list cost;
-  an omitted source means the harness reported it.
+  an omitted source means the harness reported it. `tokens_cumulative` says
+  the token figures are the harness session's running totals, which the store
+  subtracts the session's previous totals from.
 - M→S `answer{v, agent_id, generation, turn_id, answer_rev, digest,
   candidate}`. `candidate` is the raw final-answer string, including malformed
   output or an empty string. The digest covers its exact UTF-8 bytes. The

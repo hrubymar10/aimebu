@@ -477,3 +477,31 @@ func TestTurnTerminateEndsOnTheSignalOrIsKilledAfterTheGrace(t *testing.T) {
 		})
 	}
 }
+
+// A marker turn (the context's role_body shrunk to the unchanged marker) has the same warm fingerprint as the full turn before it: the
+// role body rides in the system prompt argument from role_body_system on every turn, so the warm process is not retired and the cached
+// prefix is not rewritten.
+func TestMarkerTurnKeepsTheWarmFingerprint(t *testing.T) {
+	a := &Adapter{Command: "claude", Variant: "native", AllowNative: true}
+	full := warmSpec(t, "t1")
+	full.ContextJSON = json.RawMessage(`{"role_body":"You are the worker."}`)
+	marker := full
+	marker.ContextJSON = json.RawMessage(`{"role_body":{"unchanged":true,"rev":"ab12cd34"},"role_body_system":"You are the worker."}`)
+	fpFull, err := a.WarmFingerprint(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpMarker, err := a.WarmFingerprint(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fpFull != fpMarker {
+		t.Fatal("a marker turn changed the warm fingerprint; the warm process would be retired and the cache rewritten")
+	}
+	// A changed role body is still a different fingerprint: the system prompt changes and the cache is rewritten once.
+	changed := marker
+	changed.ContextJSON = json.RawMessage(`{"role_body":"You are the worker.","role_body_system":"Different role now."}`)
+	if fp, err := a.WarmFingerprint(changed); err != nil || fp == fpMarker {
+		t.Fatalf("a changed role body must change the fingerprint: %v %v", fp, err)
+	}
+}

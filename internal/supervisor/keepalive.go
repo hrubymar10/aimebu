@@ -570,6 +570,13 @@ func (c *Client) runKeepAlive(ctx context.Context, spec adapter.TurnSpec, cred c
 	defer endWatch()
 	direct := 0.0
 	for event := range turn.Events() {
+		if event.Kind == adapter.EventCompaction {
+			// A compaction inside a ping is not recorded the way a real turn's is (a ping has no turn row), but its fact goes to
+			// the server: the session's context-delivery state must be invalidated, or the next wake would send an unchanged
+			// marker for text the compaction summarised away.
+			report.Compacted = true
+			continue
+		}
 		if event.Kind != adapter.EventUsage || event.Usage == nil || event.Usage.Partial {
 			continue
 		}
@@ -585,6 +592,9 @@ func (c *Client) runKeepAlive(ctx context.Context, spec adapter.TurnSpec, cred c
 		}
 		if u.TokensCacheWrite != nil {
 			report.CacheWrite = *u.TokensCacheWrite
+		}
+		if u.TokensCumulative {
+			report.TokensAreTotal = true
 		}
 		if u.CostEstimate != nil {
 			if u.CostCumulative { // Claude's figure is the session's running total; Codex's (from the price list) is this turn's own

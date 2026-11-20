@@ -387,7 +387,10 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		output = io.MultiWriter(&tail, capture)
 	}
 	stderrDone := make(chan struct{})
-	go func() { _, _ = io.Copy(output, stderr); close(stderrDone) }()
+	go func() {
+		_, _ = io.Copy(output, stderr)
+		close(stderrDone)
+	}()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	var candidate []byte

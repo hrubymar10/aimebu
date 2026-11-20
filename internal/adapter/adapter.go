@@ -132,6 +132,10 @@ type Usage struct {
 	// CostCumulative says CostEstimate is the harness session's total so far (Claude reports it so, and a resumed session carries the
 	// earlier spend), not this turn's: the store turns it into the turn's own cost by subtracting the session's previous total.
 	CostCumulative bool `json:"cost_cumulative,omitempty"`
+	// TokensCumulative says the token figures are the harness session's running totals (a cold resumed Codex turn reports the
+	// thread's totals), not this turn's own: the store turns them into the turn's own usage by subtracting the session's previous
+	// totals, and a session whose earlier totals the store never measured records none.
+	TokensCumulative bool `json:"tokens_cumulative,omitempty"`
 	// Partial marks what a turn spent before it ended without a final report (killed, crashed, cancelled): what was seen, not a total.
 	Partial bool `json:"partial,omitempty"`
 }

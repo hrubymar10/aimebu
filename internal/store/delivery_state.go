@@ -671,6 +671,15 @@ func (s *Store) RecordTurnEvent(ctx context.Context, turnID, agentID, sourceID, 
 		if _, err := tx.AppendEvent(Event{Kind: "supervisor_" + kind, ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: turnID, PayloadJSON: string(data)}); err != nil {
 			return err
 		}
+		// A usage event proves the turn got far enough for its harness to have taken the context in: the turn's full context
+		// deliveries count as seen, and a later wake may carry the unchanged marker. An early activity event (a turn that
+		// started and died before anything was measured or saved) proves nothing about the session's persistence, so it
+		// confirms nothing. The process exit is settled by RecordProcessInfo, not here, so usage is the only confirming kind.
+		if kind == "usage" {
+			if err := tx.confirmContextDelivery(turnID); err != nil {
+				return err
+			}
+		}
 		return tx.recordUsageOrCompaction(turnID, agentID, projectID, roomID, sourceID, kind, payload)
 	})
 }

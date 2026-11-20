@@ -32,6 +32,11 @@ const (
 	AckByReaction = `Do not send acknowledgement-only or status-only messages in response to agent updates; use a reaction when available.`
 	// ReplyLinks says how an answer is linked to what it answers, and what a note carries about that. Every adapter's output contract has it.
 	ReplyLinks = `When your message answers a delivered message, set reply_to to its no; a reply joins that message's conversation. A note's why says why it reached you; in_reply_to shows the message it replies to and conversation the message its conversation started with (yours: true when you wrote it).`
+	// UnchangedContext explains the marker that stands in for the role body and knowledge on a wake whose harness session
+	// already holds them: only the first turn of a session, a context reset or compaction, or a changed revision delivers
+	// the full text again. Only the Claude prompt carries it — the marker is Claude-only, and the other adapters never
+	// receive one.
+	UnchangedContext = `When a context.role_body or knowledge value is {"unchanged":true,...}, that block is unchanged from an earlier turn of this harness session: its full text from that turn still applies.`
 	// ReturnOneObject opens the output contract for adapters that take the
 	// reply as one JSON object in their final message.
 	ReturnOneObject = `Return only one JSON object with a messages array. Each message needs room and body. ` + ReplyLinks + ` Use attachments, ask, needs_attention, proposed_answers, open_questions, handoff, visual_plan, and appendix_pages only when needed. Set force:true on one message only when you intend to publish it despite a live mention of an agent outside that room. A delivered message carries its number as no; people write it as #no, and reply_to accepts that number or the message_id. A #no written in a message you are given is a message number: the ones that name a message of your project are in your context as referenced_messages, and the message_get tool reads any other message of your project by its number.`

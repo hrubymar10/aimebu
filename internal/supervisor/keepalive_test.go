@@ -1055,3 +1055,33 @@ func TestAgentSettingsReachIdleAgents(t *testing.T) {
 		t.Fatal("a warm window turned off must end idle processes at once")
 	}
 }
+
+// A ping whose harness reports the session's running token totals (a cold Codex turn's way) says so in its report, so the server records
+// the ping's own delta instead of the thread's totals.
+func TestKeepAliveReportCarriesTotalsMark(t *testing.T) {
+	h := newKAHarness(t)
+	h.f.mu.Lock()
+	h.f.cumulativeUsage = true
+	h.f.mu.Unlock()
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	report := h.fire(t)
+	if !report.TokensAreTotal {
+		t.Fatalf("report = %+v, want the totals mark", report)
+	}
+}
+
+// A ping whose turn reports a compaction (Claude can auto-compact during an idle ping) carries the fact in its report, so the server
+// invalidates the session's context-delivery state instead of sending an unchanged marker for text the compaction summarised away.
+func TestKeepAliveReportCarriesTheCompaction(t *testing.T) {
+	h := newKAHarness(t)
+	h.f.mu.Lock()
+	h.f.compactedPing = true
+	h.f.mu.Unlock()
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	report := h.fire(t)
+	if !report.Compacted {
+		t.Fatalf("report = %+v, want the compaction mark", report)
+	}
+}

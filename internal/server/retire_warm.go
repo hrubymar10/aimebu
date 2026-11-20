@@ -404,7 +404,15 @@ func (s *Server) recordKeepAliveUsage(ctx context.Context, c *machineConn, repor
 		cost, isTotal = report.CostCumulative, true
 	}
 	own, _ := s.Store.RecordKeepAlive(ctx, store.KeepAliveUsage{AgentID: report.AgentID, At: report.At, TokensIn: report.TokensIn, TokensOut: report.TokensOut,
-		CacheRead: report.CacheRead, CacheWrite: report.CacheWrite, Cost: cost, CostIsTotal: isTotal})
+		CacheRead: report.CacheRead, CacheWrite: report.CacheWrite, Cost: cost, CostIsTotal: isTotal, TokensAreTotal: report.TokensAreTotal})
+	if report.Compacted {
+		// A compaction inside the ping is not recorded as an event (a ping has no turn row), but the session's context-delivery
+		// state is invalidated: the ping resumed the same native session, so what earlier turns delivered in full may have been
+		// summarised away, and the next wake must carry the full text again.
+		if err := s.Store.InvalidateContextDelivery(ctx, report.AgentID); err != nil {
+			log.Printf("machine %s: a keep-alive ping's compaction could not invalidate the context delivery: %v", c.id, err)
+		}
+	}
 	if own != nil && isTotal {
 		// The card shows what the ping cost: for a running total that is the server's difference from the session's last report, which it knows
 		// across a supervisor's restart, where the supervisor's own (kept in memory) is 0 for the first ping.

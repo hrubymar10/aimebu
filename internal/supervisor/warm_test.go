@@ -77,6 +77,10 @@ type warmFake struct {
 	runHold bool
 	// next is what the next turn does: "" ends cleanly with an answer, "fail" ends without one and ends the process.
 	next string
+	// cumulativeUsage marks every clean turn's usage event as the harness session's running totals, the way a cold Codex turn reports them.
+	cumulativeUsage bool
+	// compactedPing emits a compaction event inside every ping's turn, so a test can see the report carry it.
+	compactedPing bool
 }
 
 func (f *warmFake) Catalog() []adapter.CatalogEntry { return nil }
@@ -96,7 +100,10 @@ func (f *warmFake) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tu
 		f.mu.Unlock()
 		return hold, nil
 	}
-	return newFakeTurn(!fail), nil
+	if spec.KeepAlive && f.compactedPing {
+		return newFakeTurnCompacted(!fail, f.cumulativeUsage, true), nil
+	}
+	return newFakeTurn(!fail, f.cumulativeUsage), nil
 }
 
 // KeepAliveTool says the fake can run keep-alive turns for Claude.
@@ -234,7 +241,7 @@ func (s *warmFakeSession) Run(adapter.TurnSpec) (adapter.Turn, error) {
 	s.f.mu.Unlock()
 	if mode == "fail" {
 		s.end()
-		return newFakeTurn(false), nil
+		return newFakeTurn(false, s.f.cumulativeUsage), nil
 	}
 	if s.f.runHold {
 		turn := &sessionHeldTurn{events: make(chan adapter.Event, 2)}
@@ -243,7 +250,7 @@ func (s *warmFakeSession) Run(adapter.TurnSpec) (adapter.Turn, error) {
 		s.mu.Unlock()
 		return turn, nil
 	}
-	return newFakeTurn(true), nil
+	return newFakeTurn(true, s.f.cumulativeUsage), nil
 }
 
 // sessionHeldTurn is a turn in a warm process that ends only when the process does: its Cancel does nothing, as the turn's cancel in a container
@@ -276,7 +283,11 @@ type fakeTurn struct {
 // fakeEventSeq makes the usage events of different fake turns different, as a journal needs.
 var fakeEventSeq atomic.Int64
 
-func newFakeTurn(clean bool) *fakeTurn {
+func newFakeTurn(clean, cumulative bool) *fakeTurn {
+	return newFakeTurnCompacted(clean, cumulative, false)
+}
+
+func newFakeTurnCompacted(clean, cumulative, compacted bool) *fakeTurn {
 	t := &fakeTurn{events: make(chan adapter.Event, 6)}
 	t.exit = adapter.ExitInfo{TerminalEvent: clean}
 	if !clean {
@@ -284,7 +295,10 @@ func newFakeTurn(clean bool) *fakeTurn {
 	}
 	if clean {
 		read, write, in, out := int64(4253), int64(177), int64(2), int64(104)
-		t.events <- adapter.Event{Kind: adapter.EventUsage, SourceEventID: fmt.Sprintf("u%d", fakeEventSeq.Add(1)), Usage: &adapter.Usage{TokensIn: &in, TokensOut: &out, TokensCacheRead: &read, TokensCacheWrite: &write}}
+		t.events <- adapter.Event{Kind: adapter.EventUsage, SourceEventID: fmt.Sprintf("u%d", fakeEventSeq.Add(1)), Usage: &adapter.Usage{TokensIn: &in, TokensOut: &out, TokensCacheRead: &read, TokensCacheWrite: &write, TokensCumulative: cumulative}}
+		if compacted {
+			t.events <- adapter.Event{Kind: adapter.EventCompaction, SourceEventID: fmt.Sprintf("c%d", fakeEventSeq.Add(1)), Compaction: &adapter.Compaction{PreTokens: 9000, PostTokens: 900}}
+		}
 		t.events <- adapter.Event{Kind: adapter.EventFinalAnswer, SourceEventID: "a", Answer: json.RawMessage(`{"messages":[]}`)}
 	}
 	t.events <- adapter.Event{Kind: adapter.EventProcessExit, SourceEventID: "x", Exit: &t.exit}

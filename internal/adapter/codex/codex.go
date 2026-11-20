@@ -227,6 +227,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 // turnPrompt is the instruction text ahead of the turn JSON on standard input.
 var turnDeltas = prompt.Deltas{
 	Opening:     "Complete this aimebu turn from the JSON below.",
+	Role:        "Obey context.role_body.",
 	Attachments: prompt.AttachmentGetTool,
 	Output:      prompt.ReturnOneObject + " " + "For visual_plan blocks, data is a JSON-encoded object string; the server accepts and renders that object." + " " + prompt.HumanResponse("choices"),
 	Ack:         prompt.AckByReaction,
@@ -647,6 +648,13 @@ func (t *turn) run(stdout, stderr io.Reader) {
 				if cost := pricing.Estimate(t.model, input, output, cached, written); cost != nil {
 					usage.CostEstimate, usage.CostSource = cost, "estimated"
 				}
+			}
+			// exec reports the thread's running totals in turn.completed.usage, not the turn's own: the figures include every earlier
+			// turn of a resumed thread (the same totals the warm path baselines against), so the store subtracts the session's previous
+			// totals. A thread's first turn is its own usage, and marking it cumulative too seeds the store's baseline with it.
+			usage.TokensCumulative = true
+			if usage.CostEstimate != nil {
+				usage.CostCumulative = true
 			}
 			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage})
 		case "turn.failed", "error":

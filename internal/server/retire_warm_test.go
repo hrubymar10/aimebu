@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -826,5 +827,58 @@ func TestWarmProcessEndedFrameRecordsAnEventFromTheAgentsMachine(t *testing.T) {
 	f.srv.handleWarmEnded(t.Context(), machine, protocol.Frame{Type: protocol.WarmEndedFrame, AgentID: "agt_nobody", Message: "no such agent"})
 	if n, _ := events(); n != 1 {
 		t.Fatalf("a machine that does not run the agent, or an unknown agent, must not add one: %d", n)
+	}
+}
+
+// A compaction inside a keep-alive ping (no turn row records it) invalidates the session's context-delivery state, so the next wake
+// carries the role body and knowledge in full rather than an unchanged marker for text the compaction summarised away.
+func TestKeepAlivePingCompactionInvalidatesTheContextDelivery(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	machine := connectHost(t, f, true)
+	agent, _ := f.createToolAgent(t, "role_leader_default")
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`UPDATE agent SET home_room_id=? WHERE id=?`, f.room.ID, agent.ID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_ka_compact',?,0,'fresh_with_history','2026-11-19T10:00:00.000000000Z')`, agent.ID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO session_context_delivery(session_id,role_revision,role_turn_id,role_confirmed,knowledge_revision,knowledge_turn_id,knowledge_confirmed)
+			VALUES ('ses_ka_compact','rev-a','turn_a',1,'rev-b','turn_a',1)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	report := protocol.KeepAliveReport{AgentID: agent.ID, At: "2026-11-19T17:00:00Z", OK: true, Compacted: true}
+	f.srv.recordKeepAliveUsage(t.Context(), machine, report)
+	reader, err := sql.Open("sqlite", "file:"+f.db.DBPath()+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var rows int
+	if err := reader.QueryRow(`SELECT COUNT(*) FROM session_context_delivery WHERE session_id='ses_ka_compact'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("the compacted ping left %d delivery rows, want the state invalidated", rows)
+	}
+	// A ping without a compaction leaves the state alone.
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO session_context_delivery(session_id,role_revision,role_turn_id,role_confirmed,knowledge_revision,knowledge_turn_id,knowledge_confirmed)
+			VALUES ('ses_ka_compact','rev-a','turn_a',1,'rev-b','turn_a',1)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plain := protocol.KeepAliveReport{AgentID: agent.ID, At: "2026-11-19T18:00:00Z", OK: true}
+	f.srv.recordKeepAliveUsage(t.Context(), machine, plain)
+	if err := reader.QueryRow(`SELECT COUNT(*) FROM session_context_delivery WHERE session_id='ses_ka_compact'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("a plain ping invalidated the delivery state: %d rows", rows)
 	}
 }

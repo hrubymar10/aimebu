@@ -48,7 +48,7 @@ func (a *Adapter) CatalogIdentity() (string, string) { return "claude", a.varian
 
 var systemDeltas = prompt.Deltas{
 	Opening:     "Complete this aimebu turn from the JSON supplied on standard input.",
-	Role:        "Obey the role instructions in context.role_body.",
+	Role:        "Obey the role instructions in context.role_body. " + prompt.UnchangedContext,
 	Attachments: prompt.AttachmentGetTool,
 	Output:      "Return only the JSON object described by the response schema: a messages array with room-targeted bodies, using attachments, ask, needs_attention, proposed_answers, open_questions, handoff, visual_plan, and appendix_pages only when appropriate. Set force:true on one message only when you intend to publish it despite a live mention of an agent outside that room. " + prompt.ReplyLinks + " A visual_plan block has id, type, title, data, and order; data is a JSON-encoded object string. Use appendix_pages for a collapsed Full plan. To ask a human through the inbox, include a room message with a nonempty body and \"ask\":{\"kind\":\"question\",\"text\":\"the question\",\"options\":[\"saved choice\"],\"free_text\":false}." + " " + prompt.HumanResponse("short choices"),
 	Ack:         prompt.AckByReaction,
@@ -57,15 +57,36 @@ var systemDeltas = prompt.Deltas{
 
 var systemPrompt = prompt.Build(systemDeltas)
 
-// turnInput is the JSON on standard input. The prompt overrides are in the system prompt already, so they are not repeated in it.
+// turnInput is the JSON on standard input. The prompt overrides are in the system prompt already, so they are not repeated in it, and
+// role_body_system (the full role body the system prompt carries) is stripped: the model reads the role instructions from the system
+// prompt, so the key would only be turn tokens.
 func turnInput(spec adapter.TurnSpec) ([]byte, error) {
+	context := withoutRoleBodySystem(prompt.WithoutOverrides(spec.ContextJSON))
 	return json.Marshal(struct {
 		TurnID       string          `json:"turn_id"`
 		Notes        json.RawMessage `json:"notes"`
 		Context      json.RawMessage `json:"context"`
 		AllowedTools []string        `json:"allowed_tools"`
 		KeepAlive    string          `json:"keep_alive,omitempty"`
-	}{spec.TurnID, spec.NotesJSON, prompt.WithoutOverrides(spec.ContextJSON), spec.AllowedTools, keepAliveText(spec)})
+	}{spec.TurnID, spec.NotesJSON, context, spec.AllowedTools, keepAliveText(spec)})
+}
+
+// withoutRoleBodySystem removes context.role_body_system from a turn's context JSON. A context without the key (or unreadable) is returned
+// untouched, byte for byte.
+func withoutRoleBodySystem(contextJSON []byte) []byte {
+	var fields map[string]json.RawMessage
+	if len(contextJSON) == 0 || json.Unmarshal(contextJSON, &fields) != nil {
+		return contextJSON
+	}
+	if _, ok := fields["role_body_system"]; !ok {
+		return contextJSON
+	}
+	delete(fields, "role_body_system")
+	stripped, err := json.Marshal(fields)
+	if err != nil {
+		return contextJSON
+	}
+	return stripped
 }
 
 // keepAliveText is the instruction of a keep-alive turn, in the user turn and not the system prompt: the system prompt is part of the cached prefix,
@@ -80,15 +101,27 @@ func keepAliveText(spec adapter.TurnSpec) string {
 // KeepAliveTool says this adapter can run a keep-alive turn (adapter.KeepAliver).
 func (a *Adapter) KeepAliveTool() string { return "claude" }
 
+// systemPromptFor builds the --append-system-prompt argument. The role body comes from context.role_body_system, which the store puts on
+// every turn of a Claude session, so the argument and the warm process fingerprint stay stable while the context's role_body shrinks to
+// the unchanged marker; a context without the key (a correction or diagnostic turn) falls back to a string role_body. A marker is not a
+// role body and adds no appendix.
 func systemPromptFor(spec adapter.TurnSpec) string {
 	var context struct {
-		RoleBody string `json:"role_body"`
+		RoleBodySystem json.RawMessage `json:"role_body_system"`
+		RoleBody       json.RawMessage `json:"role_body"`
 	}
 	base := prompt.ForContext(systemDeltas, systemPrompt, spec.ContextJSON)
-	if json.Unmarshal(spec.ContextJSON, &context) != nil || context.RoleBody == "" {
+	if json.Unmarshal(spec.ContextJSON, &context) != nil {
 		return base
 	}
-	return base + "\n\nRole instructions:\n" + context.RoleBody
+	var roleText string
+	switch {
+	case len(context.RoleBodySystem) > 0 && json.Unmarshal(context.RoleBodySystem, &roleText) == nil && roleText != "":
+	case len(context.RoleBody) > 0 && json.Unmarshal(context.RoleBody, &roleText) == nil && roleText != "":
+	default:
+		return base
+	}
+	return base + "\n\nRole instructions:\n" + roleText
 }
 
 var responseSchema = []byte(`{"type":"object","additionalProperties":false,"required":["messages"],"properties":{"messages":{"type":"array","maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["room","body","reply_to","attachments","ask","handoff","force","visual_plan","appendix_pages","needs_attention","proposed_answers","open_questions"],"properties":{"room":{"type":"string"},"body":{"type":"string"},"reply_to":{"type":["string","null"]},"attachments":{"type":["array","null"],"items":{"type":"string"}},"ask":{"type":["object","null"],"additionalProperties":false,"required":["kind","text","options","free_text"],"properties":{"kind":{"type":"string","enum":["question","approval"]},"text":{"type":"string"},"options":{"type":"array","items":{"type":"string"}},"free_text":{"type":"boolean"}}},"handoff":{"type":["boolean","null"]},"force":{"type":["boolean","null"]},"visual_plan":{"type":["array","null"],"maxItems":80,"items":{"type":"object","additionalProperties":false,"required":["id","type","title","data","order"],"properties":{"id":{"type":["string","null"]},"type":{"type":"string"},"title":{"type":["string","null"]},"data":{"type":"string"},"order":{"type":["integer","null"]}}}},"appendix_pages":{"type":["array","null"],"maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":["string","null"]},"body":{"type":"string"}}}},"needs_attention":{"type":["boolean","null"]},"proposed_answers":{"type":["array","null"],"maxItems":4,"items":{"type":"string"}},"open_questions":{"type":["array","null"],"maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["question","description","options"],"properties":{"question":{"type":"string"},"description":{"type":["string","null"]},"options":{"type":"array","minItems":2,"maxItems":8,"items":{"type":"string"}}}}}}}}}}`)

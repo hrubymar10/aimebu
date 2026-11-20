@@ -556,9 +556,23 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if err != nil {
 			return err
 		}
-		contextData := map[string]any{"role_body": roleBody, "rooms": contextRooms,
-			"control_changes": map[string]any{"desired": "active", "desired_rev": desiredRev}, "knowledge": knowledge,
+		// The role body and the knowledge snapshot are the same from turn to turn and the harness session keeps what an earlier
+		// turn delivered, so a wake whose session already holds the current text carries a short unchanged marker instead. Only
+		// the harnesses whose adapters report compaction events get the marker: the others can compact without reporting it, so
+		// they always receive the full text.
+		roleContext, knowledgeContext, err := tx.deliverContextBlocks(sessionID, turn.ID, roleBody, knowledge, toolReportsCompaction(tool))
+		if err != nil {
+			return err
+		}
+		contextData := map[string]any{"role_body": roleContext, "rooms": contextRooms,
+			"control_changes": map[string]any{"desired": "active", "desired_rev": desiredRev}, "knowledge": knowledgeContext,
 			"team_roster": roster, "you_are": self}
+		if tool == "claude" {
+			// Claude takes the role body as a CLI argument (--append-system-prompt), part of the cached prefix: it rides on
+			// every turn so the system prompt and the warm process fingerprint stay stable while the stdin copy shrinks to the
+			// marker. The adapter strips this key from the turn JSON it hands the model, so it is never turn tokens.
+			contextData["role_body_system"] = roleBody
+		}
 		var startMode string
 		var nativeStarted sql.NullString
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT start_mode,native_session_started_at FROM session WHERE id=?`, sessionID).Scan(&startMode, &nativeStarted); err != nil {

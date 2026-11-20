@@ -537,16 +537,24 @@ type KeepAliveSettings struct {
 
 // KeepAliveReport is what one ping did: whether it ran, and what it read from and wrote to the prompt cache, so a ping that missed shows. Nothing of
 // what the model said is in it.
+// KeepAliveReport is what a cache keep-alive ping did, as its supervisor reported it.
 type KeepAliveReport struct {
-	AgentID        string  `json:"agent_id"`
-	At             string  `json:"at"`
-	OK             bool    `json:"ok"`
-	Error          string  `json:"error,omitempty"`
-	ViaWarm        bool    `json:"via_warm,omitempty"`
-	TokensIn       int64   `json:"tokens_in"`
-	TokensOut      int64   `json:"tokens_out"`
-	CacheRead      int64   `json:"cache_read"`
-	CacheWrite     int64   `json:"cache_write"`
+	AgentID string `json:"agent_id"`
+	At      string `json:"at"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	ViaWarm bool   `json:"via_warm,omitempty"`
+	// Compacted says the harness reported a context compaction inside the ping: a ping has no turn row, so the server cannot
+	// record it the way a real turn's compaction is recorded, but the session's context-delivery state must be invalidated, or the
+	// next wake would send an unchanged marker for text the compaction summarised away.
+	Compacted  bool  `json:"compacted,omitempty"`
+	TokensIn   int64 `json:"tokens_in"`
+	TokensOut  int64 `json:"tokens_out"`
+	CacheRead  int64 `json:"cache_read"`
+	CacheWrite int64 `json:"cache_write"`
+	// TokensAreTotal says the token figures are the harness session's running totals (a cold Codex ping reports the thread's
+	// totals), not this ping's own usage: the server subtracts the session's previous totals.
+	TokensAreTotal bool    `json:"tokens_are_total,omitempty"`
 	CostCumulative float64 `json:"cost_cumulative"`
 	// CostIsTotal says CostCumulative is the harness session's running total (Claude); otherwise Cost is this ping's own cost (Codex).
 	CostIsTotal bool `json:"cost_is_total,omitempty"`

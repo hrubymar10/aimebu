@@ -559,7 +559,9 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
   supervisor skips a ping quietly until the real turn has reported a native
   session handle; there is no resumable session to ping before then. Both
   adapters implement `adapter.KeepAliver`: Codex runs `codex exec resume` with the real turn's arguments and the
-  instruction in the turn JSON after the unchanged instruction text; its cost is the price list's, per ping,
+  instruction in the turn JSON after the unchanged instruction text; its cost is the price list's, per ping (a cold ping
+  reports the thread's running token totals, so the server records the ping's own delta from the session's previous
+  totals),
   where Claude's is the difference of the session's running total. Settings -> General -> Agents holds a switch (on by default), the interval
   per harness (0 is off for that harness) and "stop pinging after N hours without work" (24 by default); only the
   owner changes them. The server puts the setting for the agent's tool on every delivery (`keep_alive`:
@@ -607,7 +609,10 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
   count again). A fork, a correction, a diagnostic or a tool whose adapter cannot ping arms nothing.
 - **Cost.** (The cost of the first ping after a supervisor restart is 0 in the supervisor's own report, which has
   no earlier total to take a difference from; the server records a ping's cost as the difference from the
-  session's last total it holds, which survives a restart, so the usage figures and the card are not affected.)
+  session's last total it holds, which survives a restart, so the usage figures and the card are not affected.
+  A ping whose session holds no earlier total at all records no cost and no totals-shaped tokens: a ping is
+  never the first spend of a session, so such figures are the session's lifetime, and only the reported totals
+  are kept as the baseline the next real turn is priced from.)
   A ping reads the agent's whole context from the cache: at the cache-read price (a tenth of the input
   price) of that context. Measured on Haiku with a 4 k context it is $0.0001; for a 90 k-token Opus context about
   $0.045, so up to 28 pings after the last turn (24 h at 50 min) is about $1.3 per idle agent per day at most. The

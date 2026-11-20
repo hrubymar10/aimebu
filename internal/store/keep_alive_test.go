@@ -65,7 +65,9 @@ func TestKeepAliveUsageDirectCostAndNothingToRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cost, total sql.NullFloat64
-	if err := s.db.QueryRow(`SELECT cost_est,cost_total FROM usage_record WHERE source='keep_alive'`).Scan(&cost, &total); err != nil || !cost.Valid || math.Abs(cost.Float64-0.002) > 1e-9 || total.Valid {
+	// The direct cost is recorded as it is, and the row derives the session's running total (the chain had none, so the ping's own
+	// cost starts it) for the next cumulative report to be priced against.
+	if err := s.db.QueryRow(`SELECT cost_est,cost_total FROM usage_record WHERE source='keep_alive'`).Scan(&cost, &total); err != nil || !cost.Valid || math.Abs(cost.Float64-0.002) > 1e-9 || !total.Valid || total.Float64 != 0.002 {
 		t.Fatalf("direct cost: %v %v %v", cost, total, err)
 	}
 	for name, usage := range map[string]KeepAliveUsage{"spent nothing": {AgentID: f.agent.ID}, "no such agent": {AgentID: "agt_nobody", CacheRead: 1}} {

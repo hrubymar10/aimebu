@@ -88,19 +88,21 @@ func TestClaudeCostIsPricedAsTheDifferenceFromTheSessionTotal(t *testing.T) {
 	if cost, _ := costOf(t, s, "g"); !near(cost, 0.0005) {
 		t.Errorf("after the fall: %+v, want 0.0005", cost)
 	}
-	// A harness that reports each turn's own cost (not a running total) is recorded as it is.
+	// A harness that reports each turn's own cost (not a running total) is recorded as it is, and its row derives the session's running
+	// total (the previous total plus its own), so a later cumulative report is priced against it instead of counting this turn again.
 	record(nextTurn(t, s, f, "ses_next", 1), "h", map[string]any{"cost_estimate": 0.01})
-	if cost, total := costOf(t, s, "h"); !near(cost, 0.01) || total.Valid {
-		t.Errorf("a per-turn cost: %+v %+v", cost, total)
+	if cost, total := costOf(t, s, "h"); !near(cost, 0.01) || !near(total, 0.0109) {
+		t.Errorf("a per-turn cost: %+v %+v, want 0.01 and the derived running total 0.0109", cost, total)
 	}
 	// A turn with no cost leaves the chain alone: no row becomes the previous total.
 	record(nextTurn(t, s, f, "ses_next", 1), "i", map[string]any{"tokens_in": 3, "partial": true})
 	if cost, total := costOf(t, s, "i"); cost.Valid || total.Valid {
 		t.Errorf("a turn with no cost: %+v %+v", cost, total)
 	}
-	record(nextTurn(t, s, f, "ses_next", 1), "j", cumulative(0.0012))
-	if cost, _ := costOf(t, s, "j"); !near(cost, 0.0003) {
-		t.Errorf("after a turn with no cost: %+v, want 0.0003", cost)
+	// The next cumulative report is priced from the derived running total (0.0109 after h), not from the last harness-reported one.
+	record(nextTurn(t, s, f, "ses_next", 1), "j", cumulative(0.0122))
+	if cost, _ := costOf(t, s, "j"); !near(cost, 0.0013) {
+		t.Errorf("after a per-turn-cost turn: %+v, want 0.0013", cost)
 	}
 }
 
@@ -145,8 +147,12 @@ func TestMigrationStartsTheCostChainFromTheLastStoredClaudeCost(t *testing.T) {
 	if backfill == "" {
 		t.Fatal("no migration carries the cost_total backfill")
 	}
-	// What the previous code stored: the running total as the turn's cost, and no cost_total.
+	// What the previous code stored: the running total as the turn's cost, and no cost_total. (The store today derives a running
+	// total for a fresh chain's first own-cost row, so the fixture clears it to reproduce the pre-fix shape the backfill judges.)
 	if err := s.RecordTurnEvent(ctx, f.turn.ID, f.agent.ID, "old", "usage", "", usageFrame(map[string]any{"cost_estimate": 0.5})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE usage_record SET cost_total=NULL WHERE source_event_id='old'`); err != nil {
 		t.Fatal(err)
 	}
 	// An agent of another tool: its stored cost was its own, so it is not a total.

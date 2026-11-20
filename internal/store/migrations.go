@@ -1987,6 +1987,62 @@ INSERT INTO schedule_new (id,room_id,project_id,creator_kind,creator_id,target_a
 DROP TABLE schedule;
 ALTER TABLE schedule_new RENAME TO schedule;
 CREATE INDEX schedule_due ON schedule(enabled,next_run_at);
+`}, {124, `
+-- A cold resumed Codex turn (and a keep-alive ping run as one) reports the harness thread's running token totals, and a resumed Claude
+-- session's first report carries the whole session's lifetime cost with no earlier total to subtract from: neither may record the lifetime
+-- as one turn's own spend. Four total columns (added by ensureUsageTotalColumns, so a replayed migration skips the ones a database already
+-- has) remember a session's last reported token totals the way cost_total remembers its cost total, so a later report is turned into the
+-- turn's own usage by subtraction.
+-- Repair the rows already stored the broken way. A row that recorded its session's whole lifetime cost as its own is the first row of a
+-- native session chain that carries a total, on a session that continues history the store never measured (a native resume or a fork).
+-- Its true cost cannot be reconstructed, so the cost is cleared and the row marked estimated; the total is kept, because it is the
+-- baseline the next turn subtracts from.
+UPDATE usage_record SET cost_est=NULL,
+  source=CASE WHEN source='keep_alive' THEN source ELSE 'estimated' END
+WHERE cost_est IS NOT NULL AND cost_total IS NOT NULL AND cost_est=cost_total
+  AND EXISTS (SELECT 1 FROM session s WHERE s.id=COALESCE((SELECT t.session_id FROM turn t WHERE t.id=usage_record.turn_id),usage_record.session_id)
+    AND (s.start_mode='native_resume' OR COALESCE(s.fork_of,'')<>''))
+  AND NOT EXISTS (
+    SELECT 1 FROM usage_record p LEFT JOIN turn pt ON pt.id=p.turn_id JOIN session ps ON ps.id=COALESCE(pt.session_id,p.session_id)
+    WHERE p.agent_id=usage_record.agent_id AND p.cost_total IS NOT NULL AND p.id<>usage_record.id
+      AND (p.created_at<usage_record.created_at OR (p.created_at=usage_record.created_at AND p.rowid<usage_record.rowid))
+      AND EXISTS (SELECT 1 FROM session cs WHERE cs.id=COALESCE((SELECT t2.session_id FROM turn t2 WHERE t2.id=usage_record.turn_id),usage_record.session_id)
+        AND (cs.id=ps.id OR (cs.native_session_id IS NOT NULL AND cs.native_session_id=ps.native_session_id))));
+-- A keep-alive ping whose harness reports a thread's running totals recorded them as the ping's own usage (a cold Codex ping showed a
+-- session's 13.96M cached tokens at $3.50) is not repaired here: the only discriminators between such a row and a correct warm ping are
+-- heuristics over the stored figures, and a heuristic that can erase valid spend irreversibly is not worth a few overstated pings. The
+-- baseline fix going forward stops new bad rows: a ping with no chain baseline records nothing and seeds the reported totals, so the
+-- next real turn is priced from them; existing overstated pings stay until a later report re-seeds their chain's baseline.
+-- The cold Codex turn rows the pre-fix code stored the broken way keep their figures: warm turns carry the identical shape (estimated,
+-- no cost total, own deltas), so no query over the stored data can prove which rows were cold, and a repair keyed on growing figures
+-- would wipe correct warm rows. The rows overstate historical spend; the first post-upgrade report of their sessions finds no baseline
+-- and starts the chain from its own, correct figures.
+`}, {125, `
+-- The role body and knowledge blocks an agent's wake prompt carries are the same from turn to turn; resending them on every wake spends
+-- tokens for nothing. The table remembers, per harness session, the revision last delivered in full and the turn that carried it, so a
+-- later wake sends a short unchanged marker instead. The revision is the SHA-256 of the block's exact delivered content. A turn whose
+-- delivery the harness never confirmed (no usage event arrived for it) stays unconfirmed, and the next wake sends the full text again;
+-- so does a turn after a compaction, a context reset, or a changed revision. The marker is only sent to Claude, whose compaction
+-- events are reported and whose session loss is detected; the other harnesses always receive the full text.
+CREATE TABLE IF NOT EXISTS session_context_delivery (
+  session_id TEXT PRIMARY KEY REFERENCES session(id),
+  role_revision TEXT NOT NULL,
+  role_turn_id TEXT NOT NULL,
+  role_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (role_confirmed IN (0,1)),
+  knowledge_revision TEXT NOT NULL,
+  knowledge_turn_id TEXT NOT NULL,
+  knowledge_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (knowledge_confirmed IN (0,1))
+);
+-- A session whose native thread was reset (the harness lost the session it was to resume) starts a fresh thread whose usage totals
+-- began at zero, but its session row keeps the earlier turns' rows. Without a marker the first report after the reset finds no totals,
+-- sees the earlier rows, and is dropped as an unknown baseline, losing that turn's spend. The marker tells the baseline checks to read
+-- the session as fresh until the first report after the reset has been baselined, which consumes it.
+CREATE TABLE IF NOT EXISTS cost_reset_marker (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL UNIQUE REFERENCES session(id),
+  turn_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -2098,6 +2154,9 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		}
 		if err == nil && m.version == 54 {
 			err = ensureRoleExtendsColumn(ctx, tx)
+		}
+		if err == nil && m.version == 124 {
+			err = ensureUsageTotalColumns(ctx, tx)
 		}
 		var droppedRoomLimits []string
 		if err == nil && strings.Contains(m.sql, roomLimitsMarker) {

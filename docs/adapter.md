@@ -46,6 +46,26 @@ turn reflects joins, leaves, and role changes. A recipient may be absent from
 the roster after leaving a room but is still identified by `you_are` for a
 recovery turn. The roster is a snapshot, not an access grant; room membership
 is still checked when a candidate is committed.
+The context's `role_body` and `knowledge` blocks are the same from turn to turn,
+and the harness session keeps what an earlier turn delivered in its own
+context, so a wake whose session already holds the current text carries a short
+marker instead: `{"unchanged":true,"rev":"…"}`, where `rev` is the SHA-256 of
+the exact delivered content. The full text goes out again on the first turn of
+a harness session, after a context reset or a compaction, when the revision
+changes, and whenever the delivery that carried it may not have reached the
+harness (a turn whose dispatch was never confirmed, such as a lost turn): when
+in doubt, the full text goes out. A delivery counts as seen once the turn
+reports a usage event; an earlier activity event proves nothing about the
+session's persistence. The marker is only sent to Claude:
+its compaction events are reported and its session loss is detected, so its
+session is provably still holding what an earlier turn delivered in full. Every
+other harness can compact without reporting it, or silently start a new session
+when its session files are gone, so it always receives the full text. For
+Claude the role body additionally rides in the `--append-system-prompt`
+argument of every turn (`role_body_system` in the context, stripped from the
+turn JSON), so the system prompt and the warm process fingerprint stay stable.
+The prompts tell the agent what the marker
+means.
 Mention ranking uses the original message body and the same addressing rules
 as wake delivery. Mentions only in visual blocks or appendix pages do not
 affect roster order.
@@ -330,9 +350,15 @@ the adapter reports Input as `input_tokens` less the reported cache-read and
 cache-write shares (never below zero), with those shares shown separately.
 When Codex omits either cache figure, that share stays unknown and is treated
 as zero in the estimate. Codex 0.162.1 also prints
-`reasoning_output_tokens`; output already includes it. For listed models,
+`reasoning_output_tokens`; output already includes it. `turn.completed.usage`
+carries the thread's running token totals (the same totals the warm path
+baselines against), earlier turns included, so the cold usage event is marked
+as session totals and the store prices the turn as the difference from the
+session's previous totals: a thread's first turn is its own usage, and a
+thread resumed from history the store never measured records none. For listed models,
 the adapter estimates a dollar cost from the dated
-[model price list](pricing.md) and marks its source `estimated`. An unlisted
+[model price list](pricing.md) and marks its source `estimated`, the cost
+priced over the totals and marked cumulative the same way. An unlisted
 model, missing input/output, or inconsistent token shares leave cost unknown.
 
 Its private per-agent `CODEX_HOME` holds the structured-output schema and a

@@ -87,3 +87,19 @@ func TestUsageSeparatesCachedInputFromInput(t *testing.T) {
 		})
 	}
 }
+
+// The cold Codex path reports the thread's running token totals (exec's turn.completed carries token_usage.total, earlier turns
+// included), so the usage event says so: the store turns the totals into the turn's own usage by subtracting the session's previous
+// totals, and the cost priced over the totals is a running total the same way.
+func TestColdUsageReportsSessionTotals(t *testing.T) {
+	usage := usageOf(t, `{"type":"turn.completed","usage":{"input_tokens":13960000,"cached_input_tokens":13960000,"output_tokens":7}}`)
+	if !usage.TokensCumulative {
+		t.Fatalf("the cold usage is not marked as session totals: %+v", usage)
+	}
+	if usage.CostEstimate == nil && !usage.CostCumulative {
+		t.Fatalf("a priced cold usage is not marked cumulative: %+v", usage)
+	}
+	if usage.CostEstimate != nil && usage.CostSource != "estimated" {
+		t.Errorf("cost source = %q, want estimated", usage.CostSource)
+	}
+}
