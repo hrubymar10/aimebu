@@ -630,7 +630,7 @@ Listed room agent cards also carry an optional `keep_alive` for an active Claude
 has the cache keep-alive on: `{interval_minutes, pings_per_stretch, estimate_usd?, last_at?, last_ok?, last_error?, cache_read?, cache_write?,
 missed?}` (`estimate_usd` is the cost of a stretch of pings, measured from the last ping when there is one, else the price list's; `missed` says the
 last ping wrote to the cache what it should have read). `GET /api/agent-isolation` also returns `warm_idle_minutes` (the warm window: the owner's saved value, else the default of 5; 0 is off) with
-`warm_idle_saved` (whether the owner has saved one; the owner changes it with `PUT {warm_idle_minutes}`), `codex_warm_enabled` (owner opt-in for Codex app-server warm mode, default false), and `keep_alive: {enabled, claude_minutes,
+`warm_idle_saved` (whether the owner has saved one; the owner changes it with `PUT {warm_idle_minutes}`), `supervisor_drain_grace_minutes` (how long a local supervisor that must be replaced is waited for before its running turns are interrupted to continue on the new one: 5 unless saved, 0 waits without limit, at most 1440; the owner changes it with `PUT {supervisor_drain_grace_minutes}`, another user gets 403), `codex_warm_enabled` (owner opt-in for Codex app-server warm mode, default false), and `keep_alive: {enabled, claude_minutes,
 codex_minutes, stop_after_hours}` (defaults on, 50, 10, 24), which the owner changes with `PUT {keep_alive: {...}}` (any of the fields; 0 minutes is
 off for that harness; the bounds are 0 to 55 minutes for Claude, 0 to 1440 for Codex and 0 to 720 hours; another user gets 403).
 Listed room agent cards also include optional `latest_usage` with nullable

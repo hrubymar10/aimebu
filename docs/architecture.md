@@ -7,8 +7,10 @@
    that owns the same journal and machine WebSocket. The journal flock guards
    against duplicate supervisors, and server shutdown leaves local turns
    running. A build or turn-environment mismatch drains the local process at
-   idle and starts a replacement from the server's environment; the owner can
-   interrupt that drain with Restart now. `aimebu supervisor` remains available for remote machines;
+   idle and starts a replacement from the server's environment. After the owner's
+   drain grace (5 minutes by default) the turns still running are interrupted and
+   continue on the replacement; the owner can also interrupt the drain at once
+   with Restart now. `aimebu supervisor` remains available for remote machines;
    `AIMEBU_EMBEDDED_SUPERVISOR=0` disables the local instance.
 2. Relational SQLite store + transactional append-only event/outbox table.
    Not event-sourced. Store startup retries temporary SQLite BUSY/LOCKED

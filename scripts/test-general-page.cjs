@@ -153,6 +153,35 @@ async function main() {
       assert.deepEqual(await admin.evaluate(() => [document.querySelector('#agent-warm-idle').disabled, document.querySelector('#agent-warm-idle').title]), [true, 'Only the owner can change this.']);
       await admin.close();
     }
+    // The supervisor replacement grace: the same kind of owner-only minutes field. 5 until the server says another, a bad value is not sent,
+    // a good one is saved alone when the field is left, and anyone but the owner sees it disabled.
+    {
+      const page = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: true } } });
+      await page.evaluate(() => window.__general.open());
+      await page.waitForFunction(() => !document.querySelector('#agent-drain-grace').disabled);
+      assert.equal(await page.$eval('#agent-drain-grace', el => el.value), '5', 'five minutes when the server names none');
+      await page.$eval('#agent-drain-grace', el => { el.focus(); el.value = '1441'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
+      await page.$eval('#agent-drain-grace', el => el.blur());
+      await page.waitForFunction(() => /whole number of minutes/.test(document.querySelector('#agent-drain-grace-error').textContent));
+      assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT').length), 0, 'a value out of range is not sent');
+      await page.$eval('#agent-drain-grace', el => { el.focus(); el.value = '0'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
+      await page.$eval('#agent-drain-grace', el => el.blur());
+      await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.path === '/api/agent-isolation' && !request.answered));
+      const put = await page.evaluate(() => window.__requests.findIndex(request => request.method === 'PUT' && request.path === '/api/agent-isolation'));
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { supervisor_drain_grace_minutes: 0 });
+      await page.evaluate(index => window.__answer(index, 200, { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: true, supervisor_drain_grace_minutes: 0 }), put);
+      await page.waitForFunction(() => document.querySelector('#agent-drain-grace').value === '0' && !document.querySelector('#agent-drain-grace').disabled);
+      assert.equal(await page.$eval('#agent-drain-grace-error', el => el.textContent), '');
+      assert.equal(await page.$eval('#agent-warm-idle', el => el.value), '5', 'the warm window is left as it was');
+      await page.close();
+      const admin = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: false, supervisor_drain_grace_minutes: 12 } } });
+      await admin.evaluate(() => window.__general.open());
+      await admin.waitForFunction(() => document.querySelector('#agent-drain-grace').value === '12');
+      assert.deepEqual(await admin.evaluate(() => [document.querySelector('#agent-drain-grace').disabled, document.querySelector('#agent-drain-grace').title]), [true, 'Only the owner can change this.']);
+      await admin.close();
+    }
     // Codex warm mode is an owner-only opt-in. It is off when the server omits the new field and saves one boolean without changing the window.
     {
       const page = await mount({}, { auto: { 'GET /api/agent-isolation': { docker_only: false, can_edit: true, warm_idle_minutes: 5, can_edit_warm: true, codex_warm_enabled: false } } });
@@ -213,7 +242,7 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general > div')].map(div => `${div.id}:${div.querySelector('h3').textContent}`)),
         ['settings-appearance:Appearance', 'chat-preferences:Chat', 'message-retention:Messages', 'agent-isolation:Agents', 'prompt-cache:Prompt cache', 'settings-backup:Settings backup']);
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#settings-general .settings-row')].filter(row => !row.hidden).map(row => (row.querySelector('input, select, button')).id)),
-        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
+        ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-amount', 'agent-reviewer-enabled', 'agent-docker-only', 'agent-warm-idle', 'agent-codex-warm', 'agent-drain-grace', 'agent-keepalive-enabled', 'agent-keepalive-claude-minutes', 'agent-keepalive-codex-minutes', 'agent-keepalive-stop-after-hours', 'settings-backup-export', 'settings-backup-file']);
       await page.close();
     }
     // The chat switches show what this person has and change the page at once: the bell and the debug button follow them.

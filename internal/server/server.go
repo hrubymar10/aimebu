@@ -109,6 +109,8 @@ type Server struct {
 	localSupervisorPending           atomic.Bool
 	localSupervisorUpgradeRequired   atomic.Bool
 	localSupervisorCanInterrupt      atomic.Bool
+	localDrainMu                     sync.Mutex
+	localDrainDeadline               time.Time // when the drain of a mismatched local supervisor stops waiting for its turns; zero while none drains
 	localRestartMu                   sync.Mutex
 	localRestartTurns                map[string]time.Time
 	telemetryTransport               sentry.Transport // tests replace the network transport; nil is the real one

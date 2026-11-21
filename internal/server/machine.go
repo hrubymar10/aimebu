@@ -423,12 +423,14 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	if localSupervisor && !restartPending {
 		s.localSupervisorPending.Store(false)
+		s.clearLocalDrain()
 	}
 	if restartPending {
 		if hello.SupportsRetireAtIdle {
 			if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.RetireAtIdle}); err != nil {
 				return
 			}
+			s.startLocalDrainGrace(ctx, c) // the wait for its turns is bounded by the owner's drain grace
 		} else if s.LocalSupervisorLegacyDrain != nil {
 			s.LocalSupervisorLegacyDrain()
 		}

@@ -1345,7 +1345,21 @@ seconds for their journal writes. The supervisor's hello includes its build
 version and a digest of the environment that affects turns. A mismatch marks
 restart pending, holds new local dispatch, and retires the supervisor after
 its running turns and commands finish. The server starts the replacement from
-its own environment. The owner can choose Restart now to interrupt current
+its own environment. The wait for turns is bounded by the owner's drain grace
+(global setting `supervisor_drain_grace_seconds`, default 300, `0` waits
+without limit; `supervisor_drain_grace_minutes` on `/api/agent-isolation`,
+0 to 1440). The grace starts when the mismatch is first seen and is not
+extended by the supervisor's reconnects. When it is over, a supervisor that
+announced `supports_turn_interrupt` is sent a turn interrupt (§3.4) with
+purpose `supervisor_drain` and disposition `continue` for every ordinary turn
+it still runs: the turn ends interrupted, the supervisor goes idle and exits,
+and the turn is continued by itself on the replacement, outside the one
+automatic continuation of its chain. A correction or diagnostic turn is left
+to finish, an older supervisor is waited for as before, and a command outside
+a turn is never ended for this: the old supervisor stays up, and local
+dispatch stays held, until its commands finish. A turn whose process in a
+container is not confirmed gone holds the supervisor for its quarantine
+(§4.2) first. The owner can choose Restart now to interrupt current
 work and trigger the ordinary auto-continue. A crashed detached supervisor is
 respawned while the server runs. If the executable on disk is newer than the
 running server, its supervisor keeps dispatching and the server reports that

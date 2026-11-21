@@ -20,8 +20,25 @@ The running server compares the supervisor's build and a fingerprint of PATH,
 turn limits, credential variables, and harness config homes. A mismatch shows
 "restart pending" in Machines, Health and `doctor --live`, holds new local
 dispatch, and replaces the supervisor after its active turns and commands
-finish. The owner's Restart now action interrupts them and gets the ordinary
-one auto-continue. A crashed detached supervisor is respawned with backoff.
+finish. That wait is bounded for turns: after the owner's **drain grace**
+(Settings → Agents → Agent isolation, "Supervisor replacement grace
+(minutes)", 5 until the owner saves another, at most 1440, 0 waits without
+limit; `supervisor_drain_grace_minutes` on `GET`/`PUT /api/agent-isolation`,
+owner only to change) the server interrupts every ordinary turn the old
+supervisor still runs, with a `turn_interrupt` frame and the `continue`
+disposition (see the turn interrupt below). Each of those turns ends
+interrupted, the supervisor goes idle and exits, and the turn is continued by
+itself on the new supervisor with the note `your previous turn was interrupted
+(the turn was interrupted on request); check state and continue`. That
+continuation does not count as the chain's one automatic continuation. The
+grace starts when the server first sees the mismatch (after a server restart,
+at the supervisor's first connection) and reconnects do not extend it. A
+supervisor that does not announce `supports_turn_interrupt`, and a correction
+or diagnostic turn, are waited for as before. A long command started with
+`run_command` is never cut: it keeps the old supervisor up, and local
+dispatch held, until it ends, also after the turns were interrupted. The
+owner's Restart now action interrupts turns and commands at once and gets the
+ordinary one auto-continue. A crashed detached supervisor is respawned with backoff.
 While the restart is pending, new local spawns wait for the replacement. If a
 retiring supervisor reconnects to a server that now matches it, it resumes
 accepting work after that server's acknowledgement.

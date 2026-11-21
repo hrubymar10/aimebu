@@ -713,6 +713,14 @@ stored record, who it addressed, the wake note and turn each agent got,
 and the related events, with previous and next to walk the room's messages and the Reply in thread, Copy
 text and Copy link actions). The HTML revalidates on refresh and its CSS and JS
 modules use a content version, so a deploy reaches a normal browser refresh.
+Settings → Agents → Agent isolation has an owner-only **Supervisor replacement
+grace (minutes)**. After a server update, or a change of its environment, the
+supervisor on the server's machine has to be replaced, and until it is no local
+agent gets a new turn ("restart pending" in Machines and Health). It first waits
+for running turns. After the grace (5 minutes unless you set another) the turns
+still running are interrupted and continue by themselves on the new supervisor.
+Long commands started with `run_command` are not cut and keep the old
+supervisor up until they end. 0 waits for the turns without limit.
 Settings → Agents → Agent isolation has an owner-only Codex warm (experimental) switch,
 off by default. An opted-in Codex agent works with a ChatGPT subscription once
 token auto-refresh is on (Settings → Server → Accounts & usage), or with an API key; otherwise it
