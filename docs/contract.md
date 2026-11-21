@@ -790,8 +790,8 @@ Inbox, usage, events, settings
   (permanent for that version and state) or `remind` (hidden until `until`,
   24 hours after the ask; migration 128). The server's own update check
   (stdlib-only `internal/updatecheck`) follows the same release-channel rules
-  as the `bin/aimebu` wrapper: every 6 hours with jitter, first 30 seconds
-  after start, only when the clone is detectable (`<dir of os.Executable()>/.git`
+  as the `bin/aimebu` wrapper: first check 30-90 seconds after start,
+  then every 6 hours, only when the clone is detectable (`<dir of os.Executable()>/.git`
   plus `bin/aimebu`), and never under `AIMEBU_UPDATE_CHECK=0`. It reports three
   states: `available` (the newest release for the channel is newer than the
   running process), `installed` (the cached binary on disk, read with

@@ -99,7 +99,7 @@ const installed = { checked: true, state: 'installed', version: 'v2.1.0' };
   await Promise.resolve();
   assert.deepEqual([...t.context.copyCalls, t.banner.bar.hidden], ['aimebu update', false]);
 
-  // Remind asks the server, then hides the bar for a day (a refused ask still hides it until the next refresh says otherwise).
+  // Remind asks the server, then hides the bar for a day (a refused ask keeps the bar and explains in its tooltip).
   t = make({ status });
   await t.banner.setAccount({ admin: true, owner: false });
   await t.banner.answer('remind');
@@ -115,7 +115,12 @@ const installed = { checked: true, state: 'installed', version: 'v2.1.0' };
   t = make({ status, refuse: true });
   await t.banner.setAccount({ admin: true, owner: false });
   await t.banner.answer('remind');
-  assert.equal(t.banner.bar.hidden, true, 'a refused remind still closes the bar');
+  assert.equal(t.banner.bar.hidden, false, 'a refused remind keeps the bar');
+  assert.equal(t.banner.ackRecord, null, 'a refused remind is not remembered');
+  assert.match(t.banner.bar.title, /Could not save your answer: refused/, 'the failure is in the tooltip');
+  t.banner.acknowledge = async () => {};
+  await t.banner.answer('remind');
+  assert.deepEqual([t.banner.bar.hidden, t.banner.bar.title], [true, ''], 'a later successful answer closes the bar and clears the tooltip');
 
   // Skip asks the server and hides the bar for good (until the version or state changes).
   t = make({ status });

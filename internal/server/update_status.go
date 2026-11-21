@@ -45,9 +45,9 @@ func (u *updateStatus) store(status updatecheck.Status) {
 	u.set = true
 }
 
-// StartUpdateCheck runs the periodic check for the life of ctx. It starts 30
-// seconds after the call, then every 6 hours with a little jitter so a farm of
-// servers does not all knock on the remote in the same second. A clone the
+// StartUpdateCheck runs the periodic check for the life of ctx. The first check
+// comes 30 to 90 seconds after the call (the jitter keeps a farm of servers from
+// all knocking on the remote in the same second), then one every 6 hours. A clone the
 // wrapper did not make (a bare `go install` binary) has nothing to check, and
 // AIMEBU_UPDATE_CHECK=0 turns the whole loop off.
 func (s *Server) StartUpdateCheck(ctx context.Context) {

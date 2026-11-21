@@ -182,8 +182,8 @@ A channel chooses what the update follows:
   the running server has its own check (see the admin banner in the web UI).
 
 The running server checks on its own when it was started from a wrapper clone
-(the directory of its binary holds `.git` and `bin/aimebu`): every 6 hours with
-jitter, first 30 seconds after start, and never under `AIMEBU_UPDATE_CHECK=0`.
+(the directory of its binary holds `.git` and `bin/aimebu`): first check 30-90 seconds
+after start, then every 6 hours, and never under `AIMEBU_UPDATE_CHECK=0`.
 It never updates anything and never prompts; it answers `GET /api/update-status`
 with `available` (the channel's newest release is newer than the running
 process), `installed` (the **built binary on disk**, read through its embedded

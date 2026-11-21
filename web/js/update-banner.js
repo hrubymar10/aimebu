@@ -70,7 +70,13 @@ export class UpdateBanner {
     return true;
   }
   async answer(kind) {
-    try { await this.acknowledge(kind); } catch { /* the server refused or the network failed; the bar waits for the next refresh */ }
+    // Remember the answer and close the bar only once the server took it; a refused or
+    // lost answer keeps the bar and says why in its tooltip.
+    try { await this.acknowledge(kind); } catch (error) {
+      this.bar.title = `Could not save your answer: ${error?.message || 'the request failed'}`;
+      return;
+    }
+    this.bar.title = '';
     if (kind === 'remind') {
       this.ackRecord = { version: this.status?.version, state: this.status?.state, kind, until: new Date(Date.now() + 24 * 3600 * 1000).toISOString() };
     } else {

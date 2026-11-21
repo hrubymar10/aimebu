@@ -327,3 +327,30 @@ func TestCheckLeavesBranchesDirtyAndDivergedClonesAlone(t *testing.T) {
 		t.Fatalf("a dirty clone was offered an update: %+v", got)
 	}
 }
+
+func TestGitEnvIsNonInteractive(t *testing.T) {
+	last := func(env []string, key string) string {
+		value := "<unset>"
+		for _, entry := range env {
+			if v, ok := strings.CutPrefix(entry, key+"="); ok {
+				value = v
+			}
+		}
+		return value
+	}
+	env := gitEnv([]string{"PATH=/bin", "GIT_ASKPASS=ask", "SSH_ASKPASS=/usr/bin/ask"})
+	for key, want := range map[string]string{
+		"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true", "SSH_ASKPASS": "", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes", "PATH": "/bin",
+	} {
+		if got := last(env, key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	// An ssh the person configured is left alone.
+	if got := last(gitEnv([]string{"GIT_SSH_COMMAND=ssh -i /k"}), "GIT_SSH_COMMAND"); got != "ssh -i /k" {
+		t.Errorf("GIT_SSH_COMMAND = %q, want the configured one", got)
+	}
+	if got := last(gitEnv([]string{"GIT_SSH_COMMAND="}), "GIT_SSH_COMMAND"); got != "ssh -o BatchMode=yes" {
+		t.Errorf("an empty GIT_SSH_COMMAND gave %q", got)
+	}
+}

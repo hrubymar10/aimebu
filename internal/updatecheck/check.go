@@ -73,13 +73,28 @@ func channelFromEnvironment(configRoot string) string {
 	return word
 }
 
+// gitEnv is the environment for the check's git calls: fully non-interactive, as the
+// wrapper's own (no credential, passphrase or host-key prompt; an ssh configured
+// through GIT_SSH_COMMAND is left alone).
+func gitEnv(base []string) []string {
+	ssh := "ssh -o BatchMode=yes"
+	for _, entry := range base {
+		if value, ok := strings.CutPrefix(entry, "GIT_SSH_COMMAND="); ok && value != "" {
+			ssh = value
+		}
+	}
+	return append(base, "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "SSH_ASKPASS=", "GIT_SSH_COMMAND="+ssh)
+}
+
 // gitOut runs one git command in the clone with a time limit and returns stdout.
 func gitOut(dir string, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true")
+	cmd.Env = gitEnv(os.Environ())
+	// A killed git can leave an ssh child holding the output pipe; do not wait on it.
+	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
