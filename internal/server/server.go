@@ -424,7 +424,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/rooms/{room}/leave", s.Auth.RequireUser(http.HandlerFunc(s.leaveAgentDM)))
 	mux.Handle("POST /api/agent/rooms", s.requireAgentTool(http.HandlerFunc(s.agentToolCreateRoom)))
 	mux.Handle("POST /api/agent/rooms/{room}/close", s.requireAgentTool(http.HandlerFunc(s.agentToolCloseRoom)))
-	mux.Handle("POST /api/agent/mcp", s.requireAgentTool(http.HandlerFunc(s.agentToolMCP)))
+	mux.Handle("POST /api/agent/mcp", s.requireAgentToolMCP(http.HandlerFunc(s.agentToolMCP)))
 	mux.Handle("GET /api/agent/attachments/{attachment}", s.requireAgentTool(http.HandlerFunc(s.agentAttachment)))
 	mux.Handle("GET /api/agent/usage-left", s.requireAgentTool(http.HandlerFunc(s.agentToolUsageLeft)))
 	mux.Handle("POST /api/agent/commands", s.requireAgentTool(http.HandlerFunc(s.agentToolCommandRun)))

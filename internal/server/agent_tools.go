@@ -23,6 +23,18 @@ func agentToolCaller(r *http.Request) store.AgentToolIdentity {
 }
 
 func (s *Server) requireAgentTool(next http.Handler) http.Handler {
+	return s.requireAgentToolScope(next, true)
+}
+
+// requireAgentToolMCP guards the MCP endpoint. During a cache keep-alive ping it is not refused: a ping is the real turn's request, so Codex still
+// connects to the toolbox and lists its tools (they are part of the cached prompt prefix), and a 403 there is fatal to Codex's MCP client. Every tool
+// call made through it still reaches the REST routes behind requireAgentTool, which refuse it with 403 keep_alive_scope (seen by the model as a tool
+// error), so the toolbox is as unusable as before.
+func (s *Server) requireAgentToolMCP(next http.Handler) http.Handler {
+	return s.requireAgentToolScope(next, false)
+}
+
+func (s *Server) requireAgentToolScope(next http.Handler, refuseScoped bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || len(key) != 47 || !strings.HasPrefix(key, "aak_") {
@@ -39,7 +51,7 @@ func (s *Server) requireAgentTool(next http.Handler) http.Handler {
 			apiError(w, http.StatusForbidden, "forbidden", "stopped agent cannot use toolbox")
 			return
 		}
-		if s.keepAliveScoped(caller.ID) {
+		if refuseScoped && s.keepAliveScoped(caller.ID) {
 			// A cache keep-alive ping is running for this agent: it may not act, whatever it was asked in words.
 			refuseKeepAliveScope(w)
 			return

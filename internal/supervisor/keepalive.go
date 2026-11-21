@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -655,6 +656,12 @@ func firstLine(parts ...string) string {
 	return ""
 }
 
+// keepAliveScopeRefusal says a failed ping's error is the server's own refusal of the toolbox during a ping (403 keep_alive_scope). That refusal is
+// intended and the ping is not broken by a bug of ours, so it is logged and counted as a failure but not reported to Sentry.
+func keepAliveScopeRefusal(message string) bool {
+	return strings.Contains(message, "keep_alive_scope")
+}
+
 // sendKeepAliveReport logs the ping and tells the server what it did. A ping that read little from the cache and wrote much missed: it is in the log
 // so the interval can be tuned from what actually happened.
 func (c *Client) sendKeepAliveReport(report protocol.KeepAliveReport) {
@@ -662,7 +669,9 @@ func (c *Client) sendKeepAliveReport(report protocol.KeepAliveReport) {
 		log.Printf("keep-alive %s: cache read %d, written %d, in %d, out %d, %.1fs", report.AgentID, report.CacheRead, report.CacheWrite, report.TokensIn, report.TokensOut, report.DurationSeconds)
 	} else {
 		log.Printf("keep-alive %s failed: %s", report.AgentID, report.Error)
-		telemetry.WarnCause(context.Background(), "supervisor", "keep-alive ping failed") // report.Error is the harness's own words: the local log only
+		if !keepAliveScopeRefusal(report.Error) {
+			telemetry.WarnCause(context.Background(), "supervisor", "keep-alive ping failed") // report.Error is the harness's own words: the local log only
+		}
 	}
 	if c.keepAliveSink != nil {
 		c.keepAliveSink(report)

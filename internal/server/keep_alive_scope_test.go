@@ -54,11 +54,28 @@ func TestKeepAliveScopeRefusesTheToolbox(t *testing.T) {
 	for name, response := range map[string]*http.Response{
 		"read":  f.toolRequest(t, "/api/agent/rooms", key),
 		"write": f.toolPost(t, "/api/agent/rooms", key, "scoped", map[string]string{"title": "A ping must not make this"}),
-		"mcp":   f.toolPost(t, "/api/agent/mcp", key, "scoped-mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+		"mcp tool call": f.toolPost(t, "/api/agent/mcp", key, "scoped-mcp-call", map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+			"params": map[string]any{"name": "create_room", "arguments": map[string]any{"request_key": "scoped-call-key", "title": "A ping must not make this either"}}}),
 	} {
 		status := response.StatusCode
-		if body := read(response); status != 403 || !strings.Contains(body, "keep_alive_scope") {
+		body := read(response)
+		if name == "mcp tool call" {
+			// The MCP endpoint itself answers, the refused tool call comes back as a tool error.
+			if status != 200 || !strings.Contains(body, "keep_alive_scope") || !strings.Contains(body, `"isError":true`) {
+				t.Fatalf("%s during a ping: %d %s", name, status, body)
+			}
+			continue
+		}
+		if status != 403 || !strings.Contains(body, "keep_alive_scope") {
 			t.Fatalf("%s during a ping: %d %s", name, status, body)
+		}
+	}
+	// Codex connects to the toolbox and lists its tools during a ping: a 403 there is fatal to its MCP client, and the tool list is part of the cached
+	// prompt prefix.
+	for name, method := range map[string]string{"initialize": "initialize", "tools/list": "tools/list"} {
+		response := f.toolPost(t, "/api/agent/mcp", key, "scoped-mcp-"+method, map[string]any{"jsonrpc": "2.0", "id": 1, "method": method})
+		if body := read(response); response.StatusCode != 200 || strings.Contains(body, "keep_alive_scope") {
+			t.Fatalf("MCP %s during a ping: %d %s", name, response.StatusCode, body)
 		}
 	}
 	if roomCount() != before {

@@ -566,8 +566,13 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
   environment stay byte-identical, so the key in them is the agent's own). The server enforces it: the supervisor
   sends `keep_alive_scope` (`scope_on` true, the agent id) before the ping's process exists and starts the ping only
   once the server answers `keep_alive_scope_ack`; while the scope is on, every agent-tools call made with that
-  agent's key (REST and MCP alike, in `requireAgentTool`) is refused with **403 `keep_alive_scope`** before any
-  handler runs, so a ping that calls a tool anyway posts nothing and changes nothing. The supervisor lifts the scope
+  agent's key is refused with **403 `keep_alive_scope`** before any handler runs (`requireAgentTool`), so a ping that
+  calls a tool anyway posts nothing and changes nothing. The one exception is the MCP endpoint itself
+  (`POST /api/agent/mcp`, `requireAgentToolMCP`): it still answers `initialize` and `tools/list`, because Codex's MCP
+  client treats a 403 there as fatal (exit 1, the ping fails and its cache lapses) and the tool list is part of the
+  cached prompt prefix, which a ping must keep identical to the real turn's. A `tools/call` made through it reaches the
+  scoped REST routes and comes back as a tool error (`HTTP 403: ... keep_alive_scope`). A ping whose error still
+  carries `keep_alive_scope` is logged and counted as a failure but not reported to Sentry. The supervisor lifts the scope
   (`scope_on` false, answered the same way) only after the ping's process is confirmed gone and before the ping
   counts as ended, so a real turn that follows is never refused. Without an answer the ping does not run (it fails
   closed and counts as a failure). A scope nobody lifted (a supervisor that died) lapses on the server after three
