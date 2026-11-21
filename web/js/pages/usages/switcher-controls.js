@@ -3,7 +3,13 @@ import { SettingsGroup, SettingsRow } from '../../components/settings-row.js';
 import { mergeAlerts } from '../../usage-alerts.js';
 import { confirmDialog } from '../../dialogs.js';
 import { usagesPorts } from '../../usages-ports.js';
+import { maskName, maskingOn } from '../../usage-privacy.js';
 import { alertKind, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenAutoRefreshOn, tokenAutoRefreshAvailable, tokenStateLine } from './model.js';
+
+// maskCredentialAlert builds a text mask for the credential-alert sentences:
+// while B's privacy mode is on it replaces every known profile name with its
+// masked form, so a sentence like "claude profile backup: ..." leaks no name.
+const maskCredentialAlert = names => (maskingOn() ? text => (names || []).reduce((line, name) => name ? line.replaceAll(name, maskName(name)) : line, String(text || '')) : undefined);
 
 const AUTO_REFRESH = 'aimebu becomes the only thing that refreshes your Claude and Codex logins. While on, aimebu must stay running whenever you use Claude or Codex, also outside aimebu: if it is stopped for more than about an hour around a token\'s expiry, sessions get auth errors until it runs again. Turn this off before stopping aimebu for long or uninstalling it.';
 
@@ -84,9 +90,9 @@ function UsageConfig({ store, settings }) {
 }
 
 // Credentials of the token-copy model that need a human (a rejected refresh token, one about to expire), one sentence each. Plain text only:
-// the server never sends CLI output here.
-function CredentialAlerts({ alerts }) {
-  return html`<div class="usage-credential-alerts" role="alert">${mergeAlerts(alerts).map((alert, index) => html`<div class=${`usage-credential-alert usage-credential-alert-${alertKind(alert.kind)}`} key=${index}>
+// the server never sends CLI output here. B's privacy mode masks the profile names inside the sentences.
+function CredentialAlerts({ alerts, mask }) {
+  return html`<div class="usage-credential-alerts" role="alert">${mergeAlerts(alerts, mask).map((alert, index) => html`<div class=${`usage-credential-alert usage-credential-alert-${alertKind(alert.kind)}`} key=${index}>
     <p>${alert.text}</p>${alert.details.length > 0 && html`<details><summary>Details</summary>${alert.details.map((line, at) => html`<p key=${at}>${line}</p>`)}</details>`}</div>`)}</div>`;
 }
 
@@ -103,9 +109,11 @@ export function SwitcherControls({ store }) {
   if (!state) return null;
   if (!state.owner) return null;
   const alerts = usage?.credential_alerts;
+  const names = (usage?.providers || []).flatMap(provider => (provider.profiles || []).map(profile => profile.profile_name)).filter(Boolean);
+  const mask = maskCredentialAlert(names);
   return html`
     ${!state.enabled && html`<button type="button" class="btn btn-primary" id="usage-switcher-enable" onClick=${() => store.mutateSwitcher(() => store.source.enable(true))}>Enable account switcher</button>`}
-    ${Array.isArray(alerts) && alerts.length > 0 && html`<${CredentialAlerts} alerts=${alerts} />`}
+    ${Array.isArray(alerts) && alerts.length > 0 && html`<${CredentialAlerts} alerts=${alerts} mask=${mask} />`}
     <${UsageConfig} key=${store.revision.value} store=${store} settings=${usage?.settings} />
     ${state.enabled && html`<${DisableSwitcher} store=${store} />`}
   `;

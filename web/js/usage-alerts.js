@@ -5,13 +5,14 @@
 // with what to do (usually nothing), and the reasons and paths as details. Every other alert is kept as it is.
 const REFRESHER = /^([a-z0-9_-]+): (.*); this tool will not refresh$/i;
 
-export function mergeAlerts(alerts) {
+export function mergeAlerts(alerts, mask) {
   const out = [], tools = [], details = [];
+  const say = text => (typeof mask === 'function' ? mask(String(text || '')) : String(text || ''));
   for (const alert of Array.isArray(alerts) ? alerts : []) {
     const match = alert?.kind === 'refresher_conflict' ? REFRESHER.exec(String(alert.message || '')) : null;
-    if (!match) { out.push({ kind: String(alert?.kind || ''), text: String(alert?.message || ''), details: [] }); continue; }
+    if (!match) { out.push({ kind: String(alert?.kind || ''), text: say(alert?.message), details: [] }); continue; }
     if (!tools.includes(match[1])) tools.push(match[1]);
-    details.push(`${match[1]}: ${match[2]}`);
+    details.push(say(`${match[1]}: ${match[2]}`));
   }
   if (tools.length) {
     const these = tools.length > 1 ? 'these logins' : 'this login';

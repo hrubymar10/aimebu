@@ -140,6 +140,23 @@ async function main() {
       await page.waitForFunction(selector => document.querySelector(`${selector} .switcher-tile-name`).textContent !== 'main', {}, '.usages-b-tile[data-provider="codex"]');
       await page.close();
     }
+    // Credential-alert sentences mask their profile names while B's privacy is on.
+    {
+      const page = await mount({ variant: 'b' });
+      await page.evaluate(async () => {
+        const list = window.__source.list.bind(window.__source);
+        window.__source.list = async () => ({ ...(await list()), credential_alerts: [{ kind: 'expiring', tool: 'claude', profile: 'main', role: 'store', message: 'claude profile main: the access token expires in 4 min.' }] });
+        await window.__usages.load();
+      });
+      assert.match(await page.$eval('.usage-credential-alerts p', el => el.textContent), /claude profile main:/, 'B without privacy shows the name');
+      await click(page, '.usages-b-privacy');
+      await page.waitForFunction(() => /claude profile m•••:/.test(document.querySelector('.usage-credential-alerts p').textContent));
+      // And A shows the plain sentence even with the toggle on.
+      await page.evaluate(() => window.__ui.chooseVariant('usages-ports', 'a'));
+      await page.waitForFunction(() => !document.querySelector('.usages-b-privacy'));
+      assert.match(await page.$eval('.usage-credential-alerts p', el => el.textContent), /claude profile main:/);
+      await page.close();
+    }
     assert.deepEqual(errors, [], 'no page errors');
     console.log('usages ports page tests passed');
   } finally {

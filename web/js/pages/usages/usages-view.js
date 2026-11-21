@@ -5,7 +5,7 @@ import { creditsText, percent, windowLabel, paceExplanation, sparkGeometry, dail
 import { mergeAlerts, staleAge } from '../../usage-alerts.js';
 import { expiryBadge } from '../../usage-expiry.js';
 import { usagesPorts } from '../../usages-ports.js';
-import { maskEmail, maskName, usagePrivacy, toggleUsagePrivacy } from '../../usage-privacy.js';
+import { maskEmail, maskName, maskingOn, usagePrivacy, toggleUsagePrivacy } from '../../usage-privacy.js';
 import { toolOf, isSwitchable, sortProviders, providerConfigured, canEnable, movedOrder, profileKey, profileStatusLine, switchView, affectedText } from './model.js';
 import { CopilotSetup, MistralSetup, OllamaSetup } from './provider-setup.js';
 import { profileActions } from './profile-actions.js';
@@ -140,6 +140,15 @@ function Tile({ store, provider, profiles, order, providers, state, usedDisplay,
   </article>`;
 }
 
+// maskCredentialAlert builds a text mask for the credential-alert sentences:
+// while B's privacy mode is on it replaces every known profile name with its
+// masked form, so a sentence like "claude profile backup: ..." leaks no name.
+// The names come from the snapshot being drawn.
+function maskCredentialAlert(names) {
+  if (!maskingOn()) return undefined;
+  return text => (names || []).reduce((line, name) => name ? line.replaceAll(name, maskName(name)) : line, String(text || ''));
+}
+
 // readOnly is the side panel's view: v1's panel only showed, so every control that changes a provider or an account is left out and Switch (and the panel
 // header's own refresh and group buttons) remain; Settings → Usages draws the same view with its management controls.
 export function UsagesView({ store, readOnly = false, openSettings }) {
@@ -164,7 +173,9 @@ export function UsagesView({ store, readOnly = false, openSettings }) {
   const primary = groupBy === 'active' ? part(profile => profile.active, false) : groups;
   const secondary = groupBy === 'active' ? part(profile => !profile.active, true) : [];
   // The Settings page already draws the owner's credential alerts in its switcher block, so only the read-only panel (which has no such block) draws them here.
-  const alerts = readOnly ? mergeAlerts(usage?.credential_alerts) : [];
+  // B's privacy mode masks the profile names inside those sentences too.
+  const names = providers.flatMap(provider => (provider.profiles || []).map(profile => profile.profile_name)).filter(Boolean);
+  const alerts = readOnly ? mergeAlerts(usage?.credential_alerts, maskCredentialAlert(names)) : [];
   const tile = group => html`<${Tile} key=${group.provider.provider_name} store=${store} provider=${group.provider} profiles=${sorted(group.profiles)} order=${group.order} providers=${providers} state=${shown_}
     usedDisplay=${usedDisplay} refreshSec=${refreshSec} tokens=${tokens} revision=${revision} readOnly=${readOnly} alerts=${usage?.credential_alerts || []} />`;
   return html`<div class=${`usages-b${usagesPorts.value === 'b' ? ' usages-b-ports' : ''}`}>

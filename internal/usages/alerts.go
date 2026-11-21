@@ -60,9 +60,12 @@ type alertWindow struct {
 type alertState struct {
 	Windows map[string]alertWindow `json:"windows"`
 	Alerts  map[string]UsageAlert  `json:"alerts"`
-	// Expiry remembers the expiry each account has already raised an
-	// expiry alert for, keyed by the hashed provider and account, so one
-	// decay fires once until the credential is renewed.
+	// Expiry remembers what each account has already been told about its
+	// credential: `<expiry>@<announced level>` keyed by the hashed provider
+	// and account. A dismissal keeps this record, so the same level is not
+	// raised again; only a stronger level (expiring became expired) or a new
+	// expiry time raises a fresh notice. It is cleared when the credential
+	// is renewed or the alert setting goes off.
 	Expiry map[string]string `json:"expiry,omitempty"`
 }
 
@@ -166,20 +169,22 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 			// time, and a renewed credential (healthy again, or absent) closes
 			// the notice and lets a later decay raise a fresh one.
 			expiryBase := expiryBaseKey(provider.ProviderName, account)
-			stamp, seen := t.state.Expiry[expiryBase]
+			stamp, announced, seen := expiryRecord(t.state.Expiry[expiryBase])
 			if expiryOn && profile.ExpiresAt != nil {
 				if level, _ := credentialLevel(profile.ExpiresAt, t.clock()); level == TargetLevelExpiring || level == TargetLevelExpired {
-					if stamped := profile.ExpiresAt.UTC().Format(time.RFC3339); stamp != stamped {
+					stamped := expiryStamp(profile.ExpiresAt.UTC().Format(time.RFC3339), level)
+					if stamp != expiryOf(stamped) {
 						if seen {
 							t.closeExpiry(expiryBase) // the old expiry's notice is obsolete
 						}
 						t.state.Expiry[expiryBase] = stamped
 						t.addExpiryAlert(expiryBase, provider.ProviderName, profile.ProfileName, *profile.ExpiresAt, level)
 						visibleChanged, changed = true, true
-					} else if openTier(t.state.Alerts, expiryBase) != level {
-						// Same credential and expiry as the open notice, but
-						// its wording moved on (expiring became expired):
-						// replace it with the stronger state.
+					} else if level != announced && levelIsStronger(level, announced) && openTier(t.state.Alerts, expiryBase) != level {
+						// Same expiry time, already announced at a weaker
+						// level (expiring became expired): replace the
+						// wording, unless the stronger one is already open.
+						t.state.Expiry[expiryBase] = stamped
 						t.closeExpiry(expiryBase)
 						t.addExpiryAlert(expiryBase, provider.ProviderName, profile.ProfileName, *profile.ExpiresAt, level)
 						visibleChanged, changed = true, true
@@ -307,13 +312,22 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 		}
 	}
 	// A toggle turned off closes what it had opened, so the opt-in alerts
-	// never outlive their setting.
+	// never outlive their setting. The pace toggle also clears the episode
+	// state of every tracked window, so re-enabling during an ongoing
+	// episode can raise a fresh notice.
 	if !paceOn {
 		for id, alert := range t.state.Alerts {
 			if alert.Open && alert.Tier == "pace" {
 				alert.Open = false
 				t.state.Alerts[id] = alert
 				visibleChanged, changed = true, true
+			}
+		}
+		for key, window := range t.state.Windows {
+			if window.Pace {
+				window.Pace = false
+				t.state.Windows[key] = window
+				changed = true
 			}
 		}
 	}
@@ -446,6 +460,29 @@ func paceAlertWindow(provider, key string) bool {
 
 func expiryBaseKey(provider, account string) string {
 	return "expiry\x00" + alertHash("account\x00"+provider+"\x00"+account)
+}
+
+// The Expiry record is `<expiry>@<announced level>`: the notice's expiry and
+// the level it was announced at, so a dismissal survives the next observation
+// while an escalation still re-raises.
+func expiryStamp(stamp, level string) string { return stamp + "@" + level }
+func expiryOf(record string) string          { value, _, _ := expiryRecord(record); return value }
+func expiryRecord(record string) (stamp, level string, ok bool) {
+	value, seen := strings.CutSuffix(record, "@"+TargetLevelExpired)
+	if seen {
+		return value, TargetLevelExpired, true
+	}
+	value, seen = strings.CutSuffix(record, "@"+TargetLevelExpiring)
+	if seen {
+		return value, TargetLevelExpiring, true
+	}
+	return record, "", false // a pre-follow-up record: its stamp is the whole value
+}
+
+// levelIsStronger says whether got escalates from was: expiring became
+// expired is the only escalation the credential levels have.
+func levelIsStronger(got, was string) bool {
+	return got == TargetLevelExpired && was == TargetLevelExpiring
 }
 
 func alertHash(value string) string {

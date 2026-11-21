@@ -639,3 +639,97 @@ func TestExpiryAlertWordTurnsToExpired(t *testing.T) {
 		t.Fatalf("the notice must say expired once the expiry passed: %+v", got)
 	}
 }
+
+func TestExpiryAlertDismissalSurvivesUntilItEscalates(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := now.Add(10 * time.Minute)
+	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1"}}}}}
+	response.Settings.AlertExpiryEnabled = true
+	observe := func(want bool) {
+		t.Helper()
+		got, err := tracker.Observe(response)
+		if err != nil || got != want {
+			t.Fatalf("observe: created=%v error=%v, want %v", got, err, want)
+		}
+	}
+	observe(true)
+	open := tracker.OpenAlerts()
+	if len(open) != 1 || open[0].Tier != "expiring" {
+		t.Fatalf("expiring: %+v", open)
+	}
+	// Dismissed stays dismissed: the same expiry at the same level raises nothing again.
+	if err := tracker.Dismiss(open[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("dismissed: %+v", got)
+	}
+	observe(false)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("a dismissed expiry must not come back at its level: %+v", got)
+	}
+	// The level strengthens to expired: raised once, at the stronger wording.
+	now = now.Add(11 * time.Minute)
+	observe(true)
+	got := tracker.OpenAlerts()
+	if len(got) != 1 || got[0].Tier != "expired" {
+		t.Fatalf("the stronger level must be raised once: %+v", got)
+	}
+	// And it, too, stays dismissed once dismissed.
+	if err := tracker.Dismiss(got[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	observe(false)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("the dismissed stronger notice must stay dismissed: %+v", got)
+	}
+}
+
+func TestPaceAlertOffThenOnCanRaiseAgain(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	etaSeconds := 2 * 3600.0
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", LastRefreshAt: &now,
+			Windows: []Window{{Key: "session", PercentUsed: 70, ResetAt: &reset,
+				Pace: &Pace{ExpectedPercent: 40, DeltaPercent: 30, State: "deficit", EtaSeconds: &etaSeconds}}}}}}}}
+	response.Settings.AlertPaceEnabled = true
+	observe := func(want bool) {
+		t.Helper()
+		now = now.Add(time.Minute)
+		response.Providers[0].Profiles[0].LastRefreshAt = &now
+		got, err := tracker.Observe(response)
+		if err != nil || got != want {
+			t.Fatalf("observe: created=%v error=%v, want %v", got, err, want)
+		}
+	}
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "pace" {
+		t.Fatalf("pace alert: %+v", got)
+	}
+	response.Settings.AlertPaceEnabled = false
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("off closes: %+v", got)
+	}
+	// On again during the same ongoing episode: it can raise again.
+	response.Settings.AlertPaceEnabled = true
+	observe(true)
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "pace" {
+		t.Fatalf("re-enabling during an episode must raise again: %+v", got)
+	}
+	// But holding it on does not repeat the alert.
+	observe(false)
+	if got := tracker.OpenAlerts(); len(got) != 1 {
+		t.Fatalf("one alert per episode: %+v", got)
+	}
+}
