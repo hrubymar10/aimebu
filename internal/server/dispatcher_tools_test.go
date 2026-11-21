@@ -212,15 +212,15 @@ func TestDispatcherCanDispatch(t *testing.T) {
 		t.Fatalf("dispatcher deleted a person's schedule: %d", status)
 	}
 
-	// (3b) Spawning into a pre-switch room under home makes the dispatcher a member, so it can brief the worker there.
+	// (3b) A spawn the server refuses (no variant) into a pre-switch room under home leaves the dispatcher outside it. A spawn that goes
+	// through joins it (see the store's TestSharedTaskRoomAccess).
+	resp = f.toolPost(t, "/api/agent/agents", dispatcherKey, "brief-refused", map[string]string{"room_id": briefRoom.ID, "role_key": "worker", "tool": "fake", "model": "test"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("spawn without variant into a pre-switch room: %d", statusOf(resp))
+	}
+	resp.Body.Close()
 	if joined, err := f.db.AgentInRoom(ctx, dispatcher.ID, briefRoom.ID); err != nil || joined {
-		t.Fatalf("dispatcher in the pre-switch room before acting on it: %v %v", joined, err)
-	}
-	if err := f.db.Tx(ctx, func(tx *store.Tx) error { return tx.AuthorizeSpawn(briefRoom.ID, "agent", dispatcher.ID) }); err != nil {
-		t.Fatal(err)
-	}
-	if joined, err := f.db.AgentInRoom(ctx, dispatcher.ID, briefRoom.ID); err != nil || !joined {
-		t.Fatalf("dispatcher not joined to the pre-switch room it spawned into: %v %v", joined, err)
+		t.Fatalf("a refused spawn joined the dispatcher: %v %v", joined, err)
 	}
 
 	// (4) The dispatcher may close a task room under home that the leader made before the switch, but may not close the

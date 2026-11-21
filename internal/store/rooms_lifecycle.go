@@ -229,7 +229,7 @@ func (tx *Tx) roomClosePermission(projectID, roomID, kind, actor string) error {
 		// before a flow switch (by the leader) have no dispatcher member, and joining each would be a larger change.
 		// It joins the room as it does so, so it can follow up in it.
 		if kind == "task" && active {
-			joined, err := tx.joinSharedTaskRoom(projectID, roomID, actor)
+			joined, err := tx.sharedTaskRoomAccess(projectID, roomID, actor, true)
 			if err != nil {
 				return err
 			}
@@ -461,10 +461,12 @@ func (s *Store) ReopenRoom(ctx context.Context, id, actor string, rev int64) (Ro
 	return s.RoomByID(ctx, id)
 }
 
-// joinSharedTaskRoom is for a flow coordinator acting on an open, unkeyed task room directly under the home or a flow's
-// general room (one it may not be a member of, such as a room the leader made before a flow switch): it joins the room so
-// it can brief in it, and reports true. For any other room or actor it does nothing and reports false.
-func (tx *Tx) joinSharedTaskRoom(projectID, roomID, actor string) (bool, error) {
+// sharedTaskRoomAccess reports whether a flow coordinator (or the project lead) may act on an open, unkeyed task room directly under
+// the home or a flow's general room, one it may not be a member of, such as a room made before a flow switch. With join set it also
+// joins the room, to brief there, unless it already has an active membership (an existing, possibly quiet, membership is left alone) or
+// the flow's join rules refuse the role (the lead): the actor still has access, it just stays outside. For any other room or actor it
+// does nothing and reports false.
+func (tx *Tx) sharedTaskRoomAccess(projectID, roomID, actor string, join bool) (bool, error) {
 	var shared bool
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT x.kind='task' AND x.lifecycle='open' AND x.team_flow_room_key='' AND (p.kind='home' OR p.team_flow_room_key='general')
 		FROM room x JOIN room p ON p.id=x.parent_id WHERE x.id=? AND x.project_id=?`, roomID, projectID).Scan(&shared); err != nil {
@@ -482,7 +484,17 @@ func (tx *Tx) joinSharedTaskRoom(projectID, roomID, actor string) (bool, error) 
 		}
 		return false, err
 	}
-	if err := tx.AddMember(roomID, "agent", actor); err != nil {
+	if !join {
+		return true, nil
+	}
+	var member bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`, roomID, actor).Scan(&member); err != nil {
+		return false, err
+	}
+	if member {
+		return true, nil
+	}
+	if err := tx.AddMember(roomID, "agent", actor); err != nil && !errors.Is(err, ErrTeamFlowRule) {
 		return false, err
 	}
 	return true, nil

@@ -174,6 +174,13 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if err := tx.authorizeSpawnActor(projectID, actorKind, in.ActorID, true); err != nil {
 		return AgentCard{}, err
 	}
+	if actorKind == "agent" {
+		// A coordinator spawning into a task room under home or general it was never joined to (made before a flow switch) joins it, to brief
+		// there. It happens here, in the spawn transaction, so a refused spawn leaves no membership.
+		if _, err := tx.sharedTaskRoomAccess(projectID, in.RoomID, in.ActorID, true); err != nil {
+			return AgentCard{}, err
+		}
+	}
 	if disabled, err := tx.reviewerSpawnDisabled(projectID, in.RoleKey); err != nil {
 		return AgentCard{}, err
 	} else if disabled {

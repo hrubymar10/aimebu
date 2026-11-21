@@ -184,9 +184,11 @@ export function treeOf(state) {
     if (opts.nest && kids) collapsible.add(room.id);
     const folded = kids > 0 && (collapsed.has(room.id) || (provisional && opts.nest && !seen.has(room.id) && !holders.has(room.id)));
     const childViews = children.map(child => view(child, { chip: false, nest: false, deep: true }));
-    // A folded row stands for everything under it, so its badge adds each child's own (a folded child already includes its own children).
-    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, tail, collapsible: expands && kids > 0, folded,
-      unread: roomUnread(room, active) + (folded ? childViews.reduce((sum, child) => sum + child.unread, 0) : 0) };
+    // A folded row stands for everything under it, at any depth and whatever each descendant's own fold state: its badge adds all of their
+    // own unread counts. `below` is that sum, kept on the view so a parent adds it without walking the subtree again.
+    const below = childViews.reduce((sum, child) => sum + roomUnread(child.room, active) + child.below, 0);
+    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, tail, collapsible: expands && kids > 0, folded, below,
+      unread: roomUnread(room, active) + (folded ? below : 0) };
   };
   const place = (room, nest, extra) => {
     const tail = room.kind === 'home' && tails.get(room.project_id)?.length && !tailed.has(room.project_id) ? tails.get(room.project_id) : null;

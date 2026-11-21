@@ -657,3 +657,86 @@ func TestTeamFlowSpawnAuthority(t *testing.T) {
 		t.Fatalf("leader lost C spawn authority: %v", err)
 	}
 }
+
+// A coordinator acting on a task room under home that it was never joined to (a room made before a flow switch) joins it, but only in
+// a spawn that goes through, never keeps a quiet membership it already had from becoming an ordinary one, and the lead may close such a
+// room without joining it (the flow's join rules keep it out of task rooms).
+func TestSharedTaskRoomAccess(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	leader := f.agent(t, "sharedlead", "role_leader_default", &f.home)
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	var routingID string
+	if err := f.s.db.QueryRow(`SELECT id FROM room WHERE project_id=? AND team_flow_room_key='routing'`, f.project.ID).Scan(&routingID); err != nil {
+		t.Fatal(err)
+	}
+	spawn := func(actorID, roomID, role, key string) error {
+		return f.s.Tx(ctx, func(tx *Tx) error {
+			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: role, Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key})
+			return err
+		})
+	}
+	if err := spawn(leader.ID, routingID, "dispatcher", "shared_dispatcher"); err != nil {
+		t.Fatal(err)
+	}
+	var dispatcherID string
+	if err := f.s.db.QueryRow(`SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND r.role_key='dispatcher'`, f.project.ID).Scan(&dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	newRoom := func(title string) Room {
+		room, err := f.s.CreateRoom(ctx, Room{ProjectID: f.project.ID, ParentID: f.home.ID, Kind: "task", Title: title, CreatedBy: "usr_test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return room
+	}
+	members := func(roomID, agentID string) (count, auto int) {
+		if err := f.s.db.QueryRow(`SELECT COUNT(*),COALESCE(MAX(auto),0) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, roomID, agentID).Scan(&count, &auto); err != nil {
+			t.Fatal(err)
+		}
+		return count, auto
+	}
+	pre := newRoom("pre-switch")
+	// A spawn refused for another reason (a dispatcher may not spawn a dispatcher) leaves no membership behind.
+	if err := spawn(dispatcherID, pre.ID, "dispatcher", "shared_refused"); !errors.Is(err, ErrTeamFlowRule) {
+		t.Fatalf("dispatcher spawned a dispatcher: %v", err)
+	}
+	if count, _ := members(pre.ID, dispatcherID); count != 0 {
+		t.Fatalf("a refused spawn joined the dispatcher: %d", count)
+	}
+	// A spawn that goes through joins it.
+	if err := spawn(dispatcherID, pre.ID, "worker", "shared_worker"); err != nil {
+		t.Fatal(err)
+	}
+	if count, _ := members(pre.ID, dispatcherID); count != 1 {
+		t.Fatalf("dispatcher not joined by its spawn: %d", count)
+	}
+	// A quiet (auto) membership stays quiet when the member spawns there again.
+	if _, err := f.s.db.Exec(`UPDATE room_member SET auto=1 WHERE room_id=? AND member_kind='agent' AND member_id=?`, pre.ID, dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	if err := spawn(dispatcherID, pre.ID, "worker", "shared_worker2"); err != nil {
+		t.Fatal(err)
+	}
+	if count, auto := members(pre.ID, dispatcherID); count != 1 || auto != 1 {
+		t.Fatalf("spawning changed a quiet membership: count=%d auto=%d", count, auto)
+	}
+	// The lead may close such a room without joining it, and a spawn of its own is refused without a membership either.
+	if err := spawn(leader.ID, pre.ID, "worker", "shared_lead_worker"); !errors.Is(err, ErrTeamFlowRule) {
+		t.Fatalf("leader spawned a worker in B: %v", err)
+	}
+	// (A room holding the dispatcher's workers stays the dispatcher's to stop, so the lead closes an empty one.)
+	empty := newRoom("empty")
+	before, _ := members(empty.ID, leader.ID)
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, _, err := tx.CloseTaskRoomAsTool(empty.ID, leader.ID, empty.LifecycleRev, true)
+		return err
+	}); err != nil {
+		t.Fatalf("lead close of a task room under home: %v", err)
+	}
+	if after, _ := members(empty.ID, leader.ID); after != before {
+		t.Fatalf("lead close changed its membership: %d -> %d", before, after)
+	}
+}

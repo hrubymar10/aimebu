@@ -141,8 +141,11 @@ Projects, rooms, people
   rooms and workers a leader started before a switch to this flow stay its to
   close and stop. A flow coordinator may close any open task room directly under
   the home room or a flow's `general` room, member or not, so rooms made before a
-  switch need no dispatcher membership; acting on such a room (closing it, or
-  `spawn_agent` into it) also joins the coordinator to it, so it can brief there. No agent can close the home room or a flow's
+  switch need no dispatcher membership; so may the project lead, which the flow's
+  join rules keep out of task rooms and which is not joined. Acting on such a
+  room (closing it, or a `spawn_agent` that succeeds into it) also joins the
+  dispatcher to it, so it can brief there; a refused spawn joins nothing, and an
+  existing membership, quiet or not, is left as it is. No agent can close the home room or a flow's
   `general`, `routing` or `advice` room (409 `home_room` / `flow_room`). A
   `spawn_agent` with tool and model but no variant is refused with "add variant
   (e.g. docker)". In flows A and B the leader belongs

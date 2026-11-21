@@ -54,6 +54,12 @@ assert.equal(tree.sections[0].children[0].unread, 3);
 assert.equal(tree.sections[0].unread, 0, 'an open project row does not add what a folded child already shows');
 assert.equal(Array.from(tree.collapsible).join(), 'home', 'only project rows take part in the first-seen folding');
 
+// A folded row adds every descendant's unread, whatever each one's own fold state: home folded with general expanded still counts the task under it.
+tree = treeOf(state([home, room('gen', 'a', { parent_id: 'home', unread_count: 1 }), room('deep', 'a', { parent_id: 'gen', unread_count: 3 }), room('deeper', 'a', { parent_id: 'deep', unread_count: 5 })], { collapsed: new Set(['home']) }));
+assert.equal(tree.sections[0].unread, 9, 'a folded home counts all of its descendants');
+assert.equal(tree.sections[0].children[0].folded, false);
+assert.equal(tree.sections[0].children[0].unread, 1, 'an expanded general shows its own count only');
+
 // A folded parent adds its children's unread to itself; the active room counts for nothing.
 tree = treeOf(state([home, room('child', 'a', { parent_id: 'home', unread_count: 2 })], { collapsed: new Set(['home']) }));
 assert.equal(tree.sections[0].folded, true);
