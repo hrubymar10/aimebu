@@ -53,8 +53,8 @@ func (c *Client) noteActiveTurn(agentID string, turn activeTurn) {
 	c.activeTurns[agentID] = turn
 }
 
-// handleTurnInterrupt applies a turn_interrupt frame and says what it did. An interrupt of a turn the agent's stop is already ending is "ok"
-// and stays a stop. A repeat for the same turn is "ok" and signals nothing again.
+// handleTurnInterrupt applies a turn_interrupt frame and says what it did. An interrupt of a turn the agent's stop (or the supervisor's
+// shutdown) is already ending is "ok" and stays a stop. A repeat for the same turn is "ok" and signals nothing again.
 func (c *Client) handleTurnInterrupt(frame protocol.Frame) string {
 	c.mu.Lock()
 	turnID := c.active[frame.AgentID]
@@ -67,7 +67,9 @@ func (c *Client) handleTurnInterrupt(frame protocol.Frame) string {
 		c.mu.Unlock()
 		return "unsupported_mode"
 	}
-	if c.desired[frame.AgentID].Desired == "stopped" || c.stopping {
+	// A supervisor that is only retiring (it takes no new work and exits once idle) still cuts a turn: that is how the server bounds its
+	// drain. One that is shutting down is ending every turn already.
+	if c.desired[frame.AgentID].Desired == "stopped" || c.shutdownRequested.Load() {
 		c.mu.Unlock()
 		return "ok"
 	}

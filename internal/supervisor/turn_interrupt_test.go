@@ -159,10 +159,23 @@ type terminableTurn struct {
 	confirms   bool // what Terminate answers
 	termCode   int
 	terminated int
+	told       chan struct{} // closed when the process was told to end
+	toldOnce   sync.Once
+}
+
+func (t *terminableTurn) cancelled() chan struct{} {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.told == nil {
+		t.told = make(chan struct{})
+	}
+	return t.told
 }
 
 func (t *terminableTurn) Events() <-chan adapter.Event { return t.events }
 func (t *terminableTurn) end(code int) {
+	told := t.cancelled()
+	t.toldOnce.Do(func() { close(told) })
 	t.mu.Lock()
 	if t.ended {
 		t.mu.Unlock()
@@ -336,5 +349,55 @@ func TestTurnInterruptFrameIsAnsweredOverTheConnection(t *testing.T) {
 	case <-finished:
 	case <-time.After(waitGuard):
 		t.Fatal("supervisor did not stop")
+	}
+}
+
+// A supervisor that was asked to retire at idle takes no new work, but still cuts a turn it is told to: the server bounds its drain that
+// way. A command outside a turn is not part of that, and keeps the supervisor up after the turn is gone.
+func TestRetiringSupervisorInterruptsATurnAndStaysUpForItsCommand(t *testing.T) {
+	client, journal, done := interruptClient(t, hangingTurn(t, adapter.ModeNormal), activeTurn{mode: adapter.ModeNormal})
+	if _, err := journal.RecordCommandStart(t.Context(), CommandStartRecord{JobID: "job_long", AgentID: "agent", Pid: 1, Cmd: "sleep", LogPath: "log"}); err != nil {
+		t.Fatal(err)
+	}
+	client.retireRequested.Store(true)
+	client.mu.Lock()
+	client.stopping = true
+	client.mu.Unlock()
+	if result := client.handleTurnInterrupt(interruptFrame()); result != "ok" {
+		t.Fatalf("result=%q", result)
+	}
+	waitEnded(t, done)
+	if exit := pendingExit(t, journal); !exit.Interrupted || exit.CancelIntent {
+		t.Fatalf("exit=%+v", exit)
+	}
+	if !client.hasActiveWork() {
+		t.Fatal("the retiring supervisor would exit while its command still runs")
+	}
+	if err := journal.RecordCommandExit(t.Context(), protocol.CommandExit{JobID: "job_long", ExitCode: new(int)}); err != nil {
+		t.Fatal(err)
+	}
+	if client.hasActiveWork() {
+		t.Fatal("the supervisor is held after its command ended")
+	}
+}
+
+// A supervisor that is shutting down ends every turn itself: an interrupt then changes nothing, and the exit stays the shutdown's cancel.
+func TestShutdownWinsOverTurnInterrupt(t *testing.T) {
+	gate := make(chan struct{})
+	turn := &terminableTurn{events: make(chan adapter.Event), done: make(chan struct{}), gate: gate}
+	client, journal, done := interruptClient(t, turn, activeTurn{mode: adapter.ModeNormal})
+	drained := make(chan error, 1)
+	go func() { drained <- client.StopAcceptingAndDrain(t.Context()) }()
+	<-turn.cancelled()
+	if result := client.handleTurnInterrupt(interruptFrame()); result != "ok" {
+		t.Fatalf("result=%q", result)
+	}
+	close(gate)
+	waitEnded(t, done)
+	if err := <-drained; err != nil {
+		t.Fatal(err)
+	}
+	if exit := pendingExit(t, journal); !exit.CancelIntent || exit.Interrupted {
+		t.Fatalf("exit=%+v", exit)
 	}
 }
