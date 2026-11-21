@@ -839,13 +839,13 @@ processes are never on one session.
   returns, the wrapper's session cleanup runs and it exits 0), or, with that capability, a
   terminate: the wrapper traps TERM, ends the session in the container, waits for it and only then
   exits 128+signal, so exactly 143 after our SIGTERM. Any other status, a kill, or no capability
-  is *unconfirmed*. The supervisor retries the end periodically and on the next delivery, backing off as the retries fail, twice as long
-  each time up to about five minutes; only the first failure reports the uncertainty (the release says so once more), so a slot
+  is *unconfirmed*. The supervisor retries the end periodically, backing off as the retries fail, twice as long
+  each time up to about five minutes; a stop or a delivery that finds the slot stuck wakes the retry at once, so a process that has recovered is confirmed without waiting out the backoff; only the first failure reports the uncertainty (the release says so once more), so a slot
   nothing can settle neither spins nor fills the log. While the
   host wrapper is alive, no replacement starts on the session and stop ack and key drop wait. If the
   wrapper has been reaped but its container end remains unconfirmed, the session stays quarantined
-  for two minutes while kill is retried; it is released at the first background retry after the two
-  minutes, which the backoff makes a little later than the deadline itself. The supervisor then
+  for two minutes while kill is retried; a timer at the quarantine's end wakes the watcher, so it is released at that
+  deadline and not at the next backoff step. The supervisor then
   reports the uncertainty once and releases the session; the harness's session heartbeat cleans up a
   process left in the container. The release report is a warning, and there is none at all when the
   end that stuck the slot was a planned one (the agent was stopped, or the supervisor is stopping):

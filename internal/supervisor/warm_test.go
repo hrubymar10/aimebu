@@ -1545,6 +1545,32 @@ func TestWarmContainerSideNeverConfirmedByTime(t *testing.T) {
 	eventually(t, "the stop completing once the end is confirmed", func() bool { return h.c.keyOf("agt_a") == "" })
 }
 
+// A stop (or a delivery) that finds a slot stuck wakes the background watcher, so a process that has since been confirmed gone is released at
+// once and not at the next backoff step.
+func TestWarmRetireNudgesTheStuckWatcher(t *testing.T) {
+	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+	warmRetryEvery, warmStuckQuarantine = time.Hour, time.Hour
+	defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	if h.c.retireWarm("agt_a", "test") {
+		t.Fatal("an unconfirmed container end was treated as confirmed")
+	}
+	time.Sleep(200 * time.Millisecond)   // the watcher's wake on the host exit has retried and failed; its next try is an hour away
+	h.f.sessions[0].lingers.Store(false) // the end is now confirmable
+	if h.c.retireWarm("agt_a", "test again") {
+		t.Fatal("the retry is the watcher's: the caller must not be told it is confirmed yet")
+	}
+	slot := h.c.pool().slot("agt_a")
+	eventually(t, "the nudged watcher confirming the end", func() bool {
+		slot.mu.Lock()
+		defer slot.mu.Unlock()
+		return slot.stuck == nil
+	})
+}
+
 func TestWarmStuckProcessExitsLaterAndNextTurnStarts(t *testing.T) {
 	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
 	warmRetryEvery, warmStuckQuarantine = 10*time.Millisecond, 30*time.Millisecond

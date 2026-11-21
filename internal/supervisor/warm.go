@@ -114,9 +114,10 @@ type warmEntry struct {
 	unconfirmedReported atomic.Bool   // retries must not report the same uncertain end repeatedly
 	quarantineReported  atomic.Bool   // a still-live process past the quarantine is reported once
 	stuckAt             time.Time
-	stuckReason         string // why the process was ended and not confirmed gone (the reason its slot went stuck)
-	plannedEnd          bool   // the end was decided by a stop of the agent or the supervisor's shutdown, whatever reason text the path gave (guarded by the slot's lock)
-	kept                bool   // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
+	stuckNudge          chan struct{} // wakes the stuck watcher early (buffered, one pending): a stop or delivery that finds the slot stuck asks for a retry now (guarded by the slot's lock)
+	stuckReason         string        // why the process was ended and not confirmed gone (the reason its slot went stuck)
+	plannedEnd          bool          // the end was decided by a stop of the agent or the supervisor's shutdown, whatever reason text the path gave (guarded by the slot's lock)
+	kept                bool          // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
 }
 
 // swapWriter is the stderr sink of a warm process: it writes to the output log of the turn that is running, and to nothing between turns (a
@@ -322,6 +323,7 @@ func (c *Client) finish(slot *warmSlot, entry *warmEntry, reason string, grace t
 		slot.stuck = entry
 		entry.stuckAt = time.Now()
 		entry.stuckReason = reason
+		entry.stuckNudge = make(chan struct{}, 1)
 		pool := c.pool()
 		telemetry.Go(context.Background(), func() { c.watchStuck(pool, slot, entry) })
 	}
@@ -336,9 +338,18 @@ var warmStuckQuarantine = 2 * time.Minute
 func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
 	wait := warmRetryEvery
 	exited := entry.session.Exited()
+	// The quarantine's own deadline wakes the watcher too, so a release is not left to the backoff (up to five minutes late).
+	quarantine := time.NewTimer(time.Until(entry.stuckAt.Add(warmStuckQuarantine)))
+	defer quarantine.Stop()
+	quarantineDone := quarantine.C
 	for {
 		timer := time.NewTimer(wait)
 		select {
+		case <-entry.stuckNudge:
+			timer.Stop()
+		case <-quarantineDone:
+			quarantineDone = nil
+			timer.Stop()
 		case <-pool.ctx.Done():
 			timer.Stop()
 			return
@@ -395,6 +406,18 @@ var warmStuckRetryMax = 5 * time.Minute
 // a start that could not be tracked) is worth the report.
 func plannedWarmEnd(reason string) bool {
 	return reason == "the agent was stopped" || reason == "the supervisor is stopping"
+}
+
+// nudgeStuck asks the stuck watcher to retry now, so a process that has since recovered is confirmed at once and not at the next backoff step.
+// The caller holds slot.mu.
+func nudgeStuck(slot *warmSlot) {
+	if slot.stuck == nil || slot.stuck.stuckNudge == nil {
+		return
+	}
+	select {
+	case slot.stuck.stuckNudge <- struct{}{}:
+	default:
+	}
 }
 
 // clearStuck makes only cheap checks so a delivery does not wait behind a
@@ -463,6 +486,9 @@ func (c *Client) retireWarmAgent(agentID, reason string, killBusy bool) bool {
 // retireSlot is retireWarmAgent with the slot's lock held.
 func (c *Client) retireSlot(slot *warmSlot, reason string, killBusy bool, grace time.Duration) bool {
 	ok := c.clearStuck(slot)
+	if !ok {
+		nudgeStuck(slot)
+	}
 	if slot.busy != nil {
 		slot.busy.retire = true
 		if killBusy && !c.finish(slot, slot.busy, reason, 0) {
@@ -663,10 +689,11 @@ var warmRetryEvery = 2 * time.Second
 // stopWarmUntilGone keeps trying to end a stopped agent's warm process, and runs then once it is confirmed gone (the stop's ack and the key's
 // drop): they do not happen while a process of the agent may still be alive.
 func (c *Client) stopWarmUntilGone(agentID string, then func()) {
+	every := warmRetryEvery // read once, before the goroutine: the watcher can release the slot, and a test reset the interval, while this still sleeps
 	go func() {
 		defer telemetry.Recover(context.Background())
 		for {
-			time.Sleep(warmRetryEvery)
+			time.Sleep(every)
 			c.mu.Lock()
 			stillStopped := c.desired[agentID].Desired == "stopped"
 			c.mu.Unlock()
@@ -920,6 +947,7 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 	slot.mu.Lock()
 	defer slot.mu.Unlock()
 	if !c.clearStuck(slot) {
+		nudgeStuck(slot)
 		return nil, errWarmUnconfirmed
 	}
 	now := pool.now()
