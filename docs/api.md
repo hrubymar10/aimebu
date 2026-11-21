@@ -523,7 +523,10 @@ Owner-only Settings routes use CSRF-protected POST requests:
 `/api/usages/providers` changes a provider's enabled state;
 `/api/usages/settings` changes refresh interval, percent display, provider order,
 `alert_warning_remaining` and `alert_critical_remaining` (20 and 10 by default;
-1–99, critical below warning), or the
+1–99, critical below warning), the three opt-in alert toggles
+`alert_pace_enabled`, `alert_reset_notice_enabled` and `alert_expiry_enabled`
+(all off by default, server-wide once on; shown only in the usages-ports
+experiment's B), or the
 `token_auto_refresh` setting (legacy alias `claude_auto_refresh`), `warmup_mode`
 (`off`, `force`, `scheduled`, `smart`) and multiline `warmup_schedule`; see
 [usages](usages.md#auto-refresh-tokens-account-maintenance) and
@@ -543,11 +546,24 @@ reset time; it carries no email or credential. The owner alone can open the
 Usages view from that entry. A critical alert supersedes a warning for the
 same window, and each threshold fires once per reset cycle. The server stores
 this dedupe state in private `usages/alerts.json` rather than SQLite. The
-alert closes when its reset time passes, its account disappears, or the provider
-is disabled. The Inbox card has a dismiss control; dismissing does not rearm
+alert closes when its reset time passes, its account disappears, or the
+provider is disabled. The Inbox card has a dismiss control; dismissing does not rearm
 that threshold in the same cycle. A renamed stored profile keeps its opaque
 account identity. Invalid saved thresholds fall back to 20/10 on load while
 other saved usage settings and credentials remain intact.
+Behind the three opt-in alert toggles, a `usage_alert` row can also carry a
+`pace` tier (one per risk episode while a fresh Codex or Claude Code session
+or weekly window is projected to run out before its reset, re-arming only
+after recovery), a `reset` tier (one note per window and reset cycle, closed
+by the next cycle) or an `expiring`/`expired` tier (from the same expiry data
+as the Usages token-expiry badge, one per account and expiry time, replaced
+by the stronger wording once the expiry passes; no reset time, closed when
+the credential is renewed). A pace alert's question names the window and its
+reset time; a reset notice says the allowance started over; an expiry alert
+says when the token expires or that it has expired, and names the CLI to run.
+An active limit guard hides the threshold and pace rows of its tool, never
+the reset or expiry rows; each toggle going off closes the rows its alerts
+had opened.
 
 Project responses set `repo_url` to `null` when absent. Message responses
 expose `targets` as a JSON array and omit the raw `targets_json` column.

@@ -69,7 +69,7 @@ func usageAlertQuestion(alert usages.UsageAlert) string {
 		return fmt.Sprintf("%s · %s: projected to run out%s; %.1f%% remaining.", who, alert.Window, eta, alert.Remaining)
 	case "reset":
 		return fmt.Sprintf("%s · %s: the window reset; a fresh allowance is available.", who, alert.Window)
-	case "expiry":
+	case "expiry", "expiring", "expired":
 		expires := "no expiry reported"
 		if alert.ExpiresAt != nil {
 			expires = alert.ExpiresAt.UTC().Format("2 Jan 2006 15:04 MST")
@@ -77,6 +77,9 @@ func usageAlertQuestion(alert usages.UsageAlert) string {
 		tool := alert.Provider
 		if tool == "claude-code" {
 			tool = "claude"
+		}
+		if alert.Tier == "expired" {
+			return fmt.Sprintf("%s: the access token has expired. Run %s to renew it.", who, tool)
 		}
 		return fmt.Sprintf("%s: the access token expires %s. Run %s to renew it.", who, expires, tool)
 	default:

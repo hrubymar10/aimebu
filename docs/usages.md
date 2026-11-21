@@ -128,28 +128,30 @@ not lost; a literal `null` is also refused. Fix the field in the file first.
 
 Settings → Server → Accounts & usage offers three opt-in alert toggles behind
 the `usages-ports` experiment's B (the A/B pill in the top bar; A is the
-current state and shows none of them). Each is off by default, posts its own
-change to `POST /api/usages/settings`, and is stored in `usages/config.json`
+current state and hides the toggles, though any alert an earlier B enabled
+keeps firing). Each is off by default, posts its own change to
+`POST /api/usages/settings`, and is stored in `usages/config.json`
 (`alert_pace_enabled`, `alert_reset_notice_enabled`, `alert_expiry_enabled`).
-An alert they have opened is closed again when its toggle goes off; in A they
-never fire.
+The toggles are shown only in B; the alerts themselves are server-wide
+settings, so once enabled they apply to the whole server regardless of the
+pill, and turning a toggle off closes what it had opened.
 
 - **Predictive pace alerts**: when a fresh Codex or Claude Code session or
   weekly window is projected to run out before it resets (the same projection
   that draws "Runs out in …", from `pace.eta_seconds`), the Inbox gets one
   notice per risk episode, with the window, the remaining share and the reset
   time. The episode closes when the window is again projected to last until
-  its reset, and only then can a later episode raise a fresh notice; a new
-  reset cycle closes and re-arms it too.
+  its reset (or the toggle goes off), and only then can a later episode raise
+  a fresh notice; a new reset cycle closes and re-arms it too.
 - **Reset notices**: one Inbox note per provider, profile and window when a
   new reset cycle is observed (never for the very first observation). The
   next cycle's observation closes it, as does dismissal.
 - **Credential expiry alerts**: from the same expiry data that drives the
   Usages token-expiry badge, a notice when a Claude or Codex credential is
   within its expiry alert window (15 minutes) or has expired — one per
-  account and expiry time. A renewed credential closes the notice, and a
-  later decay raises a fresh one; the notice carries no reset time, so it
-  stays open until then.
+  account and expiry time, wording itself "expired" once the expiry passes.
+  A renewed credential closes the notice, and a later decay raises a fresh
+  one; the notice carries no reset time, so it stays open until then.
 
 All three share the remaining-quota alerts' storage and lifecycle otherwise:
 private `usages/alerts.json` (0600, hashed accounts), the owner-and-admin
@@ -160,7 +162,8 @@ notice or the expiry alert.
 In B the Usages view itself changes, in A it does not: usage and cost figures
 draw with fixed-width digits (`font-variant-numeric: tabular-nums`), the
 header actions gain a privacy toggle that masks account emails and profile
-names in the view (kept in this browser, like the group-by choice), and the
+names in the view (kept in this browser, like the group-by choice; it masks
+only in B — A keeps the plain view whatever the toggle says), and the
 whole view draws at a compact density. Switching the pill switches all of
 that live, without a reload.
 

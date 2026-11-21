@@ -127,6 +127,19 @@ async function main() {
       assert.equal(await page.evaluate(() => document.querySelector('.usages-b-privacy').getAttribute('aria-label')), 'Mask account names and emails');
       await page.close();
     }
+    // Masking applies only in B: a saved privacy choice leaves A's view plain.
+    {
+      const page = await mount({ variant: 'b' });
+      await click(page, '.usages-b-privacy');
+      await page.waitForFunction(selector => document.querySelector(`${selector} .switcher-tile-name`).textContent !== 'main', {}, '.usages-b-tile[data-provider="codex"]');
+      await page.evaluate(() => window.__ui.chooseVariant('usages-ports', 'a'));
+      await page.waitForFunction(() => !document.querySelector('.usages-b-privacy'));
+      assert.equal(await page.evaluate(() => document.querySelector('.usages-b-tile[data-provider="codex"] .switcher-tile-name').textContent), 'main', 'A keeps the plain view whatever the toggle says');
+      // And B masks again when it comes back, from the remembered choice.
+      await page.evaluate(() => window.__ui.chooseVariant('usages-ports', 'b'));
+      await page.waitForFunction(selector => document.querySelector(`${selector} .switcher-tile-name`).textContent !== 'main', {}, '.usages-b-tile[data-provider="codex"]');
+      await page.close();
+    }
     assert.deepEqual(errors, [], 'no page errors');
     console.log('usages ports page tests passed');
   } finally {

@@ -95,7 +95,7 @@ func NewAlertTracker(root string, now ...func() time.Time) (*AlertTracker, error
 		t.recoverCorrupt(err)
 		return t, nil
 	}
-	if t.state.Windows == nil || t.state.Alerts == nil {
+	if t.state.Windows == nil || t.state.Alerts == nil || t.state.Expiry == nil {
 		t.recoverCorrupt(errors.New("missing state"))
 	}
 	return t, nil
@@ -116,12 +116,15 @@ func (t *AlertTracker) recoverCorrupt(reason error) {
 func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	before := alertState{Windows: make(map[string]alertWindow, len(t.state.Windows)), Alerts: make(map[string]UsageAlert, len(t.state.Alerts))}
+	before := alertState{Windows: make(map[string]alertWindow, len(t.state.Windows)), Alerts: make(map[string]UsageAlert, len(t.state.Alerts)), Expiry: make(map[string]string, len(t.state.Expiry))}
 	for key, window := range t.state.Windows {
 		before.Windows[key] = window
 	}
 	for id, alert := range t.state.Alerts {
 		before.Alerts[id] = alert
+	}
+	for key, stamp := range t.state.Expiry {
+		before.Expiry[key] = stamp
 	}
 	warn, critical := snapshot.Settings.AlertWarningRemaining, snapshot.Settings.AlertCriticalRemaining
 	if warn == 0 && critical == 0 {
@@ -168,20 +171,27 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 				if level, _ := credentialLevel(profile.ExpiresAt, t.clock()); level == TargetLevelExpiring || level == TargetLevelExpired {
 					if stamped := profile.ExpiresAt.UTC().Format(time.RFC3339); stamp != stamped {
 						if seen {
-							t.closeTier(expiryBase, "expiry") // the old expiry's notice is obsolete
+							t.closeExpiry(expiryBase) // the old expiry's notice is obsolete
 						}
 						t.state.Expiry[expiryBase] = stamped
+						t.addExpiryAlert(expiryBase, provider.ProviderName, profile.ProfileName, *profile.ExpiresAt, level)
+						visibleChanged, changed = true, true
+					} else if openTier(t.state.Alerts, expiryBase) != level {
+						// Same credential and expiry as the open notice, but
+						// its wording moved on (expiring became expired):
+						// replace it with the stronger state.
+						t.closeExpiry(expiryBase)
 						t.addExpiryAlert(expiryBase, provider.ProviderName, profile.ProfileName, *profile.ExpiresAt, level)
 						visibleChanged, changed = true, true
 					}
 				} else if seen {
 					delete(t.state.Expiry, expiryBase)
-					t.closeTier(expiryBase, "expiry")
+					t.closeExpiry(expiryBase)
 					visibleChanged, changed = true, true
 				}
 			} else if seen {
 				delete(t.state.Expiry, expiryBase)
-				t.closeTier(expiryBase, "expiry")
+				t.closeExpiry(expiryBase)
 				visibleChanged, changed = true, true
 			}
 			if s, seen := t.state.Expiry[expiryBase]; seen {
@@ -262,7 +272,9 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 						t.addAlert(base, cycle, profile.AlertCredential, provider.ProviderName, profile.ProfileName, window, "pace", remaining)
 						visibleChanged = true
 					}
-				case state.Pace:
+				case state.Pace && window.Pace != nil && window.Pace.EtaSeconds == nil:
+					// Recovery is observed inline: the window is again
+					// projected to last until its reset.
 					t.closeTier(base, "pace")
 					state.Pace = false
 					visibleChanged, changed = true, true
@@ -296,6 +308,15 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 	}
 	// A toggle turned off closes what it had opened, so the opt-in alerts
 	// never outlive their setting.
+	if !paceOn {
+		for id, alert := range t.state.Alerts {
+			if alert.Open && alert.Tier == "pace" {
+				alert.Open = false
+				t.state.Alerts[id] = alert
+				visibleChanged, changed = true, true
+			}
+		}
+	}
 	if !resetOn {
 		for id, alert := range t.state.Alerts {
 			if alert.Open && alert.Tier == "reset" {
@@ -311,7 +332,7 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 			continue
 		}
 		name, present := "", false
-		if alert.Tier == "expiry" {
+		if alert.Tier == "expiry" || alert.Tier == "expiring" || alert.Tier == "expired" {
 			name, present = liveAccounts[alert.BaseKey]
 		} else {
 			name, present = liveBases[alert.BaseKey]
@@ -333,6 +354,9 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 		}
 		if err := t.save(); err != nil {
 			t.state = before
+			if t.state.Expiry == nil { // before.Expiry is always a map, but a state restored from disk without one stays nil
+				t.state.Expiry = map[string]string{}
+			}
 			return false, err
 		}
 	}
@@ -371,10 +395,13 @@ func (t *AlertTracker) addAlert(base, cycle, credential, provider, profile strin
 // addExpiryAlert raises the credential-expiry notice: one per credential and
 // expiry time. It carries no reset time, so it stays open until the
 // credential is renewed, the account disappears or it is dismissed.
+// addExpiryAlert raises the credential-expiry notice: one per credential and
+// expiry time. It carries no reset time, so it stays open until the
+// credential is renewed, the account disappears or it is dismissed.
 func (t *AlertTracker) addExpiryAlert(base, provider, profile string, expires time.Time, level string) {
-	id := "usage_alert_" + alertHash(base + "\x00" + expires.UTC().Format(time.RFC3339) + "\x00" + level)[:24]
+	id := "usage_alert_" + alertHash(base + "\x00" + expires.UTC().Format(time.RFC3339))[:24]
 	expiresAt := expires
-	t.state.Alerts[id] = UsageAlert{ID: id, Provider: provider, Profile: profile, Tier: "expiry",
+	t.state.Alerts[id] = UsageAlert{ID: id, Provider: provider, Profile: profile, Tier: level,
 		ExpiresAt: &expiresAt, CreatedAt: t.clock().UTC(), Open: true, BaseKey: base}
 }
 
@@ -386,6 +413,25 @@ func (t *AlertTracker) closeTier(base, tier string) {
 			t.state.Alerts[id] = alert
 		}
 	}
+}
+
+// closeExpiry closes every open expiry notice of one base, whatever its
+// wording (expiry, expiring, expired).
+func (t *AlertTracker) closeExpiry(base string) {
+	for id, alert := range t.state.Alerts {
+		if alert.BaseKey == base && alert.Open && (alert.Tier == "expiry" || alert.Tier == "expiring" || alert.Tier == "expired") {
+			alert.Open = false
+			t.state.Alerts[id] = alert
+		}
+	}
+}
+func openTier(alerts map[string]UsageAlert, base string) string {
+	for _, alert := range alerts {
+		if alert.BaseKey == base && alert.Open && (alert.Tier == "expiry" || alert.Tier == "expiring" || alert.Tier == "expired") {
+			return alert.Tier
+		}
+	}
+	return ""
 }
 
 // paceAlertWindow says whether a window's pace can raise the predictive pace

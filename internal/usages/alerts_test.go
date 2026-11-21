@@ -521,7 +521,7 @@ func TestExpiryAlertOncePerCredentialUntilRenewed(t *testing.T) {
 	}
 	observe(true)
 	open := tracker.OpenAlerts()
-	if len(open) != 1 || open[0].Tier != "expiry" || open[0].ExpiresAt == nil || !open[0].ExpiresAt.Equal(expires) {
+	if len(open) != 1 || open[0].Tier != "expiring" || open[0].ExpiresAt == nil || !open[0].ExpiresAt.Equal(expires) {
 		t.Fatalf("expiry alert: %+v", open)
 	}
 	observe(false) // one notice per credential and expiry
@@ -548,5 +548,94 @@ func TestExpiryAlertOncePerCredentialUntilRenewed(t *testing.T) {
 	observe(true)
 	if got := tracker.OpenAlerts(); len(got) != 0 {
 		t.Fatalf("the expiry toggle must close its notices: %+v", got)
+	}
+}
+
+func TestExpiryAlertSurvivesASaveFailure(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	tracker, err := NewAlertTracker(root, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := now.Add(10 * time.Minute)
+	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1"}}}}}
+	response.Settings.AlertExpiryEnabled = true
+	locked := filepath.Join(root, "alerts.json")
+	if err := os.Mkdir(locked, 0700); err != nil { // a directory where the state file must be written: every save fails
+		t.Fatal(err)
+	}
+	if changed, err := tracker.Observe(response); err == nil {
+		t.Fatalf("the failing save must surface: changed=%v", changed)
+	}
+	if got := len(tracker.OpenAlerts()); got != 0 {
+		t.Fatalf("nothing is open while the save failed: %+v", tracker.OpenAlerts())
+	}
+	// The save failure rolled the state back; observing the same expiry again
+	// must not panic on a nil Expiry map.
+	os.Remove(locked)
+	if _, err := tracker.Observe(response); err != nil {
+		t.Fatal(err)
+	}
+	open := tracker.OpenAlerts()
+	if len(open) != 1 || open[0].Tier != "expiring" {
+		t.Fatalf("the expiry alert survived the save failure: %+v", open)
+	}
+}
+
+func TestAlertTogglesCloseOpenAlertsWithoutARefresh(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	etaSeconds := 2 * 3600.0
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", LastRefreshAt: &now,
+			Windows: []Window{{Key: "session", PercentUsed: 70, ResetAt: &reset,
+				Pace: &Pace{ExpectedPercent: 40, DeltaPercent: 30, State: "deficit", EtaSeconds: &etaSeconds}}}}}}}}
+	response.Settings.AlertPaceEnabled = true
+	if changed, err := tracker.Observe(response); err != nil || !changed {
+		t.Fatalf("initial: %v %v", changed, err)
+	}
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "pace" {
+		t.Fatalf("pace alert: %+v", got)
+	}
+	// Off without advancing LastRefreshAt: the open pace alerts close at once.
+	response.Settings.AlertPaceEnabled = false
+	if changed, err := tracker.Observe(response); err != nil || !changed {
+		t.Fatalf("toggling off must be a visible change: %v %v", changed, err)
+	}
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("the pace toggle must close its alerts at once: %+v", got)
+	}
+}
+
+func TestExpiryAlertWordTurnsToExpired(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := now.Add(10 * time.Minute)
+	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1"}}}}}
+	response.Settings.AlertExpiryEnabled = true
+	if changed, err := tracker.Observe(response); err != nil || !changed {
+		t.Fatalf("initial: %v %v", changed, err)
+	}
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "expiring" {
+		t.Fatalf("expiring: %+v", got)
+	}
+	// The clock passes the expiry without a new snapshot: the wording turns to expired.
+	now = now.Add(11 * time.Minute)
+	if changed, err := tracker.Observe(response); err != nil || !changed {
+		t.Fatalf("expired: %v %v", changed, err)
+	}
+	got := tracker.OpenAlerts()
+	if len(got) != 1 || got[0].Tier != "expired" {
+		t.Fatalf("the notice must say expired once the expiry passed: %+v", got)
 	}
 }

@@ -699,3 +699,46 @@ func TestMistralLoginRedirectReportsAuthMissing(t *testing.T) {
 		})
 	}
 }
+
+func TestAlertTogglesPersistOnAndOff(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	if _, err := store.UpdateConfig(func(cfg *Config) error {
+		cfg.AlertPaceEnabled, cfg.AlertResetNoticeEnabled, cfg.AlertExpiryEnabled = true, true, true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"alert_pace_enabled": true`, `"alert_reset_notice_enabled": true`, `"alert_expiry_enabled": true`} {
+		if !strings.Contains(string(raw), key) {
+			t.Fatalf("an on toggle must be stored: %s in %s", key, raw)
+		}
+	}
+	// Off again: the saved true must not survive the merge.
+	if _, err := store.UpdateConfig(func(cfg *Config) error {
+		cfg.AlertPaceEnabled, cfg.AlertResetNoticeEnabled, cfg.AlertExpiryEnabled = false, false, false
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(filepath.Join(root, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AlertPaceEnabled || cfg.AlertResetNoticeEnabled || cfg.AlertExpiryEnabled {
+		t.Fatalf("an off toggle must not stay on after a reload: %+v", cfg)
+	}
+	for _, key := range []string{`"alert_pace_enabled": false`, `"alert_reset_notice_enabled": false`, `"alert_expiry_enabled": false`} {
+		if !strings.Contains(string(raw), key) {
+			t.Fatalf("an off toggle must be stored: %s in %s", key, raw)
+		}
+	}
+}

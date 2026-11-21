@@ -30,13 +30,13 @@ type Config struct {
 	// AlertPaceEnabled turns on the predictive pace alert: one Inbox notice per
 	// risk episode when a session or weekly window is projected to run out
 	// before it resets. It re-arms only after recovery. Off by default.
-	AlertPaceEnabled bool `json:"alert_pace_enabled,omitempty"`
+	AlertPaceEnabled bool `json:"alert_pace_enabled"`
 	// AlertResetNoticeEnabled turns on the reset notice: an optional Inbox note
 	// when a window resets and its allowance starts over. Off by default.
-	AlertResetNoticeEnabled bool `json:"alert_reset_notice_enabled,omitempty"`
+	AlertResetNoticeEnabled bool `json:"alert_reset_notice_enabled"`
 	// AlertExpiryEnabled turns on the credential-expiry alert, from the same
 	// expiry data that drives the Usages token-expiry badge. Off by default.
-	AlertExpiryEnabled bool `json:"alert_expiry_enabled,omitempty"`
+	AlertExpiryEnabled bool `json:"alert_expiry_enabled"`
 	// TokenAutoRefresh is the "Auto-refresh tokens" setting: on, the server owns
 	// every refresh token (the token-copy model) and migrates each tool to it. It
 	// was `claude_auto_refresh` before v1 renamed it; the old key is still read
