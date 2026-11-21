@@ -4,7 +4,7 @@ import { agentLabel } from './sender-identity.js';
 // server's addressing order (internal/store/wake.go resolveMentionTargets): group tags win, then an
 // exact unique slug (agent slugs and human logins share one namespace), then an assigned role key;
 // `slug@<project>` selects an agent explicitly, the project being named by its id or by its name (a name only when it is a valid
-// mention qualifier, [a-z0-9_.-]+: any other name is offered and read by id). It is deliberately narrower than the server:
+// mention qualifier, [a-z0-9_.-]+, and no other same-named agent's project shares it: otherwise the id is offered and read). It is deliberately narrower than the server:
 // member-ID tokens are not recognised, so those mentions go unhighlighted.
 const GROUP_TAGS = [
   ['everyone', 'all members of this room'], ['all', 'alias for @everyone'], ['channel', 'all members of this room'],
@@ -35,16 +35,17 @@ export class MentionIndex {
     for (const card of this.cards) if (card.role_key) { const key = card.role_key.toLowerCase(); if (!this.roles.has(key)) this.roles.set(key, { emoji: card.role_emoji || '', slugs: [] }); this.roles.get(key).slugs.push(card.slug); }
   }
   get signature() { return JSON.stringify([this.me, this.projectID, this.humans, this.cards.map(card => [card.slug, card.role_key, this.qualifier(card)]), [...this.historical].sort()]); }
-  // The qualifier that tells same-named agents apart, per agent: its project's name when that is a valid qualifier, else its project's id
-  // (the room's project for a card that carries none).
+  // The qualifier that tells same-named agents apart, per agent: its project's name when that is a valid qualifier and no other agent of the
+  // same slug has a project of the same name, else its project's id (the room's project for a card that carries none).
   qualifier(card) {
-    const name = projectOf(card);
-    return QUALIFIER.test(name) ? name : String(card.project_id || this.projectID || '');
+    const name = projectOf(card), slug = String(card.slug).toLowerCase();
+    const shared = this.cards.filter(other => String(other.slug).toLowerCase() === slug && projectOf(other).toLowerCase() === name.toLowerCase()).length;
+    return QUALIFIER.test(name) && shared === 1 ? name : String(card.project_id || this.projectID || '');
   }
-  // Whether `slug@qualifier` names one of the room's agents: by its project's id or its name (whatever qualifier() offers is read back).
+  // Whether `slug@qualifier` names one of the room's agents: by what qualifier() offers or its project's id.
   qualified(slug, qualifier) {
     if (!qualifier) return false;
-    return this.cards.some(card => String(card.slug).toLowerCase() === slug && [this.qualifier(card), card.project_id || this.projectID, projectOf(card)].some(name => name && String(name).toLowerCase() === qualifier));
+    return this.cards.some(card => String(card.slug).toLowerCase() === slug && [this.qualifier(card), card.project_id || this.projectID].some(name => name && String(name).toLowerCase() === qualifier));
   }
   isSelf(token) { return !!this.me && token === this.me; }
   // A mention that opens a profile: a live agent of the room, or an author of its history whose agent record is gone.

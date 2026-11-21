@@ -21,29 +21,31 @@ type InboxEntry struct {
 	Evidence      string `json:"evidence,omitempty"`
 	// ResultText is what the harness said was wrong, as a sentence, when it said (Claude Code's error result); Evidence holds it inside the
 	// raw output. DefiniteFailure says the turn failed before it did anything, so Retry is safe and Resume cannot help.
-	ResultText        string                `json:"result_text,omitempty"`
-	DefiniteFailure   bool                  `json:"definite_failure,omitempty"`
-	StartFailure      bool                  `json:"start_failure,omitempty"`
-	DiagnosticReport  json.RawMessage       `json:"diagnostic_report,omitempty"`
-	RecoveryPhase     string                `json:"recovery_phase,omitempty"`
-	HeldReason        string                `json:"held_reason,omitempty"`
-	DeliveryError     string                `json:"delivery_error,omitempty"`
-	CandidatePreview  string                `json:"candidate_preview,omitempty"`
-	Kind              string                `json:"kind"`
-	CanDecide         bool                  `json:"can_decide"`
-	Question          string                `json:"question"`
-	Options           []string              `json:"options"`
-	FreeText          bool                  `json:"free_text"`
-	ProposedAnswers   []string              `json:"proposed_answers,omitempty"`
-	OpenQuestions     []answer.OpenQuestion `json:"open_questions,omitempty"`
-	State             string                `json:"state"`
-	Seen              bool                  `json:"seen"`
-	Rev               int64                 `json:"rev"`
-	CreatedAt         string                `json:"created_at"`
-	BoundaryPending   bool                  `json:"boundary_pending,omitempty"`
-	BoundaryMachine   string                `json:"boundary_machine,omitempty"`
-	BoundaryPath      string                `json:"boundary_path,omitempty"`
-	BoundaryRequester string                `json:"boundary_requester,omitempty"`
+	ResultText       string                `json:"result_text,omitempty"`
+	DefiniteFailure  bool                  `json:"definite_failure,omitempty"`
+	StartFailure     bool                  `json:"start_failure,omitempty"`
+	DiagnosticReport json.RawMessage       `json:"diagnostic_report,omitempty"`
+	RecoveryPhase    string                `json:"recovery_phase,omitempty"`
+	HeldReason       string                `json:"held_reason,omitempty"`
+	DeliveryError    string                `json:"delivery_error,omitempty"`
+	CandidatePreview string                `json:"candidate_preview,omitempty"`
+	Kind             string                `json:"kind"`
+	CanDecide        bool                  `json:"can_decide"`
+	Question         string                `json:"question"`
+	Options          []string              `json:"options"`
+	FreeText         bool                  `json:"free_text"`
+	ProposedAnswers  []string              `json:"proposed_answers,omitempty"`
+	OpenQuestions    []answer.OpenQuestion `json:"open_questions,omitempty"`
+	State            string                `json:"state"`
+	Seen             bool                  `json:"seen"`
+	// InboxHidden marks an attention item outside the home room: the chat still shows its controls, the Inbox view and the counts leave it out.
+	InboxHidden       bool   `json:"inbox_hidden,omitempty"`
+	Rev               int64  `json:"rev"`
+	CreatedAt         string `json:"created_at"`
+	BoundaryPending   bool   `json:"boundary_pending,omitempty"`
+	BoundaryMachine   string `json:"boundary_machine,omitempty"`
+	BoundaryPath      string `json:"boundary_path,omitempty"`
+	BoundaryRequester string `json:"boundary_requester,omitempty"`
 	// NoteID is the shared agent note an approval item asks about (see note_inbox.go); empty for every other item.
 	NoteID string `json:"note_id,omitempty"`
 }
@@ -69,17 +71,19 @@ type inboxAsk struct {
 const inboxFromSQL = `FROM inbox_item i JOIN room r ON r.id=i.room_id JOIN membership member ON member.project_id=i.project_id
         AND member.user_id=?`
 
+// An attention message (needs_attention, proposed answers, open questions; no structured ask) keeps its item in every room, and /api/inbox keeps
+// returning it (flagged inbox_hidden outside a home room), so the chat shows the card's live controls. Only the project's home room lists it
+// in the Inbox and counts it: a person who is in another room reads it there. attentionInbox marks such an item (options_json "attention");
+// a real ask, a recovery and the rest are never hidden, and an attention item stored before the mark was added stays listed until it settles.
+// inboxHiddenSQL is the test; inboxCountWhereSQL is the Inbox's own set, which every count and the seen-marking use.
+const inboxHiddenSQL = `(i.kind IN ('question','approval') AND r.kind<>'home' AND COALESCE(json_extract(i.options_json,'$.attention'),0)=1)`
+
 // A closed room's items never show: nothing in it can be acted on, and closing settles them (the usage kinds belong to the project, not the room).
 // A recovery still open there is one the settle pass left on purpose (a lost turn with no proof its process is gone): only a person can accept that
 // risk, so it stays visible.
-// An attention message (needs_attention, proposed answers, open questions; no structured ask) keeps its item in every room, so the chat shows the
-// card's live controls, but only the project's home room lists it in the Inbox and counts it: a person who is in another room reads it there.
-// attentionInbox marks such an item (options_json "attention"); a real ask, a recovery and the rest are listed wherever they come from, and an
-// attention item stored before the mark was added stays listed until it settles.
-const inboxHomeOnlySQL = `
-        AND NOT (i.kind IN ('question','approval') AND r.kind<>'home' AND COALESCE(json_extract(i.options_json,'$.attention'),0)=1)`
 const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
-        AND (r.lifecycle<>'closed' OR i.kind IN ('usage_info','usage_limit','recovery'))` + inboxHomeOnlySQL + inboxVisibleSQL
+        AND (r.lifecycle<>'closed' OR i.kind IN ('usage_info','usage_limit','recovery'))` + inboxVisibleSQL
+const inboxCountWhereSQL = inboxWhereSQL + ` AND NOT ` + inboxHiddenSQL
 const inboxSupersededWhereSQL = `WHERE i.state='superseded' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval') AND i.requester_kind='agent'` + inboxVisibleSQL
 const inboxVisibleSQL = `
 		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
@@ -130,7 +134,8 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 		COALESCE((SELECT b.canonical_path FROM boundary_pending b WHERE b.inbox_id=i.id),''),
 		COALESCE((SELECT b.requested_by_id FROM boundary_pending b WHERE b.inbox_id=i.id),''),
 		CASE WHEN i.kind='approval' AND i.requester_kind='system' AND i.requester_id LIKE 'note:%' THEN substr(i.requester_id,6) ELSE '' END,
-		EXISTS(SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)
+		EXISTS(SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?),
+		`+inboxHiddenSQL+`
         `+inboxFromSQL+`
         LEFT JOIN message msg ON msg.id=i.message_id
 		LEFT JOIN turn t ON t.id=i.turn_id
@@ -146,7 +151,7 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 		var options, fallback, report, memberRole, roomKind string
 		if err := rows.Scan(&item.ID, &item.ProjectID, &item.RoomID, &item.RoomLifecycle, &item.MessageID, &item.AgentID, &item.TurnID,
 			&item.TurnExec, &item.TurnOutcome, &item.Evidence, &item.ResultText, &item.DefiniteFailure, &item.StartFailure, &report, &item.HeldReason, &item.DeliveryError, &item.Kind, &options, &fallback, &item.State, &item.Rev, &item.CreatedAt, &memberRole, &roomKind,
-			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester, &item.NoteID, &item.Seen); err != nil {
+			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester, &item.NoteID, &item.Seen, &item.InboxHidden); err != nil {
 			return nil, err
 		}
 		item.CanDecide = memberRole == "owner" || memberRole == "operator" && !item.BoundaryPending || roomKind == "dm" && (item.Kind == "question" || item.Kind == "delivery_failed" || item.Kind == "approval" && !item.BoundaryPending)

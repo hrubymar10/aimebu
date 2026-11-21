@@ -47,7 +47,7 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 		// Opening the latest page acknowledges only requests already present in that
 		// view. Items without a message are visible in the room's Inbox context.
 		marked, err := tx.Exec(`INSERT OR IGNORE INTO inbox_item_seen(item_id,user_id,seen_at)
-			SELECT i.id,?,? `+inboxFromSQL+` LEFT JOIN message msg ON msg.id=i.message_id `+inboxWhereSQL+`
+			SELECT i.id,?,? `+inboxFromSQL+` LEFT JOIN message msg ON msg.id=i.message_id `+inboxCountWhereSQL+`
 			AND i.room_id=? AND (i.message_id IS NULL OR msg.seq<=?)`,
 			userID, timestamp(), userID, userID, roomID, state.ReadCursor)
 		if err != nil {
@@ -76,7 +76,7 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 			roomID, state.ReadCursor, userID).Scan(&state.UnreadAddressed); err != nil {
 			return err
 		}
-		return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+`
+		return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) `+inboxFromSQL+` `+inboxCountWhereSQL+`
 			AND i.room_id=? AND NOT EXISTS (SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)`,
 			userID, userID, roomID, userID).Scan(&state.AttentionCount)
 	})
@@ -86,7 +86,7 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 // openAttentionByRoom counts every open inbox entry the user can see per room, seen or not: a room still waits for a person while an
 // entry is open, whether or not they have looked at it.
 func (s *Store) openAttentionByRoom(ctx context.Context, userID string) (map[string]int, error) {
-	rows, err := s.readDB.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+` GROUP BY i.room_id`, userID, userID)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxCountWhereSQL+` GROUP BY i.room_id`, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func (s *Store) openAttentionByRoom(ctx context.Context, userID string) (map[str
 func (s *Store) attentionByRoom(ctx context.Context, userID string) (map[string]int, error) {
 	// A count per room, not the whole inbox: every project's room list asks for this, and building each item (diagnostic reports,
 	// receipts, options) is wasted work when only the number is shown.
-	rows, err := s.readDB.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+`
+	rows, err := s.readDB.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxCountWhereSQL+`
 		AND NOT EXISTS (SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)
 		GROUP BY i.room_id`, userID, userID, userID)
 	if err != nil {

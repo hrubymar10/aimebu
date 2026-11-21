@@ -30,8 +30,9 @@ export class InboxStore {
     const entries = await this.source.list();
     if (!this.alive || ticket !== this.requestSeq) return;
     // The Inbox is the open rows (its list and its badge count); a superseded ask is not over, so it leaves the Inbox and keeps its answer
-    // controls in the chat, which is why every row goes on to the page that draws them.
-    const items = entries.filter(item => item.state === 'open');
+    // controls in the chat, which is why every row goes on to the page that draws them. An attention item outside the home room (inbox_hidden) is
+    // the same: counted and listed nowhere in the Inbox, answerable in its chat.
+    const items = entries.filter(item => item.state === 'open' && !item.inbox_hidden);
     const previous = this.items.peek() && new Set(this.items.peek().map(item => item.id));
     batch(() => {
       this.items.value = items;

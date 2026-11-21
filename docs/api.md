@@ -664,9 +664,11 @@ resolves the item, and reaches the requester as usual. "No longer pending" in
 chat marks a resolved or withdrawn item only. Existing open asks with such a
 later message are superseded once by migration 117.
 A message with `needs_attention`, `proposed_answers` or `open_questions` and no
-`ask` creates its item in any room (the chat shows the card's controls), but the
-Inbox list and its counts include it only for the project's home room; a real
-`ask`, a recovery and the other kinds are listed wherever they come from. A question with no structured `ask` is narrower, because it is a message
+`ask` creates its item in any room (the chat shows the card's controls).
+`GET /api/inbox` returns it either way, with `inbox_hidden: true` outside the
+project's home room; the Inbox view omits a hidden item and the per-room
+attention counts, the read cursor's attention count and the seen-marking exclude
+it. A real `ask`, a recovery and the other kinds are never hidden. A question with no structured `ask` is narrower, because it is a message
 in a conversation, and a person usually answers it in the chat: any later
 message from a person in the same room supersedes it only when it replies in
 the card's thread (`answered in thread`) or when it is a plain message (a reply to nothing) and the room's only open

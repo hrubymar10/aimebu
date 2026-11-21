@@ -103,6 +103,14 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-view').hidden, document.querySelector('.chat').hidden, document.querySelector('.sidebar').hidden, document.querySelector('#app-view').classList.contains('inbox-open')]), [true, false, false, false]);
       await page.close();
     }
+    // An open attention item outside the home room (inbox_hidden) is not listed or counted either, but the chat gets it and keeps its controls.
+    {
+      const page = await mount({ list: [...items(), { ...base, id: 'hid1', kind: 'question', question: 'Asked in a task room', options: ['A', 'B'], state: 'open', inbox_hidden: true }] });
+      await waitList(page);
+      assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.inbox-card').length, document.querySelector('#inbox-count').textContent, window.__onItems.at(-1).includes('hid1'), !!document.querySelector('[data-inbox-id=hid1]')]),
+        [items().length, String(items().length), true, false], 'a hidden attention item is not in the Inbox but is handed to the chat');
+      await page.close();
+    }
     // A superseded ask is out of the Inbox (no card, not counted) but still reaches the chat, which answers it there.
     {
       const page = await mount({ list: [...items(), { ...base, id: 'sup1', kind: 'question', question: 'A question a newer message overtook', options: ['A', 'B'], state: 'superseded' }] });

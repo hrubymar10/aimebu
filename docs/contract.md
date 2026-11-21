@@ -1133,10 +1133,14 @@ compare-and-set on (state, rev) — an answer to an open item matches
   superseded ask is answered the same way and reaches its requester as an open
   one does.
 - A message with needs_attention or answer controls creates one ordinary
-  question inbox item in any room, so the chat keeps the card's controls; the
-  Inbox list and its counts include such an item (one without an explicit `ask`)
-  only for the project's home room. An explicit `ask`, recovery and
-  delivery-failed items are listed wherever they come from. Proposed answers always allow free text; open questions
+  question inbox item in any room, so the chat keeps the card's live controls.
+  `GET /api/inbox` returns every such item, flagged `inbox_hidden: true` when its
+  room is not the project's home room; the Inbox view leaves a hidden item out
+  of its list, and the server leaves it out of every Inbox count (the per-room
+  `attention_count` and `attention_open`, the read-cursor attention count and the
+  seen-marking). An explicit `ask`, recovery and delivery-failed items are never
+  hidden. An item created before the flag existed is not marked and stays listed
+  until it settles. Proposed answers always allow free text; open questions
   collect one answer per question and add a free-text Other choice to each.
   The room and inbox use the same item and answer endpoint. An explicit ask
   cannot be combined with attention controls.

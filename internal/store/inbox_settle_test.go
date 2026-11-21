@@ -157,31 +157,47 @@ func attentionQuestion(t *testing.T, s *Store, f executionFixture) InboxEntry {
 	return items[0]
 }
 
-// A message that needs attention outside the project's home room keeps its item (the chat shows the card's controls) but the Inbox neither
-// lists nor counts it; a real ask in the same room is still listed.
-func TestAttentionCardOutsideTheHomeRoomIsNotInTheInbox(t *testing.T) {
-	s, f := answerFixture(t, false)
-	ctx := context.Background()
-	if _, err := s.db.Exec(`UPDATE room SET kind='task' WHERE id=?`, f.room.ID); err != nil {
-		t.Fatal(err)
-	}
-	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Which way?","needs_attention":true,"proposed_answers":["a","b"]}]}`, f.room.ID)
-	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
-	if err != nil || receipt.Result != "committed" {
-		t.Fatalf("receipt=%+v err=%v", receipt, err)
-	}
-	var open int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE room_id=? AND state='open' AND kind='question'`, f.room.ID).Scan(&open); err != nil || open != 1 {
-		t.Fatalf("the item is kept for the chat: open=%d err=%v", open, err)
-	}
-	if items, err := s.InboxForUser(ctx, "usr_answers"); err != nil || len(items) != 0 {
-		t.Fatalf("inbox=%+v err=%v", items, err)
-	}
-	if counts, err := s.openAttentionByRoom(ctx, "usr_answers"); err != nil || counts[f.room.ID] != 0 {
-		t.Fatalf("open count=%v err=%v", counts, err)
-	}
-	if counts, err := s.attentionByRoom(ctx, "usr_answers"); err != nil || counts[f.room.ID] != 0 {
-		t.Fatalf("unseen count=%v err=%v", counts, err)
+// A message that needs attention outside the project's home room keeps its item, and /api/inbox still returns the row (flagged inbox_hidden) so the
+// chat shows live controls; the counts and the seen-marking leave it out. In the home room the same message is listed, counted and unflagged.
+func TestAttentionCardOutsideTheHomeRoomIsHiddenFromTheInboxCounts(t *testing.T) {
+	for _, tc := range []struct {
+		kind   string
+		hidden bool
+	}{{"task", true}, {"home", false}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			s, f := answerFixture(t, false)
+			ctx := context.Background()
+			if _, err := s.db.Exec(`UPDATE room SET kind=? WHERE id=?`, tc.kind, f.room.ID); err != nil {
+				t.Fatal(err)
+			}
+			raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Which way?","needs_attention":true,"proposed_answers":["a","b"]}]}`, f.room.ID)
+			receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+			if err != nil || receipt.Result != "committed" {
+				t.Fatalf("receipt=%+v err=%v", receipt, err)
+			}
+			items, err := s.InboxForUser(ctx, "usr_answers")
+			if err != nil || len(items) != 1 || items[0].InboxHidden != tc.hidden || items[0].State != "open" {
+				t.Fatalf("the row is returned either way, hidden=%v: %+v err=%v", tc.hidden, items, err)
+			}
+			want := 1
+			if tc.hidden {
+				want = 0
+			}
+			if counts, err := s.openAttentionByRoom(ctx, "usr_answers"); err != nil || counts[f.room.ID] != want {
+				t.Fatalf("open count=%v want %d err=%v", counts, want, err)
+			}
+			if counts, err := s.attentionByRoom(ctx, "usr_answers"); err != nil || counts[f.room.ID] != want {
+				t.Fatalf("unseen count=%v want %d err=%v", counts, want, err)
+			}
+			state, err := s.MarkRoomRead(ctx, "usr_answers", f.room.ID, 1<<40)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var seen int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item_seen WHERE item_id=?`, items[0].ID).Scan(&seen); err != nil || seen != want {
+				t.Fatalf("seen=%d err=%v state=%+v", seen, err, state)
+			}
+		})
 	}
 }
 
