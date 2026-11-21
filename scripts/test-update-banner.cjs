@@ -21,7 +21,8 @@ function element(tag) {
 }
 function page() {
   const document = { hidden: false, createElement: element };
-  const context = { document, Date, console };
+  const timers = new Map(); let nextTimer = 1;
+  const context = { document, Date, console, timers, setTimeout: (fn, ms) => { timers.set(nextTimer, { fn, ms }); return nextTimer++; }, clearTimeout: id => { timers.delete(id); } };
   vm.createContext(context);
   vm.runInContext(source, context);
   return { context, document, api: context.api, anchor: element('header') };
@@ -97,6 +98,14 @@ const installed = { checked: true, state: 'installed', version: 'v2.1.0' };
   await t.banner.setAccount({ admin: true, owner: false });
   await t.banner.answer('remind');
   assert.deepEqual([t.calls.acked, t.banner.bar.hidden], [['remind'], true]);
+  // The bar wakes itself at the deadline: one timer about a day out, and when it fires after the deadline the bar is back.
+  assert.equal(t.context.timers.size, 1, 'one wake-up is scheduled');
+  const [{ fn: wake, ms: wait }] = [...t.context.timers.values()];
+  assert.ok(wait > 23 * 3600e3 && wait <= 24 * 3600e3 + 1000, 'the wake-up is about 24 hours away');
+  t.banner.ackRecord = { ...t.banner.ackRecord, until: new Date(Date.now() - 1000).toISOString() };
+  wake();
+  assert.equal(t.banner.bar.hidden, false, 'the bar is back once the remind is due');
+  assert.equal(t.context.timers.size, 0, 'a due remind leaves no timer behind');
   t = make({ status, refuse: true });
   await t.banner.setAccount({ admin: true, owner: false });
   await t.banner.answer('remind');

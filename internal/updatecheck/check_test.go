@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // The server-side check runs real git against a local bare remote holding the
@@ -36,7 +38,7 @@ func checkWorld(t *testing.T) (clone string, remote string, binary string) {
 	// have reached.
 	shim := t.TempDir()
 	for name, sub := range map[string]string{"git-upload-pack": "upload-pack", "git-receive-pack": "receive-pack"} {
-		if err := os.WriteFile(filepath.Join(shim, name), []byte("#!/bin/sh\nexec git "+sub+" \"$@\"\n"), 0o755); err != nil {
+		if err := testenv.WriteExecutable(filepath.Join(shim, name), []byte("#!/bin/sh\nexec git "+sub+" \"$@\"\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -71,7 +73,7 @@ func checkWorld(t *testing.T) (clone string, remote string, binary string) {
 	// The clone knows the tags only once it fetched them, as a wrapper install has.
 	gitRun(t, clone, "fetch", "-q", "--tags", "origin")
 	binary = filepath.Join(clone, "aimebu-test")
-	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+	if err := testenv.WriteExecutable(binary, []byte("binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// The cache predates the checks by an hour, so only a moved clone or a rebuilt
@@ -184,5 +186,83 @@ func TestCheckInstalledAndNoRelease(t *testing.T) {
 	}
 	if !strings.Contains(filepath.Base(binary), "aimebu") {
 		t.Fatal("setup broke")
+	}
+}
+
+func checkState(t *testing.T, layout CloneLayout, remote, running, root string) Status {
+	t.Helper()
+	status, err := Check(layout, running, time.Now().Add(-time.Hour), root, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status
+}
+
+func TestCheckUsesDescribeVersionsAndIgnoresMalformedTags(t *testing.T) {
+	clone, remote, binary := checkWorld(t)
+	gitRun(t, clone, "checkout", "-q", "--detach", "v2.0.0")
+	layout := CloneLayout{Dir: clone, Binary: binary}
+	t.Setenv("AIMEBU_UPDATE_CHANNEL", "")
+	// Annotated tags that are not releases never rank, however high they look.
+	for _, bad := range []string{"v2.9.0-foo.1", "v2.8", "v2.7.0-rc", "v2.6.0-RC.1"} {
+		gitRun(t, clone, "tag", "-a", bad, "v2.1.0", "-m", bad)
+		gitRun(t, clone, "push", "-q", "origin", bad)
+	}
+	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "available" || got.Version != "v2.1.0" {
+		t.Fatalf("malformed tags changed the answer: %+v", got)
+	}
+	// A build past its tag is newer than that tag: v2.1.0 is not offered to it, and a
+	// build past an older tag is still offered the newer release.
+	if got := checkState(t, layout, remote, "aimebu v2.1.0-3-gabcdef1", ""); got.State != "" {
+		t.Fatalf("v2.1.0 offered to a build three commits past it: %+v", got)
+	}
+	if got := checkState(t, layout, remote, "aimebu v2.0.0-3-gabcdef1", ""); got.State != "available" || got.Version != "v2.1.0" {
+		t.Fatalf("a build past v2.0.0 was not offered v2.1.0: %+v", got)
+	}
+	// A clone further along the same tag than the running build is installed.
+	gitRun(t, clone, "commit", "-q", "--allow-empty", "-m", "local one")
+	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "installed" {
+		t.Fatalf("a clone past the running tag was not installed: %+v", got)
+	}
+}
+
+func TestCheckLeavesBranchesDirtyAndDivergedClonesAlone(t *testing.T) {
+	clone, remote, binary := checkWorld(t)
+	layout := CloneLayout{Dir: clone, Binary: binary}
+	t.Setenv("AIMEBU_UPDATE_CHANNEL", "")
+	// The default branch with no channel keeps following the branch: the remote moves
+	// on, the clone is behind, and the banner says so with the commit it would land on.
+	gitRun(t, clone, "checkout", "-q", "master")
+	gitRun(t, clone, "reset", "-q", "--hard", "v2.0.0")
+	status := checkState(t, layout, remote, "aimebu v2.0.0", "")
+	if status.State != "available" || status.Channel != "default-branch" || len(status.Version) != 12 {
+		t.Fatalf("default-branch clone behind its remote: %+v", status)
+	}
+	gitRun(t, clone, "pull", "-q", "--ff-only", "origin", "master")
+	if got := checkState(t, layout, remote, "aimebu v3.0.0-alpha.1", ""); got.State != "" {
+		t.Fatalf("a current default-branch clone was offered something: %+v", got)
+	}
+	// A named non-default branch with no channel is never detached onto a tag.
+	gitRun(t, clone, "checkout", "-q", "-b", "work", "v2.0.0")
+	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "" {
+		t.Fatalf("a named non-default branch was offered an update: %+v", got)
+	}
+	// With the channel set explicitly the branch is a normal tag target again, but
+	// commits the target does not have make it diverged and it is left alone.
+	t.Setenv("AIMEBU_UPDATE_CHANNEL", "stable")
+	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "available" || got.Version != "v2.1.0" {
+		t.Fatalf("explicit channel on a branch: %+v", got)
+	}
+	gitRun(t, clone, "commit", "-q", "--allow-empty", "-m", "local only")
+	if got := checkState(t, layout, remote, "aimebu v2.0.0-1-gabcdef1", ""); got.State != "" {
+		t.Fatalf("a diverged clone was offered an update: %+v", got)
+	}
+	// A dirty tracked file stops the offer, as it stops the wrapper.
+	gitRun(t, clone, "reset", "-q", "--hard", "v2.0.0")
+	if err := os.WriteFile(filepath.Join(clone, "go.mod"), []byte("module dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "" {
+		t.Fatalf("a dirty clone was offered an update: %+v", got)
 	}
 }

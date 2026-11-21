@@ -156,7 +156,7 @@ is not a terminal (so `aimebu agent-tools`, pipes and services never check).
 | `AIMEBU_UPDATE_TIMEOUT_SECONDS` | time limit for the remote lookup, default `5` |
 | `AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS` | time limit for the fetch once an update is accepted, default `60` |
 | `AIMEBU_UPDATE_REMOTE` | the git remote to follow, default `origin` |
-| `AIMEBU_UPDATE_CHANNEL` | the release channel: `stable`, `prerelease`, `edge` or `edge:<branch>`; it can also be set with a one-word `<config root>/update-channel` file, which wins nothing over the variable — the variable is read first. Without either, a checkout on the remote's default branch keeps the default-branch update below, and any other checkout computes one: `prerelease` while the remote has no stable tag of the running major, otherwise `stable` |
+| `AIMEBU_UPDATE_CHANNEL` | the release channel: `stable`, `prerelease`, `edge` or `edge:<branch>`; it can also be set with a one-word `<config root>/update-channel` file, which wins nothing over the variable — the variable is read first. Without either, a checkout on the remote's default branch keeps the default-branch update below, a checkout with HEAD detached computes one (`prerelease` while the remote has no stable tag of the running major, otherwise `stable`), and a **named branch other than the default is never detached** when no channel is set: it only gets the `checkout is on '<branch>', not default branch '<default>'` warning, so developer clones stay put. Set the channel explicitly to move a named branch onto a tag |
 
 ### Release channels
 
@@ -175,7 +175,7 @@ A channel chooses what the update follows:
 - Applying a tag update fetches exactly that tag (never a force fetch), verifies
   the peeled commit against what `ls-remote` advertised, checks the checkout out
   detached at the tag and rebuilds; a failed update restores the previous
-  checkout (detached HEAD stays detached, a branch keeps its own tip).
+  checkout (a detached HEAD stays detached, a branch you started on is checked out again).
 - `edge` and the default-branch update never prompt the `server` subcommand;
   the running server has its own check (see the admin banner in the web UI).
 

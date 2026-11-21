@@ -90,36 +90,46 @@ func (s *Server) runUpdateCheck(ctx context.Context, layout updatecheck.CloneLay
 		// tick tries again, quietly.
 		return
 	}
-	if status.State == "" {
-		return
-	}
+	s.recordUpdateStatus(ctx, status)
+}
+
+// recordUpdateStatus stores one successful check's conclusion and announces a change.
+func (s *Server) recordUpdateStatus(ctx context.Context, status updatecheck.Status) {
 	previous, hadPrevious := s.updateStatus.snapshot()
+	if status.State == "" && previous.State == "" {
+		return // nothing to report before and nothing now
+	}
+	// A later successful check that finds nothing (the update was applied and the
+	// server restarted onto it, or the release was withdrawn) clears the stored
+	// status and tells the admins' banners to close.
 	s.updateStatus.store(status)
 	if !hadPrevious || previous.State != status.State || previous.Version != status.Version {
 		s.Store.RecordUpdateStatusEvent(ctx, status.State, status.Version)
 	}
 }
 
+// requireUpdateAdmin answers 403 unless the signed-in person is the owner or an
+// admin (IsGlobalAdmin covers both), and reports whether the request may go on.
+func (s *Server) requireUpdateAdmin(w http.ResponseWriter, r *http.Request) bool {
+	admin, err := s.Store.IsGlobalAdmin(r.Context(), userID(r))
+	if err != nil {
+		fail(w, err)
+		return false
+	}
+	if !admin {
+		apiError(w, 403, "forbidden", "owner or admin required")
+		return false
+	}
+	return true
+}
+
 // updateStatusHandler is GET /api/update-status: the latest check's conclusion
 // plus the signed-in person's ack, for admins and the owner.
 func (s *Server) updateStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUpdateAdmin(w, r) {
+		return
+	}
 	user := userID(r)
-	owner, err := s.Store.IsGlobalOwner(r.Context(), user)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	admin := false
-	if !owner {
-		if admin, err = s.Store.IsGlobalAdmin(r.Context(), user); err != nil {
-			fail(w, err)
-			return
-		}
-	}
-	if !owner && !admin {
-		apiError(w, 403, "forbidden", "owner or admin required")
-		return
-	}
 	status, set := s.updateStatus.snapshot()
 	ack, hasAck, err := s.Store.UpdateStatusAck(r.Context(), user)
 	if err != nil {
@@ -143,6 +153,9 @@ func (s *Server) updateStatusHandler(w http.ResponseWriter, r *http.Request) {
 // /api/update-status/remind for the signed-in person.
 func (s *Server) updateStatusAckHandler(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireUpdateAdmin(w, r) {
+			return
+		}
 		status, set := s.updateStatus.snapshot()
 		if !set || status.State == "" {
 			apiError(w, 409, "no_update_status", "there is no update status to answer yet")

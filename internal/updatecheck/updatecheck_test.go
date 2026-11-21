@@ -99,3 +99,79 @@ func TestDefaultChannel(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTagGrammar(t *testing.T) {
+	for _, name := range TestTags {
+		if _, ok := ParseTag(name); !ok {
+			t.Errorf("ParseTag(%q) refused a shared-table tag", name)
+		}
+	}
+	for _, name := range []string{
+		"", "v", "2.1.0", "v2", "v2.1", "v2.1.0.0", "v2.1.x", "v2.1.0-", "v2.1.0-rc", "v2.1.0-rc.", "v2.1.0-rc.x",
+		"v2.1.0-foo.1", "v2.1.0-alpha", "v2.1.0-RC.1", "v2.1.0-rc.1.2", "v2.1.0-rc.1-3-gabc", "v2.1.0+build", "v2.-1.0",
+		"v123456.0.0", "v2.1.0 ", " v2.1.0", "v2.1.0-rc.123456",
+	} {
+		if _, ok := ParseTag(name); ok {
+			t.Errorf("ParseTag(%q) accepted a malformed tag", name)
+		}
+	}
+}
+
+func TestParseDescribeStripsTheDistanceSuffix(t *testing.T) {
+	for version, want := range map[string]Describe{
+		"v2.1.0":                    {Tag: "v2.1.0"},
+		"v2.1.0-3-gabcdef1":         {Tag: "v2.1.0", Count: 3, SHA: "abcdef1"},
+		"v2.1.0-3-gabcdef1-dirty":   {Tag: "v2.1.0", Count: 3, SHA: "abcdef1"},
+		"v2.1.0-rc.1":               {Tag: "v2.1.0-rc.1"},
+		"v2.1.0-rc.1-12-g0123abc":   {Tag: "v2.1.0-rc.1", Count: 12, SHA: "0123abc"},
+		"v2.1.0-alpha.10-1-gdeadbe": {Tag: "v2.1.0-alpha.10", Count: 1, SHA: "deadbe"},
+	} {
+		got, ok := ParseDescribe(version)
+		if !ok || got != want {
+			t.Errorf("ParseDescribe(%q) = %+v, %v; want %+v", version, got, ok, want)
+		}
+	}
+	for _, version := range []string{"", "abcdef1", "v2.1.0-x-gabcdef1", "foo-3-gabcdef1", "v2.1.0-+3-gabcdef1"} {
+		if _, ok := ParseDescribe(version); ok {
+			t.Errorf("ParseDescribe(%q) read a release out of it", version)
+		}
+	}
+}
+
+func TestCompareVersionsWithDescribeSuffixes(t *testing.T) {
+	// A checkout past a tag is newer than that tag, so the tag is never offered to it;
+	// the same distance on the same base compares equal; the base decides first.
+	for _, tc := range []struct {
+		a, b string
+		want int
+	}{
+		{"v2.1.0", "v2.1.0-3-gabcdef1", -1},
+		{"v2.1.0-3-gabcdef1", "v2.1.0", 1},
+		{"v2.1.0-3-gabcdef1", "v2.1.0-4-g1234567", -1},
+		{"v2.1.0-10-gabcdef1", "v2.1.0-9-g1234567", 1},
+		{"v2.1.0-3-gabcdef1", "v2.1.0-3-g1234567", 0},
+		{"v2.1.0-3-gabcdef1", "v2.1.0-3-gabcdef1-dirty", 0},
+		{"v2.1.0", "v2.1.0-1-gabcdef1-dirty", -1},
+		{"v2.1.0-rc.1-9-gabcdef1", "v2.1.0", -1},
+		{"v2.1.0-alpha.9-4-gabcdef1", "v2.1.0-alpha.10", -1},
+		{"v2.0.0-50-gabcdef1", "v2.1.0-alpha.1", -1},
+	} {
+		if got, ok := CompareVersions(tc.a, tc.b); !ok || got != tc.want {
+			t.Errorf("CompareVersions(%q, %q) = %d, %v; want %d", tc.a, tc.b, got, ok, tc.want)
+		}
+	}
+	if newer, _ := IsNewer("v2.1.0", "v2.1.0-3-gabcdef1"); newer {
+		t.Error("v2.1.0 was offered to a checkout three commits past it")
+	}
+}
+
+func TestSelectTagIgnoresMalformedTags(t *testing.T) {
+	tags := append([]string{"v2.9.0-foo.1", "v2.8", "v2.7.0-rc", "v2.6.0-RC.1", "v2.5.0.1"}, TestTags...)
+	got, ok := SelectTag(tags, "v2.0.0", Prerelease)
+	if !ok || got != "v2.1.0" {
+		t.Errorf("SelectTag with malformed tags = %q, %v; want v2.1.0", got, ok)
+	}
+	if DefaultChannel([]string{"v7.0.0-foo.1", "v7.0"}, "v7.0.0") != Prerelease {
+		t.Error("a malformed tag counted as the stable release that flips the default")
+	}
+}

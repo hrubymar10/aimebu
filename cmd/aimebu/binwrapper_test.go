@@ -730,3 +730,74 @@ func TestBinWrapperTagUpdateRollsBackToADetachedHeadWhenTheBuildFails(t *testing
 		t.Fatalf("the rollback left the checkout on branch %q", branch)
 	}
 }
+
+func TestBinWrapperTagUpdateRollsBackToTheBranchItStartedOn(t *testing.T) {
+	repo, env, script, _ := binWrapperWithTaggedRemote(t)
+	// A checkout on a branch with the channel set explicitly is detached onto the tag;
+	// when that tag does not build, the rollback checks the branch back out instead of
+	// failing and exiting.
+	broken := filepath.Join(t.TempDir(), "broken")
+	gitIn(t, filepath.Dir(broken), env, "clone", "-q", gitIn(t, repo, env, "remote", "get-url", "origin"), broken)
+	writeBinWrapperFile(t, filepath.Join(broken, "cmd", "aimebu", "main.go"), "package main\n\nfunc main() { undefined() }\n", 0o644)
+	gitIn(t, broken, env, "commit", "-q", "-am", "broken")
+	gitIn(t, broken, env, "tag", "-a", "v2.1.0", "-m", "v2.1.0")
+	gitIn(t, broken, env, "push", "-q", "origin", "v2.1.0")
+	gitIn(t, repo, env, "checkout", "-q", "trunk")
+
+	before := gitIn(t, repo, env, "rev-parse", "HEAD")
+	out, errs, code := runBinWrapperStatus(t, script, append(env, "AIMEBU_UPDATE_CHANNEL=stable", "AIMEBU_UPDATE_CHECK=apply", "AIMEBU_UPDATE_INTERVAL_HOURS=0"), "run")
+	if code != 0 || out != "one aimebu v2.0.0 [run]" || !strings.Contains(errs, "automatic update failed: the updated source did not build; continuing on the previous version") || strings.Contains(errs, "could not be restored") {
+		t.Fatalf("failed update from a branch: code=%d out=%q stderr=%q", code, out, errs)
+	}
+	if branch := gitIn(t, repo, env, "branch", "--show-current"); branch != "trunk" {
+		t.Fatalf("the rollback left the checkout on %q, want the branch it started on", branch)
+	}
+	if after := gitIn(t, repo, env, "rev-parse", "HEAD"); after != before {
+		t.Fatalf("HEAD moved from %s to %s", before, after)
+	}
+	// An explicit update reports the failure and restores the branch too.
+	if _, errs, code := runBinWrapperStatus(t, script, append(env, "AIMEBU_UPDATE_CHANNEL=stable"), "update"); code == 0 || !strings.Contains(errs, "the previous checkout was restored") {
+		t.Fatalf("explicit update: code=%d stderr=%q", code, errs)
+	}
+	if branch := gitIn(t, repo, env, "branch", "--show-current"); branch != "trunk" {
+		t.Fatalf("the explicit rollback left the checkout on %q", branch)
+	}
+}
+
+func TestBinWrapperNamedBranchWithNoChannelIsNeverDetached(t *testing.T) {
+	repo, env, script, pushTag := binWrapperWithTaggedRemote(t)
+	pushTag("v2.1.0", "two")
+	gitIn(t, repo, env, "checkout", "-q", "-b", "feature", "v2.0.0")
+	before := gitIn(t, repo, env, "rev-parse", "HEAD")
+	apply := append(env, "AIMEBU_UPDATE_CHECK=apply", "AIMEBU_UPDATE_INTERVAL_HOURS=0")
+	out, errs := runBinWrapper(t, script, apply, "run")
+	if out != "one aimebu v2.0.0 [run]" || !strings.Contains(errs, "checkout is on 'feature', not default branch 'trunk'") {
+		t.Fatalf("named branch, no channel: out=%q stderr=%q", out, errs)
+	}
+	if after := gitIn(t, repo, env, "rev-parse", "HEAD"); after != before || gitIn(t, repo, env, "branch", "--show-current") != "feature" {
+		t.Fatal("a developer branch was detached or moved")
+	}
+	// Setting the channel explicitly is the opt-in.
+	if _, _, code := runBinWrapperStatus(t, script, append(env, "AIMEBU_UPDATE_CHANNEL=stable"), "update"); code != 0 {
+		t.Fatal("an explicit channel did not update a named branch")
+	}
+	if head, tag := gitIn(t, repo, env, "rev-parse", "HEAD"), gitIn(t, repo, env, "rev-parse", "v2.1.0^{commit}"); head != tag {
+		t.Fatalf("HEAD %s is not the tag %s", head, tag)
+	}
+}
+
+func TestBinWrapperIgnoresMalformedTags(t *testing.T) {
+	_, env, script, pushTag := binWrapperWithTaggedRemote(t)
+	pushTag("v2.1.0", "two")
+	// Annotated tags that do not follow vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N] are not
+	// releases, however high they would sort.
+	for _, bad := range []string{"v2.9.0-foo.1", "v2.8", "v2.7.0-rc", "v2.6.0-RC.1", "v2.5.0.1", "v2.4.0-rc.1.2", "v2.3.x", "v2.99999999.0"} {
+		pushTag(bad, "")
+	}
+	for _, channel := range []string{"stable", "prerelease"} {
+		out, _, _ := runBinWrapperStatus(t, script, append(env, "AIMEBU_UPDATE_CHANNEL="+channel), "update", "--check")
+		if !strings.HasPrefix(out, "aimebu update available: v2.0.0 -> v2.1.0.") {
+			t.Fatalf("%s channel with malformed tags: %q", channel, out)
+		}
+	}
+}

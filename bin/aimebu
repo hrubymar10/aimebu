@@ -173,7 +173,17 @@ remote_tags() {
 tag_order() {
     local a="$1" b="$2" ka kb
     ka="$(tag_key "$a")" kb="$(tag_key "$b")"
-    if [ "$ka" = "$kb" ]; then echo 0; elif [[ "$ka" < "$kb" ]]; then echo -1; else echo 1; fi
+    # The keys only mean something in byte order: a locale's collation would sort
+    # "~" and "-" differently and could put a release before its release candidate.
+    if [ "$ka" = "$kb" ]; then echo 0; elif [ "$(LC_ALL=C; [[ "$ka" < "$kb" ]] && echo lt)" = lt ]; then echo -1; else echo 1; fi
+}
+
+# valid_release_tag succeeds only for vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N] with
+# numbers of one to five digits: the grammar internal/updatecheck.ParseTag applies.
+# Anything else is not a release and is never ranked or offered.
+valid_release_tag() {
+    local re='^v[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}(-(alpha|beta|rc)\.[0-9]{1,5})?$'
+    [[ "$1" =~ $re ]]
 }
 
 # tag_key maps a tag to a fixed-width comparable key: the three version numbers and
@@ -267,13 +277,22 @@ classify_update() {
         fi
         return 0
     fi
+    if [ -z "$UPDATE_CHANNEL" ] && [ -n "$UPDATE_BRANCH" ]; then
+        # No channel set and a named branch that is not the remote's default (a
+        # developer clone): never detached onto a tag behind the person's back. It
+        # keeps the old "not default branch" warning; a channel set explicitly is
+        # the way to opt in.
+        UPDATE_STATE=non-default
+        return 0
+    fi
     if [ -z "$UPDATE_CHANNEL" ]; then
-        # No channel set and not a v1-style default-branch checkout: compute one from
+        # No channel set and HEAD already detached: compute one from
         # the remote's tags (prerelease until the running major has a stable tag).
         remote_tags || return 0
         local tag oid major stable=""
         if major="$(running_major)"; then
             while read -r tag oid; do
+                valid_release_tag "$tag" || continue
                 case "$tag" in "v$major."*) case "$tag" in *-*) ;; *) stable=1; break ;; esac ;; esac
             done <"$UPDATE_TAGS_FILE"
         fi
@@ -337,6 +356,7 @@ classify_tag_update() {
         return 0
     fi
     while read -r tag oid; do
+        valid_release_tag "$tag" || continue
         case "$tag" in "v$major."*) ;; *) continue ;; esac
         case "$UPDATE_CHANNEL:$tag" in stable:*-*) continue ;; esac
         if [ -z "$best_tag" ] || [ "$(tag_order "$tag" "$best_tag")" -gt 0 ]; then
@@ -398,8 +418,18 @@ restore_update_checkout() {
         [ "$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)" = "$original_oid" ]
         return
     fi
-    [ -n "$original_ref" ] && [ -n "$moved_oid" ] && [ "$current_oid" = "$moved_oid" ] && [ "$current_ref" = "$original_ref" ] || return 1
+    [ -n "$moved_oid" ] && [ "$current_oid" = "$moved_oid" ] || return 1
     branch="${original_ref#refs/heads/}"
+    if [ -z "$current_ref" ]; then
+        # A tag update detached HEAD from a branch (explicit channel). The branch never
+        # moved: check it back out and confirm it is still where it was.
+        [ "$(git -C "$REPO_DIR" rev-parse "$original_ref" 2>/dev/null || true)" = "$original_oid" ] || return 1
+        git -C "$REPO_DIR" checkout "$branch" >/dev/null 2>&1 || return 1
+        [ "$(git -C "$REPO_DIR" symbolic-ref --quiet HEAD 2>/dev/null || true)" = "$original_ref" ] \
+            && [ "$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)" = "$original_oid" ]
+        return
+    fi
+    [ "$current_ref" = "$original_ref" ] || return 1
     git -C "$REPO_DIR" checkout --detach "$original_oid" >/dev/null 2>&1 || return 1
     git -C "$REPO_DIR" update-ref "$original_ref" "$original_oid" "$moved_oid" >/dev/null 2>&1 || return 1
     git -C "$REPO_DIR" checkout "$branch" >/dev/null 2>&1 || return 1

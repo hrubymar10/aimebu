@@ -798,8 +798,19 @@ Inbox, usage, events, settings
   running process, so a restart picks it up). `GET /api/update-status` is for
   admins and the owner; `POST /api/update-status/skip` and
   `POST /api/update-status/remind` record the ack of the signed-in person. A
-  state change emits an `update_status` event; the web shows an admin-only
-  banner with copy-`aimebu update`, remind and skip actions.
+  state change (including a later empty check clearing a stored status) emits
+  an `update_status` event, which the owner and every active admin see (it is
+  the one project-less event beyond the owner's); the web shows an admin-only
+  banner with copy-`aimebu update`, remind and skip actions, and brings the
+  banner back when a remind runs out. Both ack endpoints need the owner or an
+  admin. Versions compare as `git describe` answers: a build `<n>` commits past
+  a tag is newer than the tag (never offered it again) and two builds on one tag
+  compare by `<n>`. Only tags of the form `vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N]`
+  are releases. The check offers only what `aimebu update` would do: nothing for
+  a dirty checkout, a named non-default branch with no channel set, or a clone
+  with commits the target tag lacks; a default-branch clone with no channel is
+  reported `available` (channel `default-branch`, version the short remote
+  commit) when it is behind its remote.
 
 Project memory starts disabled and saved records remain readable to humans
 when disabled. Owners/operators and current project agents can write project

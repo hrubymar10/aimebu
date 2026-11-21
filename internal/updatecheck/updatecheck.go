@@ -41,8 +41,14 @@ type Tag struct {
 	Prerelease bool
 }
 
-// ParseTag reads a release tag. It returns false for anything that is not a
-// vMAJOR.MINOR.PATCH name, optionally with a -<pre> suffix.
+// maxNumberDigits caps every number in a tag, so the wrapper's fixed-width sort keys
+// and this package agree on what a valid tag is.
+const maxNumberDigits = 5
+
+// ParseTag reads a release tag. The grammar is exactly
+// vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N], numbers of one to five digits; anything
+// else (a "v2.1", a "v2.1.0-foo.1", a "v2.1.0-rc") is not a release and is never
+// ranked or offered. The wrapper applies the same grammar before it ranks a tag.
 func ParseTag(name string) (Tag, bool) {
 	rest, ok := strings.CutPrefix(name, "v")
 	if !ok {
@@ -51,7 +57,11 @@ func ParseTag(name string) (Tag, bool) {
 	pre := ""
 	if i := strings.IndexByte(rest, '-'); i >= 0 {
 		pre, rest = rest[i+1:], rest[:i]
-		if pre == "" {
+		label, num, ok := strings.Cut(pre, ".")
+		if !ok || (label != "alpha" && label != "beta" && label != "rc") {
+			return Tag{}, false
+		}
+		if _, tail, ok := numbers(num); !ok || tail != "" {
 			return Tag{}, false
 		}
 	}
@@ -75,11 +85,67 @@ func numbers(s string) (int, string, bool) {
 	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
 		i++
 	}
-	if i == 0 {
+	if i == 0 || i > maxNumberDigits {
 		return 0, s, false
 	}
 	n, err := strconv.Atoi(s[:i])
 	return n, s[i:], err == nil
+}
+
+// Describe is a `git describe --tags --always` answer taken apart:
+// <tag>[-<count>-g<sha>]. Count is how many commits the checkout is past Tag; a
+// clean tag has Count 0 and no SHA.
+type Describe struct {
+	Tag   string
+	Count int
+	SHA   string
+}
+
+// ParseDescribe reads a describe-style version. It reports false for a bare commit
+// hash and for anything whose tag part is not a release tag.
+func ParseDescribe(version string) (Describe, bool) {
+	version = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(version), "-dirty"))
+	d := Describe{Tag: version}
+	if i := strings.LastIndex(version, "-g"); i > 0 {
+		sha := version[i+2:]
+		head := version[:i]
+		if j := strings.LastIndexByte(head, '-'); j > 0 && sha != "" && isHex(sha) {
+			if count, err := strconv.Atoi(head[j+1:]); err == nil && count >= 0 && head[j+1:] != "" && !strings.ContainsAny(head[j+1:], "+-") {
+				d = Describe{Tag: head[:j], Count: count, SHA: sha}
+			}
+		}
+	}
+	if _, ok := ParseTag(d.Tag); !ok {
+		return Describe{}, false
+	}
+	return d, true
+}
+
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// CompareVersions orders two describe-style versions: by tag first, then by how far
+// past the tag each checkout is. A version past its tag (count > 0) is newer than
+// that tag itself, so it is never offered the tag again. Two checkouts the same
+// distance past the same tag compare equal here (the commits decide, see Check).
+// It reports false when either side is not a describe-style release version.
+func CompareVersions(a, b string) (int, bool) {
+	da, oka := ParseDescribe(a)
+	db, okb := ParseDescribe(b)
+	if !oka || !okb {
+		return 0, false
+	}
+	if c := CompareTags(da.Tag, db.Tag); c != 0 {
+		return c, true
+	}
+	return sign(da.Count - db.Count), true
 }
 
 // CompareTags orders release tags so that alpha.9 < alpha.10 < beta.1 < rc.1 <

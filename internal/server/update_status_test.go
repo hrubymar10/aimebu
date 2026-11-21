@@ -77,3 +77,85 @@ func TestUpdateStatusEventIsASystemEvent(t *testing.T) {
 		t.Fatal("update_status is not in the system-events feed")
 	}
 }
+
+// Skip and remind need the same rights as reading the status.
+func TestUpdateStatusAnswersNeedAnAdmin(t *testing.T) {
+	t.Parallel()
+	w := newAdminWorld(t)
+	w.f.srv.updateStatus.store(updatecheck.Status{State: "available", Version: "v2.1.0", Channel: "stable", CheckedAt: time.Now().UTC()})
+	for _, path := range []string{"/api/update-status/skip", "/api/update-status/remind"} {
+		if code := w.call(t, w.viewer, "POST", path, nil); code != 403 {
+			t.Fatalf("viewer POST %s: %d, want 403", path, code)
+		}
+	}
+	if _, has, err := w.f.db.UpdateStatusAck(t.Context(), w.viewer.id); err != nil || has {
+		t.Fatalf("a refused answer was stored: %v %v", has, err)
+	}
+	for _, path := range []string{"/api/update-status/skip", "/api/update-status/remind"} {
+		if code := w.call(t, w.admin, "POST", path, nil); code != 204 {
+			t.Fatalf("admin POST %s: %d, want 204", path, code)
+		}
+	}
+}
+
+// The update_status event reaches every global admin, not only the first user, and
+// nobody else; and a later empty check clears the stored status and says so.
+func TestUpdateStatusEventsReachEveryAdminAndClear(t *testing.T) {
+	t.Parallel()
+	w := newAdminWorld(t)
+	ctx := t.Context()
+	_, last, err := w.f.db.EventBounds(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.f.srv.recordUpdateStatus(ctx, updatecheck.Status{State: "available", Version: "v2.1.0", Channel: "stable", CheckedAt: time.Now().UTC()})
+	seen := func(user string) []store.Event {
+		t.Helper()
+		_, through, err := w.f.db.EventBounds(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := w.f.db.EventsAfter(ctx, user, last, through)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []store.Event
+		for _, e := range events {
+			if e.Kind == "update_status" {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	if n := len(seen(w.owner.id)); n != 1 {
+		t.Fatalf("owner saw %d update_status events, want 1", n)
+	}
+	if n := len(seen(w.admin.id)); n != 1 {
+		t.Fatalf("admin saw %d update_status events, want 1", n)
+	}
+	if n := len(seen(w.viewer.id)); n != 0 {
+		t.Fatalf("a plain member saw %d update_status events, want 0", n)
+	}
+
+	// The same conclusion again is not news; an empty one clears the status and is.
+	w.f.srv.recordUpdateStatus(ctx, updatecheck.Status{State: "available", Version: "v2.1.0", CheckedAt: time.Now().UTC()})
+	if n := len(seen(w.owner.id)); n != 1 {
+		t.Fatalf("a repeated conclusion emitted again: %d events", n)
+	}
+	w.f.srv.recordUpdateStatus(ctx, updatecheck.Status{CheckedAt: time.Now().UTC()})
+	if n := len(seen(w.admin.id)); n != 2 {
+		t.Fatalf("clearing emitted %d events for the admin, want 2 in all", n)
+	}
+	if status, _ := w.f.srv.updateStatus.snapshot(); status.State != "" {
+		t.Fatalf("the stored status was not cleared: %+v", status)
+	}
+	code, body := w.json(t, w.admin, "GET", "/api/update-status", nil)
+	if code != 200 || body["state"] != "" {
+		t.Fatalf("cleared status answer: code=%d body=%v", code, body)
+	}
+	// Empty after empty says nothing.
+	w.f.srv.recordUpdateStatus(ctx, updatecheck.Status{CheckedAt: time.Now().UTC()})
+	if n := len(seen(w.admin.id)); n != 2 {
+		t.Fatalf("an empty check after an empty check emitted: %d", n)
+	}
+}

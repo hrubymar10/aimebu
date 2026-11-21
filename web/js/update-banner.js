@@ -23,7 +23,7 @@ export class UpdateBanner {
   // keeps the bar off screens where it has no place (the sign-in page).
   constructor({ getStatus, ack, anchor = document.querySelector('.chat > header') }) {
     this.getStatus = getStatus; this.acknowledge = ack;
-    this.status = null; this.ackRecord = null; this.rights = { admin: false, owner: false };
+    this.status = null; this.ackRecord = null; this.timer = null; this.rights = { admin: false, owner: false };
     this.bar = document.createElement('div'); this.bar.className = 'update-banner'; this.bar.hidden = true;
     this.bar.setAttribute('role', 'region'); this.bar.setAttribute('aria-label', 'aimebu update');
     this.text = document.createElement('span'); this.text.className = 'update-banner-text';
@@ -49,6 +49,11 @@ export class UpdateBanner {
     return this.sync();
   }
   sync() {
+    // A remind hides the bar only until its deadline; wake up then, so a page left
+    // open shows it again without waiting for the next server event.
+    clearTimeout(this.timer); this.timer = null;
+    const until = this.ackRecord?.kind === 'remind' && this.ackRecord.version === this.status?.version && this.ackRecord.state === this.status?.state ? Date.parse(this.ackRecord.until) : NaN;
+    if (Number.isFinite(until) && until > Date.now()) this.timer = setTimeout(() => this.sync(), Math.min(until - Date.now() + 50, 2 ** 31 - 1));
     const wanted = updateBannerWanted({ status: this.status, rights: this.rights, ack: this.ackRecord });
     if (!wanted) { this.bar.hidden = true; return false; }
     const version = this.status.version || '';
