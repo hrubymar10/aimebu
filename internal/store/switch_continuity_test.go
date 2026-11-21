@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 func continuityFixture(t *testing.T, lead bool) (*Store, Project, Room, Agent) {

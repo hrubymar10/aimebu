@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // A containerized OpenCode launcher is allowed now, and its checkout preflight asks whether the launcher can forward the environment: an

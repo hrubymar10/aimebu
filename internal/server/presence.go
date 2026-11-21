@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // How long after a person's last real activity one of their browser sessions

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/ccsessions"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/ccsessions"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // attributionDeadline bounds one attribution scan, which reads whole transcripts.

@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/auth"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/auth"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // The account an import makes has a password nobody knows; after the import commits the server makes a one-time reset link for it,

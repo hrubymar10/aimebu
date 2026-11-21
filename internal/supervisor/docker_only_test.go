@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // When the instance runs agents only in docker, a supervisor refuses an agent on a native launcher itself: a spawn is an error that says why and

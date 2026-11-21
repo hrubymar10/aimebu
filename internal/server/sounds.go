@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // builtinSounds are the bundled notification sounds served from /sounds/.

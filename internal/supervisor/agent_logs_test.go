@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter/claude"
-	"github.com/hrubymar10/aimebu/internal/agentlog"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/claude"
+	"github.com/hrubymar10/aimebu/v2/internal/agentlog"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // A turn's stderr is kept in the agent's output log on the machine, redacted, and the server can read its tail over the machine socket;

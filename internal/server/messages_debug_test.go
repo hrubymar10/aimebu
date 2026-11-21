@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // ?notable=1 is what the bell reads: the notable events only, marked, as the newest `limit` of those; the plain history keeps everything.

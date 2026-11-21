@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 func TestHarnessNamesMapToTheToolsThatCanResume(t *testing.T) {

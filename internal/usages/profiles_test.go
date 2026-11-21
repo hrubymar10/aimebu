@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/usages/providers"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 // profileRig is a Reader wired to fake credential files and a fake usage

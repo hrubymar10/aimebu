@@ -11,7 +11,7 @@ import (
 	"sort"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 var errTeamSetupFolder = errors.New("team setup folder unavailable")

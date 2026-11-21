@@ -5,7 +5,7 @@ import (
 
 	"github.com/goccy/go-json"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // A message an agent wrote carries what its turn spent, for anyone who can read the room; a person's message and a turn that reported nothing do

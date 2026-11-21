@@ -1,4 +1,4 @@
-module github.com/hrubymar10/aimebu
+module github.com/hrubymar10/aimebu/v2
 
 go 1.26.1
 

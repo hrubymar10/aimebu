@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // maxRotatedRescues is how many rotated-credential rescue files are kept per

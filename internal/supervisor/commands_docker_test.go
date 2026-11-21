@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/adapter/opencode"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/opencode"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // fakeDockerLauncher writes a launcher that implements harness-docker's side of the contract (docs/design/harness-docker-run-command.md

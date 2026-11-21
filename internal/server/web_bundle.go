@@ -15,7 +15,7 @@ import (
 
 	"github.com/evanw/esbuild/pkg/api"
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // The page's ~240 ES modules are one bundle. Fetched as modules they are 240 requests, and over HTTP/1.1 (the usual way a dev server or a LAN

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // attributionSupervisor answers the host's attribution scans from a fixed list and counts them.

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 	_ "modernc.org/sqlite"
 )
 

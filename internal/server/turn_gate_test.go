@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/switcher"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/switcher"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // A turn recorded while a credential swap is running must wait for it. The swap is a real SwitchGuarded with the

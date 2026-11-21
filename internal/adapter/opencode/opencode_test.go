@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
-	"github.com/hrubymar10/aimebu/internal/answer"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 const testSession = "ses_eb9ff7679ffeTWs01Hgh3UTIS0"

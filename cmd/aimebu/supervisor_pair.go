@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/tlsclient"
+	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
 )
 
 func pairSupervisorCommand(ctx context.Context, serverURL, token string, insecure bool, stderr io.Writer) int {

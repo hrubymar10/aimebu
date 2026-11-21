@@ -11,8 +11,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/credtarget"
-	"github.com/hrubymar10/aimebu/internal/switcher"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/switcher"
 )
 
 // switcherManager is the subset of *switcher.Manager the CLI uses.

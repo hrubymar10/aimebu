@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // hello sends a hello that says whether the supervisor takes agent keys and which it holds, and returns the ack.

@@ -10,9 +10,9 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // TestMachineAnswersStaleControlAckWithStaleRev reproduces the production race of #43362 (AIMEBU_V2-6/V2-7): a stop

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
 )
 
 // externalLoginInstall wires the real fan-out and registers an external follow-active target that holds a fresh /login

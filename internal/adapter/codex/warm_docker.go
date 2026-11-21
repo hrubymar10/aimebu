@@ -13,8 +13,8 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // Known settings outside the denylist can remain in the host config. In

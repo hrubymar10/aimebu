@@ -12,8 +12,8 @@ import (
 	"github.com/goccy/go-json"
 	toml "github.com/pelletier/go-toml/v2"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func TestSkippedDockerMCPWarningRepeatsOnlyAfterConfigChanges(t *testing.T) {

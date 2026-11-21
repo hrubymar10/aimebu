@@ -11,8 +11,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // A supervisor that takes the server's telemetry settings says so in its hello, gets them in hello_ack and again in a telemetry_config frame; one that

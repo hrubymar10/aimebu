@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/getsentry/sentry-go"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 	"io"
 	"io/fs"
 	"log"
@@ -28,13 +28,13 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu"
-	"github.com/hrubymar10/aimebu/internal/auth"
-	"github.com/hrubymar10/aimebu/internal/quota"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/switcher"
-	"github.com/hrubymar10/aimebu/internal/usages"
-	"github.com/hrubymar10/aimebu/internal/usages/providers"
+	"github.com/hrubymar10/aimebu/v2"
+	"github.com/hrubymar10/aimebu/v2/internal/auth"
+	"github.com/hrubymar10/aimebu/v2/internal/quota"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/switcher"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 type Server struct {

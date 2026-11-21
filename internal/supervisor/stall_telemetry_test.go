@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // captureTransport collects what the supervisor reports, so a test can assert

@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func (s *Server) projectRecoverySettings(w http.ResponseWriter, r *http.Request) {

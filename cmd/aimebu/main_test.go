@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/auth"
-	"github.com/hrubymar10/aimebu/internal/server"
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/supervisor"
-	"github.com/hrubymar10/aimebu/internal/tlsclient"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/auth"
+	"github.com/hrubymar10/aimebu/v2/internal/server"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
+	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
 )
 
 // watchServing returns a channel that is closed when the server a test starts next is serving. The listeners are open long before that: a

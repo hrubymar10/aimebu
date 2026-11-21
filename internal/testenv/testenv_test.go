@@ -291,7 +291,7 @@ func declaresIsolatingTestMain(t *testing.T, files []string) bool {
 		}
 		alias := ""
 		for _, spec := range parsed.Imports {
-			if strings.Trim(spec.Path.Value, `"`) == "github.com/hrubymar10/aimebu/internal/testenv" {
+			if strings.Trim(spec.Path.Value, `"`) == "github.com/hrubymar10/aimebu/v2/internal/testenv" {
 				alias = "testenv"
 				if spec.Name != nil {
 					alias = spec.Name.Name

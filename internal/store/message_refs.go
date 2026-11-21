@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // MaxMessageRefs bounds how many "#N" references one delivery resolves into its context.

@@ -4,7 +4,7 @@ import (
 	"log"
 	"path/filepath"
 
-	"github.com/hrubymar10/aimebu/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
 )
 
 // newFanOut builds the live-target fan-out of a manager: the two live files

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // runScripted runs one normal turn of scripted steps to its end and returns the journal that recorded it.

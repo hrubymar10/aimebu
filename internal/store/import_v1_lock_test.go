@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // The v1 source openers read a copy that another process may be opening at that moment. They wait out a brief exclusive

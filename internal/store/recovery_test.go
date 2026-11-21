@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 func recoveryFixture(t *testing.T, readonly bool) (*Store, executionFixture, string) {

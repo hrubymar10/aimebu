@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // Compact requests manual compaction in a separate, tool-free Pi RPC process.

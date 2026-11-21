@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // Settings -> Telemetry lives in three global settings; see docs/telemetry.md. They are read and written here, not in the

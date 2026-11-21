@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // sessionStats is the part of a session's meta.json (its "stats") that prices a turn: Vibe totals tokens over the whole session, resumes

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 func decidedContinuation(t *testing.T, choice string) (*Store, executionFixture, string) {

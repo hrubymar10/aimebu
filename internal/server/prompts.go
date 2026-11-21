@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/hrubymar10/aimebu/internal/adapter/prompt"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func promptError(w http.ResponseWriter, err error) {

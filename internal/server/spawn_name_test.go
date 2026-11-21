@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // namedSpawnFixture has the seeded project and room and a connected fake machine, so a spawn is accepted without a supervisor process.

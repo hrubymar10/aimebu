@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // The fixtures in testdata/stream are Claude Code 2.1.329's own output, recorded against a local stand-in for the Messages API (an isolated

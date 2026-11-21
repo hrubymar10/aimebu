@@ -1,6 +1,6 @@
 package switcher
 
-import "github.com/hrubymar10/aimebu/internal/usages"
+import "github.com/hrubymar10/aimebu/v2/internal/usages"
 
 // OverlayUsages shows the configured account profiles on a usages response:
 // each Claude Code and Codex provider lists every profile, the active one

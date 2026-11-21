@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	aimebu "github.com/hrubymar10/aimebu"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	aimebu "github.com/hrubymar10/aimebu/v2"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // get reads a URL of a test server, asking for gzip as a browser does when `gzipped`, and returns the response and its body as it came (not decoded).

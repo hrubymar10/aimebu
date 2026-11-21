@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/cmdprobe"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 var harnessNames = []struct{ tool, variant, command string }{

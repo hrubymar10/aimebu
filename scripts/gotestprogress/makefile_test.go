@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // The Makefile is read by every make call, on machines that have no node (the web tests run in Docker, so `make test-full` needs Docker, Go and make,

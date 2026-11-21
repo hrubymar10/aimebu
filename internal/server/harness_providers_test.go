@@ -7,8 +7,8 @@ import (
 
 	"github.com/goccy/go-json"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // fakeProviderMachine connects a stand-in supervisor to the fixture's machine: it answers every detect request with what answer returns

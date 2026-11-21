@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // grantAgentKeys is the new keys a supervisor gets in hello_ack: one for each agent it should be running and holds no key for. A supervisor keeps

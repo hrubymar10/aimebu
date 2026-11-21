@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // refreshStateFileName lives beside the rescue files under the switcher root.

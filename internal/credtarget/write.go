@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // ErrLockBusy is returned when the target's write lock could not be taken

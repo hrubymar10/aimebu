@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 func (tx *Tx) insertAnswerReceipt(receipt AnswerReceipt, raw []byte) error {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/goccy/go-json"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // exportPage is how many messages are read, and written, at a time: a long room is streamed in pages; only a small id-to-number map (one

@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/cmdprobe"
+	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
 )
 
 // The harness-docker modes beyond a turn (docs/design/harness-docker-run-command.md): a command run in the agent's container outside any

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 func decodeTelemetry(t *testing.T, f *fixture, method string, body any) (int, telemetryView, map[string]any) {

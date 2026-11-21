@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/telemetry"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // Alert kinds the reconciler raises. Callers dedupe them.

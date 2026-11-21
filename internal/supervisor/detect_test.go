@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func TestParsePiModels(t *testing.T) {

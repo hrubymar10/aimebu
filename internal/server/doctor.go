@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // DoctorKeyFile is the file under server/ that holds the key `aimebu doctor --live` authenticates with. The server writes it at start with

@@ -768,16 +768,15 @@ depend on an `aimebu` binary in the harness image.
 
 An image that installs `aimebu` anyway (for an agent to run by hand, or for a
 v1 `aimebu mcp` entry in the mounted Claude configuration) must install it from
-the v2 line, not with `@latest`: `@latest` resolves to `master`, which is still
-v1 until v2 lands there. `@v2` does not work either (Go reads it as a version
-prefix), and the `v2.0.0-*` tags are refused because the module path has no
-`/v2` suffix, so pin a commit of the `v2` branch:
+the v2 line. Until a v2 tag is published in the public repository, pin a
+commit of the `v2` branch:
 
 ```sh
-go install github.com/hrubymar10/aimebu/cmd/aimebu@$(git ls-remote https://github.com/hrubymar10/aimebu refs/heads/v2 | cut -f1)
+go install github.com/hrubymar10/aimebu/v2/cmd/aimebu@$(git ls-remote https://github.com/hrubymar10/aimebu refs/heads/v2 | cut -f1)
 ```
 
-Once v2 is on `master`, `@latest` works again.
+After a v2 tag is published, install it with
+`go install github.com/hrubymar10/aimebu/v2/cmd/aimebu@<tag>`.
 Codex's response schema is written below the mirrored checkout, while its
 credentials stay in the container's configured Codex home. The adapter checks
 that the schema still exists immediately before launch and recreates it

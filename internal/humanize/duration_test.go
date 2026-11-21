@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // TestMain isolates the tests from the person's home and credentials, as every package with tests does. It is here, not in a file of its own,

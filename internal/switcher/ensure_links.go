@@ -3,7 +3,7 @@ package switcher
 import (
 	"errors"
 	"fmt"
-	"github.com/hrubymar10/aimebu/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
 	"io/fs"
 	"os"
 	"path/filepath"

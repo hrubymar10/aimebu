@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // A message from a person carries the person's login, so the chat can show a name where it only had the account id.

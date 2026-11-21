@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 var ErrCommandInvalid = errors.New("invalid command")

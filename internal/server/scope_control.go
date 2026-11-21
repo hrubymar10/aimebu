@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func (s *Server) scopeControl(w http.ResponseWriter, r *http.Request) {

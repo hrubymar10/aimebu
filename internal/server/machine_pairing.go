@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/auth"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/tlsclient"
-	"github.com/hrubymar10/aimebu/internal/worktree"
+	"github.com/hrubymar10/aimebu/v2/internal/auth"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
+	"github.com/hrubymar10/aimebu/v2/internal/worktree"
 )
 
 type machineRow struct {

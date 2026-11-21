@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // The exec ID line is taken out of the launcher's stderr, wherever the writes split it; everything else passes through untouched.

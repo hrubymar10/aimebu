@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func TestReviewerSpawnError(t *testing.T) {

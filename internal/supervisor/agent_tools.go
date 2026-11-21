@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/tlsclient"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
 )
 
 // An agent's key lives in this process's memory and nowhere else: the server hands it over in a spawn (or, after a restart, in hello_ack), a turn

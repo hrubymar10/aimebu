@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // lockedBuffer is a bytes.Buffer safe to write from the adapter's goroutine and read from the test.

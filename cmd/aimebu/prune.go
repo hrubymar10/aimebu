@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // pruneCommand acts only on the configured v2 root. The server and supervisor

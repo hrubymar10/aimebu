@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/usages"
-	"github.com/hrubymar10/aimebu/internal/usages/providers"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 // The owner reads the whole snapshot of the usages, an admin the limits without anything that names an account or how it signs in, and nobody else

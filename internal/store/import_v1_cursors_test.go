@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // v1CursorFixture is the shared v1 fixture with alice's read cursors set:

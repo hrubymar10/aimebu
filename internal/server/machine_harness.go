@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 func (s *Server) machineHarnesses(w http.ResponseWriter, r *http.Request) {

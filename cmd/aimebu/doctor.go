@@ -16,9 +16,9 @@ import (
 	"github.com/goccy/go-json"
 	_ "modernc.org/sqlite"
 
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/switcher"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/switcher"
 )
 
 const doctorUsage = "usage: aimebu doctor [--json] [--strict] [--live | --machine]"

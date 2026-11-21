@@ -10,7 +10,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/usages/providers"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 const warmupGap = time.Hour

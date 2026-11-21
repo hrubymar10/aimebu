@@ -6,8 +6,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/worktree"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/worktree"
 )
 
 // agentRemove (DELETE /api/agents/{id}) removes a stopped agent for good. The project's owner or an operator may. Its worktree of its own, if it

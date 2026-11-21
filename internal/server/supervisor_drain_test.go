@@ -12,10 +12,10 @@ import (
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
 
 // countRows counts the rows a condition matches. The store's transaction offers Exec only, so a no-op update counts them.

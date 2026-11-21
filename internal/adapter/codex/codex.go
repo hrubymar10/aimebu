@@ -22,11 +22,11 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/adapter/prompt"
-	"github.com/hrubymar10/aimebu/internal/cmdprobe"
-	"github.com/hrubymar10/aimebu/internal/harness"
-	"github.com/hrubymar10/aimebu/internal/pricing"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
+	"github.com/hrubymar10/aimebu/v2/internal/harness"
+	"github.com/hrubymar10/aimebu/v2/internal/pricing"
 )
 
 type Adapter struct {

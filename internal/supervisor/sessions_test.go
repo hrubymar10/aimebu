@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/ccsessions"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/ccsessions"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // A session_scan that names a session and CopyTo copies it under the folder's Claude project directory and lists nothing; an unknown session

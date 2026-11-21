@@ -7,8 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // legacyAttrTTL is how long what a transcript scan found for a v1 sender is kept; legacyAttrLimit is how many of the sender's latest message

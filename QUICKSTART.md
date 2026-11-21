@@ -25,6 +25,10 @@ aimebu version
 
 The first `aimebu` run compiles the binary (a minute or so) and prints `Building aimebu...`, then a version such as `aimebu v2.0.0-alpha.1`; later runs start at once. Add the `export` line to your shell profile to keep it. The clone goes first on `PATH` on purpose: if v1 is installed (Homebrew, `go install`), its `aimebu` would otherwise shadow v2. `command -v aimebu` should print the clone's `bin/aimebu`.
 
+After a v2 tag is published, the corresponding Go install path is
+`go install github.com/hrubymar10/aimebu/v2/cmd/aimebu@<tag>` (replace
+`<tag>` with that tag). The steps here use the clone and wrapper.
+
 ### 2. Start the server
 
 ```sh

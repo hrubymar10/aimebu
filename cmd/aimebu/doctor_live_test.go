@@ -14,7 +14,7 @@ import (
 
 	"github.com/goccy/go-json"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 func TestReadDoctorKey(t *testing.T) {

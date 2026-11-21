@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 func TestSessionsMergesLocalAndServerViews(t *testing.T) {

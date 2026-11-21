@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
 )
 
 func enabledManager(t *testing.T) (*Manager, string) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // Any active agent, a worker as much as a lead, may start a private chat with a person of its own project; the server decides who, and how much.

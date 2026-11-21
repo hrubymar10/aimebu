@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // The stall evidence the supervisor sends for a turn its own watchdog killed: marked, and its evidence names the deadline.

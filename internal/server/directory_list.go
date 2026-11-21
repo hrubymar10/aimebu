@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/pathlist"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/pathlist"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // directoryList offers folder names only to people who can create or edit

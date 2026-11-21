@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func (f *fixture) patchRoom(t *testing.T, cookie *http.Cookie, csrf, roomID string, body any) (int, map[string]any) {

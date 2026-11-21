@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/tlsclient"
+	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
 )
 
 func TestServerRejectsPublicURLWithPath(t *testing.T) {

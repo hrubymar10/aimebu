@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // turnInterruptAnswerWait is how long the server waits for a supervisor's answer to a turn_interrupt frame: the supervisor only signals the

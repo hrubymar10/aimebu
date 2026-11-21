@@ -17,7 +17,7 @@ import (
 
 	"github.com/goccy/go-json"
 
-	"github.com/hrubymar10/aimebu/internal/cmdprobe"
+	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
 )
 
 const (

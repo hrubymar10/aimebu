@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/hrubymar10/aimebu/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
 )
 
 // Prompt overrides replace the shared prose sentences of an adapter's turn prompt (prompt.Slots): one row per scope and slot, global

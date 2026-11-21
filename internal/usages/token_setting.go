@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/usages/providers"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 // TokenAutoRefreshToolState is one tool's line of the "Auto-refresh tokens"

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // The refresher recognises a login waiting in a target through

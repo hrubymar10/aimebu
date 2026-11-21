@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/quota"
-	"github.com/hrubymar10/aimebu/internal/switcher"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/quota"
+	"github.com/hrubymar10/aimebu/v2/internal/switcher"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // StartQuotaSwitcher starts the automatic account switcher: the quota Runner over

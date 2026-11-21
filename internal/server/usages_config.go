@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hrubymar10/aimebu/internal/usages/providers"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 func (s *Server) usageReady(w http.ResponseWriter, r *http.Request) bool {

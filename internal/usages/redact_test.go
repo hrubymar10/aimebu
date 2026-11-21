@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/usages/providers"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 // An admin's view keeps the limits and drops everything that names an account or how it signs in, and nothing is added to it by a field the snapshot

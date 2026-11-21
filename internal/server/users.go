@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/auth"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/auth"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func userError(w http.ResponseWriter, err error) {

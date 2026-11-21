@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/quota"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/quota"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func guardRequest(t *testing.T, f *fixture, method, path string, body any) (int, string) {

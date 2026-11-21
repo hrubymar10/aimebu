@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 func TestReadOnlyManagerNeverWritesProfileMeta(t *testing.T) {

@@ -3,8 +3,8 @@ package switcher
 import (
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/credtarget"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // CredStore adapts the profile store to credtarget.ProfileStore, the interface

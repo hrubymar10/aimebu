@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // TestLiveDockerCanary runs two real turns through the vibe-docker launcher: the first hands the agent a nonce, the second resumes the

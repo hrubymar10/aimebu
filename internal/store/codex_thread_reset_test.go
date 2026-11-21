@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 const threadMissingStderr = "ERROR codex_core::rollout: failed to record rollout items: thread 019a1b2c-3d4e not found"

@@ -37,10 +37,10 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/adapter/prompt"
-	"github.com/hrubymar10/aimebu/internal/cmdprobe"
-	"github.com/hrubymar10/aimebu/internal/vibeconfig"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
+	"github.com/hrubymar10/aimebu/v2/internal/vibeconfig"
 )
 
 // SupportedVersion is the Vibe release this adapter's stream parsing and session accounting were verified against.

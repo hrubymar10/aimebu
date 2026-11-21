@@ -16,7 +16,7 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // A native Codex turn runs from a private CODEX_HOME, so the person's own config.toml (model, profile, approvals, trust) never applies. Their

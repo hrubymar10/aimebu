@@ -10,8 +10,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // dialCommandMachine connects a supervisor that runs commands, with what its hello says it still runs and still owes.

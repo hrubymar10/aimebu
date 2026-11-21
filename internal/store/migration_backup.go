@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 	sqlite "modernc.org/sqlite"
 )
 

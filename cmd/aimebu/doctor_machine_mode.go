@@ -17,11 +17,11 @@ import (
 
 	"github.com/goccy/go-json"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/agentlog"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/supervisor"
-	"github.com/hrubymar10/aimebu/internal/tlsclient"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/agentlog"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
+	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
 )
 
 // `aimebu doctor --machine` is for a host that runs only the supervisor, with

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // fakeClaude is a harness that reads one stream-json user message per line and answers each the way claude does: it repeats the line (as

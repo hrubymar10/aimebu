@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/cmdprobe"
-	"github.com/hrubymar10/aimebu/internal/credtarget"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // ErrMigrateNotEnabled: migration needs the switcher enabled (it works on the

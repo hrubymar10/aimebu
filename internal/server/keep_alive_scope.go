@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // keepAliveScopeTTL (protocol.KeepAliveScopeTTL) bounds a ping's scope on the server: a supervisor that lifts it always does so once the ping is

@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // dockerLauncher writes a fake opencode-docker. A launcher that has the feature probe answers it with the features and exits, as the real

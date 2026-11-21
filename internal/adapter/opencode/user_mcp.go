@@ -8,7 +8,7 @@ import (
 	"sort"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // A native OpenCode turn runs with a private XDG_CONFIG_HOME and an inline config, so the person's own global config never applies. Their MCP

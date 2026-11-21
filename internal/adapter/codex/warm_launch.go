@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 var _ adapter.WarmAdapter = (*Adapter)(nil)

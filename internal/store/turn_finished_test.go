@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // A turn that ends cleanly in a process that goes on living (a warm process kept for the next turn) is recorded as a finished turn: nothing exited, so

@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func versionLauncher(t *testing.T, body string) (protocol.LauncherDefinition, string) {

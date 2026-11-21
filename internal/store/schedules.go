@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hrubymar10/aimebu/internal/cron"
+	"github.com/hrubymar10/aimebu/v2/internal/cron"
 )
 
 var ErrScheduleInvalid = errors.New("invalid schedule")

@@ -14,7 +14,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // Block is one table of the file, kept as written: its header, every line up to the next table, and the sub-tables that follow it.

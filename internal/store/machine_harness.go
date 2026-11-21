@@ -5,7 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 func (s *Store) MachineHarnesses(ctx context.Context, machineID string) ([]protocol.HarnessRow, error) {

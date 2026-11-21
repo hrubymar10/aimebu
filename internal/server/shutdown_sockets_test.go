@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 func TestEventStreamShutdownClosesBeforeStore(t *testing.T) {

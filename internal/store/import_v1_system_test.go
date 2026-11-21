@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // v1's _system room is never imported: a mapping that sends it to a project (a saved draft, a hand-written map) is ignored, in the

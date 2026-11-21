@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // What the supervisor sends for a turn it cut on a turn_interrupt frame.

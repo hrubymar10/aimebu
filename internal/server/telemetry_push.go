@@ -4,8 +4,8 @@ import (
 	"context"
 	"os"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // telemetryForMachine is the telemetry configuration a supervisor is told: nil for one that does not take it (an older one, and the server's own

@@ -17,10 +17,10 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/answer"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 var ErrMachineUnavailable = errors.New("machine unavailable")

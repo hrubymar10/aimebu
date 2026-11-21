@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // Migrating a fresh database takes about three seconds under the race detector on a two CPU runner, and nearly every test of this package that

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 func TestUsageProfilesListsStoredCopiesOnlyWhenEnabled(t *testing.T) {

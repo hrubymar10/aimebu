@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func (s *Server) roomWriteAccess(w http.ResponseWriter, r *http.Request, room store.Room) bool {

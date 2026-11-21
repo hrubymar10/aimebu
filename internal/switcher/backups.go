@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // maxProfileBackups caps how many backups/<tool>/<name>-<unix>.json files are

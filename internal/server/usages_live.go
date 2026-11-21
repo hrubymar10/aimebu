@@ -4,8 +4,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/hrubymar10/aimebu/internal/telemetry"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // StartUsageAlerts watches fresh provider snapshots without blocking the

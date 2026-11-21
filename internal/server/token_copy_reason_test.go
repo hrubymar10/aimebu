@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/switcher"
+	"github.com/hrubymar10/aimebu/v2/internal/switcher"
 )
 
 func TestTokenCopyMigrationReasonForRunningCodex(t *testing.T) {

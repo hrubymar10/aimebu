@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func (service *Service) CreateUserInvite(ctx context.Context, actorID, kind, projectID, role, targetID string) (store.UserInvite, string, error) {

@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // The offline server checks read the config root and the server database

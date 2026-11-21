@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // A native Pi turn runs with a private PI_CODING_AGENT_DIR, so the person's own ~/.pi/agent never applies. Their MCP servers are the exception:

@@ -118,6 +118,11 @@ The clone goes first on `PATH` so that an installed v1 `aimebu` does not shadow 
 as `aimebu-<os>-<arch>` in the clone; a symlink to it on your `PATH` works too.
 Then follow the [Quick start](QUICKSTART.md).
 
+After a v2 tag is published, `go install
+github.com/hrubymar10/aimebu/v2/cmd/aimebu@<tag>` is another install route;
+replace `<tag>` with the published v2 tag. The clone and wrapper remain the
+recommended route for updates.
+
 To keep it running across logins, give your service manager the foreground
 command `aimebu server`; see [running it permanently](QUICKSTART.md#running-it-permanently).
 

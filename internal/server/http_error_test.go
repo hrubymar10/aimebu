@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 func TestHandledHTTP500LogsAndReportsTheScrubbedErrorChain(t *testing.T) {

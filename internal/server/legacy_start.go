@@ -11,8 +11,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // sessionCheck is what looking for a harness session on the host found.

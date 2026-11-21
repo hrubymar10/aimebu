@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // What the supervisor sends for a turn whose harness process was cut off: marked, with how it ended as the reason.

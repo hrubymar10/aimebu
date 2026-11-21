@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
 )
 
 // full claude credential with a given access token, a refresh token and expiry.

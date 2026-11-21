@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // launchArgs runs one normal turn through a scripted launcher and returns its argument list and the environment it was given.

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/credtarget"
-	"github.com/hrubymar10/aimebu/internal/switcher"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/switcher"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 // lookPath is exec.LookPath; tests replace it so the host's PATH never matters.

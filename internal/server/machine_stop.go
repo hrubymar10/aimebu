@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // stopFailure is an agent that a machine-wide stop could not stop, and why.

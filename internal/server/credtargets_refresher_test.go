@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/switcher"
-	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/v2/internal/switcher"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
 var refreshTokenInFile = regexp.MustCompile(`"refreshToken"\s*:\s*"([^"]+)"`)

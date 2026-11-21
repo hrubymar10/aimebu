@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // While a cache keep-alive ping of an agent runs, every call made with the agent's key is refused with 403 keep_alive_scope, before any handler: a ping

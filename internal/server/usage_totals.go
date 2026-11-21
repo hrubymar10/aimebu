@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // usageRange reads ?range= (today, 7d or all; today when absent) and answers 400 for anything else.

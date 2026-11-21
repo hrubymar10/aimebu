@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 // MessageByNo finds a message by its number (the "#N" people use). Callers check access to its room.

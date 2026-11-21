@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/credtarget"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // ErrLinkedProfile is returned when a profile's stored credential is still a

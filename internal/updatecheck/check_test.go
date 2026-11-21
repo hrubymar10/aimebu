@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // The server-side check runs real git against a local bare remote holding the

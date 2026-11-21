@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 func doctorRequest(t *testing.T, f *fixture, mutate func(*http.Request)) (int, protocol.DoctorLive) {

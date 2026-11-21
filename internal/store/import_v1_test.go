@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // skipFsync turns off fsync on a fixture database that a test builds by hand. Each autocommit

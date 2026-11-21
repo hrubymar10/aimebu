@@ -6,9 +6,9 @@ import (
 	"strconv"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/supervisor"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // applySupervisorTelemetry takes the telemetry settings the server sent (in hello_ack, and again whenever they change) and starts, replaces or stops

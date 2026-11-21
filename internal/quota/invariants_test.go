@@ -88,7 +88,7 @@ func TestQuotaPackageCannotWriteFilesOrTakeLocksOutsideTheActuator(t *testing.T)
 		}
 		for _, imp := range f.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
-			if strings.Contains(path, "hrubymar10/aimebu") {
+			if strings.Contains(path, "hrubymar10/aimebu/v2") {
 				t.Errorf("%s imports %s: the quota policy must reach the program only through its interfaces", name, path)
 			}
 			if path == "syscall" || path == "golang.org/x/sys/unix" {

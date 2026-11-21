@@ -1,6 +1,6 @@
 package switcher
 
-import "github.com/hrubymar10/aimebu/internal/usages"
+import "github.com/hrubymar10/aimebu/v2/internal/usages"
 
 // UsageProfiles lists the profiles the usage reader should poll: every stored
 // profile with its credential copy path, or nothing while the switcher is

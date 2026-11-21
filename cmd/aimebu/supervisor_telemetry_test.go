@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/supervisor"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 type discardSentryTransport struct{}

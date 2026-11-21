@@ -14,8 +14,8 @@ import (
 
 	"github.com/goccy/go-json"
 
-	"github.com/hrubymar10/aimebu/internal/quota"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/quota"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // A settings backup is the owner's instance-level choices as one JSON file: what they would want back after a

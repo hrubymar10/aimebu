@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/configroot"
-	"github.com/hrubymar10/aimebu/internal/store"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
-	"github.com/hrubymar10/aimebu/internal/updatecheck"
+	"github.com/hrubymar10/aimebu/v2/internal/configroot"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/updatecheck"
 )
 
 // The server's own update check: it follows the same release-channel rules as

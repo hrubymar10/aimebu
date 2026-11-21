@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 var doctorNow = time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)

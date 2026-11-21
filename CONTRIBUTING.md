@@ -149,12 +149,12 @@ Plain `go test ./...` prints nothing for a package until the whole package is
 done, so a stuck test looks like silence. The runner prints:
 
 ```
-[12:00:01] start  github.com/hrubymar10/aimebu/internal/store
-[12:03:10] ok     github.com/hrubymar10/aimebu/internal/store (3m09s)  [4/23 packages]
-[12:03:10] slow   github.com/hrubymar10/aimebu/internal/server TestSomething (41s)
+[12:00:01] start  github.com/hrubymar10/aimebu/v2/internal/store
+[12:03:10] ok     github.com/hrubymar10/aimebu/v2/internal/store (3m09s)  [4/23 packages]
+[12:03:10] slow   github.com/hrubymar10/aimebu/v2/internal/server TestSomething (41s)
 [12:03:40] still running after 3m39s, nothing new for 30s  [4/23 packages]
-         running github.com/hrubymar10/aimebu/cmd/aimebu TestServerFoo for 2m10s
-[12:08:01] HANG?  github.com/hrubymar10/aimebu/cmd/aimebu TestServerFoo has been running for 5m00s
+         running github.com/hrubymar10/aimebu/v2/cmd/aimebu TestServerFoo for 2m10s
+[12:08:01] HANG?  github.com/hrubymar10/aimebu/v2/cmd/aimebu TestServerFoo has been running for 5m00s
            kill -QUIT 12345    # aimebu.test
 ```
 

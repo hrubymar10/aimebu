@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/supervisor"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
 
 // agentWorktreeFolders lists the folders under the project's worktrees directory (none when it does not exist yet); any other read error fails

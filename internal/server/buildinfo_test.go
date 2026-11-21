@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 	"net/http"
 	"runtime"
 	"testing"

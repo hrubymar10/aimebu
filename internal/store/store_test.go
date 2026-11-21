@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 func TestStoreStartupRetriesSQLiteBusy(t *testing.T) {

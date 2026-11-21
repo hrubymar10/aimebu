@@ -11,8 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hrubymar10/aimebu/internal/logfile"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/logfile"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func TestMain(m *testing.M) {

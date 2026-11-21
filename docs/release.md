@@ -19,11 +19,9 @@ Where the version lives today:
   bundle's bytes, not by the version.
 - There is no `VERSION` file, changelog, or Go-source constant. Git has one tag,
   `v0.0.0`.
-- The Go module path is `github.com/hrubymar10/aimebu`, the same as v1, so a
-  v2 tag is not importable as a Go module (Go requires a `/v2` suffix for a
-  major version 2 or higher tag on a module with a `go.mod`). That is fine
-  because the repo ships a binary, not a library; do not add `/v2` to the module
-  path.
+- The Go module path is `github.com/hrubymar10/aimebu/v2`. Go requires the
+  `/v2` suffix for major version 2 tags, including binary installs with
+  `go install`.
 
 Proposal:
 
@@ -226,12 +224,11 @@ Secondary options, none required for 2.0.0 and none verified here:
   --HEAD aimebu`). It lives outside this repo and builds from `master`, so it
   picks up v2 at the cutover. Check that the formula's build command and service
   definition still fit (`aimebu server`) and update it for the new defaults.
-- **`go install github.com/hrubymar10/aimebu/cmd/aimebu@latest`:** documented
-  in v1. Be careful: the repo has a `v0.0.0` tag, and a `v2.x` tag on a module
-  path without `/v2` is not a valid module version. `@latest` therefore likely
-  resolves to the old `v0.0.0` commit, not v2. Check it before keeping the line
-  in the README, or document `@master` instead. Binaries from `go install` print
-  the VCS-stamped default version, not `v2.0.0`.
+- **`go install github.com/hrubymar10/aimebu/v2/cmd/aimebu@<tag>`:** the
+  `/v2` module path makes v2 tags valid install targets. Check that the
+  command resolves a published v2 tag before documenting it as an install
+  route. Binaries from `go install` print the VCS-stamped default version,
+  not the wrapper's build-time version override.
 - **Prebuilt binaries on GitHub Releases** (section 2): at most an option. They
   would need the `xattr -d com.apple.quarantine ./aimebu` workaround on macOS
   because binaries stay unsigned and signing/notarization is not a goal. If
@@ -405,6 +402,9 @@ Not blockers (can ship after 2.0.0):
    repo's commit policy); push the tag. Create the GitHub release with the
    notes (binaries and `SHA256SUMS` only if the optional route is taken).
 8. Install from a fresh clone of the public repo at the tag and confirm
-   `aimebu version`. Re-check the Homebrew formula and the `go install` line.
+   `aimebu version`. Check that
+   `go install github.com/hrubymar10/aimebu/v2/cmd/aimebu@<tag>` resolves the
+   published tag, with `<tag>` replaced by the release tag. Re-check the
+   Homebrew formula.
 9. Update the Homebrew tap if it is kept.
 10. Point v1 users at the migration guide; v1 stays reachable at its tag and `v1` branch.

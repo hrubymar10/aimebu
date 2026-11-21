@@ -24,14 +24,14 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/agentlog"
-	"github.com/hrubymar10/aimebu/internal/answer"
-	"github.com/hrubymar10/aimebu/internal/pathlist"
-	"github.com/hrubymar10/aimebu/internal/protocol"
-	"github.com/hrubymar10/aimebu/internal/telemetry"
-	"github.com/hrubymar10/aimebu/internal/tlsclient"
-	"github.com/hrubymar10/aimebu/internal/worktree"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/agentlog"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/pathlist"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
+	"github.com/hrubymar10/aimebu/v2/internal/worktree"
 )
 
 type Client struct {

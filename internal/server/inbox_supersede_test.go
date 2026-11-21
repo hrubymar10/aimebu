@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/answer"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // A superseded ask is out of the Inbox but not over: it rides along with its state for the chat, and answering it resolves it and wakes the

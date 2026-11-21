@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hrubymar10/aimebu/internal/agenttools"
+	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
 )
 
 // agentToolMCP exposes the same narrow toolbox over streamable HTTP. The

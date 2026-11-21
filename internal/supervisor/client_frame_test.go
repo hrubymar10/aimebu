@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/answer"
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 func TestAnswerFrameLimitKeepsDigestAndSendsReceiptMarker(t *testing.T) {

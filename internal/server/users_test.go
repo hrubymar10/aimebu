@@ -11,7 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func userRequest(t *testing.T, f *fixture, cookie *http.Cookie, csrf, method, path string, body any) *http.Response {

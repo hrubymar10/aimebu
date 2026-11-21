@@ -3,7 +3,7 @@ package supervisor
 import (
 	"testing"
 
-	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 // Mistral Vibe is a launcher tool, native or containerized.

@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // usageLimit is GET/PUT /api/projects/{project}/usage-limit: the project's daily limits. They apply to the whole project, all its rooms

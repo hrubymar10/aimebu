@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // daemonHelperEnv makes this test binary behave as `aimebu` (see TestMain): `server start` runs os.Executable, which in a test is the test

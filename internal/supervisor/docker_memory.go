@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/telemetry"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 var dockerUsage = regexp.MustCompile(`^\s*([\d.]+)\s*([KMGT]?i?B)\b`)

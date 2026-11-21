@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hrubymar10/aimebu/internal/cmdprobe"
-	"github.com/hrubymar10/aimebu/internal/runtimeignore"
+	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
+	"github.com/hrubymar10/aimebu/v2/internal/runtimeignore"
 )
 
 // DockerPreflight checks the requested checkout through the actual launcher.

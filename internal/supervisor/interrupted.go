@@ -5,7 +5,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
 
 // interruptedReason says whether a turn's harness process was cut off rather than having answered or failed with a reason: it ended

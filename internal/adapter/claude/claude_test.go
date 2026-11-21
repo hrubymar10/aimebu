@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/adapter"
-	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
-	"github.com/hrubymar10/aimebu/internal/testenv"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {

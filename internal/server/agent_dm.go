@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // agentToolDM is the dm_agent tool: an active lead starts (or continues) a private chat with any agent, in any project it may reach.

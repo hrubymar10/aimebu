@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	json "github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/internal/auth"
+	"github.com/hrubymar10/aimebu/v2/internal/auth"
 )
 
 func TestSetupStatusShowsTheFullPathOnlyToThisMachine(t *testing.T) {
