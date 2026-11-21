@@ -1643,7 +1643,7 @@ func (s *Store) InterruptFlowMigrationTurn(ctx context.Context, projectID, actor
 			EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_interrupt_requested')
 			FROM team_flow_migration_agent ma JOIN agent a ON a.id=ma.agent_id JOIN turn t ON t.agent_id=a.id
 			WHERE ma.migration_id=? AND ma.agent_id=? AND a.desired<>'stopped' AND t.exec='running' AND t.mode='normal'
-			AND NOT EXISTS(SELECT 1 FROM switch_handoff h WHERE h.turn_id=t.id)
+			AND NOT EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id)
 			ORDER BY t.started_at DESC,t.id DESC LIMIT 1`, id, agentID).Scan(&turnID, &generation, &machineID, &requested)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil

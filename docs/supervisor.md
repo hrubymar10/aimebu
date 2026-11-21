@@ -33,8 +33,12 @@ itself on the new supervisor with the note `your previous turn was interrupted
 continuation does not count as the chain's one automatic continuation. The
 grace starts when the server first sees the mismatch (after a server restart,
 at the supervisor's first connection) and reconnects do not extend it. A
-supervisor that does not announce `supports_turn_interrupt`, and a correction
-or diagnostic turn, are waited for as before. A long command started with
+supervisor that does not announce `supports_turn_interrupt`, and a correction,
+diagnostic or handoff turn, are waited for as before. The drain also leaves
+alone the turn of an agent that a team flow change in progress holds (the
+change interrupts it its own way), and it never replaces an interrupt somebody
+already asked for: that turn is only sent the frame again and is settled as
+the first request said. A long command started with
 `run_command` is never cut: it keeps the old supervisor up, and local
 dispatch held, until it ends, also after the turns were interrupted. The
 owner's Restart now action interrupts turns and commands at once and gets the
@@ -958,7 +962,8 @@ continuation in all, of either kind; a repeat takes the ordinary failure path be
 The server can also **interrupt one turn on purpose** without stopping its agent. A supervisor
 that announces `supports_turn_interrupt` in `hello` takes a `turn_interrupt` frame for one
 running ordinary turn and answers `ok`, `not_running` (it runs no such turn) or
-`unsupported_mode` (a correction or a diagnostic, which is left alone). It ends the turn's
+`unsupported_mode` (a correction or a diagnostic, which is left alone; the
+server itself never asks for a handoff turn to be cut). It ends the turn's
 process the way a stop does (a cancel, a kill after 30 seconds) and reports the exit
 `interrupted` with the reason `the turn was interrupted on request`, never as a cancel; the
 agent stays active and its next delivery is admitted as usual. An answer that was in first

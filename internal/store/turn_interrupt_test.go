@@ -189,3 +189,58 @@ func TestTurnInterruptRequestDoesNotApplyToAnotherEnd(t *testing.T) {
 		t.Fatalf("a stop's cancel was settled as a requeue: exec=%s outcome=%s note=%s", exec, outcome, noteState)
 	}
 }
+
+// A handoff turn (a switch's, or a departing agent's) is not an ordinary turn to cut: the server is waiting for its answer.
+func TestTurnInterruptRefusesAHandoffTurn(t *testing.T) {
+	t.Parallel()
+	s, f, _ := recoveryFixture(t, false)
+	if _, err := s.db.Exec(`INSERT INTO switch_handoff_turn(turn_id,agent_id) VALUES (?,?)`, f.turn.ID, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, yield := range []bool{false, true} {
+		if _, err := s.RequestTurnInterrupt(context.Background(), TurnInterruptRequest{TurnID: f.turn.ID, ActorKind: "user", ActorID: "usr_recovery", Purpose: "test", Disposition: TurnInterruptContinue, Yield: yield}); !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("yield=%t: %v", yield, err)
+		}
+	}
+	var requests int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE turn_id=? AND kind='turn_interrupt_requested'`, f.turn.ID).Scan(&requests); err != nil || requests != 0 {
+		t.Fatalf("requests=%d %v", requests, err)
+	}
+}
+
+// A request that yields never replaces one already recorded: the first disposition wins, the target is still returned (the frame can be
+// sent again), and the turn is settled as the first request said.
+func TestYieldingTurnInterruptKeepsTheFirstRequest(t *testing.T) {
+	t.Parallel()
+	s, f, _ := recoveryFixture(t, false)
+	ctx := context.Background()
+	first := requestInterrupt(t, s, f.turn.ID, TurnInterruptRequeue)
+	later, err := s.RequestTurnInterrupt(ctx, TurnInterruptRequest{TurnID: f.turn.ID, ActorKind: "system", ActorID: "supervisor_drain", Purpose: "supervisor_drain", Disposition: TurnInterruptContinue, Yield: true})
+	if err != nil || later != first {
+		t.Fatalf("yielding request: %+v %v, want the target %+v", later, err, first)
+	}
+	var requests, children int
+	var noteState string
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE turn_id=? AND kind='turn_interrupt_requested'`, f.turn.ID).Scan(&requests); err != nil || requests != 1 {
+		t.Fatalf("requests=%d %v", requests, err)
+	}
+	if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, requestedInterruptExit); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM turn WHERE parent_turn_id=?`, f.turn.ID).Scan(&children); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT state FROM note WHERE id=?`, f.note.ID).Scan(&noteState); err != nil {
+		t.Fatal(err)
+	}
+	if children != 0 || noteState != "queued" {
+		t.Fatalf("the turn was not settled as the first request (requeue) said: children=%d note=%s", children, noteState)
+	}
+	// A request that does not yield (a person deciding again) still replaces it.
+	s2, f2, _ := recoveryFixture(t, false)
+	requestInterrupt(t, s2, f2.turn.ID, TurnInterruptRequeue)
+	requestInterrupt(t, s2, f2.turn.ID, TurnInterruptContinue)
+	if err := s2.db.QueryRow(`SELECT COUNT(*) FROM event WHERE turn_id=? AND kind='turn_interrupt_requested'`, f2.turn.ID).Scan(&requests); err != nil || requests != 2 {
+		t.Fatalf("requests=%d %v", requests, err)
+	}
+}

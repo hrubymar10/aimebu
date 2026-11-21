@@ -1051,7 +1051,9 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   change; observed goes `in_turn→idle` when the supervisor reports the exit,
   never through `interrupting` or `stopped`. The server first records a
   `turn_interrupt_requested{actor, actor_kind, purpose, disposition}` event on
-  the turn (only for a turn that is `running` in mode `normal`), then sends
+  the turn (only for a turn that is `running` in mode `normal` and is not a
+  switch or departing handoff turn, which has a `switch_handoff_turn` row and
+  whose answer the server waits for), then sends
   `turn_interrupt` (§4.2). The disposition applies when the turn's exit
   arrives marked `interrupted`, not terminal and not a cancel:
   `continue` continues the turn on its own like a turn whose process was cut
@@ -1354,8 +1356,14 @@ announced `supports_turn_interrupt` is sent a turn interrupt (§3.4) with
 purpose `supervisor_drain` and disposition `continue` for every ordinary turn
 it still runs: the turn ends interrupted, the supervisor goes idle and exits,
 and the turn is continued by itself on the replacement, outside the one
-automatic continuation of its chain. A correction or diagnostic turn is left
-to finish, an older supervisor is waited for as before, and a command outside
+automatic continuation of its chain. A correction, diagnostic or handoff turn
+is left to finish. The drain yields to whoever already decided about a turn:
+the turn of an agent that is part of a team flow change in progress
+(`draining` or `applying`) is not touched, since the change has its own
+interrupt and disposition, and a turn that already has a
+`turn_interrupt_requested` event keeps it (the first recorded disposition
+wins; the drain only sends the frame again). An older supervisor is waited
+for as before, and a command outside
 a turn is never ended for this: the old supervisor stays up, and local
 dispatch stays held, until its commands finish. A turn whose process in a
 container is not confirmed gone holds the supervisor for its quarantine

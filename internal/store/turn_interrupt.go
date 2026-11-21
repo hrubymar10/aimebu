@@ -30,6 +30,10 @@ type TurnInterruptRequest struct {
 	ActorID     string
 	Purpose     string
 	Disposition string
+	// Yield makes the request give way to whoever already decided about the turn: a turn whose agent is part of a team flow change in
+	// progress is refused (the change has its own interrupt), and a turn that already has a request keeps it (the first recorded
+	// disposition wins; the target is returned so the frame can be sent again, and nothing new is recorded).
+	Yield bool
 }
 
 // TurnInterruptTarget is what the server needs to send the frame. An empty TurnID says there is no turn to interrupt this way.
@@ -41,7 +45,9 @@ type TurnInterruptTarget struct {
 }
 
 // RequestTurnInterrupt records the request for a running ordinary turn and says where to send the frame. It authorizes nobody: the caller
-// has decided the actor may do this. A turn that is not running, or is not an ordinary one, is refused with ErrInvalidTransition.
+// has decided the actor may do this. A turn that is not running, or is not an ordinary one (a correction, a diagnostic, a switch or
+// departing handoff turn, whose answer the server is waiting for), is refused with ErrInvalidTransition; so is, for a request that
+// yields, a turn held by a team flow change in progress.
 func (s *Store) RequestTurnInterrupt(ctx context.Context, request TurnInterruptRequest) (TurnInterruptTarget, error) {
 	var out TurnInterruptTarget
 	err := s.Tx(ctx, func(tx *Tx) error {
@@ -58,17 +64,29 @@ func (tx *Tx) requestTurnInterrupt(request TurnInterruptRequest) (TurnInterruptT
 	}
 	out := TurnInterruptTarget{TurnID: request.TurnID}
 	var projectID, roomID, exec, mode string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.agent_id,COALESCE(a.machine_id,''),t.generation,a.project_id,t.room_id,t.exec,t.mode
+	var handoff, migrating, requested bool
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.agent_id,COALESCE(a.machine_id,''),t.generation,a.project_id,t.room_id,t.exec,t.mode,
+		EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id),
+		EXISTS(SELECT 1 FROM team_flow_migration_agent ma JOIN team_flow_migration m ON m.id=ma.migration_id WHERE ma.agent_id=t.agent_id AND m.state IN ('draining','applying')),
+		EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_interrupt_requested')
 		FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, request.TurnID).
-		Scan(&out.AgentID, &out.MachineID, &out.Generation, &projectID, &roomID, &exec, &mode)
+		Scan(&out.AgentID, &out.MachineID, &out.Generation, &projectID, &roomID, &exec, &mode, &handoff, &migrating, &requested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TurnInterruptTarget{}, ErrInvalidTransition
 	}
 	if err != nil {
 		return TurnInterruptTarget{}, err
 	}
-	if exec != "running" || mode != "normal" {
+	if exec != "running" || mode != "normal" || handoff {
 		return TurnInterruptTarget{}, ErrInvalidTransition
+	}
+	if request.Yield {
+		if migrating {
+			return TurnInterruptTarget{}, ErrInvalidTransition
+		}
+		if requested {
+			return out, nil
+		}
 	}
 	_, err = tx.AppendEvent(Event{Kind: eventTurnInterruptRequested, ProjectID: projectID, RoomID: roomID, AgentID: out.AgentID, TurnID: request.TurnID,
 		PayloadJSON: payloadJSON(map[string]string{"actor": request.ActorID, "actor_kind": request.ActorKind, "purpose": request.Purpose, "disposition": request.Disposition})})

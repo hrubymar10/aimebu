@@ -206,7 +206,9 @@ func (s *Server) startLocalDrainGrace(ctx context.Context, c *machineConn) {
 }
 
 // interruptDrainingTurns interrupts, with the continue disposition, every ordinary turn the machine still runs. A turn that is not running
-// any more, or is not an ordinary one (a correction, a diagnostic), is left to finish.
+// any more, or is not an ordinary one (a correction, a diagnostic, a handoff turn), is left to finish. So is the turn of an agent a team
+// flow change in progress holds: the change has its own interrupt and decides what becomes of that turn. A turn somebody already asked
+// to be interrupted keeps that request's disposition; it is only sent the frame again.
 func (s *Server) interruptDrainingTurns(ctx context.Context, c *machineConn) {
 	turnIDs, err := s.Store.MachineRunningTurnIDs(ctx, c.id)
 	if err != nil {
@@ -215,7 +217,7 @@ func (s *Server) interruptDrainingTurns(ctx context.Context, c *machineConn) {
 	}
 	for _, turnID := range turnIDs {
 		target, err := s.Store.RequestTurnInterrupt(ctx, store.TurnInterruptRequest{TurnID: turnID, ActorKind: "system", ActorID: supervisorDrainActor,
-			Purpose: supervisorDrainPurpose, Disposition: store.TurnInterruptContinue})
+			Purpose: supervisorDrainPurpose, Disposition: store.TurnInterruptContinue, Yield: true})
 		if errors.Is(err, store.ErrInvalidTransition) {
 			continue
 		}

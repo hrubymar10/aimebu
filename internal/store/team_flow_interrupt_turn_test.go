@@ -158,3 +158,36 @@ func TestInterruptFlowMigrationTurnLeavesTheRestToTheStopPath(t *testing.T) {
 		t.Fatalf("a change that is over: %v", err)
 	}
 }
+
+// A request that yields (the supervisor drain's) leaves alone the turn of an agent a team flow change in progress holds: the change has
+// its own interrupt, which still works, and its requeue is what settles the turn.
+func TestYieldingTurnInterruptLeavesAMigratingAgentsTurnAlone(t *testing.T) {
+	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	turnID := openTurn(t, f, leaderID)
+	drain := TurnInterruptRequest{TurnID: turnID, ActorKind: "system", ActorID: "supervisor_drain", Purpose: "supervisor_drain", Disposition: TurnInterruptContinue, Yield: true}
+	if _, err := f.s.RequestTurnInterrupt(ctx, drain); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("a yielding request for a migrating agent's turn: %v", err)
+	}
+	var requests int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE turn_id=? AND kind='turn_interrupt_requested'`, turnID).Scan(&requests); err != nil || requests != 0 {
+		t.Fatalf("requests=%d %v", requests, err)
+	}
+	if target, err := f.s.InterruptFlowMigrationTurn(ctx, f.project.ID, f.alice, leaderID); err != nil || target.TurnID != turnID {
+		t.Fatalf("the change's own interrupt: %+v %v", target, err)
+	}
+	if _, err := f.s.RequestTurnInterrupt(ctx, drain); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("a yielding request after the change's own: %v", err)
+	}
+	if disposition, err := flowTurnDisposition(f.s, turnID); err != nil || disposition != TurnInterruptRequeue {
+		t.Fatalf("disposition=%q %v", disposition, err)
+	}
+	// Once the change is over the agent's turns are nobody's but the drain's again.
+	if _, err := f.s.CancelTeamFlowMigration(ctx, f.project.ID, f.alice); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := f.s.RequestTurnInterrupt(ctx, drain); err != nil || target.TurnID != turnID {
+		t.Fatalf("after the change ended: %+v %v", target, err)
+	}
+}

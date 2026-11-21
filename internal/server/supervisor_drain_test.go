@@ -414,3 +414,68 @@ func TestDrainGraceSettingIsOwnerOnly(t *testing.T) {
 		t.Fatalf("saving the grace saved a warm window: %v", body["warm_idle_saved"])
 	}
 }
+
+// drainFrames runs the drain's sweep against a machine that takes turn interrupts and answers nothing, and returns the frames it was sent.
+func drainFrames(t *testing.T, f *fixture, machine *machineConn) []protocol.Frame {
+	t.Helper()
+	f.srv.turnInterruptWait = 100 * time.Millisecond
+	for len(machine.sendQueue) > 0 {
+		<-machine.sendQueue
+	}
+	f.srv.interruptDrainingTurns(t.Context(), machine)
+	var frames []protocol.Frame
+	for len(machine.sendQueue) > 0 {
+		frames = append(frames, <-machine.sendQueue)
+	}
+	return frames
+}
+
+// The drain does not reach into a team flow change: the turn of an agent the change holds is left to the change's own interrupt.
+func TestBoundedDrainLeavesATeamFlowChangesTurnAlone(t *testing.T) {
+	t.Parallel()
+	f, machine, _, turnID := interruptFlowFixture(t, true)
+	if frames := drainFrames(t, f, machine); len(frames) != 0 {
+		t.Fatalf("the drain sent frames for a migrating agent's turn: %+v", frames)
+	}
+	if got := f.countRows(t, "event", "kind", `turn_id=? AND kind='turn_interrupt_requested'`, turnID); got != 0 {
+		t.Fatalf("the drain recorded %d requests for a migrating agent's turn", got)
+	}
+	if got := f.countRows(t, "turn", "exec", `id=? AND exec='running'`, turnID); got != 1 {
+		t.Fatal("the turn is not running any more")
+	}
+}
+
+// A turn a person already asked to be interrupted keeps that request: the drain only sends the frame again, and the requeue stands.
+func TestBoundedDrainKeepsAnEarlierInterruptRequest(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	agent, turn, note, _ := f.execution(t)
+	f.startExecution(t, agent, turn, note)
+	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{}, supportsTurnInterrupt: true}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID] = machine
+	f.srv.machineMu.Unlock()
+	if _, err := f.db.RequestTurnInterrupt(t.Context(), store.TurnInterruptRequest{TurnID: turn.ID, ActorKind: "user", ActorID: f.ownerUserID(t), Purpose: "test", Disposition: store.TurnInterruptRequeue}); err != nil {
+		t.Fatal(err)
+	}
+	frames := drainFrames(t, f, machine)
+	if len(frames) != 1 || frames[0].Type != protocol.TurnInterrupt || frames[0].TurnID != turn.ID {
+		t.Fatalf("frames: %+v", frames)
+	}
+	if got := f.countRows(t, "event", "kind", `turn_id=? AND kind='turn_interrupt_requested'`, turn.ID); got != 1 {
+		t.Fatalf("%d requests recorded, want the person's alone", got)
+	}
+	if got := f.countRows(t, "event", "kind", `turn_id=? AND kind='turn_interrupt_requested' AND json_extract(payload_json,'$.disposition')='requeue'`, turn.ID); got != 1 {
+		t.Fatal("the person's requeue was replaced")
+	}
+	// The turn ends interrupted: its notes are queued again and no continuation is made, as the person asked.
+	if err := f.db.RecordProcessInfo(t.Context(), turn.ID, agent.ID, 0, adapter.ExitInfo{ExitCode: 130, ErrorEvent: "the turn was interrupted on request", Interrupted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.countRows(t, "turn", "exec", `parent_turn_id=?`, turn.ID); got != 0 {
+		t.Fatalf("%d continuation turns were made", got)
+	}
+	if got := f.countRows(t, "note", "state", `id=? AND state='queued'`, note.ID); got != 1 {
+		t.Fatal("the turn's note was not queued again")
+	}
+}
