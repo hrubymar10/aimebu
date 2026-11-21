@@ -83,8 +83,10 @@ type Client struct {
 	active              map[string]string
 	running             map[string]adapter.Turn
 	pendingStopAck      map[string]protocol.Frame
-	agentKeys           map[string]string // each agent's key, in memory only (see agent_tools.go)
-	telemetryEnv        map[string]string // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
+	activeTurns         map[string]activeTurn     // the turn each agent was last admitted for (see turn_interrupt.go)
+	turnInterrupts      map[string]*turnInterrupt // the interrupt asked for an agent's running turn
+	agentKeys           map[string]string         // each agent's key, in memory only (see agent_tools.go)
+	telemetryEnv        map[string]string         // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
 	currentConn         *websocket.Conn
 	stopping            bool
 	turns               sync.WaitGroup
@@ -347,7 +349,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -564,6 +566,12 @@ func (c *Client) RunOnce(ctx context.Context) error {
 					}
 				}
 			}()
+		case protocol.TurnInterrupt:
+			// Cutting a turn only signals its process (a terminate in a container runs in its own goroutine), so it is answered on this loop.
+			result := protocol.Frame{V: protocol.Version, Type: protocol.TurnInterruptResult, ReqID: frame.ReqID, AgentID: frame.AgentID, Generation: frame.Generation, TurnID: frame.TurnID, Result: c.handleTurnInterrupt(frame)}
+			if err := c.send(ctx, conn, result); err != nil {
+				return err
+			}
 		case protocol.WorktreeOp:
 			result := protocol.Frame{V: protocol.Version, Type: protocol.WorktreeResult, ReqID: frame.ReqID}
 			var info worktree.Result
@@ -1232,6 +1240,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		return fmt.Errorf("delivery admission rejected for agent %s", delivery.AgentID)
 	}
 	c.active[delivery.AgentID] = delivery.TurnID
+	c.noteActiveTurn(delivery.AgentID, activeTurn{turnID: delivery.TurnID, mode: delivery.Mode, containerized: containerized, confirmsEnd: launcherConfirmsEnd})
 	c.turns.Add(1)
 	c.mu.Unlock()
 	release := true
@@ -1312,6 +1321,8 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	c.mu.Unlock()
 	if stopNow {
 		_ = turn.Cancel()
+	} else {
+		c.signalTurnInterrupt(delivery.AgentID, delivery.TurnID, turn) // an interrupt that came while the process was starting
 	}
 	release = false
 	tracked = false
@@ -1525,12 +1536,22 @@ events:
 	if err != nil {
 		c.report("waiting for a turn failed", err)
 	}
+	// A turn the supervisor ended on purpose without the agent being stopped (the owner's restart of the local supervisor, or the server's
+	// turn interrupt) is reported interrupted, not cancelled. An answer that arrived first wins, and so does a stop of the agent.
+	interruptReason := ""
+	if requested, ours := c.settleTurnInterrupt(delivery, turn, exit); requested && ours {
+		interruptReason = turnInterruptedOnRequest
+	}
+	defer c.forgetTurnInterrupt(delivery.AgentID, delivery.TurnID)
+	if c.restartInterrupted.Load() && exit.CancelIntent {
+		interruptReason = "local supervisor restarted by owner"
+	}
 	if held != nil {
 		// The harness ended its turn with an empty answer. If its process was also cut off (killed, container stopped), the turn
 		// was interrupted, not answered badly: the empty answer is dropped (a clean exit 0 is the harness's own empty reply). Otherwise it goes to the server as it always did.
 		probe := exit
 		probe.TerminalEvent = false
-		if c.restartInterrupted.Load() && exit.CancelIntent && delivery.Mode == adapter.ModeNormal {
+		if interruptReason != "" && delivery.Mode == adapter.ModeNormal {
 			exit.TerminalEvent = false
 		} else if _, cut := interruptedReason(probe); cut && exit.ExitCode != 0 && stall == "" && journalErr == nil {
 			exit.TerminalEvent = false
@@ -1538,10 +1559,10 @@ events:
 			forward(*held)
 		}
 	}
-	if c.restartInterrupted.Load() && exit.CancelIntent && !exit.TerminalEvent && delivery.Mode == adapter.ModeNormal {
+	if interruptReason != "" && !exit.TerminalEvent && delivery.Mode == adapter.ModeNormal {
 		exit.CancelIntent = false
 		exit.Interrupted = true
-		exit.ErrorEvent = "local supervisor restarted by owner"
+		exit.ErrorEvent = interruptReason
 		if exit.ExitCode == 0 {
 			exit.ExitCode = 130
 		}
@@ -1648,6 +1669,9 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 	for _, turn := range c.running {
 		turns = append(turns, turn)
 	}
+	for agentID := range c.turnInterrupts {
+		c.clearTurnInterrupt(agentID) // a shutdown does not wait for an interrupted turn's unconfirmed end
+	}
 	c.mu.Unlock()
 	c.shutdownWarm()
 	for _, turn := range turns {
@@ -1714,6 +1738,9 @@ func (c *Client) handleControl(frame protocol.Frame) bool {
 	c.desired[frame.AgentID] = protocol.DesiredAgent{AgentID: frame.AgentID, Generation: frame.Generation, Desired: frame.DesiredState, DesiredRev: frame.DesiredRev}
 	turn := c.running[frame.AgentID]
 	turnID := c.active[frame.AgentID]
+	if frame.DesiredState == "stopped" {
+		c.clearTurnInterrupt(frame.AgentID) // a stop wins over a turn interrupt: the exit is the stop's cancel
+	}
 	deferAck := frame.DesiredState == "stopped" && turn != nil
 	if deferAck {
 		if c.pendingStopAck == nil {

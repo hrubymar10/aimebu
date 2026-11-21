@@ -72,6 +72,12 @@ const (
 	SessionScan         = "session_scan"
 	SessionScanResult   = "session_scan_result"
 	TelemetryConfig     = "telemetry_config"
+	// TurnInterrupt asks a supervisor to cut one running turn without stopping its agent (Frame.AgentID, Generation, TurnID, Reason), and
+	// TurnInterruptResult is its answer (the same ReqID): Result "ok" once the turn was told to end, "not_running" when the supervisor runs no
+	// such turn (it ended, or never started here), "unsupported_mode" for a turn that is not an ordinary one. The turn's end still arrives
+	// as its Process frame, marked interrupted and not as a cancel.
+	TurnInterrupt       = "turn_interrupt"
+	TurnInterruptResult = "turn_interrupt_result"
 	// RetireWarm asks a supervisor to end the idle warm processes of one tool (an account switch is about to change the login they hold) and to answer
 	// with RetireWarmResult: Result "ok" once every one is confirmed gone, "error" (with Message) when one is not.
 	RetireWarm       = "retire_warm"
@@ -179,6 +185,9 @@ type Frame struct {
 	SupportsAgentLogs          bool `json:"supports_agent_logs,omitempty"`
 	SupportsAgentLogSize       bool `json:"supports_agent_log_size,omitempty"`
 	SupportsStopReplay         bool `json:"supports_stop_replay,omitempty"`
+	// SupportsTurnInterrupt says the supervisor cuts one turn on a turn_interrupt frame and leaves its agent running. An older one does not
+	// know the frame, so the server keeps to stopping the agent and starting it again.
+	SupportsTurnInterrupt bool `json:"supports_turn_interrupt,omitempty"`
 	// SupportsTelemetryConfig says the supervisor takes the server's telemetry settings (a telemetry_config frame, and Telemetry in hello_ack). One that
 	// does not never gets the frame, whose type an older supervisor does not know.
 	SupportsTelemetryConfig bool `json:"supports_telemetry_config,omitempty"`
@@ -278,7 +287,9 @@ type Frame struct {
 	AnswerTooLarge bool                `json:"answer_too_large,omitempty"`
 	Exit           *adapter.ExitInfo   `json:"exit,omitempty"`
 	Result         string              `json:"result,omitempty"`
-	Details        json.RawMessage     `json:"details,omitempty"`
+	// Reason, on a turn_interrupt frame, says in a few words why the turn is cut (for the supervisor's log).
+	Reason  string          `json:"reason,omitempty"`
+	Details json.RawMessage `json:"details,omitempty"`
 	// ScanFolders (spellings of one folder: every Claude Code session that worked in it or below) or ScanSessionID (that one session,
 	// wherever it worked) asks a machine for its Claude Code sessions; the answer lists them in Sessions.
 	ScanFolders   []string `json:"scan_folders,omitempty"`

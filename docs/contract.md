@@ -1335,7 +1335,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version, supervisor_environment?, supports_retire_at_idle?,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, held_keys?[agent_id],
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}], command_open?[{job_id, agent_id, generation, pid, pid_start?,
@@ -1347,6 +1347,10 @@ it never silently reruns a turn with uncertain effects.
 - S→M `retire_at_idle{v}` asks a detached supervisor to reject new work, finish
   its running turns and commands, and exit. A server replacing an older
   supervisor waits for its recorded work to finish before stopping it.
+- `supports_turn_interrupt=true` in `hello` says the supervisor cuts one
+  running turn on a `turn_interrupt` frame (§4.2) and leaves its agent
+  running. The server sends the frame only to a supervisor that says so; for
+  any other it keeps to stopping the agent and starting it again.
 - S→M `hello_ack{v, desired[{agent_id, generation, desired, desired_rev}],
   redeliver[...], resend_receipts[...], harness_settings[...],
   harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...], telemetry?}` — the optional probe directories are the
@@ -1631,6 +1635,32 @@ it never silently reruns a turn with uncertain effects.
   attachment bearer is used only by Pi Docker, never journaled, and authorizes
   reads only for a delivered file in a live turn while the agent remains a
   member of its room; MCP agents use `attachment_get` with the same checks.
+- S→M `turn_interrupt{v, req_id, agent_id, generation, turn_id, reason}`;
+  M→S `turn_interrupt_result{v, req_id, agent_id, generation, turn_id,
+  result[ok|not_running|unsupported_mode]}`. It cuts one running turn without
+  stopping its agent: no desired state, revision or generation changes, and
+  the agent's next delivery is admitted as usual. Sent only when the hello
+  advertised `supports_turn_interrupt`. `ok`: the turn's process was told to
+  end (a repeat for the same turn is `ok` and signals nothing again; a turn
+  the agent's stop is already ending is `ok` and stays a stop).
+  `not_running`: the supervisor runs no such turn for that agent and
+  generation (it ended, or never started there). `unsupported_mode`: the turn
+  is not an ordinary one (a correction or a diagnostic), and is left alone.
+  The process is cancelled like a stopped turn's, and killed after 30 s; a
+  process in a container whose launcher confirms the end of its session is
+  told to terminate instead and given 8 s before it is killed. The turn's end
+  arrives as its `process` frame with `interrupted:true`,
+  `cancel_intent:false` and the reason `the turn was interrupted on request`
+  as `error_event`. An answer that was in before the process ended wins: the
+  exit is terminal and not interrupted. A stop of the agent that follows the
+  frame wins too: the exit is the stop's cancel. When the process ran in a
+  container and its end there is not confirmed (the terminate ran out, the
+  launcher confirms no end, or the wrapper was killed), the supervisor holds
+  the agent's admission slot: it reports the turn's exit, and admits another
+  turn, only after the 150 s quarantine an unconfirmed keep-alive ping gets,
+  or at once when the agent is stopped or the supervisor shuts down. `reason`
+  is a few words for the supervisor's log. What becomes of the turn's notes is
+  the server's decision, recorded before the frame is sent (§3.4).
 - M→S `ack{v, agent_id, generation, ref, level[persisted|accepted]}`
 - M→S `activity{…, turn_id, source_event_id, kind, summary}`,
   `usage{…, source_event_id, tokens_in?, tokens_out?, tokens_cache_read?,
@@ -1655,7 +1685,11 @@ it never silently reruns a turn with uncertain effects.
   candidate when either limit would be exceeded, so the server records a
   receipt with an `answer too large` error instead of dropping the socket.
 - M→S `process{v, agent_id, generation, turn_id,
-  exit:{exit_code, terminal_event, cancel_intent, stderr_tail?, error_event?}}`
+  exit:{exit_code, terminal_event, cancel_intent, stderr_tail?, error_event?,
+  limit_stall?, interrupted?}}`. `interrupted` marks a turn whose process was
+  cut off without an answer and without the agent being stopped: by itself (a
+  signal, a restarted session, a stopped container), by the owner's restart of
+  the local supervisor, or by a `turn_interrupt` frame.
 - S→M `ack{v, turn_id, level=process}` after the process update commits;
   the supervisor marks that exit acknowledged and stops replaying it.
 - Frames whose agent is revoked, not bound to this machine, or of a stale

@@ -936,7 +936,22 @@ process is not sent, since the server would hold it as `invalid_answer: EOF`. Th
 continues the turn once with the note `your previous turn was interrupted (<reason>); check
 state and continue` and a `turn_interrupted_continuation` system event that carries
 `reason: turn_interrupted`, the detail and the exit code. A chain of turns has one automatic
-continuation in all, of either kind; a repeat takes the ordinary failure path below. An
+continuation in all, of either kind; a repeat takes the ordinary failure path below.
+
+The server can also **interrupt one turn on purpose** without stopping its agent. A supervisor
+that announces `supports_turn_interrupt` in `hello` takes a `turn_interrupt` frame for one
+running ordinary turn and answers `ok`, `not_running` (it runs no such turn) or
+`unsupported_mode` (a correction or a diagnostic, which is left alone). It ends the turn's
+process the way a stop does (a cancel, a kill after 30 seconds) and reports the exit
+`interrupted` with the reason `the turn was interrupted on request`, never as a cancel; the
+agent stays active and its next delivery is admitted as usual. An answer that was in first
+wins, and so does a stop of the agent that follows. A process in a container whose launcher
+confirms the end of its session is told to terminate and given 8 seconds; when the end in the
+container is not confirmed, the supervisor holds the agent's slot (it reports the exit, and
+admits another turn, only after the same 150-second quarantine an unconfirmed keep-alive ping
+gets, or at once when the agent is stopped or the supervisor shuts down), so that a new turn
+never starts beside a process that may still be running. What becomes of the interrupted
+turn is the server's decision. An
 owner cancel, a start failure, an explained failure, a provider limit and a lost thread are
 not interruptions and keep their own handling, and an answer that arrives but does not parse
 stays an invalid answer. A failed journal write for a turn's event or final answer is handled the

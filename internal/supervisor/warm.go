@@ -117,7 +117,7 @@ type warmEntry struct {
 	lastNudge           time.Time     // when the watcher was last woken early (guarded by the slot's lock)
 	stuckNudge          chan struct{} // wakes the stuck watcher early (buffered, one pending): a stop or delivery that finds the slot stuck asks for a retry now (guarded by the slot's lock)
 	stuckReason         string        // why the process was ended and not confirmed gone (the reason its slot went stuck)
-	plannedEnd          bool          // the end was decided by a stop of the agent or the supervisor's shutdown, whatever reason text the path gave (guarded by the slot's lock)
+	plannedEnd          bool          // the end was decided by a stop of the agent, a requested turn interrupt or the supervisor's shutdown, whatever reason text the path gave (guarded by the slot's lock)
 	kept                bool          // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
 }
 
@@ -1098,7 +1098,8 @@ func (c *Client) warmTurnEnded(turn adapter.Turn, exit adapter.ExitInfo) (kept b
 	}
 	if !keep {
 		c.mu.Lock()
-		entry.plannedEnd = c.desired[entry.agentID].Desired != "active" || c.stopping || exit.CancelIntent
+		// A turn the server asked to be interrupted ends its process on purpose too.
+		entry.plannedEnd = c.desired[entry.agentID].Desired != "active" || c.stopping || exit.CancelIntent || exit.ErrorEvent == turnInterruptedOnRequest
 		c.mu.Unlock()
 		reason := "its turn did not end cleanly, or the agent was stopped, or its lifetime is over"
 		if entry.loginMoved {
