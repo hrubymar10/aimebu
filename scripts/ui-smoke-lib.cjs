@@ -48,6 +48,8 @@ const appReadyFolded = page => page.waitForSelector('#app-view:not([hidden]):not
 // behind it can be reached. The tests of the card itself (the setup flow) do not use it: they wait for the card.
 const appReady = async page => {
   await appReadyFolded(page);
+  // The Harnesses offer is decided after the page is shown (a server question, then the step's lazily fetched chunk): wait for the app to say it has been.
+  await page.waitForSelector('#app-view[data-harness-offer=settled]', { timeout: APP_READY_TIMEOUT });
   await page.waitForFunction(() => !document.querySelector('#onboarding-view').hidden || document.querySelector('#projects .room-group'), { timeout: 8000 }).catch(() => {}); // the list is drawn after the page is shown; a page with no project has none
   // Later sign-ins may offer Harnesses without the Project step. Use its Skip
   // action so the choice is recorded and the offer does not cover later tabs.

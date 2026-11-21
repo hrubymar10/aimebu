@@ -373,6 +373,7 @@ function cancelStartup() {
   importWizard.close();
 }
 function resetWorkspace() {
+  delete appView.dataset.harnessOffer; // the next sign-in's offer is not yet decided
   endLazySession(); // calls queued for the session that ends (an Onboarding to show, a refresh) are dropped
   cancelStartup();
   sessionGeneration++;
@@ -551,6 +552,7 @@ async function signedIn(session) {
   const active = () => generation === sessionGeneration;
   const startupAbort = new AbortController();
   const startupActive = () => active() && !startupExpired && !startupAbort.signal.aborted;
+  let harnessOffer = Promise.resolve(); // the sign-in's Harnesses offer, which is decided after the page is shown (see data-harness-offer below)
   startupController = startupAbort;
   // The reads the sign-in is about to make one after another start now beside the preferences: the event cursor (it only has to be taken before the
   // project and room lists, which come after), and the newest page of the room the page will most likely open (the one in the address, else the last).
@@ -675,7 +677,7 @@ async function signedIn(session) {
     // server, and so does a skip. Outside the startup deadline: a slow supervisor must not turn a loaded workspace into a timeout.
     if (!importWizard.open && !onboarding.open && sidebar.projects.size > 0) {
       onboarding.preload();
-      void offerHarnessSetup({
+      harnessOffer = offerHarnessSetup({
         user: currentUser, canSetUp: rights.owner, skipped: harnessSkipStored, configured: () => anyHarnessConfigured(request),
         show: async () => { if (active() && !onboarding.open) await onboarding.showHarnesses('harness-only'); }, setSkipped: value => setHarnessSkipped(value, generation),
       }).catch(error => { if (active()) { console.error('harness setup:', error); captureError(error, 'startup.harness-setup'); } });
@@ -694,6 +696,9 @@ async function signedIn(session) {
     clearTimeout(preStreamDeadline);
     clearTimeout(startupDeadline);
     if (startupSucceeded && startupActive()) setStartupState('ready');
+    // The page is ready before the Harnesses offer is decided (it asks the server, then the step's chunk is fetched): data-harness-offer="settled" says that
+    // the card, if there is one, is on screen by now, so a script that clears the card on sign-in (the UI tests) does not race its arrival.
+    if (startupSucceeded && startupActive()) void harnessOffer.finally(() => { if (active()) appView.dataset.harnessOffer = 'settled'; });
   }
 }
 const projectDialog = document.querySelector('#project-dialog');

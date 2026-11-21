@@ -1,8 +1,13 @@
 // The bundle's lazily fetched chunks, in the real app on a scratch server (bundled): a chunk a newer build replaced (404) is told to the person, never
 // swallowed (a toast when the build is the same, a reload or the "new version" bar when the server is another build); sign-in is in the entry and works
 // with every lazy chunk gone; what was queued for a chunk that arrives after the session ended does not show in the next one; and Back to a settings
-// address before the Settings chunk is loaded opens it.
+// address before the Settings chunk is loaded opens it; and the Harnesses offer of a sign-in (a card that arrives after the page is ready, once the
+// Onboarding chunk is fetched) is announced as settled on #app-view, so a script that clears the card does not race it.
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { scratch, OWNER } = require('./scratch-server.cjs');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -107,6 +112,30 @@ async function main() {
     assert.equal(await late.evaluate(() => document.querySelector('#onboarding-view').hidden), true, 'the onboarding of the ended session did not show over sign-in');
     assert.equal(await late.evaluate(() => document.querySelector('#login-view').hidden), false, 'sign-in stays visible');
     await late.close();
+
+    // 7. The Harnesses offer is made after the page is ready, and its card waits for the Onboarding chunk (here 3 s on its way): the app says when the offer
+    // is settled (data-harness-offer), and the card is on screen by then. A script that waited for the page and looked for the card found none, then it came.
+    const owner = await server.ownerClient();
+    const folder = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'aimebu-lazy-'));
+    execFileSync('git', ['init', '-q'], { cwd: folder });
+    assert.equal((await owner('/api/projects', { method: 'POST', body: { name: 'Offer', folder } })).status, 201, 'a project exists, so the first-run card is not the one shown');
+    const offer = await server.open({ width: 1280, height: 900, context: await server.context() });
+    await offer.setRequestInterception(true);
+    offer.on('request', request => { if (lazyChunk(request.url())) setTimeout(() => request.continue().catch(() => {}), 3000); else request.continue(); });
+    await offer.goto(server.origin);
+    await offer.waitForSelector('#login-view:not([hidden])');
+    await offer.type('#login-form [name=login]', OWNER.login); await offer.type('#login-form [name=password]', OWNER.password);
+    await offer.$eval('#login-form', form => form.requestSubmit());
+    await offer.waitForFunction(() => document.querySelector('#welcome-continue') || !document.querySelector('#app-view').hidden);
+    if (await offer.$('#welcome-continue')) { await offer.waitForSelector('#welcome-continue:not([inert])'); await offer.click('#welcome-continue'); }
+    await offer.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: 20000 });
+    assert.equal(await offer.evaluate(() => [document.querySelector('#onboarding-view').hidden, document.querySelector('#app-view').dataset.harnessOffer ?? null]).then(String), 'true,', 'the page is ready before the Harnesses card (its chunk is on its way): the window a script used to miss');
+    await offer.waitForSelector('#app-view[data-harness-offer=settled]', { timeout: 20000 });
+    assert.equal(await offer.evaluate(() => !document.querySelector('#onboarding-view').hidden), true, 'the Harnesses card is on screen when the offer is settled');
+    await offer.$eval('#logout', button => button.click());
+    await offer.waitForSelector('#login-view:not([hidden])', { timeout: 8000 });
+    assert.equal(await offer.evaluate(() => document.querySelector('#app-view').dataset.harnessOffer ?? null), null, 'a session that ended is not settled');
+    await offer.close();
     assert.deepEqual(server.errors.filter(text => !/Failed to load resource|Could not load|not found|dynamically imported|Importing a module script failed/i.test(text)), [], 'no other page error');
   } finally { await server.stop(); }
   console.log('lazy chunks page: ok');
