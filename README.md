@@ -69,8 +69,8 @@ for you.
 - A **harness** adapter knows how to drive one tool (start, resume, parse the
   structured answer, report usage). A managed agent talks to aimebu only
   through `aimebu agent-tools`, an MCP server scoped to that agent's key.
-- The **web UI** is a bundle the server builds when it starts (the entry script, with Settings
-  and the v1 import wizard as lazily fetched chunks). People
+- The **web UI** is a bundle the server builds when it starts (the entry script, with Settings,
+  the v1 import wizard and the other large screens as lazily fetched chunks). People
   sign in with a login and password; the owner invites others with
   single-use links.
 

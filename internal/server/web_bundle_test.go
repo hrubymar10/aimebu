@@ -164,8 +164,8 @@ func TestThePageStartsFromTheBundle(t *testing.T) {
 		total += len(chunkSource)
 		packedTotal += len(packedChunkBody)
 	}
-	if total > 1_100_000 || packedTotal > 330_000 {
-		t.Errorf("the bundle is %d bytes in all, %d gzipped (ceilings 1.1 MB and 330 KB)", total, packedTotal)
+	if total > 1_100_000 || packedTotal > 340_000 {
+		t.Errorf("the bundle is %d bytes in all, %d gzipped (ceilings 1.1 MB and 340 KB)", total, packedTotal)
 	}
 	if missing, _ := fetchRaw(t, f.http.URL+"/bundle/nothing-ABCDEFGH.js", false); missing.StatusCode == 200 && strings.HasPrefix(missing.Header.Get("Content-Type"), "text/javascript") {
 		t.Error("a chunk that does not exist is served")

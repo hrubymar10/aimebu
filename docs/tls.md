@@ -18,7 +18,7 @@ is invalid, or it equals the HTTP port. With neither set, the server uses HTTP
 only. Sessions set the `Secure` cookie attribute on HTTPS requests, and on
 plain-HTTP requests addressed to the host of an `https` `AIMEBU_PUBLIC_URL`.
 The HTTPS listener negotiates HTTP/2. The web UI is one bundled entry script (the
-server bundles its ~240 modules when it starts; Settings and the v1 import wizard are
+server bundles its ~240 modules when it starts; Settings, the v1 import wizard and the other large screens are
 lazily fetched chunks), so a cold load is about 50
 requests and 0.7 MB rather than about 290 and 1.9 MB: with a 100 ms round trip
 the app is shown after about 0.5 s over plain HTTP/1.1, where the separate modules

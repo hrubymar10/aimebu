@@ -1,7 +1,10 @@
 import { html } from '../../ui.js';
 import { mountPreactPage } from '../mount-page.js';
 import { TeamFlowStore } from './team-flow-store.js';
-import { TeamSetupPage } from './team-setup-page.js';
+import { lazyComponent } from '../../lazy.js';
+
+// The setup page is a lazily fetched chunk (it is drawn only for a project whose team flow is not set up).
+const TeamSetupPage = lazyComponent(() => import('./team-setup-page.js').then(module => module.TeamSetupPage), 'team-setup');
 
 export class TeamFlowHome {
   constructor({ canEdit, onApplied, onSetupChange = () => {}, projectForID = () => null }) {

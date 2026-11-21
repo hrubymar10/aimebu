@@ -114,6 +114,8 @@ async function main() {
       await page.evaluate(label => [...document.querySelectorAll('#more-menu .more-item')].find(button => button.firstElementChild.textContent === label).click(), label);
       assert.equal(await page.evaluate(() => window.__forwarded.at(-1)), id, `${label} clicks its button`);
       assert.equal((await menu()).open, false, 'and closes the menu');
+      // Memory is a lazily fetched chunk: its dialog opens a moment after the click, and Escape closes it then.
+      if (id === 'knowledge-toggle') await page.waitForFunction(() => document.querySelector('#knowledge-dialog')?.open, { timeout: 5000 });
       await page.keyboard.press('Escape');
     }
     // a badge on the real button is mirrored on the item

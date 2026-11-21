@@ -628,7 +628,7 @@ async function main() {
       assert.equal(await page.$$eval('#team-flow-home .team-flow-option', options => Math.max(...options.map(option => option.getBoundingClientRect().height)) <= 240), true, 'phone cards remain scannable');
       assert.deepEqual(await fitted(), [true, true], 'phone thumbnails fit above the expand control');
       await page.setViewport({ width: 1280, height: 800 });
-      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.waitForFunction(() => { const button = document.querySelector('#team-flow-home .btn-primary'); return !!button && !button.disabled; }); // the setup page is a lazily fetched chunk
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
       assert.deepEqual(await page.$$eval('#team-flow-home .team-wizard-recommended-group', nodes => nodes.map(node => [node.querySelector('strong').textContent, node.querySelector('li').textContent])), [['Claude Code · Selected', 'Sonnet — Claude choice'], ['Codex', 'GPT-6 Sol — Codex choice']], 'leader lists every available harness against its live models');
@@ -649,7 +649,7 @@ async function main() {
       await page.$$eval('#team-flow-home .team-flow-actions .btn:not(.btn-primary)', nodes => nodes[0].click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Choose how your AI team works');
       await page.$eval('#team-flow-home .team-flow-option:nth-child(2) .team-flow-card', node => node.click());
-      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.waitForFunction(() => { const button = document.querySelector('#team-flow-home .btn-primary'); return !!button && !button.disabled; }); // the setup page is a lazily fetched chunk
       assert.equal(await page.$eval('#team-flow-home .btn-primary', node => node.textContent.trim()), 'Next');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
@@ -711,7 +711,7 @@ async function main() {
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ id: 'r1', kind: 'home', project_id: 'p1' }); });
       await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 5);
       await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-advisor"] .team-flow-card', node => node.click());
-      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.waitForFunction(() => { const button = document.querySelector('#team-flow-home .btn-primary'); return !!button && !button.disabled; }); // the setup page is a lazily fetched chunk
       const title = () => page.$eval('#team-flow-home-title', node => node.textContent);
       const next = async expected => { await page.$eval('#team-flow-home .btn-primary', node => node.click()); await page.waitForFunction(text => document.querySelector('#team-flow-home-title')?.textContent === text, {}, expected); };
       await next('Leader');
@@ -756,7 +756,7 @@ async function main() {
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ id: 'r1', kind: 'home', project_id: 'p1' }); });
       await page.waitForFunction(() => document.querySelectorAll('#team-flow-home .team-flow-card').length === 5);
       await page.$eval('#team-flow-home .team-flow-option[data-flow-key="leader-workers"] .team-flow-card', node => node.click());
-      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.waitForFunction(() => { const button = document.querySelector('#team-flow-home .btn-primary'); return !!button && !button.disabled; }); // the setup page is a lazily fetched chunk
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
       await page.waitForSelector('#team-flow-home .team-setup-legacy');
@@ -798,7 +798,7 @@ async function main() {
       auto['POST /api/projects/p1/team-setup/preview'] = { can_create: true, settings: { worktree_mode: 'auto', memory_enabled: false, max_live_agents: 10, reviewer_agents: 'inherit', reviewer_agents_global_enabled: false }, created_rooms: [], conflicts: [] };
       const page = await mount({ auto });
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
-      await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+      await page.waitForFunction(() => { const button = document.querySelector('#team-flow-home .btn-primary'); return !!button && !button.disabled; }); // the setup page is a lazily fetched chunk
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
       await page.waitForFunction(() => document.querySelector('#team-flow-home-title')?.textContent === 'Leader');
       await page.$eval('#team-flow-home .btn-primary', node => node.click());
@@ -823,7 +823,7 @@ async function main() {
       await page.evaluate(async () => { const { TeamFlowHome } = await import('/js/pages/project/team-flow-home.js'); window.__homeFlow = new TeamFlowHome({ canEdit: () => true, onApplied: () => {} }); window.__homeFlow.setRoom({ kind: 'home', project_id: 'p1' }); });
       await page.waitForFunction(() => window.__requests.some(row => row.path === '/api/projects/p1/settings' && row.answered) && window.__requests.some(row => row.path === '/api/projects/p1/team-setup/preview' && row.answered));
       for (const title of ['Leader', 'Workers and reviewers', 'Project settings']) {
-        await page.waitForFunction(() => !document.querySelector('#team-flow-home .btn-primary')?.disabled);
+        await page.waitForFunction(() => { const button = document.querySelector('#team-flow-home .btn-primary'); return !!button && !button.disabled; }); // the setup page is a lazily fetched chunk
         await page.$eval('#team-flow-home .btn-primary', node => node.click());
         await page.waitForFunction(title => document.querySelector('#team-flow-home-title')?.textContent === title, {}, title);
       }

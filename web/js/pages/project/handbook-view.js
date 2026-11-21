@@ -6,17 +6,20 @@ import { HandbookPage } from './handbook-page.js';
 // The project handbook is content, so it has its own page beside the home
 // room's Settings button rather than living among configuration controls.
 export class HandbookView {
-  constructor(projectName) {
+  constructor(projectName, button = null) {
     this.projectName = projectName;
     this.room = null;
     this.store = new HandbookStore();
-    this.button = document.createElement('button');
-    this.button.id = 'room-handbook'; this.button.type = 'button';
-    this.button.className = 'btn-icon quiet';
-    this.button.title = 'Project handbook'; this.button.setAttribute('aria-label', 'Project handbook');
-    this.button.innerHTML = '<span class="icon-mask icon-mask-book-open" aria-hidden="true"></span>';
-    this.button.hidden = true;
-    document.querySelector('#room-info').after(this.button);
+    // The app may have made the button already (it is there before this page's chunk is fetched, see lazy-panels.js).
+    this.button = button || document.createElement('button');
+    if (!button) {
+      this.button.id = 'room-handbook'; this.button.type = 'button';
+      this.button.className = 'btn-icon quiet';
+      this.button.title = 'Project handbook'; this.button.setAttribute('aria-label', 'Project handbook');
+      this.button.innerHTML = '<span class="icon-mask icon-mask-book-open" aria-hidden="true"></span>';
+      this.button.hidden = true;
+      document.querySelector('#room-info').after(this.button);
+    }
     this.dialog = document.createElement('dialog');
     this.dialog.id = 'handbook-dialog'; this.dialog.className = 'handbook-dialog';
     this.dialog.setAttribute('aria-labelledby', 'project-handbook-title');

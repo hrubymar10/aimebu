@@ -18,16 +18,10 @@ import { TeamFlowHome } from './pages/project/team-flow-home.js';
 import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './pages/topbar/page.js';
 import { createUsagesSource } from './usages-source.js';
-import { KnowledgePanel } from './pages/knowledge/page.js';
-import { HandbookView } from './pages/project/handbook-view.js';
-import { Health } from './pages/health/page.js';
+import { LazyKnowledge, LazyHandbook, LazyHealth, LazyOnboarding, LazySignin, prefetchWhenIdle } from './lazy-panels.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
 import { agentIsolation } from './agent-isolation.js';
-import { Signin } from './pages/signin/page.js';
-import { showWelcome } from './pages/setup/welcome.js';
-import { ownerSetup } from './pages/setup/page.js';
-import { Onboarding } from './pages/onboarding/page.js';
 import { loadPreferences } from './preferences.js';
 import { RoomMenu } from './pages/room-menu/page.js';
 import { MessageDebug } from './message-debug.js';
@@ -37,7 +31,6 @@ import { attachFolderField } from './folder-field.js';
 import { copyText } from './markdown.js';
 import { LazyImportWizard } from './import-v1-lazy.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
-import { DiskUsage } from './pages/health/disk.js';
 import { showBuildVersion } from './build-version.js';
 import { startTelemetry, captureError } from './telemetry.js';
 import { askTelemetryConsent } from './telemetry-consent.js';
@@ -78,7 +71,7 @@ function setStartupState(state) {
   startupText.textContent = busy ? 'Finishing sign-in…' : state === 'timeout' ? "Some checks didn't finish." : '';
   startupRetry.hidden = state !== 'timeout';
 }
-const signin = new Signin({
+const signin = new LazySignin({
   view: loginView,
   signedIn: session => signedIn(session),
   afterReset: () => { resetWorkspace(); clearSession(); appView.hidden = true; void signin.show(); },
@@ -216,7 +209,7 @@ const agents = new AgentsPanel(createAgentSource(), async agent => {
   } catch (error) { if (generation === sessionGeneration) agents.error.textContent = error.message || 'Could not open private chat'; }
 });
 if (new URLSearchParams(location.search).has('mock_agents')) window.__mockAgentsPanel = agents;
-const health = new Health(sidebar, agents, async (room, agentID) => {
+const health = new LazyHealth(async () => { const [{ Health }, { DiskUsage }] = await Promise.all([import('./pages/health/page.js'), import('./pages/health/disk.js')]); return new Health(sidebar, agents, async (room, agentID) => {
   // Without an Inbox item behind it, a health entry opens the agent: its room, then its profile.
   if (!room) { showToast('That agent’s room is no longer available.'); return; }
   const generation = sessionGeneration;
@@ -234,7 +227,7 @@ const health = new Health(sidebar, agents, async (room, agentID) => {
   agents.setMobileOpen(false); setRoomsOpen(false); inbox.show();
   requestAnimationFrame(() => document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' }));
   return true;
-}, new DiskUsage());
+}, new DiskUsage()); });
 const systemEvents = new SystemEvents({ agentName: id => agents.cards.get(id)?.name, roomTitle: id => sidebar.rooms.get(id)?.title });
 const messageDebug = new MessageDebug();
 chat.setDebugInspector(message => messageDebug.open(message));
@@ -347,15 +340,15 @@ const setHarnessSkipped = async (skipped, generation = sessionGeneration) => {
 // next sign-in (a later removal of every harness then offers the step again).
 const harnessSeen = () => { if (harnessSkipStored) void setHarnessSkipped(false).catch(() => {}); };
 settings.harnessSettings.onReady = harnessSeen;
-const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.owner, onSkip: () => setHarnessSkipped(true), onReady: harnessSeen });
+const onboarding = new LazyOnboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.owner, onSkip: () => setHarnessSkipped(true), onReady: harnessSeen });
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
 importWizard.onClose(() => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'), () => rights.owner);
 const topbarMenu = new TopbarMenu();
 new ColumnResize();
 const roomMenu = new RoomMenu();
-const knowledge = new KnowledgePanel(() => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), () => chat.room);
-const handbook = new HandbookView(projectID => sidebar.projects.get(projectID)?.name || '');
+const knowledge = new LazyKnowledge(() => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), () => chat.room);
+const handbook = new LazyHandbook(projectID => sidebar.projects.get(projectID)?.name || '');
 chat.openProjectMemory = projectID => knowledge.openProjectFacts(projectID);
 chat.openTaskNotes = () => knowledge.openTask();
 let stream;
@@ -556,7 +549,7 @@ async function signedIn(session) {
   cursor?.then(() => chat.prefetchLatest(roomInAddress() || rememberedRoom()), () => {});
   setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); void agentIsolation.load(); presence.start(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); void updateBanner.setAccount(rights); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
-  if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
+  if (session.first_run) { await (await import('./pages/setup/welcome.js')).showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   // The owner is asked about error reports once (after the welcome on a new install, or on the first sign-in after an update brought them).
   if (session.telemetry_prompt) { await askTelemetryConsent(request, formDialog); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;
@@ -662,6 +655,8 @@ async function signedIn(session) {
     if (!importWizard.open && sidebar.projects.size === 0) onboarding.show();
     if (signin.pendingInvite) signin.openDialog();
     startupSucceeded = true;
+    // Once the page is up, the screens a session is likely to open are fetched when the browser is idle, so opening one is instant in practice.
+    prefetchWhenIdle([() => import('./settings-dialog.js'), () => import('./pages/knowledge/page.js'), () => import('./pages/project/handbook-view.js'), () => import('./pages/project/team-setup-page.js')]);
     // Items already waiting for the person are something that needs them too: the bar is offered once, the first time.
     if (inbox.items?.length) notificationBanner.attention();
     // The owner, with no harness that has a model, is offered the Harnesses step (after a v1 import, which carries no harness over; on
@@ -756,7 +751,7 @@ document.querySelector('#boot-retry').onclick = () => location.reload();
 try {
   // The first-run owner setup (welcome, setup token, Create owner, theme) runs on /setup, and also on / while the server has no owner and
   // is waiting for its setup token: no session exists yet, and it ends signed in as the new owner.
-  const runSetup = () => ownerSetup({ views: { token: document.querySelector('#setup-token-view'), owner: document.querySelector('#setup-view'), theme: document.querySelector('#theme-view') } });
+  const runSetup = async () => (await import('./pages/setup/page.js')).ownerSetup({ views: { token: document.querySelector('#setup-token-view'), owner: document.querySelector('#setup-view'), theme: document.querySelector('#theme-view') } });
   let session = null;
   if (location.pathname === '/setup') { bootView.hidden = true; session = await runSetup(); }
   if (!session) {

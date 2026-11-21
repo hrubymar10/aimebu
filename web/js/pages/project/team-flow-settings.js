@@ -1,8 +1,11 @@
 import { createPortal, html, useEffect, useRef, useState } from '../../ui.js';
-import { TeamWizard } from './team-setup-page.js';
+import { lazyComponent } from '../../lazy.js';
 import { IconButton } from '../../components/icon-button.js';
 import { captureError } from '../../telemetry.js';
 import { dismissedMigration, dismissMigration, flowLetter, interruptAgent, MigrationProgress, MIGRATION_TERMINAL } from './team-wizard-parts.js';
+
+// The wizard is a lazily fetched chunk (it is drawn only when a team flow is set up or changed).
+const TeamWizard = lazyComponent(() => import('./team-setup-page.js').then(module => module.TeamWizard), 'team-wizard');
 
 const conflictName = item => `${item.slug || item.agent_id} (${item.role_label || item.role_key || 'agent'})`;
 
