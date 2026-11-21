@@ -225,8 +225,20 @@ Projects, rooms, people
   finishes (and when a flow is applied directly), one system message
   (`Team flow changed: a → b. Added: … Stopped: …`) is posted in the
   project's home and general rooms. `POST /team-flow/migration/interrupt`
-  `{agent_id}` (owner or operator, while draining) stops an agent the
-  migration waits for (`blocking` in its progress) to cut its turn. A kept
+  `{agent_id}` (owner or operator, while draining) cuts the turn of an agent
+  the migration waits for (`blocking` in its progress). On a machine whose
+  supervisor announced `supports_turn_interrupt`, a running ordinary turn
+  (not a handoff turn) gets a turn interrupt (§3.4) with purpose
+  `team_flow_migration` and disposition `requeue`: the agent is not stopped
+  and not started again, the turn's notes wait in the queue the drain holds,
+  and the change goes on once the turn is gone; a departing agent still does
+  its handoff turn. The agent is no longer `blocking` once the request is
+  recorded, and interrupting it again succeeds and sends the frame again. Any
+  other case takes the stop path: an older supervisor, a machine that is not
+  connected, an open turn that is pending, a handoff turn, or ended and not
+  settled, an `unsupported_mode` answer, and a frame that could not be sent
+  or was not answered within 10 s (a stop that follows a frame wins on the
+  supervisor). The stop path stops the agent to cut its turn. A kept
   agent (`keeps`) is recorded in `team_flow_migration_interrupt` (migration
   127), started again once its turn is gone and waited for until its spawn is
   confirmed (or has failed), and also started again when the change is

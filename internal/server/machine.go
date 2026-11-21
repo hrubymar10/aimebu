@@ -58,6 +58,7 @@ type machineConn struct {
 	supportsAgentLogs          bool
 	supportsAgentLogSize       bool
 	supportsStopReplay         bool
+	supportsTurnInterrupt      bool
 	supportsTelemetryConfig    bool
 	supportsAgentKeys          bool
 	supportsCommands           bool
@@ -370,7 +371,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsDirectoryList: hello.SupportsDirectoryList, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsLegacySessionCopy: hello.SupportsLegacySessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, supportsCommands: hello.SupportsCommands, supportsContainerCommands: hello.SupportsContainerCommands, supportsWarm: hello.SupportsWarm, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsDirectoryList: hello.SupportsDirectoryList, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsLegacySessionCopy: hello.SupportsLegacySessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, supportsTurnInterrupt: hello.SupportsTurnInterrupt, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, supportsCommands: hello.SupportsCommands, supportsContainerCommands: hello.SupportsContainerCommands, supportsWarm: hello.SupportsWarm, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	if !c.supportsWarm {
 		s.noteWarmSeen(machineID, 0) // a supervisor that cannot keep anything warm has nothing left running when it drops
@@ -582,7 +583,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		if frame.Type == protocol.PathResult || frame.Type == protocol.DirectoryListResult || frame.Type == protocol.SessionScanResult || frame.Type == protocol.WorktreeResult || frame.Type == protocol.AgentLogResult || frame.Type == protocol.AgentLogUsageResult || frame.Type == protocol.RetireWarmResult || frame.Type == protocol.CommandStarted || frame.Type == protocol.CommandCancelResult || frame.Type == protocol.CommandLogResult {
+		if frame.Type == protocol.PathResult || frame.Type == protocol.DirectoryListResult || frame.Type == protocol.SessionScanResult || frame.Type == protocol.WorktreeResult || frame.Type == protocol.AgentLogResult || frame.Type == protocol.AgentLogUsageResult || frame.Type == protocol.RetireWarmResult || frame.Type == protocol.CommandStarted || frame.Type == protocol.CommandCancelResult || frame.Type == protocol.CommandLogResult || frame.Type == protocol.TurnInterruptResult {
 			c.harnessMu.Lock()
 			waiter := c.pathPending[frame.ReqID]
 			c.harnessMu.Unlock()

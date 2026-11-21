@@ -418,10 +418,12 @@ progress view): the dialog closes, the change keeps going, and Project settings 
 Team flow shows its progress (and the outcome, until dismissed; the dismissal
 is remembered per project in the browser, so the outcome is still there after
 a reload). Next to an agent
-the change is waiting for, **Interrupt now** (after a confirmation) cuts its turn
-by stopping it, so the change goes on; a kept agent is started again once its
-turn is gone and the change waits for that restart, an agent the new flow stops anyway stays stopped (the
-confirmation says which). When a change finishes, one system message (`Team flow changed: a → b.
+the change is waiting for, **Interrupt now** (after a confirmation) cuts its turn,
+so the change goes on. The agent keeps running and what it was asked is queued
+again; an agent the new flow does not keep then hands off and stops as planned.
+On a machine with an older supervisor the turn is cut by stopping the agent
+instead: a kept agent is started again once its turn is gone and the change
+waits for that restart, an agent the new flow stops anyway stays stopped. When a change finishes, one system message (`Team flow changed: a → b.
 Added: … Stopped: …`) is posted in the project's home and general rooms. The
 drain marks idle kept agents ready and tells them the change is pending even
 while another agent is still finishing. A departing agent that is stopped or

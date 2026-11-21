@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
@@ -23,12 +25,12 @@ func TestTeamFlowMigrationInterruptRefusals(t *testing.T) {
 	}
 }
 
-// Interrupt now sends the stop to the agent's machine: the turn is cut by the supervisor, not by the database row.
-func TestTeamFlowMigrationInterruptSendsTheStopControl(t *testing.T) {
-	t.Parallel()
+// interruptFlowFixture is a draining team flow change whose kept leader runs a turn, on a machine that does or does not cut one turn.
+func interruptFlowFixture(t *testing.T, turnInterrupt bool) (*fixture, *machineConn, string, string) {
+	t.Helper()
 	f := newFixture(t)
 	f.seed()
-	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{},
+	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{}, supportsTurnInterrupt: turnInterrupt,
 		capabilities: []protocol.CapabilityReport{{Tool: "fake", Environment: adapter.Environment{Variant: "test"}}}}
 	f.srv.machineMu.Lock()
 	f.srv.machines[f.machineID] = machine
@@ -45,11 +47,13 @@ func TestTeamFlowMigrationInterruptSendsTheStopControl(t *testing.T) {
 	}
 	leaderID := setup.Agents[0].AgentID
 	in := store.TeamFlowMigrationInput{FlowKey: "leader-dispatcher", FlowRev: setup.Flow.Rev, Dispatcher: &target}
+	var turnID string
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
 		if _, err := tx.Exec(`UPDATE session SET id='ses_flow' WHERE agent_id=? AND generation=0`, leaderID); err != nil {
 			return err
 		}
-		_, err := tx.RecordTurn(store.Turn{AgentID: leaderID, SessionID: "ses_flow", Generation: 0, RoomID: f.room.ID, Attempt: 1, Mode: "normal", Exec: "running"})
+		turn, err := tx.RecordTurn(store.Turn{AgentID: leaderID, SessionID: "ses_flow", Generation: 0, RoomID: f.room.ID, Attempt: 1, Mode: "normal", Exec: "running"})
+		turnID = turn.ID
 		return err
 	}); err != nil {
 		t.Fatalf("turn: %v", err)
@@ -63,6 +67,13 @@ func TestTeamFlowMigrationInterruptSendsTheStopControl(t *testing.T) {
 	for len(machine.sendQueue) > 0 { // frames of the setup are not what is asserted
 		<-machine.sendQueue
 	}
+	return f, machine, leaderID, turnID
+}
+
+// An older supervisor (no supports_turn_interrupt) gets the stop: the turn is cut by stopping the agent, which the change starts again.
+func TestTeamFlowMigrationInterruptSendsTheStopControl(t *testing.T) {
+	t.Parallel()
+	f, machine, leaderID, _ := interruptFlowFixture(t, false)
 	resp := f.request(http.MethodPost, "/api/projects/"+f.project.ID+"/team-flow/migration/interrupt", map[string]any{"agent_id": leaderID}, true)
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -75,5 +86,87 @@ func TestTeamFlowMigrationInterruptSendsTheStopControl(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no stop control reached the agent's machine")
+	}
+}
+
+// A supervisor that cuts one turn gets the turn_interrupt frame, and what it answers decides the rest: ok (and not_running, a turn that
+// just ended) leave the agent running; unsupported_mode and no answer at all fall back to the stop.
+func TestTeamFlowMigrationInterruptUsesTheTurnInterruptFrame(t *testing.T) {
+	t.Parallel()
+	for name, item := range map[string]struct {
+		answer string // "" answers nothing
+		stops  bool
+	}{"ok": {"ok", false}, "not running": {"not_running", false}, "unsupported mode": {"unsupported_mode", true}, "no answer": {"", true}} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f, machine, leaderID, turnID := interruptFlowFixture(t, true)
+			f.srv.turnInterruptWait = 200 * time.Millisecond
+			frames := make(chan protocol.Frame, 8)
+			go func() {
+				for {
+					select {
+					case frame := <-machine.sendQueue:
+						frames <- frame
+						if frame.Type == protocol.TurnInterrupt && item.answer != "" {
+							machine.harnessMu.Lock()
+							waiter := machine.pathPending[frame.ReqID]
+							machine.harnessMu.Unlock()
+							if waiter != nil {
+								waiter <- protocol.Frame{V: protocol.Version, Type: protocol.TurnInterruptResult, ReqID: frame.ReqID, Result: item.answer}
+							}
+						}
+					case <-machine.done:
+						return
+					}
+				}
+			}()
+			t.Cleanup(func() { close(machine.done) })
+			resp := f.request(http.MethodPost, "/api/projects/"+f.project.ID+"/team-flow/migration/interrupt", map[string]any{"agent_id": leaderID}, true)
+			var body struct {
+				Migration store.TeamFlowMigrationProgress `json:"migration"`
+			}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&body)
+			resp.Body.Close()
+			if resp.StatusCode != 200 || decodeErr != nil {
+				t.Fatalf("interrupt: %d %v", resp.StatusCode, decodeErr)
+			}
+			select {
+			case frame := <-frames:
+				if frame.Type != protocol.TurnInterrupt || frame.AgentID != leaderID || frame.TurnID != turnID || frame.ReqID == "" || frame.Reason == "" {
+					t.Fatalf("first frame sent to the machine: %+v", frame)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("no turn_interrupt frame reached the agent's machine")
+			}
+			stopped := false
+			select {
+			case frame := <-frames:
+				if frame.Type != protocol.Control || frame.AgentID != leaderID || frame.DesiredState != "stopped" {
+					t.Fatalf("second frame sent to the machine: %+v", frame)
+				}
+				stopped = true
+			case <-time.After(300 * time.Millisecond):
+			}
+			card, err := f.db.AgentCardByID(t.Context(), leaderID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stopped != item.stops || (card.Desired == "stopped") != item.stops {
+				t.Fatalf("stop control sent=%t desired=%s, want stop=%t", stopped, card.Desired, item.stops)
+			}
+			// Not blocking while still active says the request is recorded: only that, or a stop, ends blocking for an open turn.
+			found := false
+			for _, agent := range body.Migration.Agents {
+				if agent.AgentID == leaderID {
+					found = true
+					if agent.Blocking || agent.Restarting != item.stops {
+						t.Fatalf("progress of the interrupted agent: %+v", agent)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("the interrupted agent is not in the progress: %+v", body.Migration.Agents)
+			}
+		})
 	}
 }

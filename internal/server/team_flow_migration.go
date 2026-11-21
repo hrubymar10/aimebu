@@ -192,7 +192,10 @@ func (s *Server) teamFlowMigrationCancel(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, map[string]any{"migration": progress})
 }
 
-// teamFlowMigrationInterrupt cuts the current turn of an agent the running migration is waiting for (see Store.InterruptFlowMigrationAgent).
+// teamFlowMigrationInterrupt cuts the current turn of an agent the running migration is waiting for. A machine whose supervisor cuts one
+// turn (supports_turn_interrupt) is sent a turn_interrupt frame and the agent keeps running (see Store.InterruptFlowMigrationTurn); any
+// other machine, a turn that cannot be cut that way, and a frame that was not answered take the older path, which stops the agent and
+// starts a kept one again (see Store.InterruptFlowMigrationAgent). A stop that follows a frame wins on the supervisor.
 func (s *Server) teamFlowMigrationInterrupt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AgentID string `json:"agent_id"`
@@ -205,6 +208,28 @@ func (s *Server) teamFlowMigrationInterrupt(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	projectID := r.PathValue("project")
+	// Which path is the machine's to say; who may interrupt, and what, is checked by the store on both.
+	if known, err := s.Store.AgentCardByID(r.Context(), req.AgentID); err == nil && s.machineInterruptsTurns(known.MachineID) {
+		target, err := s.Store.InterruptFlowMigrationTurn(r.Context(), projectID, userID(r), req.AgentID)
+		if err != nil {
+			teamFlowMigrationError(w, err)
+			return
+		}
+		if target.TurnID != "" {
+			result, err := s.interruptTurn(r.Context(), target, "team flow change")
+			// not_running: the turn ended by itself in the meantime, and its end is on its way.
+			if err == nil && (result == "ok" || result == "not_running") {
+				progress, err := s.Store.TeamFlowMigrationProgress(r.Context(), projectID, userID(r))
+				if err != nil {
+					teamFlowMigrationError(w, err)
+					return
+				}
+				writeJSON(w, 200, map[string]any{"migration": progress})
+				return
+			}
+			log.Printf("team flow migration interrupt: turn %s of agent %s was not interrupted (result %q, error %v); stopping the agent instead", target.TurnID, target.AgentID, result, err)
+		}
+	}
 	updated, err := s.Store.InterruptFlowMigrationAgent(r.Context(), projectID, userID(r), req.AgentID)
 	if err != nil {
 		teamFlowMigrationError(w, err)

@@ -158,12 +158,13 @@ export function MigrationSummary({ plan, options, changes, newTargets, flowLabel
 const AGENT_STATE = { waiting: 'Waiting', draining: 'Finishing its current turn', running: 'Applying', done: 'Done', failed: 'Failed' };
 const AGENT_ACTION = { notice: 'keeps running with the new rules', switch: 'switches model', spawn: 'is added', reactivate: 'is started again', handoff_stop: 'hands off to the leader, then stops' };
 
-// Asks before cutting an agent's turn, then does it. Answers the migration as it stands, or null when the person said no.
+// Asks before cutting an agent's turn, then does it. Whether the agent keeps running or is stopped and started again is its machine's
+// supervisor's to say (the server picks), so the question covers both. Answers the migration as it stands, or null when the person said no.
 export async function interruptAgent(source, projectID, agent) {
   const name = agent.slug || agent.agent_id;
   const message = agent.keeps
-    ? `Interrupt ${name} now? Its current turn is cut off; ${name} stops the turn, is started again once the turn is gone, and the change waits for it.`
-    : `Interrupt ${name} now? Its current turn is cut off and ${name} stops; the new flow does not keep it.`;
+    ? `Interrupt ${name} now? Its current turn is cut off and its request is queued again. ${name} keeps running (a machine with an older supervisor stops it and starts it again), and the change goes on once the turn is gone.`
+    : `Interrupt ${name} now? Its current turn is cut off. The new flow does not keep ${name}: it hands off to the leader if it still can, then stops.`;
   if (!await confirmDialog(message, { title: 'Interrupt agent', confirm: 'Interrupt', danger: true })) return null;
   const answer = await source.interruptMigration(projectID, agent.agent_id);
   return answer?.migration || answer;

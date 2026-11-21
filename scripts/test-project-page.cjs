@@ -277,7 +277,7 @@ async function main() {
       assert.equal(await page.$eval('#team-flow-modal .team-wizard-background', node => node.title), 'Continue in background');
       await page.$eval('#team-flow-modal .team-wizard-interrupt', node => node.click());
       await page.waitForFunction(() => document.querySelector('#app-dialog')?.open && document.querySelector('#app-dialog-title').textContent === 'Interrupt agent');
-      assert.match(await page.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Interrupt ada now\? Its current turn is cut off; ada stops the turn, is started again once the turn is gone, and the change waits for it\./);
+      assert.match(await page.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Interrupt ada now\? Its current turn is cut off and its request is queued again\. ada keeps running \(a machine with an older supervisor stops it and starts it again\), and the change goes on once the turn is gone\./);
       await page.$eval('#app-dialog .app-dialog-cancel', node => node.click());
       await settle(page);
       assert.equal(await page.evaluate(() => window.__requests.some(request => request.path.endsWith('/migration/interrupt'))), false, 'declining the confirmation interrupts nothing');
@@ -330,10 +330,10 @@ async function main() {
       assert.equal(await page.$eval('.team-flow-modal', node => node.open), false, 'the poll does not bring the wizard back');
       // Interrupt now, next to the agent that blocks the change.
       assert.deepEqual(await page.$$eval('#team-flow-progress .team-wizard-interrupt', nodes => nodes.map(node => node.title)), ['Interrupt dax now', 'Interrupt ada now']);
-      // An agent the new flow does not keep is stopped; a kept one restarts after the switch: the confirmation says which.
+      // An agent the new flow does not keep hands off and stops; a kept one keeps running (or restarts, on an older supervisor): the confirmation says which.
       await page.$eval('#team-flow-progress .team-wizard-interrupt', node => node.click());
       await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
-      assert.match(await page.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Interrupt dax now\? Its current turn is cut off and dax stops; the new flow does not keep it\./);
+      assert.match(await page.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Interrupt dax now\? Its current turn is cut off\. The new flow does not keep dax: it hands off to the leader if it still can, then stops\./);
       await page.$eval('#app-dialog .app-dialog-cancel', node => node.click());
       await page.$eval('#team-flow-progress li:nth-child(2) .team-wizard-interrupt', node => node.click());
       await confirmOk(page);

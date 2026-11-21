@@ -46,10 +46,12 @@ type Server struct {
 	socketWG        sync.WaitGroup
 	sockets         map[*websocket.Conn]struct{}
 	socketForceWait time.Duration // tests shorten the post-deadline join; zero uses five seconds
-	codexWarmOn     atomic.Bool
-	localOnce       sync.Once // localHandler: the handler the agent MCP endpoint reuses
-	localMux        http.Handler
-	localBuilds     atomic.Int64 // how many times localHandler built it (a test reads it)
+	// turnInterruptWait is how long a turn_interrupt frame's answer is waited for; tests shorten it, zero uses turnInterruptAnswerWait.
+	turnInterruptWait time.Duration
+	codexWarmOn       atomic.Bool
+	localOnce         sync.Once // localHandler: the handler the agent MCP endpoint reuses
+	localMux          http.Handler
+	localBuilds       atomic.Int64 // how many times localHandler built it (a test reads it)
 	// NoWebBundle serves the page from its modules instead of the bundle (a test sets it; AIMEBU_WEB_BUNDLE=off does the same for a whole process).
 	NoWebBundle bool
 	// legacyAttr caches which Claude Code session a v1 sender's work is in (see resolveLegacyStart), so opening a profile and then starting the

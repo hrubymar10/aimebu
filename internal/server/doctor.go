@@ -78,6 +78,7 @@ var doctorCapabilities = []struct {
 	{"supports_agent_logs", "an agent's captured stderr cannot be read from the web UI", func(c *machineConn) bool { return c.supportsAgentLogs }},
 	{"supports_agent_log_size", "the size of the agent logs on this machine is not shown", func(c *machineConn) bool { return c.supportsAgentLogSize }},
 	{"supports_stop_replay", "a stop sent while the machine was offline is applied by a fallback that can kill a live process early", func(c *machineConn) bool { return c.supportsStopReplay }},
+	{"supports_turn_interrupt", "a turn cannot be cut without stopping its agent: interrupting an agent a team flow change waits for stops it and starts it again", func(c *machineConn) bool { return c.supportsTurnInterrupt }},
 }
 
 // sameHostPeer says whether a connection comes from the machine the server runs on: from a loopback address, or from the very address it

@@ -224,7 +224,10 @@ environment or launcher arguments.
   to its folder cannot be continued there, its turns are held; `supports_providers`: an OpenCode agent on a
   custom provider cannot run there, its turns are held; `supports_worktree`: room worktrees cannot be created
   on that machine; `supports_stop_replay`: a stop sent while the machine was
-  offline is applied by a fallback that can kill a live process early). A
+  offline is applied by a fallback that can kill a live process early;
+  `supports_turn_interrupt`: a turn cannot be cut without stopping its agent,
+  so interrupting an agent a team flow change waits for stops it and starts
+  it again). A
   machine that is not connected right now is ok here; the offline `machines`
   check judges how long it has been gone.
 - **connected machines** — warns when no approved machine is connected.
