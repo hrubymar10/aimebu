@@ -134,18 +134,19 @@ value, including `0`, uses the cache). The binary reports the output of
 `git describe` as its version.
 
 The wrapper can also update the clone for you. Run in a terminal, a command
-checks the remote's default branch at most once every 24 hours (a hard 5 second
-limit, no credential or passphrase prompts, silent when the remote cannot be reached) and, when the clone is behind,
-asks `aimebu update available. update now? (Y/n)`. Yes fast-forwards the clone
+checks the remote at most once every 24 hours (a hard 5 second
+limit, no credential or passphrase prompts, silent when the remote cannot be reached) and, when an update is available,
+asks `aimebu update available. update now? (Y/n)`. Yes applies the update
 and rebuilds the cached binary (the old one stays in place until the new build
 succeeds; a failed update restores the checkout), then runs your command on the
-new version. A dirty checkout or a branch other than the remote's default is
+new version. A dirty checkout or a checkout the channel does not track is
 never touched: it only prints a one-line notice. Notices go to stderr, and the
-check is skipped for `version`, `help`, `--json`, `--machine` and `--plain`
-runs, for `AIMEBU_FORCE_BUILD=1`, and whenever stdin, stdout or stderr is not a
-terminal (so `aimebu agent-tools`, pipes and services never check).
+check is skipped for `version`, `help`, `server`, `--json`, `--machine` and
+`--plain` runs, for `AIMEBU_FORCE_BUILD=1`, and whenever stdin, stdout or stderr
+is not a terminal (so `aimebu agent-tools`, pipes and services never check).
 `aimebu update` updates on demand and `aimebu update --check` only reports
-(`current`, `behind`, `dirty`, `non-default` or `unreachable`). Settings:
+(`current`, `behind`, `dirty`, `non-default`, `diverged`, `no-release` or
+`unreachable`). Settings:
 
 | Variable | Effect |
 | --- | --- |
@@ -155,6 +156,28 @@ terminal (so `aimebu agent-tools`, pipes and services never check).
 | `AIMEBU_UPDATE_TIMEOUT_SECONDS` | time limit for the remote lookup, default `5` |
 | `AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS` | time limit for the fetch once an update is accepted, default `60` |
 | `AIMEBU_UPDATE_REMOTE` | the git remote to follow, default `origin` |
+| `AIMEBU_UPDATE_CHANNEL` | the release channel: `stable`, `prerelease`, `edge` or `edge:<branch>`; it can also be set with a one-word `<config root>/update-channel` file, which wins nothing over the variable — the variable is read first. Without either, a checkout on the remote's default branch keeps the default-branch update below, and any other checkout computes one: `prerelease` while the remote has no stable tag of the running major, otherwise `stable` |
+
+### Release channels
+
+A channel chooses what the update follows:
+
+- `stable` follows the newest annotated tag of the running checkout's major
+  (`v2.x.y` while running `v2.*`), releases only. `prerelease` follows the
+  newest annotated tag of the major including prereleases (`-alpha.N`,
+  `-beta.N`, `-rc.N`, which order `alpha.9 < alpha.10 < beta.1 < rc.1 <
+  release`). Lightweight tags are never targets. When the remote has no tag of
+  the running major on the channel, the state is `no-release` and nothing
+  moves.
+- `edge` follows the remote's default branch and `edge:<branch>` follows that
+  branch; the checkout must be on the tracked branch. A branch with commits the
+  remote tip does not have is reported as `diverged` and left alone.
+- Applying a tag update fetches exactly that tag (never a force fetch), verifies
+  the peeled commit against what `ls-remote` advertised, checks the checkout out
+  detached at the tag and rebuilds; a failed update restores the previous
+  checkout (detached HEAD stays detached, a branch keeps its own tip).
+- `edge` and the default-branch update never prompt the `server` subcommand;
+  the running server has its own check (see the admin banner in the web UI).
 
 
 ## Testing, development server and defaults

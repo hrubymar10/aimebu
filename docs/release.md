@@ -134,13 +134,28 @@ quarantine problem does not arise for a locally built binary.
   states this.
 - It resolves symlinks to its own location, so `bin/aimebu` can be symlinked
   onto PATH or its `bin/` directory added to PATH.
-- It updates its own clone: an interactive run offers to fast-forward the
-  remote's default branch and rebuild (once per `AIMEBU_UPDATE_INTERVAL_HOURS`,
-  skipped for machine-readable and non-terminal runs), and `aimebu update
-  [--check]` does it on demand. It never touches a dirty checkout or a
-  non-default branch, builds beside the cache and swaps it in only on success,
-  and `AIMEBU_UPDATE_CHECK=0` disables it. Its git calls never prompt. docs/reference.md has the full list of variables;
-  the update tests in `cmd/aimebu/binwrapper_test.go` use a local bare remote.
+- It updates its own clone: an interactive run offers to update and rebuild
+  (once per `AIMEBU_UPDATE_INTERVAL_HOURS`, skipped for machine-readable and
+  non-terminal runs), and `aimebu update [--check]` does it on demand. It never
+  touches a dirty checkout or a checkout the channel does not track, builds
+  beside the cache and swaps it in only on success, and
+  `AIMEBU_UPDATE_CHECK=0` disables it. Its git calls never prompt.
+  docs/reference.md has the full list of variables; the update tests in
+  `cmd/aimebu/binwrapper_test.go` use a local bare remote.
+- Release channels: `AIMEBU_UPDATE_CHANNEL` (or a one-word
+  `<config root>/update-channel` file) picks `stable`, `prerelease`, `edge` or
+  `edge:<branch>`. The tag channels follow the newest annotated tag of the
+  running checkout's major; the default is computed (`prerelease` until the
+  remote has a stable tag of that major, then `stable`), and a checkout on the
+  remote's default branch with no channel set keeps the default-branch update.
+  A local branch with commits the target does not have is `diverged` and left
+  alone; a major with no release on the channel is `no-release`. Consequence
+  for publishing: release tags must be **annotated** (`git tag -a v2.1.0 -m
+  ...` and push the tag), they pin to a major (`v3.0.0` never reaches a `v2`
+  install), and prereleases order by semver (`alpha.9 < alpha.10 < beta.1 <
+  rc.1 < release`), so a new label or a dropped `rc` changes what installs
+  pick up. The same ordering table lives in `internal/updatecheck` and is
+  shared with the wrapper tests.
 
 README Install section: Manual (clone, add `bin/` to PATH, `aimebu
 version`) first, with the Go toolchain requirement.

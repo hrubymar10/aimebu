@@ -784,6 +784,22 @@ Inbox, usage, events, settings
   **quota_switcher_decision**(id, tool, at, decision_json) — the automatic
   provider account switcher's per-tool settings, current state and decision
   log (migration 48).
+- **update_status_ack**(user_id, version, state, kind, until) — per person the
+  last update-status notice they answered: `version` is the release the state
+  was about, `state` is `available` or `installed`, `kind` is `skip`
+  (permanent for that version and state) or `remind` (hidden until `until`,
+  24 hours after the ask; migration 127). The server's own update check
+  (stdlib-only `internal/updatecheck`) follows the same release-channel rules
+  as the `bin/aimebu` wrapper: every 6 hours with jitter, first 30 seconds
+  after start, only when the clone is detectable (`<dir of os.Executable()>/.git`
+  plus `bin/aimebu`), and never under `AIMEBU_UPDATE_CHECK=0`. It reports two
+  states: `available` (the newest release for the channel is newer than the
+  running process) and `installed` (the clone or the binary is newer than the
+  running process, so a restart picks it up). `GET /api/update-status` is for
+  admins and the owner; `POST /api/update-status/skip` and
+  `POST /api/update-status/remind` record the ack of the signed-in person. A
+  state change emits an `update_status` event; the web shows an admin-only
+  banner with copy-`aimebu update`, remind and skip actions.
 
 Project memory starts disabled and saved records remain readable to humans
 when disabled. Owners/operators and current project agents can write project

@@ -6,10 +6,16 @@
 # A symlink to this file also works. Requires a Go toolchain at least as new as
 # the "go" line in go.mod (an older Go downloads the right one by default).
 #
-# Updates: an interactive run checks the clone's default branch at most once a day and
-# offers to update and rebuild; "aimebu update [--check]" does it on demand. See the
-# "Installing, building and updating the wrapper" section of docs/reference.md for
-# AIMEBU_UPDATE_CHECK and its companions.
+# Updates: an interactive run checks the clone at most once a day and offers to update
+# and rebuild; "aimebu update [--check]" does it on demand. A release channel chooses
+# what to track: `stable` and `prerelease` follow the newest annotated tag of the
+# running major, `edge` and `edge:<branch>` follow a branch. The channel comes from
+# AIMEBU_UPDATE_CHANNEL or the one-word file <config root>/update-channel; with no
+# channel set, a checkout on the remote's default branch keeps the old default-branch
+# update and any other checkout computes one (prerelease while the remote has no stable
+# tag of the running major, otherwise stable). See the "Installing, building and
+# updating the wrapper" section of docs/reference.md for AIMEBU_UPDATE_CHECK and its
+# companions.
 
 set -euo pipefail
 
@@ -61,10 +67,10 @@ build_binary() {
 }
 
 # ---- update check -------------------------------------------------------------------
-# The clone is updated only from a clean checkout of the remote's default branch, by a
-# fast-forward, and the cached binary is rebuilt before it replaces the old one. Notices
-# go to stderr so machine-readable stdout stays clean. State: unreachable, dirty,
-# non-default, current or behind.
+# The clone is updated only from a clean checkout, by a fast-forward (a branch) or a
+# detached checkout (a tag), and the cached binary is rebuilt before it replaces the old
+# one. Notices go to stderr so machine-readable stdout stays clean. States: unreachable,
+# dirty, non-default, current, behind, diverged or no-release.
 
 # update_git <seconds> <output-file> <git args...> runs git in the clone with a hard time
 # limit, fully non-interactive: no credential, passphrase or host-key prompt (an ssh
@@ -104,6 +110,113 @@ update_seconds() {
 
 update_short_oid() { printf '%.12s' "$1"; }
 
+# resolve_channel prints the configured release channel: AIMEBU_UPDATE_CHANNEL, else the
+# one word in <config root>/update-channel, else nothing. An invalid word warns and
+# counts as unset, so a typo cannot brick the update path.
+resolve_channel() {
+    local word="" root file
+    if [ -n "${AIMEBU_UPDATE_CHANNEL:-}" ]; then
+        word="$AIMEBU_UPDATE_CHANNEL"
+    else
+        root="${AIMEBU_CONFIG_DIR:-}"
+        case "$root" in
+            "") root="$HOME/.aimebu" ;;
+            "~") root="$HOME" ;;
+            "~/"*) root="$HOME/${root#~/}" ;;
+        esac
+        file="$root/update-channel"
+        if [ -f "$file" ]; then
+            read -r word <"$file" || true
+        fi
+    fi
+    case "$word" in
+        ''|stable|prerelease|edge|edge:[!\ ]*) printf '%s' "$word" ;;
+        *) echo "aimebu update: ignoring invalid channel '$word' (use stable, prerelease, edge or edge:<branch>)" >&2 ;;
+    esac
+}
+
+# running_major prints the major of the checkout's newest tag, or fails when the
+# checkout carries no release tag at all (a bare commit hash).
+running_major() {
+    local v="$UPDATE_LOCAL_VERSION" major
+    case "$v" in
+        v[0-9]*|[0-9]*)
+            v="${v#v}"
+            major="${v%%.*}"
+            case "$major" in ''|*[!0-9]*) return 1 ;; esac
+            printf '%s' "$major"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# remote_tags writes "tag commit" lines for the remote's annotated tags into
+# UPDATE_TAGS_FILE and returns 0, or fails when the remote is unreachable. ls-remote
+# answers a peeled "refs/tags/<name>^{}" line only for annotated tags, so the peeled
+# commit is both the annotation mark and the commit the wrapper must land on.
+remote_tags() {
+    local output value name
+    output="$(mktemp "${TMPDIR:-/tmp}/aimebu-update-tags.XXXXXX")" || return 1
+    if ! update_git "$(update_seconds AIMEBU_UPDATE_TIMEOUT_SECONDS 5)" "$output" ls-remote --tags --refs "$UPDATE_REMOTE"; then
+        rm -f "$output"
+        return 1
+    fi
+    UPDATE_TAGS_FILE="${output}.peeled"
+    awk '$2 ~ /^refs\/tags\/.*\^\{\}$/ { tag = $2; sub(/\^\{\}$/, "", tag); sub(/^refs\/tags\//, "", tag); print tag, $1 }' "$output" >"$UPDATE_TAGS_FILE"
+    rm -f "$output"
+    return 0
+}
+
+# tag_order <a> <b> prints -1, 0 or 1 ordering release tags so that
+# alpha.9 < alpha.10 < beta.1 < rc.1 < release.
+tag_order() {
+    local a="$1" b="$2" ka kb
+    ka="$(tag_key "$a")" kb="$(tag_key "$b")"
+    if [ "$ka" = "$kb" ]; then echo 0; elif [[ "$ka" < "$kb" ]]; then echo -1; else echo 1; fi
+}
+
+# tag_key maps a tag to a fixed-width comparable key: the three version numbers and
+# then the prerelease, each part zero-padded, so lexicographic order is release order.
+tag_key() {
+    local tag="$1" core pre key="" part
+    core="${tag#v}"
+    pre=""
+    case "$core" in *-*) pre="${core#*-}" core="${core%%-*}" ;; esac
+    local major minor patch
+    IFS=. read -r major minor patch <<EOF
+$core
+EOF
+    case "${major:-x}${minor:-x}${patch:-x}" in *[!0-9]*) echo "zzzzzzzzz"; return ;; esac
+    key="$(printf '%05d%05d%05d' "$major" "$minor" "$patch")"
+    if [ -n "$pre" ]; then
+        key="$key-$(pre_key "$pre")"
+    else
+        key="$key-~~~~~" # a release sorts after every prerelease of the same version
+    fi
+    printf '%s' "$key"
+}
+
+# pre_key maps one prerelease to a fixed-width comparable key: labels rank
+# alpha < beta < rc (anything unknown ranks before them), numbers keep their value.
+pre_key() {
+    local pre="$1" out="" part weight
+    local -a parts
+    IFS=. read -r -a parts <<EOF
+$pre
+EOF
+    for part in "${parts[@]}"; do
+        case "$part" in
+            alpha) weight=00001 ;;
+            beta) weight=00002 ;;
+            rc) weight=00003 ;;
+            *[!0-9]*|"") weight=00000 ;;
+            *) weight="$(printf '%05d' "$part")" ;;
+        esac
+        out="$out.$weight"
+    done
+    printf '%s' "${out#.}"
+}
+
 # remote_default_target prints "<default ref> <oid>" of the remote's HEAD.
 remote_default_target() {
     local output value name ref="" oid=""
@@ -127,6 +240,7 @@ remote_default_target() {
 classify_update() {
     local target
     UPDATE_STATE=unreachable UPDATE_DEFAULT_REF="" UPDATE_REMOTE_OID="" UPDATE_LOCAL_OID="" UPDATE_BRANCH=""
+    UPDATE_CHANNEL="" UPDATE_TARGET_TAG="" UPDATE_TARGET_OID="" UPDATE_TAGS_FILE="" UPDATE_TARGET_REF="" UPDATE_TARGET_IS_DEFAULT=""
     UPDATE_LOCAL_VERSION="$(git -C "$REPO_DIR" describe --tags --always 2>/dev/null || true)"
     if [ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no 2>/dev/null || true)" ]; then
         UPDATE_STATE=dirty
@@ -135,30 +249,133 @@ classify_update() {
     target="$(remote_default_target)" || return 0
     UPDATE_DEFAULT_REF="${target% *}" UPDATE_REMOTE_OID="${target#* }"
     UPDATE_BRANCH="$(git -C "$REPO_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-    if [ -z "$UPDATE_BRANCH" ] || [ "refs/heads/$UPDATE_BRANCH" != "$UPDATE_DEFAULT_REF" ]; then
-        UPDATE_STATE=non-default
-        return 0
-    fi
     UPDATE_LOCAL_OID="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)" || {
         UPDATE_STATE=unreachable
         return 0
     }
-    if [ "$UPDATE_LOCAL_OID" = "$UPDATE_REMOTE_OID" ] \
-        || { git -C "$REPO_DIR" cat-file -e "$UPDATE_REMOTE_OID^{commit}" 2>/dev/null \
-            && git -C "$REPO_DIR" merge-base --is-ancestor "$UPDATE_REMOTE_OID" "$UPDATE_LOCAL_OID" 2>/dev/null; }; then
+    UPDATE_CHANNEL="$(resolve_channel)"
+    if [ -z "$UPDATE_CHANNEL" ] && [ -n "$UPDATE_BRANCH" ] \
+        && [ "refs/heads/$UPDATE_BRANCH" = "$UPDATE_DEFAULT_REF" ]; then
+        # A v1-style checkout on the remote's default branch keeps today's behaviour.
+        if [ "$UPDATE_LOCAL_OID" = "$UPDATE_REMOTE_OID" ] \
+            || { git -C "$REPO_DIR" cat-file -e "$UPDATE_REMOTE_OID^{commit}" 2>/dev/null \
+                && git -C "$REPO_DIR" merge-base --is-ancestor "$UPDATE_REMOTE_OID" "$UPDATE_LOCAL_OID" 2>/dev/null; }; then
+            UPDATE_STATE=current
+        else
+            UPDATE_STATE=behind
+        fi
+        return 0
+    fi
+    if [ -z "$UPDATE_CHANNEL" ]; then
+        # No channel set and not a v1-style default-branch checkout: compute one from
+        # the remote's tags (prerelease until the running major has a stable tag).
+        remote_tags || return 0
+        local tag oid major stable=""
+        if major="$(running_major)"; then
+            while read -r tag oid; do
+                case "$tag" in "v$major."*) case "$tag" in *-*) ;; *) stable=1; break ;; esac ;; esac
+            done <"$UPDATE_TAGS_FILE"
+        fi
+        if [ -n "$stable" ]; then UPDATE_CHANNEL=stable; else UPDATE_CHANNEL=prerelease; fi
+        rm -f "$UPDATE_TAGS_FILE"
+    fi
+    case "$UPDATE_CHANNEL" in
+        edge)
+            UPDATE_TARGET_REF="$UPDATE_DEFAULT_REF" UPDATE_TARGET_IS_DEFAULT=1
+            classify_edge_update "$UPDATE_DEFAULT_REF" "$UPDATE_REMOTE_OID"
+            ;;
+        edge:*)
+            local branch oid="" out
+            branch="${UPDATE_CHANNEL#edge:}"
+            UPDATE_TARGET_REF="refs/heads/$branch"
+            # The default-target call above only answered HEAD; ask for the named branch.
+            out="$(mktemp "${TMPDIR:-/tmp}/aimebu-update-edge.XXXXXX")"
+            if update_git "$(update_seconds AIMEBU_UPDATE_TIMEOUT_SECONDS 5)" "$out" ls-remote "$UPDATE_REMOTE" "$UPDATE_TARGET_REF"; then
+                while read -r value name _; do
+                    if [ "$name" = "$UPDATE_TARGET_REF" ]; then oid="$value"; fi
+                done <"$out"
+            fi
+            rm -f "$out"
+            if [ -z "$oid" ]; then UPDATE_STATE=non-default; return 0; fi
+            UPDATE_REMOTE_OID="$oid"
+            classify_edge_update "$UPDATE_TARGET_REF" "$oid"
+            ;;
+        *)
+            classify_tag_update
+            ;;
+    esac
+}
+
+# classify_edge_update <ref> <remote oid> classifies a checkout that follows a branch:
+# on the branch it is current, behind or diverged; anywhere else it is left alone.
+classify_edge_update() {
+    local ref="$1" oid="$2"
+    if [ -z "$UPDATE_BRANCH" ] || [ "refs/heads/$UPDATE_BRANCH" != "$ref" ]; then
+        UPDATE_STATE=non-default
+        return 0
+    fi
+    if [ "$UPDATE_LOCAL_OID" = "$oid" ]; then
         UPDATE_STATE=current
+    elif git -C "$REPO_DIR" cat-file -e "$oid^{commit}" 2>/dev/null \
+        && git -C "$REPO_DIR" merge-base --is-ancestor "$oid" "$UPDATE_LOCAL_OID" 2>/dev/null; then
+        # Local commits the branch tip does not have: left alone.
+        UPDATE_STATE=diverged
     else
         UPDATE_STATE=behind
+    fi
+}
+
+# classify_tag_update picks the newest annotated tag of the running major that the
+# channel allows, then compares the checkout with it. A checkout carrying commits the
+# target does not have is diverged and left alone.
+classify_tag_update() {
+    local major tag oid best_tag="" best_oid=""
+    remote_tags || { UPDATE_STATE=unreachable; return 0; }
+    if ! major="$(running_major)"; then
+        UPDATE_STATE=no-release
+        return 0
+    fi
+    while read -r tag oid; do
+        case "$tag" in "v$major."*) ;; *) continue ;; esac
+        case "$UPDATE_CHANNEL:$tag" in stable:*-*) continue ;; esac
+        if [ -z "$best_tag" ] || [ "$(tag_order "$tag" "$best_tag")" -gt 0 ]; then
+            best_tag="$tag" best_oid="$oid"
+        fi
+    done <"$UPDATE_TAGS_FILE"
+    rm -f "$UPDATE_TAGS_FILE"
+    UPDATE_TAGS_FILE=""
+    if [ -z "$best_tag" ]; then
+        UPDATE_STATE=no-release
+        return 0
+    fi
+    UPDATE_TARGET_TAG="$best_tag" UPDATE_TARGET_OID="$best_oid"
+    if [ "$UPDATE_LOCAL_OID" = "$best_oid" ]; then
+        UPDATE_STATE=current
+    elif git -C "$REPO_DIR" cat-file -e "$best_oid^{commit}" 2>/dev/null \
+        && git -C "$REPO_DIR" merge-base --is-ancestor "$UPDATE_LOCAL_OID" "$best_oid" 2>/dev/null; then
+        UPDATE_STATE=behind
+    elif ! git -C "$REPO_DIR" cat-file -e "$best_oid^{commit}" 2>/dev/null; then
+        # The target is not fetched yet, so divergence cannot be proven here; applying
+        # the update re-checks with the tag in hand.
+        UPDATE_STATE=behind
+    else
+        UPDATE_STATE=diverged
     fi
 }
 
 update_local_label() { printf '%s' "${UPDATE_LOCAL_VERSION:-$(update_short_oid "$UPDATE_LOCAL_OID")}"; }
 
 update_skip_warning() {
+    local kind="branch" target="${UPDATE_TARGET_REF:-$UPDATE_DEFAULT_REF}"
+    target="${target#refs/heads/}"
+    if [ -z "$UPDATE_TARGET_REF" ] || [ "$UPDATE_TARGET_IS_DEFAULT" = "1" ]; then kind="default branch"; fi
     case "$UPDATE_STATE" in
         dirty) echo "aimebu update check skipped: checkout is dirty." >&2 ;;
         non-default)
-            echo "aimebu update check skipped: checkout is on '${UPDATE_BRANCH:-detached}', not default branch '${UPDATE_DEFAULT_REF#refs/heads/}'." >&2
+            echo "aimebu update check skipped: checkout is on '${UPDATE_BRANCH:-detached}', not $kind '$target'." >&2
+            ;;
+        diverged)
+            echo "aimebu update check skipped: the checkout has commits that are not in ${UPDATE_TARGET_TAG:-the target}; left alone." >&2
             ;;
     esac
 }
@@ -171,6 +388,14 @@ restore_update_checkout() {
     current_ref="$(git -C "$REPO_DIR" symbolic-ref --quiet HEAD 2>/dev/null || true)"
     if [ "$current_oid" = "$original_oid" ] && [ "$current_ref" = "$original_ref" ]; then
         return 0
+    fi
+    if [ -z "$original_ref" ]; then
+        # A tag update detached HEAD; rollback restores a detached HEAD at the original
+        # commit (the branch, if there was one, never moved).
+        [ -n "$moved_oid" ] && [ "$current_oid" = "$moved_oid" ] || return 1
+        git -C "$REPO_DIR" checkout --detach "$original_oid" >/dev/null 2>&1 || return 1
+        [ "$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)" = "$original_oid" ]
+        return
     fi
     [ -n "$original_ref" ] && [ -n "$moved_oid" ] && [ "$current_oid" = "$moved_oid" ] && [ "$current_ref" = "$original_ref" ] || return 1
     branch="${original_ref#refs/heads/}"
@@ -239,6 +464,50 @@ apply_update() {
     echo "$message"
 }
 
+# apply_tag_update <automatic> checks out the advertised tag detached and rebuilds the
+# cached binary. The tag is fetched exactly (no force), the peeled commit is verified
+# against what ls-remote advertised, and a checkout whose commits are not in the target
+# is refused as diverged. Automatic: restart the wrapper on the new code or carry on
+# with the previous version after a failure. Explicit: report and return.
+apply_tag_update() {
+    local automatic="$1" original_oid original_ref built
+    original_oid="$(git -C "$REPO_DIR" rev-parse HEAD)" || { echo "Error: cannot resolve current checkout revision" >&2; exit 1; }
+    original_ref="$(git -C "$REPO_DIR" symbolic-ref --quiet HEAD 2>/dev/null || true)"
+    if ! update_git "$(update_seconds AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS 60)" /dev/null fetch --no-tags "$UPDATE_REMOTE" "tag" "$UPDATE_TARGET_TAG"; then
+        update_failure "$automatic" "could not fetch $UPDATE_TARGET_TAG within the time limit (AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS)" "$original_oid" "$original_ref" ""
+        return 0
+    fi
+    if [ "$(git -C "$REPO_DIR" rev-parse "$UPDATE_TARGET_TAG^{}" 2>/dev/null || true)" != "$UPDATE_TARGET_OID" ]; then
+        update_failure "$automatic" "fetched $UPDATE_TARGET_TAG did not match the advertised revision" "$original_oid" "$original_ref" ""
+        return 0
+    fi
+    if ! git -C "$REPO_DIR" merge-base --is-ancestor "$original_oid" "$UPDATE_TARGET_OID" 2>/dev/null; then
+        UPDATE_STATE=diverged
+        update_failure "$automatic" "the checkout has commits that are not in $UPDATE_TARGET_TAG" "$original_oid" "$original_ref" ""
+        return 0
+    fi
+    if ! git -C "$REPO_DIR" checkout --detach "$UPDATE_TARGET_TAG" >/dev/null 2>&1; then
+        update_failure "$automatic" "cannot detach onto $UPDATE_TARGET_TAG" "$original_oid" "$original_ref" ""
+        return 0
+    fi
+    # Build beside the cache and swap it in only on success, so a failed build leaves
+    # the previous version fully usable.
+    built="$CACHE_BINARY.update.$$"
+    echo "Building aimebu..." >&2
+    if ! build_binary "$built" >&2; then
+        rm -f "$built"
+        update_failure "$automatic" "the updated source did not build" "$original_oid" "$original_ref" "$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+        return 0
+    fi
+    mv -f "$built" "$CACHE_BINARY"
+    message="Updated aimebu from $(update_short_oid "$original_oid") to $UPDATE_TARGET_TAG."
+    if [ "$automatic" = true ]; then
+        echo "$message" >&2
+        AIMEBU_UPDATE_RESTARTED=1 exec "$SCRIPT_DIR/aimebu" "$@"
+    fi
+    echo "$message"
+}
+
 # update_due is true when the last automatic check is older than
 # AIMEBU_UPDATE_INTERVAL_HOURS (default 24; 0 checks every run).
 update_due() {
@@ -263,7 +532,7 @@ passive_update_check() {
     fi
     [ "$mode" = "0" ] && return 0
     [ "$FORCE_BUILD" = "1" ] && return 0
-    case "${1:-}" in ''|version|help|-h|--help|update) return 0 ;; esac
+    case "${1:-}" in ''|version|help|-h|--help|update|server) return 0 ;; esac
     for arg in "$@"; do
         case "$arg" in --json|--machine|--plain) return 0 ;; esac
     done
@@ -274,20 +543,30 @@ passive_update_check() {
     : >"$UPDATE_STAMP" 2>/dev/null || true
     classify_update
     case "$UPDATE_STATE" in
-        current|unreachable) return 0 ;;
-        dirty|non-default) update_skip_warning; return 0 ;;
+        current|unreachable|no-release) return 0 ;;
+        dirty|non-default|diverged) update_skip_warning; return 0 ;;
     esac
     if [ "$mode" = "apply" ]; then
-        apply_update true "$@"
+        apply_update_for_state true "$@"
         return 0
     fi
     printf 'aimebu update available. update now? (Y/n) ' >&2
     if IFS= read -r answer; then
         answer="${answer#"${answer%%[![:space:]]*}"}"
         answer="${answer%"${answer##*[![:space:]]}"}"
-        case "$answer" in ''|y|Y|yes|YES|Yes) apply_update true "$@"; return 0 ;; esac
+        case "$answer" in ''|y|Y|yes|YES|Yes) apply_update_for_state true "$@"; return 0 ;; esac
     fi
-    echo "aimebu update available ($(update_local_label) -> $(update_short_oid "$UPDATE_REMOTE_OID")); continuing without update." >&2
+    echo "aimebu update available ($(update_local_label) -> ${UPDATE_TARGET_TAG:-$(update_short_oid "$UPDATE_REMOTE_OID")}); continuing without update." >&2
+}
+
+# apply_update_for_state dispatches the apply to the branch or the tag path the
+# classification chose.
+apply_update_for_state() {
+    if [ -n "$UPDATE_TARGET_TAG" ]; then
+        apply_tag_update "$@"
+    else
+        apply_update "$@"
+    fi
 }
 
 # cmd_update implements "aimebu update [--check]".
@@ -299,22 +578,34 @@ cmd_update() {
         *) echo "usage: aimebu update [--check]" >&2; exit 1 ;;
     esac
     classify_update
+    local target="${UPDATE_TARGET_REF:-$UPDATE_DEFAULT_REF}"
+    target="${target#refs/heads/}"
     if $check_only; then
         case "$UPDATE_STATE" in
             current) echo "aimebu is current at $(update_local_label)." ;;
-            behind) echo "aimebu update available: $(update_local_label) -> $(update_short_oid "$UPDATE_REMOTE_OID")." ;;
+            behind)
+                if [ -n "$UPDATE_TARGET_TAG" ]; then
+                    echo "aimebu update available: $(update_local_label) -> $UPDATE_TARGET_TAG."
+                else
+                    echo "aimebu update available: $(update_local_label) -> $(update_short_oid "$UPDATE_REMOTE_OID")."
+                fi
+                ;;
             dirty) echo "aimebu update status: dirty checkout; check skipped." ;;
-            non-default) echo "aimebu update status: non-default branch '${UPDATE_BRANCH:-detached}'; check skipped." ;;
+            non-default) echo "aimebu update status: checkout is on '${UPDATE_BRANCH:-detached}', not '$target'; check skipped." ;;
+            diverged) echo "aimebu update status: the checkout has commits that are not in ${UPDATE_TARGET_TAG:-the target}; left alone." ;;
+            no-release) echo "aimebu update status: no release of major $(running_major || echo '?') on channel '${UPDATE_CHANNEL:-stable}'." ;;
             unreachable) echo "aimebu update status: remote '$UPDATE_REMOTE' is unreachable." ;;
         esac
         return 0
     fi
     case "$UPDATE_STATE" in
         dirty) echo "Error: update refused: checkout is dirty" >&2; exit 1 ;;
-        non-default) echo "Error: update refused: checkout is on '${UPDATE_BRANCH:-detached}', not default branch '${UPDATE_DEFAULT_REF#refs/heads/}'" >&2; exit 1 ;;
+        non-default) echo "Error: update refused: checkout is on '${UPDATE_BRANCH:-detached}', not '$target'" >&2; exit 1 ;;
+        diverged) echo "Error: update refused: the checkout has commits that are not in ${UPDATE_TARGET_TAG:-the target}" >&2; exit 1 ;;
+        no-release) echo "Error: update refused: no release of major $(running_major || echo '?') on channel '${UPDATE_CHANNEL:-stable}'" >&2; exit 1 ;;
         unreachable) echo "Error: update refused: remote '$UPDATE_REMOTE' is unreachable" >&2; exit 1 ;;
         current) echo "aimebu is already current at $(update_local_label)." ;;
-        behind) apply_update false ;;
+        behind) apply_update_for_state false ;;
     esac
 }
 
