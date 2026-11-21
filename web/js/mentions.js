@@ -36,10 +36,12 @@ export class MentionIndex {
   }
   get signature() { return JSON.stringify([this.me, this.projectID, this.humans, this.cards.map(card => [card.slug, card.role_key, this.qualifier(card)]), [...this.historical].sort()]); }
   // The qualifier that tells same-named agents apart, per agent: its project's name when that is a valid qualifier and no other agent of the
-  // same slug has a project of the same name, else its project's id (the room's project for a card that carries none).
+  // same slug has a project of the same name or id, else its project's id (the room's project for a card that carries none).
   qualifier(card) {
     const name = projectOf(card), slug = String(card.slug).toLowerCase();
-    const shared = this.cards.filter(other => String(other.slug).toLowerCase() === slug && projectOf(other).toLowerCase() === name.toLowerCase()).length;
+    const same = this.cards.filter(other => String(other.slug).toLowerCase() === slug), lower = name.toLowerCase();
+    // Another same-named agent whose project has this name, or whose project id is this very text, would make the name ambiguous.
+    const shared = same.filter(other => projectOf(other).toLowerCase() === lower).length + same.filter(other => other !== card && String(other.project_id || '').toLowerCase() === lower).length;
     return QUALIFIER.test(name) && shared === 1 ? name : String(card.project_id || this.projectID || '');
   }
   // Whether `slug@qualifier` names one of the room's agents: by what qualifier() offers or its project's id.
