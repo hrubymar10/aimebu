@@ -1,6 +1,6 @@
 // The usages-ports privacy masks (web/js/usage-privacy.js), run in a vm, with
 // usagesPorts pinned to B (a stub signal: the same shape the real module has).
-// Part of `make test-ui`.
+// Part of `make test-web`.
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
