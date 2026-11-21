@@ -840,7 +840,7 @@ processes are never on one session.
   terminate: the wrapper traps TERM, ends the session in the container, waits for it and only then
   exits 128+signal, so exactly 143 after our SIGTERM. Any other status, a kill, or no capability
   is *unconfirmed*. The supervisor retries the end periodically, backing off as the retries fail, twice as long
-  each time up to about five minutes; a stop or a delivery that finds the slot stuck wakes the retry at once, so a process that has recovered is confirmed without waiting out the backoff; only the first failure reports the uncertainty (the release says so once more), so a slot
+  each time up to about five minutes; a stop or a delivery that finds the slot stuck wakes the retry at once (at most one such wake per stuck process every 30 seconds), so a process that has recovered is confirmed without waiting out the backoff; only the first failure reports the uncertainty (the release says so once more), so a slot
   nothing can settle neither spins nor fills the log. While the
   host wrapper is alive, no replacement starts on the session and stop ack and key drop wait. If the
   wrapper has been reaped but its container end remains unconfirmed, the session stays quarantined

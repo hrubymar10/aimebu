@@ -114,6 +114,7 @@ type warmEntry struct {
 	unconfirmedReported atomic.Bool   // retries must not report the same uncertain end repeatedly
 	quarantineReported  atomic.Bool   // a still-live process past the quarantine is reported once
 	stuckAt             time.Time
+	lastNudge           time.Time     // when the watcher was last woken early (guarded by the slot's lock)
 	stuckNudge          chan struct{} // wakes the stuck watcher early (buffered, one pending): a stop or delivery that finds the slot stuck asks for a retry now (guarded by the slot's lock)
 	stuckReason         string        // why the process was ended and not confirmed gone (the reason its slot went stuck)
 	plannedEnd          bool          // the end was decided by a stop of the agent or the supervisor's shutdown, whatever reason text the path gave (guarded by the slot's lock)
@@ -408,14 +409,23 @@ func plannedWarmEnd(reason string) bool {
 	return reason == "the agent was stopped" || reason == "the supervisor is stopping"
 }
 
+// warmNudgeEvery bounds how often one stuck process's watcher is woken early: a stopping agent's retry loop asks every couple of seconds, and
+// each wake is an end attempt that skips the backoff.
+var warmNudgeEvery = 30 * time.Second
+
 // nudgeStuck asks the stuck watcher to retry now, so a process that has since recovered is confirmed at once and not at the next backoff step.
-// The caller holds slot.mu.
+// At most one nudge per warmNudgeEvery wakes it. The caller holds slot.mu.
 func nudgeStuck(slot *warmSlot) {
-	if slot.stuck == nil || slot.stuck.stuckNudge == nil {
+	entry := slot.stuck
+	if entry == nil || entry.stuckNudge == nil {
+		return
+	}
+	if !entry.lastNudge.IsZero() && time.Since(entry.lastNudge) < warmNudgeEvery {
 		return
 	}
 	select {
-	case slot.stuck.stuckNudge <- struct{}{}:
+	case entry.stuckNudge <- struct{}{}:
+		entry.lastNudge = time.Now()
 	default:
 	}
 }
@@ -548,6 +558,7 @@ func (c *Client) RetireWarmTool(tool, reason string) bool {
 				}
 			case stuckOfTool:
 				if !c.clearStuck(slot) {
+					nudgeStuck(slot)
 					failed.Store(true)
 				}
 			}
@@ -580,7 +591,9 @@ func (c *Client) setCodexWarmEnabled(enabled bool) {
 		if slot.idle != nil && slot.idle.tool == "codex" {
 			_ = c.retireSlot(slot, "Codex warm mode was turned off", false, warmCloseGrace)
 		} else if slot.stuck != nil && slot.stuck.tool == "codex" {
-			_ = c.clearStuck(slot)
+			if !c.clearStuck(slot) {
+				nudgeStuck(slot)
+			}
 		}
 		slot.mu.Unlock()
 	}

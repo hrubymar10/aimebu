@@ -1571,6 +1571,58 @@ func TestWarmRetireNudgesTheStuckWatcher(t *testing.T) {
 	})
 }
 
+// A stop's retry loop asks every few seconds: the nudges it sends must stay bounded, so a stuck slot is not retried on every ask.
+func TestWarmStuckNudgesAreRateLimited(t *testing.T) {
+	oldRetry, oldQuarantine, oldNudge := warmRetryEvery, warmStuckQuarantine, warmNudgeEvery
+	warmRetryEvery, warmStuckQuarantine, warmNudgeEvery = time.Hour, time.Hour, time.Hour
+	defer func() { warmRetryEvery, warmStuckQuarantine, warmNudgeEvery = oldRetry, oldQuarantine, oldNudge }()
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	h.c.retireWarm("agt_a", "test")
+	slot := h.c.pool().slot("agt_a")
+	slot.mu.Lock()
+	entry := slot.stuck
+	slot.mu.Unlock()
+	if entry == nil {
+		t.Fatal("the slot is not stuck")
+	}
+	time.Sleep(100 * time.Millisecond) // the watcher's wake on the host exit has run
+	sent := 0
+	for i := 0; i < 20; i++ {
+		slot.mu.Lock()
+		before := entry.lastNudge
+		nudgeStuck(slot)
+		if !entry.lastNudge.Equal(before) {
+			sent++
+		}
+		slot.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	if sent != 1 {
+		t.Fatalf("%d nudges went out in a burst of 20, want 1", sent)
+	}
+}
+
+// The quarantine's own deadline releases a slot whose host side has exited, though the backoff retry is far away.
+func TestWarmQuarantineDeadlineReleasesWithoutBackoff(t *testing.T) {
+	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+	warmRetryEvery, warmStuckQuarantine = time.Hour, 100*time.Millisecond
+	defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	h.c.retireWarm("agt_a", "test")
+	slot := h.c.pool().slot("agt_a")
+	eventually(t, "the quarantine deadline releasing the slot", func() bool {
+		slot.mu.Lock()
+		defer slot.mu.Unlock()
+		return slot.stuck == nil
+	})
+}
+
 func TestWarmStuckProcessExitsLaterAndNextTurnStarts(t *testing.T) {
 	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
 	warmRetryEvery, warmStuckQuarantine = 10*time.Millisecond, 30*time.Millisecond
