@@ -112,6 +112,15 @@ func (s *Server) agentToolCloseRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	roomID := r.PathValue("room")
+	target, err := s.Store.RoomByID(r.Context(), roomID)
+	if err != nil {
+		toolRoomError(w, err)
+		return
+	}
+	if target.ProjectID != caller.ProjectID {
+		apiError(w, http.StatusForbidden, "forbidden", "room belongs to another project")
+		return
+	}
 	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: "agent", ActorID: caller.ID,
 		Kind: "room_close", Key: key, Digest: toolDigest(struct {
 			RoomID       string `json:"room_id"`

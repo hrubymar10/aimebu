@@ -93,10 +93,6 @@ export function roomStatus(room) {
   return { key: 'idle', label: 'Idle', title: 'Nothing is running in this room' };
 }
 
-export function rowUnread(room, children, collapsed, activeID) {
-  return roomUnread(room, activeID) + (collapsed ? children.reduce((sum, child) => sum + roomUnread(child, activeID), 0) : 0);
-}
-
 // Sends read marks with at most one request per room in flight. A mark asked for while one is in flight is kept (the
 // highest seq wins; 0 means the room's newest) and sent when the first one settles, if it goes further than that one.
 // reset() (sign-out) forgets everything, and a request from before it neither re-issues nor reports its result.

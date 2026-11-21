@@ -8,22 +8,13 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'sidebar', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { roomUnread, rowUnread, ReadMarker };', context);
-const { roomUnread, rowUnread, ReadMarker } = context.api;
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { roomUnread, ReadMarker };', context);
+const { roomUnread, ReadMarker } = context.api;
 
 const home = { id: 'home', unread_count: 2 };
 const a = { id: 'a', unread_count: 3 }, b = { id: 'b', unread_count: 4 }, quiet = { id: 'q' };
 
-// An expanded root shows only its own count; the children show theirs on their own rows.
-assert.equal(rowUnread(home, [a, b], false, ''), 2);
-// A collapsed root adds its children's counts, so nothing new is hidden.
-assert.equal(rowUnread(home, [a, b], true, ''), 9);
-assert.equal(rowUnread(home, [], true, ''), 2, 'a collapsed root with no children is just its own count');
-// The open room counts as read, whether it is the root or a child.
-assert.equal(rowUnread(home, [a, b], true, 'a'), 6);
-assert.equal(rowUnread(home, [a, b], true, 'home'), 7);
 // Missing, zero or negative counts are zero.
-assert.equal(rowUnread(quiet, [quiet], true, ''), 0);
 assert.equal(roomUnread({ id: 'x', unread_count: -5 }, ''), 0);
 assert.equal(roomUnread({ id: 'x', unread_count: 4 }, 'x'), 0);
 

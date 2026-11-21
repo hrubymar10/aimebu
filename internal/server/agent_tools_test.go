@@ -350,6 +350,12 @@ func TestAgentToolRoomsAreKeyAuthenticatedAndProjectScoped(t *testing.T) {
 		t.Fatalf("cross-project spawn status=%d", resp.StatusCode)
 	}
 	resp.Body.Close()
+	// Closing another project's room is refused the same way, even for its home room or a flow room, which tell nothing before the permission check.
+	resp = f.toolPost(t, "/api/agent/rooms/"+otherRoom.ID+"/close", key, "cross-project-close", map[string]any{"lifecycle_rev": otherRoom.LifecycleRev})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-project close status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
 	if err := f.db.RevokeAgent(t.Context(), agent.ID); err != nil {
 		t.Fatal(err)
 	}

@@ -159,8 +159,12 @@ func (tx *Tx) beginRoomClose(id, actor string, rev int64, cascade bool) (control
 
 func (tx *Tx) CloseTaskRoomAsTool(id, actor string, rev int64, cascade bool) (Room, []AgentCard, error) {
 	var wasOpen bool
-	var kind, flowKey string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT lifecycle='open',kind,team_flow_room_key FROM room WHERE id=?`, id).Scan(&wasOpen, &kind, &flowKey); err != nil {
+	var kind, flowKey, projectID string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT lifecycle='open',kind,team_flow_room_key,project_id FROM room WHERE id=?`, id).Scan(&wasOpen, &kind, &flowKey, &projectID); err != nil {
+		return Room{}, nil, err
+	}
+	// The home and flow-room guards come after the permission check, so a caller with no right to the room learns nothing about it.
+	if err := tx.roomClosePermission(projectID, id, kind, actor); err != nil {
 		return Room{}, nil, err
 	}
 	if kind == "home" {
