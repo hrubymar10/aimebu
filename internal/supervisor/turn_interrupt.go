@@ -160,8 +160,8 @@ func (c *Client) forgetTurnInterrupt(agentID, turnID string) {
 }
 
 // settleTurnInterrupt runs when the process of a turn has been waited for. It says whether the turn's interrupt still stands and whether the
-// supervisor ended the process for it. When the process ran in a container and its end there is not confirmed, the turn is not reported
-// ended yet: the agent's admission slot is held (the server sees the turn still running and sends no other) for the quarantine a keep-alive
+// supervisor ended the process for it. When the process ran in a container and its end there is not confirmed (also when the turn's answer
+// was already in and the exit is terminal), the turn is not reported ended yet: the agent's admission slot is held (the server sees the turn still running and sends no other) for the quarantine a keep-alive
 // ping's unconfirmed end gets, or until the agent is stopped or the supervisor shuts down.
 func (c *Client) settleTurnInterrupt(delivery protocol.Delivery, turn adapter.Turn, exit adapter.ExitInfo) (requested, ours bool) {
 	interrupt := c.pendingTurnInterrupt(delivery.AgentID, delivery.TurnID)
@@ -184,7 +184,10 @@ func (c *Client) settleTurnInterrupt(delivery protocol.Delivery, turn adapter.Tu
 	}
 	// A warm process that was closed records no cancel intent of its own; anywhere else the adapter's record says whether the signal ended it.
 	ours = exit.CancelIntent || (usedTerminate && warm)
-	if exit.TerminalEvent || !ours || info.turnID != delivery.TurnID || !info.containerized || confirmed {
+	// A turn that finished by itself (a clean terminal exit nobody signalled) is gone. One whose answer was in but whose wrapper the
+	// supervisor then ended is terminal too, yet says nothing of the process in the container: its end needs the same confirmation.
+	selfEnded := exit.TerminalEvent && exit.ExitCode == 0 && !exit.CancelIntent
+	if !ours || selfEnded || info.turnID != delivery.TurnID || !info.containerized || confirmed {
 		return true, ours
 	}
 	wait := c.quarantine()

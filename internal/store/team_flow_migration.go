@@ -388,9 +388,10 @@ func flowMigrationProgressByID(ctx context.Context, db rowQuerier, id string) (T
 	}
 	if out.State == "draining" {
 		for i := range out.Agents {
-			// An agent already told to stop, or whose open turn was asked to be interrupted, is on its way out of the turn: nothing more to interrupt.
-			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.agent_id=? AND a.desired<>'stopped' AND `+openFlowTurnPredicate+`
-				AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_interrupt_requested'))`, out.Agents[i].AgentID).Scan(&out.Agents[i].Blocking); err != nil {
+			// An agent already told to stop is on its way out of the turn: nothing more to interrupt. A turn interrupt that was only recorded
+			// is not that: the frame may never have been sent (a server restart) or the supervisor may not know the turn, so the agent stays
+			// blocking, and can be interrupted again, until its turn has ended.
+			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.agent_id=? AND a.desired<>'stopped' AND `+openFlowTurnPredicate+`)`, out.Agents[i].AgentID).Scan(&out.Agents[i].Blocking); err != nil {
 				return out, err
 			}
 			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_interrupt WHERE migration_id=? AND agent_id=?)`, out.ID, out.Agents[i].AgentID).Scan(&out.Agents[i].Restarting); err != nil {
@@ -1616,7 +1617,8 @@ const flowMigrationInterruptPurpose = "team_flow_migration"
 // InterruptFlowMigrationTurn is the interrupt for an agent whose machine cuts one turn without stopping the agent (the supervisor's
 // turn_interrupt frame): it records the request for the agent's running ordinary turn, with the requeue disposition, and says where the
 // frame goes. The agent stays active and is not started again; the turn's notes wait in the queue, which the drain holds, and the change
-// goes on once the turn is gone. A repeat while the turn runs answers the same target and records nothing new.
+// goes on once the turn is gone. The agent stays blocking until then. A repeat while the turn runs answers the same target and records
+// nothing new: the server sends the frame again.
 //
 // An empty TurnID with no error says this path has nothing to cut and InterruptFlowMigrationAgent decides: the agent is already stopping,
 // or its open turn is not a running ordinary one (it is pending, a handoff turn, a correction, or ended and not settled yet).

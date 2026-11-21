@@ -194,6 +194,16 @@ func (t *terminableTurn) end(code int) {
 	}()
 }
 func (t *terminableTurn) Cancel() error { t.end(137); return nil }
+
+// finish ends the process by itself, with the exit given.
+func (t *terminableTurn) finish(exit adapter.ExitInfo) {
+	t.mu.Lock()
+	t.ended = true
+	t.exit = exit
+	t.mu.Unlock()
+	close(t.events)
+	close(t.done)
+}
 func (t *terminableTurn) Terminate(time.Duration) bool {
 	t.mu.Lock()
 	t.terminated++
@@ -399,5 +409,69 @@ func TestShutdownWinsOverTurnInterrupt(t *testing.T) {
 	}
 	if exit := pendingExit(t, journal); !exit.CancelIntent || exit.Interrupted {
 		t.Fatalf("exit=%+v", exit)
+	}
+}
+
+// The answer was in when the supervisor ended the wrapper of a container turn: the exit is terminal, but nothing confirms that the process
+// in the container is gone. The slot is held like any unconfirmed end, and the turn is then reported as answered, not interrupted.
+func TestUnconfirmedContainerEndAfterAnAnswerHoldsTheSlot(t *testing.T) {
+	turn := &terminableTurn{events: make(chan adapter.Event), done: make(chan struct{}), terminal: true, termCode: 137}
+	client, journal, done := interruptClient(t, turn, activeTurn{mode: adapter.ModeNormal, containerized: true, confirmsEnd: true})
+	client.kaQuarantine = 400 * time.Millisecond
+	began := time.Now()
+	if result := client.handleTurnInterrupt(interruptFrame()); result != "ok" {
+		t.Fatalf("result=%q", result)
+	}
+	<-turn.done
+	time.Sleep(100 * time.Millisecond)
+	client.mu.Lock()
+	held := client.active["agent"]
+	client.mu.Unlock()
+	if exits, err := journal.PendingExits(context.Background()); err != nil || len(exits) != 0 || held != interruptTurnID {
+		t.Fatalf("the slot was not held: active=%q exits=%+v %v", held, exits, err)
+	}
+	waitEnded(t, done)
+	if waited := time.Since(began); waited < 400*time.Millisecond {
+		t.Fatalf("the hold ended after %s", waited)
+	}
+	if exit := pendingExit(t, journal); !exit.TerminalEvent || exit.Interrupted {
+		t.Fatalf("exit=%+v", exit)
+	}
+}
+
+// A container turn that finished by itself (a clean exit nobody signalled into) is gone: an interrupt that came too late holds nothing.
+func TestCleanContainerEndIsNotHeld(t *testing.T) {
+	turn := &terminableTurn{events: make(chan adapter.Event), done: make(chan struct{})}
+	client, journal, done := interruptClient(t, turn, activeTurn{mode: adapter.ModeNormal, containerized: true})
+	client.kaQuarantine = time.Hour
+	client.mu.Lock()
+	client.turnInterrupts = map[string]*turnInterrupt{"agent": {turnID: interruptTurnID, signalled: true, released: make(chan struct{})}}
+	client.mu.Unlock()
+	turn.finish(adapter.ExitInfo{TerminalEvent: true})
+	waitEnded(t, done)
+	if exit := pendingExit(t, journal); !exit.TerminalEvent || exit.Interrupted || exit.CancelIntent {
+		t.Fatalf("exit=%+v", exit)
+	}
+}
+
+// A turn whose harness never started has nothing to cut: the interrupt asked for it meanwhile is forgotten with it.
+func TestStartFailureForgetsTheTurnInterrupt(t *testing.T) {
+	journal, err := OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.Close() // the exit cannot be recorded, so the failure returns before any frame would be written to a connection
+	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+	client.OnError = func(error) {}
+	client.mu.Lock()
+	client.turnInterrupts = map[string]*turnInterrupt{"agent": {turnID: "turn-unstarted", released: make(chan struct{})}}
+	client.mu.Unlock()
+	if err := client.reportStartFailure(context.Background(), nil, protocol.Delivery{AgentID: "agent", Generation: 2, TurnID: "turn-unstarted"}, context.DeadlineExceeded); err == nil {
+		t.Fatal("the exit was recorded in a closed journal")
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.turnInterrupts["agent"] != nil {
+		t.Fatalf("the interrupt of a turn that never started was kept: %+v", client.turnInterrupts["agent"])
 	}
 }

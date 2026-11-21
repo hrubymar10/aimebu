@@ -283,7 +283,16 @@ async function main() {
       assert.equal(await page.evaluate(() => window.__requests.some(request => request.path.endsWith('/migration/interrupt'))), false, 'declining the confirmation interrupts nothing');
       await page.$eval('#team-flow-modal .team-wizard-interrupt', node => node.click());
       await confirmOk(page);
+      const firstInterrupt = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/interrupt');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, firstInterrupt), { agent_id: 'agt_l' });
+      // The server keeps the agent blocking until its turn has really ended (the request may not have reached the turn): the button stays,
+      // and a second click asks again.
+      await answer(page, firstInterrupt, 200, { migration: running });
+      await page.waitForFunction(() => { const button = document.querySelector('#team-flow-modal .team-wizard-interrupt'); return button && !button.disabled; });
+      await page.$eval('#team-flow-modal .team-wizard-interrupt', node => node.click());
+      await confirmOk(page);
       const interrupt = await waitRequest(page, 'POST', '/api/projects/p1/team-flow/migration/interrupt');
+      assert.notEqual(interrupt, firstInterrupt, 'the second click sends a second request');
       assert.deepEqual(await page.evaluate(index => window.__requests[index].body, interrupt), { agent_id: 'agt_l' });
       await answer(page, interrupt, 200, { migration: { ...running, agents: running.agents.map(agent => agent.agent_id === 'agt_l' ? { ...agent, blocking: false } : agent) } });
       await page.waitForFunction(() => !document.querySelector('#team-flow-modal .team-wizard-interrupt'));

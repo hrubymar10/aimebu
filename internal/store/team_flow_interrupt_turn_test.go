@@ -13,7 +13,8 @@ import (
 var adapterCancelExit = adapter.ExitInfo{ExitCode: 130, CancelIntent: true}
 
 // On a machine that cuts one turn, the interrupt records a requeue request for the agent's running turn and leaves the agent alone: it is
-// not stopped, not marked for a restart, and no longer blocks; the change goes on once the turn is gone.
+// not stopped and not marked for a restart. It keeps blocking (and can be interrupted again) until the turn has really ended: a recorded
+// request says nothing of whether the frame arrived. The change goes on once the turn is gone.
 func TestInterruptFlowMigrationTurnRecordsARequeueAndKeepsTheAgentRunning(t *testing.T) {
 	f, setup, _ := interruptFixture(t, "leader-workers", "leader-dispatcher", true)
 	ctx := t.Context()
@@ -50,14 +51,22 @@ func TestInterruptFlowMigrationTurnRecordsARequeueAndKeepsTheAgentRunning(t *tes
 	if disposition, err := flowTurnDisposition(f.s, turnID); err != nil || disposition != TurnInterruptRequeue {
 		t.Fatalf("disposition=%q %v", disposition, err)
 	}
-	progress, err := f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, agent := range progress.Agents {
-		if agent.AgentID == leaderID && (agent.Blocking || agent.Restarting) {
-			t.Fatalf("an agent whose turn was asked to be interrupted: %+v", agent)
+	leaderProgress := func() TeamFlowMigrationAgentProgress {
+		t.Helper()
+		progress, err := f.s.TeamFlowMigrationProgress(ctx, f.project.ID, f.alice)
+		if err != nil {
+			t.Fatal(err)
 		}
+		for _, agent := range progress.Agents {
+			if agent.AgentID == leaderID {
+				return agent
+			}
+		}
+		t.Fatalf("the leader is not in the progress: %+v", progress.Agents)
+		return TeamFlowMigrationAgentProgress{}
+	}
+	if agent := leaderProgress(); !agent.Blocking || agent.Restarting {
+		t.Fatalf("a recorded request alone must leave the agent blocking and not restarting: %+v", agent)
 	}
 	// The supervisor reports the turn interrupted: it is settled with no continuation, the agent is idle and still active, and the change advances.
 	if err := f.s.RecordProcessInfo(ctx, turnID, leaderID, 0, requestedInterruptExit); err != nil {
@@ -76,6 +85,9 @@ func TestInterruptFlowMigrationTurnRecordsARequeueAndKeepsTheAgentRunning(t *tes
 	}
 	if settle != "settled" || outcome != "cancelled" || desired != "active" || observed != "idle" || block != 0 || children != 0 {
 		t.Fatalf("settle=%s outcome=%s desired=%s observed=%s block=%d children=%d", settle, outcome, desired, observed, block, children)
+	}
+	if agent := leaderProgress(); agent.Blocking {
+		t.Fatalf("the agent still blocks after its turn has ended: %+v", agent)
 	}
 	if _, err := f.s.AdvanceTeamFlowMigrations(ctx); err != nil {
 		t.Fatal(err)

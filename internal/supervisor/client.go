@@ -1345,6 +1345,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 // leave the turn running in the journal with no evidence of why.
 func (c *Client) reportStartFailure(ctx context.Context, conn *websocket.Conn, delivery protocol.Delivery, startErr error) error {
 	c.report("harness failed to start", fmt.Errorf("agent %s turn %s: harness failed to start: %w", delivery.AgentID, delivery.TurnID, startErr))
+	c.forgetTurnInterrupt(delivery.AgentID, delivery.TurnID) // an interrupt that came while it was starting has nothing left to cut
 	reason := adapter.SanitizeStderr(startErr.Error())
 	exit := adapter.ExitInfo{ExitCode: 1, StderrTail: "harness failed to start: " + reason,
 		ErrorSummary: reason, DefiniteFailure: true, StartFailure: true}

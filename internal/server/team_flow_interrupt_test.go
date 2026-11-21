@@ -147,6 +147,19 @@ func TestTeamFlowMigrationInterruptUsesTheTurnInterruptFrame(t *testing.T) {
 				stopped = true
 			case <-time.After(300 * time.Millisecond):
 			}
+			if !item.stops {
+				// A second request, while the turn still runs, sends the frame again.
+				again := f.request(http.MethodPost, "/api/projects/"+f.project.ID+"/team-flow/migration/interrupt", map[string]any{"agent_id": leaderID}, true)
+				again.Body.Close()
+				select {
+				case frame := <-frames:
+					if again.StatusCode != 200 || frame.Type != protocol.TurnInterrupt || frame.TurnID != turnID {
+						t.Fatalf("repeat: %d %+v", again.StatusCode, frame)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("a repeat did not send the frame again")
+				}
+			}
 			card, err := f.db.AgentCardByID(t.Context(), leaderID)
 			if err != nil {
 				t.Fatal(err)
@@ -154,12 +167,13 @@ func TestTeamFlowMigrationInterruptUsesTheTurnInterruptFrame(t *testing.T) {
 			if stopped != item.stops || (card.Desired == "stopped") != item.stops {
 				t.Fatalf("stop control sent=%t desired=%s, want stop=%t", stopped, card.Desired, item.stops)
 			}
-			// Not blocking while still active says the request is recorded: only that, or a stop, ends blocking for an open turn.
+			// The turn has not ended yet: an agent that was only sent the frame keeps blocking (it can be interrupted again); one that was
+			// stopped does not.
 			found := false
 			for _, agent := range body.Migration.Agents {
 				if agent.AgentID == leaderID {
 					found = true
-					if agent.Blocking || agent.Restarting != item.stops {
+					if agent.Blocking == item.stops || agent.Restarting != item.stops {
 						t.Fatalf("progress of the interrupted agent: %+v", agent)
 					}
 				}

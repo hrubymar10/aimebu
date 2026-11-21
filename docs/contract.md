@@ -232,8 +232,10 @@ Projects, rooms, people
   `team_flow_migration` and disposition `requeue`: the agent is not stopped
   and not started again, the turn's notes wait in the queue the drain holds,
   and the change goes on once the turn is gone; a departing agent still does
-  its handoff turn. The agent is no longer `blocking` once the request is
-  recorded, and interrupting it again succeeds and sends the frame again. Any
+  its handoff turn. The agent stays `blocking` until its turn has ended (a
+  recorded request does not say the frame arrived: the server may have
+  restarted before sending it, or the supervisor may not know the turn), and
+  interrupting it again succeeds and sends the frame again. Any
   other case takes the stop path: an older supervisor, a machine that is not
   connected, an open turn that is pending, a handoff turn, or ended and not
   settled, an `unsupported_mode` answer, and a frame that could not be sent
@@ -1674,7 +1676,7 @@ it never silently reruns a turn with uncertain effects.
   the agent's next delivery is admitted as usual. Sent only when the hello
   advertised `supports_turn_interrupt`. `ok`: the turn's process was told to
   end (a repeat for the same turn is `ok` and signals nothing again; a turn
-  the agent's stop is already ending is `ok` and stays a stop).
+  the agent's stop is already ending is `ok` and stays a stop; so is one that arrives while the supervisor shuts down).
   `not_running`: the supervisor runs no such turn for that agent and
   generation (it ended, or never started there). `unsupported_mode`: the turn
   is not an ordinary one (a correction or a diagnostic), and is left alone.
@@ -1684,7 +1686,8 @@ it never silently reruns a turn with uncertain effects.
   arrives as its `process` frame with `interrupted:true`,
   `cancel_intent:false` and the reason `the turn was interrupted on request`
   as `error_event`. An answer that was in before the process ended wins: the
-  exit is terminal and not interrupted. A stop of the agent that follows the
+  exit is terminal and not interrupted (a container turn's slot is still held
+  as below when the supervisor ended its wrapper and the end is unconfirmed). A stop of the agent that follows the
   frame wins too: the exit is the stop's cancel. When the process ran in a
   container and its end there is not confirmed (the terminate ran out, the
   launcher confirms no end, or the wrapper was killed), the supervisor holds
