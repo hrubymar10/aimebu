@@ -91,6 +91,9 @@ func ReadCache(cacheDir string) (Response, time.Time, error) {
 	decorateResponse(&response, cfg)
 	response.Settings.AlertWarningRemaining = cfg.AlertWarningRemaining
 	response.Settings.AlertCriticalRemaining = cfg.AlertCriticalRemaining
+	response.Settings.AlertPaceEnabled = cfg.AlertPaceEnabled
+	response.Settings.AlertResetNoticeEnabled = cfg.AlertResetNoticeEnabled
+	response.Settings.AlertExpiryEnabled = cfg.AlertExpiryEnabled
 	sort.SliceStable(response.Providers, func(i, j int) bool { return response.Providers[i].OrderNumber < response.Providers[j].OrderNumber })
 	return response, written, err
 }

@@ -32,9 +32,14 @@ const mask = maskNames(['m', 'main', 'backup']);
 assert.equal(mask('claude profile main and m and backup: expiring.'),
   `claude profile ${maskName('main')} and ${maskName('m')} and ${maskName('backup')}: expiring.`,
   'every name is masked in one pass, no suffix leaks');
-// The email's local part and domain also contain the names, so they are
-// masked too — every occurrence, in one pass.
-assert.equal(mask('main@example.test'), `m•••@exam•••ple.test`, 'every occurrence of the names is masked, in the email too');
+// A name is masked as a whole token only: the email's local part is a token
+// ending at the @, while "m" inside "example" is part of a longer word.
+assert.equal(mask('main@example.test'), `m•••@example.test`, 'a whole name is masked, a fragment of a longer word is not');
+
+// A one-letter name must not mangle the words around it.
+const single = maskNames(['a']);
+assert.equal(single('a banana, a-b, a.b and (a): a'), `${maskName('a')} banana, a-b, a.b and (${maskName('a')}): ${maskName('a')}`,
+  'only whole-name tokens are masked; letters inside words and dash or dot joined tokens stay');
 
 // A name list with duplicates or empties is deduplicated and filtered.
 const sparse = maskNames(['', 'main', 'main']);

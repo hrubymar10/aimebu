@@ -95,3 +95,30 @@ func TestReadCacheWithoutFilesIsDefaultAndWritesNothing(t *testing.T) {
 		t.Fatalf("ReadCache wrote %d files", len(entries))
 	}
 }
+
+// The offline cache read reports the same alert opt-ins as the live reader's
+// snapshot for the same config.
+func TestReadCacheAlertTogglesMatchSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	cfg := `{"alert_pace_enabled":true,"alert_reset_notice_enabled":true,"alert_expiry_enabled":true,"alert_warning_remaining":25,"alert_critical_remaining":8}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := reader.Snapshot().Settings
+	cached, _, err := ReadCache(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cached.Settings
+	if !live.AlertPaceEnabled || !live.AlertResetNoticeEnabled || !live.AlertExpiryEnabled {
+		t.Fatalf("the snapshot must carry the toggles: %+v", live)
+	}
+	if got.AlertPaceEnabled != live.AlertPaceEnabled || got.AlertResetNoticeEnabled != live.AlertResetNoticeEnabled || got.AlertExpiryEnabled != live.AlertExpiryEnabled ||
+		got.AlertWarningRemaining != live.AlertWarningRemaining || got.AlertCriticalRemaining != live.AlertCriticalRemaining {
+		t.Fatalf("cache settings %+v differ from the snapshot's %+v", got, live)
+	}
+}

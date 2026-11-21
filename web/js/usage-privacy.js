@@ -40,13 +40,15 @@ export function maskEmail(email) {
 // single regex alternation of the escaped names, longest first, so an
 // overlapping name (m inside main) cannot leave a readable suffix behind
 // ("m•••ain"). Every occurrence is replaced with the name's masked form.
-// Returns undefined when masking is off or there is nothing to hide, so
-// callers can leave the text as it is.
+// Only whole names are masked: a name needs a token boundary on both sides
+// (the text's edge or a character outside [A-Za-z0-9._-]), so a profile named
+// a leaves the words around it alone. Returns undefined when masking is off
+// or there is nothing to hide, so callers can leave the text as it is.
 export function maskNames(names) {
   if (!maskingOn()) return undefined;
   const sorted = [...new Set((names || []).map(name => String(name || '')).filter(name => name))].sort((a, b) => b.length - a.length);
   if (!sorted.length) return undefined;
-  const pattern = new RegExp(sorted.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  const pattern = new RegExp(`(?<![A-Za-z0-9._-])(?:${sorted.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![A-Za-z0-9._-])`, 'g');
   const masked = new Map(sorted.map(name => [name, maskName(name)]));
   return text => String(text || '').replace(pattern, name => masked.get(name));
 }
