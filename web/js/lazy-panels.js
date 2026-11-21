@@ -1,7 +1,6 @@
-import { Lazy, bridgeClick, whenIdle } from './lazy.js';
-import { inviteToken } from './pages/signin/model.js';
+import { Lazy, bridgeClick, whenIdle, lazySession } from './lazy.js';
 
-// What app.js holds in place of the screens that are lazily fetched chunks: Knowledge, the project handbook, Health, Onboarding and the sign-in page.
+// What app.js holds in place of the screens that are lazily fetched chunks: Knowledge, the project handbook, Health, and Onboarding. (The sign-in page is in the entry: a signed-out page must always be able to draw.)
 // Each keeps the few things that must be there at once (a button, its visibility, a flag the app reads) and queues the calls made before the chunk
 // arrives, replaying them when the object is made (see lazy.js). Each chunk is fetched when the browser is idle after the first paint, or at once when
 // the screen is used, whichever comes first.
@@ -68,19 +67,9 @@ export class LazyOnboarding {
   }
   get open() { return !!this.lazy.instance?.open; }
   show() { this.lazy.run(onboarding => onboarding.show()); }
-  close() { this.lazy.instance?.close(); }
-  showHarnesses(mode) { return this.lazy.load().then(onboarding => onboarding.showHarnesses(mode)); }
-}
-
-export class LazySignin {
-  constructor(options) {
-    this.lazy = new Lazy(() => import('./pages/signin/page.js').then(module => new module.Signin(options)), 'signin');
-  }
-  // The invitation in the address, as the sign-in page reads it (once made it holds the one it is working on).
-  get pendingInvite() { return this.lazy.instance ? this.lazy.instance.pendingInvite : inviteToken(location.hash.slice(1)); }
-  show() { return this.lazy.load().then(signin => signin.show()); }
-  hide() { this.lazy.instance?.hide(); }
-  openDialog() { this.lazy.run(signin => signin.openDialog()); }
+  // Closing also drops an open that was queued: the card must not appear for a session that ended.
+  close() { this.lazy.pending.clear(); this.lazy.instance?.close(); }
+  showHarnesses(mode) { const session = lazySession(); return this.lazy.load().then(onboarding => (session === lazySession() ? onboarding.showHarnesses(mode) : undefined)); }
 }
 
 // Fetches the chunks a signed-in session is likely to open, one after the other, when the browser is idle (Settings, and the screens of the toolbar).

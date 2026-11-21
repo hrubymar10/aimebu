@@ -60,3 +60,4 @@ node scripts/test-bundle-page.cjs
 node scripts/test-hc-page.cjs
 node scripts/test-system-events-page.cjs
 node scripts/test-error-boundary-page.cjs
+node scripts/test-lazy-chunks-page.cjs

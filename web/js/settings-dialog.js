@@ -94,7 +94,8 @@ export class SettingsDialog {
     else this.navigate(this.pathOf(target));
     this.show(target); // the dialog shows at once; what the account may do is read again right after
     this.usages.setError(''); // before the wait: whatever the person does in the meantime may write here, and must not be wiped
-    try { await refreshRights(); this.setRights(rights); this.owner.onRights?.(rights); } catch (error) { captureError(error, 'settings.rights'); /* keep what sign-in said */ }
+    // (the rights go through the shim, which also owns #usages-toggle)
+    try { await refreshRights(); this.owner.setRights(rights); this.owner.onRights?.(rights); } catch (error) { captureError(error, 'settings.rights'); /* keep what sign-in said */ }
     this.usersSettings.prepare().catch(() => this.usersSettings.settle(true));
     // The default daily limits do not depend on the switcher or the usage snapshots, so they load on their own.
     void this.usages.syncDefault();

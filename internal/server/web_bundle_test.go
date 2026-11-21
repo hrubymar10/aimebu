@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	aimebu "github.com/hrubymar10/aimebu"
 	"github.com/hrubymar10/aimebu/internal/telemetry"
 )
 
@@ -147,7 +148,6 @@ func TestThePageStartsFromTheBundle(t *testing.T) {
 	if len(chunkNames) < 2 {
 		t.Fatalf("the entry imports %d chunks lazily, want Settings and the import wizard at least", len(chunkNames))
 	}
-	total, packedTotal := len(source), len(packedBody)
 	for _, found := range chunkNames {
 		name := string(found[1])
 		plainChunk, chunkSource := fetchRaw(t, f.http.URL+"/bundle/"+name, false)
@@ -161,11 +161,6 @@ func TestThePageStartsFromTheBundle(t *testing.T) {
 		if mapResponse, _ := fetchRaw(t, f.http.URL+"/bundle/"+name+".map", false); mapResponse.StatusCode != 200 {
 			t.Errorf("chunk %s has no source map: %d", name, mapResponse.StatusCode)
 		}
-		total += len(chunkSource)
-		packedTotal += len(packedChunkBody)
-	}
-	if total > 1_100_000 || packedTotal > 340_000 {
-		t.Errorf("the bundle is %d bytes in all, %d gzipped (ceilings 1.1 MB and 340 KB)", total, packedTotal)
 	}
 	if missing, _ := fetchRaw(t, f.http.URL+"/bundle/nothing-ABCDEFGH.js", false); missing.StatusCode == 200 && strings.HasPrefix(missing.Header.Get("Content-Type"), "text/javascript") {
 		t.Error("a chunk that does not exist is served")
@@ -339,5 +334,27 @@ func TestAcceptsGzip(t *testing.T) {
 		if got := acceptsGzip(header); got != want {
 			t.Errorf("acceptsGzip(%q) = %v, want %v", header, got, want)
 		}
+	}
+}
+
+// The size ceilings count every script of the build: the entry and every chunk (the lazily fetched ones and the ones the entry imports at load), the maps
+// left out. Measured when these ceilings were set: entry about 540 KB, all scripts about 1.05 MB, 337 KB gzipped (each file packed on its own, as served).
+func TestTheBundleStaysWithinItsCeilings(t *testing.T) {
+	t.Parallel()
+	assets, err := prepareWebAssets(aimebu.Web(), true)
+	if err != nil || assets.bundle == nil {
+		t.Fatalf("bundle: %v", err)
+	}
+	total, packed := len(assets.bundle.js), len(assets.bundle.jsGzip)
+	for name, chunk := range assets.bundle.chunks {
+		if strings.HasSuffix(name, ".map") {
+			continue
+		}
+		total += len(chunk.body)
+		packed += len(chunk.gz)
+	}
+	t.Logf("entry %d bytes, all scripts %d bytes, %d gzipped", len(assets.bundle.js), total, packed)
+	if len(assets.bundle.js) > 900_000 || total > 1_100_000 || packed > 340_000 {
+		t.Errorf("the build is over a ceiling: entry %d (0.9 MB), all scripts %d (1.1 MB), gzipped %d (340 KB)", len(assets.bundle.js), total, packed)
 	}
 }

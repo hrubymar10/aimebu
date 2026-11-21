@@ -1,3 +1,5 @@
+import { iconButton } from './icon-button.js';
+
 // A page that was loaded from one build keeps running after the server is replaced by another (a deploy): its scripts no longer match what
 // the server serves. The event stream tells the page when the server it reconnected to is a different build; this bar asks for a reload, and
 // the page reloads by itself once nobody is looking at it and nothing typed would be lost.
@@ -24,5 +26,17 @@ export class UpdateBar {
     const button = this.doc.createElement('button'); button.type = 'button'; button.className = 'btn btn-primary'; button.textContent = 'Reload'; button.onclick = () => this.reload();
     bar.append(text, button); this.doc.body.prepend(bar); this.bar = bar;
     this.maybeReload();
+  }
+  // A part of the page could not be fetched because the server is a newer build (the old build's chunks are gone): reload at once when nothing typed would be
+  // lost, otherwise keep a bar up (with a reload icon button) until the person reloads.
+  stale() {
+    if (reloadIsSafe(this.doc, this.hasDraft)) { this.reload(); return 'reloaded'; }
+    if (!this.bar) {
+      const bar = this.doc.createElement('div'); bar.className = 'update-bar'; bar.id = 'update-bar'; bar.setAttribute('role', 'alert');
+      const text = this.doc.createElement('span'); text.textContent = 'A new version is ready, reload to continue.';
+      const button = iconButton('refresh', 'Reload', { className: 'update-bar-reload' }); button.onclick = () => this.reload();
+      bar.append(text, button); this.doc.body.prepend(bar); this.bar = bar;
+    }
+    return 'bar';
   }
 }

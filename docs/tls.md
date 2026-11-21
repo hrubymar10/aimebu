@@ -19,9 +19,12 @@ only. Sessions set the `Secure` cookie attribute on HTTPS requests, and on
 plain-HTTP requests addressed to the host of an `https` `AIMEBU_PUBLIC_URL`.
 The HTTPS listener negotiates HTTP/2. The web UI is one bundled entry script (the
 server bundles its ~240 modules when it starts; Settings, the v1 import wizard and the other large screens are
-lazily fetched chunks), so a cold load is about 50
-requests and 0.7 MB rather than about 290 and 1.9 MB: with a 100 ms round trip
-the app is shown after about 0.5 s over plain HTTP/1.1, where the separate modules
+lazily fetched chunks). The entry is 0.55 MB; the whole build is 1.05 MB, 336 KB gzipped. A signed-in load
+fetches the entry and the 19 chunks it shares with the lazy ones (hinted with `modulepreload`), and the
+browser fetches the likely lazy ones when idle: about 80 requests in all, rather than about 290 and
+1.9 MB for the separate modules. The timings below were measured with the earlier single-script build
+(about 50 requests and 0.7 MB) and not again for the split: with a 100 ms round trip
+the app was shown after about 0.5 s over plain HTTP/1.1, where the separate modules
 took about 5 s (about 2 s over HTTP/2, 1.3 s with `modulepreload` hints; those are
 what `AIMEBU_WEB_BUNDLE=off` serves, for debugging). A load from the browser's cache
 is not affected. HTTP/2 still helps the API and the remaining files, so use HTTPS

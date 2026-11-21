@@ -18,7 +18,9 @@ import { TeamFlowHome } from './pages/project/team-flow-home.js';
 import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './pages/topbar/page.js';
 import { createUsagesSource } from './usages-source.js';
-import { LazyKnowledge, LazyHandbook, LazyHealth, LazyOnboarding, LazySignin, prefetchWhenIdle } from './lazy-panels.js';
+import { LazyKnowledge, LazyHandbook, LazyHealth, LazyOnboarding, prefetchWhenIdle } from './lazy-panels.js';
+import { onChunkFailure, endLazySession, reportChunkFailure } from './lazy.js';
+import { Signin } from './pages/signin/page.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
 import { agentIsolation } from './agent-isolation.js';
@@ -71,7 +73,7 @@ function setStartupState(state) {
   startupText.textContent = busy ? 'Finishing sign-in…' : state === 'timeout' ? "Some checks didn't finish." : '';
   startupRetry.hidden = state !== 'timeout';
 }
-const signin = new LazySignin({
+const signin = new Signin({
   view: loginView,
   signedIn: session => signedIn(session),
   afterReset: () => { resetWorkspace(); clearSession(); appView.hidden = true; void signin.show(); },
@@ -156,6 +158,14 @@ chat.onOpenMessage = async found => {
 };
 let pageBuild = ''; // the build that served this page, as the server names it (first read at sign-in; it stays when the person signs in again)
 const updateBar = new UpdateBar({ hasDraft: () => chat.hasDraft() });
+// A lazily loaded part of the page that cannot be fetched: ask which build the server is. A newer one has replaced the chunks this page was built with, so
+// reload (or keep the update bar up when something typed would be lost); the same build is a failed fetch, said briefly and tried again on the next use.
+onChunkFailure(async () => {
+  let current = '';
+  try { current = (await request('/api/buildinfo'))?.version || ''; } catch { /* unreadable: handled below */ }
+  if (current && pageBuild && current !== pageBuild) { updateBar.stale(); return; }
+  showToast(current ? 'Could not load that part of the page. Try again.' : 'Could not load that part of the page: the server did not answer.');
+});
 const notifications = new InboxNotifications(item => {
   inbox.show();
   requestAnimationFrame(() => document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' }));
@@ -363,6 +373,7 @@ function cancelStartup() {
   importWizard.close();
 }
 function resetWorkspace() {
+  endLazySession(); // calls queued for the session that ends (an Onboarding to show, a refresh) are dropped
   cancelStartup();
   sessionGeneration++;
   stream?.stop(); stream = null;
@@ -549,7 +560,7 @@ async function signedIn(session) {
   cursor?.then(() => chat.prefetchLatest(roomInAddress() || rememberedRoom()), () => {});
   setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); void agentIsolation.load(); presence.start(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); void updateBanner.setAccount(rights); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
-  if (session.first_run) { await (await import('./pages/setup/welcome.js')).showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
+  if (session.first_run) { try { await (await import('./pages/setup/welcome.js')).showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); } catch (error) { reportChunkFailure(error, 'welcome'); /* the welcome is skipped, not the sign-in */ } if (!active()) return; }
   // The owner is asked about error reports once (after the welcome on a new install, or on the first sign-in after an update brought them).
   if (session.telemetry_prompt) { await askTelemetryConsent(request, formDialog); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;

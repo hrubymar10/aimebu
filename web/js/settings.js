@@ -1,7 +1,7 @@
 import { ProjectSettings } from './pages/project/page.js';
 import { createProjectSettingsSource } from './project-settings-source.js';
 import { parsePath } from './pages/shell/registry.js';
-import { captureError } from './telemetry.js';
+import { reportChunkFailure } from './lazy.js';
 import { knownTheme, themeAttribute, themeKey } from './pages/general/model.js';
 
 // The signed-in person's theme is applied at sign-in, not when General is first opened (that page is in the lazy dialog and applies it again).
@@ -40,6 +40,10 @@ export class SettingsPanel {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.isComposing) return;
       if (event.key === ',' && this.userID) { event.preventDefault(); void this.open(); }
     });
+    // Back or Forward to a #settings/... address before the dialog exists: load it, and it follows the address (its setUser does, see settings-dialog.js).
+    window.addEventListener('popstate', () => {
+      if (!this.dialogModule && this.userID && parsePath(location.hash)) void this.load().catch(error => reportChunkFailure(error, 'settings'));
+    });
   }
   // The dialog, made once (a failed fetch of the chunk is tried again by the next call).
   load() {
@@ -64,11 +68,11 @@ export class SettingsPanel {
     applyStoredTheme(userID);
     document.querySelector('#usages-toggle').hidden = false;
     if (this.dialogModule) this.dialogModule.setUser(userID);
-    else if (parsePath(location.hash)) void this.load().catch(error => captureError(error, 'settings.load')); // opened by a link
+    else if (parsePath(location.hash)) void this.load().catch(error => reportChunkFailure(error, 'settings')); // opened by a link
   }
   async open(section = '', options = {}) {
     let dialog;
-    try { dialog = await this.load(); } catch (error) { captureError(error, 'settings.load'); return; }
+    try { dialog = await this.load(); } catch (error) { reportChunkFailure(error, 'settings'); return; }
     return dialog.open(section, options);
   }
   usagesChanged() { return this.dialogModule?.usagesChanged(); }
