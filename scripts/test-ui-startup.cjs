@@ -86,6 +86,7 @@ async function main() {
     assert.deepEqual(held, { busy: true, settingsInert: true, logoutInert: false, loading: true, reachable: false, settingsOpen: false }, 'workspace controls or loading state were wrong before the import check finished, or Settings could be reached');
     await appReady(startupPage);
     await startupPage.click('#settings-toggle');
+    await startupPage.waitForFunction(() => document.querySelector('#settings-dialog').open, { timeout: 5000 }).catch(() => {}); // the dialog is a chunk fetched on first use
     assert.equal(await startupPage.$eval('#settings-dialog', node => node.open), true, 'Settings did not open after the import check');
     await startupContext.close();
     const stalledContext = await browser.createBrowserContext();

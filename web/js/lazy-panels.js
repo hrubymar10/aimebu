@@ -68,6 +68,9 @@ export class LazyOnboarding {
   }
   get open() { return !!this.lazy.instance?.open; }
   show() { this.lazy.run(onboarding => onboarding.show()); }
+  // Starts fetching the chunk for an offer that is about to be made (the harness setup asks the server first): the card then appears as soon as it did when
+  // it was part of the page, and not a fetch later. A failure is the offer's own to report, when it is made.
+  preload() { void this.lazy.load().catch(() => {}); }
   // Closing also drops an open that was queued: the card must not appear for a session that ended.
   close() { this.lazy.pending.clear(); this.lazy.instance?.close(); }
   showHarnesses(mode) { const session = lazySession(); return this.lazy.load().then(onboarding => (session === lazySession() ? onboarding.showHarnesses(mode) : undefined)); }
