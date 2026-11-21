@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"math/rand/v2"
 	"net/http"
 	"os"
@@ -102,10 +103,16 @@ func (s *Server) recordUpdateStatus(ctx context.Context, status updatecheck.Stat
 	// A later successful check that finds nothing (the update was applied and the
 	// server restarted onto it, or the release was withdrawn) clears the stored
 	// status and tells the admins' banners to close.
-	s.updateStatus.store(status)
+	// The status is stored only after its event committed, so the admins' banners
+	// never lag a status the stream did not announce; a failed write leaves the
+	// previous status in place and the next check announces the change again.
 	if !hadPrevious || previous.State != status.State || previous.Version != status.Version {
-		s.Store.RecordUpdateStatusEvent(ctx, status.State, status.Version)
+		if err := s.Store.RecordUpdateStatusEvent(ctx, status.State, status.Version); err != nil {
+			log.Printf("update status event for %s %s: %v", status.State, status.Version, err)
+			return
+		}
 	}
+	s.updateStatus.store(status)
 }
 
 // requireUpdateAdmin answers 403 unless the signed-in person is the owner or an

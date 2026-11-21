@@ -2,16 +2,20 @@ package updatecheck
 
 import (
 	"context"
+	"debug/buildinfo"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
 
 // Status is what one check concluded. State is "available" (the newest release
-// for the channel is newer than the running process), "installed" (the clone or
-// the binary is newer than the running process, so a restart picks it up), or
+// for the channel is newer than the running process), "installed" (the cached
+// binary on disk was built from something newer than the running process, so a
+// restart picks it up), "unbuilt" (the checkout moved past the running process
+// but the cached binary was not rebuilt, so a restart alone changes nothing), or
 // empty (nothing to do).
 type Status struct {
 	State     string
@@ -112,14 +116,16 @@ func Check(layout CloneLayout, runningVersion string, started time.Time, configR
 		return status, err
 	}
 	channel := channelFromEnvironment(configRoot)
-	// A clone that has moved past the running build means the update was applied
-	// and a restart picks it up.
-	if cloneMovedPast(layout.Dir, describe, head, version) {
-		status.State, status.Version, status.Channel = "installed", describe, channel
+	// "installed" is about the built binary only: its embedded version (or VCS
+	// revision) says what a restart would run. A checkout that moved while the
+	// binary did not (a manual `git pull`) is "unbuilt": restarting changes nothing
+	// until the binary is rebuilt.
+	if installed, built := binaryMovedPast(layout, started, version); installed {
+		status.State, status.Version, status.Channel = "installed", built, channel
 		return status, nil
 	}
-	if info, err := os.Stat(layout.Binary); err == nil && info.ModTime().After(started) {
-		status.State, status.Version, status.Channel = "installed", describe, channel
+	if versionMovedPast(layout.Dir, describe, head, version) {
+		status.State, status.Version, status.Channel = "unbuilt", describe, channel
 		return status, nil
 	}
 	if channel == Edge || strings.HasPrefix(channel, Edge+":") {
@@ -181,24 +187,90 @@ func Check(layout CloneLayout, runningVersion string, started time.Time, configR
 	return status, nil
 }
 
-// cloneMovedPast reports whether the clone is on a newer version than the running
+// versionMovedPast reports whether version names something newer than the running
 // process: a newer tag, the same tag further along, or (same tag and distance) a
-// different commit that is a descendant of the running build's commit.
-func cloneMovedPast(dir, describe, head, running string) bool {
-	if c, ok := CompareVersions(describe, running); ok {
-		if c != 0 {
-			return c > 0
-		}
-		if cd, rd := parsedDescribe(describe), parsedDescribe(running); cd.Count > 0 && rd.SHA != "" && !strings.HasPrefix(head, rd.SHA) {
-			return gitOK(dir, "merge-base", "--is-ancestor", rd.SHA, head)
-		}
+// different commit that is a descendant of the running build's commit. sha, when
+// known, is the full commit version was taken at.
+func versionMovedPast(dir, version, sha, running string) bool {
+	c, ok := CompareVersions(version, running)
+	if !ok {
+		return false
 	}
-	return false
+	if c != 0 {
+		return c > 0
+	}
+	next, current := parsedDescribe(version), parsedDescribe(running)
+	if sha == "" {
+		sha = next.SHA
+	}
+	if next.Count == 0 || current.SHA == "" || sha == "" || strings.HasPrefix(sha, current.SHA) || strings.HasPrefix(current.SHA, sha) {
+		return false
+	}
+	return gitOK(dir, "merge-base", "--is-ancestor", current.SHA, sha)
 }
 
 func parsedDescribe(version string) Describe {
 	d, _ := ParseDescribe(version)
 	return d
+}
+
+var ldflagsVersion = regexp.MustCompile(`main\.version=aimebu ([^'" ]+)`)
+
+// builtVersion reads what the binary at path was built from: the version the
+// wrapper stamped with -ldflags, else its VCS revision. Both are empty when the
+// file is not a Go binary.
+func builtVersion(path string) (version, revision string) {
+	info, err := buildinfo.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "-ldflags":
+			if m := ldflagsVersion.FindStringSubmatch(setting.Value); m != nil {
+				version = m[1]
+			}
+		case "vcs.revision":
+			revision = setting.Value
+		}
+	}
+	return version, revision
+}
+
+// runningSHA finds the commit in the running build's version string: the describe
+// suffix, or a bare revision field ("aimebu v2 abc123def456 ...").
+func runningSHA(running string) string {
+	if d, ok := ParseDescribe(running); ok && d.SHA != "" {
+		return d.SHA
+	}
+	for _, field := range strings.Fields(running) {
+		if len(field) >= 7 && isHex(field) {
+			return field
+		}
+	}
+	return ""
+}
+
+// binaryMovedPast reports whether the cached binary on disk was built from
+// something newer than the running process, and what that is. A binary no newer
+// than the process start cannot be a rebuild, so it is not even read.
+func binaryMovedPast(layout CloneLayout, started time.Time, running string) (bool, string) {
+	info, err := os.Stat(layout.Binary)
+	if err != nil || !info.ModTime().After(started) {
+		return false, ""
+	}
+	version, revision := builtVersion(layout.Binary)
+	if version != "" {
+		return versionMovedPast(layout.Dir, version, "", running), version
+	}
+	if sha := runningSHA(running); revision != "" && sha != "" && !strings.HasPrefix(revision, sha) {
+		short := revision
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		return gitOK(layout.Dir, "merge-base", "--is-ancestor", sha, revision), short
+	}
+	return false, ""
 }
 
 // checkDefaultBranch is the no-channel case on a named branch. Only the remote's
@@ -222,9 +294,11 @@ func checkDefaultBranch(dir, remote, branch, head string, status Status) (Status
 	if ref != "refs/heads/"+branch || oid == "" || oid == head {
 		return status, nil
 	}
-	// Behind means the remote tip is not already part of the checkout; a tip that is
-	// not fetched yet is behind too, as for the wrapper.
-	if gitOK(dir, "cat-file", "-e", oid+"^{commit}") && gitOK(dir, "merge-base", "--is-ancestor", oid, head) {
+	// Behind means HEAD is an ancestor of the remote tip. A tip already in the
+	// checkout leaves nothing to fetch, and a checkout with commits of its own that
+	// the tip lacks is diverged: the wrapper leaves it alone, so nothing is offered.
+	// A tip that is not fetched yet cannot be judged, and is behind as for the wrapper.
+	if gitOK(dir, "cat-file", "-e", oid+"^{commit}") && !gitOK(dir, "merge-base", "--is-ancestor", head, oid) {
 		return status, nil
 	}
 	short := oid

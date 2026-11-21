@@ -171,7 +171,9 @@ A channel chooses what the update follows:
   moves.
 - `edge` follows the remote's default branch and `edge:<branch>` follows that
   branch; the checkout must be on the tracked branch. A branch with commits the
-  remote tip does not have is reported as `diverged` and left alone.
+  remote tip does not have is reported as `diverged` and left alone, and so is
+  one with commits on both sides (it cannot fast-forward); a v1-style
+  default-branch checkout follows the same rule.
 - Applying a tag update fetches exactly that tag (never a force fetch), verifies
   the peeled commit against what `ls-remote` advertised, checks the checkout out
   detached at the tag and rebuilds; a failed update restores the previous
@@ -184,8 +186,11 @@ The running server checks on its own when it was started from a wrapper clone
 jitter, first 30 seconds after start, and never under `AIMEBU_UPDATE_CHECK=0`.
 It never updates anything and never prompts; it answers `GET /api/update-status`
 with `available` (the channel's newest release is newer than the running
-process) or `installed` (the clone or the binary is newer than the running
-process, so a restart picks it up), and the web shows an admin banner with
+process), `installed` (the **built binary on disk**, read through its embedded
+build information, is newer than the running process, so a restart picks it up)
+or `unbuilt` (the checkout is newer than the running process but the binary was
+not rebuilt, as after a manual `git pull`: delete the cached `aimebu-<os>-<arch>`
+in the clone and run `aimebu version` once to rebuild it, then restart), and the web shows an admin banner with
 copy-`aimebu update`, remind (24 h) and skip. `POST /api/update-status/skip`
 and `.../remind` record each person's own answer.
 

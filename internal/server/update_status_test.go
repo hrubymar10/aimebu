@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -157,5 +158,37 @@ func TestUpdateStatusEventsReachEveryAdminAndClear(t *testing.T) {
 	w.f.srv.recordUpdateStatus(ctx, updatecheck.Status{CheckedAt: time.Now().UTC()})
 	if n := len(seen(w.admin.id)); n != 2 {
 		t.Fatalf("an empty check after an empty check emitted: %d", n)
+	}
+}
+
+// A status is stored only after its event committed: a failed event write leaves the
+// previous status, and the next check announces the change again.
+func TestUpdateStatusIsStoredOnlyAfterItsEventCommits(t *testing.T) {
+	t.Parallel()
+	w := newAdminWorld(t)
+	failed, cancel := context.WithCancel(t.Context())
+	cancel()
+	status := updatecheck.Status{State: "unbuilt", Version: "v2.1.0-3-gabcdef1", CheckedAt: time.Now().UTC()}
+	w.f.srv.recordUpdateStatus(failed, status)
+	if _, set := w.f.srv.updateStatus.snapshot(); set {
+		t.Fatal("a status was stored although its event could not be written")
+	}
+	w.f.srv.recordUpdateStatus(t.Context(), status)
+	if got, set := w.f.srv.updateStatus.snapshot(); !set || got.State != "unbuilt" {
+		t.Fatalf("the retry did not store the status: %+v %v", got, set)
+	}
+}
+
+// An ack may name every state the check reports, the unbuilt checkout included.
+func TestUpdateStatusAcksTheUnbuiltState(t *testing.T) {
+	t.Parallel()
+	w := newAdminWorld(t)
+	w.f.srv.updateStatus.store(updatecheck.Status{State: "unbuilt", Version: "v2.1.0-3-gabcdef1", CheckedAt: time.Now().UTC()})
+	if code := w.call(t, w.owner, "POST", "/api/update-status/skip", nil); code != 204 {
+		t.Fatalf("skip of an unbuilt notice: %d", code)
+	}
+	code, body := w.json(t, w.owner, "GET", "/api/update-status", nil)
+	if ack, _ := body["ack"].(map[string]any); code != 200 || ack["state"] != "unbuilt" {
+		t.Fatalf("unbuilt ack: code=%d body=%v", code, body)
 	}
 }

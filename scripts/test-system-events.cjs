@@ -37,6 +37,14 @@ assert.equal(view.text, 'Credential alert: reauth required');
 assert.equal(view.where, 'claude/main', 'the row names whose login it is');
 assert.equal(view.details, 'the provider rejected the refresh token');
 
+// The update-check notice reads as a sentence for each state, with the version beside it; an empty state is the notice clearing.
+const update = payload => describe({ kind: 'update_status', payload_json: JSON.stringify(payload) });
+assert.deepEqual([update({ state: 'available', version: 'v2.1.0' }).text, update({ state: 'available', version: 'v2.1.0' }).details], ['Update available', 'v2.1.0']);
+assert.match(update({ state: 'installed', version: 'v2.1.0' }).text, /restart/);
+assert.match(update({ state: 'unbuilt', version: 'v2.1.0-3-gabc' }).text, /newer than the built binary/);
+assert.deepEqual([update({ state: '', version: '' }).text, update({ state: '', version: '' }).details], ['Update notice cleared', '']);
+assert.equal(update({}).text, 'Update notice cleared');
+
 // The reply loop guard reads as a sentence.
 assert.equal(describe({ kind: 'loop_guard', payload_json: '{"hops":"4"}' }).text, 'Agents stopped answering each other');
 

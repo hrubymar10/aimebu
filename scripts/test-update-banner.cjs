@@ -72,6 +72,12 @@ const installed = { checked: true, state: 'installed', version: 'v2.1.0' };
   await t.banner.setAccount({ admin: true, owner: false });
   assert.equal(t.banner.bar.hidden, false);
   assert.ok(!t.banner.text.children.some(node => node.tag === 'code'), 'installed asks for a restart, not the command');
+  t = make({ status: { checked: true, state: 'unbuilt', version: 'v2.1.0-3-gabcdef1' } });
+  await t.banner.setAccount({ admin: true, owner: false });
+  assert.equal(t.banner.bar.hidden, false);
+  assert.ok(t.banner.text.children.some(node => node.tag === 'code' && node.textContent === 'aimebu version'), 'unbuilt names the rebuild step');
+  assert.ok(!t.banner.text.children.some(node => node.tag === 'code' && node.textContent === 'aimebu update'), 'unbuilt is not fixed by aimebu update');
+  assert.ok(t.banner.text.children.some(node => typeof node === 'string' && /built binary is older/.test(node)), 'unbuilt says the binary is older');
   // A member gets nothing, and neither does anyone when the server has checked nothing.
   t = make({ status });
   await t.banner.setAccount({ admin: false, owner: false });

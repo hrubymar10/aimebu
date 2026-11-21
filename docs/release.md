@@ -151,8 +151,8 @@ quarantine problem does not arise for a locally built binary.
   A local branch with commits the target does not have is `diverged` and left
   alone; a major with no release on the channel is `no-release`. Consequence
   for publishing: release tags must be **annotated** and follow
-  `vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N]` (a tag like `v2.1` or `v2.1.0-foo.1`
-  is never a target) (`git tag -a v2.1.0 -m
+  `vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N]` with no leading zeros (a tag like
+  `v2.1`, `v2.01.0` or `v2.1.0-foo.1` is never a target) (`git tag -a v2.1.0 -m
   ...` and push the tag), they pin to a major (`v3.0.0` never reaches a `v2`
   install), and prereleases order by semver (`alpha.9 < alpha.10 < beta.1 <
   rc.1 < release`), so a new label or a dropped `rc` changes what installs

@@ -2069,7 +2069,7 @@ CREATE TABLE IF NOT EXISTS team_flow_migration_interrupt (
 CREATE TABLE IF NOT EXISTS update_status_ack (
   user_id TEXT PRIMARY KEY REFERENCES user(id),
   version TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('available','installed')),
+  state TEXT NOT NULL CHECK (state IN ('available','installed','unbuilt')),
   kind TEXT NOT NULL CHECK (kind IN ('skip','remind')),
   until TEXT
 );

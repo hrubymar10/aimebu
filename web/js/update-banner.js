@@ -1,6 +1,6 @@
 // A quiet bar that tells the admins what the server's own update check found: a newer
 // release for the channel (`available`), or an update that was applied while the server
-// kept running (`installed`, a restart picks it up). The wrapper does the updating on
+// kept running (`installed`, a restart picks it up), or a checkout that moved while the built binary did not (`unbuilt`, rebuild first). The wrapper does the updating on
 // the host (`aimebu update`); the server never prompts, so the bar only reports and
 // offers copy, remind (24 h) and skip. A skip hides that version and state for good, a
 // remind hides it until the deadline; both are remembered on the account.
@@ -59,7 +59,9 @@ export class UpdateBanner {
     const version = this.status.version || '';
     this.text.replaceChildren();
     const versionPart = document.createElement('strong'); versionPart.textContent = version;
-    if (this.status.state === 'installed') {
+    if (this.status.state === 'unbuilt') {
+      this.text.append(versionPart, ' is checked out but the built binary is older — delete the cached binary in the clone (', Object.assign(document.createElement('code'), { textContent: 'aimebu-<os>-<arch>' }), '), run ', Object.assign(document.createElement('code'), { textContent: 'aimebu version' }), ' once to rebuild it, then restart the server.');
+    } else if (this.status.state === 'installed') {
       this.text.append(versionPart, ' is installed on disk but this server still runs the old build — restart the server to pick it up.');
     } else {
       this.text.append(versionPart, ' is available on this channel — run ', Object.assign(document.createElement('code'), { textContent: 'aimebu update' }), ' on the server host.');

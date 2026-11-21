@@ -179,10 +179,11 @@ tag_order() {
 }
 
 # valid_release_tag succeeds only for vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N] with
-# numbers of one to five digits: the grammar internal/updatecheck.ParseTag applies.
+# numbers of one to five digits without leading zeros: the grammar internal/updatecheck.ParseTag applies.
 # Anything else is not a release and is never ranked or offered.
 valid_release_tag() {
-    local re='^v[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}(-(alpha|beta|rc)\.[0-9]{1,5})?$'
+    local n='(0|[1-9][0-9]{0,4})'
+    local re="^v$n\.$n\.$n(-(alpha|beta|rc)\.$n)?\$"
     [[ "$1" =~ $re ]]
 }
 
@@ -198,7 +199,7 @@ tag_key() {
 $core
 EOF
     case "${major:-x}${minor:-x}${patch:-x}" in *[!0-9]*) echo "zzzzzzzzz"; return ;; esac
-    key="$(printf '%05d%05d%05d' "$major" "$minor" "$patch")"
+    key="$(printf '%05d%05d%05d' "$((10#$major))" "$((10#$minor))" "$((10#$patch))")"
     if [ -n "$pre" ]; then
         key="$key-$(pre_key "$pre")"
     else
@@ -221,7 +222,7 @@ EOF
             beta) weight=00002 ;;
             rc) weight=00003 ;;
             *[!0-9]*|"") weight=00000 ;;
-            *) weight="$(printf '%05d' "$part")" ;;
+            *) weight="$(printf '%05d' "$((10#$part))")" ;;
         esac
         out="$out.$weight"
     done
@@ -267,14 +268,11 @@ classify_update() {
     UPDATE_CHANNEL="$(resolve_channel)"
     if [ -z "$UPDATE_CHANNEL" ] && [ -n "$UPDATE_BRANCH" ] \
         && [ "refs/heads/$UPDATE_BRANCH" = "$UPDATE_DEFAULT_REF" ]; then
-        # A v1-style checkout on the remote's default branch keeps today's behaviour.
-        if [ "$UPDATE_LOCAL_OID" = "$UPDATE_REMOTE_OID" ] \
-            || { git -C "$REPO_DIR" cat-file -e "$UPDATE_REMOTE_OID^{commit}" 2>/dev/null \
-                && git -C "$REPO_DIR" merge-base --is-ancestor "$UPDATE_REMOTE_OID" "$UPDATE_LOCAL_OID" 2>/dev/null; }; then
-            UPDATE_STATE=current
-        else
-            UPDATE_STATE=behind
-        fi
+        # A v1-style checkout on the remote's default branch keeps today's behaviour:
+        # current or behind, with local commits ahead of the tip counting as current;
+        # but commits of its own beside a tip it lacks are diverged (a fast-forward
+        # cannot apply), so nothing is offered.
+        classify_branch_tip "$UPDATE_REMOTE_OID" current
         return 0
     fi
     if [ -z "$UPDATE_CHANNEL" ] && [ -n "$UPDATE_BRANCH" ]; then
@@ -334,14 +332,27 @@ classify_edge_update() {
         UPDATE_STATE=non-default
         return 0
     fi
+    classify_branch_tip "$oid" diverged
+}
+
+# classify_branch_tip <remote tip> <state when the checkout is ahead of the tip> sets
+# the state of a checkout that follows a branch: current when it is at the tip;
+# behind only when HEAD is an ancestor of the tip (a fast-forward applies); the given
+# state when the tip is already part of the checkout; diverged when both sides have
+# commits the other lacks. A tip that is not fetched yet cannot be judged here (applying
+# the update re-checks with it in hand), so it counts as behind.
+classify_branch_tip() {
+    local oid="$1" ahead_state="$2"
     if [ "$UPDATE_LOCAL_OID" = "$oid" ]; then
         UPDATE_STATE=current
-    elif git -C "$REPO_DIR" cat-file -e "$oid^{commit}" 2>/dev/null \
-        && git -C "$REPO_DIR" merge-base --is-ancestor "$oid" "$UPDATE_LOCAL_OID" 2>/dev/null; then
-        # Local commits the branch tip does not have: left alone.
-        UPDATE_STATE=diverged
-    else
+    elif ! git -C "$REPO_DIR" cat-file -e "$oid^{commit}" 2>/dev/null; then
         UPDATE_STATE=behind
+    elif git -C "$REPO_DIR" merge-base --is-ancestor "$UPDATE_LOCAL_OID" "$oid" 2>/dev/null; then
+        UPDATE_STATE=behind
+    elif git -C "$REPO_DIR" merge-base --is-ancestor "$oid" "$UPDATE_LOCAL_OID" 2>/dev/null; then
+        UPDATE_STATE="$ahead_state"
+    else
+        UPDATE_STATE=diverged
     fi
 }
 

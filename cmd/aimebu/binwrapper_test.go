@@ -267,6 +267,7 @@ func gitIn(t *testing.T, dir string, env []string, args ...string) string {
 func binWrapperWithRemote(t *testing.T) (repo string, env []string, script string, publish func(marker string)) {
 	t.Helper()
 	repo, env = binWrapperRepo(t, "v9.9.9")
+	env = withGitTransportShim(t, env)
 	remote := t.TempDir()
 	gitIn(t, remote, env, "init", "-q", "--bare")
 	gitIn(t, remote, env, "symbolic-ref", "HEAD", "refs/heads/trunk")
@@ -791,7 +792,7 @@ func TestBinWrapperIgnoresMalformedTags(t *testing.T) {
 	pushTag("v2.1.0", "two")
 	// Annotated tags that do not follow vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N] are not
 	// releases, however high they would sort.
-	for _, bad := range []string{"v2.9.0-foo.1", "v2.8", "v2.7.0-rc", "v2.6.0-RC.1", "v2.5.0.1", "v2.4.0-rc.1.2", "v2.3.x", "v2.99999999.0"} {
+	for _, bad := range []string{"v2.9.0-foo.1", "v2.8", "v2.7.0-rc", "v2.6.0-RC.1", "v2.5.0.1", "v2.4.0-rc.1.2", "v2.3.x", "v2.99999999.0", "v2.0.0-alpha.08", "v2.01.0"} {
 		pushTag(bad, "")
 	}
 	for _, channel := range []string{"stable", "prerelease"} {
@@ -799,5 +800,38 @@ func TestBinWrapperIgnoresMalformedTags(t *testing.T) {
 		if !strings.HasPrefix(out, "aimebu update available: v2.0.0 -> v2.1.0.") {
 			t.Fatalf("%s channel with malformed tags: %q", channel, out)
 		}
+	}
+}
+
+// Commits on both sides of a followed branch cannot fast-forward: the state is
+// diverged and nothing is applied, for the v1-style default-branch checkout and for an
+// edge channel alike.
+func TestBinWrapperDivergedBranchesAreLeftAlone(t *testing.T) {
+	repo, env, script, publish := binWrapperWithRemote(t)
+	setBinWrapperSource(t, repo, "local-edit")
+	gitIn(t, repo, env, "commit", "-q", "-am", "local work")
+	publish("two")
+	gitIn(t, repo, env, "fetch", "-q", "origin")
+	before := gitIn(t, repo, env, "rev-parse", "HEAD")
+	for _, channel := range [][]string{nil, {"AIMEBU_UPDATE_CHANNEL=edge"}} {
+		e := append(append([]string{}, env...), channel...)
+		out, _, code := runBinWrapperStatus(t, script, e, "update", "--check")
+		if code != 0 || !strings.Contains(out, "commits that are not in") {
+			t.Fatalf("--check with %v: code=%d out=%q", channel, code, out)
+		}
+		if out, errs, code := runBinWrapperStatus(t, script, e, "update"); code == 0 || out != "" || !strings.Contains(errs, "commits that are not in") {
+			t.Fatalf("update with %v: code=%d out=%q stderr=%q", channel, code, out, errs)
+		}
+		if after := gitIn(t, repo, env, "rev-parse", "HEAD"); after != before {
+			t.Fatalf("the diverged checkout moved with %v", channel)
+		}
+	}
+	// Local commits ahead of the tip, with nothing new on the remote, are not behind.
+	publishNothing := gitIn(t, repo, env, "rev-parse", "origin/trunk")
+	gitIn(t, repo, env, "reset", "-q", "--hard", publishNothing)
+	setBinWrapperSource(t, repo, "local-ahead")
+	gitIn(t, repo, env, "commit", "-q", "-am", "ahead only")
+	if out, _, _ := runBinWrapperStatus(t, script, env, "update", "--check"); !strings.Contains(out, "current") && !strings.Contains(out, "already") {
+		t.Fatalf("a checkout ahead of the remote was not current: %q", out)
 	}
 }

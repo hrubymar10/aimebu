@@ -46,7 +46,8 @@ type Tag struct {
 const maxNumberDigits = 5
 
 // ParseTag reads a release tag. The grammar is exactly
-// vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N], numbers of one to five digits; anything
+// vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N], numbers of one to five digits without
+// leading zeros (v2.01.0 and -alpha.08 are not releases); anything
 // else (a "v2.1", a "v2.1.0-foo.1", a "v2.1.0-rc") is not a release and is never
 // ranked or offered. The wrapper applies the same grammar before it ranks a tag.
 func ParseTag(name string) (Tag, bool) {
@@ -85,8 +86,8 @@ func numbers(s string) (int, string, bool) {
 	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
 		i++
 	}
-	if i == 0 || i > maxNumberDigits {
-		return 0, s, false
+	if i == 0 || i > maxNumberDigits || (i > 1 && s[0] == '0') {
+		return 0, s, false // no digits, too many, or a leading zero (SemVer forbids it)
 	}
 	n, err := strconv.Atoi(s[:i])
 	return n, s[i:], err == nil

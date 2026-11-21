@@ -786,16 +786,19 @@ Inbox, usage, events, settings
   log (migration 48).
 - **update_status_ack**(user_id, version, state, kind, until) — per person the
   last update-status notice they answered: `version` is the release the state
-  was about, `state` is `available` or `installed`, `kind` is `skip`
+  was about, `state` is `available`, `installed` or `unbuilt`, `kind` is `skip`
   (permanent for that version and state) or `remind` (hidden until `until`,
   24 hours after the ask; migration 128). The server's own update check
   (stdlib-only `internal/updatecheck`) follows the same release-channel rules
   as the `bin/aimebu` wrapper: every 6 hours with jitter, first 30 seconds
   after start, only when the clone is detectable (`<dir of os.Executable()>/.git`
-  plus `bin/aimebu`), and never under `AIMEBU_UPDATE_CHECK=0`. It reports two
+  plus `bin/aimebu`), and never under `AIMEBU_UPDATE_CHECK=0`. It reports three
   states: `available` (the newest release for the channel is newer than the
-  running process) and `installed` (the clone or the binary is newer than the
-  running process, so a restart picks it up). `GET /api/update-status` is for
+  running process), `installed` (the cached binary on disk, read with
+  `debug/buildinfo` for its embedded version or VCS revision, is newer than the
+  running process, so a restart picks it up) and `unbuilt` (the checkout is
+  newer than the running process but the binary was not rebuilt, so a restart
+  alone changes nothing). `GET /api/update-status` is for
   admins and the owner; `POST /api/update-status/skip` and
   `POST /api/update-status/remind` record the ack of the signed-in person. A
   state change (including a later empty check clearing a stored status) emits
@@ -806,9 +809,11 @@ Inbox, usage, events, settings
   admin. Versions compare as `git describe` answers: a build `<n>` commits past
   a tag is newer than the tag (never offered it again) and two builds on one tag
   compare by `<n>`. Only tags of the form `vMAJOR.MINOR.PATCH[-(alpha|beta|rc).N]`
-  are releases. The check offers only what `aimebu update` would do: nothing for
+  (numbers of one to five digits, no leading zeros) are releases. The leader
+  approved these contract edits. The check offers only what `aimebu update` would do: nothing for
   a dirty checkout, a named non-default branch with no channel set, or a clone
-  with commits the target tag lacks; a default-branch clone with no channel is
+  with commits the target tag lacks (a followed branch with commits on both sides
+  is `diverged` as well); a default-branch clone with no channel is
   reported `available` (channel `default-branch`, version the short remote
   commit) when it is behind its remote.
 

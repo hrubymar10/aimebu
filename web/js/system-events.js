@@ -28,7 +28,7 @@ const labels = {
   scope_control_requested: 'Scope control requested', notes_dropped: 'Queued notes dropped',
   machine_created: 'Machine added', machine_approved: 'Machine approved', machine_revoked: 'Machine revoked', machine_key_rotated: 'Machine key rotated', machine_pairing_created: 'Machine pairing created',
   user_created: 'User created', user_deactivated: 'User deactivated', user_admin_changed: 'Admin changed', user_invite_created: 'Invite created', user_invite_redeemed: 'Invite redeemed',
-  credential_alert: 'Credential alert',
+  credential_alert: 'Credential alert', update_status: 'Update status',
   quota_switch: 'Automatic account switch', quota_hold: 'Automatic account switch held', quota_switch_failed: 'Automatic account switch failed',
   quota_reset_seen: 'Weekly window reset seen', quota_switcher_tripped: 'Automatic switching tripped',
   limit_guard_soft: 'Usage limit near: new turns held', limit_guard_hard: 'Usage limit reached', limit_guard_clear: 'Usage back under the limit: new turns resume',
@@ -82,6 +82,14 @@ export function describeEvent(event, names = {}) {
     const detail = String(payload.detail ?? '');
     const split = detail.indexOf(': '), subject = split > 0 && split <= 40 ? detail.slice(0, split) : '';
     return { text: what ? `${parts[0]}: ${what}` : parts[0], where: where || subject, details: subject ? detail.slice(split + 2) : detail };
+  }
+  if (event.kind === 'update_status') {
+    // {state, version}: what the server's own update check found. An empty state means a later check found nothing and the notice cleared. Rendered with textContent by the caller.
+    const text = {
+      available: 'Update available', installed: 'Update installed: restart the server to pick it up',
+      unbuilt: 'Checkout is newer than the built binary', '': 'Update notice cleared',
+    }[payload.state ?? ''] ?? parts[0];
+    return { text, where, details: payload.version ? String(payload.version) : '' };
   }
   if (event.kind.startsWith('quota_')) {
     // {tool, from, to, profile, reason}: the tool, the move or the watched profile, and

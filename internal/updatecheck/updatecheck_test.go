@@ -175,3 +175,23 @@ func TestSelectTagIgnoresMalformedTags(t *testing.T) {
 		t.Error("a malformed tag counted as the stable release that flips the default")
 	}
 }
+
+func TestRunningSHAAndLeadingZeros(t *testing.T) {
+	for in, want := range map[string]string{
+		"v2.1.0-3-gabcdef1": "abcdef1", "v2 abc123def456 2026-11-01T00:00:00Z dirty": "abc123def456", "v2.1.0": "", "v2": "",
+	} {
+		if got := runningSHA(in); got != want {
+			t.Errorf("runningSHA(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, name := range []string{"v2.0.0-alpha.08", "v2.01.0", "v02.1.0", "v2.1.00", "v2.1.0-rc.01"} {
+		if _, ok := ParseTag(name); ok {
+			t.Errorf("ParseTag(%q) accepted a leading zero", name)
+		}
+	}
+	for _, name := range []string{"v2.0.0-alpha.0", "v0.0.0", "v2.10.0", "v2.1.0-rc.10"} {
+		if _, ok := ParseTag(name); !ok {
+			t.Errorf("ParseTag(%q) refused a valid tag", name)
+		}
+	}
+}

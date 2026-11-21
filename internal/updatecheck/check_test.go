@@ -152,33 +152,78 @@ func TestCheckFollowsTheChannelAndIgnoresLightweightTags(t *testing.T) {
 	}
 }
 
-func TestCheckInstalledAndNoRelease(t *testing.T) {
+// buildStandIn compiles a tiny Go program stamped with the version the wrapper would
+// stamp, so the check reads a real binary's embedded build information.
+func buildStandIn(t *testing.T, path, describe string) {
+	t.Helper()
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte("module standin\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "main.go"), []byte("package main\n\nvar version = \"x\"\n\nfunc main() { println(version) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "build", "-ldflags", "-s -w -X 'main.version=aimebu "+describe+"'", "-o", path+".tmp", ".")
+	cmd.Dir = src
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckInstalledMeansTheBuiltBinaryAndUnbuiltTheCheckout(t *testing.T) {
 	clone, remote, binary := checkWorld(t)
 	layout := CloneLayout{Dir: clone, Binary: binary}
-	// The clone has moved past the running build: installed, a restart picks it up.
+	// The clone moved past the running build but the cached binary is the old one
+	// (a manual `git pull`): unbuilt, not installed, because a restart alone would
+	// change nothing.
 	gitRun(t, clone, "checkout", "-q", "--detach", "v2.1.0")
 	status, err := Check(layout, "aimebu v2.0.0", time.Now().Add(-time.Hour), "", remote)
+	if err != nil || status.State != "unbuilt" || status.Version != "v2.1.0" {
+		t.Fatalf("unbuilt status = %+v, %v", status, err)
+	}
+	// The binary is rebuilt from the new checkout: now a restart picks it up.
+	buildStandIn(t, binary, "v2.1.0")
+	status, err = Check(layout, "aimebu v2.0.0", time.Now().Add(-time.Hour), "", remote)
 	if err != nil || status.State != "installed" || status.Version != "v2.1.0" {
 		t.Fatalf("installed status = %+v, %v", status, err)
 	}
-	// A binary rebuilt after this process started counts as installed too.
-	now := time.Now()
-	if err := os.Chtimes(binary, now, now); err != nil {
-		t.Fatal(err)
+	// A rebuilt binary that is not newer than the running process is not "installed"
+	// (a forced rebuild of the same source), and a binary older than the process
+	// start is never read.
+	if got := checkState(t, layout, remote, "aimebu v2.1.0", ""); got.State != "" {
+		t.Fatalf("a same-version rebuild counted: %+v", got)
 	}
-	status, err = Check(layout, "aimebu v2.1.0", time.Now().Add(-time.Hour), "", remote)
-	if err != nil || status.State != "installed" {
-		t.Fatalf("rebuilt binary status = %+v, %v", status, err)
-	}
-	// The cache is old again: nothing to say about the current release.
 	past := time.Now().Add(-2 * time.Hour)
 	if err := os.Chtimes(binary, past, past); err != nil {
 		t.Fatal(err)
 	}
+	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "unbuilt" {
+		t.Fatalf("a binary older than the process counted: %+v", got)
+	}
+	// A rebuilt binary further along the same tag counts, by distance.
+	buildStandIn(t, binary, "v2.1.0-4-gabcdef1")
+	if got := checkState(t, layout, remote, "aimebu v2.1.0-2-g1234567", ""); got.State != "installed" || got.Version != "v2.1.0-4-gabcdef1" {
+		t.Fatalf("a binary further past the tag was not installed: %+v", got)
+	}
+	// A binary that is not a Go binary says nothing.
+	if err := testenv.WriteExecutable(binary, []byte("not a binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkState(t, layout, remote, "aimebu v2.1.0", ""); got.State != "" {
+		t.Fatalf("a non-Go binary counted: %+v", got)
+	}
+}
+
+func TestCheckNoReleaseAndNoWrapperClone(t *testing.T) {
+	clone, remote, binary := checkWorld(t)
+	layout := CloneLayout{Dir: clone, Binary: binary}
+	gitRun(t, clone, "checkout", "-q", "--detach", "v2.1.0")
 	// No release for the running major: nothing to offer.
-	status, err = Check(layout, "aimebu v9.9.9", time.Now().Add(-time.Hour), "", remote)
-	if err != nil || status.State != "" {
-		t.Fatalf("no-release status = %+v, %v", status, err)
+	if got := checkState(t, layout, remote, "aimebu v9.9.9", ""); got.State != "" {
+		t.Fatalf("no-release status = %+v", got)
 	}
 	// A checkout that is not a wrapper clone has no layout at all.
 	if _, ok := LayoutFromExecutable(); ok {
@@ -219,10 +264,10 @@ func TestCheckUsesDescribeVersionsAndIgnoresMalformedTags(t *testing.T) {
 	if got := checkState(t, layout, remote, "aimebu v2.0.0-3-gabcdef1", ""); got.State != "available" || got.Version != "v2.1.0" {
 		t.Fatalf("a build past v2.0.0 was not offered v2.1.0: %+v", got)
 	}
-	// A clone further along the same tag than the running build is installed.
+	// A clone further along the same tag than the running build, with the old binary, is unbuilt.
 	gitRun(t, clone, "commit", "-q", "--allow-empty", "-m", "local one")
-	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "installed" {
-		t.Fatalf("a clone past the running tag was not installed: %+v", got)
+	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "unbuilt" {
+		t.Fatalf("a clone past the running tag with an old binary was not unbuilt: %+v", got)
 	}
 }
 
@@ -242,6 +287,22 @@ func TestCheckLeavesBranchesDirtyAndDivergedClonesAlone(t *testing.T) {
 	if got := checkState(t, layout, remote, "aimebu v3.0.0-alpha.1", ""); got.State != "" {
 		t.Fatalf("a current default-branch clone was offered something: %+v", got)
 	}
+	// Commits of its own on both sides: diverged, nothing is offered (the update would
+	// fail to fast-forward). Local-only commits ahead of the remote are not behind either.
+	gitRun(t, clone, "commit", "-q", "--allow-empty", "-m", "local only")
+	described, err := gitOut(clone, 10*time.Second, "describe", "--tags", "--always")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := checkState(t, layout, remote, "aimebu "+described, ""); got.State != "" {
+		t.Fatalf("a clone ahead of its remote was offered something: %+v", got)
+	}
+	gitRun(t, clone, "reset", "-q", "--hard", "v2.0.0")
+	gitRun(t, clone, "commit", "-q", "--allow-empty", "-m", "local fork")
+	if got := checkState(t, layout, remote, "aimebu v2.0.0-1-gabcdef1", ""); got.State != "" {
+		t.Fatalf("a diverged default-branch clone was offered an update: %+v", got)
+	}
+	gitRun(t, clone, "reset", "-q", "--hard", "origin/master")
 	// A named non-default branch with no channel is never detached onto a tag.
 	gitRun(t, clone, "checkout", "-q", "-b", "work", "v2.0.0")
 	if got := checkState(t, layout, remote, "aimebu v2.0.0", ""); got.State != "" {
