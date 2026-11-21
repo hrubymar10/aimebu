@@ -53,18 +53,18 @@ type alertWindow struct {
 	Critical    bool      `json:"critical"`
 	// Pace records that a pace alert is open for this window and cycle; it
 	// clears on recovery (the window is again projected to last until its
-	// reset), so the alert can re-arm only after that. PaceSince records when
-	// the current at-risk episode was first seen, so a re-raise after
-	// recovery waits for the hysteresis margin instead of flipping on the
-	// first jittery observation.
+	// reset). Recovered records that a recovery happened in this cycle, so a
+	// re-raise waits for the hysteresis; RiskSince is the start of the
+	// current at-risk run (zero while the window is safe), and a re-raise
+	// needs the window continuously at risk for paceHysteresis.
 	Pace      bool      `json:"pace,omitempty"`
-	PaceSince time.Time `json:"pace_since,omitempty"`
+	Recovered bool      `json:"pace_recovered,omitempty"`
+	RiskSince time.Time `json:"risk_since,omitempty"`
 }
 
-// paceHysteresis is the margin a window must stay at risk again after a
-// recovery before its pace alert re-arms: the projection must leave at least
-// this much room before the reset, and the same time must have passed since
-// the last raise, so one observation cannot flip the episode back and forth.
+// paceHysteresis is how long a window must stay continuously at risk after a
+// recovery before its pace alert re-arms, so one jittery reading cannot flip
+// the episode back and forth. The first episode of a cycle raises at once.
 const paceHysteresis = 10 * time.Minute
 
 type alertState struct {
@@ -271,7 +271,7 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 						}
 					}
 					state.Warning, state.Critical, state.Pace = false, false, false
-					state.PaceSince = time.Time{}
+					state.Recovered, state.RiskSince = false, time.Time{}
 				}
 				state.Cycle, state.Credential, state.LastUsed, state.LastRefresh = cycle, profile.AlertCredential, window.PercentUsed, *profile.LastRefreshAt
 				if window.ResetAt != nil && (cycleChanged || state.ResetAt.IsZero()) {
@@ -289,32 +289,29 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 				// (hysteresis) that a jittery projection cannot flip it.
 				switch {
 				case paceOn && paceAlertWindow(provider.ProviderName, window.Key) && window.Pace != nil && window.Pace.EtaSeconds != nil:
-					if !state.Pace {
-						// A window that has never raised a pace alert in this
-						// cycle (no recovery on record) is at risk without a
-						// timer: its first episode raises at once. Only a
-						// re-arm after a recovery waits for the hysteresis.
-						if state.PaceSince.IsZero() {
-							state.Pace = true
-							t.addAlert(base, cycle, profile.AlertCredential, provider.ProviderName, profile.ProfileName, window, "pace", remaining)
-							visibleChanged = true
-						} else {
-							margin := time.Duration(*window.Pace.EtaSeconds * float64(time.Second))
-							if t.clock().Sub(state.PaceSince) >= paceHysteresis && margin >= paceHysteresis {
-								state.Pace = true
-								t.addAlert(base, cycle, profile.AlertCredential, provider.ProviderName, profile.ProfileName, window, "pace", remaining)
-								visibleChanged = true
-							}
-						}
+					if state.RiskSince.IsZero() {
+						state.RiskSince = t.clock()
 					}
-				case state.Pace && window.Pace != nil && window.Pace.EtaSeconds == nil:
-					// Recovery is observed inline: the window is again
-					// projected to last until its reset. The hysteresis timer
-					// starts here for a possible next episode.
-					t.closeTier(base, "pace")
-					state.Pace = false
-					state.PaceSince = t.clock()
-					visibleChanged, changed = true, true
+					// The first episode of a cycle raises at once; a re-arm
+					// after a recovery needs the window continuously at risk
+					// for the hysteresis.
+					if !state.Pace && (!state.Recovered || t.clock().Sub(state.RiskSince) >= paceHysteresis) {
+						state.Pace = true
+						t.addAlert(base, cycle, profile.AlertCredential, provider.ProviderName, profile.ProfileName, window, "pace", remaining)
+						visibleChanged = true
+					}
+					changed = true
+				case paceOn && paceAlertWindow(provider.ProviderName, window.Key) && window.Pace != nil && window.Pace.EtaSeconds == nil:
+					// Safe again: the window is projected to last until its
+					// reset. The at-risk run ends; an open alert closes and
+					// the next raise waits for the hysteresis.
+					state.RiskSince = time.Time{}
+					if state.Pace {
+						t.closeTier(base, "pace")
+						state.Pace, state.Recovered = false, true
+						visibleChanged = true
+					}
+					changed = true
 				}
 				// The reset notice: one note per window and reset cycle, when
 				// a new cycle is observed. The next cycle's observation closes
@@ -356,8 +353,8 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 			}
 		}
 		for key, window := range t.state.Windows {
-			if window.Pace || !window.PaceSince.IsZero() {
-				window.Pace, window.PaceSince = false, time.Time{}
+			if window.Pace || window.Recovered || !window.RiskSince.IsZero() {
+				window.Pace, window.Recovered, window.RiskSince = false, false, time.Time{}
 				t.state.Windows[key] = window
 				changed = true
 			}
@@ -508,7 +505,7 @@ func expiryRecord(record string) (stamp, level string, ok bool) {
 	if seen {
 		return value, TargetLevelExpiring, true
 	}
-	return record, "", false // a pre-follow-up record: its stamp is the whole value
+	return record, "", record != "" // a pre-follow-up record: its stamp is the whole value, and it counts as seen
 }
 
 // levelIsStronger says whether got escalates from was: expiring became

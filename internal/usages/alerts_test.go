@@ -760,3 +760,59 @@ func TestExpiryAlertOnlyOnTheTokenCopyModel(t *testing.T) {
 		t.Fatalf("only the token-copy profile raises the expiry alert: %+v", open)
 	}
 }
+
+// The re-arm after a recovery needs the window continuously at risk for the
+// hysteresis, however short its time-to-full is; a safe reading restarts the
+// clock, and one risky reading long after the recovery does not raise.
+func TestPaceAlertRearmNeedsSustainedRisk(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	shortEta := (5 * time.Minute).Seconds() // under the hysteresis: eta is time-to-full, not slack
+	risk := &Pace{State: "deficit", EtaSeconds: &shortEta}
+	safe := &Pace{State: "reserve", LastsToReset: true}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", LastRefreshAt: &now,
+			Windows: []Window{{Key: "session", PercentUsed: 70, ResetAt: &reset, Pace: risk}}}}}}}
+	response.Settings.AlertPaceEnabled = true
+	observe := func(after time.Duration, pace *Pace) {
+		t.Helper()
+		now = now.Add(after)
+		response.Providers[0].Profiles[0].LastRefreshAt = &now
+		response.Providers[0].Profiles[0].Windows[0].Pace = pace
+		if _, err := tracker.Observe(response); err != nil {
+			t.Fatal(err)
+		}
+	}
+	open := func(want int, why string) {
+		t.Helper()
+		if got := tracker.OpenAlerts(); len(got) != want {
+			t.Fatalf("%s: %d open, want %d: %+v", why, len(got), want, got)
+		}
+	}
+	observe(time.Minute, risk)
+	open(1, "the first episode raises at once")
+	observe(time.Minute, safe)
+	open(0, "recovery closes")
+	observe(time.Hour, risk) // one risky reading long after the recovery
+	open(0, "one jittery reading must not re-raise")
+	observe(5*time.Minute, safe) // safe again: the clock restarts
+	observe(6*time.Minute, risk)
+	observe(6*time.Minute, risk)
+	open(0, "risk, safe, risk restarts the clock: 6 minutes is too soon")
+	observe(5*time.Minute, risk)
+	open(1, "11 sustained minutes re-raise even with a short eta")
+}
+
+func TestExpiryRecordOldFormatCountsAsSeen(t *testing.T) {
+	stamp, level, seen := expiryRecord("2026-10-21T12:00:00Z")
+	if stamp != "2026-10-21T12:00:00Z" || level != "" || !seen {
+		t.Fatalf("old-format record: %q %q %v", stamp, level, seen)
+	}
+	if _, _, seen := expiryRecord(""); seen {
+		t.Fatal("an empty record is not seen")
+	}
+}

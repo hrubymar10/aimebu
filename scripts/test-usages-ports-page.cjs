@@ -157,6 +157,36 @@ async function main() {
       assert.match(await page.$eval('.usage-credential-alerts p', el => el.textContent), /claude profile main:/);
       await page.close();
     }
+    // The Switch, Install anyway, Rename and Delete dialogs mask the profile name in their text while B's privacy is on; Rename's input keeps the real one.
+    {
+      const page = await mount({ variant: 'b' });
+      const tile = '.usages-b-tile[data-provider="codex"]', profile = `${tile} .usages-b-profile:not(.is-active)`; // data-profile carries the masked name, so pick the non-active one by position
+      const dialogText = () => page.evaluate(() => ({ message: document.querySelector('.app-dialog-message').textContent, fields: [...document.querySelectorAll('.app-dialog-fields input')].map(input => input.value) }));
+      const cancel = async () => { await click(page, '#app-dialog .app-dialog-cancel'); await page.waitForFunction(() => !document.querySelector('#app-dialog')?.open); };
+      await click(page, '.usages-b-privacy');
+      await click(page, `${tile} .usages-b-manage`);
+      await page.waitForSelector(`${profile} .usages-b-remove`);
+      assert.equal(await page.$eval(`${profile} .switcher-tile-name`, el => el.textContent), 'b•••');
+      await click(page, `${profile} .usages-b-remove`);
+      await page.waitForSelector('#app-dialog[open] .app-dialog-message:not([hidden])');
+      let shown = await dialogText();
+      assert.match(shown.message, /Delete b•••\?/);
+      assert.ok(!shown.message.includes('backup'), 'Delete masks the name');
+      await cancel();
+      await click(page, `${profile} .usages-b-rename`);
+      await page.waitForSelector('#app-dialog[open] .app-dialog-fields input');
+      shown = await dialogText();
+      assert.ok(!(await page.$eval('#app-dialog-title', el => el.textContent)).includes('backup'));
+      assert.deepEqual(shown.fields, ['backup'], 'Rename keeps the real name in its input');
+      await cancel();
+      await click(page, `${profile} .usages-b-switch`);
+      await page.waitForSelector('#app-dialog[open] .app-dialog-message:not([hidden])');
+      shown = await dialogText();
+      assert.match(shown.message, /Switch to b•••\?/);
+      assert.ok(!shown.message.includes('backup'), 'Switch masks the name');
+      await cancel();
+      await page.close();
+    }
     assert.deepEqual(errors, [], 'no page errors');
     console.log('usages ports page tests passed');
   } finally {
