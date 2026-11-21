@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -391,7 +392,8 @@ func TestDrainGraceSettingIsOwnerOnly(t *testing.T) {
 			t.Errorf("%s changed the drain grace: %d", who.name, code)
 		}
 	}
-	for _, bad := range []int{-1, 1441} {
+	// The last one times sixty wraps around to a small number: the bound is checked before any multiplication.
+	for _, bad := range []int{-1, 1441, math.MaxInt64/60 + 2, math.MaxInt64} {
 		if code := w.call(t, w.owner, "PUT", "/api/agent-isolation", map[string]int{"supervisor_drain_grace_minutes": bad}); code != 400 {
 			t.Errorf("%d minutes: %d", bad, code)
 		}

@@ -1618,7 +1618,7 @@ const flowMigrationInterruptPurpose = "team_flow_migration"
 // turn_interrupt frame): it records the request for the agent's running ordinary turn, with the requeue disposition, and says where the
 // frame goes. The agent stays active and is not started again; the turn's notes wait in the queue, which the drain holds, and the change
 // goes on once the turn is gone. The agent stays blocking until then. A repeat while the turn runs answers the same target and records
-// nothing new: the server sends the frame again.
+// nothing new: the server sends the frame again. A request with another disposition that was on the turn already is replaced by this one.
 //
 // An empty TurnID with no error says this path has nothing to cut and InterruptFlowMigrationAgent decides: the agent is already stopping,
 // or its open turn is not a running ordinary one (it is pending, a handoff turn, a correction, or ended and not settled yet).
@@ -1638,9 +1638,9 @@ func (s *Store) InterruptFlowMigrationTurn(ctx context.Context, projectID, actor
 		var turnID string
 		var generation int
 		var machineID string
-		var requested bool
+		var requested string
 		err := tx.tx.QueryRowContext(ctx, `SELECT t.id,t.generation,COALESCE(a.machine_id,''),
-			EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_interrupt_requested')
+			COALESCE((SELECT json_extract(e.payload_json,'$.disposition') FROM event e WHERE e.turn_id=t.id AND e.kind='turn_interrupt_requested' ORDER BY e.seq DESC LIMIT 1),'')
 			FROM team_flow_migration_agent ma JOIN agent a ON a.id=ma.agent_id JOIN turn t ON t.agent_id=a.id
 			WHERE ma.migration_id=? AND ma.agent_id=? AND a.desired<>'stopped' AND t.exec='running' AND t.mode='normal'
 			AND NOT EXISTS(SELECT 1 FROM switch_handoff_turn ht WHERE ht.turn_id=t.id)
@@ -1651,7 +1651,10 @@ func (s *Store) InterruptFlowMigrationTurn(ctx context.Context, projectID, actor
 		if err != nil {
 			return err
 		}
-		if requested {
+		// A repeat of the change's own request records nothing new. Any other request standing on the turn (the supervisor drain's
+		// continue, recorded before the change began) is replaced: the person's requeue is what the change waits for, and a
+		// continuation turn would hold the drain again.
+		if requested == TurnInterruptRequeue {
 			out = TurnInterruptTarget{TurnID: turnID, AgentID: agentID, MachineID: machineID, Generation: generation}
 			return nil
 		}

@@ -191,3 +191,46 @@ func TestYieldingTurnInterruptLeavesAMigratingAgentsTurnAlone(t *testing.T) {
 		t.Fatalf("after the change ended: %+v %v", target, err)
 	}
 }
+
+// The other order: the supervisor drain recorded its continue on the turn before the change began. The person's interrupt during the
+// change replaces it, so the turn is requeued for the change and no continuation turn is made to hold the drain again.
+func TestFlowInterruptReplacesAnEarlierDrainRequest(t *testing.T) {
+	f, setup := flowMigrationFixture(t, "leader-workers")
+	ctx := t.Context()
+	leaderID := setup.Agents[0].AgentID
+	turnID := openTurn(t, f, leaderID)
+	if _, err := f.s.RequestTurnInterrupt(ctx, TurnInterruptRequest{TurnID: turnID, ActorKind: "system", ActorID: "supervisor_drain", Purpose: "supervisor_drain", Disposition: TurnInterruptContinue, Yield: true}); err != nil {
+		t.Fatalf("the drain's request before any change: %v", err)
+	}
+	in := TeamFlowMigrationInput{FlowKey: "leader-dispatcher", FlowRev: setup.Flow.Rev,
+		Dispatcher: &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake"}}
+	if err := f.s.Tx(ctx, func(tx *Tx) error { _, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, in); return err }); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // the second is a repeat of the change's own request: nothing new is recorded
+		if target, err := f.s.InterruptFlowMigrationTurn(ctx, f.project.ID, f.alice, leaderID); err != nil || target.TurnID != turnID {
+			t.Fatalf("the change's interrupt: %+v %v", target, err)
+		}
+	}
+	var requests int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE turn_id=? AND kind='turn_interrupt_requested'`, turnID).Scan(&requests); err != nil || requests != 2 {
+		t.Fatalf("requests=%d %v, want the drain's and the change's", requests, err)
+	}
+	if disposition, err := flowTurnDisposition(f.s, turnID); err != nil || disposition != TurnInterruptRequeue {
+		t.Fatalf("disposition=%q %v", disposition, err)
+	}
+	if err := f.s.RecordProcessInfo(ctx, turnID, leaderID, 0, requestedInterruptExit); err != nil {
+		t.Fatal(err)
+	}
+	var outcome string
+	var children int
+	if err := f.s.db.QueryRow(`SELECT outcome FROM turn WHERE id=?`, turnID).Scan(&outcome); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM turn WHERE parent_turn_id=?`, turnID).Scan(&children); err != nil {
+		t.Fatal(err)
+	}
+	if outcome != "cancelled" || children != 0 {
+		t.Fatalf("the turn was settled as the drain's continue: outcome=%s children=%d", outcome, children)
+	}
+}

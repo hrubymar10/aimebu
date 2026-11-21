@@ -1362,7 +1362,9 @@ the turn of an agent that is part of a team flow change in progress
 (`draining` or `applying`) is not touched, since the change has its own
 interrupt and disposition, and a turn that already has a
 `turn_interrupt_requested` event keeps it (the first recorded disposition
-wins; the drain only sends the frame again). An older supervisor is waited
+wins; the drain only sends the frame again). A team flow change's own
+interrupt does not yield: its `requeue` replaces a `continue` the drain
+recorded before the change began. An older supervisor is waited
 for as before, and a command outside
 a turn is never ended for this: the old supervisor stays up, and local
 dispatch stays held, until its commands finish. A turn whose process in a

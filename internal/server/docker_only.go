@@ -230,7 +230,7 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if body.DrainGraceMinutes != nil {
-			if *body.DrainGraceMinutes < 0 || *body.DrainGraceMinutes*60 > maxDrainGraceSeconds {
+			if *body.DrainGraceMinutes < 0 || *body.DrainGraceMinutes > maxDrainGraceSeconds/60 { // compared in minutes: a huge value must not wrap around in the multiplication
 				apiError(w, 400, "invalid_request", supervisorDrainGraceMinutes+" must be between 0 (wait without limit) and 1440")
 				return
 			}
