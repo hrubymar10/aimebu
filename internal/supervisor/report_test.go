@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/getsentry/sentry-go"
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
@@ -173,5 +174,44 @@ func TestReconnectOutageIsReportedOnlyWhenLong(t *testing.T) {
 	}
 	if got := run(50*time.Millisecond, 400*time.Millisecond); len(got) != 1 {
 		t.Fatalf("a long outage must be reported once: %+v", got)
+	}
+}
+
+// An activity frame is not journaled for replay: only logged while there is no connection, reported (by its phrase) when a send on a live connection fails.
+func TestUnsentActivityIsReportedOnlyWhileConnected(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := startReporting(t)
+	var logged int
+	c := &Client{OnError: func(error) { logged++ }}
+	c.unsentLive("a turn frame could not be sent to the server", errors.New("machine socket disconnected"))
+	telemetry.Current().Flush(time.Second)
+	if got := transport.sent(); len(got) != 0 || logged != 1 {
+		t.Fatalf("a disconnected activity send must be only logged: %+v logged=%d", got, logged)
+	}
+	c.currentConn = &websocket.Conn{} // a live connection (only its presence matters here)
+	c.unsentLive("a turn frame could not be sent to the server", errors.New("write failed"))
+	telemetry.Current().Flush(time.Second)
+	got := transport.sent()
+	if len(got) != 1 || got[0].Exception[0].Value != "a turn frame could not be sent to the server" || logged != 2 {
+		t.Fatalf("a failed send on a live connection must be reported: %+v logged=%d", got, logged)
+	}
+}
+
+// A journal that cannot be read to replay is reported, except when the context is cancelled (a shutdown).
+func TestReplayReadFailureIsNotReportedOnShutdown(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := startReporting(t)
+	c := &Client{OnError: func(error) {}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	c.replayReadFailed(ctx, context.Canceled)
+	telemetry.Current().Flush(time.Second)
+	if got := transport.sent(); len(got) != 0 {
+		t.Fatalf("a shutdown was reported: %+v", got)
+	}
+	c.replayReadFailed(t.Context(), errors.New("disk I/O error"))
+	telemetry.Current().Flush(time.Second)
+	if got := transport.sent(); len(got) != 1 {
+		t.Fatalf("a replay read failure must be reported: %+v", got)
 	}
 }

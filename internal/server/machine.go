@@ -723,8 +723,7 @@ func (s *Server) authorizeAgentFrame(ctx context.Context, c *machineConn, frame 
 	if agent.Revoked || agent.MachineID != c.id {
 		// A late frame (the supervisor's ack of a stop it applied) for an agent that is already stopped or removed is the protocol
 		// racing itself, not a fault: expected, so it is refused without a report. Any other unauthorized frame still reports.
-		stopped := agent.MachineID == c.id && (agent.Revoked || agent.Desired != "active")
-		return "unauthorized", stopped
+		return "unauthorized", agent.Revoked && agent.MachineID == c.id
 	}
 	if frame.Generation != generation || agent.Generation != generation {
 		if frame.Type == protocol.Answer || frame.Type == protocol.NativeSessionStarted {

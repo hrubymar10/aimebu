@@ -454,7 +454,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	sessions, err := c.Journal.NativeSessionEvents(ctx)
 	if err != nil {
-		c.report("the journal could not be read to replay it after reconnecting", err)
+		c.replayReadFailed(ctx, err)
 		return err
 	}
 	for _, session := range sessions {
@@ -469,7 +469,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	// follows every event of the turn.
 	usage, err := c.Journal.PendingUsageEvents(ctx)
 	if err != nil {
-		c.report("the journal could not be read to replay it after reconnecting", err)
+		c.replayReadFailed(ctx, err)
 		return err
 	}
 	for _, pending := range usage {
@@ -479,7 +479,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	exits, err := c.Journal.PendingExits(ctx)
 	if err != nil {
-		c.report("the journal could not be read to replay it after reconnecting", err)
+		c.replayReadFailed(ctx, err)
 		return err
 	}
 	for _, exit := range exits {
@@ -498,7 +498,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	c.reconcileCommands(ctx)
 	pending, err := c.Journal.PendingAnswers(ctx)
 	if err != nil {
-		c.report("the journal could not be read to replay it after reconnecting", err)
+		c.replayReadFailed(ctx, err)
 		return err
 	}
 	for _, answer := range pending {
@@ -1032,6 +1032,24 @@ func (c *Client) unsent(err error) {
 	c.reportLocal(err)
 }
 
+// unsentLive is for a frame nothing replays (an activity frame): only logged while there is no connection, reported when the connection is up and the send
+// still failed (a write on a live socket, an encode failure).
+func (c *Client) unsentLive(cause string, err error) {
+	if c.serverUnreachable() {
+		c.reportLocal(err)
+		return
+	}
+	c.report(cause, err)
+}
+
+// replayReadFailed reports a journal that cannot be read to replay after reconnecting; a shutdown (a cancelled context) is not a failure.
+func (c *Client) replayReadFailed(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	c.report("the journal could not be read to replay it after reconnecting", err)
+}
+
 // serverUnreachable says whether the supervisor has no live server connection right now.
 func (c *Client) serverUnreachable() bool {
 	c.mu.Lock()
@@ -1441,7 +1459,12 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 			}
 		}
 		if err := c.sendCurrent(ctx, frame); err != nil {
-			c.unsent(err) // journaled before this send: the reconnect replays it
+			if event.Kind == adapter.EventActivity {
+				// Activity is not journaled for replay: while the connection is down it is only logged, but a failed send on a live connection is a fault.
+				c.unsentLive("a turn frame could not be sent to the server", err)
+			} else {
+				c.unsent(err) // journaled before this send (a native session, usage, compaction, the answer): the reconnect replays it
+			}
 		}
 	}
 	events := turn.Events()
