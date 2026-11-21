@@ -788,7 +788,7 @@ Inbox, usage, events, settings
   last update-status notice they answered: `version` is the release the state
   was about, `state` is `available` or `installed`, `kind` is `skip`
   (permanent for that version and state) or `remind` (hidden until `until`,
-  24 hours after the ask; migration 127). The server's own update check
+  24 hours after the ask; migration 128). The server's own update check
   (stdlib-only `internal/updatecheck`) follows the same release-channel rules
   as the `bin/aimebu` wrapper: every 6 hours with jitter, first 30 seconds
   after start, only when the clone is detectable (`<dir of os.Executable()>/.git`

@@ -1,0 +1,111 @@
+// The bar that reports the server's update check to the admins: when it may show (a state, an admin or the owner, no ack still covering that
+// version and state), what it says in each state, and what Copy, Remind and Skip do. Runs the module sources in a vm with a small stand-in
+// for the page, the same way the notification banner test does.
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const read = name => fs.readFileSync(path.join(__dirname, '..', 'web', 'js', name), 'utf8');
+const source = read('icon-button.js').replace(/^export /gm, '') + '\n' +
+  read('update-banner.js').replace(/^import .*$/gm, '').replace(/^export /gm, '') +
+  '\nfunction copyText(text) { copyCalls.push(text); return Promise.resolve(true); }' +
+  '\nglobalThis.api = { updateBannerWanted, UpdateBanner, copied: text => copyCalls.push(text) };\nglobalThis.copyCalls = [];';
+
+function element(tag) {
+  const node = { tag, className: '', hidden: false, title: '', textContent: '', attrs: {}, children: [], onclick: null, disabled: false,
+    append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; },
+    setAttribute(name, value) { this.attrs[name] = value; }, getAttribute(name) { return this.attrs[name] ?? null; }, after(item) { this.next = item; } };
+  return node;
+}
+function page() {
+  const document = { hidden: false, createElement: element };
+  const context = { document, Date, console };
+  vm.createContext(context);
+  vm.runInContext(source, context);
+  return { context, document, api: context.api, anchor: element('header') };
+}
+function make(options = {}) {
+  const env = page();
+  const calls = { status: 0, acked: [] };
+  const banner = new env.api.UpdateBanner({
+    getStatus: async () => { calls.status++; return options.status ?? null; },
+    ack: async kind => { calls.acked.push(kind); if (options.refuse) throw new Error('refused'); },
+    anchor: env.anchor,
+  });
+  return { ...env, banner, calls };
+}
+const status = { checked: true, state: 'available', version: 'v2.1.0' };
+const installed = { checked: true, state: 'installed', version: 'v2.1.0' };
+
+(async () => {
+  const { updateBannerWanted } = page().api;
+  const rights = { admin: true, owner: false };
+  assert.equal(updateBannerWanted({ status, rights, ack: null }), true);
+  for (const [name, change] of [
+    ['no status', { status: null }],
+    ['nothing to do', { status: { state: '', version: '' } }],
+    ['not an admin', { rights: { admin: false, owner: false } }],
+    ['skipped', { ack: { version: 'v2.1.0', state: 'available', kind: 'skip' } }],
+    ['remind not due yet', { ack: { version: 'v2.1.0', state: 'available', kind: 'remind', until: new Date(Date.now() + 3600e3).toISOString() } }],
+  ]) {
+    assert.equal(updateBannerWanted({ status, rights, ack: null, ...change }), false, name);
+  }
+  assert.equal(updateBannerWanted({ status, rights: { admin: false, owner: true }, ack: null }), true, 'the owner sees it too');
+  assert.equal(updateBannerWanted({ status, rights, ack: { version: 'v2.1.0', state: 'available', kind: 'remind', until: new Date(Date.now() - 1000).toISOString() } }), true, 'a due remind shows it again');
+
+  // The bar sits right after its anchor, hidden, as a labelled region with three icon buttons (a tooltip and a name each, no text).
+  let t = make();
+  assert.equal(t.anchor.next, t.banner.bar);
+  assert.deepEqual([t.banner.bar.hidden, t.banner.bar.getAttribute('role'), t.banner.bar.getAttribute('aria-label')], [true, 'region', 'aimebu update']);
+  for (const button of [t.banner.copy, t.banner.remind, t.banner.skip]) assert.ok(button.title && button.getAttribute('aria-label') === button.title && button.textContent === '', 'icon button');
+
+  // A sign-in reads the account's rights and then the server's answer: available says what to run, installed says to restart.
+  t = make({ status });
+  await t.banner.setAccount({ admin: true, owner: false });
+  assert.deepEqual([t.calls.status, t.banner.bar.hidden], [1, false]);
+  assert.ok(t.banner.text.children.some(node => node.textContent === 'v2.1.0'), 'the version is named');
+  assert.ok(t.banner.text.children.some(node => node.tag === 'code' && node.textContent === 'aimebu update'), 'the command is named');
+  t = make({ status: installed });
+  await t.banner.setAccount({ admin: true, owner: false });
+  assert.equal(t.banner.bar.hidden, false);
+  assert.ok(!t.banner.text.children.some(node => node.tag === 'code'), 'installed asks for a restart, not the command');
+  // A member gets nothing, and neither does anyone when the server has checked nothing.
+  t = make({ status });
+  await t.banner.setAccount({ admin: false, owner: false });
+  assert.equal(t.banner.bar.hidden, true);
+  t = make({ status: null });
+  await t.banner.setAccount({ admin: true, owner: false });
+  assert.equal(t.banner.bar.hidden, true);
+  // A failed read closes the bar instead of raising an error.
+  t = make({ status });
+  await t.banner.setAccount({ admin: true, owner: false });
+  t.banner.getStatus = async () => { throw new Error('gone'); };
+  await t.banner.refresh();
+  assert.equal(t.banner.bar.hidden, true);
+
+  // Copy puts the command on the clipboard and changes nothing else.
+  t = make({ status });
+  await t.banner.setAccount({ admin: true, owner: false });
+  t.banner.copy.onclick();
+  await Promise.resolve();
+  assert.deepEqual([...t.context.copyCalls, t.banner.bar.hidden], ['aimebu update', false]);
+
+  // Remind asks the server, then hides the bar for a day (a refused ask still hides it until the next refresh says otherwise).
+  t = make({ status });
+  await t.banner.setAccount({ admin: true, owner: false });
+  await t.banner.answer('remind');
+  assert.deepEqual([t.calls.acked, t.banner.bar.hidden], [['remind'], true]);
+  t = make({ status, refuse: true });
+  await t.banner.setAccount({ admin: true, owner: false });
+  await t.banner.answer('remind');
+  assert.equal(t.banner.bar.hidden, true, 'a refused remind still closes the bar');
+
+  // Skip asks the server and hides the bar for good (until the version or state changes).
+  t = make({ status });
+  await t.banner.setAccount({ admin: true, owner: false });
+  await t.banner.answer('skip');
+  assert.deepEqual([t.calls.acked, t.banner.bar.hidden], [['skip'], true]);
+  console.log('update banner test passed');
+})().catch(error => { console.error(error); process.exit(1); });

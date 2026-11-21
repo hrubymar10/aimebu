@@ -207,7 +207,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-context-track { flex: 1; height: 5px; overflow: hidden; border-radius: 3px; background: var(--border); }
 .agent-context-fill { display: block; height: 100%; background: var(--accent); }
 .agent-context-value { min-width: 27px; text-align: right; font-variant-numeric: tabular-nums; }
-.chat > .messages, .chat > .send-bar, .chat > .notification-banner { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
+.chat > .messages, .chat > .send-bar, .chat > .notification-banner, .chat > .update-banner { margin-right: calc(var(--agents-w, 260px) + var(--gap, 0px)); }
 
 .inbox-view { background: var(--bg-primary); }
 .inbox-view > header { background: var(--bg-secondary); border-color: var(--border); }
@@ -400,7 +400,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .chat.agents-open #agents-scrim { display: block; position: absolute; z-index: 3; inset: 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: var(--scrim-soft); }
   #agents-close { display: inline-flex; margin-left: auto; padding: 2px 7px; font-size: 20px; }
   .agents-panel header { gap: 8px; }
-  .chat > .messages, .chat > .send-bar, .chat > .notification-banner { margin-right: 0; }
+  .chat > .messages, .chat > .send-bar, .chat > .notification-banner, .chat > .update-banner { margin-right: 0; }
   .messages { padding: 12px 10px; }
   .chat-msg-system { max-width: 100%; }
   .chat > header { padding: 8px 10px; }
@@ -420,6 +420,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .chat.agents-collapsed .agents-panel { display: none; }
   .chat.agents-collapsed > .messages,
   .chat.agents-collapsed > .notification-banner,
+  .chat.agents-collapsed > .update-banner,
   .chat.agents-collapsed > .send-bar { margin-right: 0; }
 }
 @media (max-width: 360px) {
@@ -1310,6 +1311,14 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .notification-banner .btn-icon { flex: 0 0 auto; }
 /* A slim strip on a phone: the same two controls (still 36px targets), less padding around them and the bell glyph left out of the row's height. */
 @media (max-width: 700px) { .notification-banner { padding: 2px 10px; gap: 8px; } .notification-banner button.btn-icon { width: 36px; height: 36px; min-height: 36px; flex-basis: 36px; } }
+/* The quiet bar that reports the server's update check to the admins, under the room header: the same shape as the notification banner, with Copy, Remind and Skip. */
+.update-banner { display: flex; align-items: center; gap: 10px; padding: 4px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 12px; }
+.update-banner[hidden] { display: none; }
+.update-banner > .icon-mask { flex: 0 0 auto; width: 16px; height: 16px; color: var(--text-muted); }
+.update-banner-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.update-banner-text code { font-size: 11px; }
+.update-banner .btn-icon { flex: 0 0 auto; }
+@media (max-width: 700px) { .update-banner { padding: 2px 10px; gap: 8px; } .update-banner button.btn-icon { width: 36px; height: 36px; min-height: 36px; flex-basis: 36px; } }
 .composer-notice-host { display: contents; }
 .composer-notice { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .composer-notice[hidden] { display: none; }

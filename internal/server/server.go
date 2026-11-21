@@ -94,8 +94,9 @@ type Server struct {
 	CopilotFlow                      *providers.CopilotFlow
 	Switcher                         *switcher.Manager
 	ImportV1Root                     string
-	DataRoot                         string // the config root; falls back to ImportV1Root
-	Version                          string // the build's version string, shown in the page header (GET /api/buildinfo)
+	DataRoot                         string       // the config root; falls back to ImportV1Root
+	Version                          string       // the build's version string, shown in the page header (GET /api/buildinfo)
+	updateStatus                     updateStatus // the latest update check's conclusion (StartUpdateCheck writes it)
 	localSupervisorIDMu              sync.RWMutex
 	LocalSupervisorID                string
 	LocalSupervisorEnvironment       string
@@ -196,6 +197,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/me/preferences", s.Auth.RequireUser(http.HandlerFunc(s.preferencesGet)))
 	mux.Handle("PUT /api/me/preferences", s.Auth.RequireUser(http.HandlerFunc(s.preferencesPut)))
 	mux.Handle("GET /api/disk", s.Auth.RequireUser(http.HandlerFunc(s.diskReport)))
+	mux.Handle("GET /api/update-status", s.Auth.RequireUser(http.HandlerFunc(s.updateStatusHandler)))
+	mux.Handle("POST /api/update-status/skip", s.Auth.RequireUser(s.updateStatusAckHandler("skip")))
+	mux.Handle("POST /api/update-status/remind", s.Auth.RequireUser(s.updateStatusAckHandler("remind")))
 	mux.Handle("POST /api/cleanup", s.Auth.RequireUser(http.HandlerFunc(s.cleanupNow)))
 	mux.Handle("GET /api/cleanup/settings", s.Auth.RequireUser(http.HandlerFunc(s.cleanupSettings)))
 	mux.Handle("PUT /api/cleanup/settings", s.Auth.RequireUser(http.HandlerFunc(s.cleanupSettings)))

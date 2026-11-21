@@ -2062,6 +2062,17 @@ CREATE TABLE IF NOT EXISTS team_flow_migration_interrupt (
   agent_id TEXT NOT NULL REFERENCES agent(id),
   PRIMARY KEY(migration_id,agent_id)
 );
+`}, {128, `
+-- What each person answered about the last update-status notice they saw: skipping one
+-- hides that version and state for good, a remind hides it until the named time. One
+-- row per person; the server's update check overwrites it on the next answer.
+CREATE TABLE IF NOT EXISTS update_status_ack (
+  user_id TEXT PRIMARY KEY REFERENCES user(id),
+  version TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('available','installed')),
+  kind TEXT NOT NULL CHECK (kind IN ('skip','remind')),
+  until TEXT
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

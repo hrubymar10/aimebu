@@ -45,6 +45,7 @@ import { formDialog, cancelAppDialogs } from './dialogs.js';
 import { UpdateBar } from './update-bar.js';
 import { ColumnResize } from './column-resize.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
+import { UpdateBanner } from './update-banner.js';
 import { trackInputModality } from './input-modality.js';
 import { PresenceHeartbeat } from './presence.js';
 
@@ -168,6 +169,8 @@ const notifications = new InboxNotifications(item => {
 }, (room, messageID) => { void selectByPerson(sidebar.rooms.get(room.id) || room, messageID); });
 // The bar that offers browser notifications the first time something needs the person's attention; dismissing it is the account's choice.
 const notificationBanner = new NotificationBanner({ notifications, saveDismissed: () => request('/api/me/preferences', { method: 'PUT', body: { preferences: { [BANNER_DISMISSED_PREFERENCE]: '1' } } }) });
+// The bar that reports the server's own update check to the admins: what the channel's newest release is, or that a restart would pick an applied update up. It sits after the notification banner, so that one keeps its place right under the room header.
+const updateBanner = new UpdateBanner({ getStatus: () => request('/api/update-status'), ack: kind => request(`/api/update-status/${kind}`, { method: 'POST' }), anchor: notificationBanner.bar });
 notifications.onAttention = () => notificationBanner.attention();
 notifications.onPermission = () => notificationBanner.sync();
 const inbox = new Inbox(createInboxSource(), sidebar.projects, sidebar.rooms, async item => {
@@ -551,7 +554,7 @@ async function signedIn(session) {
   // before it could miss. (The first sign-in waits behind the welcome, which can take long, so it starts nothing early.)
   const cursor = session.first_run ? undefined : request('/api/events/cursor');
   cursor?.then(() => chat.prefetchLatest(roomInAddress() || rememberedRoom()), () => {});
-  setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); void agentIsolation.load(); presence.start(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
+  setSession(session); void showBuildVersion(request, document.querySelector('#build-version'), info => void startTelemetry(info?.sentry)).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); void agentIsolation.load(); presence.start(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); void updateBanner.setAccount(rights); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   // The owner is asked about error reports once (after the welcome on a new install, or on the first sign-in after an update brought them).
@@ -622,6 +625,7 @@ async function signedIn(session) {
         await inbox.refresh().catch(() => {});
         void health.refreshLimits();
       }
+      if (event.kind === 'update_status') void updateBanner.refresh();
       if (!active()) return;
       if ((event.agent_id && agents.cards.has(event.agent_id)) || event.kind.startsWith('inbox_item_') || event.kind.startsWith('machine_')) health.schedule();
       knowledge.onEvent(event);

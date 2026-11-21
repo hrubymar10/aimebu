@@ -498,7 +498,8 @@ func TestBinWrapperUpdateKeepsThePreviousVersionWhenTheNewSourceDoesNotBuild(t *
 // annotated tag (on a new commit whose stand-in prints the marker).
 func binWrapperWithTaggedRemote(t *testing.T) (repo string, env []string, script string, pushTag func(tag, marker string)) {
 	t.Helper()
-	repo, env = binWrapperRepo(t, "")
+	repo, env = binWrapperRepo(t, "v2.0.0")
+	env = withGitTransportShim(t, env)
 	remote := t.TempDir()
 	gitIn(t, remote, env, "init", "-q", "--bare")
 	gitIn(t, remote, env, "symbolic-ref", "HEAD", "refs/heads/trunk")
@@ -509,10 +510,13 @@ func binWrapperWithTaggedRemote(t *testing.T) (repo string, env []string, script
 	}
 	gitIn(t, repo, env, "branch", "-M", "trunk")
 	gitIn(t, repo, env, "remote", "add", "origin", remote)
-	gitIn(t, repo, env, "tag", "-a", "v2.0.0", "-m", "v2.0.0")
-	gitIn(t, repo, env, "push", "-q", "origin", "trunk", "v2.0.0")
+	gitIn(t, repo, env, "push", "-q", "origin", "trunk")
+	// The remote's v2.0.0 must be annotated even though the clone's own tag is not:
+	// only annotated tags are ever targets.
 	other := filepath.Join(t.TempDir(), "other")
 	gitIn(t, filepath.Dir(other), env, "clone", "-q", remote, other)
+	gitIn(t, other, env, "tag", "-a", "v2.0.0", "-m", "v2.0.0")
+	gitIn(t, other, env, "push", "-q", "origin", "v2.0.0")
 	pushTag = func(tag, marker string) {
 		t.Helper()
 		if marker != "" {
@@ -525,39 +529,45 @@ func binWrapperWithTaggedRemote(t *testing.T) (repo string, env []string, script
 	script = filepath.Join(repo, "bin", "aimebu")
 	// Detach the clone at v2.0.0 and warm the cached binary.
 	gitIn(t, repo, env, "checkout", "-q", "--detach", "v2.0.0")
-	if out, _ := runBinWrapper(t, script, env); out != "one v2.0.0 []" {
+	if out, _ := runBinWrapper(t, script, env); out != "one aimebu v2.0.0 []" {
 		t.Fatalf("warm-up run printed %q", out)
 	}
 	return repo, env, script, pushTag
 }
 
-func channelEnv(env []string, channel string) []string {
-	if channel == "" {
-		return env
+// withGitTransportShim returns the extra environment for the local file transport:
+// this git dispatches upload-pack and receive-pack through dashed symlinks that do not
+// resolve on every machine (the sandbox here cannot exec them), so a private exec path
+// carries two one-line shims that call the built-ins the transport would have reached.
+func withGitTransportShim(t *testing.T, env []string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, sub := range map[string]string{"git-upload-pack": "upload-pack", "git-receive-pack": "receive-pack"} {
+		writeBinWrapperFile(t, filepath.Join(dir, name), "#!/bin/sh\nexec git "+sub+" \"$@\"\n", 0o755)
 	}
-	return append(env, "AIMEBU_UPDATE_CHANNEL="+channel)
+	return append(env, "GIT_EXEC_PATH="+dir)
 }
 
 func TestBinWrapperComputedDefaultChannelFollowsTheTags(t *testing.T) {
 	repo, env, script, pushTag := binWrapperWithTaggedRemote(t)
-	apply := append(env, "AIMEBU_UPDATE_CHECK=apply")
+	apply := append(env, "AIMEBU_UPDATE_CHECK=apply", "AIMEBU_UPDATE_INTERVAL_HOURS=0")
 
 	// With no stable tag of major 2 on the remote the computed default is prerelease,
 	// and the newest annotated tag of the running major is the one it sits on: current.
-	if out, errs := runBinWrapper(t, script, apply, "run"); out != "one v2.0.0 [run]" || errs != "" {
+	if out, errs := runBinWrapper(t, script, apply, "run"); out != "one aimebu v2.0.0 [run]" || errs != "" {
 		t.Fatalf("current run: out=%q stderr=%q", out, errs)
 	}
 	// The first stable tag of the major switches the computed default to stable, and the
 	// next run updates onto it, detached, with a rebuilt cache.
 	pushTag("v2.1.0", "two")
 	out, errs := runBinWrapper(t, script, apply, "run")
-	if out != "two v2.1.0 [run]" {
+	if out != "two aimebu v2.1.0 [run]" {
 		t.Fatalf("updated run printed %q", out)
 	}
 	if !strings.Contains(errs, "Updated aimebu from ") || !strings.Contains(errs, "Building aimebu") {
 		t.Fatalf("update notice missing from stderr: %q", errs)
 	}
-	if head, tag := gitIn(t, repo, env, "rev-parse", "HEAD"), gitIn(t, repo, env, "rev-parse", "v2.1.0"); head != tag {
+	if head, tag := gitIn(t, repo, env, "rev-parse", "HEAD"), gitIn(t, repo, env, "rev-parse", "v2.1.0^{commit}"); head != tag {
 		t.Fatalf("HEAD %s is not the tag %s", head, tag)
 	}
 	if branch := gitIn(t, repo, env, "branch", "--show-current"); branch != "" {
@@ -565,7 +575,7 @@ func TestBinWrapperComputedDefaultChannelFollowsTheTags(t *testing.T) {
 	}
 	// The server subcommand never prompts and never moves the checkout, even in apply mode.
 	pushTag("v2.2.0", "three")
-	if out, errs := runBinWrapper(t, script, apply, "server"); out != "two v2.1.0 [server]" || errs != "" {
+	if out, errs := runBinWrapper(t, script, apply, "server"); out != "two aimebu v2.1.0 [server]" || errs != "" {
 		t.Fatalf("server run: out=%q stderr=%q", out, errs)
 	}
 	if out, _, _ := runBinWrapperStatus(t, script, env, "update", "--check"); !strings.HasPrefix(out, "aimebu update available: v2.1.0 -> v2.2.0.") {
@@ -582,7 +592,7 @@ func TestBinWrapperChannelFileAndPrereleaseTags(t *testing.T) {
 
 	// A one-word channel file in the config root chooses the channel.
 	root := t.TempDir()
-	withFile := append(env, "AIMEBU_CONFIG_DIR="+root)
+	withFile := append(env, "AIMEBU_CONFIG_DIR="+root, "AIMEBU_UPDATE_INTERVAL_HOURS=0")
 	writeBinWrapperFile(t, filepath.Join(root, "update-channel"), "stable\n", 0o644)
 	if out, _, _ := runBinWrapperStatus(t, script, withFile, "update", "--check"); !strings.HasPrefix(out, "aimebu update available: v2.0.0 -> v2.1.0.") {
 		t.Fatalf("stable channel: %q", out)
@@ -595,13 +605,14 @@ func TestBinWrapperChannelFileAndPrereleaseTags(t *testing.T) {
 	if out, errs, code := runBinWrapperStatus(t, script, withFile, "update"); code != 0 || !strings.HasPrefix(out, "Updated aimebu from ") {
 		t.Fatalf("prerelease update: code=%d out=%q stderr=%q", code, out, errs)
 	}
-	if head, tag := gitIn(t, repo, env, "rev-parse", "HEAD"), gitIn(t, repo, env, "rev-parse", "v2.2.0-rc.1"); head != tag {
+	if head, tag := gitIn(t, repo, env, "rev-parse", "HEAD"), gitIn(t, repo, env, "rev-parse", "v2.2.0-rc.1^{commit}"); head != tag {
 		t.Fatalf("HEAD %s is not the tag %s", head, tag)
 	}
 
-	// An invalid channel word warns and counts as unset (computed default: stable here).
+	// An invalid channel word warns and counts as unset (computed default: stable here);
+	// the warning surfaces when a check actually runs.
 	writeBinWrapperFile(t, filepath.Join(root, "update-channel"), "beta\n", 0o644)
-	_, errs := runBinWrapper(t, script, withFile, "version")
+	_, errs, _ := runBinWrapperStatus(t, script, withFile, "update", "--check")
 	if !strings.Contains(errs, "ignoring invalid channel 'beta'") {
 		t.Fatalf("invalid channel warning missing: %q", errs)
 	}
@@ -618,7 +629,7 @@ func TestBinWrapperIgnoresLightweightTags(t *testing.T) {
 	if out, errs, code := runBinWrapperStatus(t, script, append(env, "AIMEBU_UPDATE_CHANNEL=stable"), "update"); code != 0 || !strings.HasPrefix(out, "Updated aimebu from ") || !strings.Contains(out, "to v2.1.0.") {
 		t.Fatalf("update: code=%d out=%q stderr=%q", code, out, errs)
 	}
-	if head, tag := gitIn(t, repo, env, "rev-parse", "HEAD"), gitIn(t, repo, env, "rev-parse", "v2.1.0"); head != tag {
+	if head, tag := gitIn(t, repo, env, "rev-parse", "HEAD"), gitIn(t, repo, env, "rev-parse", "v2.1.0^{commit}"); head != tag {
 		t.Fatalf("HEAD %s is not the tag %s", head, tag)
 	}
 }
@@ -671,11 +682,12 @@ func TestBinWrapperNoReleaseState(t *testing.T) {
 
 func TestBinWrapperEdgeChannelFollowsABranch(t *testing.T) {
 	repo, env, script, _ := binWrapperWithTaggedRemote(t)
+	gitIn(t, repo, env, "checkout", "-q", "trunk")
 	gitIn(t, repo, env, "push", "-q", "origin", "HEAD:refs/heads/dev")
 	edge := append(env, "AIMEBU_UPDATE_CHANNEL=edge:dev", "AIMEBU_UPDATE_INTERVAL_HOURS=0")
 
 	// A checkout on a branch the channel does not track is left alone.
-	if out, errs := runBinWrapper(t, script, append(edge, "AIMEBU_UPDATE_CHECK=apply"), "run"); out != "one v2.0.0 [run]" || !strings.Contains(errs, "checkout is on 'trunk', not branch 'dev'") {
+	if out, errs := runBinWrapper(t, script, append(edge, "AIMEBU_UPDATE_CHECK=apply"), "run"); out != "one aimebu v2.0.0 [run]" || !strings.Contains(errs, "checkout is on 'trunk', not branch 'dev'") {
 		t.Fatalf("wrong branch: out=%q stderr=%q", out, errs)
 	}
 	// On the tracked branch a published tip is applied and the checkout stays on it.
@@ -687,7 +699,7 @@ func TestBinWrapperEdgeChannelFollowsABranch(t *testing.T) {
 	gitIn(t, other, env, "commit", "-q", "-am", "publish two")
 	gitIn(t, other, env, "push", "-q", "origin", "dev")
 	out, errs := runBinWrapper(t, script, append(edge, "AIMEBU_UPDATE_CHECK=apply"), "run")
-	if out != "two v2.0.0 [run]" || !strings.Contains(errs, "Updated aimebu from ") {
+	if !strings.HasPrefix(out, "two aimebu v2.0.0-1-g") || !strings.Contains(errs, "Updated aimebu from ") {
 		t.Fatalf("edge update: out=%q stderr=%q", out, errs)
 	}
 	if branch := gitIn(t, repo, env, "branch", "--show-current"); branch != "dev" {
@@ -708,7 +720,7 @@ func TestBinWrapperTagUpdateRollsBackToADetachedHeadWhenTheBuildFails(t *testing
 
 	before := gitIn(t, repo, env, "rev-parse", "HEAD")
 	out, errs := runBinWrapper(t, script, append(env, "AIMEBU_UPDATE_CHECK=apply"), "run")
-	if out != "one v2.0.0 [run]" || !strings.Contains(errs, "automatic update failed: the updated source did not build; continuing on the previous version") {
+	if out != "one aimebu v2.0.0 [run]" || !strings.Contains(errs, "automatic update failed: the updated source did not build; continuing on the previous version") {
 		t.Fatalf("failed update: out=%q stderr=%q", out, errs)
 	}
 	if after := gitIn(t, repo, env, "rev-parse", "HEAD"); after != before {

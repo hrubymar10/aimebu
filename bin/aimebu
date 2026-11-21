@@ -157,7 +157,8 @@ running_major() {
 remote_tags() {
     local output value name
     output="$(mktemp "${TMPDIR:-/tmp}/aimebu-update-tags.XXXXXX")" || return 1
-    if ! update_git "$(update_seconds AIMEBU_UPDATE_TIMEOUT_SECONDS 5)" "$output" ls-remote --tags --refs "$UPDATE_REMOTE"; then
+    # No --refs: it would filter out the peeled "^{}" lines the annotated-tag mark is read from.
+    if ! update_git "$(update_seconds AIMEBU_UPDATE_TIMEOUT_SECONDS 5)" "$output" ls-remote --tags "$UPDATE_REMOTE"; then
         rm -f "$output"
         return 1
     fi
@@ -432,7 +433,7 @@ apply_update() {
     shift
     original_oid="$(git -C "$REPO_DIR" rev-parse HEAD)" || { echo "Error: cannot resolve current checkout revision" >&2; exit 1; }
     original_ref="$(git -C "$REPO_DIR" symbolic-ref --quiet HEAD 2>/dev/null || true)"
-    if ! update_git "$(update_seconds AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS 60)" /dev/null fetch --no-tags "$UPDATE_REMOTE" "$UPDATE_DEFAULT_REF"; then
+    if ! update_git "$(update_seconds AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS 60)" /dev/null fetch --no-tags "$UPDATE_REMOTE" "${UPDATE_TARGET_REF:-$UPDATE_DEFAULT_REF}"; then
         update_failure "$automatic" "could not fetch the advertised default-branch tip within the time limit (AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS)" "$original_oid" "$original_ref" "$moved_oid"
         return 0
     fi
@@ -471,6 +472,7 @@ apply_update() {
 # with the previous version after a failure. Explicit: report and return.
 apply_tag_update() {
     local automatic="$1" original_oid original_ref built
+    shift
     original_oid="$(git -C "$REPO_DIR" rev-parse HEAD)" || { echo "Error: cannot resolve current checkout revision" >&2; exit 1; }
     original_ref="$(git -C "$REPO_DIR" symbolic-ref --quiet HEAD 2>/dev/null || true)"
     if ! update_git "$(update_seconds AIMEBU_UPDATE_FETCH_TIMEOUT_SECONDS 60)" /dev/null fetch --no-tags "$UPDATE_REMOTE" "tag" "$UPDATE_TARGET_TAG"; then

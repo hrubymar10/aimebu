@@ -59,6 +59,15 @@ var environment = []envVar{
 		"Set to 1 to skip the v1 port 9997 listener probe so a dev instance can",
 		"rehearse the cutover on a copy of v1 data; never in production, the v1",
 		"daemon pid-file check still runs"}},
+	{[]string{"AIMEBU_UPDATE_CHANNEL"}, []string{
+		"Release channel the wrapper and the server's update check follow: stable,",
+		"prerelease, edge or edge:<branch> (default: computed — prerelease until the",
+		"remote has a stable tag of the running major, then stable; a one-word",
+		"update-channel file in the config root works too, the variable wins)"}},
+	{[]string{"AIMEBU_UPDATE_CHECK"}, []string{
+		"Wrapper update check: 0 turns it and the server's own check off, apply",
+		"updates without asking; the server never updates or prompts either way"}},
+	{[]string{"AIMEBU_UPDATE_REMOTE"}, []string{"Git remote the update checks follow (default: origin)"}},
 	{[]string{"AIMEBU_DEV_CONFIG_DIR", "AIMEBU_DEV_PORT", "AIMEBU_DEV_TLS_PORT", "AIMEBU_DEV_SENTRY_ENV"}, []string{
 		"Overrides for make dev only: config root, HTTP port, HTTPS port, and",
 		"telemetry environment. Any AIMEBU_DEV_<name> becomes AIMEBU_<name>",
