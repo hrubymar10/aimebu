@@ -127,7 +127,7 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
 - **Drafts** belong to the component that edits them: a card owns its Edit form, a models panel its model list and new-model
   entry, the page its Add harness and auto-detect panels. They report unsaved input through `useDirty`; the adapter only
   aggregates the keys for `hasUnsavedChanges()`.
-- **Settings closing** (`SettingsPanel.release()`): the dialog's `close` event clears the page of every section that reports no unsaved
+- **Settings closing** (`SettingsDialog.release()`): the dialog's `close` event clears the page of every section that reports no unsaved
   changes, and a section is drawn again (`show()`, or its own `open()`) when it is next selected, so a closed Settings keeps no section
   in the page (about a thousand nodes). A page with unsaved drafts keeps its tree: the pages that report them through `useDirty` (Roles, Prompts, Macros, Harnesses, and General's message-expiry window) and Usages, whose uncontrolled fields are marked by any text typed in the section until a read of the server redraws them. A write in flight when the page is cleared still
   reaches the server, but its answer is dropped and the next open reloads from the top.

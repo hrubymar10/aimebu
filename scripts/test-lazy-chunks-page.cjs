@@ -27,6 +27,7 @@ async function main() {
 
     // 1. Every lazy chunk is gone (the old build's names after an upgrade): the signed-out page still draws and signs in, and Settings says so.
     const page = await server.open({ width: 1280, height: 900, context: await server.context() });
+    const reported = []; page.on('console', message => { const match = /could not load ([a-z0-9-]+):/.exec(message.text()); if (match) reported.push(match[1]); });
     let buildVersion = null; // when set, /api/buildinfo answers this version (another build)
     await page.setRequestInterception(true);
     page.on('request', request => {
@@ -41,6 +42,8 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('#app-toast').hidden && /Could not load that part of the page/.test(document.querySelector('#app-toast').textContent), { timeout: 8000 });
     assert.equal(await page.evaluate(() => document.querySelector('#settings-dialog').open), false, 'Settings did not open without its chunk');
     assert.equal(await page.$('#update-bar'), null, 'the same build is no reason to ask for a reload');
+    assert.ok(reported.includes('settings'), 'the person'+"'s own open of Settings reports");
+    assert.ok(!reported.includes('health'), `the app's own health refresh reports nothing (${reported})`);
 
     // 2. The server is another build: with something typed a bar stays up (and Settings is retried by the next click); with nothing typed the page reloads.
     buildVersion = 'aimebu v9.9.9-new';
@@ -63,6 +66,32 @@ async function main() {
     await history.evaluate(() => history.back());
     await history.waitForFunction(() => document.querySelector('#settings-dialog').open, { timeout: 8000 });
     await history.close();
+
+    // 5. A Settings asked for while the chunk is on its way, and a session that ends before it arrives: the dialog does not open over sign-in.
+    const slow = await server.open({ width: 1280, height: 900, context: await server.context() });
+    await slow.setRequestInterception(true);
+    let delayed = false;
+    slow.on('request', request => {
+      if (delayed && lazyChunk(request.url())) setTimeout(() => request.continue().catch(() => {}), 3000); else request.continue();
+    });
+    await signIn(slow, server.origin);
+    delayed = true;
+    await slow.evaluate(() => { document.querySelector('#settings-toggle').click(); document.querySelector('#logout').click(); });
+    await slow.waitForSelector('#login-view:not([hidden])', { timeout: 8000 });
+    await sleep(4500);
+    assert.equal(await slow.evaluate(() => document.querySelector('#settings-dialog')?.open ?? false), false, 'Settings of the ended session did not open over sign-in');
+    await slow.close();
+
+    // 6. The first-run setup page is a chunk: when it cannot be fetched the boot view says so with Retry, not a blank page.
+    const setup = await server.open({ width: 1280, height: 900, context: await server.context() });
+    await setup.setRequestInterception(true);
+    setup.on('request', request => { // (this server has an owner, so its own /setup is a 404: the page is served there as the setup of a new server would be)
+      if (new URL(request.url()).pathname === '/setup') request.respond({ status: 200, contentType: 'text/html', body: html });
+      else if (lazyChunk(request.url())) request.respond({ status: 404, contentType: 'text/plain', body: 'not found' }); else request.continue(); });
+    await setup.goto(server.origin + '/setup');
+    await setup.waitForFunction(() => !document.querySelector('#boot-view').hidden && !document.querySelector('#boot-retry').hidden, { timeout: 8000 });
+    assert.match(await setup.$eval('#boot-status', node => node.textContent), /Could not load/);
+    await setup.close();
 
     // 4. An onboarding that was queued for a chunk still on its way when the session ends does not show in the next one.
     const late = await server.open({ width: 1280, height: 900, context: await server.context() });

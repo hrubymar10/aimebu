@@ -1,5 +1,4 @@
 import { request } from './api.js';
-import { reportChunkFailure } from './lazy.js';
 
 // The v1 import wizard is a lazily fetched chunk (a large module that only an install with a v1 backup ever shows). This is what the app holds in its
 // place: it asks the server whether an import is pending (the one request the wizard's own startup check makes) and loads the wizard only when it is,
@@ -20,7 +19,7 @@ export class LazyImportWizard {
       this.wizard = new module.ImportV1Wizard(this.currentSession);
       for (const listener of this.closeListeners) this.wizard.dialog.addEventListener('close', listener);
       return this.wizard;
-    }, error => { this.loading = null; reportChunkFailure(error, 'import-v1'); throw error; });
+    }, error => { this.loading = null; throw error; }); // a startup check, not the person's: the caller (app.js) records the failure quietly
     return this.loading;
   }
   async maybeOpen(signal, isCurrent = () => true) {

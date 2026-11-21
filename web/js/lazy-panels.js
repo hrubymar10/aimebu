@@ -54,9 +54,10 @@ export class LazyHealth {
   }
   get ticket() { return this.lazy.instance ? this.lazy.instance.ticket : this.ticketValue; }
   set ticket(value) { this.ticketValue = value; if (this.lazy.instance) this.lazy.instance.ticket = value; }
-  refresh() { return this.lazy.run(health => health.refresh(), { key: 'refresh' }); }
-  refreshLimits() { return this.lazy.run(health => health.refreshLimits(), { key: 'limits' }); }
-  schedule() { this.lazy.run(health => health.schedule(), { key: 'schedule' }); }
+  // The refreshes are the app's own (a timer, a stream event, sign-in): a chunk that cannot be fetched is not told to the person, only the toggle is.
+  refresh() { return this.lazy.run(health => health.refresh(), { key: 'refresh', background: true }); }
+  refreshLimits() { return this.lazy.run(health => health.refreshLimits(), { key: 'limits', background: true }); }
+  schedule() { this.lazy.run(health => health.schedule(), { key: 'schedule', background: true }); }
   // Closing what was never opened is nothing to do.
   setOpen(open) { if (this.lazy.instance) this.lazy.instance.setOpen(open); }
 }

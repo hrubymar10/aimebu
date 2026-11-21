@@ -26,6 +26,7 @@ export class Lazy {
     this.loader = loader; this.label = label;
     this.instance = null; this.promise = null;
     this.pending = new Map();
+    this.quietUntil = 0;
     registry.add(this);
   }
   // The object, made once; a failed fetch is reported and tried again by the next call.
@@ -39,11 +40,14 @@ export class Lazy {
     return this.promise;
   }
   // Runs call(instance) now, or once the object is made; `load: false` queues it without fetching the chunk (it runs if the chunk is fetched for another reason).
-  run(call, { key = Symbol(), load = true } = {}) {
+  // `background` is for a load nobody asked for (a timer's refresh, a sign-in's catch-up): a failure of it is not reported or shown, and the chunk is not asked
+  // for again for 30 s (the next call after that retries); a person's own use of the screen reports.
+  run(call, { key = Symbol(), load = true, background = false } = {}) {
     if (this.instance) return call(this.instance);
+    if (background && Date.now() < this.quietUntil) return undefined;
     const session = generation;
     this.pending.set(key, instance => { if (session === generation) call(instance); });
-    if (load) this.load().catch(error => reportChunkFailure(error, this.label));
+    if (load) this.load().catch(error => { if (background) this.quietUntil = Date.now() + 30000; else reportChunkFailure(error, this.label); });
     return undefined;
   }
   // Fetches the chunk, without making the object, when the browser is idle.

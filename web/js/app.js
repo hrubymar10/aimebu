@@ -762,7 +762,11 @@ document.querySelector('#boot-retry').onclick = () => location.reload();
 try {
   // The first-run owner setup (welcome, setup token, Create owner, theme) runs on /setup, and also on / while the server has no owner and
   // is waiting for its setup token: no session exists yet, and it ends signed in as the new owner.
-  const runSetup = async () => (await import('./pages/setup/page.js')).ownerSetup({ views: { token: document.querySelector('#setup-token-view'), owner: document.querySelector('#setup-view'), theme: document.querySelector('#theme-view') } });
+  const runSetup = async () => {
+    let setup;
+    try { setup = await import('./pages/setup/page.js'); } catch (error) { reportChunkFailure(error, 'setup'); bootView.hidden = false; throw error; } // the boot view with Retry (the catch below), not a blank page
+    return setup.ownerSetup({ views: { token: document.querySelector('#setup-token-view'), owner: document.querySelector('#setup-view'), theme: document.querySelector('#theme-view') } });
+  };
   let session = null;
   if (location.pathname === '/setup') { bootView.hidden = true; session = await runSetup(); }
   if (!session) {

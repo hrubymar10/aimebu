@@ -1,7 +1,7 @@
 import { ProjectSettings } from './pages/project/page.js';
 import { createProjectSettingsSource } from './project-settings-source.js';
 import { parsePath } from './pages/shell/registry.js';
-import { reportChunkFailure } from './lazy.js';
+import { reportChunkFailure, lazySession } from './lazy.js';
 import { knownTheme, themeAttribute, themeKey } from './pages/general/model.js';
 
 // The signed-in person's theme is applied at sign-in, not when General is first opened (that page is in the lazy dialog and applies it again).
@@ -72,7 +72,9 @@ export class SettingsPanel {
   }
   async open(section = '', options = {}) {
     let dialog;
+    const session = lazySession(); // a Settings asked for by a session that ended while the chunk came is not opened for the next
     try { dialog = await this.load(); } catch (error) { reportChunkFailure(error, 'settings'); return; }
+    if (session !== lazySession()) return;
     return dialog.open(section, options);
   }
   usagesChanged() { return this.dialogModule?.usagesChanged(); }
