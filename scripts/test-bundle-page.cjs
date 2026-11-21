@@ -55,14 +55,15 @@ async function main() {
     assert.deepEqual(modules, [], `the page fetched modules of the app: ${modules.slice(0, 5)}`);
     assert.deepEqual(requests.filter(pathname => pathname === '/bundle/app.js'), ['/bundle/app.js'], 'the bundle is fetched once');
     assert.ok(requests.length <= 60, `a page load is ${requests.length} requests (it was about 290 with the modules): ${requests.join(' ')}`);
-    assert.ok(scripts.length <= 4, `scripts fetched: ${scripts}`);
+    assert.ok(scripts.length <= 6, `scripts fetched: ${scripts}`); // the entry and the chunks it shares with the lazy ones
+    assert.ok(!scripts.some(pathname => /settings-dialog|import-v1/.test(pathname)), `Settings or the import wizard was fetched before it was needed: ${scripts}`);
     const bundle = responses.get('/bundle/app.js');
     assert.equal(bundle.headers()['content-encoding'], 'gzip', 'the bundle is gzipped');
     assert.equal(bundle.headers()['cache-control'], 'public, max-age=31536000, immutable', 'and cached for good under its version');
     assert.ok(/^\/bundle\/app\.js$/.test(new URL(bundle.url()).pathname) && /\?v=[0-9a-f]+$/.test(new URL(bundle.url()).search), 'under a name that carries the version');
     assert.ok(!requests.includes('/bundle/app.js.map'), 'the source map is fetched only by developer tools');
     assert.equal(await page.evaluate(() => [...document.querySelectorAll('script[src]')].map(script => new URL(script.src).pathname).join()), '/bundle/app.js', 'the page has one script');
-    assert.equal(await page.evaluate(() => document.querySelectorAll('link[rel=modulepreload]').length), 0, 'and no hint for modules it does not fetch');
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('link[rel=modulepreload]')].filter(link => !new URL(link.href).pathname.startsWith('/bundle/chunk-')).length), 0, 'and no hint for modules it does not fetch (only for the entry\'s shared chunks)');
 
     // The app works: a message goes out, the dialogs open (they are built from the bundled modules), nothing is thrown.
     await page.$eval('#composer textarea[name=body]', node => { node.value = 'sent from the bundle'; node.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -74,6 +75,7 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
     await page.$eval('#settings-toggle', node => node.click());
     await page.waitForFunction(() => document.querySelector('#settings-dialog').open);
+    assert.ok(every.some(pathname => /^\/bundle\/settings-dialog-[A-Za-z0-9]+\.js$/.test(pathname)), 'Settings is a chunk fetched when it is opened');
     await page.$eval('#settings-close', node => node.click());
     await page.$eval('#spawn-open', node => node.click());
     await page.waitForFunction(() => document.querySelector('#spawn-dialog').open);

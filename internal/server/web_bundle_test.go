@@ -52,7 +52,7 @@ func TestThePageStartsFromTheBundle(t *testing.T) {
 		t.Fatalf("the page does not start from /bundle/app.js?v=…: status %d\n%s", page.StatusCode, html)
 	}
 	text := string(html)
-	for _, forbidden := range []string{`src="/js/app.js`, `rel="modulepreload"`} {
+	for _, forbidden := range []string{`src="/js/app.js`, `rel="modulepreload" href="/js/`, `rel="modulepreload" href="/vendor/`} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("the page still has %s", forbidden)
 		}
@@ -70,17 +70,34 @@ func TestThePageStartsFromTheBundle(t *testing.T) {
 		!strings.HasPrefix(plain.Header.Get("Content-Type"), "text/javascript") || !strings.Contains(plain.Header.Get("Vary"), "Accept-Encoding") {
 		t.Fatalf("bundle: status %d, encoding %q, cache %q, type %q, vary %q", plain.StatusCode, plain.Header.Get("Content-Encoding"), plain.Header.Get("Cache-Control"), plain.Header.Get("Content-Type"), plain.Header.Get("Vary"))
 	}
+	var sharedSources []string
 	// Minified (the sources are 1.3 MB with their comments and indentation; the templates' own text is kept as it is), not a stub, and no eval: the policy
 	// forbids it, and a build that quietly started to need it would only fail in a browser.
-	if len(source) < 200_000 || len(source) > 1_500_000 || bytes.Contains(source, []byte("eval(")) || bytes.Contains(source, []byte("new Function(")) {
-		t.Fatalf("the bundle is %d bytes (want 200 KB to 1.5 MB), or uses eval", len(source))
+	if len(source) < 200_000 || len(source) > 900_000 || bytes.Contains(source, []byte("eval(")) || bytes.Contains(source, []byte("new Function(")) {
+		t.Fatalf("the bundle is %d bytes (want 200 KB to 0.9 MB for the entry chunk), or uses eval", len(source))
 	}
 	if !bytes.Contains(source, []byte("//# sourceMappingURL=app.js.map")) {
 		t.Error("the bundle does not name its source map")
 	}
 	// Function and class names survive minification (esbuild's keep-names records them as strings): an error report names them.
+	// (Code the entry shares with a lazy chunk is moved to a chunk the entry imports at load, and the page hints it.)
+	loaded := append([]byte(nil), source...)
+	for _, shared := range regexp.MustCompile(`<link rel="modulepreload" href="/bundle/([A-Za-z0-9_-]+\.js)">`).FindAllSubmatch(html, -1) {
+		_, body := fetchRaw(t, f.http.URL+"/bundle/"+string(shared[1]), false)
+		loaded = append(loaded, body...)
+		_, chunkMap := fetchRaw(t, f.http.URL+"/bundle/"+string(shared[1])+".map", false)
+		var chunkParsed struct {
+			Sources []string `json:"sources"`
+		}
+		if json.Unmarshal(chunkMap, &chunkParsed) == nil {
+			sharedSources = append(sharedSources, chunkParsed.Sources...)
+		}
+	}
+	if len(sharedSources) == 0 {
+		t.Error("the page hints no shared chunk of the entry")
+	}
 	for _, name := range []string{`"Chat"`, `"Sidebar"`, `"request"`} {
-		if !bytes.Contains(source, []byte(name)) {
+		if !bytes.Contains(loaded, []byte(name)) {
 			t.Errorf("the bundle does not keep the name %s", name)
 		}
 	}
@@ -110,7 +127,7 @@ func TestThePageStartsFromTheBundle(t *testing.T) {
 	if smap.StatusCode != 200 || smap.Header.Get("Content-Encoding") != "" || json.Unmarshal(mapBody, &parsed) != nil || parsed.Version != 3 {
 		t.Fatalf("source map: status %d, %v", smap.StatusCode, json.Unmarshal(mapBody, &parsed))
 	}
-	names := strings.Join(parsed.Sources, "\n")
+	names := strings.Join(append(parsed.Sources, sharedSources...), "\n")
 	for _, want := range []string{"js/chat.js", "js/pages/sidebar/store.js", "vendor/preact/preact.mjs"} {
 		if !strings.Contains(names, want) {
 			t.Errorf("the source map does not list %s", want)
@@ -123,6 +140,35 @@ func TestThePageStartsFromTheBundle(t *testing.T) {
 		if strings.Contains(source, "/Users/") || strings.Contains(source, "/home/") || strings.Contains(source, "/tmp/") {
 			t.Errorf("a source of the map names a machine path: %s", source)
 		}
+	}
+	// The lazily loaded parts (Settings, the v1 import wizard) are chunks the entry imports by name: served under that name, packed, cached for good, and
+	// all of it (entry and chunks) stays inside the total and gzip ceilings.
+	chunkNames := regexp.MustCompile(`import\("\./([A-Za-z0-9_-]+\.js)"\)`).FindAllSubmatch(source, -1)
+	if len(chunkNames) < 2 {
+		t.Fatalf("the entry imports %d chunks lazily, want Settings and the import wizard at least", len(chunkNames))
+	}
+	total, packedTotal := len(source), len(packedBody)
+	for _, found := range chunkNames {
+		name := string(found[1])
+		plainChunk, chunkSource := fetchRaw(t, f.http.URL+"/bundle/"+name, false)
+		if plainChunk.StatusCode != 200 || plainChunk.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" || !strings.HasPrefix(plainChunk.Header.Get("Content-Type"), "text/javascript") {
+			t.Fatalf("chunk %s: status %d, cache %q, type %q", name, plainChunk.StatusCode, plainChunk.Header.Get("Cache-Control"), plainChunk.Header.Get("Content-Type"))
+		}
+		packedChunk, packedChunkBody := fetchRaw(t, f.http.URL+"/bundle/"+name, true)
+		if packedChunk.Header.Get("Content-Encoding") != "gzip" || len(packedChunkBody) >= len(chunkSource) {
+			t.Fatalf("chunk %s is not packed: %q, %d for %d", name, packedChunk.Header.Get("Content-Encoding"), len(packedChunkBody), len(chunkSource))
+		}
+		if mapResponse, _ := fetchRaw(t, f.http.URL+"/bundle/"+name+".map", false); mapResponse.StatusCode != 200 {
+			t.Errorf("chunk %s has no source map: %d", name, mapResponse.StatusCode)
+		}
+		total += len(chunkSource)
+		packedTotal += len(packedChunkBody)
+	}
+	if total > 1_100_000 || packedTotal > 330_000 {
+		t.Errorf("the bundle is %d bytes in all, %d gzipped (ceilings 1.1 MB and 330 KB)", total, packedTotal)
+	}
+	if missing, _ := fetchRaw(t, f.http.URL+"/bundle/nothing-ABCDEFGH.js", false); missing.StatusCode == 200 && strings.HasPrefix(missing.Header.Get("Content-Type"), "text/javascript") {
+		t.Error("a chunk that does not exist is served")
 	}
 	// The modules are still served as they were (a debugging switch and the tests of the app's internals use them).
 	if module, body := fetchRaw(t, f.http.URL+"/js/api.js", false); module.StatusCode != 200 || !bytes.Contains(body, []byte("export async function request")) {

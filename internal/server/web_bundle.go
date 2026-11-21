@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +48,18 @@ type webBundle struct {
 	js     []byte
 	jsGzip []byte
 	smap   []byte
+	// chunks are the lazily loaded parts (code splitting): the files a dynamic import() of the entry asks for, by file name ("settings-AB12.js", "settings-AB12.js.map").
+	// Their names carry a hash of their content, so they are served as cached for good under any query.
+	chunks map[string]bundleChunk
+	// shared are the chunks the entry (and the others) import statically: code the entry and a lazy chunk both need is moved out of the entry into
+	// one of them, so the page hints them to start their fetch with the entry's rather than after it has been parsed.
+	shared []string
+}
+
+// bundleChunk is one lazily loaded file: a chunk's script (packed too) or its source map.
+type bundleChunk struct {
+	body []byte
+	gz   []byte // nil for a map
 }
 
 // bundleCache keeps a bundle for the sources it was made from: every Server of a process (a test makes hundreds) shares the one build.
@@ -163,25 +176,45 @@ func runEsbuild(raw map[string][]byte) (webBundle, error) {
 		// columns are the minified ones (the source map is not uploaded anywhere).
 		KeepNames: true,
 		Sourcemap: api.SourceMapLinked,
-		Outfile:   "app.js",
-		Write:     false,
-		Plugins:   []api.Plugin{memory},
-		LogLevel:  api.LogLevelSilent,
+		// Splitting puts what only a lazily imported module needs (Settings, the wizards, ...) in chunks the page fetches when it opens them.
+		Splitting:  true,
+		Outdir:     "/bundle",
+		EntryNames: "app",
+		ChunkNames: "[name]-[hash]",
+		Write:      false,
+		Plugins:    []api.Plugin{memory},
+		LogLevel:   api.LogLevelSilent,
 		// The legal comments of the vendored libraries stay in the file (their licenses ask for it).
 		LegalComments: api.LegalCommentsEndOfFile,
 	})
 	for _, message := range result.Errors {
 		return webBundle{}, fmt.Errorf("bundling the web modules: %s%s", message.Text, locationOf(message))
 	}
-	var bundle webBundle
+	bundle := webBundle{chunks: map[string]bundleChunk{}}
 	for _, out := range result.OutputFiles {
+		name := path.Base(out.Path)
+		contents := append([]byte(nil), out.Contents...)
 		switch {
-		case strings.HasSuffix(out.Path, ".map"):
-			bundle.smap = append([]byte(nil), out.Contents...)
-		case strings.HasSuffix(out.Path, ".js"):
-			bundle.js = append([]byte(nil), out.Contents...)
+		case name == "app.js.map":
+			bundle.smap = contents
+		case name == "app.js":
+			bundle.js = contents
+		case strings.HasSuffix(name, ".map"):
+			bundle.chunks[name] = bundleChunk{body: contents}
+		case strings.HasSuffix(name, ".js"):
+			packed, err := gzipBytes(contents)
+			if err != nil {
+				return webBundle{}, err
+			}
+			bundle.chunks[name] = bundleChunk{body: contents, gz: packed}
 		}
 	}
+	for _, found := range staticChunkImport.FindAllSubmatch(bundle.js, -1) {
+		if _, ok := bundle.chunks[string(found[1])]; ok {
+			bundle.shared = append(bundle.shared, string(found[1]))
+		}
+	}
+	sort.Strings(bundle.shared)
 	if len(bundle.js) == 0 {
 		return webBundle{}, fmt.Errorf("bundling the web modules produced no output")
 	}
@@ -209,3 +242,17 @@ func locationOf(message api.Message) string {
 	}
 	return fmt.Sprintf(" (%s:%d)", strings.TrimPrefix(message.Location.File, embeddedNamespace+":"), message.Location.Line)
 }
+
+// isChunk says whether name ("bundle/settings-AB12.js", or its ".map") is one of the bundle's lazily loaded files.
+func (b *webBundle) isChunk(name string) bool {
+	rest, ok := strings.CutPrefix(name, "bundle/")
+	if !ok {
+		return false
+	}
+	_, ok = b.chunks[rest]
+	return ok
+}
+
+// staticChunkImport finds the chunks the entry imports at load (`import"./chunk.js"` or `from"./chunk.js"`, as esbuild writes them minified); a dynamic
+// import() of a chunk is not one.
+var staticChunkImport = regexp.MustCompile(`(?:^|[;}\s])(?:import|from)\s*"\./([A-Za-z0-9_-]+\.js)"`)

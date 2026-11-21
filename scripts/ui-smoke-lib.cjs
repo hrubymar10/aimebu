@@ -157,6 +157,8 @@ async function start() {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve(button.isConnected && box() === before && !button.disabled)));
       }), {}, selector);
       await page.$eval(selector, button => button.click());
+      // Settings is a chunk fetched when it is first opened, so its dialog opens a moment after the click (a click that cannot open it just waits out the timeout).
+      if (selector === '#settings-toggle') await page.waitForFunction(() => document.querySelector('#settings-dialog')?.open, { timeout: 3000 }).catch(() => {});
     };
     // A row's toolbar is made when the row is reached (hovered, focused or touched). `reach` does what the pointer does, for a row named by a selector.
     const reachRow = (page, row) => page.evaluate(row => { const node = document.querySelector(row); (node?.querySelector('.chat-msg-bubble') || node)?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); }, row);
@@ -234,6 +236,8 @@ async function start() {
     });
     async function openSettings(page) {
       await domClick(page, '#settings-toggle');
+      // The dialog is a chunk fetched on first use, so it opens a moment after the click.
+      await page.waitForFunction(() => document.querySelector('#settings-dialog')?.open, { timeout: 5000 }).catch(() => {});
       const state = await page.evaluate(() => ({
         open: document.querySelector('#settings-dialog').open,
         dialogs: [...document.querySelectorAll('dialog[open]')].map(dialog => dialog.id),

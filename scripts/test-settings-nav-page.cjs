@@ -24,7 +24,7 @@ async function main() {
     const settle = (target = page) => target.evaluate(() => new Promise(resolve => setTimeout(resolve, 350)));
     await settle();
     const state = (target = page) => target.evaluate(() => ({ hash: location.hash, open: document.querySelector('#settings-dialog').open, category: document.querySelector('#settings-dialog').dataset.category, view: document.querySelector('#settings-dialog').dataset.view,
-      title: document.querySelector('#settings-title').textContent, history: history.length }));
+      title: document.querySelector('#settings-title')?.textContent ?? null, history: history.length }));
     const click = async (selector, target = page) => { await target.$eval(selector, el => el.click()); await settle(target); };
     const back = async (target = page) => { await target.evaluate(() => history.back()); await settle(target); };
     const room = await page.evaluate(() => location.hash);

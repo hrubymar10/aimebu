@@ -124,8 +124,8 @@ transport inside a test binary.
 
 **Web UI (browser)**
 
-- Uncaught errors and unhandled promise rejections, with stack frames reduced to the script path. The page's own code is one bundled script
-  (`/bundle/app.js`), so the path says no more than that; the bundle keeps function and class names (esbuild's `keepNames`), so a frame still names
+- Uncaught errors and unhandled promise rejections, with stack frames reduced to the script path. The page's own code is one bundled entry script
+  (`/bundle/app.js`) and a few chunks beside it (`/bundle/<name>-<hash>.js`), so the path says no more than that; the bundle keeps function and class names (esbuild's `keepNames`), so a frame still names
   the function, and its source map is served beside it but is not uploaded anywhere.
 - Errors the page catches and carries on from (`captureError` in `web/js/telemetry.js`): a page's render error (its `ErrorBoundary` shows nothing and
   reports it, tag `source: render`), a failed workspace startup or a read the page tolerates (`startup`, `usages.load`, `preferences.upload`, ... one

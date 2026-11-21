@@ -35,7 +35,7 @@ import { initMobileTabs } from './pages/mobile-tabs/page.js';
 import { initUIVariants } from './ui-variant.js';
 import { attachFolderField } from './folder-field.js';
 import { copyText } from './markdown.js';
-import { ImportV1Wizard } from './import-v1.js';
+import { LazyImportWizard } from './import-v1-lazy.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
 import { DiskUsage } from './pages/health/disk.js';
 import { showBuildVersion } from './build-version.js';
@@ -295,7 +295,7 @@ settings.project.onLifecycle = async projectID => {
 settings.project.onRemoved = async projectID => { await projectRemoved(projectID); };
 settings.onRights = () => applyRights();
 document.addEventListener('aimebu:open-settings', event => settings.open(event.detail?.section || '', event.detail));
-const importWizard = new ImportV1Wizard(() => {
+const importWizard = new LazyImportWizard(() => {
   const generation = sessionGeneration;
   return () => generation === sessionGeneration;
 });
@@ -349,7 +349,7 @@ const harnessSeen = () => { if (harnessSkipStored) void setHarnessSkipped(false)
 settings.harnessSettings.onReady = harnessSeen;
 const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.owner, onSkip: () => setHarnessSkipped(true), onReady: harnessSeen });
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
-importWizard.dialog.addEventListener('close', () => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
+importWizard.onClose(() => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'), () => rights.owner);
 const topbarMenu = new TopbarMenu();
 new ColumnResize();
@@ -367,7 +367,7 @@ let selectionsInFlight = 0;
 function cancelStartup() {
   startupController?.abort();
   startupController = null;
-  if (importWizard.dialog.open) importWizard.dialog.close();
+  importWizard.close();
 }
 function resetWorkspace() {
   cancelStartup();
@@ -659,7 +659,7 @@ async function signedIn(session) {
     if (!startupActive()) return;
     refreshEmptyState();
     // The last step of the first run: with no project yet (nothing imported, or the import skipped) the owner makes the first one.
-    if (!importWizard.dialog.open && sidebar.projects.size === 0) onboarding.show();
+    if (!importWizard.open && sidebar.projects.size === 0) onboarding.show();
     if (signin.pendingInvite) signin.openDialog();
     startupSucceeded = true;
     // Items already waiting for the person are something that needs them too: the bar is offered once, the first time.
@@ -667,7 +667,7 @@ async function signedIn(session) {
     // The owner, with no harness that has a model, is offered the Harnesses step (after a v1 import, which carries no harness over; on
     // a first sign-in from another browser; when every harness was removed): nothing can be spawned without one. The answer comes from the
     // server, and so does a skip. Outside the startup deadline: a slow supervisor must not turn a loaded workspace into a timeout.
-    if (!importWizard.dialog.open && !onboarding.open && sidebar.projects.size > 0) {
+    if (!importWizard.open && !onboarding.open && sidebar.projects.size > 0) {
       void offerHarnessSetup({
         user: currentUser, canSetUp: rights.owner, skipped: harnessSkipStored, configured: () => anyHarnessConfigured(request),
         show: async () => { if (active() && !onboarding.open) await onboarding.showHarnesses('harness-only'); }, setSkipped: value => setHarnessSkipped(value, generation),

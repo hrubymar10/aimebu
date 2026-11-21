@@ -3266,7 +3266,7 @@ async function main() {
           const ys = new Set(); const started = performance.now();
           document.querySelector('#settings-toggle').click();
           const sample = () => {
-            ys.add(Math.round(document.querySelector('#settings-macros-tab').getBoundingClientRect().y));
+            const tab = document.querySelector('#settings-macros-tab'); if (tab) ys.add(Math.round(tab.getBoundingClientRect().y)); // the dialog is a chunk: its tabs exist once it has loaded
             if (performance.now() - started < 1200) requestAnimationFrame(sample);
             else resolve({ ys: [...ys], pending: document.querySelector('#settings-users-tab').classList.contains('settings-tab-pending'), usersHidden: document.querySelector('#settings-users-tab').hidden });
           };

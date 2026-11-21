@@ -460,7 +460,7 @@ func (s *Server) Handler() http.Handler {
 			s.serveAppPage(w, r, web)
 			return
 		}
-		if web.bundle != nil && (name == bundleURL || name == bundleURL+".map") {
+		if web.bundle != nil && (name == bundleURL || name == bundleURL+".map" || web.bundle.isChunk(name)) {
 			serveWebBundle(w, r, web, name)
 			return
 		}
@@ -509,12 +509,27 @@ func (s *Server) Handler() http.Handler {
 // with gzip for a browser that accepts it: the bundle is built once, so it is packed once. The map is only asked for by a browser's developer tools.
 func serveWebBundle(w http.ResponseWriter, r *http.Request, web webAssets, name string) {
 	h := w.Header()
-	if r.URL.Query().Get("v") == web.version {
+	chunk, isChunk := web.bundle.chunks[strings.TrimPrefix(name, "bundle/")]
+	if isChunk || r.URL.Query().Get("v") == web.version {
+		// A chunk's name carries a hash of its content, so it never changes under that name.
 		h.Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
 		h.Set("Cache-Control", "no-cache")
 	}
 	h.Add("Vary", "Accept-Encoding")
+	if isChunk {
+		body, kind, tag := chunk.body, "text/javascript; charset=utf-8", `"`+strings.TrimPrefix(name, "bundle/")+`"`
+		if strings.HasSuffix(name, ".map") {
+			kind = "application/json"
+		} else if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			body, tag = chunk.gz, strings.TrimSuffix(tag, `"`)+`-gzip"`
+			h.Set("Content-Encoding", "gzip")
+		}
+		h.Set("ETag", tag)
+		h.Set("Content-Type", kind)
+		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
+		return
+	}
 	// An ETag lets a request that is not under the version (and so is revalidated) be answered 304; the packed file is another body and has its own.
 	body, kind, tag := web.bundle.js, "text/javascript; charset=utf-8", `"`+web.version+`"`
 	if strings.HasSuffix(name, ".map") {

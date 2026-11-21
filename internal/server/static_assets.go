@@ -200,6 +200,14 @@ func makeWebAssets(raw map[string][]byte, hash hash.Hash, bundled bool) (webAsse
 		}
 		page = strings.ReplaceAll(page, path+`"`, replacement+"?v="+version+`"`)
 	}
+	if bundle != nil && len(bundle.shared) > 0 {
+		marker := `<script type="module" src="/` + bundleURL + `?v=` + version + `">`
+		var hints strings.Builder
+		for _, name := range bundle.shared {
+			hints.WriteString(`<link rel="modulepreload" href="/bundle/` + name + `">` + "\n")
+		}
+		page = strings.Replace(page, marker, hints.String()+marker, 1)
+	}
 	page = importMap.ReplaceAllStringFunc(page, func(block string) string {
 		return importMapEntry.ReplaceAllString(block, "${1}?v="+version+"${2}")
 	})
