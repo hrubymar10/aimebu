@@ -26,6 +26,11 @@ func (m *Manager) OverlayUsages(response *usages.Response) error {
 		if tool != "claude" && tool != "codex" {
 			continue
 		}
+		// The expiry badge and the expiry alert apply where the token-copy
+		// model applies: there the server refreshes the stored logins and
+		// their short-lived tokens are its business. On the link model the
+		// CLI renews its own login.
+		migrated := m.TokenCopiesFor(tool)
 		base := response.Providers[i].Profiles[0]
 		configured := []usages.Profile{}
 		for _, profile := range profiles {
@@ -46,6 +51,7 @@ func (m *Manager) OverlayUsages(response *usages.Response) error {
 				item = base
 				item.ProfileName, item.Active, item.HasCredentials, item.Email, item.ExpiresAt, item.AlertIdentity = profile.Name, true, profile.HasCreds, profile.Email, profile.ExpiresAt, profile.AlertIdentity
 			}
+			item.ToolMigrated = migrated
 			configured = append(configured, item)
 		}
 		if len(configured) > 0 {

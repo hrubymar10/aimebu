@@ -141,8 +141,9 @@ pill, and turning a toggle off closes what it had opened.
   that draws "Runs out in …", from `pace.eta_seconds`), the Inbox gets one
   notice per risk episode, with the window, the remaining share and the reset
   time. The episode closes when the window is again projected to last until
-  its reset (or the toggle goes off), and only then can a later episode raise
-  a fresh notice; a new reset cycle closes and re-arms it too.
+  its reset (or the toggle goes off), and re-arms only once the window has
+  been at risk again for more than ten minutes — a jittery projection cannot
+  flip the alert back on; a new reset cycle closes and re-arms it too.
 - **Reset notices**: one Inbox note per provider, profile and window when a
   new reset cycle is observed (never for the very first observation). The
   next cycle's observation closes it, as does dismissal.
@@ -150,6 +151,8 @@ pill, and turning a toggle off closes what it had opened.
   Usages token-expiry badge, a notice when a Claude or Codex credential is
   within its expiry alert window (15 minutes) or has expired — one per
   account and expiry time, wording itself "expired" once the expiry passes.
+  Like the badge, it applies only to the token-copy model, whose logins the
+  server refreshes; a linked login the CLI renews itself raises nothing.
   A renewed credential closes the notice, and a later decay raises a fresh
   one; the notice carries no reset time, so it stays open until then.
 

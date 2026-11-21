@@ -3,13 +3,8 @@ import { SettingsGroup, SettingsRow } from '../../components/settings-row.js';
 import { mergeAlerts } from '../../usage-alerts.js';
 import { confirmDialog } from '../../dialogs.js';
 import { usagesPorts } from '../../usages-ports.js';
-import { maskName, maskingOn } from '../../usage-privacy.js';
+import { maskNames } from '../../usage-privacy.js';
 import { alertKind, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenAutoRefreshOn, tokenAutoRefreshAvailable, tokenStateLine } from './model.js';
-
-// maskCredentialAlert builds a text mask for the credential-alert sentences:
-// while B's privacy mode is on it replaces every known profile name with its
-// masked form, so a sentence like "claude profile backup: ..." leaks no name.
-const maskCredentialAlert = names => (maskingOn() ? text => (names || []).reduce((line, name) => name ? line.replaceAll(name, maskName(name)) : line, String(text || '')) : undefined);
 
 const AUTO_REFRESH = 'aimebu becomes the only thing that refreshes your Claude and Codex logins. While on, aimebu must stay running whenever you use Claude or Codex, also outside aimebu: if it is stopped for more than about an hour around a token\'s expiry, sessions get auth errors until it runs again. Turn this off before stopping aimebu for long or uninstalling it.';
 
@@ -110,7 +105,7 @@ export function SwitcherControls({ store }) {
   if (!state.owner) return null;
   const alerts = usage?.credential_alerts;
   const names = (usage?.providers || []).flatMap(provider => (provider.profiles || []).map(profile => profile.profile_name)).filter(Boolean);
-  const mask = maskCredentialAlert(names);
+  const mask = maskNames(names);
   return html`
     ${!state.enabled && html`<button type="button" class="btn btn-primary" id="usage-switcher-enable" onClick=${() => store.mutateSwitcher(() => store.source.enable(true))}>Enable account switcher</button>`}
     ${Array.isArray(alerts) && alerts.length > 0 && html`<${CredentialAlerts} alerts=${alerts} mask=${mask} />`}

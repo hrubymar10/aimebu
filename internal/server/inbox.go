@@ -64,7 +64,7 @@ func usageAlertQuestion(alert usages.UsageAlert) string {
 	case "pace":
 		eta := ""
 		if alert.ResetAt != nil {
-			eta = " before its " + alert.ResetAt.UTC().Format("15:04 MST") + " reset"
+			eta = " before its " + alert.ResetAt.UTC().Format("2 Jan 2006 15:04 MST") + " reset"
 		}
 		return fmt.Sprintf("%s · %s: projected to run out%s; %.1f%% remaining.", who, alert.Window, eta, alert.Remaining)
 	case "reset":

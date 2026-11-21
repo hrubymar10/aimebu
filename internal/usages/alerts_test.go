@@ -437,9 +437,14 @@ func TestPaceAlertFiresPerEpisodeAndRearmsAfterRecovery(t *testing.T) {
 		t.Fatalf("recovery must close the pace alert: %+v", got)
 	}
 	response.Providers[0].Profiles[0].Windows[0].Pace = risk
+	observe(false) // the hysteresis holds the re-arm
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("the hysteresis must hold the re-arm: %+v", got)
+	}
+	now = now.Add(11 * time.Minute)
 	observe(true)
 	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "pace" {
-		t.Fatalf("a recovered episode re-arms: %+v", got)
+		t.Fatalf("a recovered episode re-arms after the hysteresis: %+v", got)
 	}
 	// Off again closes what it opened.
 	response.Settings.AlertPaceEnabled = false
@@ -509,7 +514,7 @@ func TestExpiryAlertOncePerCredentialUntilRenewed(t *testing.T) {
 	}
 	expires := now.Add(10 * time.Minute)
 	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
-		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1"}}}}}
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1", ToolMigrated: true}}}}}
 	response.Settings.AlertExpiryEnabled = true
 	observe := func(want bool) {
 		t.Helper()
@@ -560,7 +565,7 @@ func TestExpiryAlertSurvivesASaveFailure(t *testing.T) {
 	}
 	expires := now.Add(10 * time.Minute)
 	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
-		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1"}}}}}
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1", ToolMigrated: true}}}}}
 	response.Settings.AlertExpiryEnabled = true
 	locked := filepath.Join(root, "alerts.json")
 	if err := os.Mkdir(locked, 0700); err != nil { // a directory where the state file must be written: every save fails
@@ -621,7 +626,7 @@ func TestExpiryAlertWordTurnsToExpired(t *testing.T) {
 	}
 	expires := now.Add(10 * time.Minute)
 	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
-		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1"}}}}}
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1", ToolMigrated: true}}}}}
 	response.Settings.AlertExpiryEnabled = true
 	if changed, err := tracker.Observe(response); err != nil || !changed {
 		t.Fatalf("initial: %v %v", changed, err)
@@ -648,7 +653,7 @@ func TestExpiryAlertDismissalSurvivesUntilItEscalates(t *testing.T) {
 	}
 	expires := now.Add(10 * time.Minute)
 	response := Response{Providers: []Provider{{ProviderName: "claude-code", Enabled: true, Available: true,
-		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1"}}}}}
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", ExpiresAt: &expires, AlertCredential: "cred-1", ToolMigrated: true}}}}}
 	response.Settings.AlertExpiryEnabled = true
 	observe := func(want bool) {
 		t.Helper()
@@ -731,5 +736,27 @@ func TestPaceAlertOffThenOnCanRaiseAgain(t *testing.T) {
 	observe(false)
 	if got := tracker.OpenAlerts(); len(got) != 1 {
 		t.Fatalf("one alert per episode: %+v", got)
+	}
+}
+
+func TestExpiryAlertOnlyOnTheTokenCopyModel(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := now.Add(10 * time.Minute)
+	response := Response{Providers: []Provider{
+		{ProviderName: "claude-code", Enabled: true, Available: true, Profiles: []Profile{
+			{ProfileName: "migrated", Email: "one@example.test", Status: "ok", LastRefreshAt: &now, ExpiresAt: &expires, AlertCredential: "cred-1", ToolMigrated: true},
+			{ProfileName: "linked", Email: "two@example.test", Status: "ok", LastRefreshAt: &now, ExpiresAt: &expires, AlertCredential: "cred-2", ToolMigrated: false},
+		}}}}
+	response.Settings.AlertExpiryEnabled = true
+	if changed, err := tracker.Observe(response); err != nil || !changed {
+		t.Fatalf("initial: %v %v", changed, err)
+	}
+	open := tracker.OpenAlerts()
+	if len(open) != 1 || open[0].Profile != "migrated" {
+		t.Fatalf("only the token-copy profile raises the expiry alert: %+v", open)
 	}
 }

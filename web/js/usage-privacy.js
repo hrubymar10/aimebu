@@ -36,3 +36,18 @@ export function maskEmail(email) {
   return `${value.slice(0, 1)}•••@${value.slice(at + 1, at + 2)}•••`;
 }
 
+// maskNames builds a one-pass text mask over the given profile names: a
+// single regex alternation of the escaped names, longest first, so an
+// overlapping name (m inside main) cannot leave a readable suffix behind
+// ("m•••ain"). Every occurrence is replaced with the name's masked form.
+// Returns undefined when masking is off or there is nothing to hide, so
+// callers can leave the text as it is.
+export function maskNames(names) {
+  if (!maskingOn()) return undefined;
+  const sorted = [...new Set((names || []).map(name => String(name || '')).filter(name => name))].sort((a, b) => b.length - a.length);
+  if (!sorted.length) return undefined;
+  const pattern = new RegExp(sorted.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  const masked = new Map(sorted.map(name => [name, maskName(name)]));
+  return text => String(text || '').replace(pattern, name => masked.get(name));
+}
+

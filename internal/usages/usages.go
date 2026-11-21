@@ -43,21 +43,25 @@ type Window struct {
 	History []HistoryPoint `json:"history,omitempty"`
 }
 type Profile struct {
-	ProfileName     string                 `json:"profile_name"`
-	AlertIdentity   string                 `json:"-"`
-	AlertCredential string                 `json:"-"`
-	Active          bool                   `json:"active"`
-	HasCredentials  bool                   `json:"has_credentials"`
-	Email           string                 `json:"email,omitempty"`
-	ExpiresAt       *time.Time             `json:"expires_at,omitempty"`
-	Status          string                 `json:"status"`
-	Plan            string                 `json:"plan,omitempty"`
-	Windows         []Window               `json:"windows,omitempty"`
-	Credits         *Credits               `json:"credits,omitempty"`
-	LastRefreshAt   *time.Time             `json:"last_refresh_at,omitempty"`
-	Stale           bool                   `json:"stale,omitempty"`
-	Error           string                 `json:"error,omitempty"`
-	ErrorDetail     *providers.ErrorDetail `json:"error_detail,omitempty"`
+	ProfileName     string `json:"profile_name"`
+	AlertIdentity   string `json:"-"`
+	AlertCredential string `json:"-"`
+	// ToolMigrated says the profile's tool is on the token-copy model (the
+	// server refreshes its credentials), where the expiry badge and the
+	// expiry alert apply; the link model's logins are the CLI's own to renew.
+	ToolMigrated   bool                   `json:"-"`
+	Active         bool                   `json:"active"`
+	HasCredentials bool                   `json:"has_credentials"`
+	Email          string                 `json:"email,omitempty"`
+	ExpiresAt      *time.Time             `json:"expires_at,omitempty"`
+	Status         string                 `json:"status"`
+	Plan           string                 `json:"plan,omitempty"`
+	Windows        []Window               `json:"windows,omitempty"`
+	Credits        *Credits               `json:"credits,omitempty"`
+	LastRefreshAt  *time.Time             `json:"last_refresh_at,omitempty"`
+	Stale          bool                   `json:"stale,omitempty"`
+	Error          string                 `json:"error,omitempty"`
+	ErrorDetail    *providers.ErrorDetail `json:"error_detail,omitempty"`
 }
 type Provider struct {
 	ProviderName     string    `json:"provider_name"`

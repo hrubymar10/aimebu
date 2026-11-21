@@ -53,9 +53,19 @@ type alertWindow struct {
 	Critical    bool      `json:"critical"`
 	// Pace records that a pace alert is open for this window and cycle; it
 	// clears on recovery (the window is again projected to last until its
-	// reset), so the alert can re-arm only after that.
-	Pace bool `json:"pace,omitempty"`
+	// reset), so the alert can re-arm only after that. PaceSince records when
+	// the current at-risk episode was first seen, so a re-raise after
+	// recovery waits for the hysteresis margin instead of flipping on the
+	// first jittery observation.
+	Pace      bool      `json:"pace,omitempty"`
+	PaceSince time.Time `json:"pace_since,omitempty"`
 }
+
+// paceHysteresis is the margin a window must stay at risk again after a
+// recovery before its pace alert re-arms: the projection must leave at least
+// this much room before the reset, and the same time must have passed since
+// the last raise, so one observation cannot flip the episode back and forth.
+const paceHysteresis = 10 * time.Minute
 
 type alertState struct {
 	Windows map[string]alertWindow `json:"windows"`
@@ -165,12 +175,17 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 			}
 			liveAccounts[expiryBaseKey(provider.ProviderName, account)] = profile.ProfileName
 			// The credential-expiry alert: the same expiry data that drives the
-			// Usages token-expiry badge. It fires once per account and expiry
+			// Usages token-expiry badge, so it fires where that badge applies —
+			// the token-copy model, whose stored profiles' short-lived tokens
+			// the server refreshes (matching the refresher's own alerts). A
+			// linked login the CLI renews itself has no server-side expiry to
+			// chase, so it stays quiet. It fires once per account and expiry
 			// time, and a renewed credential (healthy again, or absent) closes
 			// the notice and lets a later decay raise a fresh one.
 			expiryBase := expiryBaseKey(provider.ProviderName, account)
 			stamp, announced, seen := expiryRecord(t.state.Expiry[expiryBase])
-			if expiryOn && profile.ExpiresAt != nil {
+			expiryApplies := profile.ToolMigrated
+			if expiryOn && profile.ExpiresAt != nil && expiryApplies {
 				if level, _ := credentialLevel(profile.ExpiresAt, t.clock()); level == TargetLevelExpiring || level == TargetLevelExpired {
 					stamped := expiryStamp(profile.ExpiresAt.UTC().Format(time.RFC3339), level)
 					if stamp != expiryOf(stamped) {
@@ -256,6 +271,7 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 						}
 					}
 					state.Warning, state.Critical, state.Pace = false, false, false
+					state.PaceSince = time.Time{}
 				}
 				state.Cycle, state.Credential, state.LastUsed, state.LastRefresh = cycle, profile.AlertCredential, window.PercentUsed, *profile.LastRefreshAt
 				if window.ResetAt != nil && (cycleChanged || state.ResetAt.IsZero()) {
@@ -268,20 +284,36 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 				remaining := math.Max(0, math.Min(100, 100-window.PercentUsed))
 				// The predictive pace alert: one notice per risk episode while
 				// a session or weekly window is projected to run out before
-				// its reset. It re-arms only after recovery, when the window
-				// is again projected to last until the reset.
+				// its reset. It re-arms only after recovery, and then only
+				// once the window has been at risk again long enough
+				// (hysteresis) that a jittery projection cannot flip it.
 				switch {
 				case paceOn && paceAlertWindow(provider.ProviderName, window.Key) && window.Pace != nil && window.Pace.EtaSeconds != nil:
 					if !state.Pace {
-						state.Pace = true
-						t.addAlert(base, cycle, profile.AlertCredential, provider.ProviderName, profile.ProfileName, window, "pace", remaining)
-						visibleChanged = true
+						// A window that has never raised a pace alert in this
+						// cycle (no recovery on record) is at risk without a
+						// timer: its first episode raises at once. Only a
+						// re-arm after a recovery waits for the hysteresis.
+						if state.PaceSince.IsZero() {
+							state.Pace = true
+							t.addAlert(base, cycle, profile.AlertCredential, provider.ProviderName, profile.ProfileName, window, "pace", remaining)
+							visibleChanged = true
+						} else {
+							margin := time.Duration(*window.Pace.EtaSeconds * float64(time.Second))
+							if t.clock().Sub(state.PaceSince) >= paceHysteresis && margin >= paceHysteresis {
+								state.Pace = true
+								t.addAlert(base, cycle, profile.AlertCredential, provider.ProviderName, profile.ProfileName, window, "pace", remaining)
+								visibleChanged = true
+							}
+						}
 					}
 				case state.Pace && window.Pace != nil && window.Pace.EtaSeconds == nil:
 					// Recovery is observed inline: the window is again
-					// projected to last until its reset.
+					// projected to last until its reset. The hysteresis timer
+					// starts here for a possible next episode.
 					t.closeTier(base, "pace")
 					state.Pace = false
+					state.PaceSince = t.clock()
 					visibleChanged, changed = true, true
 				}
 				// The reset notice: one note per window and reset cycle, when
@@ -324,8 +356,8 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 			}
 		}
 		for key, window := range t.state.Windows {
-			if window.Pace {
-				window.Pace = false
+			if window.Pace || !window.PaceSince.IsZero() {
+				window.Pace, window.PaceSince = false, time.Time{}
 				t.state.Windows[key] = window
 				changed = true
 			}
@@ -409,9 +441,6 @@ func (t *AlertTracker) addAlert(base, cycle, credential, provider, profile strin
 // addExpiryAlert raises the credential-expiry notice: one per credential and
 // expiry time. It carries no reset time, so it stays open until the
 // credential is renewed, the account disappears or it is dismissed.
-// addExpiryAlert raises the credential-expiry notice: one per credential and
-// expiry time. It carries no reset time, so it stays open until the
-// credential is renewed, the account disappears or it is dismissed.
 func (t *AlertTracker) addExpiryAlert(base, provider, profile string, expires time.Time, level string) {
 	id := "usage_alert_" + alertHash(base + "\x00" + expires.UTC().Format(time.RFC3339))[:24]
 	expiresAt := expires
@@ -439,6 +468,9 @@ func (t *AlertTracker) closeExpiry(base string) {
 		}
 	}
 }
+
+// openTier says which expiry-tier notice is open for a base (expiry,
+// expiring or expired), or "" when none is.
 func openTier(alerts map[string]UsageAlert, base string) string {
 	for _, alert := range alerts {
 		if alert.BaseKey == base && alert.Open && (alert.Tier == "expiry" || alert.Tier == "expiring" || alert.Tier == "expired") {
