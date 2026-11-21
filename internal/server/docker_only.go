@@ -224,7 +224,7 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if body.WarmIdleMinutes != nil {
-			if *body.WarmIdleMinutes < 0 || *body.WarmIdleMinutes*60 > maxWarmIdleSeconds {
+			if *body.WarmIdleMinutes < 0 || *body.WarmIdleMinutes > maxWarmIdleSeconds/60 {
 				apiError(w, 400, "invalid_request", "warm_idle_minutes must be between 0 (off) and 1440")
 				return
 			}

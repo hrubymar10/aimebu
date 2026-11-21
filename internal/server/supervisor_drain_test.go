@@ -417,6 +417,20 @@ func TestDrainGraceSettingIsOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestWarmIdleMinutesRejectsOverflow(t *testing.T) {
+	t.Parallel()
+	w := newAdminWorld(t)
+	// The first value wraps to a small positive number when multiplied by sixty.
+	for _, minutes := range []int{math.MaxInt64/30 + 1, math.MaxInt64} {
+		if code := w.call(t, w.owner, "PUT", "/api/agent-isolation", map[string]int{"warm_idle_minutes": minutes}); code != 400 {
+			t.Errorf("%d minutes: %d, want 400", minutes, code)
+		}
+	}
+	if _, saved, err := w.f.srv.warmIdleSetting(t.Context()); err != nil || saved {
+		t.Fatalf("a refused write saved a warm window: %v %v", saved, err)
+	}
+}
+
 // drainFrames runs the drain's sweep against a machine that takes turn interrupts and answers nothing, and returns the frames it was sent.
 func drainFrames(t *testing.T, f *fixture, machine *machineConn) []protocol.Frame {
 	t.Helper()
