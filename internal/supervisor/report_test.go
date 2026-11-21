@@ -92,6 +92,56 @@ func TestReportKeepsAHarnessOwnWordsOutOfSentry(t *testing.T) {
 	}
 }
 
+// An idle warm process that ended by itself is a warning the first two times within the hour (the system recovers by
+// starting a new one on the next turn), an error from the third within the hour (a harness that keeps falling over is a
+// failure to triage), and a warning again once the hour has passed. The error carries its own fixed phrase, because every
+// cause is sent once a day: under the warning's phrase the escalated level would never go out. ResetCaptured between the
+// phases lets each severity be seen despite that once-a-day dedupe; the local log keeps every end.
+func TestWarmIdleEndEscalatesOnRepeatsWithinAnHour(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := startReporting(t)
+	var logged []string
+	c := &Client{OnError: func(err error) { logged = append(logged, err.Error()) }}
+	base := time.Unix(1700000000, 0)
+	clock := base
+	c.warmEndClock = func() time.Time { return clock }
+	end := func() {
+		c.warmEndedByItself("agt_a", errors.New("agent agt_a: its idle warm process ended by itself"))
+	}
+	want := func(level sentry.Level, phrase string) {
+		t.Helper()
+		telemetry.Current().Flush(time.Second)
+		got := transport.sent()
+		if len(got) != 1 || got[0].Level != level || got[0].Exception[0].Value != phrase {
+			t.Fatalf("want one %v event %q, got %+v", level, phrase, got)
+		}
+		transport.mu.Lock()
+		transport.events = nil
+		transport.mu.Unlock()
+	}
+	end()
+	want(sentry.LevelWarning, "an idle warm process ended by itself") // the first within the hour
+	telemetry.ResetCaptured()
+	clock = base.Add(time.Minute)
+	end()
+	want(sentry.LevelWarning, "an idle warm process ended by itself") // the second within the hour
+	telemetry.ResetCaptured()
+	clock = base.Add(2 * time.Minute)
+	end()
+	want(sentry.LevelError, "an idle warm process ended by itself repeatedly within an hour") // the third within the hour
+	telemetry.ResetCaptured()
+	clock = base.Add(3 * time.Minute)
+	end()
+	want(sentry.LevelError, "an idle warm process ended by itself repeatedly within an hour") // still within the hour
+	telemetry.ResetCaptured()
+	clock = base.Add(time.Hour + 4*time.Minute)
+	end()
+	want(sentry.LevelWarning, "an idle warm process ended by itself") // an hour has passed since the last end
+	if len(logged) != 5 {
+		t.Fatalf("every end still reaches the local log, got %d: %v", len(logged), logged)
+	}
+}
+
 // The server's classified refusals are the protocol working and are not reported; any other error code is, by its code alone.
 func TestServerErrorFramesAreReportedOnlyWhenTheyAreFailures(t *testing.T) {
 	telemetry.ResetCaptured()

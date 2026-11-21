@@ -104,6 +104,9 @@ type Client struct {
 	warmPool        *warmPool
 	warmReports     chan struct{} // a change of the warm picture, to be reported
 	warmReportMu    sync.Mutex    // build and send warm reports in sequence, including turn-end reports
+	warmEndsMu      sync.Mutex
+	warmEnds        map[string][]time.Time // when each agent's idle warm process last ended by itself, to escalate repeats within the hour
+	warmEndClock    func() time.Time       // tests set it; nil means time.Now
 	kaMu            sync.Mutex
 	ka              map[string]*keepAliveEntry               // each agent's cache keep-alive (see keepalive.go)
 	kaPause         keepAlivePause                           // what the server says to hold pings back for

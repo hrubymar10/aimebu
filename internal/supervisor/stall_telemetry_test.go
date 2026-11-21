@@ -64,3 +64,28 @@ func TestRunTurnStallIsReportedAsAWarning(t *testing.T) {
 		t.Fatalf("area tag: %v", stall.Tags)
 	}
 }
+
+// A kill by the wall-clock cap (AIMEBU_TURN_MAX) is reported as a warning, like the idle one: the watchdog did its job,
+// and the server continues the turn once on its own.
+func TestRunTurnWallClockLimitKillIsReportedAsAWarning(t *testing.T) {
+	transport := &captureTransport{}
+	tel, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test", Release: "v1", TracesSampleRate: 1}, transport)
+	if err != nil || tel == nil {
+		t.Fatalf("Init: %v %v", tel, err)
+	}
+	t.Cleanup(tel.Close)
+	telemetry.ResetCaptured()
+	stalledTurn(t, "claude", TurnLimitOverrides{Idle: durationPtr(time.Second), Max: durationPtr(80 * time.Millisecond)}, adapter.Step{Kind: adapter.StepHang})
+	var stall *sentry.Event
+	for _, event := range transport.sent() {
+		if len(event.Fingerprint) == 1 && strings.Contains(event.Fingerprint[0], "a turn stalled; killing harness") {
+			stall = event
+		}
+	}
+	if stall == nil {
+		t.Fatalf("no stall report among %d events", len(transport.sent()))
+	}
+	if got := fmt.Sprintf("%v", stall.Level); got != "warning" {
+		t.Fatalf("a wall-clock limit kill must be a warning, got %q", got)
+	}
+}

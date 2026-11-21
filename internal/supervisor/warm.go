@@ -1222,7 +1222,7 @@ func (c *Client) watchIdle(slot *warmSlot, entry *warmEntry, stop <-chan struct{
 			tail = tail[len(tail)-2000:]
 		}
 	}
-	c.degraded("an idle warm process ended by itself", fmt.Errorf("agent %s: its idle warm process ended by itself; the next turn starts a new one%s", entry.agentID, tailNote(tail)))
+	c.warmEndedByItself(entry.agentID, fmt.Errorf("agent %s: its idle warm process ended by itself; the next turn starts a new one%s", entry.agentID, tailNote(tail)))
 	c.finish(slot, entry, "it ended while idle", 0) // already gone: this only notes that it is
 }
 
@@ -1231,6 +1231,39 @@ func tailNote(tail string) string {
 		return ""
 	}
 	return ": " + adapter.SanitizeStderr(tail)
+}
+
+// warmIdleEndWindow is how far back a previous idle end of the same agent still counts against it.
+const warmIdleEndWindow = time.Hour
+
+// warmEndedByItself reports an idle warm process that ended by itself. The first two within the window are warnings (the
+// system recovers by starting a new one on the next turn); from the third within the window it is an error, because a
+// harness that keeps falling over while idle is a failure to triage, not noise; once the window has passed it is a warning
+// again. The error has its own fixed phrase (and so its own once-a-day report), because every cause is sent once a day:
+// under the warning's phrase the escalated level would never go out, the day's first warning always being sent first.
+func (c *Client) warmEndedByItself(agentID string, err error) {
+	now := time.Now()
+	if c.warmEndClock != nil {
+		now = c.warmEndClock()
+	}
+	c.warmEndsMu.Lock()
+	if c.warmEnds == nil {
+		c.warmEnds = map[string][]time.Time{}
+	}
+	recent := c.warmEnds[agentID][:0]
+	for _, at := range c.warmEnds[agentID] {
+		if now.Sub(at) < warmIdleEndWindow {
+			recent = append(recent, at)
+		}
+	}
+	c.warmEnds[agentID] = append(recent, now)
+	count := len(c.warmEnds[agentID])
+	c.warmEndsMu.Unlock()
+	if count >= 3 {
+		c.report("an idle warm process ended by itself repeatedly within an hour", err)
+		return
+	}
+	c.degraded("an idle warm process ended by itself", err)
 }
 
 // WarmState is what Health and the agent card need to say about warm processes.
