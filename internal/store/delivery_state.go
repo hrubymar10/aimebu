@@ -482,12 +482,25 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 		}
 		// An interrupted turn (the harness process was cut off and said nothing about why) is continued once too, unless the evidence
 		// shows a lost thread, which has its own handling; a repeat falls back to the ordinary recovery card.
+		// An interrupt the server asked for (a turn_interrupt_requested event on the turn) says itself what becomes of the turn: continued
+		// outside the chain's allowance, or its notes put back in the queue with no turn made for them.
+		requeued := false
 		if interrupted && !threadMissing {
-			continued, err := tx.createInterruptedContinuation(turnID, errorEvent, exitCode)
+			disposition, err := tx.turnInterruptDisposition(turnID)
 			if err != nil {
 				return err
 			}
-			limitContinued = continued
+			switch disposition {
+			case TurnInterruptRequeue:
+				requeued = true
+			case TurnInterruptContinue:
+				limitContinued, err = tx.createRequestedContinuation(turnID, errorEvent, exitCode)
+			default:
+				limitContinued, err = tx.createInterruptedContinuation(turnID, errorEvent, exitCode)
+			}
+			if err != nil {
+				return err
+			}
 		}
 		if terminal && settle == "settled" {
 			if err := tx.finishCompletedTurn(turnID, agentID); err != nil {
@@ -499,6 +512,13 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 			}
 		} else if providerLimited {
 			if err := tx.recordProviderLimit(turnID, agentID, projectID, roomID, tool, resetAt); err != nil {
+				return err
+			}
+		} else if requeued {
+			if err := TurnOutcomeTransitions.Transition("none", "cancelled"); err != nil {
+				return err
+			}
+			if err := tx.requeueTurnNotes(turnID, agentID, "cancelled"); err != nil {
 				return err
 			}
 		} else if limitContinued {
@@ -523,6 +543,9 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 			}
 		}
 		payload := map[string]string{"exit_code": fmt.Sprint(exitCode)}
+		if requeued {
+			payload["interrupt"] = TurnInterruptRequeue
+		}
 		if !terminal && !providerLimited && !threadMissing {
 			payload["evidence"] = fmt.Sprintf("Process exited with code %d.", exitCode)
 			if stderr != "" {
@@ -559,8 +582,8 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 				return err
 			}
 		}
-		if limitContinued {
-			// The continuation turn carries the notes and the recovery path is not taken: there is no card to resolve.
+		if limitContinued || requeued {
+			// The continuation turn carries the notes (or they are queued again) and the recovery path is not taken: there is no card to resolve.
 		} else if !terminal && !providerLimited && !threadMissing {
 			if err := tx.ensureRecoveryPath(turnID); err != nil {
 				return err

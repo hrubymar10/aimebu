@@ -79,25 +79,7 @@ func providerCapWording(lower string) bool {
 }
 
 func (tx *Tx) recordProviderLimit(turnID, agentID, projectID, roomID, tool, resetAt string) error {
-	if _, err := tx.Exec(`UPDATE turn SET outcome='failed',settle='settled' WHERE id=?`, turnID); err != nil {
-		return err
-	}
-	var uncertain bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM event WHERE turn_id=? AND kind='supervisor_activity'
-		AND COALESCE(json_extract(payload_json,'$.summary'),'') NOT IN ('turn.started','system','rate_limit_event',''))`, turnID).Scan(&uncertain); err != nil {
-		return err
-	}
-	if uncertain {
-		if _, err := tx.Exec(`INSERT INTO provider_limit_retry(note_id,source_turn_id,caution)
-			SELECT note_id,?,1 FROM turn_note WHERE turn_id=?
-			ON CONFLICT(note_id) DO UPDATE SET source_turn_id=excluded.source_turn_id,caution=1`, turnID, turnID); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.Exec(`UPDATE note SET state='queued' WHERE id IN (SELECT note_id FROM turn_note WHERE turn_id=?) AND state IN ('dispatched','in_turn')`, turnID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`UPDATE agent SET observed='idle' WHERE id=? AND observed='in_turn'`, agentID); err != nil {
+	if err := tx.requeueTurnNotes(turnID, agentID, "failed"); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES (?,?,?,?,?)

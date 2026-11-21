@@ -951,7 +951,12 @@ container is not confirmed, the supervisor holds the agent's slot (it reports th
 admits another turn, only after the same 150-second quarantine an unconfirmed keep-alive ping
 gets, or at once when the agent is stopped or the supervisor shuts down), so that a new turn
 never starts beside a process that may still be running. What becomes of the interrupted
-turn is the server's decision. An
+turn is recorded by the server before it sends the frame, in a `turn_interrupt_requested`
+event: `continue` continues it like any interrupted turn but outside the one automatic
+continuation of its chain, and `requeue` puts its notes back in the queue (with the
+"previous attempt was interrupted" caution when the turn had started working) and makes no
+turn for them. A team flow change's **Interrupt now** uses `requeue`; an older supervisor is
+stopped and started again instead. An
 owner cancel, a start failure, an explained failure, a provider limit and a lost thread are
 not interruptions and keep their own handling, and an answer that arrives but does not parse
 stays an invalid answer. A failed journal write for a turn's event or final answer is handled the

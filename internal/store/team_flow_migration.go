@@ -388,8 +388,9 @@ func flowMigrationProgressByID(ctx context.Context, db rowQuerier, id string) (T
 	}
 	if out.State == "draining" {
 		for i := range out.Agents {
-			// An agent already told to stop is on its way out of the turn: nothing more to interrupt.
-			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.agent_id=? AND a.desired<>'stopped' AND `+openFlowTurnPredicate+`)`, out.Agents[i].AgentID).Scan(&out.Agents[i].Blocking); err != nil {
+			// An agent already told to stop, or whose open turn was asked to be interrupted, is on its way out of the turn: nothing more to interrupt.
+			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.agent_id=? AND a.desired<>'stopped' AND `+openFlowTurnPredicate+`
+				AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_interrupt_requested'))`, out.Agents[i].AgentID).Scan(&out.Agents[i].Blocking); err != nil {
 				return out, err
 			}
 			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_interrupt WHERE migration_id=? AND agent_id=?)`, out.ID, out.Agents[i].AgentID).Scan(&out.Agents[i].Restarting); err != nil {
@@ -1560,8 +1561,9 @@ func (tx *Tx) postFlowNotice(projectID, body string) error {
 }
 
 // InterruptFlowMigrationAgent cuts the current turn of an agent that a draining migration is waiting for, by stopping it (the supervisor
-// interrupts a turn it is told to stop), so the change does not wait for the turn to end by itself. The agent stays stopped until a person
-// starts it again.
+// interrupts a turn it is told to stop), so the change does not wait for the turn to end by itself. A kept agent is started again by the
+// change once its turn is gone; one the flow stops anyway stays stopped. This is the path for a machine whose supervisor cannot cut a turn
+// alone, and for a turn that InterruptFlowMigrationTurn does not take.
 func (s *Store) InterruptFlowMigrationAgent(ctx context.Context, projectID, actorID, agentID string) (AgentCard, error) {
 	var out AgentCard
 	err := s.Tx(ctx, func(tx *Tx) error {
@@ -1603,6 +1605,55 @@ func (s *Store) InterruptFlowMigrationAgent(ctx context.Context, projectID, acto
 		}
 		// A kept agent is started again once its turn is gone; one the flow stops anyway stays stopped.
 		_, err = tx.Exec(`INSERT OR IGNORE INTO team_flow_migration_interrupt(migration_id,agent_id) SELECT migration_id,agent_id FROM team_flow_migration_agent WHERE migration_id=? AND agent_id=? AND action IN ('notice','switch')`, id, agentID)
+		return err
+	})
+	return out, err
+}
+
+// flowMigrationInterruptPurpose is the purpose a team flow change's turn interrupts are recorded with.
+const flowMigrationInterruptPurpose = "team_flow_migration"
+
+// InterruptFlowMigrationTurn is the interrupt for an agent whose machine cuts one turn without stopping the agent (the supervisor's
+// turn_interrupt frame): it records the request for the agent's running ordinary turn, with the requeue disposition, and says where the
+// frame goes. The agent stays active and is not started again; the turn's notes wait in the queue, which the drain holds, and the change
+// goes on once the turn is gone. A repeat while the turn runs answers the same target and records nothing new.
+//
+// An empty TurnID with no error says this path has nothing to cut and InterruptFlowMigrationAgent decides: the agent is already stopping,
+// or its open turn is not a running ordinary one (it is pending, a handoff turn, a correction, or ended and not settled yet).
+func (s *Store) InterruptFlowMigrationTurn(ctx context.Context, projectID, actorID, agentID string) (TurnInterruptTarget, error) {
+	var out TurnInterruptTarget
+	err := s.Tx(ctx, func(tx *Tx) error {
+		if err := tx.authorizeDefinitionActor(projectID, actorID, false); err != nil {
+			return err
+		}
+		var id, state string
+		if err := tx.tx.QueryRowContext(ctx, `SELECT id,state FROM team_flow_migration WHERE project_id=? ORDER BY created_at DESC,id DESC LIMIT 1`, projectID).Scan(&id, &state); err != nil {
+			return err
+		}
+		if state != "draining" {
+			return ErrTeamFlowMigrationFinal
+		}
+		var turnID string
+		var generation int
+		var machineID string
+		var requested bool
+		err := tx.tx.QueryRowContext(ctx, `SELECT t.id,t.generation,COALESCE(a.machine_id,''),
+			EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_interrupt_requested')
+			FROM team_flow_migration_agent ma JOIN agent a ON a.id=ma.agent_id JOIN turn t ON t.agent_id=a.id
+			WHERE ma.migration_id=? AND ma.agent_id=? AND a.desired<>'stopped' AND t.exec='running' AND t.mode='normal'
+			AND NOT EXISTS(SELECT 1 FROM switch_handoff h WHERE h.turn_id=t.id)
+			ORDER BY t.started_at DESC,t.id DESC LIMIT 1`, id, agentID).Scan(&turnID, &generation, &machineID, &requested)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if requested {
+			out = TurnInterruptTarget{TurnID: turnID, AgentID: agentID, MachineID: machineID, Generation: generation}
+			return nil
+		}
+		out, err = tx.requestTurnInterrupt(TurnInterruptRequest{TurnID: turnID, ActorKind: "user", ActorID: actorID, Purpose: flowMigrationInterruptPurpose, Disposition: TurnInterruptRequeue})
 		return err
 	})
 	return out, err

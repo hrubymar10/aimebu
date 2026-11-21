@@ -1032,6 +1032,26 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   and never starts again. `not_accepting` is a **drain**: already-admitted
   work runs to completion; `stopped` interrupts it. Socket order alone is
   not relied on across reconnect.
+- **Turn interrupt** (S, then M): one running ordinary turn is cut and its
+  agent stays as it is. Desired state, `desired_rev` and generation do not
+  change; observed goes `in_turn→idle` when the supervisor reports the exit,
+  never through `interrupting` or `stopped`. The server first records a
+  `turn_interrupt_requested{actor, actor_kind, purpose, disposition}` event on
+  the turn (only for a turn that is `running` in mode `normal`), then sends
+  `turn_interrupt` (§4.2). The disposition applies when the turn's exit
+  arrives marked `interrupted`, not terminal and not a cancel:
+  `continue` continues the turn on its own like a turn whose process was cut
+  off (a child turn with the turn's notes and the note `your previous turn was
+  interrupted (…); check state and continue`), outside the one automatic
+  continuation a chain of turns has: it neither needs that allowance nor uses
+  it up (its `turn_interrupted_continuation` event carries `requested:"1"`).
+  `requeue` settles the turn `cancelled`, puts its notes back to `queued`
+  with no turn made for them (the next dispatch delivers them, with the
+  `retry_notice` caution when the turn had started working), and leaves the
+  agent idle with no recovery block and no inbox item. A request whose turn
+  ends another way (it answered first, the agent was stopped, a provider
+  limit or a lost thread was recognised) changes nothing. An exit marked
+  `interrupted` with no request keeps the one-per-chain continuation.
 - Human- or close-requested interrupt with recorded termination → outcome
   `cancelled` if no effect was possible; otherwise `partial_failed` with
   the observed effects posted as a system message ("interrupted after:

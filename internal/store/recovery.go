@@ -101,7 +101,8 @@ func turnInterruptedNote(reason string) string {
 	return "your previous turn was interrupted (" + reason + "); check state and continue"
 }
 
-// Kinds of automatic continuation. Both share one allowance per chain of turns: a turn born from either does not continue again.
+// Kinds of automatic continuation. Both share one allowance per chain of turns: a turn born from either does not continue again. A
+// continuation of a requested interrupt (see turn_interrupt.go) is outside that allowance: it neither needs it nor uses it up.
 const (
 	eventLimitContinuation       = "turn_limit_continuation"
 	eventInterruptedContinuation = "turn_interrupted_continuation"
@@ -112,17 +113,24 @@ const (
 // card waiting for a person to click Resume. It reports whether it continued; a turn whose chain already had its one
 // continuation, one that already has a child, or an agent that is not active, falls back to the ordinary recovery path.
 func (tx *Tx) createLimitContinuation(originID, reason string) (bool, error) {
-	return tx.createAutoContinuation(originID, eventLimitContinuation, "turn_limit", turnLimitContinuationNote, map[string]string{"reason": reason})
+	return tx.createAutoContinuation(originID, eventLimitContinuation, "turn_limit", turnLimitContinuationNote, map[string]string{"reason": reason}, false)
 }
 
 // createInterruptedContinuation is the same for a turn the supervisor marked interrupted: reason is how the process ended, and the
 // event records turn_interrupted with the exit code.
 func (tx *Tx) createInterruptedContinuation(originID, reason string, exitCode int) (bool, error) {
 	return tx.createAutoContinuation(originID, eventInterruptedContinuation, "turn_interrupted", turnInterruptedNote(reason),
-		map[string]string{"reason": "turn_interrupted", "detail": reason, "exit_code": fmt.Sprint(exitCode)})
+		map[string]string{"reason": "turn_interrupted", "detail": reason, "exit_code": fmt.Sprint(exitCode)}, false)
 }
 
-func (tx *Tx) createAutoContinuation(originID, eventKind, wakeReason, noteBody string, payload map[string]string) (bool, error) {
+// createRequestedContinuation continues a turn that was interrupted on request with the continue disposition. Its event is marked
+// requested, which keeps it out of the chain's one automatic continuation: a later cut-off of the same chain is still continued once.
+func (tx *Tx) createRequestedContinuation(originID, reason string, exitCode int) (bool, error) {
+	return tx.createAutoContinuation(originID, eventInterruptedContinuation, "turn_interrupted", turnInterruptedNote(reason),
+		map[string]string{"reason": "turn_interrupted", "detail": reason, "exit_code": fmt.Sprint(exitCode), "requested": "1"}, true)
+}
+
+func (tx *Tx) createAutoContinuation(originID, eventKind, wakeReason, noteBody string, payload map[string]string, requested bool) (bool, error) {
 	var agentID, roomID, projectID, sessionID, desired string
 	var attempt, generation int
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.agent_id,t.room_id,a.project_id,t.session_id,t.attempt,t.generation,a.desired
@@ -147,10 +155,11 @@ func (tx *Tx) createAutoContinuation(originID, eventKind, wakeReason, noteBody s
 			SELECT id,parent_turn_id FROM turn WHERE id=?
 			UNION ALL
 			SELECT t.id,t.parent_turn_id FROM turn t JOIN chain c ON t.id=c.parent
-		) SELECT EXISTS(SELECT 1 FROM event e JOIN chain c ON e.turn_id=c.id WHERE e.kind IN ('turn_limit_continuation','turn_interrupted_continuation'))`, originID).Scan(&already); err != nil {
+		) SELECT EXISTS(SELECT 1 FROM event e JOIN chain c ON e.turn_id=c.id WHERE e.kind IN ('turn_limit_continuation','turn_interrupted_continuation')
+			AND COALESCE(json_extract(e.payload_json,'$.requested'),'')<>'1')`, originID).Scan(&already); err != nil {
 		return false, err
 	}
-	if already {
+	if already && !requested {
 		return false, nil
 	}
 	turn, err := tx.RecordTurn(Turn{AgentID: agentID, SessionID: sessionID, Generation: generation,
