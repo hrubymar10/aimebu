@@ -200,7 +200,7 @@ api -X POST "$B/api/machines/$MACHINE/launchers/detect" | jq -c '.candidates[] |
 
 Expect an id starting `mch_`, then one JSON line per installed harness, for example `{"family":"claude","command":"/home/you/.local/bin/claude","version":"2.1.0 (Claude Code)"}`. This only asks each CLI for its version.
 
-- Empty machine id: the embedded supervisor has not connected yet; wait a few seconds and retry. If it stays empty, `aimebu doctor --live`.
+- Empty machine id: the local supervisor has not connected yet; wait a few seconds and retry. If it stays empty, `aimebu doctor --live`.
 - No candidates: the CLI is not on the server's `PATH`, or is installed somewhere unusual. Add it with its absolute path in the next step.
 
 ### 6. Add the harness the person chose

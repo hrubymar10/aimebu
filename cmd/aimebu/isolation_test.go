@@ -39,7 +39,15 @@ func TestMain(m *testing.M) {
 		return
 	}
 	root, cleanup := testenv.Isolate()
-	_ = os.Setenv("AIMEBU_SUPERVISOR", "embedded")
+	// A server a test starts in this process runs no local supervisor unless the test asks for one (useLocalSupervisor): the supervisor is a
+	// process of its own, and without that helper it would be this test binary run again.
+	_ = os.Unsetenv("AIMEBU_SUPERVISOR")
+	_ = os.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
+	// A test that turns the local supervisor on without useLocalSupervisor or daemonFixture would start this test binary again as the
+	// supervisor, running the whole suite in a process nobody waits for: it fails instead.
+	daemonExecutable = func() (string, error) {
+		return "", errors.New("this test starts a local supervisor or server process without useLocalSupervisor or daemonFixture")
+	}
 	packageTestRoot = root
 	// The tests that start a server run its supervisor's harness discovery: without this they ran the real claude, codex, opencode, pi and vibe
 	// of whoever ran them, their docker launchers and docker itself. A test that needs a tool puts its own fake on PATH.

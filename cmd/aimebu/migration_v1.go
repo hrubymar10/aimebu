@@ -186,7 +186,7 @@ func v1MovePending(root string) (bool, error) {
 }
 
 // preflightV1Cutover refuses, before anything is moved, a first start that is certain to fail afterwards. The failures
-// it knows: half an owner login/password pair, a turn-limit setting the embedded supervisor rejects, and a root this process cannot write to. A start that fails after the move
+// it knows: half an owner login/password pair, a turn-limit setting the local supervisor rejects, and a root this process cannot write to. A start that fails after the move
 // leaves v1's data in .old-v1-bkp while the root looks empty, and a v1 started on it would build its schema inside
 // the v2 database.
 func preflightV1Cutover(root string, getenv func(string) string) error {

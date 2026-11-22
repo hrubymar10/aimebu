@@ -5,7 +5,7 @@
 // in use" and exits. With runs side by side that is a flake, so a start that fails that way is tried again on a new port, up to `attempts`
 // times; any other failure is reported at once, with what the server printed.
 const net = require('node:net');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const freePort = () => new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
 
@@ -44,4 +44,11 @@ async function startServer(binary, envFor, { label = 'server', attempts = 5, arg
   throw new Error(`${label} did not start after ${attempts} tries: its port was taken each time: ${last}`);
 }
 
-module.exports = { freePort, startServer, bindFailed };
+// The server's local supervisor (on unless AIMEBU_EMBEDDED_SUPERVISOR=0) is a process of its own and outlives the server. A script that ran a
+// server with one stops it, with the server's environment, once the server has exited and before it removes the config directory.
+function stopLocalSupervisor(binary, env) {
+  if (env.AIMEBU_EMBEDDED_SUPERVISOR === '0') return;
+  spawnSync(binary, ['server', 'stop', '--with-supervisor'], { env, stdio: 'ignore', timeout: 90000 });
+}
+
+module.exports = { freePort, startServer, bindFailed, stopLocalSupervisor };

@@ -6,7 +6,7 @@ const { chromiumPath } = require('./chromium-path.cjs');
 let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
 
-const { freePort, startServer } = require('./server-start.cjs');
+const { freePort, startServer, stopLocalSupervisor } = require('./server-start.cjs');
 
 const OWNER = { login: 'owner', password: 'test-password-123' };
 
@@ -25,8 +25,9 @@ for (const name of ['AIMEBU_URL', 'AIMEBU_BIND', 'AIMEBU_ALLOW', 'AIMEBU_ALLOWED
     if (build.status !== 0) throw new Error('go build failed');
   }
   // A start whose port was taken between picking it and binding it is tried again on another (see server-start.cjs).
+  let serverEnv;
   const { child: server, origin, logs: serverLogs } = await startServer(binary, port => {
-    const serverEnv = { ...env, AIMEBU_USAGES: '0', AIMEBU_EMBEDDED_SUPERVISOR: '0', AIMEBU_PORT: String(port), AIMEBU_SENTRY_DSN: 'off', ...extraEnv }; // error reports are off in every test server; a test can pass its own DSN, or null to leave it unset
+    serverEnv = { ...env, AIMEBU_USAGES: '0', AIMEBU_EMBEDDED_SUPERVISOR: '0', AIMEBU_PORT: String(port), AIMEBU_SENTRY_DSN: 'off', ...extraEnv }; // error reports are off in every test server; a test can pass its own DSN, or null to leave it unset
     for (const [name, value] of Object.entries(extraEnv)) if (value === null) delete serverEnv[name];
     if (owner) { serverEnv.AIMEBU_OWNER_LOGIN = owner.login; serverEnv.AIMEBU_OWNER_PASSWORD = owner.password; }
     return serverEnv;
@@ -76,6 +77,7 @@ for (const name of ['AIMEBU_URL', 'AIMEBU_BIND', 'AIMEBU_ALLOW', 'AIMEBU_ALLOWED
       try { server.kill('SIGKILL'); } catch { /* gone */ }
       await exited;
     }
+    stopLocalSupervisor(binary, serverEnv);
     fs.rmSync(tmp, { recursive: true, force: true });
   };
   return { origin, tmp, browser, open, api, signIn, ownerClient, context, stop, errors, logs: serverLogs, OWNER };

@@ -2,9 +2,8 @@
 
 **Architecture**
 
-1. The server runs its local supervisor in the same process by default. With
-   `AIMEBU_SUPERVISOR=detached`, it starts or adopts a separate local process
-   that owns the same journal and machine WebSocket. The journal flock guards
+1. The server starts or adopts its local supervisor as a separate process
+   that owns the journal and a machine WebSocket, like a remote one. The journal flock guards
    against duplicate supervisors, and server shutdown leaves local turns
    running. A build or turn-environment mismatch drains the local process at
    idle and starts a replacement from the server's environment. After the owner's

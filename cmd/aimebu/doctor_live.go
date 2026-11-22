@@ -152,7 +152,7 @@ func liveMachineChecks(live protocol.DoctorLive) []doctorCheck {
 	}
 	if connected == 0 {
 		checks = append(checks, doctorCheck{Name: "connected machines", Status: statusWarn, Description: "no approved machine is connected: no agent can run",
-			Hint: "Start a supervisor (the server starts its embedded one unless AIMEBU_EMBEDDED_SUPERVISOR=0), or pair a remote machine."})
+			Hint: "Start a supervisor (the server starts its local one unless AIMEBU_EMBEDDED_SUPERVISOR=0), or pair a remote machine."})
 	}
 	return checks
 }

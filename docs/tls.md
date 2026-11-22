@@ -3,7 +3,7 @@
 V2 can serve HTTPS with a certificate and key you supply. HTTP stays on
 `AIMEBU_PORT` (default `9997`); HTTPS uses `AIMEBU_TLS_PORT` (default `9996`).
 Both listeners use the same `AIMEBU_BIND` address and `AIMEBU_ALLOW`
-allowlist. The embedded supervisor continues to use HTTP on loopback.
+allowlist. The local supervisor continues to use HTTP on loopback.
 
 ```bash
 export AIMEBU_TLS_CERT=/path/to/cert.pem
@@ -40,7 +40,7 @@ another machine with a `308` redirect to the same address on `AIMEBU_TLS_PORT`
 (the method and the whole path and query are kept), so nothing a person types or
 a supervisor sends crosses the network in the clear by default. A request from
 this machine itself, from a loopback address or from the address the connection was
-accepted on, is served as before: that is how the embedded supervisor and the
+accepted on, is served as before: that is how the local supervisor and the
 command line reach the server, and nothing there crosses a network. The agents'
 toolbox calls (`/api/agent/...`) and the machine routes (`/api/machine...`: a
 supervisor's socket, its pairing and approval wait) are served as they are

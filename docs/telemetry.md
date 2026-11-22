@@ -202,8 +202,7 @@ arguments; the next turn of any agent builds its entry with the current settings
 started with.
 
 A DSN in the supervisor machine's own environment (`AIMEBU_SENTRY_DSN`, a DSN or `off`) wins over the server's settings, for the supervisor and for its
-bridges. A supervisor that predates this ignores the settings (and is not sent the frame); the server's own embedded supervisor is the server's process and
-reports through it.
+bridges. A supervisor that predates this ignores the settings (and is not sent the frame).
 
 ## Self-hosting
 

@@ -41,7 +41,7 @@ func hstsFits(r *http.Request) bool {
 
 // RedirectPlainToHTTPS is the handler of the plain-http listener when https is configured: a request from another machine is sent to the same
 // address on the https port, so nothing a person types or a supervisor sends crosses the network in the clear by default. A request from this
-// machine itself (loopback, or from the server's own address, where the embedded supervisor and the command line connect) is served as it
+// machine itself (loopback, or from the server's own address, where the local supervisor and the command line connect) is served as it
 // was: nothing there crosses a network. The agents' toolbox calls (/api/agent/...) and the machine routes (/api/machine..., a supervisor's socket,
 // its pairing) are served as they are: a Docker agent on a Linux bridge reaches the server as host.docker.internal from a bridge address that is
 // neither loopback nor the server's own, and a name and a certificate for it cannot be assumed; those callers authenticate with their key, and

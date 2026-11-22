@@ -275,7 +275,6 @@ func TestMatchingSupervisorCancelsLegacyDrain(t *testing.T) {
 func TestDetachedSupervisorRespawnsAfterCrash(t *testing.T) {
 	root, _ := daemonFixture(t)
 	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
-	t.Setenv("AIMEBU_SUPERVISOR", "detached")
 	if code, out, errOut := runServerAction("start"); code != 0 {
 		t.Fatalf("start: %d %q %q", code, out, errOut)
 	}
@@ -341,7 +340,6 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 	previousStartLimit := daemonStartLimit
 	daemonStartLimit = 90 * time.Second
 	t.Cleanup(func() { daemonStartLimit = previousStartLimit })
-	t.Setenv("AIMEBU_SUPERVISOR", "detached")
 	t.Setenv("AIMEBU_ALLOW", "192.0.2.0/24") // The host loopback address must be admitted even when people set a LAN-only list.
 	gate := filepath.Join(t.TempDir(), "release-fake-answer")
 	t.Setenv("AIMEBU_TEST_FAKE_GATE", gate)

@@ -16,7 +16,7 @@ import (
 )
 
 // A supervisor that takes the server's telemetry settings says so in its hello, gets them in hello_ack and again in a telemetry_config frame; one that
-// does not take them (the server's embedded one) does not announce the capability.
+// does not take them (OnTelemetry nil) does not announce the capability.
 func TestSupervisorTakesTelemetrySettingsFromHelloAckAndFrames(t *testing.T) {
 	for _, takes := range []bool{true, false} {
 		ctx, cancel := context.WithCancel(t.Context())

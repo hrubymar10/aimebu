@@ -117,6 +117,39 @@ func daemonFixture(t *testing.T) (root string, port int) {
 	return root, port
 }
 
+// useLocalSupervisor lets a server this test starts in its own process start the local supervisor. The supervisor runs a copy of the test
+// binary as the aimebu command (see TestMain), watches the test process, and is killed by pid when the test ends, before root is removed.
+func useLocalSupervisor(t *testing.T, root string) {
+	t.Helper()
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
+	t.Setenv(daemonHelperEnv, "1")
+	t.Setenv(daemonWatchEnv, strconv.Itoa(os.Getpid()))
+	copyPath := aimebuCopy(t)
+	previous, previousSpawned := daemonExecutable, daemonSpawned
+	daemonExecutable = func() (string, error) { return copyPath, nil }
+	var spawnedMu sync.Mutex
+	var spawned []int
+	daemonSpawned = func(pid int) { spawnedMu.Lock(); spawned = append(spawned, pid); spawnedMu.Unlock() }
+	t.Cleanup(func() {
+		daemonExecutable, daemonSpawned = previous, previousSpawned
+		spawnedMu.Lock()
+		defer spawnedMu.Unlock()
+		if pid, held, err := supervisorPID(root); err == nil && held {
+			spawned = append(spawned, pid)
+		}
+		for _, pid := range spawned {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+		// The supervisor writes under root; it must be gone before the temporary directory is removed.
+		deadline := time.Now().Add(10 * time.Second)
+		for _, pid := range spawned {
+			for processAlive(pid) && time.Now().Before(deadline) {
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+	})
+}
+
 func runServerAction(action string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"server", action}, &stdout, &stderr)

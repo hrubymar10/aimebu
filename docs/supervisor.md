@@ -1,8 +1,9 @@
 # Supervisor and delivery log
 
-`aimebu server` starts a local supervisor in the same process by default.
-Set `AIMEBU_SUPERVISOR=detached` to start or adopt a separate local process.
-It uses `server/host-machine.key` and dials the server over loopback. The
+`aimebu server` starts or adopts a local supervisor, a process of its own.
+It uses `server/host-machine.key` and dials the server over loopback. There
+is no in-process mode any more: a server that still has `AIMEBU_SUPERVISOR`
+set logs one line saying the setting is ignored and starts as usual. The
 server can restart without interrupting active turns or commands: the
 supervisor reconnects and replays its durable journal state. A normal
 `aimebu server stop` leaves it running; `aimebu server stop --with-supervisor`
@@ -66,7 +67,7 @@ the first request said. A long command started with
 `run_command` is never cut: it keeps the old supervisor up, and local
 dispatch held, until it ends, also after the turns were interrupted. The
 owner's Restart now action interrupts turns and commands at once and gets the
-ordinary one auto-continue. A crashed detached supervisor is respawned with backoff.
+ordinary one auto-continue. A crashed local supervisor is respawned with backoff.
 While the restart is pending, new local spawns wait for the replacement. If a
 retiring supervisor reconnects to a server that now matches it, it resumes
 accepting work after that server's acknowledgement.
@@ -77,26 +78,23 @@ After 24 hours without
 a server connection and with no active turn or command, it exits by itself.
 Its output is in `supervisor/aimebu.log`.
 
-In embedded mode, the server auto-provisions the approved host machine and
-its private key, opens
-`supervisor/journal.sqlite`, and connects through the same `/api/machine`
-WebSocket used by standalone supervisors. It starts once the server is
-listening (reading each tool's version takes seconds, and the web UI does not
+The server auto-provisions the approved host machine and its private key on
+first start. The local supervisor opens `supervisor/journal.sqlite` and
+connects through the same `/api/machine` WebSocket used by remote
+supervisors. The server starts it once it is listening (the web UI does not
 wait for it), and in first-run setup right after the owner is created. Set
-`AIMEBU_EMBEDDED_SUPERVISOR=0` to disable it for remote-only setups or
-tests. On shutdown, the server stops dispatch, closes its HTTP listener,
-interrupts active local turns, waits up to 40 seconds for their journal
-writes, then closes the journal and server store. A timeout logs the turn IDs
-that remain active; a restart reconciles their journal state normally.
+`AIMEBU_EMBEDDED_SUPERVISOR=0` to run no local supervisor, for remote-only
+setups or tests (the variable keeps its old name). On shutdown, the server
+stops dispatch, closes its HTTP listener and its store; the local supervisor
+and its turns keep running and reconnect to the next server.
 One supervisor owns a journal at a time. A sibling `journal.sqlite.lock`
 file (0600) holds an exclusive process lock and its owner's PID. Opening the
 same journal from a second supervisor fails with a message naming that PID.
 Two live processes cannot safely share its turn records because each has a
 different in-memory process-liveness map. When testing a second standalone
 supervisor on the same host, set `AIMEBU_EMBEDDED_SUPERVISOR=0` on the server
-and stop any existing local supervisor first.
-When switching from detached to embedded mode, stop the old process with
-`aimebu server stop --with-supervisor` before starting the embedded server.
+and stop any existing local supervisor first with
+`aimebu server stop --with-supervisor`.
 
 The owner pairs a remote machine from the browser's **Add machine** action.
 It issues a one-use token valid for ten minutes and shows a command to paste
@@ -119,8 +117,8 @@ risk with `aimebu supervisor --insecure --pair '<url>' '<token>'` (and `--insecu
 A remote supervisor that already runs against a plain-`http` server (paired before this check) stops with that message after the
 upgrade. Either move the server to HTTPS and re-pair (or edit the saved URL, `supervisor/machine.key`, or set `AIMEBU_URL`), or
 start it with `--insecure`. The pairing request and the approval wait re-check the transport on every redirect they are sent along, so a
-redirect from https to plain http on another host is refused too. The server's own embedded supervisor is exempt: it dials the address
-the server itself listens on, so nothing it sends leaves the machine.
+redirect from https to plain http on another host is refused too. The server's own local supervisor dials loopback, so the check never
+stops it.
 
 The remote supervisor redeems the token through the server allowlist and
 saves its machine ID, private key, and server URL in
@@ -475,8 +473,8 @@ process gone, the waiting item says why (the journal was replaced, or no report
 has covered the turn since it was lost). The owner sees a waiting item and may
 explicitly override the overlap risk; the actor and risk are recorded. The lead
 never decides it: the overlap risk is a person's call. The supervisor does not
-confirm the old process by pid: an embedded supervisor's turns end with the
-server, and its journal says so on the next hello; a replaced journal has no
+confirm the old process by pid: a supervisor's journal says on the next hello
+whether its turns ended; a replaced journal has no
 record at all, which is why that case needs a decision. An intact journal that proves a
 continuation never started replaces it with another linked continuation and
 preserves the recovery evidence while the agent remains active. If the agent
@@ -962,7 +960,7 @@ wall-clock cap for the whole turn, tools included. The defaults are the same
 for every harness: 30 minutes idle and a 90-minute cap. Setting either
 variable overrides it for every harness; both are Go
 durations, `0` disables a deadline, and an invalid value fails startup. The
-deadlines apply to the embedded and standalone supervisors alike and stop
+deadlines apply to the local and remote supervisors alike and stop
 counting once the final answer has been received. A tool that never reports
 its end keeps the idle deadline suspended, so only `AIMEBU_TURN_MAX` bounds
 a hung tool. On expiry the
@@ -1034,7 +1032,7 @@ harness process group, waits for it to exit, and reports a non-terminal
 failed exit whose evidence names the journal error. A harness therefore
 never keeps running after the supervisor stopped tracking it.
 
-The standalone and embedded supervisors route turns by tool: the fake
+Every supervisor, local or remote, routes turns by tool: the fake
 adapter provides a short echo for local demos, while installed Claude Code,
 Codex, Pi, OpenCode, and Mistral Vibe CLIs use their native adapters. An unavailable CLI does not
 appear in the supervisor's catalog.

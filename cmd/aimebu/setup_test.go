@@ -86,24 +86,25 @@ func TestFirstRunSetupWithoutOwnerEnvironment(t *testing.T) {
 	runFirstRunSetup(t, t.TempDir(), false)
 }
 
-// The default configuration runs the embedded supervisor, which needs the host machine key that only setup creates: the server
+// The default configuration runs the local supervisor, which needs the host machine key that only setup creates: the server
 // must come up without it and start the supervisor once the owner exists.
-func TestFirstRunSetupStartsTheEmbeddedSupervisorAfterTheOwner(t *testing.T) {
-	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
-	runFirstRunSetup(t, t.TempDir(), true)
+func TestFirstRunSetupStartsTheLocalSupervisorAfterTheOwner(t *testing.T) {
+	root := t.TempDir()
+	useLocalSupervisor(t, root)
+	runFirstRunSetup(t, root, true)
 }
 
 // A v1 cutover with no owner environment must not move v1's files and then die: it moves them, starts, and waits for setup.
 func TestV1CutoverWithoutOwnerEnvironmentWaitsForSetup(t *testing.T) {
-	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
 	root := makeV1Root(t)
+	useLocalSupervisor(t, root)
 	runFirstRunSetup(t, root, true)
 	if _, err := os.Stat(filepath.Join(root, v1BackupName)); err != nil {
 		t.Fatalf("v1's files were not backed up: %v", err)
 	}
 }
 
-func runFirstRunSetup(t *testing.T, root string, embedded bool) {
+func runFirstRunSetup(t *testing.T, root string, local bool) {
 	t.Helper()
 	t.Setenv("AIMEBU_USAGES", "0")
 	useFreePort(t)
@@ -189,8 +190,8 @@ func runFirstRunSetup(t *testing.T, root string, embedded bool) {
 	if code, _ := postToken(t, base, token); code != 404 {
 		t.Fatalf("token check after setup: %d", code)
 	}
-	if embedded {
-		waitFor(t, "the embedded supervisor", func() bool { _, err := os.Stat(filepath.Join(root, "supervisor", "journal.sqlite")); return err == nil })
+	if local {
+		waitFor(t, "the local supervisor", func() bool { _, err := os.Stat(filepath.Join(root, "supervisor", "journal.sqlite")); return err == nil })
 		select {
 		case code := <-done:
 			t.Fatalf("the server exited with %d after setup: %s", code, stderr.String())
@@ -233,20 +234,20 @@ func TestEnvironmentOwnerIsHeldToTheSameRules(t *testing.T) {
 	}
 }
 
-// A normal start answers requests before the embedded supervisor is up: building its tool list takes seconds, and the pages must not
-// wait for it. The test holds the supervisor's start, shows the server answering, then lets it go.
-func TestServerAnswersBeforeTheEmbeddedSupervisorIsUp(t *testing.T) {
+// A normal start answers requests before the local supervisor is up: starting it and building its tool list take seconds, and the pages
+// must not wait for it. The test holds the supervisor's start, shows the server answering, then lets it go.
+func TestServerAnswersBeforeTheLocalSupervisorIsUp(t *testing.T) {
 	t.Setenv("AIMEBU_USAGES", "0")
-	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
 	useFreePort(t)
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
+	useLocalSupervisor(t, root)
 	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	release := make(chan struct{})
 	hold := func() { <-release }
-	embeddedStartHook.Store(&hold)
-	t.Cleanup(func() { embeddedStartHook.Store(nil) })
+	supervisorStartHook.Store(&hold)
+	t.Cleanup(func() { supervisorStartHook.Store(nil) })
 	base := "http://127.0.0.1:" + os.Getenv("AIMEBU_PORT")
 	ctx, cancel := context.WithCancel(context.Background())
 	var stdout, stderr lockedBuffer
@@ -307,29 +308,30 @@ func TestServerAnswersBeforeTheEmbeddedSupervisorIsUp(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	close(release)
-	waitFor(t, "the embedded supervisor to connect", hostConnected)
+	waitFor(t, "the local supervisor to connect", hostConnected)
 }
 
 // A shutdown that is not a signal (the HTTP server fails while the context is still live) must not leave a supervisor starting behind it:
 // the start is still pending in the background, and it would run with nobody left to stop it.
 func TestAServeErrorDoesNotLetAPendingSupervisorStart(t *testing.T) {
 	t.Setenv("AIMEBU_USAGES", "0")
-	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
 	useFreePort(t)
-	useMigratedConfigDir(t, t.TempDir())
+	root := t.TempDir()
+	useMigratedConfigDir(t, root)
+	useLocalSupervisor(t, root)
 	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	release := make(chan struct{})
 	hold := func() { <-release }
-	embeddedStartHook.Store(&hold)
+	supervisorStartHook.Store(&hold)
 	var captured net.Listener
 	capture := func(l net.Listener) { captured = l }
 	listenerHook.Store(&capture)
 	finished := make(chan struct{})
 	onFinished := func() { close(finished) }
-	embeddedStartFinished.Store(&onFinished)
-	t.Cleanup(func() { embeddedStartHook.Store(nil); listenerHook.Store(nil); embeddedStartFinished.Store(nil) })
-	before := embeddedStarts.Load()
+	supervisorStartFinished.Store(&onFinished)
+	t.Cleanup(func() { supervisorStartHook.Store(nil); listenerHook.Store(nil); supervisorStartFinished.Store(nil) })
+	before := localSupervisorStarts.Load()
 	var stdout, stderr lockedBuffer
 	done := make(chan int, 1)
 	go func() { done <- serverCommand(context.Background(), &stdout, &stderr) }()
@@ -354,7 +356,7 @@ func TestAServeErrorDoesNotLetAPendingSupervisorStart(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the pending supervisor start never returned")
 	}
-	if got := embeddedStarts.Load() - before; got != 0 {
+	if got := localSupervisorStarts.Load() - before; got != 0 {
 		t.Fatalf("a supervisor started after the server had shut down (%d)", got)
 	}
 }

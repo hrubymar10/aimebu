@@ -998,8 +998,8 @@ the socket with an internal-error code so clients reconnect.
 
 The separate supervisor uses `GET /api/machine` as a WebSocket endpoint.
 Server shutdown closes it with 1001 (server restarting); an external
-supervisor reconnects to the next server process. The embedded supervisor's
-active turns drain before its machine socket is closed.
+supervisor, the local one included, reconnects to the next server process
+and its active turns keep running meanwhile.
 Attachment bytes stay in the server's storage; the supervisor never stages
 them in a checkout. Uploads are bound to a room immediately and one message
 on send; up to four files allow a file-only message. Unbound uploads expire

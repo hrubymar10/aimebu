@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,13 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/auth"
 	"github.com/hrubymar10/aimebu/v2/internal/server"
 	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
-	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
 )
 
 // watchServing returns a channel that is closed when the server a test starts next is serving. The listeners are open long before that: a
@@ -225,8 +224,10 @@ func TestServerCommandServesHTTP(t *testing.T) {
 	}
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
+	useLocalSupervisor(t, root)
 	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_WEB_BUNDLE", "off")
 	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -257,12 +258,12 @@ func TestServerCommandServesHTTP(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("embedded supervisor did not connect: %v", err)
+			t.Fatalf("local supervisor did not connect: %v", err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	if _, err := os.Stat(journalPath); err != nil {
-		t.Fatalf("embedded journal: %v", err)
+		t.Fatalf("local supervisor journal: %v", err)
 	}
 	cancel()
 	select {
@@ -275,13 +276,16 @@ func TestServerCommandServesHTTP(t *testing.T) {
 	}
 }
 
-func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
+// AIMEBU_EMBEDDED_SUPERVISOR=0 turns the local supervisor off, and an AIMEBU_SUPERVISOR left from when it could run inside the server is
+// noted as ignored without failing the start.
+func TestServerCanDisableLocalSupervisor(t *testing.T) {
 	t.Setenv("AIMEBU_USAGES", "0")
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
+	t.Setenv("AIMEBU_SUPERVISOR", "embedded")
 	port := holdPort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
@@ -294,14 +298,19 @@ func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
 		t.Fatalf("serve code=%d stderr=%q", code, stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "supervisor", "journal.sqlite")); !os.IsNotExist(err) {
-		t.Fatalf("disabled embedded supervisor created journal: %v", err)
+		t.Fatalf("disabled local supervisor created journal: %v", err)
+	}
+	if notice := `AIMEBU_SUPERVISOR="embedded" is ignored`; strings.Count(stderr.String(), notice) != 1 {
+		t.Fatalf("want one %q line, stderr=%q", notice, stderr.String())
 	}
 }
 
-func TestEmbeddedSupervisorReconcilesCrashedTurn(t *testing.T) {
+func TestLocalSupervisorReconcilesCrashedTurn(t *testing.T) {
 	t.Setenv("AIMEBU_USAGES", "0")
+	t.Setenv("AIMEBU_WEB_BUNDLE", "off")
 	root := t.TempDir()
 	useMigratedConfigDir(t, root)
+	useLocalSupervisor(t, root)
 	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	holdPort(t)
@@ -389,8 +398,8 @@ func TestEmbeddedSupervisorReconcilesCrashedTurn(t *testing.T) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	go func() { done <- serverCommand(runCtx, &stdout, &stderr) }()
-	// Observe the actual reconciliation edge. Opening the server and its
-	// embedded supervisor can take longer under race-enabled parallel suites.
+	// Observe the actual reconciliation edge. Opening the server and starting
+	// its local supervisor can take longer under race-enabled parallel suites.
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		var observed string
@@ -525,31 +534,38 @@ func TestResolveServerConfigAllowAndStartupWarning(t *testing.T) {
 	}
 }
 
-func TestAllowEmbeddedSupervisorAtItsDialAddress(t *testing.T) {
+// The local supervisor dials loopback whatever AIMEBU_BIND is, and that address is admitted even when AIMEBU_ALLOW leaves it out.
+func TestLocalSupervisorAddressIsAdmitted(t *testing.T) {
 	for _, test := range []struct {
 		bind, want string
 	}{
 		{"0.0.0.0", "127.0.0.1"},
 		{"::", "::1"},
-		{"192.0.2.10", "192.0.2.10"},
+		{"192.0.2.10", "127.0.0.1"},
 	} {
 		t.Run(test.bind, func(t *testing.T) {
 			t.Setenv("AIMEBU_BIND", test.bind)
-			t.Setenv("AIMEBU_ALLOW", "127.0.0.0/8,::1/128")
+			t.Setenv("AIMEBU_ALLOW", "192.0.2.0/24")
 			config, err := resolveServerConfig()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := allowEmbeddedSupervisor(&config); got != test.want {
-				t.Fatalf("dial address=%q want %q", got, test.want)
+			localURL, err := localSupervisorURL(config)
+			if err != nil {
+				t.Fatal(err)
 			}
+			parsed, err := url.Parse(localURL)
+			if err != nil || parsed.Hostname() != test.want {
+				t.Fatalf("dial url=%q want host %q (%v)", localURL, test.want, err)
+			}
+			allowSupervisorAddress(&config, parsed.Hostname())
 			ip := netip.MustParseAddr(test.want)
 			allowed := false
 			for _, prefix := range config.allow {
 				allowed = allowed || prefix.Contains(ip)
 			}
 			if !allowed {
-				t.Fatalf("embedded source %s excluded by %v", ip, config.allow)
+				t.Fatalf("local supervisor source %s excluded by %v", ip, config.allow)
 			}
 		})
 	}
@@ -598,7 +614,8 @@ func TestAFailedStartJoinsTheTokenCopyGoroutines(t *testing.T) {
 	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
-	// The embedded supervisor's journal cannot be opened under a regular file: the start fails after the server wiring.
+	// The local supervisor's journal lock cannot be checked under a regular file: the start fails after the server wiring.
+	useLocalSupervisor(t, root)
 	if err := os.WriteFile(filepath.Join(root, "supervisor"), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -629,21 +646,5 @@ func TestListenErrorDoesNotBlameV1ForAnyBusyPort(t *testing.T) {
 	other := listenError("127.0.0.1", 80, &net.OpError{Op: "listen", Err: &os.SyscallError{Syscall: "bind", Err: syscall.EACCES}})
 	if strings.Contains(other, "v1") {
 		t.Errorf("a permission error must not mention v1: %q", other)
-	}
-}
-
-// With AIMEBU_BIND set to a LAN or VPN address the embedded supervisor dials that address, which is not loopback: it is still this machine,
-// so the refusal of plain http to another machine must not apply to it, or the host machine stays offline.
-func TestEmbeddedSupervisorMayUsePlainHTTPOnItsOwnNonLoopbackAddress(t *testing.T) {
-	client := newEmbeddedSupervisor("machine", "key", "192.168.1.20", 9897, nil, adapter.NewFake())
-	if client.ServerURL != "http://192.168.1.20:9897" || !client.AllowPlainHTTP {
-		t.Fatalf("url=%q allowPlain=%v", client.ServerURL, client.AllowPlainHTTP)
-	}
-	if err := tlsclient.CheckTransport(client.ServerURL, client.AllowPlainHTTP); err != nil {
-		t.Fatalf("the embedded supervisor is refused: %v", err)
-	}
-	// The same address for a supervisor that was not told it is this machine is refused.
-	if err := tlsclient.CheckTransport("http://192.168.1.20:9897", false); err == nil {
-		t.Fatal("plain http to a LAN address was allowed for a remote supervisor")
 	}
 }

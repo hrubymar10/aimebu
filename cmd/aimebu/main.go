@@ -378,8 +378,7 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer, loc
 	}
 	client.TurnLimits = turnLimits
 	client.ConfigDir = config.root
-	// A standalone supervisor reports the way the server tells it to (unless its own AIMEBU_SENTRY_DSN says otherwise); the embedded one is the
-	// server's process and does not take the settings.
+	// A supervisor reports the way the server tells it to (unless its own AIMEBU_SENTRY_DSN says otherwise).
 	client.OnTelemetry = func(settings protocol.TelemetrySettings) {
 		applySupervisorTelemetry(settings, resolveVersion(), os.LookupEnv, client, nil, stderr)
 		if pendingCrashLog != "" && telemetry.Current().Enabled() {
@@ -454,12 +453,8 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	mode, err := supervisorMode()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if mode == "detached" && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0" {
+	localSupervisor := os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0"
+	if localSupervisor {
 		if _, err := localSupervisorURL(config); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -480,6 +475,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		stdout, stderr = serverLogs.stdout, serverLogs.stderr
 		defer serverLogs.close()
 	}
+	warnIgnoredSupervisorMode(stderr)
 	tlsConfig, err := resolveServerTLSConfig(config.port)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -497,7 +493,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	defer listener.Close()
 	var localListener net.Listener
-	if mode == "detached" && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0" {
+	if localSupervisor {
 		localURL, _ := localSupervisorURL(config)
 		localAddress := strings.TrimPrefix(localURL, "http://")
 		if localAddress != listener.Addr().String() && !strings.HasPrefix(config.bind, "0.0.0.0") && config.bind != "::" {
@@ -663,8 +659,8 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	ownerLogin, ownerPassword := os.Getenv("AIMEBU_OWNER_LOGIN"), os.Getenv("AIMEBU_OWNER_PASSWORD")
 	var ownerSetup *auth.OwnerSetup
-	// startEmbedded is set below; web setup calls it once the host machine and its key exist.
-	var startEmbedded func() error
+	// startLocalSupervisor is set below; web setup calls it once the host machine and its key exist.
+	var startLocalSupervisor func() error
 	// The token file sits in the config root, where a person looks first (and the setup screen names its full path).
 	setupRoot, absErr := filepath.Abs(config.root)
 	if absErr != nil {
@@ -680,11 +676,11 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			if err == nil && !created {
 				return "", auth.ErrSetupClosed
 			}
-			// The embedded supervisor needs the host machine key that setup just wrote. It starts in the background: reading each
-			// tool's version and opening its journal take seconds, and the person is waiting for the next screen.
-			if err == nil && startEmbedded != nil {
+			// The local supervisor needs the host machine key that setup just wrote. It starts in the background: the person is
+			// waiting for the next screen.
+			if err == nil && startLocalSupervisor != nil {
 				telemetry.Go(ctx, func() {
-					if serr := startEmbedded(); serr != nil {
+					if serr := startLocalSupervisor(); serr != nil {
 						fmt.Fprintln(stderr, "supervisor:", serr)
 					}
 				})
@@ -712,21 +708,13 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		// An owner now exists, so a token left by an earlier start without one is dead weight.
 		_ = os.Remove(setupPath)
 	}
-	localEnabled := ctx.Err() == nil && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "0"
-	embeddedEnabled := localEnabled && mode == "embedded"
-	detachedEnabled := localEnabled && mode == "detached"
-	var turnLimits supervisor.TurnLimitOverrides
+	localEnabled := ctx.Err() == nil && localSupervisor
 	if localEnabled {
-		turnLimits, err = supervisor.TurnLimitsFromEnv(os.Getenv)
-		if err != nil {
+		// The supervisor reads these itself; a value it would reject fails the server's start, where the person sees it.
+		if _, err := supervisor.TurnLimitsFromEnv(os.Getenv); err != nil {
 			failStartup(stderr, err)
 			return 1
 		}
-	}
-	embeddedAddress := ""
-	if embeddedEnabled {
-		embeddedAddress = allowEmbeddedSupervisor(&config)
-	} else if detachedEnabled {
 		localURL, _ := localSupervisorURL(config)
 		parsed, _ := url.Parse(localURL)
 		allowSupervisorAddress(&config, parsed.Hostname())
@@ -746,7 +734,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	service.DataRoot = config.root
 	var localManager *detachedSupervisorManager
-	if detachedEnabled {
+	if localEnabled {
 		localManager = &detachedSupervisorManager{config: config, stderr: stderr, store: db, ctx: ctx, connected: service.LocalSupervisorConnected, canInterrupt: service.LocalSupervisorCanInterrupt, replaceOverdue: service.ReplaceOverdueLocalSupervisor}
 		service.LocalSupervisorEnvironment = supervisor.EnvironmentFingerprint(os.Environ())
 		service.LocalSupervisorDiskVersion = onDiskSupervisorVersion
@@ -820,7 +808,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	service.StartQuotaSwitcher(ctx)
 	service.StartUpdateCheck(ctx)
 	handler := service.Handler()
-	// With https configured the plain listener sends other machines to it; this machine's own clients (the embedded supervisor, the command
+	// With https configured the plain listener sends other machines to it; this machine's own clients (the local supervisor, the command
 	// line) keep using it.
 	httpServer := &http.Server{Handler: service.RedirectPlainToHTTPS(handler), ReadHeaderTimeout: 10 * time.Second}
 	var httpsServer *http.Server
@@ -833,73 +821,35 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		defer close(dispatchDone)
 		server.NewDispatcher(service).Run(dispatchCtx, 100*time.Millisecond, func(err error) { fmt.Fprintln(stderr, "dispatch:", err) })
 	})
-	var embedded *supervisor.Client
-	var journal *supervisor.Journal
-	var stopEmbedded context.CancelFunc
-	var embeddedDone chan error
-	var embeddedMu sync.Mutex
-	// stopping is set at shutdown, before the final read of the supervisor's state: a start that is still pending (it runs in the
-	// background) must not begin after that read, or it would be left running with nobody to stop it.
+	var localMu sync.Mutex
+	// stopping is set at shutdown: a start that is still pending (it runs in the background) must not begin after that, or it would start
+	// a supervisor for a server that is gone.
 	stopping := false
-	var preparedJournal *supervisor.Journal
-	detachedStarted := false
-	startEmbedded = func() error {
-		embeddedMu.Lock()
-		defer embeddedMu.Unlock()
-		if embedded != nil || detachedStarted || stopping || ctx.Err() != nil {
+	localStarted := false
+	startLocalSupervisor = func() error {
+		localMu.Lock()
+		defer localMu.Unlock()
+		if localStarted || stopping || ctx.Err() != nil {
 			return nil
 		}
-		if detachedEnabled {
-			credential, keyErr := readHostMachineKey(keyPath)
-			if keyErr != nil {
-				return keyErr
-			}
-			service.SetLocalSupervisorID(credential.MachineID)
-			localManager.machineID = credential.MachineID
-			if err := startDetachedSupervisor(config); err != nil {
-				return err
-			}
-			detachedStarted = true
-			telemetry.Go(ctx, func() { localManager.run(ctx) })
-			return nil
+		credential, keyErr := readHostMachineKey(keyPath)
+		if keyErr != nil {
+			return keyErr
 		}
-		credential, err := readHostMachineKey(keyPath)
-		if err != nil {
+		service.SetLocalSupervisorID(credential.MachineID)
+		localManager.machineID = credential.MachineID
+		localSupervisorStarts.Add(1)
+		if err := startDetachedSupervisor(config); err != nil {
 			return err
 		}
-		// A normal start opened the journal before listening (a journal that cannot be opened is a failed start); first-run setup
-		// has not yet, and opens it here.
-		opened := preparedJournal
-		if opened == nil {
-			if opened, err = supervisor.OpenJournal(ctx, filepath.Join(config.root, "supervisor", "journal.sqlite")); err != nil {
-				return err
-			}
-		}
-		fake := localFakeAdapter()
-		client := newEmbeddedSupervisor(credential.MachineID, credential.Key, embeddedAddress, config.port, opened,
-			adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), opencode.NewDocker(), vibe.New(filepath.Join(config.root, "supervisor", "vibe")), vibe.NewDocker()))
-		client.OnError = func(err error) { fmt.Fprintln(stderr, "supervisor:", err) }
-		client.TurnLimits = turnLimits
-		client.ConfigDir = config.root
-		var embeddedCtx context.Context
-		embeddedStarts.Add(1)
-		embeddedCtx, stopEmbedded = context.WithCancel(context.Background())
-		done := make(chan error, 1)
-		telemetry.Go(ctx, func() { done <- client.Run(embeddedCtx) })
-		embedded, journal, embeddedDone = client, opened, done
+		localStarted = true
+		telemetry.Go(ctx, func() { localManager.run(ctx) })
 		return nil
 	}
-	defer func() {
-		embeddedMu.Lock()
-		defer embeddedMu.Unlock()
-		if stopEmbedded != nil {
-			stopEmbedded()
-		}
-	}()
 	// With an owner already in place the host key exists, so a missing or unreadable one is still a failed start, and so is a
-	// journal that cannot be opened: both are checked before listening. The supervisor itself (reading each tool's version, then
-	// connecting) starts after the server is listening, because the pages should not wait for it; in first-run setup everything
-	// starts when the owner is created, because the key does not exist before that.
+	// journal lock held by something that is not an aimebu supervisor: both are checked before listening. The supervisor itself starts
+	// (or is adopted) after the server is listening, because the pages should not wait for it; in first-run setup it starts when the
+	// owner is created, because the key does not exist before that.
 	startSupervisorAfterServe := false
 	if localEnabled && !ownerSetup.Open() {
 		if _, err := readHostMachineKey(keyPath); err != nil {
@@ -909,28 +859,17 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if embeddedEnabled {
-			var journalErr error
-			if preparedJournal, journalErr = supervisor.OpenJournal(ctx, filepath.Join(config.root, "supervisor", "journal.sqlite")); journalErr != nil {
-				stopDispatch()
-				<-dispatchDone
-				listener.Close()
-				fmt.Fprintln(stderr, journalErr, "If switching from detached mode, run `aimebu server stop --with-supervisor` before starting embedded mode.")
-				return 1
-			}
-		} else {
-			if _, _, err := supervisorPID(config.root); err != nil {
-				stopDispatch()
-				<-dispatchDone
-				listener.Close()
-				fmt.Fprintln(stderr, err, "Stop the server and run `aimebu server stop --with-supervisor` to clear the local supervisor before changing modes.")
-				return 1
-			}
+		if _, _, err := supervisorPID(config.root); err != nil {
+			stopDispatch()
+			<-dispatchDone
+			listener.Close()
+			fmt.Fprintln(stderr, err, "Stop the server and run `aimebu server stop --with-supervisor` to clear the local supervisor.")
+			return 1
 		}
 		startSupervisorAfterServe = true
 	}
 	if !localEnabled {
-		startEmbedded = nil
+		startLocalSupervisor = nil
 	}
 	serveDone := make(chan error, 3)
 	telemetry.Go(ctx, func() { serveDone <- httpServer.Serve(listener) })
@@ -939,13 +878,13 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	if startSupervisorAfterServe {
 		telemetry.Go(ctx, func() {
-			if hook := embeddedStartHook.Load(); hook != nil {
+			if hook := supervisorStartHook.Load(); hook != nil {
 				(*hook)()
 			}
-			if err := startEmbedded(); err != nil {
+			if err := startLocalSupervisor(); err != nil {
 				fmt.Fprintln(stderr, "supervisor:", err)
 			}
-			if hook := embeddedStartFinished.Load(); hook != nil {
+			if hook := supervisorStartFinished.Load(); hook != nil {
 				(*hook)()
 			}
 		})
@@ -989,35 +928,15 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	<-dispatchDone
 	stopTokenCopies()
-	embeddedMu.Lock()
+	localMu.Lock()
 	stopping = true
-	finalClient, finalJournal, finalStop, finalDone := embedded, journal, stopEmbedded, embeddedDone
-	unusedJournal := preparedJournal
-	embeddedMu.Unlock()
-	if finalClient != nil {
-		drainCtx, cancelDrain := context.WithTimeout(context.Background(), 40*time.Second)
-		if err := finalClient.StopAcceptingAndDrain(drainCtx); err != nil {
-			fmt.Fprintln(stderr, "supervisor drain:", err)
-		}
-		cancelDrain()
-		finalStop()
-		<-finalDone
-	}
+	localMu.Unlock()
+	// The local supervisor is a process of its own: it keeps its turns running and reconnects to the next server.
 	socketShutdownCtx, cancelSocketShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := service.ShutdownSockets(socketShutdownCtx); err != nil {
 		fmt.Fprintln(stderr, "websocket shutdown:", err)
 	}
 	cancelSocketShutdown()
-	if finalClient == nil && unusedJournal != nil {
-		// Shut down before the supervisor started: the journal opened for it still has to be closed.
-		_ = unusedJournal.Close()
-	}
-	if finalClient != nil {
-		if err := finalJournal.Close(); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-	}
 	if serveErr != nil && serveErr != http.ErrServerClosed {
 		fmt.Fprintln(stderr, serveErr)
 		return 1
@@ -1130,29 +1049,7 @@ func logAllowStartup(w io.Writer, config serverConfig, address string) {
 	}
 }
 
-// The embedded supervisor must reach its own listener even when remote peers
-// are excluded by the configured allowlist.
-// newEmbeddedSupervisor is the supervisor the server runs for its own machine. It dials the address the server itself listens on, which may be
-// a LAN or VPN address (AIMEBU_BIND) and not loopback, so plain http is allowed for it: nothing it sends leaves this machine, which is what
-// the refusal of plain http to another machine is about.
-func newEmbeddedSupervisor(machineID, key, address string, port int, journal *supervisor.Journal, harnesses adapter.Adapter) *supervisor.Client {
-	client := supervisor.NewClient(machineID, key, "http://"+net.JoinHostPort(address, strconv.Itoa(port)), journal, harnesses)
-	client.AllowPlainHTTP = true
-	return client
-}
-
-func allowEmbeddedSupervisor(config *serverConfig) string {
-	address := config.bind
-	switch address {
-	case "0.0.0.0":
-		address = "127.0.0.1"
-	case "::":
-		address = "::1"
-	}
-	allowSupervisorAddress(config, address)
-	return address
-}
-
+// allowSupervisorAddress admits the local supervisor's loopback address even when AIMEBU_ALLOW leaves it out.
 func allowSupervisorAddress(config *serverConfig, address string) {
 	ip := netip.MustParseAddr(address).Unmap()
 	for _, prefix := range config.allow {
@@ -1207,8 +1104,8 @@ func listenError(bind string, port int, err error) string {
 	return fmt.Sprintf("cannot listen on %s: %v", net.JoinHostPort(bind, strconv.Itoa(port)), err)
 }
 
-// embeddedStartHook runs just before the embedded supervisor starts after the server is listening; tests hold it to see the server answer first.
-// listenerHook receives the HTTP listener, so a test can close it and make Serve fail. embeddedStarts counts supervisors that really started.
+// supervisorStartHook runs just before the local supervisor starts after the server is listening; tests hold it to see the server answer first.
+// listenerHook receives the HTTP listener, so a test can close it and make Serve fail. localSupervisorStarts counts starts that really began.
 // listenOverride replaces net.Listen for the server's own listeners (HTTP and HTTPS). It is nil in production. A test that needs a port the
 // server under test will bind used to find one by listening on :0 and closing, then pass the number on; anything on the machine could take
 // the port between the close and the server's bind. The test now keeps its listener open and hands it over here (see holdFreePorts).
@@ -1223,13 +1120,13 @@ func listenTCP(address string) (net.Listener, error) {
 }
 
 var (
-	embeddedStartHook atomic.Pointer[func()]
-	listenerHook      atomic.Pointer[func(net.Listener)]
-	embeddedStarts    atomic.Int32
+	supervisorStartHook   atomic.Pointer[func()]
+	listenerHook          atomic.Pointer[func(net.Listener)]
+	localSupervisorStarts atomic.Int32
 	// servingHook runs once every listener is being served: startup (migrations, the owner's password hash) is over and a request is answered.
 	servingHook atomic.Pointer[func()]
-	// embeddedStartFinished runs when the background start has returned, whatever it did.
-	embeddedStartFinished atomic.Pointer[func()]
+	// supervisorStartFinished runs when the background start has returned, whatever it did.
+	supervisorStartFinished atomic.Pointer[func()]
 )
 
 const setupTokenFile = ".setup_token"

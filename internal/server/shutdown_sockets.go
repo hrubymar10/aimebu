@@ -50,7 +50,7 @@ func (s *Server) socketsClosing() bool {
 }
 
 // ShutdownSockets closes WebSockets with 1001 and joins their handlers before
-// the caller closes the store or an embedded supervisor's journal. If the
+// the caller closes the store. If the
 // deadline expires, it force closes sockets and gives handlers one final
 // bounded interval; a stuck handler is reported and the caller can proceed.
 func (s *Server) ShutdownSockets(ctx context.Context) error {

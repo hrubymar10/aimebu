@@ -20,7 +20,7 @@ A server reached by IP address, by `localhost` or through its public URL is not 
 A supervisor on another machine that is paired against a plain-`http` server (not loopback) now refuses to run, and so does
 `aimebu supervisor --pair` against one. Either serve the server over HTTPS and re-pair (or set `AIMEBU_URL` to the https address), or accept
 the risk with `--insecure` (on the pairing command and on every later `aimebu supervisor`). The **Add machine** dialog shows a warning and the
-`--insecure` command when the server is reached over plain http at such an address. The server's own embedded supervisor is not affected.
+`--insecure` command when the server is reached over plain http at such an address. The server's own local supervisor, which dials loopback, is not affected.
 See [Supervisor](supervisor.md).
 
 ## Docker harnesses need a current harness-docker

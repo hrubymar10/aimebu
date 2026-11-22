@@ -32,7 +32,7 @@ const pidFileName = "aimebu.pid"
 
 var (
 	// daemonStartLimit is how long start waits for the new server to prove it is up: a first start moves v1's files, opens and migrates
-	// the database and starts the embedded supervisor before it listens. Without the proof it has failed, however alive the process is.
+	// the database and checks the local supervisor's journal before it listens. Without the proof it has failed, however alive the process is.
 	daemonStartLimit = 30 * time.Second
 	// daemonStopLimit is how long stop waits for a clean shutdown (agents are stopped and the database closed). It never kills: a
 	// server killed in the middle of a write is worth more waiting than a faster command.
@@ -396,8 +396,8 @@ func daemonStart(config serverConfig, stdout, stderr io.Writer) int {
 	return 1
 }
 
-// daemonSpawned is told the pid of each detached server `start` launches; only tests set it, so that they can kill by pid whatever they
-// started, even when its pid file was never written or is gone.
+// daemonSpawned is told the pid of each detached server `start` launches, and of each local supervisor this process launches; only tests
+// set it, so that they can kill by pid whatever they started, even when its pid file was never written or is gone.
 var daemonSpawned func(pid int)
 
 // markInheritedFDsCloseOnExec sets close-on-exec on every descriptor above stderr. Go opens its own with it, but a descriptor inherited from

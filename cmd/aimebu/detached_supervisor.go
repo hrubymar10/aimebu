@@ -37,15 +37,12 @@ func localFakeAdapter() *adapter.Fake {
 	return fake
 }
 
-func supervisorMode() (string, error) {
-	mode := os.Getenv("AIMEBU_SUPERVISOR")
-	if mode == "" {
-		mode = "embedded"
+// warnIgnoredSupervisorMode notes an AIMEBU_SUPERVISOR left over from when the local supervisor could also run inside the server. The local
+// supervisor is now always a process of its own, so the setting changes nothing; the start goes on.
+func warnIgnoredSupervisorMode(w io.Writer) {
+	if mode := os.Getenv("AIMEBU_SUPERVISOR"); mode != "" {
+		fmt.Fprintf(w, "AIMEBU_SUPERVISOR=%q is ignored: the local supervisor always runs as its own process (AIMEBU_EMBEDDED_SUPERVISOR=0 turns it off)\n", mode)
 	}
-	if mode != "embedded" && mode != "detached" {
-		return "", fmt.Errorf("AIMEBU_SUPERVISOR must be embedded or detached")
-	}
-	return mode, nil
 }
 
 func localSupervisorURL(config serverConfig) (string, error) {
@@ -114,6 +111,9 @@ func startDetachedSupervisor(config serverConfig) error {
 	markInheritedFDsCloseOnExec()
 	if err := command.Start(); err != nil {
 		return err
+	}
+	if daemonSpawned != nil {
+		daemonSpawned(command.Process.Pid)
 	}
 	go func() { _ = command.Wait() }()
 	return nil

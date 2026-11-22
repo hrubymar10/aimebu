@@ -8,8 +8,8 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
-// telemetryForMachine is the telemetry configuration a supervisor is told: nil for one that does not take it (an older one, and the server's own
-// embedded supervisor, which is this process and reports through it).
+// telemetryForMachine is the telemetry configuration a supervisor is told: nil for one that does not take it (an older one, or a client that
+// leaves OnTelemetry unset).
 func (s *Server) telemetryForMachine(ctx context.Context, machine *machineConn) *protocol.TelemetrySettings {
 	if machine == nil || !machine.supportsTelemetryConfig {
 		return nil

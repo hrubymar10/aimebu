@@ -457,7 +457,7 @@ Codex, Pi, OpenCode and Vibe run with private state per agent, so the
 supervisor first copies the selected v1 native session into that state (see
 [Start as v2 agent](import-v1.md#start-as-v2-agent)).
 
-Both standalone and embedded supervisors route `fake`, `claude`, `codex`, `pi`, `opencode`, and `vibe`
+Every supervisor, local or remote, routes `fake`, `claude`, `codex`, `pi`, `opencode`, and `vibe`
 turns through `adapter.Multi` when their CLIs are available.
 
 ## Pi native and Docker adapters

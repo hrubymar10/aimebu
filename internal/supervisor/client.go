@@ -40,8 +40,8 @@ type Client struct {
 	ServerURL  string
 	// AllowPlainHTTP lets this supervisor reach a server on another machine over plain http (the --insecure flag); without it only https, or this machine, is used.
 	AllowPlainHTTP bool
-	// OnTelemetry takes the server's telemetry settings (in hello_ack, and again whenever they change). Nil means this supervisor does not take them (the
-	// server's own embedded one is the server's process and reports through it): it then does not announce the capability.
+	// OnTelemetry takes the server's telemetry settings (in hello_ack, and again whenever they change). Nil means this supervisor does not take them: it
+	// then does not announce the capability.
 	OnTelemetry             func(protocol.TelemetrySettings)
 	HTTPClient              *http.Client
 	SupervisorVersion       string

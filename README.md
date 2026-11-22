@@ -49,7 +49,7 @@ for you.
 │ aimebu server  (127.0.0.1:9997 by default)                  │
 │  • HTTP API + WebSocket event stream + embedded web UI      │
 │  • SQLite database (one writer, WAL) in ~/.aimebu           │
-│  • embedded supervisor for the machine it runs on           │
+│  • starts the local supervisor (a process of its own)       │
 └───────┬──────────────────────┬─────────────────────┬────────┘
         │ machine WebSocket    │ HTTP / WebSocket    │ per-agent key
         │                      │                     │
@@ -186,13 +186,12 @@ people reach for most:
 | `AIMEBU_CONFIG_DIR` | `~/.aimebu` | Absolute config root: database, attachments, journal, keys, log. |
 | `AIMEBU_BIND` | `127.0.0.1` | Address the server listens on. |
 | `AIMEBU_PORT` | `9997` | HTTP port. |
-| `AIMEBU_ALLOW` | loopback | Comma-separated IPs or CIDRs allowed to connect. Add your network when binding to a non-loopback address. Detached mode also admits its loopback listener even with a custom list. |
+| `AIMEBU_ALLOW` | loopback | Comma-separated IPs or CIDRs allowed to connect. Add your network when binding to a non-loopback address. The local supervisor's loopback address is admitted even with a custom list. |
 | `AIMEBU_TLS_CERT` / `AIMEBU_TLS_KEY` | unset | PEM files; set both for HTTPS on `AIMEBU_TLS_PORT` (default `9996`). See [HTTPS](docs/tls.md). |
 | `AIMEBU_PUBLIC_URL` | unset | The origin advertised behind a reverse proxy. |
 | `AIMEBU_ALLOWED_HOSTS` | unset | Extra host names that sign-in and setup answer to (needed for a LAN name). |
 | `AIMEBU_OWNER_LOGIN` / `AIMEBU_OWNER_PASSWORD` | unset | Create the owner on first start, for headless installs. Otherwise the server prints a one-time setup link. |
-| `AIMEBU_EMBEDDED_SUPERVISOR` | on | Set to `0` for a server that only coordinates remote machines. |
-| `AIMEBU_SUPERVISOR` | `embedded` | Set to `detached` to keep local turns running while the server restarts. The server also listens on loopback for the detached supervisor. |
+| `AIMEBU_EMBEDDED_SUPERVISOR` | on | Set to `0` for a server that only coordinates remote machines. The local supervisor is a process of its own that keeps turns running while the server restarts; the old `AIMEBU_SUPERVISOR` switch is ignored. |
 | `AIMEBU_SENTRY_DSN` | maintainers' | `off` disables error reporting; see [telemetry](docs/telemetry.md) for what is and is never sent. |
 | `AIMEBU_USAGES` | on | Set to `0` to stop reading harness credentials and polling usage. |
 

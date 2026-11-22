@@ -201,7 +201,7 @@ TimeoutStopSec=60
 WantedBy=default.target
 ```
 
-With `AIMEBU_SUPERVISOR=detached`, these settings let the local supervisor
+These settings let the local supervisor
 survive a manager restart of the server. Without them, the manager may kill
 the server's child process group or service cgroup as well. Stop such a
 service with its manager (`launchctl bootout`, `systemctl --user stop`), not
@@ -215,7 +215,7 @@ If the executable is upgraded before the running server, a new supervisor
 continues serving work and Machines, Health and `doctor --live` ask for a
 server restart. Restart the service to finish the upgrade.
 The server closes event and machine WebSockets, waits for their handlers,
-then closes the database; embedded mode also drains its local turns. A Homebrew formula's
+then closes the database; the local supervisor's turns keep running. A Homebrew formula's
 `service` block takes the same `aimebu server` command.
 
 Secondary options, none required for 2.0.0 and none verified here:

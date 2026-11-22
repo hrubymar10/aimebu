@@ -387,6 +387,7 @@ func TestFirstStartWithoutOwnerLeavesV1RootUntouched(t *testing.T) {
 	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
 	t.Setenv("AIMEBU_TURN_IDLE", "not-a-duration")
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1") // the turn limits are the local supervisor's, checked only when it runs
 	stderr.Reset()
 	if code := serverCommand(t.Context(), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "nothing has been moved") {
 		t.Fatalf("bad turn limit: code=%d %q", code, stderr.String())

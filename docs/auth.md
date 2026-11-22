@@ -50,10 +50,9 @@ The login must be 3-32 lowercase letters, digits, `-` or `_` starting with a
 letter (capitals are lowercased) and the password at least 12 characters, as
 for invitations and for the environment variables.
 
-The embedded supervisor, which needs the host machine key, starts in the
-background right after the owner is created (reading each tool's version takes
-seconds, and the setup request does not wait for it); until then the server only
-serves setup. A v1 cutover works the same way:
+The local supervisor, which needs the host machine key, starts in the
+background right after the owner is created (the setup request does not wait
+for it); until then the server only serves setup. A v1 cutover works the same way:
 the files are moved, the server starts, and setup creates the owner.
 
 The token is single use and stops working the moment the owner exists (the

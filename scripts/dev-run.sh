@@ -1,5 +1,6 @@
 #!/bin/sh
-# Dev runner used by `make dev`. The server embeds its local supervisor.
+# Dev runner used by `make dev`. The server starts or adopts its local supervisor, a
+# process of its own that keeps running across the restarts air makes.
 # Children get TERM:
 # background jobs of a non-interactive shell ignore INT.
 set -u

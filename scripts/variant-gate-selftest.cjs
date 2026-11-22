@@ -2,7 +2,7 @@
 'use strict';
 // Dry run of scripts/variant-gate.cjs with no model spend and no real CLIs.
 //
-// It builds aimebu, starts an isolated scratch server (embedded supervisor) with
+// It builds aimebu, starts an isolated scratch server (with its local supervisor) with
 // fake `claude`, `codex`, and `pi` programs first on PATH, and runs the gate's
 // native variants against it. The fakes speak just enough of each tool's stream
 // protocol for the real adapters to accept them: they answer the word a note
@@ -20,7 +20,7 @@ const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('node:child_process');
 
 const { Client } = require('./variant-gate.cjs');
-const { startServer } = require('./server-start.cjs');
+const { startServer, stopLocalSupervisor } = require('./server-start.cjs');
 const root = path.resolve(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vg-selftest-'));
 const home = path.join(tmp, 'home');
@@ -81,14 +81,22 @@ async function main() {
   if (build.status !== 0) throw new Error('go build failed');
   const inheritedEnv = { ...process.env };
   for (const name of ['AIMEBU_URL', 'AIMEBU_BIND', 'AIMEBU_ALLOW', 'AIMEBU_ALLOWED_HOSTS', 'AIMEBU_TLS_CERT', 'AIMEBU_TLS_KEY', 'AIMEBU_TLS_PORT', 'AIMEBU_OWNER_LOGIN', 'AIMEBU_OWNER_PASSWORD']) delete inheritedEnv[name];
-  const { child: server, origin, logs: serverLogs } = await startServer(aimebu, port => ({ ...inheritedEnv, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'config'),
+  let serverEnv;
+  const { child: server, origin, logs: serverLogs } = await startServer(aimebu, port => (serverEnv = { ...inheritedEnv, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'config'),
     PATH: `${bin}${path.delimiter}${process.env.PATH}`, AIMEBU_ALLOW_NATIVE: '1', AIMEBU_USAGES: '0', AIMEBU_PORT: String(port), AIMEBU_OWNER_LOGIN: 'owner', AIMEBU_OWNER_PASSWORD: 'selftest-password-123' }), { label: 'variant-gate server', cwd: tmp });
   try {
     // Nothing is seeded: add the four native harnesses the fakes stand in for, each with its cheap model, as an owner would.
     const api = new Client(origin);
     await api.login('owner', 'selftest-password-123');
-    const machines = (await api.must('GET', '/api/machines')).machines;
-    const host = machines.find(m => m.is_host) || machines[0];
+    // The local supervisor is a process of its own that connects a moment after the server answers; launchers need it connected.
+    let host;
+    for (let i = 0; i < 60; i++) {
+      const machines = (await api.must('GET', '/api/machines')).machines;
+      host = machines.find(m => m.is_host) || machines[0];
+      if (host && host.connected) break;
+      await sleep(500);
+    }
+    if (!host || !host.connected) throw new Error('the local supervisor did not connect within 30 s');
     const cheap = { claude: 'haiku', codex: 'gpt-6-luna', pi: 'ollama-cloud/gemma4:31b', opencode: 'ollama-cloud/gemma4:31b' };
     for (const tool of Object.keys(cheap)) {
       const made = await api.must('POST', `/api/machines/${host.id}/launchers`, { tool, command: tool, args: [], env_refs: {}, enabled: true, containerized: false, path_maps: [], visible_roots: [], supports_toolbox: true });
@@ -140,8 +148,10 @@ async function main() {
     console.error(`--- server log tail ---\n${serverLogs().slice(-4000)}`);
     throw error;
   } finally {
+    const exited = new Promise(resolve => { if (server.exitCode !== null || server.signalCode) resolve(); else server.once('close', resolve); });
     server.kill('SIGTERM');
-    await sleep(500);
+    await Promise.race([exited, sleep(15000)]);
+    stopLocalSupervisor(aimebu, serverEnv); // the local supervisor that ran the fakes outlives the server
     if (!process.env.VG_SELFTEST_KEEP) fs.rmSync(tmp, { recursive: true, force: true }); else console.log(`kept ${tmp}`);
   }
 }
