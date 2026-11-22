@@ -50,10 +50,14 @@ seconds later is killed, so that its replacement can start; its own drain is
 limited to 40 seconds, so one that is still there is hanging. It is killed
 together with what it started: every process group one of its child processes
 leads (each harness CLI and each `run_command` job runs in a group of its
-own) and its other child processes, so nothing of the old supervisor keeps
-writing in a checkout while a turn is continued on the new one. A process
-inside a container is not a child of the supervisor; its launcher ends it
-when the host side is gone. The journal keeps what its turns reported, and
+own) and its other child processes, so nothing of the old supervisor on the
+host keeps writing in a checkout while a turn is continued on the new one. A
+process inside a container is not a child of the supervisor: killing the host
+side does not stop it, and its launcher ends it only when its session
+heartbeat sweeps it, about fifteen seconds after the host side is gone. For a
+container turn the no-overlap guarantee therefore holds only after that
+sweep: for up to about fifteen seconds the old process can still write in the
+checkout while the new supervisor continues the turn. The journal keeps what its turns reported, and
 the replacement delivers it. The drain also leaves
 alone the turn of an agent that a team flow change in progress holds (the
 change interrupts it its own way), and it never replaces an interrupt somebody
