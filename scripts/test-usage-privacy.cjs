@@ -1,5 +1,4 @@
-// The usages-ports privacy masks (web/js/usage-privacy.js), run in a vm, with
-// usagesPorts pinned to B (a stub signal: the same shape the real module has).
+// The Usages privacy masks (web/js/usage-privacy.js), run in a vm.
 // Part of `make test-web`.
 'use strict';
 const assert = require('node:assert/strict');
@@ -9,16 +8,14 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '..', 'web', 'js');
 const source = fs.readFileSync(path.join(root, 'usage-privacy.js'), 'utf8');
 const context = vm.createContext({ document: { addEventListener() {}, dispatchEvent() {} }, localStorage: { getItem: () => 'on', setItem() {}, removeItem() {} } });
-// The mask's on/off state comes from maskingOn(), usagesPorts.value === 'b'
-// && usagePrivacy.value; the stub pins the experiment to B and the test flips
-// the toggle through the same signal the real module keeps.
-vm.runInContext(`var usagesPorts = { value: 'b' };
-var signal = value => ({ value, peek: () => value });
+// The mask's on/off state comes from maskingOn(), usagePrivacy.value; the
+// test flips the toggle through the same signal the real module keeps.
+vm.runInContext(`var signal = value => ({ value, peek: () => value });
 ${source.replace(/^import .*$/gm, '').replace(/^export /gm, '')}
 globalThis.api = { maskName, maskEmail, maskNames, setPrivacy: value => { usagePrivacy.value = value; } };`, context);
 const { maskName, maskEmail, maskNames, setPrivacy } = context.api;
 
-assert.equal(maskName('main'), 'm•••', 'masking is on in B by default (no saved state reads as off, so the stub forces the check)');
+assert.equal(maskName('main'), 'm•••', 'masking is on when the saved choice says so');
 setPrivacy(false); // toggling off leaves the plain text
 assert.equal(maskName('main'), 'main', 'masking off leaves the name');
 assert.equal(maskName(''), '', 'an empty name has nothing to hide');

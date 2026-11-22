@@ -4,7 +4,6 @@ import { promptDialog } from '../../dialogs.js';
 import { creditsText, percent, windowLabel, paceExplanation, sparkGeometry, dailyTargetText, countdown, shown, staleResetText, age as ageOf, USAGE_LEGEND } from '../../usage-format.js';
 import { mergeAlerts, staleAge } from '../../usage-alerts.js';
 import { expiryBadge } from '../../usage-expiry.js';
-import { usagesPorts } from '../../usages-ports.js';
 import { maskEmail, maskName, maskNames, usagePrivacy, toggleUsagePrivacy } from '../../usage-privacy.js';
 import { toolOf, isSwitchable, sortProviders, providerConfigured, canEnable, movedOrder, profileKey, profileStatusLine, switchView, affectedText } from './model.js';
 import { CopilotSetup, MistralSetup, OllamaSetup } from './provider-setup.js';
@@ -164,12 +163,12 @@ export function UsagesView({ store, readOnly = false, openSettings }) {
   const primary = groupBy === 'active' ? part(profile => profile.active, false) : groups;
   const secondary = groupBy === 'active' ? part(profile => !profile.active, true) : [];
   // The Settings page already draws the owner's credential alerts in its switcher block, so only the read-only panel (which has no such block) draws them here.
-  // B's privacy mode masks the profile names inside those sentences too.
+  // Privacy mode masks the profile names inside those sentences too.
   const names = providers.flatMap(provider => (provider.profiles || []).map(profile => profile.profile_name)).filter(Boolean);
   const alerts = readOnly ? mergeAlerts(usage?.credential_alerts, maskNames(names)) : [];
   const tile = group => html`<${Tile} key=${group.provider.provider_name} store=${store} provider=${group.provider} profiles=${sorted(group.profiles)} order=${group.order} providers=${providers} state=${shown_}
     usedDisplay=${usedDisplay} refreshSec=${refreshSec} tokens=${tokens} revision=${revision} readOnly=${readOnly} alerts=${usage?.credential_alerts || []} />`;
-  return html`<div class=${`usages-b${usagesPorts.value === 'b' ? ' usages-b-ports' : ''}`}>
+  return html`<div class="usages-b">
     ${alerts.length > 0 && html`<div class="usages-credential-alerts" role="alert">${alerts.map(alert => html`<div class=${`usages-credential-alert usages-credential-alert-${String(alert.kind || '').replace(/[^a-z_]/g, '')}`}><p>${alert.text}</p>
       ${alert.details.length > 0 && html`<details><summary>Details</summary>${alert.details.map(line => html`<p>${line}</p>`)}</details>`}</div>`)}</div>`}
     <div class="usages-b-grid">${primary.map(tile)}</div>
@@ -180,14 +179,14 @@ export function UsagesView({ store, readOnly = false, openSettings }) {
   </div>`;
 }
 
-// B's actions for the Usages page's header, where the panel's own header already holds them (refresh, and the group button).
-// B of the usages-ports experiment adds the privacy toggle, which masks account emails and profile names for screen sharing.
+// The actions for the Usages page's header, where the panel's own header already holds them (refresh, and the group button).
+// The privacy toggle masks account emails and profile names for screen sharing.
 export function UsagesActions({ store }) {
   const activeFirst = usagesGroup.value === 'active', label = groupLabel(usagesGroup.value);
-  const ports = usagesPorts.value === 'b', masked = usagePrivacy.value;
+  const masked = usagePrivacy.value;
   return html`<span class="usages-b-actions">
     ${store.owner.value && html`<${IconButton} name="refresh" label="Refresh usages" className="usages-b-refresh-all" onClick=${() => store.mutateUsage(() => store.source.refresh())} />`}
-    ${ports && html`<${IconButton} name=${masked ? 'eye-off' : 'eye'} label=${masked ? 'Show account names and emails' : 'Mask account names and emails'} className="usages-b-privacy" aria-pressed=${String(masked)} onClick=${toggleUsagePrivacy} />`}
+    <${IconButton} name=${masked ? 'eye-off' : 'eye'} label=${masked ? 'Show account names and emails' : 'Mask account names and emails'} className="usages-b-privacy" aria-pressed=${String(masked)} onClick=${toggleUsagePrivacy} />
     <button type="button" class=${`btn-icon usages-b-group${activeFirst ? ' active' : ''}`} title=${label} aria-label=${label} aria-pressed=${String(activeFirst)} onClick=${toggleUsagesGroup}>${GROUP_ICON}</button>
   </span>`;
 }

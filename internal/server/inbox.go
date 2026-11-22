@@ -53,7 +53,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 
 // usageAlertQuestion renders one Inbox line per alert tier. The threshold
 // tiers keep the shape the remaining-quota alerts always had; the opt-in
-// usages-ports tiers describe the episode, the reset or the expiry instead.
+// alert tiers describe the episode, the reset or the expiry instead.
 func usageAlertQuestion(alert usages.UsageAlert) string {
 	who := providers.ProviderLabel(alert.Provider) + " · " + alert.Profile
 	reset := "reset time unavailable"

@@ -100,7 +100,7 @@ func (s *Server) usageSettings(w http.ResponseWriter, r *http.Request) {
 		ProviderOrder          *[]string `json:"provider_order"`
 		AlertWarningRemaining  *int      `json:"alert_warning_remaining"`
 		AlertCriticalRemaining *int      `json:"alert_critical_remaining"`
-		// The three opt-in alert toggles of the usages-ports experiment; each is
+		// The three opt-in alert toggles; each is
 		// off by default and the UI only offers them in that experiment's B.
 		AlertPaceEnabled        *bool `json:"alert_pace_enabled"`
 		AlertResetNoticeEnabled *bool `json:"alert_reset_notice_enabled"`

@@ -479,7 +479,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 
 /* Usages view: v1's tiles (a provider per tile, its accounts one under the other, a limit as a bar and its numbers), as dense as v1's panel. The
    tiles sit in a grid that gives each at least a v1 sidebar's width, so one column on a phone and several in a wide window. */
-.usages-b { display: grid; gap: 8px; }
+.usages-b { display: grid; gap: 6px; }
 .usages-b-actions { display: inline-flex; flex: 0 0 auto; gap: 4px; }
 .usages-b-group.active { color: var(--accent); }
 .usages-b-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 6px; align-items: start; }
@@ -1090,19 +1090,18 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
 #room-info-dialog .room-view-actions { margin: 0 0 14px; }
 #room-info-dialog .room-view-actions button { border: 1px solid var(--border); }
 
-/* usages-ports experiment, option B: fixed-width digits on usage and cost
+/* Usages view: fixed-width digits on usage and cost
    values, and a compact density for the Usages view (Settings -> Usages and
    the side panel draw the same one). */
-.usages-b-ports .usages-window-meta strong,
-.usages-b-ports .usages-window-meta span,
-.usages-b-ports .usages-credits-row,
-.usages-b-ports .usages-pace-text,
-.usages-b-ports .usages-daily-target,
-.usages-b-ports .usages-provider-updated,
-.usages-b-ports .usages-stale-line { font-variant-numeric: tabular-nums; }
-.usages-b-ports.usages-b { gap: 6px; }
-.usages-b-ports .usages-provider-tile { gap: 7px; padding: 7px 8px; }
-.usages-b-ports .usages-window-row { gap: 3px; }
-.usages-b-ports .switcher-tile-profile { padding-top: 6px; }
-.usages-b-ports .switcher-tile-head { margin-bottom: 2px; }
-.usages-b-ports .usages-b-profile .usages-window-row + .usages-window-row { margin-top: 4px; }
+.usages-b .usages-window-meta strong,
+.usages-b .usages-window-meta span,
+.usages-b .usages-credits-row,
+.usages-b .usages-pace-text,
+.usages-b .usages-daily-target,
+.usages-b .usages-provider-updated,
+.usages-b .usages-stale-line { font-variant-numeric: tabular-nums; }
+.usages-b .usages-provider-tile { gap: 7px; padding: 7px 8px; }
+.usages-b .usages-window-row { gap: 3px; }
+.usages-b .switcher-tile-profile { padding-top: 6px; }
+.usages-b .switcher-tile-head { margin-bottom: 2px; }
+.usages-b .usages-b-profile .usages-window-row + .usages-window-row { margin-top: 4px; }

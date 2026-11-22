@@ -83,7 +83,7 @@ type Response struct {
 		RefreshIntervalSec     int    `json:"refresh_interval_sec"`
 		AlertWarningRemaining  int    `json:"alert_warning_remaining"`
 		AlertCriticalRemaining int    `json:"alert_critical_remaining"`
-		// The three opt-in alert toggles of the usages-ports experiment (off by
+		// The three opt-in alert toggles (off by
 		// default): the predictive pace alert, the reset notice and the
 		// credential-expiry alert.
 		AlertPaceEnabled        bool `json:"alert_pace_enabled"`

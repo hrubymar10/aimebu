@@ -2,7 +2,6 @@ import { html, useRef } from '../../ui.js';
 import { SettingsGroup, SettingsRow } from '../../components/settings-row.js';
 import { mergeAlerts } from '../../usage-alerts.js';
 import { confirmDialog } from '../../dialogs.js';
-import { usagesPorts } from '../../usages-ports.js';
 import { maskNames } from '../../usage-privacy.js';
 import { alertKind, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenAutoRefreshOn, tokenAutoRefreshAvailable, tokenStateLine } from './model.js';
 
@@ -40,7 +39,7 @@ function AccountMaintenance({ store, settings }) {
   <//>`;
 }
 
-// The opt-in alert toggles of the usages-ports experiment's B: each posts its
+// The opt-in alert toggles: each posts its
 // own change, and the server-side alerts fire only while their toggle is on.
 function UsageAlertToggles({ store, settings }) {
   const toggle = key => event => store.mutateUsage(() => store.source.settings({ [key]: event.currentTarget.checked }));
@@ -79,7 +78,7 @@ function UsageConfig({ store, settings }) {
       <//>
     <//>
     <div class="settings-actions"><button type="button" class="btn btn-primary" onClick=${save}>Save usage settings</button><button type="button" class="btn" onClick=${refresh}>Refresh now</button></div>
-    ${usagesPorts.value === 'b' && html`<${UsageAlertToggles} store=${store} settings=${settings} />`}
+    <${UsageAlertToggles} store=${store} settings=${settings} />
     <${AccountMaintenance} store=${store} settings=${settings} />
   </div>`;
 }

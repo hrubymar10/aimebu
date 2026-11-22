@@ -1,5 +1,4 @@
-// Settings -> Usages under the usages-ports experiment: A is the current state, B adds the opt-in usage alerts in settings, fixed-width digits,
-// the privacy toggle and the compact density, and the pill in the top bar switches between them live. The source is the app's own mock of the
+// Settings -> Usages: the opt-in usage alerts in settings, fixed-width digits, the privacy toggle and the compact density. The source is the app's own mock of the
 // usages API. web/ is served as is with its import map; no Go server. Part of `make test-ui`.
 'use strict';
 const assert = require('node:assert/strict');
@@ -13,7 +12,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css"><link rel="stylesheet" href="/v2-only.css">${importMap}</head>
-<body><button id="ui-variant-toggle" class="btn ui-variant-toggle" type="button" hidden><span>UI</span><span class="ui-variant-options"></span><span class="ui-variant-testing"></span></button><dialog id="settings-dialog" class="settings-modal" aria-label="Settings" open><div class="settings-pane"><nav class="settings-nav" aria-label="Settings sections"></nav><div class="settings-body"><header class="settings-body-header"></header><section id="settings-usages" class="settings-section active"></section></div></div></dialog></body></html>`;
+<body><dialog id="settings-dialog" class="settings-modal" aria-label="Settings" open><div class="settings-pane"><nav class="settings-nav" aria-label="Settings sections"></nav><div class="settings-body"><header class="settings-body-header"></header><section id="settings-usages" class="settings-section active"></section></div></div></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -28,18 +27,13 @@ async function main() {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
-  // variant is the saved pill choice the page starts with: 'a' is the current state, 'b' the ports.
-  const mount = async ({ variant = 'a' } = {}) => {
+  const mount = async () => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`${origin}/fixture.html`);
-    await page.evaluate(async variant => {
+    await page.evaluate(async () => {
       localStorage.clear();
-      const ui = await import('/js/ui-variant.js');
-      localStorage.setItem('aimebu2.ui.variant.usages-ports', variant);
-      ui.initUIVariants(document.querySelector('#ui-variant-toggle'));
-      window.__ui = ui;
       const { MockUsagesSource } = await import('/js/usages-source.js');
       const { UsagesSettings } = await import('/js/pages/usages/page.js');
       const source = new MockUsagesSource();
@@ -55,34 +49,15 @@ async function main() {
       window.__usages = new UsagesSettings({ source, quotaSource, guardSource, dialog, section });
       window.__usages.setOwner(true);
       await window.__usages.load();
-    }, variant);
+    });
     return page;
   };
   const settle = page => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
   const click = (page, selector) => page.$eval(selector, el => el.click());
   try {
-    // A, the current state: the pill shows the experiment, but none of B's ports are on the page.
+    // The toggles appear off by default and post their own change, the digits are fixed-width, the view is compact.
     {
-      const page = await mount({ variant: 'a' });
-      assert.deepEqual(await page.evaluate(() => {
-        const pill = document.querySelector('#ui-variant-toggle');
-        const meta = document.querySelector('.usages-window-meta strong');
-        return {
-          pill: [pill.hidden, pill.textContent.replace(/\s+/g, ''), pill.title],
-          alerts: ['#usage-alert-pace', '#usage-alert-reset', '#usage-alert-expiry'].map(selector => !!document.querySelector(selector)),
-          privacy: !!document.querySelector('.usages-b-privacy'),
-          root: document.querySelector('.usages-b').className,
-          digits: meta ? getComputedStyle(meta).fontVariantNumeric : null,
-        };
-      }), {
-        pill: [false, 'UIA|B—TESTING:Usagesports', 'Testing Usages ports: current. Click for B'],
-        alerts: [false, false, false], privacy: false, root: 'usages-b', digits: 'normal',
-      });
-      await page.close();
-    }
-    // B: the toggles appear off by default and post their own change, the digits are fixed-width, the view is compact.
-    {
-      const page = await mount({ variant: 'b' });
+      const page = await mount();
       assert.deepEqual(await page.evaluate(() => {
         const pace = document.querySelector('#usage-alert-pace');
         const meta = document.querySelector('.usages-window-meta strong');
@@ -93,24 +68,16 @@ async function main() {
           root: document.querySelector('.usages-b').className,
           digits: meta ? getComputedStyle(meta).fontVariantNumeric : null,
         };
-      }), { group: true, checks: [false, false, false], privacy: true, root: 'usages-b usages-b-ports', digits: 'tabular-nums' });
+      }), { group: true, checks: [false, false, false], privacy: true, root: 'usages-b', digits: 'tabular-nums' });
       await click(page, '#usage-alert-pace');
       await page.waitForFunction(() => window.__calls.some(call => call[0] === 'settings'));
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'settings')[1]), { alert_pace_enabled: true });
       await page.waitForFunction(() => document.querySelector('#usage-alert-pace').checked === true, { timeout: 8000 });
-      // A click on the pill switches back to A live: the toggles leave, the digits go back to normal, without a reload.
-      await page.evaluate(() => window.__ui.chooseVariant('usages-ports', 'a'));
-      await page.waitForFunction(() => !document.querySelector('#usage-alert-pace'));
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('.usages-b').className, getComputedStyle(document.querySelector('.usages-window-meta strong')).fontVariantNumeric, !!document.querySelector('.usages-b-privacy')]),
-        ['usages-b', 'normal', false]);
-      // And back to B again, where the saved pace toggle is still on.
-      await page.evaluate(() => window.__ui.chooseVariant('usages-ports', 'b'));
-      await page.waitForFunction(() => document.querySelector('#usage-alert-pace')?.checked === true, { timeout: 8000 });
       await page.close();
     }
     // The privacy toggle masks profile names and the plan tooltip's email, and unmasks again.
     {
-      const page = await mount({ variant: 'b' });
+      const page = await mount();
       const main = '.usages-b-tile[data-provider="codex"] .usages-b-profile';
       assert.deepEqual(await page.evaluate(selector => {
         const card = document.querySelector(selector);
@@ -127,39 +94,22 @@ async function main() {
       assert.equal(await page.evaluate(() => document.querySelector('.usages-b-privacy').getAttribute('aria-label')), 'Mask account names and emails');
       await page.close();
     }
-    // Masking applies only in B: a saved privacy choice leaves A's view plain.
+    // Credential-alert sentences mask their profile names while privacy is on.
     {
-      const page = await mount({ variant: 'b' });
-      await click(page, '.usages-b-privacy');
-      await page.waitForFunction(selector => document.querySelector(`${selector} .switcher-tile-name`).textContent !== 'main', {}, '.usages-b-tile[data-provider="codex"]');
-      await page.evaluate(() => window.__ui.chooseVariant('usages-ports', 'a'));
-      await page.waitForFunction(() => !document.querySelector('.usages-b-privacy'));
-      assert.equal(await page.evaluate(() => document.querySelector('.usages-b-tile[data-provider="codex"] .switcher-tile-name').textContent), 'main', 'A keeps the plain view whatever the toggle says');
-      // And B masks again when it comes back, from the remembered choice.
-      await page.evaluate(() => window.__ui.chooseVariant('usages-ports', 'b'));
-      await page.waitForFunction(selector => document.querySelector(`${selector} .switcher-tile-name`).textContent !== 'main', {}, '.usages-b-tile[data-provider="codex"]');
-      await page.close();
-    }
-    // Credential-alert sentences mask their profile names while B's privacy is on.
-    {
-      const page = await mount({ variant: 'b' });
+      const page = await mount();
       await page.evaluate(async () => {
         const list = window.__source.list.bind(window.__source);
         window.__source.list = async () => ({ ...(await list()), credential_alerts: [{ kind: 'expiring', tool: 'claude', profile: 'main', role: 'store', message: 'claude profile main: the access token expires in 4 min.' }] });
         await window.__usages.load();
       });
-      assert.match(await page.$eval('.usage-credential-alerts p', el => el.textContent), /claude profile main:/, 'B without privacy shows the name');
+      assert.match(await page.$eval('.usage-credential-alerts p', el => el.textContent), /claude profile main:/, 'without privacy shows the name');
       await click(page, '.usages-b-privacy');
       await page.waitForFunction(() => /claude profile m•••:/.test(document.querySelector('.usage-credential-alerts p').textContent));
-      // And A shows the plain sentence even with the toggle on.
-      await page.evaluate(() => window.__ui.chooseVariant('usages-ports', 'a'));
-      await page.waitForFunction(() => !document.querySelector('.usages-b-privacy'));
-      assert.match(await page.$eval('.usage-credential-alerts p', el => el.textContent), /claude profile main:/);
       await page.close();
     }
-    // The Switch, Install anyway, Rename and Delete dialogs mask the profile name in their text while B's privacy is on; Rename's input keeps the real one.
+    // The Switch, Install anyway, Rename and Delete dialogs mask the profile name in their text while privacy is on; Rename's input keeps the real one.
     {
-      const page = await mount({ variant: 'b' });
+      const page = await mount();
       const tile = '.usages-b-tile[data-provider="codex"]', profile = `${tile} .usages-b-profile:not(.is-active)`; // data-profile carries the masked name, so pick the non-active one by position
       const dialogText = () => page.evaluate(() => ({ message: document.querySelector('.app-dialog-message').textContent, fields: [...document.querySelectorAll('.app-dialog-fields input')].map(input => input.value) }));
       const cancel = async () => { await click(page, '#app-dialog .app-dialog-cancel'); await page.waitForFunction(() => !document.querySelector('#app-dialog')?.open); };
@@ -188,7 +138,7 @@ async function main() {
       await page.close();
     }
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('usages ports page tests passed');
+    console.log('usages extras page tests passed');
   } finally {
     await browser.close();
     server.close();

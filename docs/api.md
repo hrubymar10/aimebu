@@ -525,8 +525,7 @@ Owner-only Settings routes use CSRF-protected POST requests:
 `alert_warning_remaining` and `alert_critical_remaining` (20 and 10 by default;
 1–99, critical below warning), the three opt-in alert toggles
 `alert_pace_enabled`, `alert_reset_notice_enabled` and `alert_expiry_enabled`
-(all off by default, server-wide once on; shown only in the usages-ports
-experiment's B), or the
+(all off by default, server-wide once on), or the
 `token_auto_refresh` setting (legacy alias `claude_auto_refresh`), `warmup_mode`
 (`off`, `force`, `scheduled`, `smart`) and multiline `warmup_schedule`; see
 [usages](usages.md#auto-refresh-tokens-account-maintenance) and

@@ -1,9 +1,7 @@
-// The privacy toggle of the usages-ports experiment's B: it masks account
-// emails and profile names in the Usages view, for screen sharing. The choice
-// is kept in this browser, like the group-by one. The masks apply only in B;
-// A keeps the plain view whatever the toggle says.
+// The privacy toggle of the Usages view: it masks account emails and profile
+// names, for screen sharing. The choice is kept in this browser, like the
+// group-by one.
 import { signal } from './ui.js';
-import { usagesPorts } from './usages-ports.js';
 
 const KEY = 'aimebu2.usages.privacy';
 const read = () => { try { return localStorage.getItem(KEY) === 'on'; } catch { return false; } };
@@ -16,9 +14,7 @@ export function toggleUsagePrivacy() {
   usagePrivacy.value = next;
 }
 
-// Masking is on only while the experiment shows its B; the toggle's own choice
-// is remembered for when B returns.
-export const maskingOn = () => usagesPorts.value === 'b' && usagePrivacy.value;
+export const maskingOn = () => usagePrivacy.value;
 
 // A masked name keeps its first character, so rows stay tellable apart.
 export function maskName(name) {

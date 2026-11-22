@@ -124,17 +124,14 @@ invalid JSON file can be repaired from Settings. If the JSON is valid but a
 field has the wrong type, settings saves are refused so saved credentials are
 not lost; a literal `null` is also refused. Fix the field in the file first.
 
-## Opt-in usage alerts (the usages-ports experiment)
+## Opt-in usage alerts
 
-Settings → Server → Accounts & usage offers three opt-in alert toggles behind
-the `usages-ports` experiment's B (the A/B pill in the top bar; A is the
-current state and hides the toggles, though any alert an earlier B enabled
-keeps firing). Each is off by default, posts its own change to
+Settings → Server → Accounts & usage offers three opt-in alert toggles.
+Each is off by default, posts its own change to
 `POST /api/usages/settings`, and is stored in `usages/config.json`
 (`alert_pace_enabled`, `alert_reset_notice_enabled`, `alert_expiry_enabled`).
-The toggles are shown only in B; the alerts themselves are server-wide
-settings, so once enabled they apply to the whole server regardless of the
-pill, and turning a toggle off closes what it had opened.
+The alerts are server-wide settings: once enabled they apply to the whole
+server, and turning a toggle off closes what it had opened.
 
 - **Predictive pace alerts**: when a fresh Codex or Claude Code session or
   weekly window is projected to run out before it resets (the same projection
@@ -164,13 +161,10 @@ Inbox visibility, dismissal, and the corrupt-state recovery. An active limit
 guard hides the threshold and pace notices of its tool, but never the reset
 notice or the expiry alert.
 
-In B the Usages view itself changes, in A it does not: usage and cost figures
-draw with fixed-width digits (`font-variant-numeric: tabular-nums`), the
-header actions gain a privacy toggle that masks account emails and profile
-names in the view (kept in this browser, like the group-by choice; it masks
-only in B — A keeps the plain view whatever the toggle says), and the
-whole view draws at a compact density. Switching the pill switches all of
-that live, without a reload.
+The Usages view also draws usage and cost figures with fixed-width digits
+(`font-variant-numeric: tabular-nums`), has a privacy toggle in its header
+actions that masks account emails and profile names (kept in this browser, like
+the group-by choice), and draws at a compact density.
 
 ## Auto-refresh tokens (Account maintenance)
 
