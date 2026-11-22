@@ -519,6 +519,9 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 			t.Fatalf("the old supervisor was not replaced by the drain: %s", tailOfFile(serverLogPath(root), 40))
 		}
 	}
+	if olderBuild {
+		assertSwapLogSequence(t, serverLogPath(root))
+	}
 	if err := os.WriteFile(gate, []byte("go"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -585,5 +588,46 @@ func TestJournalOwnerProbesFreeAndHeldLock(t *testing.T) {
 	defer j.Close()
 	if held, pid, err := supervisor.JournalOwner(path); err != nil || !held || pid != fmt.Sprint(os.Getpid()) {
 		t.Fatalf("held lock: held=%t pid=%q err=%v", held, pid, err)
+	}
+}
+
+// assertSwapLogSequence waits for the server log to tell how one supervisor swap went and checks the order of its steps: the mismatch,
+// the end of the grace, the retire request, the new supervisor's start and its connection. The old one's exit has no fixed place next to
+// the start (the manager's loop and the exit watch run apart), so it only has to come after the retire request and before the connection.
+func assertSwapLogSequence(t *testing.T, logPath string) {
+	t.Helper()
+	steps := []string{
+		"local supervisor restart pending",
+		"supervisor swap: drain grace of 2s is over",
+		"supervisor swap: retire requested: pid",
+		"supervisor swap: started supervisor pid",
+		"supervisor swap: supervisor pid",
+	}
+	var content string
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		data, _ := os.ReadFile(logPath)
+		content = string(data)
+		if retired := strings.Index(content, "supervisor swap: retire requested: pid"); retired >= 0 && strings.LastIndex(content, "supervisor swap: supervisor pid") > retired && strings.Contains(content, "supervisor swap: old supervisor pid") {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	position := 0
+	for _, step := range steps {
+		index := strings.Index(content[position:], step)
+		if index < 0 {
+			t.Fatalf("swap log lacks %q after offset %d, or has it out of order; server log:\n%s", step, position, content)
+		}
+		position += index + len(step)
+	}
+	retired := strings.Index(content, "supervisor swap: retire requested: pid")
+	exited := strings.Index(content, "supervisor swap: old supervisor pid")
+	connected := strings.LastIndex(content, "supervisor swap: supervisor pid")
+	if exited < retired || exited > connected {
+		t.Fatalf("the old supervisor's exit is not between the retire request and the new connection; server log:\n%s", content)
+	}
+	if !strings.Contains(content, "supervisor swap: local supervisor connected: build ") {
+		t.Fatalf("swap log lacks the connected build; server log:\n%s", content)
 	}
 }

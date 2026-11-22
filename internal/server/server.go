@@ -107,6 +107,7 @@ type Server struct {
 	LocalSupervisorLegacyDrain       func()
 	LocalSupervisorLegacyDrainCancel func()
 	localSupervisorPending           atomic.Bool
+	localSupervisorLoggedBuild       atomic.Value // the build of the last local supervisor connection that was logged
 	localSupervisorUpgradeRequired   atomic.Bool
 	localSupervisorCanInterrupt      atomic.Bool
 	localDrainMu                     sync.Mutex

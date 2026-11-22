@@ -421,6 +421,13 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Telemetry: s.telemetryForMachine(ctx, c), AgentKeys: grants, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
 		return
 	}
+	if localSupervisor {
+		// Once per build, so the swap shows in the log and the supervisor's regular reconnects do not.
+		if previous, _ := s.localSupervisorLoggedBuild.Load().(string); previous != hello.SupervisorVersion {
+			s.localSupervisorLoggedBuild.Store(hello.SupervisorVersion)
+			log.Printf("supervisor swap: local supervisor connected: build %s", hello.SupervisorVersion)
+		}
+	}
 	if localSupervisor && !restartPending {
 		s.localSupervisorPending.Store(false)
 		s.clearLocalDrain()

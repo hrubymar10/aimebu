@@ -221,6 +221,11 @@ func (s *Server) startLocalDrainGrace(ctx context.Context, c *machineConn) {
 		if now, err := s.drainGraceSeconds(ctx); err != nil || now == 0 {
 			return
 		}
+		running := -1
+		if ids, err := s.Store.MachineRunningTurnIDs(ctx, c.id); err == nil {
+			running = len(ids)
+		}
+		log.Printf("supervisor swap: drain grace of %ds is over, %d turn(s) still running; ending the drain", grace, running)
 		if !c.supportsTurnInterrupt {
 			s.restartDrainingSupervisor(ctx, c)
 			return

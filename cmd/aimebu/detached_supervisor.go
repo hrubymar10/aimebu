@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -94,18 +95,18 @@ func startDetachedSupervisor(config serverConfig) error {
 		return err
 	}
 	logPath := filepath.Join(config.root, "supervisor", "aimebu.log")
-	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return err
 	}
-	defer log.Close()
+	defer logFile.Close()
 	null, err := os.Open(os.DevNull)
 	if err != nil {
 		return err
 	}
 	defer null.Close()
 	command := exec.Command(executable, "supervisor", "--local")
-	command.Stdin, command.Stdout, command.Stderr = null, log, log
+	command.Stdin, command.Stdout, command.Stderr = null, logFile, logFile
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	command.Env = append(os.Environ(), "AIMEBU_URL="+serverURL)
 	markInheritedFDsCloseOnExec()
@@ -115,6 +116,7 @@ func startDetachedSupervisor(config serverConfig) error {
 	if daemonSpawned != nil {
 		daemonSpawned(command.Process.Pid)
 	}
+	log.Printf("supervisor swap: started supervisor pid %d", command.Process.Pid)
 	go func() { _ = command.Wait() }()
 	return nil
 }
@@ -213,6 +215,7 @@ func (m *detachedSupervisorManager) killIfStuck(pid int) {
 	if bound <= 0 {
 		bound = supervisorStopBound
 	}
+	stopped := time.Now()
 	go func() {
 		defer func() {
 			m.stopMu.Lock()
@@ -225,6 +228,7 @@ func (m *detachedSupervisorManager) killIfStuck(pid int) {
 		defer ticker.Stop()
 		for {
 			if current, held, err := holder(); err == nil && (!held || current != pid) {
+				log.Printf("supervisor swap: old supervisor pid %d exited %s after it was told to stop", pid, time.Since(stopped).Round(time.Millisecond))
 				return // it exited (and another may already have taken over)
 			}
 			select {
@@ -235,7 +239,7 @@ func (m *detachedSupervisorManager) killIfStuck(pid int) {
 				if current, held, err := holder(); err != nil || !held || current != pid {
 					return
 				}
-				fmt.Fprintf(m.stderr, "supervisor pid %d still holds the journal %s after it was told to stop; killing it\n", pid, bound)
+				log.Printf("supervisor swap: old supervisor pid %d still holds the journal %s after it was told to stop; killing it", pid, bound)
 				if err := kill(pid); err != nil {
 					fmt.Fprintln(m.stderr, "supervisor kill:", err)
 				}
@@ -316,11 +320,36 @@ func (m *detachedSupervisorManager) restartNow() error {
 	if err := syscall.Kill(pid, stop); err != nil {
 		return err
 	}
+	signalName := "SIGTERM"
+	if stop == syscall.SIGUSR1 {
+		signalName = "SIGUSR1, retire at idle with turn interrupt"
+	}
+	log.Printf("supervisor swap: retire requested: pid %d, stop signal %s, %s", pid, signalName, m.openTurnsNote())
 	m.killIfStuck(pid)
 	return nil
 }
 
+// openTurnsNote says how many turns the local supervisor runs, for the swap log.
+func (m *detachedSupervisorManager) openTurnsNote() string {
+	if m.store == nil || m.machineID == "" {
+		return "open turns unknown"
+	}
+	ids, err := m.store.MachineRunningTurnIDs(m.ctxOrBackground(), m.machineID)
+	if err != nil {
+		return "open turns unknown"
+	}
+	return fmt.Sprintf("%d open turn(s)", len(ids))
+}
+
+func (m *detachedSupervisorManager) ctxOrBackground() context.Context {
+	if m.ctx != nil {
+		return m.ctx
+	}
+	return context.Background()
+}
+
 func (m *detachedSupervisorManager) run(ctx context.Context) {
+	announcedPID := 0
 	backoff := time.Second
 	var disconnectedAt time.Time
 	everConnected := false
@@ -334,6 +363,10 @@ func (m *detachedSupervisorManager) run(ctx context.Context) {
 			disconnectedAt = time.Time{}
 			everConnected = true
 			backoff = time.Second
+			if pid, held, err := supervisorPID(m.config.root); err == nil && held && pid != announcedPID {
+				announcedPID = pid
+				log.Printf("supervisor swap: supervisor pid %d connected", pid)
+			}
 		} else if _, held, err := supervisorPID(m.config.root); err != nil {
 			fmt.Fprintln(m.stderr, "supervisor:", err)
 		} else if !held {

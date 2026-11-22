@@ -68,6 +68,14 @@ the first request said. A long command started with
 dispatch held, until it ends, also after the turns were interrupted. The
 owner's Restart now action interrupts turns and commands at once and gets the
 ordinary one auto-continue. A crashed local supervisor is respawned with backoff.
+The server log tells how a swap goes, one line per step, each starting with
+`supervisor swap:`: `local supervisor restart pending` (the mismatch),
+`drain grace of Ns is over, M turn(s) still running`, `retire requested: pid P,
+stop signal …, M open turn(s)`, `old supervisor pid P exited … after it was
+told to stop` (or `still holds the journal … ; killing it`), `started supervisor
+pid P`, `supervisor pid P connected` and `local supervisor connected: build B`
+(the build is logged when it changes, not on every reconnect). The lines carry
+no paths or secrets.
 While the restart is pending, new local spawns wait for the replacement. If a
 retiring supervisor reconnects to a server that now matches it, it resumes
 accepting work after that server's acknowledgement.
