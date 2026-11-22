@@ -333,6 +333,14 @@ func TestDetachedSupervisorFromAnOlderBuildIsReplacedAfterTheGrace(t *testing.T)
 
 func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, restartNow, olderBuild bool) {
 	root, _ := daemonFixture(t)
+	// These tests do not look at the web page, and each server start would otherwise bundle the web UI with esbuild before it listens.
+	// On a 2-core CI runner, with the supervisor and leftovers of earlier tests competing for the CPU, that bundling alone pushed a start
+	// past the default 30 s (alpha.6 CI). Serve the modules instead, and allow 90 s anyway: the limit is a ceiling that a healthy start
+	// never reaches, so a longer one costs nothing when the server comes up.
+	t.Setenv("AIMEBU_WEB_BUNDLE", "off")
+	previousStartLimit := daemonStartLimit
+	daemonStartLimit = 90 * time.Second
+	t.Cleanup(func() { daemonStartLimit = previousStartLimit })
 	t.Setenv("AIMEBU_SUPERVISOR", "detached")
 	t.Setenv("AIMEBU_ALLOW", "192.0.2.0/24") // The host loopback address must be admitted even when people set a LAN-only list.
 	gate := filepath.Join(t.TempDir(), "release-fake-answer")
