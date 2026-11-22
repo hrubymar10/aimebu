@@ -14,11 +14,11 @@ const load = (file, names) => {
   vm.runInContext(`${source.replace(/^export /gm, '')}\nglobalThis.api = { ${names} };`, context);
   return { source, api: context.api };
 };
-const loaded = load('pages/import-v1/model.js', 'SYSTEM_ROOM, COUNT_LABELS, countRank, stepsFor, draftKey, skippedPersonWarning, newLogin, defaultPeople, dmTitle, roomDestination, macroBody, footerTotals, accountingRows, reportCountRows, number, NEW_PROJECT, NEW_ACCOUNT, IMPORT_PHASES, ONLY_CHANCE');
+const loaded = load('pages/import-v1/model.js', 'SYSTEM_ROOM, COUNT_LABELS, countRank, stepsFor, draftKey, skippedPersonWarning, newLogin, defaultPeople, dmTitle, roomDestination, macroBody, footerTotals, accountingRows, reportCountRows, stepStatus, ownerHint, macroCards, summaryLists, number, NEW_PROJECT, NEW_ACCOUNT, IMPORT_PHASES, ONLY_CHANCE');
 assert.ok(!/^import /m.test(loaded.source), 'model.js stays import-free so it can run here');
 const m = loaded.api;
 const tree = load('import-tree.js', 'roomChoice, parseChoice, planTree').api;
-const rules = { roomChoice: tree.roomChoice, parseChoice: tree.parseChoice };
+const rules = { roomChoice: tree.roomChoice, parseChoice: tree.parseChoice, planTree: tree.planTree };
 // Values built inside the vm have another realm's prototypes, so compare them after a JSON round trip.
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -157,5 +157,56 @@ const skipped = plain(m.reportCountRows({ imported: { rooms: 1 }, skipped: { mac
 assert.equal(skipped.showSkipped, true);
 assert.deepEqual(skipped.rows.map(row => [row.key, row.skipped, row.skippedNonZero]), [['rooms', '0', false], ['macros', '2', true]]);
 assert.deepEqual(plain(m.reportCountRows({})), { showSkipped: false, rows: [] });
+
+// Page status lines.
+const statusPreview = { counts: { rooms: 3, messages: 9, attachments: 1, memory: 4 }, rooms: [{ id: 'a' }, { id: 'b' }, { id: '_system' }, { id: 'd1', dm: true }, { id: 'd2', dm: true }] };
+const statusMapping = { rooms: { a: { project: 'p' }, b: { skip: true, project: 'p' }, d1: { skip: false }, d2: { skip: true } } };
+assert.match(m.stepStatus('projects', statusPreview, statusMapping), /^The backup holds 3 rooms, 9 messages, 1 attachments and 4 memory records\. First/);
+assert.match(m.stepStatus('rooms', statusPreview, statusMapping), /^1 of 2 rooms will be imported\./, 'the system room and direct messages are not rooms here');
+assert.match(m.stepStatus('dms', statusPreview, statusMapping), /^1 of 2 chats are going to be imported\./);
+assert.match(m.stepStatus('dms', statusPreview, { rooms: { d1: { skip: true }, d2: { skip: true } } }), /^None of the 2 chats are going/);
+assert.match(m.stepStatus('dms', statusPreview, { rooms: {} }), /^All 2 chats are going/, 'a chat with no choice yet counts as picked, as before');
+assert.match(m.stepStatus('dms', { rooms: [{ id: 'd', dm: true }] }, { rooms: { d: { skip: true } } }), /^The chat is not going to be imported\./);
+assert.match(m.stepStatus('dms', { rooms: [{ id: 'd', dm: true }] }, { rooms: { d: {} } }), /^The chat is going to be imported\./);
+assert.match(m.stepStatus('memory', statusPreview, statusMapping), /^The backup holds 4 memory records\./);
+assert.match(m.stepStatus('people', statusPreview, statusMapping), /messages show under the account you map them to/);
+assert.match(m.stepStatus('roles', statusPreview, statusMapping), /^Importable v1 roles/);
+assert.equal(m.stepStatus('summary', statusPreview, statusMapping), '');
+
+// The owner hint: only with several people, none suggested as or mapped to the owner.
+const hintPreview = { humans: ['ann', 'bob'], suggested: { humans: { ann: '-', bob: '-' } } };
+assert.match(m.ownerHint(hintPreview, { owner_login: 'sam', humans: { ann: '-', bob: '-' } }), /^None of these people is mapped to your account \(sam\)/);
+assert.equal(m.ownerHint(hintPreview, { owner_login: 'sam', humans: { ann: 'sam', bob: '-' } }), '', 'someone mapped to the owner');
+assert.equal(m.ownerHint({ ...hintPreview, suggested: { humans: { ann: 'sam' } } }, { owner_login: 'sam', humans: { ann: '-', bob: '-' } }), '', 'the server suggested an owner: a manual unmap is not a mismatch');
+assert.equal(m.ownerHint({ humans: ['ann'], suggested: { humans: {} } }, { owner_login: 'sam', humans: { ann: '-' } }), '', 'a single person');
+
+// Macro cards: conflicts first, then new, same, imported; the status counts what is chosen, in the Summary's buckets.
+const cards = plain(m.macroCards(
+  { macros: { a: 'x', b: 'v1', c: 'same', d: 'done', e: 'v1e' }, imported_macros: ['d'], macro_defaults: ['a'], macros_left_out: { z: 'deleted_in_v1', y: 'v1_builtin_example' } },
+  { skip_macros: ['e'], macro_conflicts: { b: 'use_v1' } },
+  { b: 'v2', c: 'same', e: 'v2e' },
+));
+assert.deepEqual(cards.keys, ['a', 'b', 'c', 'd', 'e']);
+assert.equal(cards.status, '4 of 5 macros chosen: 1 new, 1 replace the v2 text, 1 already match v2, 1 already imported from this backup.');
+assert.equal(cards.leftOut, "Left out: <y> (v1's built-in example, unchanged; v2 has its own), <z> (deleted in v1).");
+assert.deepEqual(cards.cards.map(card => [card.key, card.state, card.label]), [['b', 'conflict', 'Conflict: replacing the v2 text'], ['e', 'conflict', 'Conflict: keeping the v2 text'], ['a', 'new', 'New'], ['c', 'same', 'Already in v2'], ['d', 'imported', 'Already imported']]);
+assert.deepEqual(cards.cards.find(card => card.key === 'a'), { key: 'a', state: 'new', label: 'New', legend: '<a> · v1 seeded default ', imported: false, included: true, body: 'x', current: null, exists: false, same: false, conflict: 'keep_v2' });
+assert.deepEqual([cards.cards[1].included, cards.cards[1].current, cards.cards[1].exists, cards.cards[1].same], [false, 'v2e', true, false]);
+assert.equal(plain(m.macroCards({ macros: { a: 'x' } }, { skip_macros: ['a'] }, {})).status, '0 of 1 macros chosen.');
+
+// Summary lists: in reading order, empty ones left out, room placements through import-tree.js.
+const lists = plain(m.summaryLists(
+  { skipped_no_project: ['solo'], new_accounts: [{ login: 'bobby', role: 'operator', v1_name: 'bob' }], role_conflicts: { r2: 'keep_v2', r1: 'use_v1' }, macro_conflicts: { m: 'use_v1' }, not_carried: { plans: 31 }, skipped_memory: [{ scope: 'project', scope_key: 'p', id: 'k1', reason: 'gone' }], carried_over_files: ['f.txt'] },
+  { rooms: [{ id: 'home' }, { id: '_system' }, { id: 'dmoff', dm: true, participants: [{ kind: 'agent', id: 'x', name: 'Agent' }] }] },
+  { owner_login: 'me', humans: {}, projects: { p: { name: 'Proj' } }, rooms: { home: { project: 'p', target: 'root' }, dmoff: { skip: true } } },
+  rules,
+));
+assert.deepEqual(lists.map(list => list.title), ['Where each room goes', 'Rooms not imported: no project', 'Accounts created', 'Direct messages not imported', 'Memory skipped', 'Role conflicts', 'Macro conflicts', 'Not carried over', 'Files kept for v2']);
+assert.deepEqual(lists[0], { title: 'Where each room goes', items: ['home → ⌂ Proj', 'Agent → not imported · dmoff'], note: 'Check each placement before importing.' });
+assert.deepEqual(lists[2].items, ['bobby (operator) for bob']);
+assert.deepEqual(lists[3], { title: 'Direct messages not imported', items: ['Agent · dmoff'], note: '' });
+assert.deepEqual(lists[5].items, ['r1: use v1 role', 'r2: keep v2 role'], 'sorted by key');
+assert.deepEqual(lists[6].items, ['<m>: use v1 text']);
+assert.deepEqual(lists[7].items, ['plans: 31 rows']);
 
 console.log('import-v1 model tests passed');

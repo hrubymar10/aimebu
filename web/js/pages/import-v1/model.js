@@ -243,3 +243,99 @@ export function reportCountRows(report) {
     }),
   };
 }
+
+// The line under the progress bar for a review page: what the page is about and how much of it is chosen. The Macros page's comes with its
+// cards (macroCards), and the Summary's follows the dry run, so both are worded where they are drawn.
+export function stepStatus(stepID, preview, mapping) {
+  const p = preview, m = mapping;
+  if (stepID === 'projects') {
+    const counts = p.counts || {};
+    return `The backup holds ${counts.rooms || 0} rooms, ${counts.messages || 0} messages, ${counts.attachments || 0} attachments and ${counts.memory || 0} memory records. First, the projects the history goes into: each needs a name and an absolute workspace folder.`;
+  }
+  if (stepID === 'people') return 'Each v1 person\'s messages show under the account you map them to, so people sharing one destination account are merged, in access and in how their old messages are labelled. A person can get a new account made by the import (no password: you get a one-time link for each at the end). A skipped person has no account: their messages keep their v1 name as a label, and they receive no live room membership.';
+  if (stepID === 'rooms') {
+    const rooms = (p.rooms || []).filter(room => room.id !== SYSTEM_ROOM && !room.dm);
+    const kept = rooms.filter(room => !m.rooms[room.id]?.skip && m.rooms[room.id]?.project).length;
+    return `${kept} of ${rooms.length} rooms will be imported. Every room starts open; archive individual rooms or use Archive all if you want. Rooms sent to the same place merge, their messages interleaved by their v1 numbers.`;
+  }
+  if (stepID === 'dms') {
+    const direct = (p.rooms || []).filter(room => room.dm);
+    const picked = direct.filter(room => !m.rooms[room.id]?.skip).length, total = direct.length;
+    const count = total === 1 ? `The chat is${picked ? '' : ' not'}` : picked === 0 ? `None of the ${total} chats are` : picked === total ? `All ${total} chats are` : `${picked} of ${total} chats are`;
+    return `${count} going to be imported. Each private chat becomes a v2 direct message titled by the other person or agent, always open. A chat between two agents is imported as history you can read. No chat is imported unless you tick it; a ticked chat goes into its agent's project when there is one, and you can pick another.`;
+  }
+  if (stepID === 'memory') return `The backup holds ${p.counts?.memory || 0} memory records. Imported records arrive as ordinary, active ones.`;
+  if (stepID === 'roles') return 'Importable v1 roles become global v2 definitions. Existing v2 definitions win unless you choose the v1 version.';
+  return '';
+}
+
+// The People page's warning when nobody is mapped to the owner (the backup has several people and none with the owner's name), or ''.
+export function ownerHint(preview, mapping) {
+  const owner = mapping.owner_login, humans = preview.humans || [];
+  const noSuggestedOwner = !Object.values(preview.suggested?.humans || {}).includes(owner);
+  const noMappedOwner = !humans.some(human => mapping.humans[human] === owner);
+  if (humans.length <= 1 || !noSuggestedOwner || !noMappedOwner) return '';
+  return `None of these people is mapped to your account (${owner}): the backup has no one with your name, and more than one person. Choose which one is you to carry that person's read positions, memory profile, pins and reactions into ${owner}. New accounts keep their own importable data; skipping a person drops theirs.`;
+}
+
+// The Macros page: the status line (the same buckets the Summary reports: new ones, ones that replace v2's text, ones that keep it, ones
+// already the same) and one card per macro, the ones that need a decision (a key both have with different text) first.
+export function macroCards(preview, mapping, destination) {
+  const p = preview, dest = destination || {};
+  const keys = Object.keys(p.macros || {}).sort();
+  const skip = new Set(mapping.skip_macros || []);
+  const done = new Set(p.imported_macros || []);
+  const conflict = key => mapping.macro_conflicts?.[key] || 'keep_v2';
+  const stateOf = key => {
+    if (done.has(key)) return ['imported', 'Already imported'];
+    if (!Object.hasOwn(dest, key)) return ['new', 'New'];
+    if (dest[key] === p.macros[key]) return ['same', 'Already in v2'];
+    return conflict(key) === 'use_v1' ? ['conflict', 'Conflict: replacing the v2 text'] : ['conflict', 'Conflict: keeping the v2 text'];
+  };
+  const tally = { new: 0, replace: 0, keep: 0, same: 0, imported: 0 };
+  for (const key of keys.filter(key => !skip.has(key))) {
+    const state = stateOf(key)[0];
+    if (state === 'conflict') tally[conflict(key) === 'use_v1' ? 'replace' : 'keep']++;
+    else tally[state]++;
+  }
+  const parts = [[tally.new, 'new'], [tally.replace, 'replace the v2 text'], [tally.keep, 'keep the v2 text (a key both have)'], [tally.same, 'already match v2'], [tally.imported, 'already imported from this backup']].filter(([n]) => n).map(([n, text]) => `${n} ${text}`);
+  const leftOut = Object.entries(p.macros_left_out || {}).sort(([a], [b]) => a.localeCompare(b));
+  const rank = { conflict: 0, new: 1, same: 2, imported: 3 };
+  return {
+    keys,
+    status: `${keys.length - skip.size} of ${keys.length} macros chosen${parts.length ? `: ${parts.join(', ')}` : ''}.`,
+    leftOut: leftOut.length ? `Left out: ${leftOut.map(([key, why]) => `<${key}> (${why === 'deleted_in_v1' ? 'deleted in v1' : "v1's built-in example, unchanged; v2 has its own"})`).join(', ')}.` : '',
+    cards: [...keys].sort((a, b) => rank[stateOf(a)[0]] - rank[stateOf(b)[0]] || a.localeCompare(b)).map(key => {
+      const [state, label] = stateOf(key), exists = Object.hasOwn(dest, key);
+      return { key, state, label, legend: `<${key}>${(p.macro_defaults || []).includes(key) ? ' · v1 seeded default' : ''} `, imported: done.has(key), included: !skip.has(key), body: p.macros[key],
+        current: exists ? dest[key] : null, exists, same: exists && dest[key] === p.macros[key], conflict: conflict(key) };
+    }),
+  };
+}
+
+// The Summary's folded lists, in reading order, each { title, items, note }; an empty list is left out. `rules` is import-tree.js's
+// { roomChoice, parseChoice, planTree }.
+export function summaryLists(report, preview, mapping, rules) {
+  const lists = [];
+  const list = (title, items, note = '') => { if (items.length) lists.push({ title, items, note }); };
+  const byKey = map => Object.entries(map || {}).sort(([a], [b]) => a.localeCompare(b));
+  const placed = (preview.rooms || []).filter(room => room.id !== SYSTEM_ROOM);
+  const tree = rules.planTree(mapping, placed);
+  list('Where each room goes', placed.map(room => `${room.dm ? dmTitle(room, mapping) : room.id} → ${roomDestination(room, mapping, tree, rules)}${room.dm ? ` · ${room.id}` : ''}`), 'Check each placement before importing.');
+  list('Rooms not imported: no project', report.skipped_no_project || [], 'These have no project to go into. Choose one on the Rooms page to bring them across.');
+  list('Memory switched off', report.memory_off_targets || [], 'A room that several v1 rooms merge into has memory off when any one of them did.');
+  list('Merged rooms', report.target_warnings || [], 'More than one v1 room lands in the same v2 room; their messages interleave by their v1 numbers.');
+  list('Accounts created', (report.new_accounts || []).map(account => `${account.login} (${account.role}) for ${account.v1_name}`), 'Each is created without a password. After the import you get a one-time link per account to hand over.');
+  list('Access through direct messages', report.dm_only_access || [], 'Nothing else in the backup puts these people in the project. Untick the chat to leave them out.');
+  list('Direct messages not imported', (preview.rooms || []).filter(room => room.dm && mapping.rooms[room.id]?.skip).map(room => `${dmTitle(room, mapping)} · ${room.id}`));
+  list('Direct messages opened', report.opened_dms || [], 'v2 has no archive for direct messages, so these import open.');
+  list('Memory skipped', (report.skipped_memory || []).map(entry => `${entry.scope} · ${entry.scope_key} · ${entry.id}: ${entry.reason}`));
+  list('Roles skipped', byKey(report.skipped_roles).map(([key, reason]) => `${key}: ${reason}`));
+  list('Role conflicts', byKey(report.role_conflicts).map(([key, choice]) => `${key}: ${choice === 'use_v1' ? 'use v1 role' : 'keep v2 role'}`));
+  list('Macro conflicts', byKey(report.macro_conflicts).map(([key, choice]) => `<${key}>: ${choice === 'use_v1' ? 'use v1 text' : 'keep v2 text'}`));
+  list('Sounds skipped', Object.values(report.skipped_sounds || {}));
+  list('Settings skipped', (report.skipped_settings || []).map(entry => `${entry.key}: ${entry.reason}`));
+  list('Not carried over', byKey(report.not_carried).map(([name, count]) => `${name}: ${count} rows`), 'These records or fields remain only in the v1 backup on disk.');
+  list('Files kept for v2', report.carried_over_files || []);
+  return lists;
+}
