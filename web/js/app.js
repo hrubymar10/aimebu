@@ -676,7 +676,7 @@ async function signedIn(session) {
     // a first sign-in from another browser; when every harness was removed): nothing can be spawned without one. The answer comes from the
     // server, and so does a skip. Outside the startup deadline: a slow supervisor must not turn a loaded workspace into a timeout.
     if (!importWizard.open && !onboarding.open && sidebar.projects.size > 0) {
-      onboarding.preload();
+      if (rights.owner) onboarding.preload(); // only the owner is offered the Harnesses step, so only the owner's page has a use for its chunk
       harnessOffer = offerHarnessSetup({
         user: currentUser, canSetUp: rights.owner, skipped: harnessSkipStored, configured: () => anyHarnessConfigured(request),
         show: async () => { if (active() && !onboarding.open) await onboarding.showHarnesses('harness-only'); }, setSkipped: value => setHarnessSkipped(value, generation),

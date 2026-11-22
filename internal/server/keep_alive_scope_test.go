@@ -3,6 +3,7 @@ package server
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -198,5 +199,15 @@ func TestKeepAliveScopeStays403ThroughAQuarantineByRenewal(t *testing.T) {
 	<-machine.sendQueue
 	if got := status("lifted"); got != 200 {
 		t.Fatalf("the quarantine's lift opens the toolbox: %d", got)
+	}
+}
+
+// The supervisor recognises the refusal by this exact body (see keepAliveScopeRefusalBody there); it is written here as the supervisor expects it.
+func TestKeepAliveScopeRefusalBodyIsStable(t *testing.T) {
+	rec := httptest.NewRecorder()
+	refuseKeepAliveScope(rec)
+	const want = `{"error":"keep_alive_scope","message":"this is a cache keep-alive, not work: the toolbox is not available"}`
+	if got := strings.TrimSpace(rec.Body.String()); got != want || rec.Code != 403 {
+		t.Fatalf("refusal = %d %s, want 403 %s", rec.Code, got, want)
 	}
 }

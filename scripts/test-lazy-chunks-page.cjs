@@ -121,6 +121,8 @@ async function main() {
     assert.equal((await owner('/api/projects', { method: 'POST', body: { name: 'Offer', folder } })).status, 201, 'a project exists, so the first-run card is not the one shown');
     const offer = await server.open({ width: 1280, height: 900, context: await server.context() });
     await offer.setRequestInterception(true);
+    const ownerChunks = new Set();
+    offer.on('request', request => { if (lazyChunk(request.url())) ownerChunks.add(request.url()); });
     offer.on('request', request => { if (lazyChunk(request.url())) setTimeout(() => request.continue().catch(() => {}), 3000); else request.continue(); });
     await offer.goto(server.origin);
     await offer.waitForSelector('#login-view:not([hidden])');
@@ -136,6 +138,30 @@ async function main() {
     await offer.waitForSelector('#login-view:not([hidden])', { timeout: 8000 });
     assert.equal(await offer.evaluate(() => document.querySelector('#app-view').dataset.harnessOffer ?? null), null, 'a session that ended is not settled');
     await offer.close();
+
+    // 8. Only the owner is offered the Harnesses card, so only the owner's sign-in fetches the Onboarding chunk (the one that holds that card).
+    let onboardingChunk = null;
+    for (const url of ownerChunks) if ((await (await fetch(url)).text()).includes('onboarding-harnesses-skip')) onboardingChunk = url;
+    assert.ok(onboardingChunk, 'the owner\'s sign-in fetched the Onboarding chunk');
+    const project = (await owner('/api/projects')).body;
+    const projectId = (project.projects || project)[0].id;
+    const invite = await owner('/api/invites', { method: 'POST', body: { kind: 'join', project_id: projectId, role: 'viewer' } });
+    assert.equal(invite.status, 201, `an invitation to the project (${JSON.stringify(invite.body)})`);
+    const member = { login: 'member', password: 'member-password-123' };
+    const redeemed = await fetch(server.origin + '/api/invites/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: invite.body.token, ...member }) });
+    assert.ok(redeemed.status < 300, `the member joined (${redeemed.status})`);
+    const other = await server.open({ width: 1280, height: 900, context: await server.context() });
+    const memberChunks = [];
+    other.on('request', request => { if (lazyChunk(request.url())) memberChunks.push(request.url()); });
+    await other.goto(server.origin);
+    assert.equal((await server.signIn(other, member)).status, 200, 'the member signs in');
+    await other.goto(server.origin);
+    await other.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: 20000 });
+    await other.waitForSelector('#app-view[data-harness-offer=settled]', { timeout: 20000 });
+    await sleep(500);
+    assert.ok(!memberChunks.includes(onboardingChunk), `a member's sign-in does not fetch the Onboarding chunk (${memberChunks})`);
+    assert.equal(await other.evaluate(() => document.querySelector('#onboarding-view').hidden), true, 'and is offered no card');
+    await other.close();
     assert.deepEqual(server.errors.filter(text => !/Failed to load resource|Could not load|not found|dynamically imported|Importing a module script failed/i.test(text)), [], 'no other page error');
   } finally { await server.stop(); }
   console.log('lazy chunks page: ok');

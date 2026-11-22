@@ -656,10 +656,20 @@ func firstLine(parts ...string) string {
 	return ""
 }
 
-// keepAliveScopeRefusal says a failed ping's error is the server's own refusal of the toolbox during a ping (403 keep_alive_scope). That refusal is
+// keepAliveScopeRefusalBody is the server's whole refusal as the toolbox's REST route writes it (refuseKeepAliveScope: the stable code, then the
+// message). The server test TestKeepAliveScopeRefusalBodyIsStable pins it, so a change there cannot silently make this recognise nothing.
+const keepAliveScopeRefusalBody = `{"error":"keep_alive_scope","message":"this is a cache keep-alive, not work: the toolbox is not available"}`
+
+// keepAliveScopeRefusal says a failed ping's error ends on the server's own refusal of the toolbox during a ping (403 keep_alive_scope). That refusal is
 // intended and the ping is not broken by a bug of ours, so it is logged and counted as a failure but not reported to Sentry.
+//
+// It is recognised by the server's structured error body (its stable code and message, as one JSON object), and only as the end of the harness's
+// output: what the harness prints after a refusal it could not get past is the failure. A real failure that merely quotes an earlier refusal (a retry
+// that then timed out, a crash after one) has more words after the body and is reported. The code is the server's, so no wording of the harness
+// (its own prefix, its own quoting) decides it; the harness only transports the body, so its end is the one place the body can be matched.
 func keepAliveScopeRefusal(message string) bool {
-	return strings.Contains(message, "keep_alive_scope")
+	// Only closing punctuation may follow the body (the harness wraps it in its own parentheses or quotes); any word after it is another failure.
+	return strings.HasSuffix(strings.TrimRight(message, " \t\r\n)]'`.,;:"), keepAliveScopeRefusalBody)
 }
 
 // sendKeepAliveReport logs the ping and tells the server what it did. A ping that read little from the cache and wrote much missed: it is in the log

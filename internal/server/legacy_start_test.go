@@ -667,7 +667,8 @@ func TestTeamFlowMigrationContinuesTheV1Agent(t *testing.T) {
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		return resp.StatusCode, out
 	}
-	fresh := map[string]any{"machine_id": f.machineID, "tool": "fake", "variant": "test", "model": "test"}
+	// Named, not drawn from the pool: a drawn name could be the v1 agent's own ("sage"), which the migration then refuses with 409 name_in_use.
+	fresh := map[string]any{"machine_id": f.machineID, "name": "lead-fresh", "tool": "fake", "variant": "test", "model": "test"}
 	if status, out := post(base+"/team-setup", "setup-first", map[string]any{"flow_key": "leader-workers", "flow_rev": 0, "leader": fresh}); status != 201 {
 		t.Fatalf("setup %d %+v", status, out)
 	}

@@ -1089,11 +1089,13 @@ func TestKeepAliveReportCarriesTheCompaction(t *testing.T) {
 // The server's refusal of the toolbox during a ping (403 keep_alive_scope) is intended, so a ping that ends on it is not reported to Sentry; any other
 // failure still is.
 func TestKeepAliveScopeRefusalIsNotReportable(t *testing.T) {
-	refused := `worker quit with fatal: Transport channel closed, when UnexpectedServerResponse(HTTP 403 {"error":{"code":"keep_alive_scope"}})`
+	refused := `worker quit with fatal: Transport channel closed, when UnexpectedServerResponse(HTTP 403 ` + keepAliveScopeRefusalBody + `)`
 	if !keepAliveScopeRefusal(refused) {
 		t.Fatal("the scope refusal is recognised")
 	}
-	for _, other := range []string{"", "exit status 1", "HTTP 403 forbidden", "timed out"} {
+	// A real failure whose output only quotes an earlier refusal is not the refusal: it still reaches Sentry.
+	quoted := `earlier: HTTP 403 ` + keepAliveScopeRefusalBody + "\nthen the worker crashed: signal: segmentation fault"
+	for _, other := range []string{"", "exit status 1", "HTTP 403 forbidden", "timed out", "keep_alive_scope", quoted, "HTTP 403 " + keepAliveScopeRefusalBody + ` and then: context deadline exceeded`} {
 		if keepAliveScopeRefusal(other) {
 			t.Fatalf("%q is a real ping failure", other)
 		}

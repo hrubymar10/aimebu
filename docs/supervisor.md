@@ -571,8 +571,8 @@ supervisor sends the harness a tiny **ping** shortly before the cache would expi
   (`POST /api/agent/mcp`, `requireAgentToolMCP`): it still answers `initialize` and `tools/list`, because Codex's MCP
   client treats a 403 there as fatal (exit 1, the ping fails and its cache lapses) and the tool list is part of the
   cached prompt prefix, which a ping must keep identical to the real turn's. A `tools/call` made through it reaches the
-  scoped REST routes and comes back as a tool error (`HTTP 403: ... keep_alive_scope`). A ping whose error still
-  carries `keep_alive_scope` is logged and counted as a failure but not reported to Sentry. The supervisor lifts the scope
+  scoped REST routes and comes back as a tool error (`HTTP 403: ... keep_alive_scope`). A ping whose error ends on the server's refusal body
+  (`{"error":"keep_alive_scope","message":...}`, pinned by a server test; a failure that only quotes an earlier one is not) is logged and counted as a failure but not reported to Sentry. The supervisor lifts the scope
   (`scope_on` false, answered the same way) only after the ping's process is confirmed gone and before the ping
   counts as ended, so a real turn that follows is never refused. Without an answer the ping does not run (it fails
   closed and counts as a failure). A scope nobody lifted (a supervisor that died) lapses on the server after three
