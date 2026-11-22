@@ -20,7 +20,10 @@ const (
 	inboxAsk        = `Use either proposed_answers or open_questions, never both. For an Inbox ask, set needs_attention:false, proposed_answers:null, and open_questions:null in that same message; for example: {"room":"room_id","body":"Choose a team","reply_to":null,"attachments":null,"ask":{"kind":"question","text":"Which team?","options":["Team A"],"free_text":false},"handoff":false,"visual_plan":null,"appendix_pages":null,"needs_attention":false,"proposed_answers":null,"open_questions":null}. Never combine ask with human attention controls.`
 	mentions        = `After spawning an agent, address its assignment with a live @slug or @agent_id mention in ordinary prose; a name inside backticks does not wake it. A mention only reaches members of the message's room; for a worker use their task room or dm_agent. A reply_to another agent's message wakes that agent, but only a few times in a row: after four automatic replies with no human message between them, replies stop waking anyone, so use a live @mention or a handoff for anything that still needs an answer. Never reply just to acknowledge; use a reaction. Replies to humans still target them. Always @mention whoever should act next: a message with no @mention and no reply_to is a broadcast that wakes every other agent in the room, so it should be rare. A note with fyi true was not addressed to you (another agent broadcast it): answer only if you have to act on it, otherwise end the turn with an empty messages array and write nothing.`
 	humanReply      = `Toward people: don't narrate. Message a person only for a decision, an answer, an approval, or a result they asked for; batch several questions into one numbered message; acknowledge with a reaction (👍 seen, ✅ done) instead of a text ack. When a person addresses you directly (mention, a reply to your message, a DM), always respond: answer if there is anything to say, otherwise react. Never leave them without any sign you saw it.`
-	tail            = `A lead with a completed review should publish the home-room summary before any further task-room status. Other free text is always available.`
+	// owedWork keeps a turn from ending silently while work is still running. It is not an override slot: a harness job that outlives the
+	// turn is lost work, whatever an owner's wording.
+	owedWork = `Harness background jobs (a background shell command, a Monitor or another watcher) do not wake you when they finish and die with your process when the turn ends: run a long command with the aimebu run_command tool, which wakes you with its exit code. Never end a turn with an empty messages array while you still owe work or a report; a turn that was addressed to you and ends without a message is announced in the room and wakes whoever addressed you.`
+	tail     = `A lead with a completed review should publish the home-room summary before any further task-room status. Other free text is always available.`
 )
 
 // Sentences shared by some adapters.
@@ -121,7 +124,7 @@ func BuildWith(d Deltas, overrides map[string]string) string {
 	if d.Role != "" {
 		parts = append(parts, d.Role)
 	}
-	parts = append(parts, attachmentsLead+" "+d.Attachments, sentence("retry_notice", retryNotice), d.Output, sentence("inbox_ask", inboxAsk), sentence("mentions", mentions), d.Ack, sentence("human_reply", humanReply), sentence("tail", tail), d.Closing)
+	parts = append(parts, attachmentsLead+" "+d.Attachments, sentence("retry_notice", retryNotice), d.Output, sentence("inbox_ask", inboxAsk), sentence("mentions", mentions), d.Ack, owedWork, sentence("human_reply", humanReply), sentence("tail", tail), d.Closing)
 	return strings.Join(parts, " ")
 }
 

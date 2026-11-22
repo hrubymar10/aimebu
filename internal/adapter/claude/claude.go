@@ -56,6 +56,18 @@ const (
 	legacyToolsRule = "mcp__aimebu"
 )
 
+// A harness-native background job (a run_in_background shell, the Monitor tool) does not wake the agent when it ends and dies with the
+// process, so an agent that starts one and ends its turn waits for a wake that never comes. The aimebu run_command tool is the way to run a
+// long command. normalDisallowedTools denies Monitor beside the v1 bus, and backgroundTasksEnv switches Claude Code's background tasks off:
+// run_in_background is dropped from the Bash and Agent tools and a long command is no longer moved to the background on its own. The switch
+// was checked in the Claude Code 2.1.329 bundle, where it is one of the two inputs of the check that hides run_in_background from the tool
+// description and runs a command in the foreground when it is asked for.
+const (
+	normalDisallowedTools = legacyToolsRule + ",Monitor"
+	backgroundTasksEnvVar = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+	backgroundTasksEnv    = backgroundTasksEnvVar + "=1"
+)
+
 var systemDeltas = prompt.Deltas{
 	Opening:     "Complete this aimebu turn from the JSON supplied on standard input.",
 	Role:        "Obey the role instructions in context.role_body. " + prompt.UnchangedContext,
@@ -267,7 +279,7 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 		if spec.Mode == adapter.ModeNormal {
 			// Not strict: the person's own MCP servers and connectors stay available to the agent, as in their terminal. The --mcp-config entry
 			// is toolboxServer, and a v1 bus named aimebu, of any scope, is denied (see toolboxServer).
-			args = append(args, "--disallowedTools", legacyToolsRule)
+			args = append(args, "--disallowedTools", normalDisallowedTools)
 			if a.variant() == "docker" {
 				endpoint, header, err := adapter.DockerMCPAt(spec.AgentTools, spec.Agent.ID, spec.AgentServerURL)
 				if err != nil {
@@ -317,6 +329,11 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 		env = append(env, "CLAUDE_LAUNCH_FLAGS=")
 	}
 	env = append(env, agentKey...)
+	env = append(env, backgroundTasksEnv)
+	if a.variant() == "docker" {
+		// docker exec carries only the variables the launcher is told to forward by name.
+		env = forwardToDocker(env, backgroundTasksEnvVar)
+	}
 	full := adapter.LauncherArgs(spec, args)
 	shift := len(full) - len(args) // what the launcher puts before the protocol arguments
 	l := &launch{name: command, args: full, env: env, dir: dir, input: input, sessionAt: [2]int{shift + sessionStart, shift + sessionEnd}}
@@ -324,6 +341,22 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 		l.agentKey = agentKey[0]
 	}
 	return l, nil
+}
+
+// forwardToDocker adds name to the HARNESS_DOCKER_FORWARD_ENV list in env, creating the list when there is none.
+func forwardToDocker(env []string, name string) []string {
+	const key = "HARNESS_DOCKER_FORWARD_ENV="
+	for i, item := range env {
+		if list, ok := strings.CutPrefix(item, key); ok {
+			if list == "" {
+				env[i] = key + name
+			} else {
+				env[i] = key + list + "," + name
+			}
+			return env
+		}
+	}
+	return append(env, key+name)
 }
 
 func childEnv() []string {

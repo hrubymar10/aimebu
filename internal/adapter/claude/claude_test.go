@@ -52,7 +52,7 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(env) != "aak_secret\nAIMEBU_AGENT_KEY\n" {
+	if string(env) != "aak_secret\nAIMEBU_AGENT_KEY,CLAUDE_CODE_DISABLE_BACKGROUND_TASKS\n" {
 		t.Fatalf("the key must reach the harness through the forwarded variable, got %q", env)
 	}
 	if strings.Contains(string(args), "aak_secret") {

@@ -88,10 +88,55 @@ func TestToolboxEntryIsNotNamedLikeAV1Bus(t *testing.T) {
 			if toolboxServer == "aimebu" || strings.HasPrefix("mcp__"+toolboxServer+"__", legacyToolsRule+"__") {
 				t.Fatalf("the toolbox %q must not be named, or denied, like a v1 bus", toolboxServer)
 			}
-			if got := flagValue(t, args, "--disallowedTools"); got != legacyToolsRule {
-				t.Fatalf("--disallowedTools = %q, want %q", got, legacyToolsRule)
+			if got := flagValue(t, args, "--disallowedTools"); got != legacyToolsRule+",Monitor" {
+				t.Fatalf("--disallowedTools = %q, want %q", got, legacyToolsRule+",Monitor")
 			}
 		})
+	}
+}
+
+// A harness background job does not wake the agent and dies with the process, so a normal turn has none: Monitor is denied and Claude
+// Code's background tasks are switched off, in the container too (the launcher forwards the switch by name next to the agent key).
+func TestHarnessBackgroundJobsAreOff(t *testing.T) {
+	for _, variant := range []string{"native", "docker"} {
+		t.Run(variant, func(t *testing.T) {
+			args, env := launchArgs(t, variant, "")
+			if got := flagValue(t, args, "--disallowedTools"); !strings.Contains(","+got+",", ",Monitor,") {
+				t.Fatalf("--disallowedTools = %q, want Monitor denied", got)
+			}
+			if env[backgroundTasksEnvVar] != "1" {
+				t.Fatalf("%s = %q, want 1", backgroundTasksEnvVar, env[backgroundTasksEnvVar])
+			}
+			forwarded := "," + env["HARNESS_DOCKER_FORWARD_ENV"] + ","
+			if variant == "docker" && (!strings.Contains(forwarded, ","+backgroundTasksEnvVar+",") || !strings.Contains(forwarded, ","+adapter.AgentKeyEnv+",")) {
+				t.Fatalf("the launcher must forward the switch and the key: %q", env["HARNESS_DOCKER_FORWARD_ENV"])
+			}
+		})
+	}
+}
+
+func TestForwardToDockerAddsToTheList(t *testing.T) {
+	for _, tc := range []struct {
+		env  []string
+		want string
+	}{
+		{nil, "HARNESS_DOCKER_FORWARD_ENV=X"},
+		{[]string{"A=1", "HARNESS_DOCKER_FORWARD_ENV=A"}, "HARNESS_DOCKER_FORWARD_ENV=A,X"},
+		{[]string{"HARNESS_DOCKER_FORWARD_ENV="}, "HARNESS_DOCKER_FORWARD_ENV=X"},
+	} {
+		got := forwardToDocker(tc.env, "X")
+		count := 0
+		for _, item := range got {
+			if strings.HasPrefix(item, "HARNESS_DOCKER_FORWARD_ENV=") {
+				count++
+				if item != tc.want {
+					t.Fatalf("forwardToDocker(%q) = %q, want %q", tc.env, item, tc.want)
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("forwardToDocker(%q) gave %d lists: %q", tc.env, count, got)
+		}
 	}
 }
 

@@ -162,7 +162,13 @@ a reaction, never with no sign at all. Every prompt asks the agent to set `reply
 delivered one (a reply joins that message's conversation; there is no separate thread link), and
 explains the note's `why`, `in_reply_to` and `conversation`. An agent that
 answers a human with an empty `messages` list is following a stored rule, not failing; the
-turn commits normally.
+turn commits normally. Every prompt also says (a fixed sentence, not an override slot) that
+harness background jobs (a background shell command, a Monitor or another watcher) do not wake
+the agent and die with its process when the turn ends, that a long command belongs in the aimebu
+`run_command` tool, which wakes the agent with its exit code, and that a turn must not end with
+an empty `messages` array while work or a report is still owed: an addressed turn that ends
+without a message is announced in the room and wakes whoever addressed the agent (the
+silent-turn notice, docs/contract.md §3.3).
 After spawning, they direct the lead to use a live mention in the assignment;
 a name in code formatting does not wake the new agent.
 On a failed Claude `result`, the adapter keeps a bounded, redacted copy of
@@ -220,7 +226,14 @@ would otherwise switch off the toolbox of every agent working there. A Docker
 agent runs in the host's spelling of the checkout with the host's mounted
 Claude home, so it inherits that project state too. A v1 bus named `aimebu`,
 of any scope, is instead hidden with `--disallowedTools mcp__aimebu` (a deny
-rule holds under `bypassPermissions`), so it never reaches a v2 agent.
+rule holds under `bypassPermissions`), so it never reaches a v2 agent. The same deny list
+holds `Monitor`, and every turn runs with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` (in Docker
+the variable is added to `HARNESS_DOCKER_FORWARD_ENV`, next to the agent key): a harness-native
+background job does not wake the agent and dies with the process, so a worker that started one
+and ended its turn waited for a wake that never came. The switch drops `run_in_background` from
+the Bash and Agent tools and stops a long command from being moved to the background on its own;
+it was checked in the Claude Code 2.1.329 bundle, where it feeds the check that hides
+`run_in_background` from the tool description and runs such a command in the foreground.
 `AIMEBU_LIVE_CC_MCP=1 go test ./internal/adapter/claude` runs the real
 `claude` (on `PATH`, no login needed) through the Docker entry against a fake
 toolbox, with a user-scope v1 `aimebu` server enabled and then disabled in the
