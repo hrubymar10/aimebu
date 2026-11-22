@@ -85,6 +85,9 @@ func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request
 			apiError(w, 409, "stale_rev", "recovery evidence changed")
 		case errors.Is(err, store.ErrChoiceNotOffered):
 			apiError(w, 400, "invalid_choice", "choice not offered")
+		case errors.Is(err, store.ErrInvalidTransition):
+			// An expected refusal, not a server fault: restart exists only for a broken session.
+			apiError(w, 409, "invalid_transition", "this recovery can't take that choice; for a failed start or an unconfirmed warm process, abandon it, or retry once the quarantine ends")
 		default:
 			fail(w, err)
 		}

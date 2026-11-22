@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
@@ -162,5 +163,29 @@ func TestAgentRecoveryToolOnAResolvedItemSaysWhoResolvedIt(t *testing.T) {
 	if json.Unmarshal(body, &payload) != nil || payload.Error != "already_resolved" ||
 		payload.Message != "already resolved by "+ownerID+" (choice abandon)" {
 		t.Fatalf("payload=%+v body=%s", payload, body)
+	}
+}
+
+// Restart exists only for a broken session: on any other recovery the store refuses it, and that is a 409 the lead can read, not a 500
+// that lands in Sentry.
+func TestAgentRecoveryToolRestartOnAnotherKindIsConflict(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	lead, leadKey := f.createToolAgentNamed(t, "role_leader_default", "restartlead")
+	worker, _ := f.createToolAgentNamed(t, "role_worker_default", "restartworker")
+	itemID := "inb_recovery_restart"
+	err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,agent_id,requester_kind,requester_id,kind,lead_due_at,recovery_lead_id,created_at) VALUES (?,?,?,?,'agent',?,'recovery','2099-01-01T00:00:00.000000000Z',?,?)`,
+			itemID, f.project.ID, f.room.ID, worker.ID, worker.ID, lead.ID, "2026-01-01T00:00:00.000000000Z")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := f.toolPost(t, "/api/agent/recoveries/"+itemID+"/decision", leadKey, "restart-other-kind", map[string]string{"choice": "restart"})
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 409 || !strings.Contains(string(body), `"invalid_transition"`) {
+		t.Fatalf("restart on another kind: status=%d body=%s", resp.StatusCode, body)
 	}
 }
