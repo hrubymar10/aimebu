@@ -389,6 +389,8 @@ Owner's decision (2026-10-28): continue with the remaining units.
   order and `firstRoom()` walks the projects in server order), and a project the browser has not seen is drawn folded already, without saving it, except the
   one holding the room the app will open (`expect()`, then `focusRoom()`: the address, the last room, else the first room), so opening that room changes
   nothing that was drawn. `scripts/perf-sidebar-paint.cjs` measures it.
+  Under a project's home row `treeOf` puts the system rooms first (`systemRank` in `model.js`: general, routing, other flow rooms, read from `kind`, `purpose` and
+  `team_flow_room_key`, never the title), and gives the home view a `divider` index where the rest begin; `Group` draws a `.room-divider` (`role=separator`) there.
 - Done for the room header's phone overflow menu: `web/js/pages/room-menu/` (`store.js` reads the header's buttons through a mutation observer and the
   phone breakpoint, `room-menu.js` has the button and the menu, `page.js` mounts them in two box-less hosts, the menu on the body). Its items still click
   the real header buttons. `room-menu.js` is gone.

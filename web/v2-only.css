@@ -186,6 +186,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .sidebar details > summary svg { flex: 0 0 13px; }
 .sidebar .sidebar-section-heading { margin: 16px 8px 8px; padding: 0; color: var(--text-muted); font-size: 9.8px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .sidebar .sidebar-fold-heading { font-size: 11px; }
+.sidebar .room-divider { height: 0; margin: 4px 8px; border-top: 1px solid var(--border); }
 .archived-projects > .archived-project > .room-item :is(.room-item-name, .room-item-icon, .room-collapse) { color: var(--text-muted); }
 .archived-projects > .archived-project > .room-item { opacity: .78; }
 [data-theme^="high-contrast"] .archived-projects > .archived-project > .room-item { opacity: 1; }

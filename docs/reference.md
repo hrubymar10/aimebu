@@ -818,6 +818,7 @@ activity, or manually (drag a project by its ☰ handle; the whole row opens the
 the order the server lists them); the choice and the manual order are personal preferences that follow the person across devices. The room list is
 one list across projects, with no section labels (on opening, each project is drawn as its name in its final place the moment the project list arrives, and its rooms replace it when its own list lands, in whatever order they come; the order by latest activity waits for every list, since it depends on the rooms): each project's home
 room (`⌂ name`) is the parent row and its task rooms nest under it, one level.
+Under a project row the system rooms come first, in a fixed order (general, routing, then advice and any other flow room), then a thin divider line (`role=separator`, drawn only when both groups are there), then the task and research rooms in the chosen sort; the project's Archived and Hidden rows stay last.
 If an open task room has no live parent link, the room list places it under
 that project's home row when one exists, including while the project is
 collapsed. Open room rows show `#name`, their member count and an unread badge;

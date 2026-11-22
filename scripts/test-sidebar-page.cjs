@@ -1485,6 +1485,31 @@ async function main() {
     await page.close();
   }
 
+  // System rooms lead a project's rooms (general, routing, then other flow rooms), then a thin divider, then the task and research rooms; no divider when
+  // either group is empty; the folded project row still sums every room's unread.
+  {
+    const order = () => ({ ids: [...document.querySelectorAll('[data-room-id=rm_oh] > .room-children > .room-group, [data-room-id=rm_oh] > .room-children > .room-divider')].map(node => node.dataset.roomId || 'DIVIDER'),
+      divider: (() => { const node = document.querySelector('.room-divider'); return node && { role: node.getAttribute('role'), tab: node.tabIndex, text: node.textContent, color: getComputedStyle(node).borderTopColor, border: getComputedStyle(node).borderTopWidth }; })() });
+    const mixed = [room('rm_oh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }),
+      room('rm_ot', 'prj_a', 'zz-task', { parent_id: 'rm_oh', purpose: 'task' }), room('rm_oa', 'prj_a', 'advice', { parent_id: 'rm_oh', purpose: 'general', team_flow_room_key: 'advice' }),
+      room('rm_or', 'prj_a', 'routing', { parent_id: 'rm_oh', purpose: 'general', team_flow_room_key: 'routing' }), room('rm_orr', 'prj_a', 'aa-research', { parent_id: 'rm_oh', purpose: 'research' }),
+      room('rm_og', 'prj_a', 'general', { parent_id: 'rm_oh', purpose: 'general', unread_count: 4 })];
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': mixed }) });
+    await settle(page);
+    await page.evaluate(() => { const group = document.querySelector('[data-room-id=rm_oh]'); if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse').click(); });
+    const got = await page.evaluate(order);
+    assert.deepEqual(got.ids, ['rm_og', 'rm_or', 'rm_oa', 'DIVIDER', 'rm_ot', 'rm_orr'], 'system rooms first (general, routing, advice), a divider, then the task and research rooms in their order');
+    assert.deepEqual([got.divider.role, got.divider.tab, got.divider.text, got.divider.border], ['separator', -1, '', '1px']);
+    assert.notEqual(got.divider.color, 'rgba(0, 0, 0, 0)', 'the divider has a visible theme border colour');
+    await page.close();
+    for (const [name, rooms] of [['only system', mixed.filter(item => item.id !== 'rm_ot' && item.id !== 'rm_orr')], ['only tasks', mixed.filter(item => ['rm_oh', 'rm_ot', 'rm_orr'].includes(item.id))]]) {
+      const lone = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms }) });
+      await settle(lone);
+      assert.equal(await lone.$$eval('.room-divider', nodes => nodes.length), 0, `no divider with ${name} rooms`);
+      await lone.close();
+    }
+  }
+
   // Marking a task room read keeps its addressed count in step with the server's answer.
   {
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': [room('rm_kh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }), room('rm_t', 'prj_a', 'task', { parent_id: 'rm_kh', purpose: 'task', unread_count: 6, unread_addressed: 2 })] }) });

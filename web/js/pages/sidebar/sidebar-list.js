@@ -123,7 +123,9 @@ function Row({ view, store, ctx, preview, onToggle }) {
 function Group({ view, store, ctx, className = '', onToggle }) {
   const { room } = view;
   const preview = room.id === ctx.active || ctx.previewAll;
-  const kids = [...view.children.map(child => html`<${Group} key=${child.room.id} view=${child} store=${store} ctx=${ctx} />`), ...view.tail.map(node => html`<${Tail} key=${`${node.kind}:${node.project.id}`} node=${node} store=${store} ctx=${ctx} />`)];
+  const rooms = view.children.map(child => html`<${Group} key=${child.room.id} view=${child} store=${store} ctx=${ctx} />`);
+  if (view.divider > 0) rooms.splice(view.divider, 0, html`<div key="system-divider" class="room-divider" role="separator"></div>`);
+  const kids = [...rooms, ...view.tail.map(node => html`<${Tail} key=${`${node.kind}:${node.project.id}`} node=${node} store=${store} ctx=${ctx} />`)];
   return html`<div class=${`room-group${view.folded ? ' collapsed' : ''}${className ? ` ${className}` : ''}`} data-room-id=${room.id}><${Row} view=${view} store=${store} ctx=${ctx} preview=${preview} onToggle=${onToggle} />${kids.length > 0 && html`<div class="room-children">${kids}</div>`}</div>`;
 }
 

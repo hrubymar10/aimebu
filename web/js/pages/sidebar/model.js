@@ -45,6 +45,15 @@ export function orderRooms(rooms, sort) {
   return [...rooms].sort((a, b) => (a.kind === 'home' ? 0 : 1) - (b.kind === 'home' ? 0 : 1) || compare(a, b));
 }
 
+// A project's system rooms: general, the routing room and any other flow room (advice, ...), as the server's `purpose` and `team_flow_room_key` say.
+// They lead a project's rooms in that fixed order: general, routing, then the other flow rooms; task and research rooms follow in their own order.
+export function systemRank(room) {
+  if (room.kind === 'dm' || room.kind === 'home') return -1;
+  if (room.team_flow_room_key === 'routing') return 1;
+  if (room.team_flow_room_key) return 2;
+  return room.kind === 'lobby' || room.purpose === 'general' ? 0 : -1;
+}
+
 // The whole manual order after `id` moves one step up (-1) or down (+1).
 export function moveProject(projects, manual, id, delta) {
   const sequence = manualSequence(projects, manual);
@@ -172,7 +181,15 @@ export function treeOf(state) {
   // gets an expander when it has any. Only the project-level rows take part in the first-seen folding (`collapsible`, `nested`, `holdsActive`).
   const view = (room, opts) => {
     const expands = opts.nest || opts.deep;
-    const children = expands && room.lifecycle !== 'closed' ? orderRooms([...rooms.values()].filter(other => displayParentID(other) === room.id && other.lifecycle !== 'closed' && !other.hidden && other.kind !== 'dm' && matchesRoom(other, filter, projects)), sort) : [];
+    let children = expands && room.lifecycle !== 'closed' ? orderRooms([...rooms.values()].filter(other => displayParentID(other) === room.id && other.lifecycle !== 'closed' && !other.hidden && other.kind !== 'dm' && matchesRoom(other, filter, projects)), sort) : [];
+    // Under a project's home row the system rooms lead, then a divider, then the rest (the divider only when both groups are there).
+    let divider = -1;
+    if (opts.nest && room.kind === 'home') {
+      const rank = other => { const value = systemRank(other); return value < 0 ? Infinity : value; };
+      children = children.map((child, index) => ({ child, index })).sort((a, b) => rank(a.child) - rank(b.child) || a.index - b.index).map(item => item.child);
+      const system = children.filter(child => systemRank(child) >= 0).length;
+      if (system > 0 && system < children.length) divider = system;
+    }
     const tail = opts.tail || [];
     const kids = children.length + tail.length;
     if (opts.nest) nested.add(room.id);
@@ -183,7 +200,7 @@ export function treeOf(state) {
     // A folded row stands for everything under it, at any depth and whatever each descendant's own fold state: its badge adds all of their
     // own unread counts. `below` is that sum, kept on the view so a parent adds it without walking the subtree again.
     const below = childViews.reduce((sum, child) => sum + roomUnread(child.room, active) + child.below, 0);
-    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, tail, collapsible: expands && kids > 0, folded, below,
+    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, ...(divider > 0 ? { divider } : {}), tail, collapsible: expands && kids > 0, folded, below,
       unread: roomUnread(room, active) + (folded ? below : 0) };
   };
   const place = (room, nest, extra) => {
