@@ -188,8 +188,11 @@ the real CLI in a throwaway container.
 The harness container image is built by `harness-docker-ctrl build-image` the
 first time a refresh or a warmup run needs it (for example after the image was
 pruned). The build has its own 20-minute budget, separate from the 4-minute
-limit of one CLI run, and it is not interrupted by a server shutdown; the run
-limit starts counting only once the image exists. A failure is reported once:
+limit of one CLI run. A server shutdown stops a build in progress: no token
+has been spent at that point, so the refresh or warmup ends as one that never
+started, with no alert and no backoff for the account. A CLI run that has
+already started is not interrupted by a shutdown. The run limit starts
+counting only once the image exists. A failure is reported once:
 an account failure that already went out as its own alert (refresh-failed) does
 not raise a second, pass-level report.
 

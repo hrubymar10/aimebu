@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -36,6 +41,115 @@ func init() {
 				time.Sleep(20 * time.Millisecond)
 			}
 		}()
+	}
+}
+
+// treeParentEnv makes this test binary a stand-in for a hanging supervisor: it starts a child in a process group of its own, as a
+// harness or a command is started, prints the child's pid and then ignores every signal it can.
+const treeParentEnv = "AIMEBU_TEST_TREE_PARENT"
+
+func init() {
+	if os.Getenv(treeParentEnv) == "" {
+		return
+	}
+	// The child has a child of its own in its group, as a harness that runs a tool does.
+	child := exec.Command("sh", "-c", "sleep 300 & echo $!; wait")
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	child.Stdout = os.Stdout
+	if err := child.Start(); err != nil {
+		fmt.Println("error", err)
+		os.Exit(1)
+	}
+	fmt.Println(child.Process.Pid)
+	signal.Ignore(syscall.SIGTERM, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGHUP)
+	time.Sleep(5 * time.Minute)
+	os.Exit(0)
+}
+
+// gone says a process no longer runs: it is not in the process table, or only as a zombie nobody has reaped yet.
+func gone(pid int) bool {
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	state := strings.TrimSpace(string(out))
+	return err != nil || state == "" || strings.HasPrefix(state, "Z")
+}
+
+// The real kill: a supervisor that ignores its stop and still holds the journal is killed together with the process group of the
+// harness it started, and with what that harness started. Left alone, that group would keep running, and writing in the checkout, next
+// to the turn's continuation on the replacement.
+func TestStuckSupervisorIsKilledWithItsChildProcessGroups(t *testing.T) {
+	parent := exec.Command(os.Args[0], "-test.run=^$")
+	parent.Env = append(os.Environ(), treeParentEnv+"=1")
+	parent.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // its own session, as the detached supervisor has
+	stdout, err := parent.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	var pids []int
+	t.Cleanup(func() {
+		_ = parent.Process.Kill()
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+		<-exited
+	})
+	scanner := bufio.NewScanner(stdout)
+	for len(pids) < 2 && scanner.Scan() {
+		pid, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
+		if err != nil {
+			t.Fatalf("the stand-in supervisor printed %q", scanner.Text())
+		}
+		pids = append(pids, pid)
+	}
+	go func() { _ = parent.Wait(); close(exited) }()
+	if len(pids) != 2 {
+		t.Fatalf("the stand-in supervisor reported %v", pids)
+	}
+	harness, tool := pids[0], pids[1]
+	if harness > tool { // the two lines come from two processes, in either order: the group leader was started first
+		harness, tool = tool, harness
+	}
+	if gone(harness) || gone(tool) {
+		t.Fatalf("the child processes do not run: %d gone=%t, %d gone=%t", harness, gone(harness), tool, gone(tool))
+	}
+	if err := syscall.Kill(parent.Process.Pid, syscall.SIGTERM); err != nil { // the stop it ignores
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	m := &detachedSupervisorManager{ctx: t.Context(), stderr: &stderr, stopBound: 400 * time.Millisecond,
+		holder: func() (int, bool, error) { return parent.Process.Pid, true, nil }}
+	m.killIfStuck(parent.Process.Pid)
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("the supervisor that ignored its stop was not killed: %s", stderr.String())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !(gone(harness) && gone(tool)) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !gone(harness) || !gone(tool) {
+		t.Fatalf("the killed supervisor's child process group still runs: %d gone=%t, %d gone=%t; %s", harness, gone(harness), tool, gone(tool), stderr.String())
+	}
+}
+
+// Only what the supervisor started is killed: the groups its descendants lead, and descendants in its own group one by one. A group
+// led by a stranger is never signalled, also when a descendant sits in it.
+func TestDescendantsOfAProcess(t *testing.T) {
+	rows := []processRow{{1, 0, 1}, {100, 1, 100}, // the supervisor, in its own session
+		{200, 100, 200}, {201, 200, 200}, {202, 201, 200}, // a harness in its group, with a tool and the tool's child
+		{300, 100, 300},                               // a command in its group
+		{400, 100, 100},                               // a helper in the supervisor's own group
+		{500, 400, 900},                               // a descendant in a group a stranger leads
+		{900, 1, 900}, {901, 900, 900}, {600, 1, 600}} // strangers
+	groups, singles := descendantsOf(100, rows)
+	sort.Ints(groups)
+	sort.Ints(singles)
+	if fmt.Sprint(groups) != "[200 300]" || fmt.Sprint(singles) != "[400 500]" {
+		t.Fatalf("groups %v, singles %v", groups, singles)
 	}
 }
 

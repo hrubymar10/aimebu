@@ -185,8 +185,9 @@ type detachedSupervisorManager struct {
 // limited to 40 seconds (supervisorCommand), so one that still holds the journal after this is not draining: it hangs.
 var supervisorStopBound = 75 * time.Second
 
-// killIfStuck waits for a supervisor that was told to stop. One that still holds the journal when the bound is over is killed, so that
-// its replacement can start: the journal keeps what its turns reported, and the replacement delivers it.
+// killIfStuck waits for a supervisor that was told to stop. One that still holds the journal when the bound is over is killed, with the
+// processes it started (killSupervisorTree), so that its replacement can start: the journal keeps what its turns reported, and the
+// replacement delivers it.
 func (m *detachedSupervisorManager) killIfStuck(pid int) {
 	m.stopMu.Lock()
 	if m.stopWatched == nil {
@@ -207,7 +208,7 @@ func (m *detachedSupervisorManager) killIfStuck(pid int) {
 		holder = func() (int, bool, error) { return supervisorPID(m.config.root) }
 	}
 	if kill == nil {
-		kill = func(pid int) error { return syscall.Kill(pid, syscall.SIGKILL) }
+		kill = killSupervisorTree
 	}
 	if bound <= 0 {
 		bound = supervisorStopBound

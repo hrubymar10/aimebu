@@ -47,8 +47,14 @@ both cases a running `run_command` job still holds the replacement back, and
 a grace of 0 turns both off. A supervisor that was signalled to stop (by the
 drain, by Restart now, or by the manager) and still holds its journal 75
 seconds later is killed, so that its replacement can start; its own drain is
-limited to 40 seconds, so one that is still there is hanging. The journal
-keeps what its turns reported, and the replacement delivers it. The drain also leaves
+limited to 40 seconds, so one that is still there is hanging. It is killed
+together with what it started: every process group one of its child processes
+leads (each harness CLI and each `run_command` job runs in a group of its
+own) and its other child processes, so nothing of the old supervisor keeps
+writing in a checkout while a turn is continued on the new one. A process
+inside a container is not a child of the supervisor; its launcher ends it
+when the host side is gone. The journal keeps what its turns reported, and
+the replacement delivers it. The drain also leaves
 alone the turn of an agent that a team flow change in progress holds (the
 change interrupts it its own way), and it never replaces an interrupt somebody
 already asked for: that turn is only sent the frame again and is settled as
