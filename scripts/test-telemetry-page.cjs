@@ -127,8 +127,10 @@ async function on() {
     await page.evaluate(() => { window.__timing = []; new PerformanceObserver(list => { for (const entry of list.getEntries()) window.__timing.push([entry.name, entry.target?.id || '', entry.duration]); }).observe({ type: 'event', durationThreshold: 16 }); });
     const cdp = await page.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
     await page.evaluate(() => document.querySelector('#settings-toggle').click());
+    // The nav entry is drawn (and unhidden) after Settings opens, which is slow with the CPU throttled: wait for it, never click blind.
+    await page.waitForSelector('#settings-telemetry-tab:not([hidden])', { timeout: 30000 });
     await page.click('#settings-telemetry-tab');
-    await page.waitForFunction(() => document.querySelector('#telemetry-fingerprint')?.value);
+    await page.waitForFunction(() => document.querySelector('#telemetry-fingerprint')?.value, { timeout: 30000 });
     assert.deepEqual(await page.evaluate(() => ({ value: document.querySelector('#telemetry-fingerprint').value, readOnly: document.querySelector('#telemetry-fingerprint').readOnly, sendName: document.querySelector('#telemetry-send-name').checked })), { value: fingerprint, readOnly: true, sendName: false }, 'the field shows the fingerprint, read-only; the name is off by default');
     await page.click('#telemetry-send-name');
     await page.waitForFunction(() => /user name/.test(document.querySelector('#telemetry-status').textContent));
@@ -256,6 +258,7 @@ async function popup() {
     await page.click('#settings-close');
     await page.waitForFunction(() => !document.querySelector('#settings-dialog').open && document.querySelector('#settings-telemetry').childElementCount === 0);
     await page.evaluate(() => document.querySelector('#settings-toggle').click());
+    await page.waitForSelector('#settings-telemetry-tab:not([hidden])');
     await page.click('#settings-telemetry-tab');
     await page.waitForSelector('#telemetry-dsn:not([disabled])');
     assert.equal(await page.$eval('#telemetry-dsn', el => el.value), 'http://pagekey@127.0.0.1:9/5', 'read again on the next open');
@@ -324,6 +327,7 @@ async function popup() {
     await page.click('#settings-close');
     await page.waitForFunction(() => !document.querySelector('#settings-dialog').open && document.querySelector('#settings-telemetry').childElementCount === 0);
     await page.evaluate(() => document.querySelector('#settings-toggle').click());
+    await page.waitForSelector('#settings-telemetry-tab:not([hidden])');
     await page.click('#settings-telemetry-tab'); await page.waitForSelector('#telemetry-dsn'); await page.waitForFunction(() => !document.querySelector('#telemetry-enabled').disabled); await new Promise(resolve => setTimeout(resolve, 300));
     const quiet = await places();
     assert.equal(quiet.status, '', 'nothing has been said yet');
