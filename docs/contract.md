@@ -127,7 +127,11 @@ Projects, rooms, people
   membership. For agents, restricted history and uncited message reads require membership;
   the dispatcher flow marks `routing` restricted. The dispatcher is a
   singleton spawn-capable role without lead capability. A flow's spawn
-  rules grant its task-room and agent-management authority. Team setup puts
+  rules grant its task-room and agent-management authority. In the dispatcher
+  flow the leader spawns only the dispatcher and researchers, and the
+  dispatcher spawns workers, reviewers and researchers; a researcher may join
+  `general` (where the leader reads its report) and task rooms, never home or
+  `routing`. Team setup puts
   the dispatcher in routing and the keyed `general`, the project-wide room shared with
   the leader for announcements and coordination. It joins task rooms it
   creates or explicitly joins, never home. Its `create_room` without a `parent_id`

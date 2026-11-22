@@ -658,6 +658,56 @@ func TestTeamFlowSpawnAuthority(t *testing.T) {
 	}
 }
 
+// In the leader-dispatcher flow both the leader and the dispatcher may spawn a researcher, into a task room or general (where the leader
+// reads its report); the leader still may not spawn workers or reviewers.
+func TestDispatcherFlowResearcherSpawn(t *testing.T) {
+	f := newMembersFixture(t)
+	ctx := context.Background()
+	leader := f.agent(t, "flowlead", "role_leader_default", &f.home)
+	if _, err := f.s.ApplyTeamFlow(ctx, f.project.ID, f.alice, "leader-dispatcher", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	var routingID, generalID string
+	if err := f.s.db.QueryRow(`SELECT id FROM room WHERE project_id=? AND team_flow_room_key='routing'`, f.project.ID).Scan(&routingID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.db.QueryRow(`SELECT id FROM room WHERE project_id=? AND team_flow_room_key='general'`, f.project.ID).Scan(&generalID); err != nil {
+		t.Fatal(err)
+	}
+	spawn := func(actorID, roomID, role, key string) error {
+		return f.s.Tx(ctx, func(tx *Tx) error {
+			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: role, Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key})
+			return err
+		})
+	}
+	if err := spawn(leader.ID, f.other.ID, "researcher", "lead_research_task"); err != nil {
+		t.Fatalf("leader spawn researcher in a task room: %v", err)
+	}
+	if err := spawn(leader.ID, generalID, "researcher", "lead_research_general"); err != nil {
+		t.Fatalf("leader spawn researcher in general: %v", err)
+	}
+	if err := spawn(leader.ID, f.other.ID, "reviewer", "lead_reviewer"); !errors.Is(err, ErrTeamFlowRule) {
+		t.Fatalf("leader spawned reviewer in B: %v", err)
+	}
+	if err := spawn(leader.ID, routingID, "researcher", "lead_research_routing"); !errors.Is(err, ErrTeamFlowRule) {
+		t.Fatalf("researcher joined routing: %v", err)
+	}
+	if err := spawn(leader.ID, routingID, "dispatcher", "flow_dispatcher"); err != nil {
+		t.Fatal(err)
+	}
+	var dispatcherID string
+	if err := f.s.db.QueryRow(`SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND r.role_key='dispatcher'`, f.project.ID).Scan(&dispatcherID); err != nil {
+		t.Fatal(err)
+	}
+	if err := spawn(dispatcherID, f.other.ID, "researcher", "disp_research_task"); err != nil {
+		t.Fatalf("dispatcher spawn researcher in a task room: %v", err)
+	}
+	var researchers int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND r.role_key='researcher'`, f.project.ID).Scan(&researchers); err != nil || researchers != 3 {
+		t.Fatalf("researchers = %d, %v", researchers, err)
+	}
+}
+
 // A coordinator acting on a task room under home that it was never joined to (a room made before a flow switch) joins it, but only in
 // a spawn that goes through, never keeps a quiet membership it already had from becoming an ordinary one, and the lead may close such a
 // room without joining it (the flow's join rules keep it out of task rooms).

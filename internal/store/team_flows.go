@@ -110,8 +110,10 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	routed.Rooms = []FlowRoom{{Key: "home", Title: "Home", Kind: "home"}, {Key: "routing", Title: "routing", Kind: "task", Restricted: true}, {Key: "general", Title: "general", Kind: "task"}}
 	routed.Diagram.Rooms = []FlowDiagramRoom{{"home", "Home", []string{"leader"}}, {"routing", "Routing", []string{"leader", "dispatcher"}}, {"general", "General and tasks", []string{"leader", "dispatcher", "worker", "reviewer"}}}
 	routed.Diagram.Edges = []FlowEdge{{"home", "routing"}, {"routing", "general"}}
-	routed.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"routing", []string{"leader", "dispatcher"}}, {"general", []string{"leader", "dispatcher", "worker", "reviewer"}}, {"task", []string{"dispatcher", "worker", "reviewer"}}}
-	routed.SpawnRules = []FlowSpawnRule{{"leader", []string{"dispatcher"}}, {"dispatcher", []string{"worker", "reviewer"}}}
+	// A researcher (read-only, on demand) may be spawned by the leader and by the dispatcher, into general (where the leader can read its report)
+	// or a task room.
+	routed.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"routing", []string{"leader", "dispatcher"}}, {"general", []string{"leader", "dispatcher", "worker", "reviewer", "researcher"}}, {"task", []string{"dispatcher", "worker", "reviewer", "researcher"}}}
+	routed.SpawnRules = []FlowSpawnRule{{"leader", []string{"dispatcher", "researcher"}}, {"dispatcher", []string{"worker", "reviewer", "researcher"}}}
 	routed.AutoJoinRoles = []string{"leader", "dispatcher"}
 	routed.CoreRoles = []string{"leader", "dispatcher"}
 	routed.TaskParentKey = "home"
