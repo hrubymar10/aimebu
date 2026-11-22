@@ -2279,6 +2279,39 @@ func TestWarmQuarantineReleaseAfterAPlannedStopIsNotReported(t *testing.T) {
 	}
 }
 
+// The release is the supervisor's own recovery: it is logged locally and never sent to Sentry (the start of the quarantine is the report).
+func TestWarmQuarantineReleaseStaysOutOfSentry(t *testing.T) {
+	telemetry.ResetCaptured()
+	transport := startReporting(t)
+	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+	warmRetryEvery, warmStuckQuarantine = 10*time.Millisecond, 40*time.Millisecond
+	defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+	h := newWarmHarness(t)
+	reports := quarantineEndReports(h.c)
+	h.spawn("agt_a")
+	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true })
+	h.f.sessions[0].lingers.Store(true)
+	if h.c.retireWarm("agt_a", "test") {
+		t.Fatal("an unconfirmed container end was treated as confirmed")
+	}
+	slot := h.c.pool().slot("agt_a")
+	eventually(t, "release of the reaped wrapper after quarantine", func() bool {
+		slot.mu.Lock()
+		stuck := slot.stuck != nil
+		slot.mu.Unlock()
+		return !stuck && h.c.warmLive.Load() == 0
+	})
+	if reports.Load() != 1 {
+		t.Fatalf("the release must still reach the local log once, got %d", reports.Load())
+	}
+	telemetry.Current().Flush(time.Second)
+	for _, event := range transport.sent() {
+		if event.Exception != nil && len(event.Exception) > 0 && event.Exception[0].Value == "a warm process quarantine ended" {
+			t.Fatalf("the quarantine release was sent to Sentry: %+v", event)
+		}
+	}
+}
+
 // A slot stuck by anything else still reports its quarantine release: the process would not die on its own, and that is worth hearing about.
 func TestWarmQuarantineReleaseAfterAnUnplannedStuckIsReported(t *testing.T) {
 	oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine

@@ -444,10 +444,11 @@ func (c *Client) clearStuck(slot *warmSlot) bool {
 	}
 	if time.Since(entry.stuckAt) >= warmStuckQuarantine {
 		if !entry.session.Alive() && slot.busy != entry {
-			// A released quarantine is a degraded state the supervisor recovers from by itself, and no news at all when the process was
-			// ended on purpose (a stop, a shutdown): its unconfirmed container end and the quarantine are that decision's own path.
+			// A released quarantine is the supervisor's own recovery, so it goes to the local log only: the start of the quarantine is
+			// the report that matters. No news at all when the process was ended on purpose (a stop, a shutdown): its unconfirmed
+			// container end and the quarantine are that decision's own path.
 			if !entry.plannedEnd && !plannedWarmEnd(entry.stuckReason) {
-				c.degraded("a warm process quarantine ended", fmt.Errorf("agent %s: host wrapper exited but its container end was not confirmed; releasing the session after quarantine", entry.agentID))
+				c.reportLocal(fmt.Errorf("agent %s: host wrapper exited but its container end was not confirmed; releasing the session after quarantine", entry.agentID))
 			}
 			c.recordWarmEnd(entry, "quarantine ended after its host wrapper exited")
 			slot.stuck = nil
