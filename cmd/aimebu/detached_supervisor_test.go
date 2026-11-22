@@ -39,6 +39,63 @@ func init() {
 	}
 }
 
+func init() {
+	supervisorClientHook = func(client *supervisor.Client) {
+		// The supervisor child stands in for a build from before turn_interrupt.
+		client.NoTurnInterrupt = os.Getenv("AIMEBU_TEST_OLD_SUPERVISOR") != ""
+	}
+}
+
+// A supervisor that was told to stop and still holds the journal when the bound is over is killed; one that let go of it, or was
+// replaced by another process, is left alone.
+func TestStuckSupervisorIsKilledAfterTheStopBound(t *testing.T) {
+	for name, item := range map[string]struct {
+		holderPID int
+		held      bool
+		killed    bool
+	}{
+		"still holds the journal": {4242, true, true},
+		"released the journal":    {0, false, false},
+		"another one took over":   {4343, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			killed := make(chan int, 1)
+			m := &detachedSupervisorManager{ctx: t.Context(), stderr: &stderr, stopBound: 300 * time.Millisecond,
+				holder: func() (int, bool, error) { return item.holderPID, item.held, nil },
+				kill:   func(pid int) error { killed <- pid; return nil }}
+			m.killIfStuck(4242)
+			m.killIfStuck(4242) // a second stop of the same process starts no second watch
+			select {
+			case pid := <-killed:
+				if !item.killed || pid != 4242 {
+					t.Fatalf("killed pid %d", pid)
+				}
+			case <-time.After(1500 * time.Millisecond):
+				if item.killed {
+					t.Fatal("the supervisor that kept the journal was not killed")
+				}
+			}
+		})
+	}
+}
+
+// A supervisor that holds the journal without a connection is handed to the server's overdue check, but only after it has been
+// disconnected for a while: one between two reconnects is not asked about.
+func TestDisconnectedSupervisorIsCheckedForAnOverdueReplacement(t *testing.T) {
+	asked := 0
+	m := &detachedSupervisorManager{replaceOverdue: func(context.Context) (bool, error) { asked++; return true, nil }}
+	if replaced, err := m.overdue(t.Context(), time.Now()); replaced || err != nil || asked != 0 {
+		t.Fatalf("a supervisor that just disconnected: replaced=%t err=%v asked=%d", replaced, err, asked)
+	}
+	if replaced, err := m.overdue(t.Context(), time.Now().Add(-supervisorDisconnectedLimit-time.Second)); !replaced || err != nil || asked != 1 {
+		t.Fatalf("a supervisor disconnected for long: replaced=%t err=%v asked=%d", replaced, err, asked)
+	}
+	if replaced, err := (&detachedSupervisorManager{}).overdue(t.Context(), time.Now().Add(-time.Hour)); replaced || err != nil {
+		t.Fatalf("no server check: replaced=%t err=%v", replaced, err)
+	}
+}
+
 func TestLocalSupervisorRejectsNonLoopbackURL(t *testing.T) {
 	for _, raw := range []string{"http://example.com:9997", "http://192.0.2.1:9997", "http://localhost:9997", "http://127.0.0.1:9997/else"} {
 		if err := localDialURL(raw); err == nil {
@@ -142,18 +199,25 @@ func TestDetachedSupervisorRespawnsAfterCrash(t *testing.T) {
 // A real detached child holds its journal and its fake turn while the server
 // exits. Its answer reaches the same store after the server returns.
 func TestDetachedSupervisorCompletesTurnAcrossServerRestart(t *testing.T) {
-	testDetachedSupervisorAcrossServerRestart(t, false, false)
+	testDetachedSupervisorAcrossServerRestart(t, false, false, false)
 }
 
 func TestDetachedSupervisorDrainsForEnvironmentChange(t *testing.T) {
-	testDetachedSupervisorAcrossServerRestart(t, true, false)
+	testDetachedSupervisorAcrossServerRestart(t, true, false, false)
 }
 
 func TestDetachedSupervisorRestartNowContinuesTurn(t *testing.T) {
-	testDetachedSupervisorAcrossServerRestart(t, false, true)
+	testDetachedSupervisorAcrossServerRestart(t, false, true, false)
 }
 
-func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, restartNow bool) {
+// The upgrade case: the supervisor that runs a turn across the server's restart is an older build, which does not know turn_interrupt,
+// and the restarted server no longer matches it. The turn does not end by itself. When the drain grace is over the server stops the old
+// supervisor itself, a new one takes over, the turn is continued on it and its answer is delivered: nobody kills anything by hand.
+func TestDetachedSupervisorFromAnOlderBuildIsReplacedAfterTheGrace(t *testing.T) {
+	testDetachedSupervisorAcrossServerRestart(t, true, false, true)
+}
+
+func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, restartNow, olderBuild bool) {
 	root, _ := daemonFixture(t)
 	t.Setenv("AIMEBU_SUPERVISOR", "detached")
 	t.Setenv("AIMEBU_ALLOW", "192.0.2.0/24") // The host loopback address must be admitted even when people set a LAN-only list.
@@ -213,6 +277,13 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 	message, err := db.InsertMessage(ctx, store.Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@worker finish after restart"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if olderBuild {
+		// Two seconds of grace: the old supervisor's turn is still held by the gate when it is over.
+		if err := db.SetGlobalSettingValue(ctx, "supervisor_drain_grace_seconds", "2"); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AIMEBU_TEST_OLD_SUPERVISOR", "1") // the first supervisor child inherits it; its replacement does not
 	}
 	if code, out, errOut := runServerAction("stop"); code != 0 {
 		t.Fatalf("stop after seeding: %d %q %q", code, out, errOut)
@@ -279,6 +350,9 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 		if changeEnvironment {
 			t.Setenv("AIMEBU_TURN_MAX", "2h")
 		}
+		if olderBuild {
+			t.Setenv("AIMEBU_TEST_OLD_SUPERVISOR", "")
+		}
 		if code, out, errOut := runServerAction("start"); code != 0 {
 			t.Fatalf("restart: %d %q %q", code, out, errOut)
 		}
@@ -294,10 +368,14 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 		if !strings.Contains(tailOfFile(serverLogPath(root), 30), "local supervisor restart pending") {
 			t.Fatalf("new server did not detect environment change: %s", tailOfFile(serverLogPath(root), 30))
 		}
-		if pid, held, err := supervisorPID(root); err != nil || !held || pid != supervisorPIDAtStart {
+		if olderBuild {
+			// Its grace may already be over.
+		} else if pid, held, err := supervisorPID(root); err != nil || !held || pid != supervisorPIDAtStart {
 			t.Fatalf("supervisor retired while a turn was active: pid=%d held=%t err=%v", pid, held, err)
 		}
 	}
+	// A restart now, and an older build whose grace ran out, both cut the turn: it is continued once on the replacement.
+	restartNow = restartNow || olderBuild
 	if restartNow {
 		deadline = time.Now().Add(30 * time.Second)
 		replaced, continued := false, false
@@ -316,6 +394,9 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 		}
 		if !replaced || !continued {
 			t.Fatalf("immediate restart did not continue once: replaced=%t continued=%t; server: %s; supervisor: %s", replaced, continued, tailOfFile(serverLogPath(root), 25), tailOfFile(filepath.Join(root, "supervisor", "aimebu.log"), 25))
+		}
+		if olderBuild && !strings.Contains(tailOfFile(serverLogPath(root), 40), "the supervisor cannot interrupt a turn; restarting it") {
+			t.Fatalf("the old supervisor was not replaced by the drain: %s", tailOfFile(serverLogPath(root), 40))
 		}
 	}
 	if err := os.WriteFile(gate, []byte("go"), 0600); err != nil {

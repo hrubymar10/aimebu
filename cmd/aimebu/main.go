@@ -366,6 +366,9 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer, loc
 	client := supervisor.NewClient(credential.MachineID, credential.Key, serverURL, journal,
 		adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), opencode.NewDocker(), vibe.New(filepath.Join(config.root, "supervisor", "vibe")), vibe.NewDocker()))
 	client.OnError = func(err error) { fmt.Fprintln(stderr, err) }
+	if supervisorClientHook != nil {
+		supervisorClientHook(client)
+	}
 	client.AllowPlainHTTP = insecure
 	client.SupervisorVersion = resolveVersion()
 	client.EnvironmentFingerprint = supervisor.EnvironmentFingerprint(os.Environ())
@@ -744,7 +747,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	service.DataRoot = config.root
 	var localManager *detachedSupervisorManager
 	if detachedEnabled {
-		localManager = &detachedSupervisorManager{config: config, stderr: stderr, store: db, ctx: ctx, connected: service.LocalSupervisorConnected, canInterrupt: service.LocalSupervisorCanInterrupt}
+		localManager = &detachedSupervisorManager{config: config, stderr: stderr, store: db, ctx: ctx, connected: service.LocalSupervisorConnected, canInterrupt: service.LocalSupervisorCanInterrupt, replaceOverdue: service.ReplaceOverdueLocalSupervisor}
 		service.LocalSupervisorEnvironment = supervisor.EnvironmentFingerprint(os.Environ())
 		service.LocalSupervisorDiskVersion = onDiskSupervisorVersion
 		service.LocalSupervisorRestart = localManager.restartNow

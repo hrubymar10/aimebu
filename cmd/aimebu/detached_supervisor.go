@@ -25,6 +25,9 @@ import (
 
 var fakeAdapterHook func(*adapter.Fake)
 
+// supervisorClientHook lets a test change the supervisor's client before it runs (to stand in for an older build).
+var supervisorClientHook func(*supervisor.Client)
+
 func localFakeAdapter() *adapter.Fake {
 	fake := adapter.NewFake()
 	fake.SetEchoDefault(true)
@@ -167,6 +170,79 @@ type detachedSupervisorManager struct {
 	ctx          context.Context
 	connected    func() bool
 	canInterrupt func() bool
+	// replaceOverdue asks the server to replace a supervisor that was told to retire, whose grace is over and which has no connection
+	// (server.ReplaceOverdueLocalSupervisor). It says whether it did.
+	replaceOverdue func(context.Context) (bool, error)
+	stopMu         sync.Mutex
+	stopWatched    map[int]bool // the pids a stop was sent to and whose exit is being waited for
+	// Tests replace these: who holds the journal (supervisorPID), how a process is killed, and how long a stop may take (supervisorStopBound).
+	holder    func() (int, bool, error)
+	kill      func(int) error
+	stopBound time.Duration
+}
+
+// supervisorStopBound is how long a supervisor that was told to stop gets to release its journal before it is killed. Its own drain is
+// limited to 40 seconds (supervisorCommand), so one that still holds the journal after this is not draining: it hangs.
+var supervisorStopBound = 75 * time.Second
+
+// killIfStuck waits for a supervisor that was told to stop. One that still holds the journal when the bound is over is killed, so that
+// its replacement can start: the journal keeps what its turns reported, and the replacement delivers it.
+func (m *detachedSupervisorManager) killIfStuck(pid int) {
+	m.stopMu.Lock()
+	if m.stopWatched == nil {
+		m.stopWatched = make(map[int]bool)
+	}
+	if m.stopWatched[pid] {
+		m.stopMu.Unlock()
+		return
+	}
+	m.stopWatched[pid] = true
+	m.stopMu.Unlock()
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	holder, kill, bound := m.holder, m.kill, m.stopBound
+	if holder == nil {
+		holder = func() (int, bool, error) { return supervisorPID(m.config.root) }
+	}
+	if kill == nil {
+		kill = func(pid int) error { return syscall.Kill(pid, syscall.SIGKILL) }
+	}
+	if bound <= 0 {
+		bound = supervisorStopBound
+	}
+	go func() {
+		defer func() {
+			m.stopMu.Lock()
+			delete(m.stopWatched, pid)
+			m.stopMu.Unlock()
+		}()
+		deadline := time.NewTimer(bound)
+		defer deadline.Stop()
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if current, held, err := holder(); err == nil && (!held || current != pid) {
+				return // it exited (and another may already have taken over)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-deadline.C:
+				// Only the process that verifiably still holds the journal is killed, and only while it is the one the stop went to.
+				if current, held, err := holder(); err != nil || !held || current != pid {
+					return
+				}
+				fmt.Fprintf(m.stderr, "supervisor pid %d still holds the journal %s after it was told to stop; killing it\n", pid, bound)
+				if err := kill(pid); err != nil {
+					fmt.Fprintln(m.stderr, "supervisor kill:", err)
+				}
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 type legacyDrainState struct {
@@ -232,10 +308,15 @@ func (m *detachedSupervisorManager) restartNow() error {
 	if !held {
 		return startDetachedSupervisor(m.config)
 	}
+	stop := syscall.SIGTERM
 	if m.canInterrupt != nil && m.canInterrupt() {
-		return syscall.Kill(pid, syscall.SIGUSR1)
+		stop = syscall.SIGUSR1
 	}
-	return syscall.Kill(pid, syscall.SIGTERM)
+	if err := syscall.Kill(pid, stop); err != nil {
+		return err
+	}
+	m.killIfStuck(pid)
+	return nil
 }
 
 func (m *detachedSupervisorManager) run(ctx context.Context) {
@@ -263,6 +344,12 @@ func (m *detachedSupervisorManager) run(ctx context.Context) {
 			backoff = min(backoff*2, 30*time.Second)
 		} else if disconnectedAt.IsZero() {
 			disconnectedAt = time.Now()
+		} else if replaced, err := m.overdue(ctx, disconnectedAt); err != nil {
+			fmt.Fprintln(m.stderr, "supervisor replacement:", err)
+			disconnectedAt = time.Now()
+		} else if replaced {
+			fmt.Fprintln(m.stderr, "supervisor was told to retire, did not exit within the grace and is not connected; requested its restart")
+			disconnectedAt = time.Now()
 		} else if !everConnected && time.Since(disconnectedAt) > 30*time.Second {
 			active, err := m.store.MachineActiveWork(ctx, m.machineID)
 			if err != nil {
@@ -281,6 +368,17 @@ func (m *detachedSupervisorManager) run(ctx context.Context) {
 		case <-time.After(backoff):
 		}
 	}
+}
+
+// supervisorDisconnectedLimit is how long a supervisor may hold the journal without a connection before the server is asked whether its
+// replacement is overdue. A healthy one reconnects every five seconds.
+var supervisorDisconnectedLimit = 30 * time.Second
+
+func (m *detachedSupervisorManager) overdue(ctx context.Context, disconnectedAt time.Time) (bool, error) {
+	if m.replaceOverdue == nil || time.Since(disconnectedAt) < supervisorDisconnectedLimit {
+		return false, nil
+	}
+	return m.replaceOverdue(ctx)
 }
 
 func looksLikeAimebuSupervisor(exe, command string) bool {

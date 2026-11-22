@@ -54,10 +54,31 @@ func (s *Server) restartLocalSupervisor(w http.ResponseWriter, ctx context.Conte
 		apiError(w, http.StatusConflict, "server_upgrade_required", "restart the server to finish the upgrade")
 		return
 	}
-	turnIDs, err := s.Store.MachineRunningTurnIDs(ctx, s.localSupervisorID())
-	if err != nil {
+	if err := s.forceLocalSupervisorRestart(ctx); err != nil {
+		var stopErr *supervisorStopError
+		if errors.As(err, &stopErr) {
+			apiError(w, http.StatusServiceUnavailable, "supervisor_restart_failed", err.Error())
+			return
+		}
 		fail(w, err)
 		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"restart_pending": true})
+}
+
+// supervisorStopError is a restart the supervisor's manager could not carry out (the process could not be signalled or started).
+type supervisorStopError struct{ err error }
+
+func (e *supervisorStopError) Error() string { return e.err.Error() }
+func (e *supervisorStopError) Unwrap() error { return e.err }
+
+// forceLocalSupervisorRestart replaces the local supervisor now, whatever it runs: the turns it runs are remembered, so that their ends
+// count as interrupted (one automatic continuation on the replacement) and not as cancelled, and the manager is told to stop the process
+// and start another. It is the owner's Restart now, and what the drain falls back to for a supervisor it cannot interrupt turn by turn.
+func (s *Server) forceLocalSupervisorRestart(ctx context.Context) error {
+	turnIDs, err := s.Store.MachineRunningTurnIDs(ctx, s.localSupervisorID())
+	if err != nil {
+		return err
 	}
 	s.localRestartMu.Lock()
 	if s.localRestartTurns == nil {
@@ -80,10 +101,9 @@ func (s *Server) restartLocalSupervisor(w http.ResponseWriter, ctx context.Conte
 			delete(s.localRestartTurns, id)
 		}
 		s.localRestartMu.Unlock()
-		apiError(w, http.StatusServiceUnavailable, "supervisor_restart_failed", err.Error())
-		return
+		return &supervisorStopError{err}
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"restart_pending": true})
+	return nil
 }
 
 // An older adopted supervisor reports its SIGTERM cancellation as an owner
@@ -130,8 +150,9 @@ func (s *Server) LocalSupervisorCanInterrupt() bool {
 // local dispatch is held until its replacement connects. One long turn would hold every local agent for as long as it runs, so the wait
 // has a limit: the owner's drain grace. When it runs out, every ordinary turn the old supervisor still runs is interrupted with the
 // continue disposition (see store.RequestTurnInterrupt): the turn ends, the supervisor goes idle and exits, and the turn is continued on
-// its replacement, outside the chain's one automatic continuation. A command outside a turn is never ended for this: the old supervisor
-// stays up until its commands finish, as before.
+// its replacement, outside the chain's one automatic continuation. A supervisor that cannot be interrupted turn by turn (an older build,
+// or one that lost its connection for good) is stopped and started again instead. A command outside a turn is never ended for this: the
+// old supervisor stays up until its commands finish, as before.
 const (
 	supervisorDrainGraceKey     = "supervisor_drain_grace_seconds"
 	defaultDrainGraceSeconds    = 5 * 60
@@ -163,14 +184,13 @@ func (s *Server) clearLocalDrain() {
 	s.localDrainMu.Unlock()
 }
 
-// startLocalDrainGrace runs after retire_at_idle was sent to a mismatched local supervisor: it waits for the drain's deadline on this
-// connection and then interrupts what still runs. The deadline is set when the mismatch is first seen and kept across the supervisor's
-// reconnects (each of which gets a retire_at_idle of its own), so a flapping connection does not extend the grace. Nothing is started for a
-// grace of 0 or for a supervisor that does not announce supports_turn_interrupt: it is waited for as before.
+// startLocalDrainGrace runs once a mismatched local supervisor was asked to retire: it waits for the drain's deadline on this connection and
+// then ends what still runs. The deadline is set when the mismatch is first seen and kept across the supervisor's reconnects (each of which
+// is asked to retire again), so a flapping connection does not extend the grace. A supervisor that announces supports_turn_interrupt gets
+// its turns interrupted one by one. One that does not (a build from before the frame, which is what a newer server finds running right
+// after an upgrade) cannot be told to cut a turn, and waiting for it could take as long as its longest turn: it is replaced the way the
+// owner's Restart now does it (see restartDrainingSupervisor). Nothing is started for a grace of 0: the supervisor is waited for.
 func (s *Server) startLocalDrainGrace(ctx context.Context, c *machineConn) {
-	if !c.supportsTurnInterrupt {
-		return
-	}
 	grace, err := s.drainGraceSeconds(ctx)
 	if err != nil {
 		telemetry.ReportWarning(ctx, "machine", fmt.Errorf("reading the supervisor drain grace: %w", err))
@@ -201,8 +221,81 @@ func (s *Server) startLocalDrainGrace(ctx context.Context, c *machineConn) {
 		if now, err := s.drainGraceSeconds(ctx); err != nil || now == 0 {
 			return
 		}
+		if !c.supportsTurnInterrupt {
+			s.restartDrainingSupervisor(ctx, c)
+			return
+		}
 		s.interruptDrainingTurns(ctx, c)
 	})
+}
+
+// drainCommandPoll is how often a drain that waits for a command outside a turn looks whether it has ended.
+var drainCommandPoll = 2 * time.Second
+
+// restartDrainingSupervisor ends the drain of a supervisor that knows no turn_interrupt: when the grace is over it is stopped and started
+// again, with the turns it runs marked so that they end interrupted and are continued once on the replacement. A command outside a turn
+// is still never cut: while one runs the stop waits, as the drain of a newer supervisor does.
+func (s *Server) restartDrainingSupervisor(ctx context.Context, c *machineConn) {
+	if s.LocalSupervisorRestart == nil {
+		return
+	}
+	ticker := time.NewTicker(drainCommandPoll)
+	defer ticker.Stop()
+	for {
+		running, err := s.Store.MachineRunningCommand(ctx, c.id)
+		if err != nil {
+			telemetry.ReportError(ctx, "machine", fmt.Errorf("supervisor drain: looking for running commands: %w", err))
+			return
+		}
+		if !running {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-c.done:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+	select {
+	case <-c.done:
+		return // it went by itself, or its next connection starts this again
+	default:
+	}
+	if s.localSupervisorUpgradeRequired.Load() {
+		return
+	}
+	log.Printf("supervisor drain: grace over and the supervisor cannot interrupt a turn; restarting it")
+	if err := s.forceLocalSupervisorRestart(ctx); err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("supervisor drain: restarting the supervisor: %w", err))
+	}
+}
+
+// localDrainOverdueAfter is how long after the drain's deadline a supervisor that is not connected is given before it is replaced anyway.
+var localDrainOverdueAfter = 30 * time.Second
+
+// ReplaceOverdueLocalSupervisor is for the manager of a detached supervisor, which calls it while the supervisor holds its journal and has
+// no connection to this server. A supervisor that was asked to retire, whose grace is over and which neither exits nor connects again can
+// be reached by no frame: it is stopped and started again like the one that cannot interrupt a turn. It reports whether it did so.
+func (s *Server) ReplaceOverdueLocalSupervisor(ctx context.Context) (bool, error) {
+	if s.LocalSupervisorRestart == nil || !s.localSupervisorPending.Load() || s.localSupervisorUpgradeRequired.Load() {
+		return false, nil
+	}
+	s.localDrainMu.Lock()
+	deadline := s.localDrainDeadline
+	s.localDrainMu.Unlock()
+	if deadline.IsZero() || time.Now().Before(deadline.Add(localDrainOverdueAfter)) {
+		return false, nil
+	}
+	if grace, err := s.drainGraceSeconds(ctx); err != nil || grace == 0 {
+		return false, err
+	}
+	if running, err := s.Store.MachineRunningCommand(ctx, s.localSupervisorID()); err != nil || running {
+		return false, err
+	}
+	log.Printf("supervisor drain: grace over and the supervisor is neither connected nor gone; restarting it")
+	return true, s.forceLocalSupervisorRestart(ctx)
 }
 
 // interruptDrainingTurns interrupts, with the continue disposition, every ordinary turn the machine still runs. A turn that is not running

@@ -37,3 +37,10 @@ func (s *Store) MachineActiveWork(ctx context.Context, machineID string) (bool, 
 	)`, machineID, machineID).Scan(&active)
 	return active, err
 }
+
+// MachineRunningCommand says whether a command outside a turn is running on the machine.
+func (s *Store) MachineRunningCommand(ctx context.Context, machineID string) (bool, error) {
+	var running bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM command_job WHERE machine_id=? AND state='running')`, machineID).Scan(&running)
+	return running, err
+}

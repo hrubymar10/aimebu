@@ -430,10 +430,10 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.RetireAtIdle}); err != nil {
 				return
 			}
-			s.startLocalDrainGrace(ctx, c) // the wait for its turns is bounded by the owner's drain grace
 		} else if s.LocalSupervisorLegacyDrain != nil {
 			s.LocalSupervisorLegacyDrain()
 		}
+		s.startLocalDrainGrace(ctx, c) // the wait for its turns is bounded by the owner's drain grace, whatever the supervisor's build knows
 	}
 	for _, job := range killCommands {
 		// Cancelled before its start was confirmed, yet the machine runs it: it must not outlive the cancel.

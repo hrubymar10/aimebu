@@ -33,8 +33,22 @@ itself on the new supervisor with the note `your previous turn was interrupted
 continuation does not count as the chain's one automatic continuation. The
 grace starts when the server first sees the mismatch (after a server restart,
 at the supervisor's first connection) and reconnects do not extend it. A
-supervisor that does not announce `supports_turn_interrupt`, and a correction,
-diagnostic or handoff turn, are waited for as before. The drain also leaves
+correction, diagnostic or handoff turn is waited for as before. A supervisor
+that does not announce `supports_turn_interrupt` (a build from before the
+frame, which is what a newer server finds running right after an upgrade)
+cannot be told to cut one turn, so when the grace is over the server replaces
+it the way Restart now does: it remembers the turns the supervisor runs,
+signals the process to stop, and each of those turns ends interrupted and
+gets the ordinary one auto-continue on the new supervisor. This cuts every
+turn it runs, of whatever kind. A supervisor that was asked to retire, whose
+grace is over, and which has held its journal without a connection for 30
+seconds more is out of reach of any frame and is replaced the same way. In
+both cases a running `run_command` job still holds the replacement back, and
+a grace of 0 turns both off. A supervisor that was signalled to stop (by the
+drain, by Restart now, or by the manager) and still holds its journal 75
+seconds later is killed, so that its replacement can start; its own drain is
+limited to 40 seconds, so one that is still there is hanging. The journal
+keeps what its turns reported, and the replacement delivers it. The drain also leaves
 alone the turn of an agent that a team flow change in progress holds (the
 change interrupts it its own way), and it never replaces an interrupt somebody
 already asked for: that turn is only sent the frame again and is settled as

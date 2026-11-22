@@ -495,3 +495,107 @@ func TestBoundedDrainKeepsAnEarlierInterruptRequest(t *testing.T) {
 		t.Fatal("the turn's note was not queued again")
 	}
 }
+
+// A supervisor from a build before turn_interrupt cannot be told to cut a turn. When the grace is over it is not waited for any longer:
+// the server stops and starts it the way the owner's Restart now does, and the turn it runs is marked, so that the cancel the old build
+// reports for it counts as an interruption that is continued. It is never sent the frame it does not know.
+func TestBoundedDrainRestartsASupervisorThatCannotInterruptATurn(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.srv.Version = "new-build"
+	restarts := make(chan struct{}, 4)
+	f.srv.LocalSupervisorRestart = func() error { restarts <- struct{}{}; return nil }
+	agent, turn := f.runningExecution(t)
+	f.setDrainGrace(t, "1")
+	f.srv.SetLocalSupervisorID(f.machineID)
+	conn := f.drainSocket(t, false, agent, turn, nil)
+	if exit := f.srv.localSupervisorRestartExit(turn.ID, adapter.ExitInfo{CancelIntent: true}); exit.Interrupted {
+		t.Fatal("the turn was marked before the grace was over")
+	}
+	frames := framesFor(t, conn, 2500*time.Millisecond, protocol.TurnInterrupt)
+	if len(frames) != 0 {
+		t.Fatalf("a supervisor that does not know the frame was sent it: %+v", frames)
+	}
+	select {
+	case <-restarts:
+	default:
+		t.Fatal("the supervisor was not restarted when the grace was over")
+	}
+	if exit := f.srv.localSupervisorRestartExit(turn.ID, adapter.ExitInfo{CancelIntent: true}); !exit.Interrupted || exit.CancelIntent {
+		t.Fatalf("the turn's cancel is not read as an interruption: %+v", exit)
+	}
+	if !f.srv.localSupervisorPending.Load() {
+		t.Fatal("the restart is no longer pending")
+	}
+}
+
+// A long command outside a turn keeps also the older supervisor up: it is not restarted while the command runs.
+func TestBoundedDrainDoesNotRestartAnOlderSupervisorUnderALongCommand(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.srv.Version = "new-build"
+	restarts := make(chan struct{}, 4)
+	f.srv.LocalSupervisorRestart = func() error { restarts <- struct{}{}; return nil }
+	agent, turn, note, _ := f.execution(t)
+	_, key := f.createToolAgent(t, "role_t6")
+	first := f.dialCommandMachine(t, nil, []protocol.CommandExit{})
+	answer, run := f.startCommandCall(t, first, key, "drain-long-old")
+	writeCommandFrame(t, first, commandStartedFrame(run))
+	if call := waitCommandCall(t, answer); call.status != 201 {
+		t.Fatalf("run_command %d %s", call.status, call.body)
+	}
+	_ = first.CloseNow()
+	f.startExecution(t, agent, turn, note)
+	f.setDrainGrace(t, "1")
+	f.srv.SetLocalSupervisorID(f.machineID)
+	conn := f.drainSocket(t, false, agent, turn, []protocol.CommandOpen{{JobID: run.JobID, AgentID: run.AgentID, Generation: run.Generation, Pid: 4242, LogPath: run.Command.LogPath, StartedAt: "2026-11-19T10:00:00.000000000Z"}})
+	_ = framesFor(t, conn, 2500*time.Millisecond, protocol.TurnInterrupt)
+	select {
+	case <-restarts:
+		t.Fatal("the supervisor was restarted under a running command")
+	default:
+	}
+	if overdue, err := f.srv.ReplaceOverdueLocalSupervisor(t.Context()); overdue || err != nil {
+		t.Fatalf("overdue under a running command: %t %v", overdue, err)
+	}
+}
+
+// A supervisor that was asked to retire and then neither exits nor connects again is out of reach of every frame. Its manager asks the
+// server, which has it restarted once the grace and a margin are over, and at no other time.
+func TestOverdueLocalSupervisorIsRestartedOnlyAfterTheGrace(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	restarts := 0
+	f.srv.LocalSupervisorRestart = func() error { restarts++; return nil }
+	f.srv.SetLocalSupervisorID(f.machineID)
+	check := func(name string, want bool) {
+		t.Helper()
+		before := restarts
+		got, err := f.srv.ReplaceOverdueLocalSupervisor(t.Context())
+		if err != nil || got != want || (restarts != before) != want {
+			t.Fatalf("%s: replaced=%t err=%v restarts %d -> %d", name, got, err, before, restarts)
+		}
+	}
+	setDeadline := func(at time.Time) {
+		f.srv.localDrainMu.Lock()
+		f.srv.localDrainDeadline = at
+		f.srv.localDrainMu.Unlock()
+	}
+	setDeadline(time.Now().Add(-time.Hour))
+	check("no restart pending", false)
+	f.srv.localSupervisorPending.Store(true)
+	setDeadline(time.Time{})
+	check("no drain deadline", false)
+	setDeadline(time.Now().Add(time.Minute))
+	check("grace still running", false)
+	setDeadline(time.Now().Add(-localDrainOverdueAfter / 2))
+	check("grace over, margin still running", false)
+	setDeadline(time.Now().Add(-localDrainOverdueAfter - time.Second))
+	f.setDrainGrace(t, "0")
+	check("grace turned off", false)
+	f.setDrainGrace(t, "60")
+	f.srv.localSupervisorUpgradeRequired.Store(true)
+	check("the server is the older side", false)
+	f.srv.localSupervisorUpgradeRequired.Store(false)
+	check("grace and margin over", true)
+}

@@ -71,25 +71,28 @@ type Client struct {
 	// been absent for a long time. Zero keeps the standalone behavior.
 	IdleDisconnectLimit time.Duration
 	lastDisconnected    atomic.Int64
-	retireRequested     atomic.Bool
-	shutdownRequested   atomic.Bool
-	restartInterrupted  atomic.Bool
-	OnError             func(error)
-	OnReady             func()
-	writeMu             sync.Mutex
-	detectMu            sync.Mutex
-	mu                  sync.Mutex
-	desired             map[string]protocol.DesiredAgent
-	active              map[string]string
-	running             map[string]adapter.Turn
-	pendingStopAck      map[string]protocol.Frame
-	activeTurns         map[string]activeTurn     // the turn each agent was last admitted for (see turn_interrupt.go)
-	turnInterrupts      map[string]*turnInterrupt // the interrupt asked for an agent's running turn
-	agentKeys           map[string]string         // each agent's key, in memory only (see agent_tools.go)
-	telemetryEnv        map[string]string         // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
-	currentConn         *websocket.Conn
-	stopping            bool
-	turns               sync.WaitGroup
+	// NoTurnInterrupt makes the client behave like a build from before turn_interrupt: it does not announce the frame and does not act
+	// on one. Tests use it to stand in for the older supervisor a newer server finds running after an upgrade.
+	NoTurnInterrupt    bool
+	retireRequested    atomic.Bool
+	shutdownRequested  atomic.Bool
+	restartInterrupted atomic.Bool
+	OnError            func(error)
+	OnReady            func()
+	writeMu            sync.Mutex
+	detectMu           sync.Mutex
+	mu                 sync.Mutex
+	desired            map[string]protocol.DesiredAgent
+	active             map[string]string
+	running            map[string]adapter.Turn
+	pendingStopAck     map[string]protocol.Frame
+	activeTurns        map[string]activeTurn     // the turn each agent was last admitted for (see turn_interrupt.go)
+	turnInterrupts     map[string]*turnInterrupt // the interrupt asked for an agent's running turn
+	agentKeys          map[string]string         // each agent's key, in memory only (see agent_tools.go)
+	telemetryEnv       map[string]string         // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
+	currentConn        *websocket.Conn
+	stopping           bool
+	turns              sync.WaitGroup
 	// Warm keeps an agent's harness process up for an idle window after a turn (see warm.go); the zero value is off.
 	Warm             WarmConfig
 	codexWarmEnabled bool
@@ -352,7 +355,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: true, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: !c.NoTurnInterrupt, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -570,6 +573,9 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				}
 			}()
 		case protocol.TurnInterrupt:
+			if c.NoTurnInterrupt {
+				continue // a build from before the frame does not know its type
+			}
 			// Cutting a turn only signals its process (a terminate in a container runs in its own goroutine), so it is answered on this loop.
 			result := protocol.Frame{V: protocol.Version, Type: protocol.TurnInterruptResult, ReqID: frame.ReqID, AgentID: frame.AgentID, Generation: frame.Generation, TurnID: frame.TurnID, Result: c.handleTurnInterrupt(frame)}
 			if err := c.send(ctx, conn, result); err != nil {
