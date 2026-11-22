@@ -58,12 +58,24 @@ func (h harnessRun) runBudget() time.Duration {
 	return h.runTimeout
 }
 
+// shutdownKey carries the caller's own (cancellable) context through detachForRun, so the one step that may safely stop on a shutdown can.
+type shutdownKey struct{}
+
+// detachForRun is context.WithoutCancel for a CLI run, which must not be killed once it has started (the token may be spent), but remembers the
+// caller's context so ensureImage, which runs before any token is spent, can still follow a shutdown.
+func detachForRun(ctx context.Context) context.Context {
+	return context.WithValue(context.WithoutCancel(ctx), shutdownKey{}, ctx)
+}
+
 // ensureImage makes sure the harness image exists before a CLI run starts. The
 // build has its own budget, longer than a run's: after the image was pruned, a
 // cold `harness-docker-ctrl build-image` outlasted the run timeout and was
 // killed mid-build. The budget is cut off from the caller's cancellation, so a
-// server shutdown does not kill a build halfway; the run's own budget starts
-// only once this returns.
+// build is not killed by the caller's own deadline; the run's own budget starts
+// only once this returns. A server shutdown (the context detachForRun
+// remembers) does end the build: no token has been spent yet, so it is a
+// refresh that was not sent, and Drain, which waits for every spend, must not
+// wait out a 20-minute build.
 func (h harnessRun) ensureImage(ctx context.Context) error {
 	build := h.build
 	if build == nil {
@@ -71,6 +83,10 @@ func (h harnessRun) ensureImage(ctx context.Context) error {
 	}
 	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.buildBudget())
 	defer cancel()
+	if shutdown, ok := ctx.Value(shutdownKey{}).(context.Context); ok {
+		stop := context.AfterFunc(shutdown, cancel)
+		defer stop()
+	}
 	return build(buildCtx)
 }
 

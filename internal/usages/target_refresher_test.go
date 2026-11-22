@@ -336,6 +336,48 @@ func TestTokenRefresherBuildsTheHarnessImageUnderItsOwnBudget(t *testing.T) {
 	}
 }
 
+// A harness image build ends with a server shutdown (no token is spent before it), so Drain, which waits for every spend, does not wait out the build's
+// 20-minute budget, and the refresh is not sent and raises no alert.
+func TestTokenRefresherShutdownStopsTheImageBuildAndDrainReturns(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	runner := &scriptedRunner{fn: func(call int, dir string) (refreshRunResult, error) {
+		t.Error("the CLI must not run after a shutdown stopped the build")
+		return refreshRunResult{Started: true}, nil
+	}}
+	h := newRefreshHarness(t, runner)
+	building := make(chan struct{})
+	h.r.executors["claude"] = dockerRefreshExecutor{harnessRun: harnessRun{
+		buildTimeout: 20 * time.Minute,
+		build: func(ctx context.Context) error {
+			close(building)
+			<-ctx.Done() // a build that only ends when it is cancelled (or its budget runs out)
+			return ctx.Err()
+		},
+	}}
+	h.addProfile("claude", "main", true, claudeFull("a", "r1", now.Add(10*time.Minute)))
+	ctx, shutdown := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.r.RefreshDue(ctx) }()
+	<-building
+	shutdown()
+	drained := make(chan struct{})
+	go func() { h.r.Drain(); close(drained) }()
+	select {
+	case <-drained:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Drain waited on an image build that a shutdown should have stopped")
+	}
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("pass error = %v, want none or a cancellation", err)
+	}
+	if got := h.stateAlertKinds(); len(got) != 0 {
+		t.Fatalf("alerts = %v, a stopped build is not an account failure", got)
+	}
+	if len(h.r.stateStore().journal()) != 0 {
+		t.Fatal("journal not cleared: nothing was spent")
+	}
+}
+
 func TestWarmupBuildsTheHarnessImageUnderItsOwnBudget(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	runner := &scriptedRunner{fn: func(call int, dir string) (refreshRunResult, error) {

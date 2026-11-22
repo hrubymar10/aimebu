@@ -36,8 +36,8 @@ const (
 	// targetBuildTimeout bounds one harness image build, separately from a run:
 	// after the image was pruned, a cold `harness-docker-ctrl build-image`
 	// outlasted the run timeout and was killed mid-build. The budget is derived
-	// from context.WithoutCancel of the caller's context, so a server shutdown
-	// does not kill a build halfway.
+	// from context.WithoutCancel of the caller's context (so its deadline does
+	// not cut it), but a server shutdown does end it: no token is spent yet.
 	targetBuildTimeout = 20 * time.Minute
 	// targetSwitchAwayGrace is how long after a profile stops being active the
 	// refresher still leaves it alone. Under the token-only model no CLI holds a
@@ -723,8 +723,13 @@ func (r *TargetRefresher) spend(ctx context.Context, p StoredProfile, start []by
 			telemetry.ReportCause(ctx, "credentials", "token refresh: cannot journal that the CLI started")
 		}
 	}
-	run, runErr := runRefreshExecutor(context.WithoutCancel(ctx), r.executors[tool], dir, flag, onStart)
+	run, runErr := runRefreshExecutor(detachForRun(ctx), r.executors[tool], dir, flag, onStart)
 
+	if !run.Started && ctx.Err() != nil {
+		// The image build ended with the shutdown, before any CLI existed: nothing was spent, so it is neither a failure of the account nor an alert.
+		r.clearJournal(store, tool, p.Name)
+		return fmt.Errorf("%w: token refresh is shutting down, the image build was stopped, nothing was sent", context.Canceled)
+	}
 	rotated, _ := os.ReadFile(tmpPath)
 	startToken, _ := refreshToken(start, tool)
 	advanced := r.rotatedAdvanced(tool, p, tmpPath, start, oldExpiry)

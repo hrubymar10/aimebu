@@ -303,12 +303,17 @@ func (r *TargetRefresher) warmupProfile(ctx context.Context, c warmupCandidate) 
 	// A server shutdown must not kill a CLI that is in the middle of a warmup
 	// request, and the run's own budget starts only after the harness image
 	// exists (the executor bounds the run itself, after ensureImage).
-	run, runErr := runRefreshExecutor(context.WithoutCancel(ctx), r.executors[p.Tool], dir, r.modelFlag(p.Tool), func() {
+	run, runErr := runRefreshExecutor(detachForRun(ctx), r.executors[p.Tool], dir, r.modelFlag(p.Tool), func() {
 		entry.Phase = journalStarted
 		if err := store.setJournal(entry); err != nil {
 			log.Printf("usages: warmup journal start: %v", err)
 		}
 	})
+	if !run.Started && ctx.Err() != nil {
+		// The image build ended with the shutdown, before any CLI existed: nothing was sent, no alert.
+		r.clearJournal(store, p.Tool, p.Name)
+		return fmt.Errorf("%w: warmup is shutting down, the image build was stopped, nothing was sent", context.Canceled)
+	}
 	// Rate-limit every started request, including one that failed. A success is
 	// only visible on the next usage fetch.
 	if run.Started {
