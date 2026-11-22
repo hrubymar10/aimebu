@@ -1631,6 +1631,14 @@ it never silently reruns a turn with uncertain effects.
   `cancelled_unconfirmed`, whatever the reason for the kill; `refused` (the
   Docker launcher refused the command before it ran: an image from before
   command runs) makes it `failed` with that message and no exit code.
+- M→S `background_job_ended{v, agent_id, generation}` — the agent's live
+  (warm) harness process answered, between turns, a query it ran on its own
+  because a background job the agent had started ended (Claude Code's
+  `task-notification` result). That answer belongs to no turn, so the server
+  queues the system note "a background job of yours ended; check and report"
+  for the agent (§6). Accepted only from the machine that runs the agent; a
+  stale generation is ignored. Not acknowledged: best effort, the answer is
+  also journaled with the agent's next turn.
 - S→M `command_cancel{v,req_id,job_id}`; M→S `command_cancel_result{v,req_id,
   job_id,result[ok|error],message?}` — SIGTERM to the process group, SIGKILL
   after a grace; for a command in a container the SIGTERM goes to the Docker
@@ -1745,7 +1753,12 @@ it never silently reruns a turn with uncertain effects.
   receipt with an `answer too large` error instead of dropping the socket.
 - M→S `process{v, agent_id, generation, turn_id,
   exit:{exit_code, terminal_event, cancel_intent, stderr_tail?, error_event?,
-  limit_stall?, interrupted?}}`. `interrupted` marks a turn whose process was
+  limit_stall?, interrupted?, work_tree?}}`. `work_tree` rides a `limit_stall`
+  exit: the supervisor's description of the turn's checkout at the kill
+  (`tip <git log -1 --oneline>, tree clean` or `, N dirty files`; absent when
+  the folder is not a git checkout or git did not answer within 5 s). The
+  server puts it in the automatic continuation's note and in the
+  `turn_limit_continuation` event's payload (`work_tree`). `interrupted` marks a turn whose process was
   cut off without an answer and without the agent being stopped: by itself (a
   signal, a restarted session, a stopped container), by the owner's restart of
   the local supervisor, or by a `turn_interrupt` frame.
@@ -1971,6 +1984,14 @@ Computed in the message-insert transaction; every decision → note or
   the hop guard counts it with nothing else and it does not change. An agent
   that is stopped or gone, or a room that is closed or left, gets no note: the
   event records `not_woken`, and the result stays in `list_commands`;
+- a background job's answer between turns (`background_job_ended`, §4.1) →
+  its agent, reason `background_job`, with the system message "a background
+  job of yours ended; check and report" in the room of the agent's last ended
+  normal turn. At most one per turn: further reports after the same turn
+  queue nothing (an agent whose jobs keep ending, or that keeps arming new
+  ones, is not woken in a loop). An agent that is not active, a closed room
+  or one the agent left gets no note: a `background_job_ended` event records
+  `not_woken`; the woken one records `message_no`;
 - in a chat between agents (`room.project_id` is the reserved project, `kind=dm`,
   `dm_key` `agents:<id>:<id>`): an agent's message → only the other agent of the
   pair, reason `agent_dm` (mentions, group tags, replies and handoffs are not

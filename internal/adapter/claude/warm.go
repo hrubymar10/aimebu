@@ -90,7 +90,7 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	w := &warmSession{fp: l.fingerprint(), cmd: cmd, stdin: stdin, exited: make(chan struct{}), capture: adapter.JoinWriters(spec.StderrSink, a.stderrCapture), containerized: a.variant() == "docker" || spec.LauncherContainerized}
+	w := &warmSession{fp: l.fingerprint(), cmd: cmd, stdin: stdin, exited: make(chan struct{}), capture: adapter.JoinWriters(spec.StderrSink, a.stderrCapture), containerized: a.variant() == "docker" || spec.LauncherContainerized, onBackground: spec.OnBackgroundResult}
 	w.lastOutput.Store(time.Now().UnixNano())
 	go w.run(stdout, stderr)
 	return w, nil
@@ -121,6 +121,8 @@ type warmSession struct {
 	containerized bool
 	// stray is what the process wrote while no turn was running, reported with the next turn (see noteStray).
 	stray strayOutput
+	// onBackground is told of a background job's answer between turns (see backgroundResult and adapter.TurnSpec.OnBackgroundResult); nil: nobody is.
+	onBackground func()
 }
 
 // strayOutput is a bounded record of the output a live process writes between turns: the type of each event and the start of the first few.
@@ -163,6 +165,19 @@ func (w *warmSession) noteStray(line []byte) {
 		}
 		w.stray.excerpts = append(w.stray.excerpts, excerpt)
 	}
+}
+
+// backgroundResult says a line written between turns is the result of a query the CLI ran on its own for a background job that ended (a result
+// event with `origin.kind` "task-notification" that is not an error): the agent answered something nobody reads.
+func backgroundResult(line []byte) bool {
+	var event struct {
+		Type    string `json:"type"`
+		IsError bool   `json:"is_error"`
+		Origin  struct {
+			Kind string `json:"kind"`
+		} `json:"origin"`
+	}
+	return json.Unmarshal(line, &event) == nil && event.Type == "result" && !event.IsError && event.Origin.Kind == "task-notification"
 }
 
 // detail is the journal text for the stray output, "" when there was none.
@@ -261,8 +276,12 @@ func (w *warmSession) run(stdout, stderr io.Reader) {
 		t, s := w.cur, w.state
 		w.mu.Unlock()
 		if t == nil {
-			// Between turns the process should say nothing a turn needs; what it does say is kept for the next turn's journal.
+			// Between turns the process should say nothing a turn needs; what it does say is kept for the next turn's journal. An answer to a
+			// background job's end is lost all the same, so the supervisor is told and the agent gets a real turn to report it.
 			w.noteStray(line)
+			if w.onBackground != nil && backgroundResult(line) {
+				w.onBackground()
+			}
 			continue
 		}
 		t.handleLine(s, line)

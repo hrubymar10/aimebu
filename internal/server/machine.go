@@ -545,6 +545,10 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			s.handleWarmEnded(ctx, c, frame)
 			continue
 		}
+		if frame.Type == protocol.BackgroundJobEndedFrame {
+			s.handleBackgroundJobEnded(ctx, c, frame)
+			continue
+		}
 		if frame.Type == protocol.WarmStateFrame {
 			if frame.Warm != nil {
 				c.warmMu.Lock()

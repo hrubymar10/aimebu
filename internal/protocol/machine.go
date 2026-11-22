@@ -95,6 +95,10 @@ const (
 	// process alive, so this is where its end is recorded.
 	WarmEndedFrame    = "warm_process_ended"
 	WarmClaimAckFrame = "warm_claim_ack"
+	// BackgroundJobEndedFrame is a supervisor telling the server that an agent's live harness process answered, between turns, a query it ran on its
+	// own because a background job the agent had started ended (Claude Code's `task-notification`): Frame.AgentID with Frame.Generation. That answer
+	// belongs to no turn and reaches nobody, so the server queues a system note for the agent (at most one per turn) and it gets a real turn.
+	BackgroundJobEndedFrame = "background_job_ended"
 	// KeepAliveFrame is a supervisor's report of one cache keep-alive ping (Frame.KeepAlive).
 	KeepAliveFrame = "keep_alive"
 	// KeepAlivePausedFrame tells a supervisor which cache keep-alive pings to hold back (Frame.PausedTools, Frame.PausedAgents): the server sends it when

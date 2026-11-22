@@ -280,7 +280,13 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   result's summary is on its usage event, and so is an ignored one's (with why it was
   ignored); an ignored result that spent nothing gets an activity event `result` instead. Output a live process writes while no turn runs is not dropped
   silently: its event types (up to 32) and the first three lines (300 bytes each,
-  redacted) are journaled with the next turn, as a `between_turns` activity event.
+  redacted) are journaled with the next turn, as a `between_turns` activity event. A
+  successful `task-notification` result among that output (the agent's answer to a
+  background job that ended while it was idle, such as a handoff it wrote then) reaches
+  nobody, so the adapter also calls the spec's `OnBackgroundResult`, once per such result:
+  the supervisor sends `background_job_ended` and the server gives the agent a real turn
+  with the note "a background job of yours ended; check and report" (at most one per turn;
+  see docs/contract.md §6).
 - Measured with a real run (haiku, CLI 2.1.318): `--json-schema` gives `structured_output`
   on every result of a multi-turn stream; `total_cost_usd` stays cumulative per session (the
   existing delta logic applies); an interrupt and a malformed input line each make the CLI

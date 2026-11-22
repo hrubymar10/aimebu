@@ -224,6 +224,29 @@ func (s *Server) handleWarmEnded(ctx context.Context, c *machineConn, frame prot
 	}
 }
 
+// handleBackgroundJobEnded queues the agent's wake for a background job that ended between its turns (see store.RecordBackgroundJobEnded). It is
+// accepted only from the machine that runs the agent, and a queued note is dispatched like any other (a command's end wakes its agent the same
+// way).
+func (s *Server) handleBackgroundJobEnded(ctx context.Context, c *machineConn, frame protocol.Frame) {
+	if frame.AgentID == "" {
+		return
+	}
+	agent, err := s.Store.AgentRuntimeByID(ctx, frame.AgentID)
+	if err != nil || agent.MachineID != c.id {
+		return
+	}
+	s.maintenanceMu.RLock()
+	_, err = s.Store.RecordBackgroundJobEnded(ctx, agent.ID, frame.Generation)
+	s.maintenanceMu.RUnlock()
+	if errors.Is(err, store.ErrStaleGeneration) {
+		return // a report about an agent that was cleared or switched since: nothing of that harness is waited for
+	}
+	if err != nil {
+		log.Printf("machine %s: a background job's end was not recorded: %v", c.id, err)
+		telemetry.ReportError(context.Background(), "machine", fmt.Errorf("a background job's end was not recorded: %w", err))
+	}
+}
+
 // handleWarmClaim applies a warm claim and answers it: the supervisor keeps the process only once it has the answer.
 func (s *Server) handleWarmClaim(c *machineConn, frame protocol.Frame) {
 	if s.applyWarmCount(c, frame.WarmSeq, frame.WarmCount, false) {

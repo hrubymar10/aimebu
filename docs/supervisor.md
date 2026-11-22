@@ -858,8 +858,15 @@ processes are never on one session.
   is tried once more. If a process still cannot be confirmed gone, nothing goes on as if it were:
   a stop's acknowledgement and the key's drop wait and the stop is retried in the background (the
   ack goes out when the process is finally gone), a spawn is refused, and no other process, warm
-  or cold, is started on the session (the turn fails to start and the next delivery tries again),
-  so there are never two processes on one session.
+  or cold, is started on the session, so there are never two processes on one session. A delivery
+  that finds the agent's last process not confirmed gone waits for it, in a goroutine of its own
+  (the loop that reads the server's frames goes on), for up to 150 s: long enough for the two-minute
+  quarantine of a process whose container end is unconfirmed (below), so the automatic continuation
+  of a turn-limit kill starts once the quarantine is over instead of failing in under a second and
+  sending the agent to recovery. It looks again every second, nudging the stuck watcher. A stop of
+  the agent (or the supervisor stopping) during the wait wins: no process is started and the turn
+  is reported as the stop's cancel (exit 130, `cancel_intent`). A process still provably alive
+  after the 150 s is not released, and the turn fails to start as before.
 - **Never fails a turn.** A process that cannot be started, noted in the journal or handed the
   turn is reported and the turn runs cold.
 - **Limits.** `AIMEBU_WARM_MAX_LIFETIME` (default 1h): a process that old is not reused and is
@@ -962,9 +969,19 @@ a hung tool. On expiry the
 supervisor logs the stall (as a warning, not an error), kills the harness
 process group, and reports the
 exit as a failure (not an owner cancel) whose evidence names the deadline.
+The exit also says what the killed turn left in its checkout:
+`git log -1 --oneline` and the count of dirty files (`git status --porcelain`,
+untracked files included, run with optional locks off and a 5-second limit),
+as `tip ab31772 <subject>, tree clean` or `…, 3 dirty files`, in the
+evidence (`work tree at the kill: …`) and in the exit's `work_tree`, which
+the journal keeps for a replay. It is left out when the folder is not a git
+checkout or git does not answer.
 The server then continues the turn once on its own: the turn's notes are
 re-queued on a continuation turn with a note that says the previous turn was
-stopped by the turn limit, and the room gets a system event saying so, so a
+stopped by the turn limit (with the work tree at the kill, when there is one:
+`your previous turn was stopped by the turn limit (work tree at the kill: tip
+ab31772 …, tree clean); check state and continue; keep commands short`), and
+the room gets a system event saying so (its payload carries `work_tree`), so a
 long but legitimate turn does not wait for a person. Only when that
 continuation turn is limit-killed too does the agent fall back to the
 ordinary failure path: the turn's notes become `unknown`, the agent is

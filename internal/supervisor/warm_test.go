@@ -72,6 +72,8 @@ type warmFake struct {
 	coldErrorSummary string
 	// onRun runs when a turn is handed to a session.
 	onRun func()
+	// lastSpec is the spec the last warm process was started with.
+	lastSpec adapter.TurnSpec
 	// startErr, when set, is what StartWarm answers; runErr what Run answers.
 	startErr, runErr, fingerprintErr error
 	// containerized marks the sessions as running through a Docker launcher (set on the spec by the test).
@@ -129,6 +131,7 @@ func (f *warmFake) StartWarm(_ context.Context, spec adapter.TurnSpec) (adapter.
 	}
 	f.started++
 	f.nextPid++
+	f.lastSpec = spec
 	fp, _ := f.WarmFingerprint(spec)
 	s := &warmFakeSession{f: f, fp: fp, pid: 1000 + f.nextPid, exited: make(chan struct{}), key: spec.AgentTools}
 	f.sessions = append(f.sessions, s)
@@ -360,6 +363,9 @@ func newWarmHarness(t *testing.T) *warmHarness {
 		return ft.timer
 	}
 	c.warmClaim = func(context.Context, uint64, int) error { return nil } // the server's answer to a claim: tests with no connection take it as given
+	// A delivery that finds the agent's last process stuck gives up at once here, as it did before it waited out the quarantine: the tests
+	// that wait set their own limit (see limit_continuation_test.go).
+	c.warmStuckWait = time.Nanosecond
 	t.Cleanup(c.shutdownWarm)
 	return h
 }
@@ -400,7 +406,7 @@ func (h *warmHarness) run(agent string, mutate func(*adapter.TurnSpec)) adapter.
 	h.c.mu.Lock()
 	h.c.running[agent] = turn
 	h.c.mu.Unlock()
-	h.c.runTurn(ctx, protocol.Delivery{AgentID: agent, TurnID: id, Generation: 1, DesiredRev: 1, Mode: spec.Mode, Agent: spec.Agent}, turn)
+	h.c.runTurn(ctx, protocol.Delivery{AgentID: agent, TurnID: id, Generation: 1, DesiredRev: 1, Mode: spec.Mode, Agent: spec.Agent, CheckoutPath: spec.CheckoutPath}, turn)
 	return turn
 }
 
@@ -1539,7 +1545,7 @@ func TestWarmContainerSideNeverConfirmedByTime(t *testing.T) {
 	}
 	spec := adapter.TurnSpec{TurnID: "turn_x", Agent: adapter.AgentSpec{ID: "agt_a", Tool: "claude", Variant: "native", Model: "opus"}, Mode: adapter.ModeCorrection, NotesJSON: json.RawMessage(`[]`), ContextJSON: json.RawMessage(`{}`)}
 	spec.LauncherContainerized = true
-	if _, err := h.c.startTurn(context.Background(), spec, nil, h.cred); !errors.Is(err, errWarmUnconfirmed) {
+	if _, err := h.c.startTurn(context.Background(), spec, nil, h.cred); !errors.Is(err, errStoppedWhileWaiting) {
 		t.Fatalf("a turn started on a session whose container side is unconfirmed: %v", err)
 	}
 	if h.f.cold != 0 || h.f.started != 1 {

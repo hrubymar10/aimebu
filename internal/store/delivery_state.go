@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -399,6 +400,10 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 	exitCode, terminal, cancel := info.ExitCode, info.TerminalEvent, info.CancelIntent
 	stderr := adapter.SanitizeStderr(info.StderrTail)
 	errorEvent := adapter.SanitizeStderr(info.ErrorEvent)
+	workTree := adapter.SanitizeStderr(info.WorkTree)
+	if len(workTree) > 200 {
+		workTree = strings.ToValidUTF8(workTree[:200], "")
+	}
 	return s.Tx(ctx, func(tx *Tx) error {
 		var projectID, roomID, turnAgent, exec, settle, tool, mode string
 		var turnGeneration int
@@ -449,7 +454,7 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 		interrupted := info.Interrupted && !limitStall && !terminal && !cancel && !providerLimited && mode == "normal"
 		limitContinued := false
 		if limitStall {
-			continued, err := tx.createLimitContinuation(turnID, errorEvent)
+			continued, err := tx.createLimitContinuation(turnID, errorEvent, workTree)
 			if err != nil {
 				return err
 			}

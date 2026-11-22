@@ -133,6 +133,9 @@ type Client struct {
 	kaWaitTerminate time.Duration                                          // tests shorten keepAliveWaitTerminate here; zero is the default
 	warmNow         func() time.Time
 	warmAfter       func(time.Duration, func()) *time.Timer
+	warmStuckWait   time.Duration        // tests shorten warmStuckWaitLimit here; zero is the default
+	warmStuckPoll   time.Duration        // tests shorten warmStuckPollEvery here; zero is the default
+	backgroundEnded func(agentID string) // tests see a harness's own background query that ended between turns here (see noteBackgroundEnded)
 }
 
 func NewClient(machineID, machineKey, serverURL string, journal *Journal, implementation adapter.Adapter) *Client {
@@ -810,9 +813,10 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				c.OnTelemetry(*frame.Telemetry)
 			}
 		case protocol.Deliver:
-			if delivery := frame.Delivery(); c.keepAliveBusy(delivery.AgentID) {
-				// A ping of the agent runs (or was not confirmed gone): the delivery waits for it to end, which can take as long as a container's
-				// cleanup, so it does that in a goroutine of its own and the loop goes on reading frames (pings, controls, the keep-alive pause).
+			if delivery := frame.Delivery(); c.keepAliveBusy(delivery.AgentID) || c.warmStuck(delivery.AgentID) {
+				// A ping of the agent runs (or was not confirmed gone), or its last warm process is not confirmed gone (a turn-limit kill in a
+				// container): the delivery waits for it to end, which can take as long as a container's cleanup or the warm quarantine, so it does
+				// that in a goroutine of its own and the loop goes on reading frames (pings, controls, a stop, the keep-alive pause).
 				go func() {
 					defer telemetry.Recover(ctx)
 					if err := c.handleDeliver(ctx, conn, delivery); err != nil {
@@ -1322,6 +1326,9 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		if sink != nil {
 			_ = sink.Close()
 		}
+		if errors.Is(err, errStoppedWhileWaiting) {
+			return c.reportStoppedBeforeStart(ctx, conn, delivery)
+		}
 		return c.reportStartFailure(ctx, conn, delivery, err)
 	}
 	c.mu.Lock()
@@ -1364,6 +1371,19 @@ func (c *Client) reportStartFailure(ctx context.Context, conn *websocket.Conn, d
 	if err := c.Journal.RecordExitInfo(ctx, delivery.TurnID, exit); err != nil {
 		return err
 	}
+	return c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Process, AgentID: delivery.AgentID,
+		Generation: delivery.Generation, TurnID: delivery.TurnID, Exit: &exit})
+}
+
+// reportStoppedBeforeStart settles a journaled turn whose harness was never started because the agent was stopped (or the supervisor began
+// stopping) while the turn waited for the quarantine of its last warm process: the stop won, so the exit is the stop's cancel, not a failure.
+func (c *Client) reportStoppedBeforeStart(ctx context.Context, conn *websocket.Conn, delivery protocol.Delivery) error {
+	c.forgetTurnInterrupt(delivery.AgentID, delivery.TurnID)
+	exit := adapter.ExitInfo{ExitCode: 130, CancelIntent: true, StderrTail: errStoppedWhileWaiting.Error()}
+	if err := c.Journal.RecordExitInfo(ctx, delivery.TurnID, exit); err != nil {
+		return err
+	}
+	// The stop's own path (stopWarmUntilGone) acknowledges it once the process is confirmed gone; nothing is acknowledged here.
 	return c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Process, AgentID: delivery.AgentID,
 		Generation: delivery.Generation, TurnID: delivery.TurnID, Exit: &exit})
 }
@@ -1591,6 +1611,11 @@ events:
 		// Marked, not sniffed out of the evidence text: the server continues a
 		// limit kill once on its own, and must not confuse one with a crash.
 		exit.LimitStall = true
+		// What the killed turn left behind: whoever continues it sees at once whether its work was committed.
+		if state := workTreeState(journalCtx, delivery.CheckoutPath); state != "" {
+			exit.WorkTree = state
+			exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\nwork tree at the kill: " + state)
+		}
 	}
 	if reason, cut := interruptedReason(exit); cut && stall == "" && journalErr == nil && delivery.Mode == adapter.ModeNormal {
 		// Marked, not sniffed out of the evidence text: the server continues an interrupted turn once on its own, and must not

@@ -226,6 +226,8 @@ func noteWhy(reason string, parent *protocol.NoteParent) string {
 		return "a person's reply in a conversation you started"
 	case "command_finished":
 		return "your command finished"
+	case "background_job":
+		return "a background job of yours ended after your turn"
 	}
 	return reason
 }

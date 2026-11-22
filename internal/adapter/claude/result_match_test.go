@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -354,5 +355,58 @@ func TestOnlyALiveProcessAsksForItsInputRepeated(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(cold.args, " "), "--replay-user-messages") || !strings.Contains(strings.Join(warm.args, " "), "--input-format stream-json --replay-user-messages") {
 		t.Fatalf("cold %q\nwarm %q", cold.args, warm.args)
+	}
+}
+
+// A background job's answer between turns (a result of a query the CLI ran on its own, origin "task-notification") is not only journaled:
+// the supervisor is told, once per such result, so the agent gets a real turn. An error result, a result of another origin and an unparsed
+// line are not that, and say nothing.
+func TestWarmBackgroundResultBetweenTurnsIsReported(t *testing.T) {
+	stray := `if [ "$n" = 1 ]; then printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"other","origin":{"kind":"user"}}' '{"type":"result","subtype":"error_during_execution","is_error":true,"origin":{"kind":"task-notification"}}' 'not json' '{"type":"assistant","message":{"id":"bg","content":[{"type":"text","text":"handoff"}]}}' '{"type":"result","subtype":"success","is_error":false,"result":"{\"messages\":[]}","origin":{"kind":"task-notification"}}'; fi
+`
+	a := &Adapter{Command: fakeClaude(t, okTurn+stray), Variant: "native", AllowNative: true}
+	spec := warmSpec(t, "t1")
+	var reported atomic.Int32
+	spec.OnBackgroundResult = func() { reported.Add(1) }
+	session, err := a.StartWarm(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Kill()
+	turn, err := session.Run(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(t, turn)
+	w := session.(*warmSession)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		w.mu.Lock()
+		count := w.stray.count
+		w.mu.Unlock()
+		if count == 5 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stray lines seen: %d", count)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := reported.Load(); got != 1 {
+		t.Fatalf("background results reported: %d, want the one task-notification success", got)
+	}
+}
+
+func TestBackgroundResultRecognisesOnlyATaskNotificationSuccess(t *testing.T) {
+	for line, want := range map[string]bool{
+		`{"type":"result","is_error":false,"origin":{"kind":"task-notification"}}`: true,
+		`{"type":"result","is_error":true,"origin":{"kind":"task-notification"}}`:  false,
+		`{"type":"result","is_error":false}`:                                       false,
+		`{"type":"assistant","origin":{"kind":"task-notification"}}`:               false,
+		`{"type":"result","is_error":false,"origin":{"kind":"task-notification"}`:  false,
+	} {
+		if got := backgroundResult([]byte(line)); got != want {
+			t.Errorf("%s: %t, want %t", line, got, want)
+		}
 	}
 }

@@ -91,6 +91,10 @@ type TurnSpec struct {
 	// supervisor-owned and process-only like the capabilities above: it is never journaled, and the adapter tees into it beside the tail
 	// it keeps as exit evidence. A sink that fails changes nothing for the turn.
 	StderrSink io.Writer `json:"-"`
+	// OnBackgroundResult, when set, is called (without blocking) when a live process answers, between turns, a query its harness ran on its own
+	// because a background job of the agent's ended (Claude Code's `task-notification`): that answer belongs to no turn, so the supervisor has
+	// the server give the agent a real turn. Supervisor-owned and process-only like StderrSink; only a warm adapter that can tell calls it.
+	OnBackgroundResult func() `json:"-"`
 }
 
 // AgentToolsAccess is what a turn needs to reach the bus as one agent. The supervisor builds it per turn from the key it holds in memory.
@@ -175,6 +179,10 @@ type ExitInfo struct {
 	// the session restarted, the container stopped) and said nothing about why: the turn was cut off, not answered badly. Set by the
 	// supervisor, never guessed from evidence text; the server continues the turn once on its own.
 	Interrupted bool `json:"interrupted,omitempty"`
+	// WorkTree describes the turn's checkout when the turn-limit watchdog killed it ("tip ab31772 <subject>, tree clean", or "N dirty
+	// files"), so the automatic continuation and the room's event say at once whether the killed turn had committed its work. Set by the
+	// supervisor on a LimitStall exit; "" when the folder is not a git checkout or git did not answer.
+	WorkTree string `json:"work_tree,omitempty"`
 }
 
 // ToolEvent marks a tool execution (shell command, MCP call, ...) beginning

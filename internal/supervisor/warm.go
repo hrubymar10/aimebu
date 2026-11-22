@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -155,6 +156,14 @@ type warmSlot struct {
 	idle  *warmEntry // the process between turns
 	busy  *warmEntry // the process running a turn
 	stuck *warmEntry // a process that was ended and not confirmed gone: nothing else starts on the session until it is
+	// stuckNow mirrors stuck != nil for the loop that reads the server's frames, which must not wait for the slot's lock (a slow end holds it).
+	stuckNow atomic.Bool
+}
+
+// setStuck changes the slot's stuck process. The caller holds slot.mu.
+func (s *warmSlot) setStuck(entry *warmEntry) {
+	s.stuck = entry
+	s.stuckNow.Store(entry != nil)
 }
 
 type warmPool struct {
@@ -308,6 +317,27 @@ func (c *Client) noteWarmEnded(agentID, reason string) {
 	}()
 }
 
+// noteBackgroundEnded tells the server that the agent's live process answered, between turns, a background job's end (see
+// adapter.TurnSpec.OnBackgroundResult): the server queues a note so the agent gets a real turn (at most one per turn). Best effort and never
+// blocking: the adapter's reader calls it, and a report that cannot be sent is only logged (the answer is still in the next turn's journal).
+func (c *Client) noteBackgroundEnded(agentID string) {
+	if c.backgroundEnded != nil {
+		c.backgroundEnded(agentID)
+		return
+	}
+	c.mu.Lock()
+	generation := c.desired[agentID].Generation
+	c.mu.Unlock()
+	go func() {
+		defer telemetry.Recover(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.BackgroundJobEndedFrame, AgentID: agentID, Generation: generation}); err != nil {
+			c.reportLocal(fmt.Errorf("agent %s: a background job's end could not be reported: %w", agentID, err))
+		}
+	}()
+}
+
 // finish ends a process the slot held and keeps hold of it as stuck when it is not confirmed gone, so that nothing starts another process on the
 // session until it is. The caller holds slot.mu.
 func (c *Client) finish(slot *warmSlot, entry *warmEntry, reason string, grace time.Duration) bool {
@@ -321,7 +351,7 @@ func (c *Client) finish(slot *warmSlot, entry *warmEntry, reason string, grace t
 		return true
 	}
 	if entry != nil {
-		slot.stuck = entry
+		slot.setStuck(entry)
 		entry.stuckAt = time.Now()
 		entry.stuckReason = reason
 		entry.stuckNudge = make(chan struct{}, 1)
@@ -377,7 +407,7 @@ func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
 		}
 		if confirmed {
 			c.recordWarmEnd(entry, "a background retry")
-			slot.stuck = nil
+			slot.setStuck(nil)
 		} else {
 			confirmed = c.clearStuck(slot)
 		}
@@ -439,7 +469,7 @@ func (c *Client) clearStuck(slot *warmSlot) bool {
 	entry := slot.stuck
 	if !entry.containerized && !entry.session.Alive() {
 		c.recordWarmEnd(entry, "its host process exited")
-		slot.stuck = nil
+		slot.setStuck(nil)
 		return true
 	}
 	if time.Since(entry.stuckAt) >= warmStuckQuarantine {
@@ -451,7 +481,7 @@ func (c *Client) clearStuck(slot *warmSlot) bool {
 				c.reportLocal(fmt.Errorf("agent %s: host wrapper exited but its container end was not confirmed; releasing the session after quarantine", entry.agentID))
 			}
 			c.recordWarmEnd(entry, "quarantine ended after its host wrapper exited")
-			slot.stuck = nil
+			slot.setStuck(nil)
 			return true
 		}
 		if entry.quarantineReported.CompareAndSwap(false, true) {
@@ -917,6 +947,12 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		}
 	}
 	if !spec.KeepAlive {
+		// The agent's last warm process may not be confirmed gone yet (a turn-limit kill of a process in a container is the usual case): the turn
+		// waits for its quarantine to be over (this runs in the delivery's own goroutine, see warmStuck) rather than failing at once, which sent
+		// a limit kill's automatic continuation straight to recovery.
+		if err := c.waitWarmStuck(ctx, spec.Agent.ID); err != nil {
+			return nil, err
+		}
 		// A lift the last ping owes is sent first (and its ack waited for): a real turn's toolbox is never refused because of a ping.
 		if err := c.keepAliveSettleLifts(ctx, spec.Agent.ID); err != nil {
 			return nil, fmt.Errorf("the scope of the agent's last keep-alive ping could not be lifted, so its toolbox would be refused: %w", err)
@@ -994,6 +1030,8 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		stderr := &swapWriter{}
 		started := spec
 		started.StderrSink = stderr
+		agentID := spec.Agent.ID
+		started.OnBackgroundResult = func() { c.noteBackgroundEnded(agentID) }
 		session, err := warm.StartWarm(pool.ctx, started)
 		if err != nil {
 			c.reportWarmRefusal(spec, cred, "starting a warm process", err)
@@ -1043,6 +1081,92 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 	}
 	pool.mu.Unlock()
 	return &warmTurn{Turn: turn, entry: entry}, nil
+}
+
+// warmStuckWaitLimit bounds how long a delivery waits for the agent's last warm process to be confirmed gone or released: the quarantine of a
+// process whose end in its container is not confirmed (warmStuckQuarantine) and a little to spare, the same 150 s an unconfirmed keep-alive ping
+// blocks its agent. A process that is still provably alive after that is not released, and the turn fails to start as before.
+const warmStuckWaitLimit = 150 * time.Second
+
+// warmStuckPollEvery is how often a waiting delivery looks at the slot again (and at whether its agent was stopped meanwhile).
+const warmStuckPollEvery = time.Second
+
+// errStoppedWhileWaiting is why a turn that waited for the quarantine of the agent's last warm process is not started: the agent was stopped, or
+// the supervisor began stopping, during the wait. The stop wins; the turn ends as the stop's cancel.
+var errStoppedWhileWaiting = errors.New("the agent was stopped while its turn waited for its last warm process to be confirmed ended; the turn was not started")
+
+// warmStuck says the agent's last warm process is not confirmed gone, so a delivery for it may wait (see waitWarmStuck) and is handled in a
+// goroutine of its own. It takes no slot lock.
+func (c *Client) warmStuck(agentID string) bool {
+	c.mu.Lock()
+	pool := c.warmPool
+	c.mu.Unlock()
+	if pool == nil {
+		return false
+	}
+	pool.mu.Lock()
+	slot := pool.slots[agentID]
+	pool.mu.Unlock()
+	return slot != nil && slot.stuckNow.Load()
+}
+
+// waitWarmStuck waits, up to warmStuckWaitLimit, for the agent's stuck warm process to be confirmed gone or released by its quarantine. It
+// returns nil once nothing of the agent is left on the session (at once when nothing was stuck), errStoppedWhileWaiting when the agent was
+// stopped or the supervisor began stopping during the wait (a stop wins over the turn), the context's error when the delivery's context ended,
+// and errWarmUnconfirmed when the limit passed with the process still not settled. Each look nudges the stuck watcher (rate-limited), so a process
+// that has recovered is confirmed without waiting out the backoff.
+func (c *Client) waitWarmStuck(ctx context.Context, agentID string) error {
+	if !c.warmStuck(agentID) {
+		return nil
+	}
+	limit, poll := warmStuckWaitLimit, warmStuckPollEvery
+	if c.warmStuckWait > 0 {
+		limit = c.warmStuckWait
+	}
+	if c.warmStuckPoll > 0 {
+		poll = c.warmStuckPoll
+	}
+	slot := c.pool().slot(agentID)
+	deadline := time.Now().Add(limit)
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	logged := false
+	for {
+		if c.stoppedWhileWaiting(agentID) {
+			return errStoppedWhileWaiting
+		}
+		slot.mu.Lock()
+		cleared := c.clearStuck(slot)
+		if !cleared {
+			nudgeStuck(slot)
+		}
+		slot.mu.Unlock()
+		if cleared {
+			if c.stoppedWhileWaiting(agentID) {
+				return errStoppedWhileWaiting
+			}
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return errWarmUnconfirmed
+		}
+		if !logged {
+			logged = true
+			log.Printf("agent %s: its last warm process is not confirmed ended; the turn waits up to %v for its quarantine", agentID, limit)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for the agent's last warm process to be confirmed ended: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// stoppedWhileWaiting says a turn waiting to start must not: its agent is no longer desired active, or the supervisor is stopping.
+func (c *Client) stoppedWhileWaiting(agentID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stopping || c.desired[agentID].Desired != "active"
 }
 
 // errWarmUnconfirmed is why a turn is not started: a warm process of the agent was ended and is not confirmed gone, and a second process on the

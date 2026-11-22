@@ -144,3 +144,57 @@ func TestLimitStallOfAStoppedAgentFallsBackToRecovery(t *testing.T) {
 		t.Fatalf("children=%d err=%v", children, err)
 	}
 }
+
+// The supervisor's description of the checkout at a limit kill rides the continuation: in the note the agent (and a dispatcher reading the
+// room) sees, and in the room event's payload.
+func TestLimitStallContinuationCarriesTheWorkTree(t *testing.T) {
+	t.Parallel()
+	s, f, _ := recoveryFixture(t, false)
+	ctx := context.Background()
+	exit := limitStallExit
+	exit.WorkTree = "tip ab31772 fix(web): lazy Settings, tree clean"
+	if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, exit); err != nil {
+		t.Fatal(err)
+	}
+	var payload string
+	if err := s.db.QueryRow(`SELECT payload_json FROM event WHERE kind='turn_limit_continuation'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]string
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["work_tree"] != exit.WorkTree || fields["reason"] != exit.ErrorEvent {
+		t.Fatalf("payload=%s", payload)
+	}
+	var body string
+	if err := s.db.QueryRow(`SELECT m.body FROM note n JOIN message m ON m.id=n.message_id WHERE n.agent_id=? AND n.wake_reason='turn_limit'`, f.agent.ID).Scan(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "work tree at the kill: tip ab31772") || !strings.Contains(body, "tree clean") || !strings.Contains(body, "check state and continue") {
+		t.Fatalf("note body=%q", body)
+	}
+}
+
+// Without a description (no git checkout, git did not answer) the note is the plain one and the payload has no work_tree.
+func TestLimitStallContinuationWithoutAWorkTree(t *testing.T) {
+	t.Parallel()
+	s, f, _ := recoveryFixture(t, false)
+	ctx := context.Background()
+	if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, limitStallExit); err != nil {
+		t.Fatal(err)
+	}
+	var payload, body string
+	if err := s.db.QueryRow(`SELECT payload_json FROM event WHERE kind='turn_limit_continuation'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, "work_tree") {
+		t.Fatalf("payload=%s", payload)
+	}
+	if err := s.db.QueryRow(`SELECT m.body FROM note n JOIN message m ON m.id=n.message_id WHERE n.agent_id=? AND n.wake_reason='turn_limit'`, f.agent.ID).Scan(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body != turnLimitContinuationNote {
+		t.Fatalf("note body=%q", body)
+	}
+}

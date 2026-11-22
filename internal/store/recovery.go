@@ -92,6 +92,15 @@ func (tx *Tx) ensureRecoveryPath(turnID string) error {
 // supervisor's turn-limit watchdog, not by a failure of the work.
 const turnLimitContinuationNote = "your previous turn was stopped by the turn limit; check state and continue; keep commands short"
 
+// turnLimitNote is that note with what the supervisor saw of the checkout at the kill (its tip and how many files were dirty), when it could
+// tell: the agent, and anyone reading the room, see at once whether the killed turn had committed its work.
+func turnLimitNote(workTree string) string {
+	if workTree == "" {
+		return turnLimitContinuationNote
+	}
+	return "your previous turn was stopped by the turn limit (work tree at the kill: " + workTree + "); check state and continue; keep commands short"
+}
+
 // turnInterruptedNote is the same for a turn whose harness process was cut off (killed, session restarted, container stopped);
 // the reason is the supervisor's plain description of how it ended.
 func turnInterruptedNote(reason string) string {
@@ -112,8 +121,15 @@ const (
 // re-queued on a child turn with a note that says why, so a long but legitimate turn does not leave the agent behind a recovery
 // card waiting for a person to click Resume. It reports whether it continued; a turn whose chain already had its one
 // continuation, one that already has a child, or an agent that is not active, falls back to the ordinary recovery path.
-func (tx *Tx) createLimitContinuation(originID, reason string) (bool, error) {
-	return tx.createAutoContinuation(originID, eventLimitContinuation, "turn_limit", turnLimitContinuationNote, map[string]string{"reason": reason}, false)
+//
+// workTree is the supervisor's description of the checkout at the kill (see adapter.ExitInfo.WorkTree), "" when it had none: it goes into
+// the note and the event's payload (work_tree).
+func (tx *Tx) createLimitContinuation(originID, reason, workTree string) (bool, error) {
+	payload := map[string]string{"reason": reason}
+	if workTree != "" {
+		payload["work_tree"] = workTree
+	}
+	return tx.createAutoContinuation(originID, eventLimitContinuation, "turn_limit", turnLimitNote(workTree), payload, false)
 }
 
 // createInterruptedContinuation is the same for a turn the supervisor marked interrupted: reason is how the process ended, and the
