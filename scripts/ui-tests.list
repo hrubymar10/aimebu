@@ -43,6 +43,7 @@ node scripts/test-scroll-page.cjs
 node scripts/test-icons.cjs
 node scripts/test-emoji-page.cjs
 node scripts/test-events-page.cjs
+node scripts/test-banners-page.cjs
 node scripts/test-columns-page.cjs
 node scripts/test-settings-release-page.cjs
 node scripts/test-settings-nav-page.cjs

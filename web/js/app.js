@@ -37,10 +37,8 @@ import { showBuildVersion } from './build-version.js';
 import { startTelemetry, captureError } from './telemetry.js';
 import { askTelemetryConsent } from './telemetry-consent.js';
 import { formDialog, cancelAppDialogs } from './dialogs.js';
-import { UpdateBar } from './update-bar.js';
+import { UpdateBar, UpdateBanner, NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './pages/banners/page.js';
 import { ColumnResize } from './column-resize.js';
-import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
-import { UpdateBanner } from './update-banner.js';
 import { trackInputModality } from './input-modality.js';
 import { PresenceHeartbeat } from './presence.js';
 

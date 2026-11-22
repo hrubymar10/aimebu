@@ -1849,7 +1849,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 /* The folder's writer is known before Spawn is pressed: the two ways on sit under the warning, and Spawn waits. */
 .spawn-writer-block .spawn-occupied-actions { margin-top: 8px; }
 
-/* The bar that asks for a reload after the server was replaced by another build (update-bar.js). */
+/* The bar that asks for a reload after the server was replaced by another build (pages/banners/). */
 .update-bar { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 12px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); color: var(--text-primary); font-size: 13px; }
 
 /* Fixed column headers: the rooms column and the members column keep their header row (and the rooms filter) where it is, and only the list under

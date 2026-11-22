@@ -1,4 +1,4 @@
-// The browser's event stream (web/js/events.js) and the update bar (web/js/update-bar.js), against a fake socket in a page of a scratch server:
+// The browser's event stream (web/js/events.js) and the update bar (web/js/pages/banners/), against a fake socket in a page of a scratch server:
 // a socket that goes quiet is replaced when the server promised heartbeats, one that never promised any is left alone, a page woken after a long
 // sleep checks its socket at once, and a reconnect to a different build asks for a reload. Part of `make test-ui`.
 const assert = require('node:assert/strict');
@@ -15,7 +15,7 @@ async function main() {
     await page.goto(server.origin);
     const result = await page.evaluate(async () => {
       const { EventStream } = await import('/js/events.js');
-      const { UpdateBar, reloadIsSafe } = await import('/js/update-bar.js');
+      const { UpdateBar, reloadIsSafe } = await import('/js/pages/banners/page.js');
       const out = {};
       const original = window.WebSocket;
       const sockets = [];
@@ -234,7 +234,7 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 800)); await app.bringToFront(); await app.click('#composer .ProseMirror'); await app.keyboard.type('half a thought');
       await app.waitForFunction(() => document.querySelector('#composer textarea').value.includes('half a thought'), { timeout: 5000 }); // the editor keeps the hidden textarea in step
       const draft = await app.evaluate(async () => {
-        const { UpdateBar, reloadIsSafe } = await import('/js/update-bar.js');
+        const { UpdateBar, reloadIsSafe } = await import('/js/pages/banners/page.js');
         let reloads = 0;
         const bar = new UpdateBar({ reload: () => { reloads++; }, hasDraft: () => window.__chat.hasDraft() });
         const hidden = value => Object.defineProperty(document, 'hidden', { configurable: true, get: () => value });
