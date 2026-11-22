@@ -1,4 +1,4 @@
-# Implementation contract (revision 19)
+# Implementation contract (revision 20)
 
 This contract defines the data model, state machines, and wire protocol.
 It implements the architecture decisions and validated adapter behavior.
@@ -970,7 +970,23 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   `abandon`) and no card. Only a lead's own failure, or a worker's with no lead
   to hand to, is a card for people; `room_closed` and `not_member` holds always
   stay with people. Every empty answer logs the harness exit
-  code and the last stderr lines. An open originating room also
+  code and the last stderr lines, and every answered turn logs one server line
+  (`turn answered: agent=… turn=… mode=… result=… messages=N held_reason=…`,
+  `none` when nothing was held).
+  **Silent-turn notice:** a normal turn of an agent without lead capability
+  that commits with no message, and that carried a note from an agent or a
+  person other than itself whose wake reason is not `broadcast` (`fyi`) or
+  `group`, posts the system line "<agent> ended its turn without a message" in
+  each open room such a note came from (`OnlyTargets` empty: it wakes nobody by
+  itself) and wakes each agent author of those notes that is still an active
+  member there (reason `silent_turn`); a person author reads the line. A turn
+  woken only by system notes (a command's end, a scheduled note) gives none,
+  and neither does a lead. A turn in which the agent added a reaction (to any
+  message, from when the turn started running) has answered, since the prompt
+  asks for a reaction instead of an acknowledgement message: it gives none. It is said once until the agent next posts a
+  message (event `silent_turn` with the agent and turn; a later one is skipped
+  while no message of the agent follows it), and the author's own silent
+  answer to it never raises another, since that note is a system note. An open originating room also
   receives a system notice for answers held during validation. When the answer
   was held because no correction could be requested (`no_action_mode` false),
   the author also gets a system note "Your previous reply was held: <reason>"
@@ -1977,6 +1993,8 @@ Computed in the message-insert transaction; every decision → note or
   overwritten by the `reply` reason.
   An AI reply to a human still targets that human;
 - inbox answer → the requester;
+- a worker's silent turn (§3.3) → the agents whose note it ended without a
+  message, reason `silent_turn`;
 - a command that ends (`command_job`) → its agent, reason `command_finished`,
   with the system message the end writes in the room the command was started
   from (exit code or how it ended, duration, the tail of its output and the

@@ -200,6 +200,11 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 				}
 			}
 		}
+		if receipt.Result == "committed" && turn.mode == "normal" && len(receipt.MessageIDs) == 0 {
+			if err := tx.silentTurnNotice(turn); err != nil {
+				return err
+			}
+		}
 		if receipt.Result == "correction_requested" && turn.exec != "pending" && turn.exec != "running" {
 			if err := tx.ensureCorrectionTurn(turn); err != nil {
 				return err

@@ -854,6 +854,12 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 		if err != nil {
 			return err
 		}
+		// One line per answered turn, so a turn that ended without a message (or was held) can be found in the server log without the database.
+		heldReason := receipt.HeldReason
+		if heldReason == "" {
+			heldReason = "none"
+		}
+		log.Printf("machine %s: turn answered: agent=%s turn=%s mode=%s result=%s messages=%d held_reason=%s", c.id, frame.AgentID, frame.TurnID, mode, receipt.Result, len(receipt.MessageIDs), heldReason)
 		for _, extra := range receipt.Additional {
 			if err := c.send(answerReceiptFrame(extra)); err != nil {
 				return err
