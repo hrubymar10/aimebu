@@ -110,7 +110,7 @@ async function main() {
     }
     const reportDir = path.join(tmp, 'report');
     const gate = spawnSync(process.execPath, [path.join(__dirname, 'variant-gate.cjs'), '--server', origin, '--yes', '--variants', 'claude-native,codex-native,pi-native,opencode-native,claude-docker',
-      '--folder', path.join(folderBase, 'gate'), '--pause-wait', '4', '--task-timeout', '90', '--report-dir', reportDir, '--supervisor-match', 'aimebu.* server'],
+      '--folder', path.join(folderBase, 'gate'), '--pause-wait', '4', '--task-timeout', '90', '--report-dir', reportDir, '--supervisor-match', 'aimebu.* supervisor'],
       { env: { ...process.env, VG_LOGIN: 'owner', VG_PASSWORD: 'selftest-password-123' }, encoding: 'utf8', timeout: 20 * 60 * 1000 });
     process.stdout.write(gate.stdout || ''); process.stderr.write(gate.stderr || '');
     const report = JSON.parse(fs.readFileSync(path.join(reportDir, 'report.json'), 'utf8'));

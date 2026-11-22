@@ -5,12 +5,12 @@
 //
 // Per variant (claude, codex, pi) x (native, docker), plus opencode native, the script drives the
 // normal HTTP API as the instance owner:
-//   1 room      create a scratch task room with a $1 daily cost cap and 6-turn cap
+//   1 room      create a scratch task room (the script holds it to a $1 cost cap and 6 turns)
 //   2 spawn     add one agent with the cheapest model
 //   3 task      ask for the word PONG and assert the reply
 //   4 pause     pause the room, post, assert no turn runs; resume, assert the turn
-//   5 kill      SIGKILL the harness process mid-turn, assert recovery surfaces,
-//               decide Resume, assert the agent answers again
+//   5 kill      SIGKILL the harness process mid-turn, assert the agent answers again (the server
+//               continues the interrupted turn itself; a recovery item, if one surfaces, is decided Resume)
 //   6 cleanup   stop the agent, archive the room
 //
 // It spends real model money, so it needs --yes and an explicit --server. Usage, flags, and the safety rails are in --help.
@@ -43,8 +43,8 @@ Options
   --project NAME|ID     reuse a project; default finds or creates one named "variant-gate"
   --folder PATH         folder for a project this run creates (default <tmp>/vg-<ts>); must exist on the server host
   --budget USD          stop starting variants once measured cost reaches this (default 6)
-  --variant-cap USD     per-variant daily cost cap set on its room (default 1)
-  --turn-cap N          per-variant daily turn cap (default 6)
+  --variant-cap USD     per-variant cost cap the script enforces from its room's usage (default 1)
+  --turn-cap N          per-variant turn cap the script enforces (default 6)
   --task-timeout S      wait for each agent reply (default 240)
   --pause-wait S        how long to prove no turn runs while paused (default 20)
   --kill local|skip     SIGKILL the harness on this host, or skip that step (default local)
@@ -228,12 +228,13 @@ class Variant {
 
   async measure() {
     try {
-      const limit = await this.ctx.api.must('GET', `/api/rooms/${this.room.id}/usage-limit`);
-      this.cost = Number(limit.daily_cost) || 0; this.turns = Number(limit.daily_turns) || 0; this.coverage = limit.cost_coverage;
+      const usage = await this.ctx.api.must('GET', `/api/rooms/${this.room.id}/usage?range=today`);
+      this.cost = Number(usage.cost) || 0; this.turns = Number(usage.turns) || 0; this.coverage = usage.cost_coverage;
     } catch { /* keep the last reading */ }
     return this.cost;
   }
-  overCap() { return this.cost >= this.ctx.opts.variantCap; }
+  // Usage limits are per project now (all rooms together), so the per-variant caps are the script's own, read from the room's usage.
+  overCap() { return this.cost >= this.ctx.opts.variantCap || this.turns >= this.ctx.opts.turnCap; }
 
   async run() {
     const { api, opts, catalog } = this.ctx;
@@ -246,10 +247,7 @@ class Variant {
     const ts = stamp();
     let ok = await this.step('room', async () => {
       this.room = await api.must('POST', `/api/projects/${this.ctx.project.id}/rooms`, { title: `vg-${this.name}-${ts}` });
-      const limit = await api.must('GET', `/api/rooms/${this.room.id}/usage-limit`);
-      const set = await api.must('PUT', `/api/rooms/${this.room.id}/usage-limit`, { daily_cost_cap: opts.variantCap, daily_turn_cap: opts.turnCap, rev: limit.rev });
-      if (set.daily_cost_cap !== opts.variantCap || set.daily_turn_cap !== opts.turnCap) throw new Error(`caps not applied: ${JSON.stringify(set)}`);
-      return `room ${this.room.id}, caps $${opts.variantCap} / ${opts.turnCap} turns`;
+      return `room ${this.room.id}, script caps $${opts.variantCap} / ${opts.turnCap} turns`;
     });
     ok = await this.step('spawn', async () => {
       const created = await api.must('POST', `/api/rooms/${this.room.id}/agents`, { role_key: 'worker', tool: this.tool, variant: this.form, model: this.model }, { idempotency: true });
@@ -303,7 +301,7 @@ class Variant {
     } else {
       this.expectRecovery = true;
       ok = await this.step('kill', async () => {
-        if (this.overCap()) throw new Error(`variant cost cap reached ($${this.cost.toFixed(2)})`);
+        if (this.overCap()) throw new Error(`variant cap reached ($${this.cost.toFixed(2)}, ${this.turns} turns)`);
         const posted = await this.post(`@${this.agent.slug} Count from 1 to 40, one number per line, then reply with the word DONE.`);
         this.killPostSeq = posted.seq;
         const deadline = Date.now() + 120000; let found = null;
@@ -317,23 +315,41 @@ class Variant {
         return `SIGKILL pgid ${found.pgid} (pid ${found.pid}: ${found.command.slice(0, 60)})`;
       }, killBlocked);
       const killed = ok;
+      // A harness cut off by a signal is continued once by the server on its own (the note moves to a child turn); only a repeat, or an exit the
+      // server cannot explain, raises a recovery item. Either way the agent must answer again, and a recovery item is decided Resume.
       await this.step('recovery', async () => {
-        const deadline = Date.now() + 180000; let item = null;
-        while (Date.now() < deadline && !item) {
+        const deadline = Date.now() + 180000; let item = null; let reply = null; let last = this.killPostSeq;
+        while (Date.now() < deadline && !item && !reply) {
+          const messages = await api.must('GET', `/api/rooms/${this.room.id}/messages?after=${last}&limit=100`);
+          for (const message of messages) {
+            last = Math.max(last, message.seq);
+            if (message.author_kind === 'agent' && message.author_id === this.agent.id && !reply) reply = message;
+          }
+          if (reply) break;
           const inbox = await api.must('GET', '/api/inbox');
           item = inbox.find(i => i.kind === 'recovery' && i.agent_id === this.agent.id && i.state === 'open' && i.can_decide);
           if (!item) await sleep(2000);
         }
-        if (!item) throw new Error('no recovery item surfaced within 180s after the kill');
+        if (reply && !item) {
+          const card = await this.card();
+          if (card.recovery_block) throw new Error('the agent answered but is blocked in recovery');
+          await this.measure();
+          return `the server continued the interrupted turn on its own -> reply #${reply.seq}`;
+        }
+        if (!item) {
+          const card = await this.card(); const inbox = await api.must('GET', '/api/inbox');
+          const seen = inbox.filter(i => i.agent_id === this.agent.id).map(i => ({ kind: i.kind, state: i.state, can_decide: i.can_decide, phase: i.recovery_phase, hidden: i.inbox_hidden }));
+          throw new Error(`neither a continuation reply nor a recovery item within 180s after the kill (agent: observed ${card?.observed}, desired ${card?.desired}, recovery_block ${card?.recovery_block}, evidence ${(card?.last_exit_evidence || 'none').slice(0, 200)}; inbox items for it: ${JSON.stringify(seen)})`);
+        }
         const choices = (item.options || []).map(o => String(o).toLowerCase());
         const choice = item.recovery_phase === 'quiescence_wait' ? 'override' : (choices.includes('resume') ? 'resume' : (choices.includes('retry') ? 'retry' : choices[0]));
         if (!choice) throw new Error(`recovery item offers no choice: ${JSON.stringify(item.options)}`);
         await api.must('POST', `/api/inbox/${item.id}/decision`, { choice, rev: item.rev }, { idempotency: true });
-        const reply = await this.agentMessage(this.killPostSeq, null, opts.taskTimeout, false);
+        const answer = await this.agentMessage(this.killPostSeq, null, opts.taskTimeout, false);
         const card = await this.card();
         if (card.recovery_block) throw new Error('the agent is still blocked after the decision');
         await this.measure();
-        return `recovery surfaced (${(item.evidence || 'no evidence').slice(0, 80).replace(/\s+/g, ' ')}); ${choice} -> reply #${reply.seq}`;
+        return `recovery surfaced (${(item.evidence || 'no evidence').slice(0, 80).replace(/\s+/g, ' ')}); ${choice} -> reply #${answer.seq}`;
       }, killed ? '' : 'kill');
       this.expectRecovery = false;
     }

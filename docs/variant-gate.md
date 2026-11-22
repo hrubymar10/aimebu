@@ -41,13 +41,13 @@ is required. The owner's own `VG_LOGIN` and `VG_PASSWORD` also work.
 
 | step | what it checks |
 | --- | --- |
-| `room` | creates a scratch task room `vg-<variant>-<time>` with a daily cost cap (default $1) and turn cap (default 6) |
+| `room` | creates a scratch task room `vg-<variant>-<time>` (the script holds it to a cost cap, default $1, and a turn cap, default 6) |
 | `spawn` | adds one agent with the cheapest model (`haiku`, `gpt-6-luna`, `ollama-cloud/gemma4:31b` for Pi and OpenCode) and waits for it to be idle |
 | `task` | asks for the word `PONG` and asserts the reply |
 | `pause` | pauses the room, posts a message, and asserts no turn runs for `--pause-wait` seconds |
 | `resume` | resumes the room and asserts the queued message is answered |
 | `kill` | posts a longer task and sends `SIGKILL` to the harness process group on this host |
-| `recovery` | asserts a recovery item surfaces, decides Resume, and asserts the agent answers again |
+| `recovery` | asserts the agent answers again after the kill: the server continues a signal-killed turn once on its own, and a recovery item that surfaces instead (a repeat, or an exit it cannot explain) is decided Resume |
 | `stop`, `archive` | stops the agent and closes the room, even when an earlier step failed |
 
 A variant the server does not list or reports unavailable (for example a native
@@ -58,8 +58,10 @@ reason; the script does not retry it.
 
 ## Money
 
-The room caps bound each variant, and the script also reads the room's measured
-cost after each step and refuses to start another variant once `--budget`
+Usage limits are per project, so the server cannot bound one variant's room. The
+script reads the room's measured usage (`/api/rooms/{room}/usage`) after each
+step, stops a variant that reached its cost or turn cap before its next costly
+step, and refuses to start another variant once `--budget`
 (default $6) is reached. Codex's cost uses the dated
 [model price list](pricing.md) when its model and token counts are available,
 so `cost_coverage` is `estimated`; an unlisted model has unknown cost and only
