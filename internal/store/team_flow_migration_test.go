@@ -977,6 +977,8 @@ func flowBodies(t *testing.T, f *membersFixture, roomID string) []string {
 	return out
 }
 
+// The dispatcher's name must not be one the fixture's leader can draw: leaders get a random name from the spawn pool, and "zeno" is in it, so
+// about one run in a hundred the migration failed with "agent name in use" and posted no notice. The name here is outside the pool.
 func TestFlowMigrationFinishPostsOneNoticeInHomeAndGeneral(t *testing.T) {
 	f, setup := flowMigrationFixture(t, "leader-workers")
 	ctx := t.Context()
@@ -984,8 +986,13 @@ func TestFlowMigrationFinishPostsOneNoticeInHomeAndGeneral(t *testing.T) {
 	if err := f.s.db.QueryRow(`SELECT id FROM room WHERE project_id=? AND team_flow_room_key='general'`, f.project.ID).Scan(&generalID); err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range agentNamePool {
+		if name == "dispatchbot" {
+			t.Fatal("the dispatcher's name is in the spawn pool again: pick one outside it")
+		}
+	}
 	in := TeamFlowMigrationInput{FlowKey: "leader-dispatcher", FlowRev: setup.Flow.Rev,
-		Dispatcher: &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake", Name: "zeno"}}
+		Dispatcher: &TeamSetupTarget{MachineID: "mch_members", Path: f.project.Folder, Tool: "fake", Variant: "test", Model: "test", Provider: "fake", Name: "dispatchbot"}}
 	if err := f.s.Tx(ctx, func(tx *Tx) error { _, err := tx.BeginTeamFlowMigration(f.project.ID, f.alice, in); return err }); err != nil {
 		t.Fatal(err)
 	}
@@ -1001,7 +1008,7 @@ func TestFlowMigrationFinishPostsOneNoticeInHomeAndGeneral(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want := "Team flow changed: leader-workers → leader-dispatcher. Added: zeno (dispatcher). Rooms created: routing."
+	want := "Team flow changed: leader-workers → leader-dispatcher. Added: dispatchbot (dispatcher). Rooms created: routing."
 	for _, room := range []string{f.home.ID, generalID} {
 		if got := flowBodies(t, f, room); len(got) != 1 || got[0] != want {
 			t.Fatalf("room %s notices = %q, want one %q", room, got, want)
