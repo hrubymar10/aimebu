@@ -335,11 +335,27 @@ func TestIsolateForcesErrorReportingOff(t *testing.T) {
 // A test that writes a file to run with os.WriteFile and an executable mode can fail with "text file busy" whenever another goroutine forks while the file is
 // open for writing (or when it rewrites a launcher a process is running): it writes with WriteExecutable instead.
 func TestNoTestWritesAnExecutableWithWriteFile(t *testing.T) {
-	root := moduleRoot(t)
+	if found := executableWriteFileUses(moduleRoot(t)); len(found) > 0 {
+		t.Fatalf("use testenv.WriteExecutable instead of os.WriteFile with an executable mode (it fails with ETXTBSY under parallel forks): %s", strings.Join(found, ", "))
+	}
+}
+
+// executableWriteFileUses lists the test files under root (as path:line) that write an executable with os.WriteFile. It does not enter a directory whose name
+// starts with a dot (review copies, agent worktrees, .git: none is part of this module) or node_modules.
+func executableWriteFileUses(root string) []string {
 	exec := regexp.MustCompile(`os\.WriteFile\([^\n]*, 0o?7(00|55)\)`)
 	var found []string
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || !strings.HasSuffix(path, "_test.go") || strings.Contains(path, string(filepath.Separator)+"node_modules"+string(filepath.Separator)) {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if path != root && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
@@ -354,8 +370,32 @@ func TestNoTestWritesAnExecutableWithWriteFile(t *testing.T) {
 		}
 		return nil
 	})
-	if len(found) > 0 {
-		t.Fatalf("use testenv.WriteExecutable instead of os.WriteFile with an executable mode (it fails with ETXTBSY under parallel forks): %s", strings.Join(found, ", "))
+	return found
+}
+
+// Directories that are not part of the module are not scanned, however many of them sit under the root; a real offender under internal/ still is.
+func TestExecutableWriteScanSkipsDotDirectories(t *testing.T) {
+	root := t.TempDir()
+	bad := "package x\nfunc f() { _ = os.Write" + "File(p, b, 0" + "700) }\n"
+	for _, dir := range []string{".review-cache/review/internal/x", ".aimebu/worktrees/x/internal/y", "web/node_modules/z"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, dir, "old_test.go"), []byte(bad), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if found := executableWriteFileUses(root); len(found) != 0 {
+		t.Fatalf("skipped directories were scanned: %v", found)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal/real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal/real/bad_test.go"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if found := executableWriteFileUses(root); len(found) != 1 || found[0] != filepath.Join("internal", "real", "bad_test.go")+":2" {
+		t.Fatalf("found %v, want the one under internal/", found)
 	}
 }
 
