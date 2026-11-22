@@ -67,6 +67,10 @@ type alertWindow struct {
 // the episode back and forth. The first episode of a cycle raises at once.
 const paceHysteresis = 10 * time.Minute
 
+// resetDropPoints is the fall in used percent that marks a reset even while
+// the previous reset time is still ahead.
+const resetDropPoints = 5
+
 type alertState struct {
 	Windows map[string]alertWindow `json:"windows"`
 	Alerts  map[string]UsageAlert  `json:"alerts"`
@@ -241,6 +245,7 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 					continue
 				}
 				cycle := ""
+				driftReset := false
 				if window.ResetAt != nil {
 					cycle = window.ResetAt.UTC().Truncate(time.Minute).Format(time.RFC3339)
 					previous := state.ResetAt
@@ -251,6 +256,12 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 						delta := window.ResetAt.Sub(previous)
 						if delta >= -2*time.Minute && delta <= 2*time.Minute {
 							cycle = state.Cycle
+						} else if state.Cycle != "" && !strings.HasPrefix(state.Cycle, "observed-") &&
+							t.clock().Add(2*time.Minute).Before(previous) && state.LastUsed-window.PercentUsed < resetDropPoints {
+							// A rolling window (an idle one reports now plus its
+							// length) slides its reset forward while the old
+							// one is still ahead: drift, not a new cycle.
+							cycle, driftReset = state.Cycle, true
 						}
 					}
 				} else {
@@ -274,7 +285,7 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 					state.Recovered, state.RiskSince = false, time.Time{}
 				}
 				state.Cycle, state.Credential, state.LastUsed, state.LastRefresh = cycle, profile.AlertCredential, window.PercentUsed, *profile.LastRefreshAt
-				if window.ResetAt != nil && (cycleChanged || state.ResetAt.IsZero()) {
+				if window.ResetAt != nil && (cycleChanged || driftReset || state.ResetAt.IsZero()) {
 					state.ResetAt = *window.ResetAt
 				} else if window.ResetAt == nil {
 					state.ResetAt = time.Time{}

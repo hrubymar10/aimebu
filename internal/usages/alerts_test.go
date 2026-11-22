@@ -490,7 +490,9 @@ func TestResetNoticeOncePerCycle(t *testing.T) {
 	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].ID != open[0].ID {
 		t.Fatalf("one notice per cycle: %+v", got)
 	}
-	// The next cycle closes the old notice and raises a fresh one.
+	// The next cycle closes the old notice and raises a fresh one: the
+	// previous reset time has passed and the new one is later.
+	now = reset.Add(time.Minute)
 	reset = reset.Add(7 * 24 * time.Hour)
 	response.Providers[0].Profiles[0].Windows[0].ResetAt = &reset
 	observe(true)
@@ -814,5 +816,57 @@ func TestExpiryRecordOldFormatCountsAsSeen(t *testing.T) {
 	}
 	if _, _, seen := expiryRecord(""); seen {
 		t.Fatal("an empty record is not seen")
+	}
+}
+
+func TestResetNoticeIgnoresSlidingRollingWindow(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", AlertIdentity: "stable", Status: "ok", LastRefreshAt: &now,
+			Windows: []Window{{Key: "session", PercentUsed: 85, ResetAt: &reset}}}}}}}
+	response.Settings.AlertResetNoticeEnabled = true
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observe := func() {
+		t.Helper()
+		response.Providers[0].Profiles[0].LastRefreshAt = &now
+		response.Providers[0].Profiles[0].Windows[0].ResetAt = &reset
+		if _, err := tracker.Observe(response); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe()
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "warning" {
+		t.Fatalf("warning: %+v", got)
+	}
+	id := tracker.OpenAlerts()[0].ID
+	// Every refresh reports now+5h: the reset slides, the cycle stays.
+	for i := 0; i < 15; i++ {
+		now = now.Add(15 * time.Minute)
+		reset = now.Add(5 * time.Hour)
+		observe()
+		got := tracker.OpenAlerts()
+		if len(got) != 1 || got[0].ID != id || got[0].Tier != "warning" {
+			t.Fatalf("step %d: drift must not notify or re-arm: %+v", i, got)
+		}
+	}
+	// A real reset: the old reset time passes, the new one is later, usage is low.
+	now = reset.Add(time.Minute)
+	reset = now.Add(5 * time.Hour)
+	response.Providers[0].Profiles[0].Windows[0].PercentUsed = 0
+	observe()
+	got := tracker.OpenAlerts()
+	if len(got) != 1 || got[0].Tier != "reset" {
+		t.Fatalf("exactly one reset notice: %+v", got)
+	}
+	now = now.Add(15 * time.Minute)
+	reset = now.Add(5 * time.Hour)
+	observe()
+	if again := tracker.OpenAlerts(); len(again) != 1 || again[0].ID != got[0].ID {
+		t.Fatalf("drift after the reset repeats the notice: %+v", again)
 	}
 }
