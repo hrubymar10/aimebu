@@ -763,9 +763,10 @@ export class ImportV1Wizard {
     for (const label of ['Record', 'New', ...(counts.showSkipped ? ['Skipped'] : [])]) head.append(node('th', label));
     table.append(head);
     for (const item of counts.rows) {
+      const { imported: added } = item; // the row's count of new records
       const row = node('tr'); const name = node('td', item.title); name.dataset.key = item.key;
       if (item.explanation) name.append(node('div', item.explanation, 'import-count-note'));
-      row.append(name, node('td', item.imported));
+      row.append(name, node('td', added));
       if (counts.showSkipped) row.append(node('td', item.skipped, item.skippedNonZero ? 'import-skipped' : ''));
       table.append(row);
     }
