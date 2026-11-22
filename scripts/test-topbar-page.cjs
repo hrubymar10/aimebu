@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const { scratch, OWNER, MODULES } = require('./scratch-server.cjs');
 
 const APP = '#app-view:not([hidden])';
+// Chromium 158 serializes the flex keywords of justify-content and align-* by writing mode ('flex-end' reads 'flow-end'); compare their meaning.
+const flexEdge = value => ({ start: 'flex-start', 'flow-start': 'flex-start', end: 'flex-end', 'flow-end': 'flex-end' })[value] ?? value;
 
 async function main() {
   const server = await scratch({ env: MODULES });
@@ -32,7 +34,7 @@ async function main() {
     await page.setViewport({ width: 600, height: 900 }); await settle();
     assert.deepEqual(await bar(), { tucked: [], more: false, offered: [], mark: false, overflow: false }, 'with room for every control nothing is tucked and the overflow button is gone');
     const aligned = await page.evaluate(() => { const nav = document.querySelector('.topbar nav'), brand = document.querySelector('.topbar-left').getBoundingClientRect(); return [getComputedStyle(nav).justifyContent, [...nav.querySelectorAll('button')].find(button => button.getBoundingClientRect().width).getBoundingClientRect().left > brand.right + 20, innerWidth - document.querySelector('#connection').getBoundingClientRect().right <= 16]; });
-    assert.deepEqual(aligned, ['flex-end', true, true], 'the controls sit at the right edge, away from the logo');
+    assert.deepEqual([flexEdge(aligned[0]), ...aligned.slice(1)], ['flex-end', true, true], 'the controls sit at the right edge, away from the logo');
     await page.$eval('#health-toggle', button => button.classList.add('has-issues')); await settle();
     assert.equal((await bar()).mark, false, 'a Health warning does not colour the overflow button while Health is in the bar');
     // a wide Sign out does not fit: it alone goes into the menu, and Health, still in the bar, keeps the warning off the button

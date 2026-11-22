@@ -11,6 +11,8 @@ let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
 
 const root = path.join(__dirname, '..', 'web');
+// Chromium 158 serializes the flex keywords of justify-content and align-* by writing mode ('flex-end' reads 'flow-end'); compare their meaning.
+const flexEdge = value => ({ start: 'flex-start', 'flow-start': 'flex-start', end: 'flex-end', 'flow-end': 'flex-end' })[value] ?? value;
 const REPLACED = fs.existsSync(path.join(root, 'js', 'pages', 'chat', 'page.js'));
 const MODULE = REPLACED ? '/js/pages/chat/page.js' : '/js/chat.js';
 const PANEL = fs.existsSync(path.join(root, 'js', 'pages', 'room-panel', 'page.js'));
@@ -581,9 +583,9 @@ async function main() {
     assert.deepEqual(await layoutOf(), { align: 'stretch', width: 'none' }, 'an own message spans the column like everyone else\'s');
     const headerLeft = () => page.evaluate(() => { const own = document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header'); const other = [...document.querySelectorAll('#messages > .chat-msg:not(.self):not(.chat-msg-system) .chat-msg-header')].at(-1); return own && other ? Math.round(own.getBoundingClientRect().left - other.getBoundingClientRect().left) : null; });
     assert.equal(await headerLeft(), 0, 'an own message\'s header starts where other people\'s do');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header')).justifyContent), 'flex-start', 'an own header lays out left, in the shared order');
+    assert.equal(flexEdge(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-header')).justifyContent)), 'flex-start', 'an own header lays out left, in the shared order');
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages [data-message-id=rm_a_own] .chat-msg-bubble')).alignSelf), 'auto', 'the own bubble is not pushed right inside the full-width row');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#thread-messages [data-message-id=rm_a_t1] > .chat-msg-bubble')).alignSelf), 'flex-start', 'nothing is centred or pushed right in the thread panel either: its own bubble goes left');
+    assert.equal(flexEdge(await page.evaluate(() => getComputedStyle(document.querySelector('#thread-messages [data-message-id=rm_a_t1] > .chat-msg-bubble')).alignSelf)), 'flex-start', 'nothing is centred or pushed right in the thread panel either: its own bubble goes left');
     assert.deepEqual(await page.evaluate(() => {
       const own = document.querySelector('#messages [data-message-id=rm_a_own]');
       const strip = document.createElement('div'); strip.className = 'message-receipts'; strip.setAttribute('role', 'group');
@@ -592,7 +594,7 @@ async function main() {
       const stripBox = strip.getBoundingClientRect(), ownBox = own.getBoundingClientRect();
       strip.remove();
       return { atRight: Math.abs(stripBox.right - ownBox.right) < 2, justify };
-    }), { atRight: true, justify: 'flex-end' }, 'the receipts strip under an own message is right-aligned with its right edge');
+    }).then(out => ({ ...out, justify: flexEdge(out.justify) })), { atRight: true, justify: 'flex-end' }, 'the receipts strip under an own message is right-aligned with its right edge');
     await page.close();
   }
 
