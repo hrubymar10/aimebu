@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
@@ -62,6 +63,10 @@ type AgentMessage struct {
 	From      string `json:"from,omitempty"`
 	Body      string `json:"body,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
+	// AppendixPageCount is how many collapsed "Full plan" pages the message has (omitted when none). Every view carries it; only message_get
+	// also carries the pages themselves, so a history page or a delivery context stays small.
+	AppendixPageCount int             `json:"appendix_page_count,omitempty"`
+	AppendixPages     json.RawMessage `json:"appendix_pages,omitempty"`
 	// Project names the target's project when it is not the agent's own (a person's citation across projects); empty otherwise.
 	Project string `json:"project,omitempty"`
 }
@@ -82,14 +87,26 @@ func excerptRunes(text string, limit int) string {
 	return string([]rune(text)[:limit]) + "…"
 }
 
-func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectID string, no int64, limit int) (AgentMessage, error) {
+// appendixPageCount counts the pages of a stored appendix_pages_json; a value that is not a JSON array counts as one page so it is not hidden.
+func appendixPageCount(raw string) int {
+	if raw == "" {
+		return 0
+	}
+	var pages []json.RawMessage
+	if json.Unmarshal([]byte(raw), &pages) != nil {
+		return 1
+	}
+	return len(pages)
+}
+
+func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectID string, no int64, limit int, withPages bool) (AgentMessage, error) {
 	unavailable := AgentMessage{No: no}
-	var roomID, title, kind, authorKind, authorID, body, createdAt, targetProject, targetProjectName string
+	var roomID, title, kind, authorKind, authorID, body, createdAt, targetProject, targetProjectName, pages string
 	// System citation grants come from server-created missed-mention pointers.
 	// Their persisted targets_json records the sole agent allowed to follow one.
 	// A person's citation reaches across projects: the grant row is the person's message in a room the agent sits in, and the person must
 	// still read the target room now (a private chat never qualifies).
-	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at,r.project_id,COALESCE(p.name,'')
+	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at,r.project_id,COALESCE(p.name,''),COALESCE(m.appendix_pages_json,'')
 		FROM message m JOIN room r ON r.id=m.room_id LEFT JOIN project p ON p.id=r.project_id
 		WHERE m.no=? AND m.no>0 AND (EXISTS (SELECT 1 FROM message_reference_grant xg JOIN message xs ON xs.id=xg.source_message_id AND xs.author_kind='user'
 				JOIN room xr ON xr.id=xs.room_id AND xr.project_id=?
@@ -104,14 +121,17 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 				WHERE g.target_no=m.no AND r.kind<>'dm' AND source.room_id<>r.id AND source.room_id IN (SELECT id FROM room WHERE project_id=r.project_id)
 				AND (source.author_kind<>'system' OR EXISTS (SELECT 1 FROM json_each(source.targets_json) WHERE value=?)))))`,
 		no, projectID, agentID, projectID, agentID, agentID, agentID).
-		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt, &targetProject, &targetProjectName)
+		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt, &targetProject, &targetProjectName, &pages)
 	if err == sql.ErrNoRows {
 		return unavailable, nil
 	}
 	if err != nil {
 		return AgentMessage{}, err
 	}
-	out := AgentMessage{No: no, Available: true, RoomID: roomID, Room: title, From: authorLabel(ctx, q, authorKind, authorID), Body: excerptRunes(body, limit), CreatedAt: createdAt}
+	out := AgentMessage{No: no, Available: true, RoomID: roomID, Room: title, From: authorLabel(ctx, q, authorKind, authorID), Body: excerptRunes(body, limit), CreatedAt: createdAt, AppendixPageCount: appendixPageCount(pages)}
+	if withPages && pages != "" {
+		out.AppendixPages = json.RawMessage(pages)
+	}
 	if targetProject != projectID && targetProject != AgentDMProjectID {
 		out.Project = targetProjectName
 	}
@@ -142,7 +162,7 @@ func (s *Store) AgentMessageByNo(ctx context.Context, agentID, projectID string,
 	if err := s.checkTxReentry(ctx); err != nil {
 		return AgentMessage{}, err
 	}
-	return agentMessageByNo(ctx, s.db, agentID, projectID, no, 20000)
+	return agentMessageByNo(ctx, s.db, agentID, projectID, no, 20000, true)
 }
 
 // ReferencedMessageForUser returns only a cited target of a source message the
@@ -184,7 +204,7 @@ func (s *Store) ReferencedMessageForUser(ctx context.Context, userID, sourceID s
 func (tx *Tx) referencedMessages(agentID, projectID string, bodies []string, delivered map[int64]bool) ([]AgentMessage, error) {
 	var out []AgentMessage
 	for _, no := range extractMessageRefs(bodies, delivered, MaxMessageRefs) {
-		message, err := agentMessageByNo(tx.ctx, tx.tx, agentID, projectID, no, refExcerptRunes)
+		message, err := agentMessageByNo(tx.ctx, tx.tx, agentID, projectID, no, refExcerptRunes, false)
 		if err != nil {
 			return nil, err
 		}

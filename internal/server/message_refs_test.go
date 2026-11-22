@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
@@ -110,5 +111,50 @@ func TestDeliveryContextCarriesReferencedMessages(t *testing.T) {
 	}
 	if len(delivery.Notes) == 0 || delivery.Notes[len(delivery.Notes)-1].No < 1 {
 		t.Fatalf("the delivered note carries no number: %+v", delivery.Notes)
+	}
+}
+
+// message_get returns the appendix pages in full; message_get and room_history carry the page count.
+func TestAgentMessageGetAndHistoryExposeAppendixPages(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	_, key := f.createToolAgent(t, "role_reviewer_default")
+	pages := `[{"title":"Details","body":"` + strings.Repeat("long ", 6000) + `"},{"body":"second"}]`
+	with, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: "plan", AppendixPagesJSON: pages})
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: "plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := f.toolRequest(t, "/api/agent/message-numbers/"+strconv.FormatInt(with.No, 10), key)
+	var got store.AgentMessage
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	var decoded []struct{ Title, Body string }
+	if resp.StatusCode != 200 || got.AppendixPageCount != 2 || json.Unmarshal(got.AppendixPages, &decoded) != nil || len(decoded) != 2 || decoded[1].Body != "second" || len(decoded[0].Body) != 30000 {
+		t.Fatalf("message_get: status=%d count=%d pages=%d", resp.StatusCode, got.AppendixPageCount, len(decoded))
+	}
+	resp = f.toolRequest(t, "/api/agent/message-numbers/"+strconv.FormatInt(without.No, 10), key)
+	got = store.AgentMessage{}
+	_ = json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if got.AppendixPageCount != 0 || got.AppendixPages != nil {
+		t.Fatalf("a message without pages: %+v", got)
+	}
+	resp = f.toolRequest(t, "/api/agent/rooms/"+f.room.ID+"/history?limit=2", key)
+	var history struct {
+		Messages []store.AgentMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(history.Messages) != 2 || history.Messages[0].AppendixPageCount != 2 || history.Messages[0].AppendixPages != nil || history.Messages[1].AppendixPageCount != 0 {
+		t.Fatalf("history: %+v", history.Messages)
 	}
 }

@@ -1875,6 +1875,10 @@ CC/Codex, prompt-only on pi):
   default-collapsed Full plan panel. Keep substantive decisions, evidence, and
   next actions in `body` too: agent turn notes append a readable text form of
   the blocks and appendix Markdown, capped at 16 KiB beyond the original body.
+  When that cap cuts the text short, the note ends with a line naming `message_get #N`.
+  `message_get` returns the message's `appendix_pages` in full (and
+  `appendix_page_count`); `room_history` and `referenced_messages` carry only
+  `appendix_page_count`, so the pages are fetched on demand.
   A malformed block remains visible as raw content and produces an answer
   receipt warning when the browser would use its raw fallback.
 

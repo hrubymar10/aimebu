@@ -231,7 +231,7 @@ func TestLeadBackfillMigration(t *testing.T) {
 // What an agent is shown includes a visual plan and appendix pages, so a #N written only there is a reference too.
 func TestReferencesAreReadFromTheDeliveredBodyWithItsPlan(t *testing.T) {
 	t.Parallel()
-	body := deliveredNoteBody("see the plan", `[{"type":"markdown","title":"Plan","data":{"markdown":"Decided in #41"}}]`, `[{"title":"More","body":"and also #42"}]`)
+	body := deliveredNoteBody("see the plan", 7, `[{"type":"markdown","title":"Plan","data":{"markdown":"Decided in #41"}}]`, `[{"title":"More","body":"and also #42"}]`)
 	if got := extractMessageRefs([]string{body}, nil, 5); !reflect.DeepEqual(got, []int64{41, 42}) {
 		t.Fatalf("references of a body with a plan and pages: %v in %q", got, body)
 	}

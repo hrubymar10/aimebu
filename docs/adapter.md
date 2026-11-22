@@ -141,7 +141,9 @@ the returned room ID; `context.rooms` is only the turn-start snapshot. The
 server still verifies current membership before committing any message.
 Claude and Codex final-answer schemas also expose `needs_attention`,
 `proposed_answers`, `open_questions`, `visual_plan` blocks, and
-`appendix_pages`. Their strict native schemas list every object property in
+`appendix_pages`. A delivered note appends the appendix text within a 16 KiB cap; when the
+cap cuts it, the note names `message_get #N`, which returns all pages (`room_history` and
+`referenced_messages` show only `appendix_page_count`). Their strict native schemas list every object property in
 `required`; optional message fields such as `force` use a nullable type and
 the server treats `null` as unset. A block's `data` is a JSON-encoded object
 string in those native schemas; Pi may send an object directly. The server accepts either,

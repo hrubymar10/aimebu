@@ -78,7 +78,7 @@ func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID
 		beforeNo = 1<<63 - 1
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT m.no,r.title,COALESCE(u.login,NULLIF(a.removed_slug,''),a.slug,m.author_id),
-		CASE WHEN length(m.body)>2000 THEN substr(m.body,1,2000)||'…' ELSE m.body END,m.created_at
+		CASE WHEN length(m.body)>2000 THEN substr(m.body,1,2000)||'…' ELSE m.body END,m.created_at,COALESCE(m.appendix_pages_json,'')
 		FROM message m JOIN room r ON r.id=m.room_id
 		LEFT JOIN user u ON m.author_kind='user' AND u.id=m.author_id
 		LEFT JOIN agent a ON m.author_kind='agent' AND a.id=m.author_id
@@ -92,9 +92,11 @@ func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID
 	all := make([]AgentMessage, 0, limit+1)
 	for rows.Next() {
 		m := AgentMessage{Available: true, RoomID: roomID}
-		if err := rows.Scan(&m.No, &m.Room, &m.From, &m.Body, &m.CreatedAt); err != nil {
+		var pages string
+		if err := rows.Scan(&m.No, &m.Room, &m.From, &m.Body, &m.CreatedAt, &pages); err != nil {
 			return AgentHistoryPage{}, err
 		}
+		m.AppendixPageCount = appendixPageCount(pages)
 		all = append(all, m)
 	}
 	if err := rows.Err(); err != nil {

@@ -237,7 +237,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 						return err
 					}
 					originalBodies[note.MessageID] = note.Body
-					note.Body = deliveredNoteBody(note.Body, planJSON, pagesJSON)
+					note.Body = deliveredNoteBody(note.Body, note.No, planJSON, pagesJSON)
 					specialNotes = append(specialNotes, note)
 					specialReasons = append(specialReasons, wakeReason)
 				}
@@ -447,7 +447,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				continue
 			}
 			originalBodies[note.MessageID] = note.Body
-			note.Body = deliveredNoteBody(note.Body, planJSON, pagesJSON)
+			note.Body = deliveredNoteBody(note.Body, note.No, planJSON, pagesJSON)
 			if retryCaution {
 				note.RetryNotice = "The previous attempt was interrupted before it finished (for example by a provider limit or a lost session); you may have already done part of it. Check the state before acting."
 			}

@@ -11,12 +11,15 @@ import (
 
 // deliveredNoteBody gives agents the readable substance of display-only blocks.
 // The original message body remains intact and the added text has its own cap.
-func deliveredNoteBody(body, planJSON, pagesJSON string) string {
+func deliveredNoteBody(body string, no int64, planJSON, pagesJSON string) string {
 	if planJSON == "" && pagesJSON == "" {
 		return body
 	}
 	const extraLimit = 16 << 10
-	const omitted = "\n[Additional visual content omitted]\n"
+	omitted := "\n[Additional visual content omitted]\n"
+	if pagesJSON != "" {
+		omitted = fmt.Sprintf("\n[Additional visual content omitted; message_get #%d returns all %d appendix page(s) in full]\n", no, appendixPageCount(pagesJSON))
+	}
 	var extra strings.Builder
 	appendText := func(value string) bool {
 		remaining := extraLimit - extra.Len()
