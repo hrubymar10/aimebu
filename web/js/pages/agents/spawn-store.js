@@ -1,6 +1,6 @@
 import { batch, computed, signal } from '../../ui.js';
 import { request, rights } from '../../api.js';
-import { ClaudeSessionPicker } from '../../claude-sessions.js';
+import { ClaudeSessionPicker } from '../claude-sessions/page.js';
 import { chooseModel, hintParts, historyNote, modelChangeWarning, NEW_ROOM, REOPEN_PREFIX, resumeBanner, resumeToolChoice, sessionEntryState, sortModelOptions, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption } from '../../spawn-model.js';
 import { relativeTime } from '../../time.js';
 import { MachineStore } from './machine-store.js';
@@ -354,5 +354,5 @@ export class SpawnStore {
 
   hint(text) { return hintParts(text, this.host.canManageHarnesses()); }
 
-  destroy() { this.alive = false; this.picker.dialog.close(); this.invalidate(); }
+  destroy() { this.alive = false; this.picker.destroy(); this.invalidate(); }
 }

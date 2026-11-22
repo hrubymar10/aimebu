@@ -6,9 +6,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'claude-sessions.js'), 'utf8');
-const context = { relativeTime: iso => `ago(${iso})`, setGlyph: () => {} };
+const context = { relativeTime: iso => `ago(${iso})` };
 vm.createContext(context);
-vm.runInContext(source.replace(/^import .*$/gm, '').replace(/^export /gm, '').replace(/^class ClaudeSessionPicker[\s\S]*$/m, '')
+vm.runInContext(source.replace(/^import .*$/gm, '').replace(/^export /gm, '')
   + '\nglobalThis.api = { formatSize, sessionFacts, sessionFlags, listingStatus, rowTitles };', context);
 const { formatSize, sessionFacts, sessionFlags, listingStatus, rowTitles } = context.api;
 

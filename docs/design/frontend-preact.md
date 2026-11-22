@@ -350,6 +350,7 @@ handoff, room history and handbook, then confirms the same target. The agent car
 is active, showing only the recovery controls the server permits. Every opening, catalog read, preview, call and folder save carries a number
 and says nothing once a newer one started, the dialog was closed or the panel is gone.
 The room dialog's member list is a page of its own (`web/js/pages/members/`: a `MembersStore` whose loads take a ticket, with `model.js` for the state words); and so is the read-only profile of a sender that is no longer a live member (`web/js/pages/sender-profile/`: `openSenderProfile` keeps its call and mounts a page in a dialog of its own, over a store whose profile read dies with the dialog).
+Done for the Claude Code session picker the Spawn dialog opens (`web/js/pages/claude-sessions/`): `store.js` holds the listing, the line above it and the error, and every read (the folder's sessions, a session pasted by id) carries a number and says nothing once a newer one started, the dialog was closed or the store is gone; `picker-dialog.js` draws into the empty `#cc-sessions-dialog` of `index.html`, as the import dialog does into `#cc-import-dialog`, and the two share the row pieces in `rows.js`; `page.js` keeps the `ClaudeSessionPicker` that `SpawnStore` opens. The id box is left to the browser and read when its form is sent. `claude-sessions.js` keeps only the pure helpers (facts, flags, titles, the listing line).
 
 #### Stop-rule checkpoint after step 4
 

@@ -1,13 +1,13 @@
 import { html, useLayoutEffect } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
-import { sessionFacts, sessionFlags } from '../../claude-sessions.js';
+import { SessionFlags, SessionMain } from '../claude-sessions/rows.js';
 
 function Row({ store, session, preset, roles, locked }) {
   const state = store.states.value.get(session.id), done = store.started.value.has(session.id);
   return html`<div class="cc-session cc-import-row" data-session-id=${session.id} data-started=${done ? '1' : undefined}>
     <input type="checkbox" aria-label=${`Import ${session.title || 'untitled session'}`} checked=${store.ticked.value.has(session.id)} disabled=${locked || done} onChange=${event => store.tick(session.id, event.currentTarget.checked)} />
-    <div class="cc-session-main"><span class="cc-session-title">${session.title || 'Untitled session'}</span><span class="cc-session-facts">${sessionFacts(session).join(' · ')}</span>${session.outside_folder && html`<span class="cc-session-cwd">${session.cwd}</span>`}</div>
-    <span class="cc-session-flags">${sessionFlags(session).map(([text, kind]) => html`<span class=${`cc-session-flag cc-session-flag-${kind}`}>${text}</span>`)}${session.outside_folder && html`<span class="cc-session-flag cc-session-flag-warn">needs approval</span>`}</span>
+    <${SessionMain} session=${session} />
+    <${SessionFlags} session=${session}>${session.outside_folder && html`<span class="cc-session-flag cc-session-flag-warn">needs approval</span>`}<//>
     <select class="cc-import-role" aria-label="Role" disabled=${locked}>${roles.map(role => html`<option value=${role.role_key} selected=${role.role_key === preset}>${role.label || role.role_key}</option>`)}</select>
     <span class=${`cc-import-state${state?.error ? ' error' : ''}`} role="status">${state?.text || ''}</span></div>`;
 }
