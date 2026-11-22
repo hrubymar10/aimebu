@@ -1351,9 +1351,10 @@ the journal, for debugging (retention 14 d): see "Agent output" in
 
 ## 3d. Deployment
 
-`aimebu server` runs the local supervisor in-process by default. Setting
-`AIMEBU_SUPERVISOR=detached` starts or adopts a separate local supervisor
-which authenticates with the host machine key and connects over loopback. It
+`aimebu server` starts or adopts a separate local supervisor process, which
+authenticates with the host machine key and connects over loopback. There is
+no in-process mode: a server that still has `AIMEBU_SUPERVISOR` set logs one
+line saying it is ignored and starts normally. It
 adds a loopback listener and admits that address even when `AIMEBU_ALLOW` is
 customized. The server verifies an adopted journal owner and waits for it to
 connect. The supervisor owns the journal flock and survives server shutdown;
@@ -1395,16 +1396,14 @@ respawned while the server runs. If the executable on disk is newer than the
 running server, its supervisor keeps dispatching and the server reports that
 it must restart to finish the upgrade. A restart request from the CLI fails
 when that server holds the writer lock but does not answer; it never replaces
-the child with the CLI environment. Both modes use the
-same versioned machine WebSocket and `supervisor/journal.sqlite` as the
-standalone `aimebu supervisor` process, so reconnect and crash recovery use
+the child with the CLI environment. The local supervisor
+uses the same versioned machine WebSocket and `supervisor/journal.sqlite` as a
+remote `aimebu supervisor` process, so reconnect and crash recovery use
 one path. The server provisions an approved local machine and private key on
 first start; the key file is mode 0600. `AIMEBU_EMBEDDED_SUPERVISOR=0`
 disables the local instance for tests and remote-only installations.
-Shutdown stops new dispatch and HTTP requests. Embedded mode interrupts local
-turns, waits up to 40 seconds for their journal writes, then closes its journal.
-Detached mode leaves the supervisor and its turns alone. The server then closes
-its store. An embedded drain timeout logs the remaining turn IDs.
+Shutdown stops new dispatch and HTTP requests and leaves the local supervisor
+and its turns running; the server then closes its store.
 An ungraceful process death still reconciles the durable journal on restart;
 it never silently reruns a turn with uncertain effects.
 
@@ -1439,7 +1438,7 @@ it never silently reruns a turn with uncertain effects.
   server's effective error and performance reporting settings (its environment, else the stored Settings once the owner answered the consent popup), sent
   when a supervisor connects and again whenever they change. It carries no identity of a person. A supervisor announces `supports_telemetry_config=true`
   in `hello` when it takes them, and only then is it sent the frame (an older supervisor does not know the frame type; it ignores the `hello_ack`
-  field); the server's own embedded supervisor does not announce it, being the server's process. The supervisor starts, replaces or stops its own reporting
+  field). The supervisor starts, replaces or stops its own reporting
   by it, and sets the environment of the `agent-tools` bridge it spawns (see [Telemetry](telemetry.md#supervisors)). A DSN in the supervisor machine's own
   environment (`AIMEBU_SENTRY_DSN`, a DSN or `off`) wins over it.
 - `hello_ack` also carries `agent_keys[{agent_id, generation, key}]`: a new `aak_` key for each agent the supervisor should run and, per its
