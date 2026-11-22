@@ -9,9 +9,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
 // kaHarness is a warm harness whose deliveries carry a keep-alive setting and whose pings' reports are collected.
@@ -1099,5 +1101,46 @@ func TestKeepAliveScopeRefusalIsNotReportable(t *testing.T) {
 		if keepAliveScopeRefusal(other) {
 			t.Fatalf("%q is a real ping failure", other)
 		}
+	}
+}
+
+// A ping whose error is the server's keep-alive refusal behind a long harness prefix still ends in the refusal after the report's 200-byte cut, so the
+// refusal is recognised and stays out of Sentry; a failure that is not the refusal is reported as before. This runs the whole path, from the harness's
+// exit to the report, and the cut itself never splits a character.
+func TestKeepAliveLongScopeRefusalStaysOutOfSentry(t *testing.T) {
+	run := func(summary string) (protocol.KeepAliveReport, int) {
+		t.Helper()
+		telemetry.ResetCaptured()
+		transport := startReporting(t)
+		h := newKAHarness(t)
+		h.spawn("agt_a")
+		h.run("agt_a", nil)
+		h.f.mu.Lock()
+		h.f.coldFail, h.f.coldErrorSummary = true, summary
+		h.f.mu.Unlock()
+		report := h.fire(t)
+		telemetry.Current().Flush(time.Second)
+		n := 0
+		for _, event := range transport.sent() {
+			if len(event.Exception) > 0 && event.Exception[0].Value == "keep-alive ping failed" {
+				n++
+			}
+		}
+		return report, n
+	}
+	prefix := strings.Repeat("worker quit with fatal: Transport channel closed é, ", 8)
+	refused := prefix + "when UnexpectedServerResponse(HTTP 403 " + keepAliveScopeRefusalBody + ")"
+	if len(refused) <= 200 {
+		t.Fatal("the test needs an error longer than the cut")
+	}
+	report, sent := run(refused)
+	if report.OK || !keepAliveScopeRefusal(report.Error) || len(report.Error) > 200 || !utf8.ValidString(report.Error) {
+		t.Fatalf("the cut error must still end in the refusal: %q", report.Error)
+	}
+	if sent != 0 {
+		t.Fatalf("a long refusal was reported to Sentry %d times", sent)
+	}
+	if _, sent := run(prefix + "then it timed out"); sent != 1 {
+		t.Fatalf("a real failure must be reported once, got %d", sent)
 	}
 }

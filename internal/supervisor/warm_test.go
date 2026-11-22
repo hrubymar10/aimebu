@@ -68,6 +68,8 @@ type warmFake struct {
 	coldBlock chan struct{}
 	lastHold  *holdTurn // the held turn the last blocked start returned
 	coldFail  bool
+	// coldErrorSummary is the error summary a failing cold turn ends with.
+	coldErrorSummary string
 	// onRun runs when a turn is handed to a session.
 	onRun func()
 	// startErr, when set, is what StartWarm answers; runErr what Run answers.
@@ -91,7 +93,7 @@ func (f *warmFake) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tu
 	f.mu.Lock()
 	f.cold++
 	f.coldSpecs = append(f.coldSpecs, spec)
-	block, fail := f.coldBlock, f.coldFail
+	block, fail, summary := f.coldBlock, f.coldFail, f.coldErrorSummary
 	f.mu.Unlock()
 	if block != nil {
 		hold := newHoldTurn(block)
@@ -103,7 +105,9 @@ func (f *warmFake) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tu
 	if spec.KeepAlive && f.compactedPing {
 		return newFakeTurnCompacted(!fail, f.cumulativeUsage, true), nil
 	}
-	return newFakeTurn(!fail, f.cumulativeUsage), nil
+	turn := newFakeTurn(!fail, f.cumulativeUsage)
+	turn.exit.ErrorSummary = summary
+	return turn, nil
 }
 
 // KeepAliveTool says the fake can run keep-alive turns for Claude.

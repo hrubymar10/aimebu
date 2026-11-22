@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
@@ -648,12 +649,33 @@ func firstLine(parts ...string) string {
 		}
 		if part != "" {
 			if len(part) > 200 {
-				part = part[:200]
+				part = truncateKeepAliveError(part)
 			}
 			return part
 		}
 	}
 	return ""
+}
+
+// truncateKeepAliveError cuts one over-long line to 200 bytes (never in the middle of a character). A line that ends on the server's keep-alive
+// refusal keeps that refusal whole, at its end, and gives up its own beginning instead: the refusal is recognised only as the end of the error, so
+// a cut that dropped it would turn an intended refusal into a Sentry report.
+func truncateKeepAliveError(part string) string {
+	const limit = 200
+	cut := func(text string, n int) string {
+		for n > 0 && n < len(text) && !utf8.RuneStart(text[n]) {
+			n--
+		}
+		return text[:n]
+	}
+	if keepAliveScopeRefusal(part) {
+		body := keepAliveScopeRefusalBody
+		if end := strings.LastIndex(part, body); end >= 0 && len(body) < limit {
+			head := cut(part[:end], limit-len(body)-1)
+			return strings.TrimRight(head, " ") + " " + body
+		}
+	}
+	return cut(part, limit)
 }
 
 // keepAliveScopeRefusalBody is the server's whole refusal as the toolbox's REST route writes it (refuseKeepAliveScope: the stable code, then the
