@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -700,5 +701,96 @@ func TestAgentConversationWithholdsTurnsWhoseToolsReadRestrictedRooms(t *testing
 	}
 	if strings.Contains(view.Text, "zebra") {
 		t.Fatal("a tool result from the restricted room reached a person who cannot read it")
+	}
+}
+
+// memory_update (a stale rev answers the note's current body) and memory_remove (answers the removed row) return the text of a task note,
+// which is its room's content: a turn serving an ordinary room that made either call on a restricted room's note is withheld from an admin
+// who cannot read that room, and the owner still reads it.
+func TestAgentMemoryUpdateAndRemoveRecordTheTaskRoomRead(t *testing.T) {
+	o := newOutputFixture(t)
+	ctx := t.Context()
+	key, err := o.srv.Auth.IssueAgentKey(ctx, o.agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routing, err := o.db.CreateRoom(ctx, store.Room{ProjectID: o.project.ID, ParentID: o.room.ID, Kind: "task", Title: "routing", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`UPDATE room SET restricted=1 WHERE id=?`, routing.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.db.AddMember(ctx, routing.ID, "agent", o.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	resp := o.request(http.MethodPut, "/api/projects/"+o.project.ID+"/memory-enabled", map[string]bool{"enabled": true}, true)
+	resp.Body.Close()
+	if _, err := o.exec(`INSERT OR IGNORE INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_conv',?,0,'fresh_with_history','2026-01-01T00:00:00.000Z')`, o.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	newNote := func(body string) store.KnowledgeRecord {
+		t.Helper()
+		note, err := o.db.ManageKnowledge(ctx, "task", routing.ID, "agent", o.agent.ID, "", 0, body, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return note
+	}
+	stale, gone := newNote("zebra stale note"), newNote("zebra removed note")
+	call := func(method, path string, body any) string {
+		t.Helper()
+		var data []byte
+		if body != nil {
+			data, _ = json.Marshal(body)
+		}
+		req, err := http.NewRequest(method, o.http.URL+path, bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var text bytes.Buffer
+		text.ReadFrom(resp.Body)
+		return fmt.Sprintf("%d %s", resp.StatusCode, text.String())
+	}
+	// Each turn serves the ordinary room and makes one call on the restricted room's note.
+	turn := func(id string, run func()) {
+		t.Helper()
+		if _, err := o.exec(`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec,started_at) VALUES (?,?,'ses_conv',0,?,1,'normal','running',?)`,
+			id, o.agent.ID, o.room.ID, time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")); err != nil {
+			t.Fatal(err)
+		}
+		run()
+		if _, err := o.exec(`UPDATE turn SET exec='exited' WHERE id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turn("trn_mem_stale", func() {
+		if got := call(http.MethodPut, "/api/agent/memory/"+stale.ID+"?scope=task&room_id="+routing.ID, map[string]any{"body": "x", "rev": 7}); !strings.HasPrefix(got, "409") || !strings.Contains(got, "zebra stale note") {
+			t.Fatalf("stale update: %s", got)
+		}
+	})
+	turn("trn_mem_remove", func() {
+		if got := call(http.MethodDelete, "/api/agent/memory/"+gone.ID+"?scope=task&room_id="+routing.ID+"&rev=1", nil); !strings.HasPrefix(got, "200") || !strings.Contains(got, "zebra removed note") {
+			t.Fatalf("remove: %s", got)
+		}
+	})
+	for _, id := range []string{"trn_mem_stale", "trn_mem_remove"} {
+		if known, private, restricted, err := o.db.TurnWithheldFrom(ctx, id, o.agent.ID, "usr_nobody"); err != nil || !known || private || !restricted {
+			t.Fatalf("%s for a reader outside the room: known=%t private=%t restricted=%t %v", id, known, private, restricted, err)
+		}
+		owner, err := o.db.UserByLogin(ctx, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if known, private, restricted, err := o.db.TurnWithheldFrom(ctx, id, o.agent.ID, owner.ID); err != nil || !known || private || restricted {
+			t.Fatalf("%s for the owner: known=%t private=%t restricted=%t %v", id, known, private, restricted, err)
+		}
 	}
 }

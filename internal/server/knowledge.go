@@ -463,6 +463,10 @@ func (s *Server) agentToolMemoryRecord(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, current := range records {
 			if current.ID == r.PathValue("id") {
+				// The note's latest body is that room's content, as it is for memory_list.
+				if scope == "task" && !s.recordToolRoomReads(w, r, key) {
+					return
+				}
 				writeJSON(w, 409, map[string]any{"error": "stale_rev", "current": current})
 				return
 			}
@@ -470,6 +474,10 @@ func (s *Server) agentToolMemoryRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		knowledgeError(w, err)
+		return
+	}
+	// The answer echoes the note: the pre-delete row on a removal, the stored row otherwise.
+	if scope == "task" && !s.recordToolRoomReads(w, r, key) {
 		return
 	}
 	writeJSON(w, 200, item)
