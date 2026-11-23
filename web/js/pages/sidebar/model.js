@@ -114,9 +114,16 @@ export function roomStatus(room) {
 // Sends read marks with at most one request per room in flight. A mark asked for while one is in flight is kept (the
 // highest seq wins; 0 means the room's newest) and sent when the first one settles, if it goes further than that one.
 // reset() (sign-out) forgets everything, and a request from before it neither re-issues nor reports its result.
+// idle(roomID) answers a promise that settles once nothing is in flight or queued for the room, so a mark that moves the cursor back (mark unread)
+// is sent after any mark forward that was already on its way, and the server applies them in that order.
 export class ReadMarker {
-  constructor(post) { this.post = post; this.generation = 0; this.inFlight = new Map(); this.wanted = new Map(); }
-  reset() { this.generation++; this.inFlight.clear(); this.wanted.clear(); }
+  constructor(post) { this.post = post; this.generation = 0; this.inFlight = new Map(); this.wanted = new Map(); this.waiters = new Map(); }
+  reset() { this.generation++; this.inFlight.clear(); this.wanted.clear(); for (const list of this.waiters.values()) for (const done of list) done(); this.waiters.clear(); }
+  idle(roomID) {
+    if (!this.inFlight.has(roomID)) return Promise.resolve();
+    return new Promise(done => this.waiters.set(roomID, [...(this.waiters.get(roomID) || []), done]));
+  }
+  settle(roomID) { if (this.inFlight.has(roomID)) return; const list = this.waiters.get(roomID) || []; this.waiters.delete(roomID); for (const done of list) done(); }
   mark(roomID, seq, onState) {
     const further = (a, b) => a === 0 ? b !== 0 : b !== 0 && a > b;
     if (this.inFlight.has(roomID)) {
@@ -131,6 +138,7 @@ export class ReadMarker {
       this.inFlight.delete(roomID);
       const next = this.wanted.get(roomID); this.wanted.delete(roomID);
       if (next && further(next.seq, seq)) this.mark(roomID, next.seq, next.onState);
+      this.settle(roomID);
     }).catch(() => {}); // an onState that throws must not surface as an unhandled rejection
   }
 }
@@ -162,6 +170,8 @@ function tailOf(project, all, archiveFilter) {
 // Every row is a view: { room, nest, chip, controls, children, tail, collapsible, collapsed, unread, mention }.
 export function treeOf(state) {
   const { projects, rooms, filter, sort, manual, collapsed, active, archiveFilter, offers } = state;
+  // The open room counts as read, unless the person marked it unread (`held`): then it shows its count and dot like any other until they leave it.
+  const counted = countedActive(active, state.held);
   // While the lists are still arriving (`pending`: projects with no list yet), a project is drawn as a placeholder in its place, and the projects that
   // would be folded the first time they are seen are drawn folded now (`provisional`, without saving it), so what lands later does not reflow the list:
   // the project holding the room the app means to open (`expected`) stays open.
@@ -208,8 +218,8 @@ export function treeOf(state) {
     const childViews = children.map(child => view(child, { chip: false, nest: false, deep: true }));
     // A folded row stands for the rooms under it, at any depth, for the mention dot only (never for a count): `below` says whether one of them is mentioned.
     const below = childViews.some(child => child.mentioned || child.below);
-    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, ...(divider > 0 ? { divider } : {}), tail, collapsible: expands && kids > 0, folded, unread: roomUnread(room, active),
-      mentioned: roomMentioned(room, active), below, mention: roomMentioned(room, active) || (folded && below) };
+    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, ...(divider > 0 ? { divider } : {}), tail, collapsible: expands && kids > 0, folded, unread: roomUnread(room, counted),
+      mentioned: roomMentioned(room, counted), below, mention: roomMentioned(room, counted) || (folded && below) };
   };
   const place = (room, nest, extra) => {
     const tail = room.kind === 'home' && tails.get(room.project_id)?.length && !tailed.has(room.project_id) ? tails.get(room.project_id) : null;
@@ -239,7 +249,33 @@ export function treeOf(state) {
   return { filtering, many, sections, noMatch: filtering && !shown.length && !pending.size ? `No rooms match “${filter.trim()}”.` : '', archived: archivedShown, direct, offers: joinable, collapsible, nested, holdsActive, closedProjects: live.filter(project => !all.some(room => room.project_id === project.id && room.lifecycle === 'closed' && !room.hidden && room.kind !== 'dm')).map(project => project.id) };
 }
 
-// A row with nothing under it (the rooms of a tail, an archived project's rooms, a direct message).
-export function leafView(room, active, chip = false) {
-  return { room, nest: false, chip, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: roomUnread(room, active), mentioned: roomMentioned(room, active), below: false, mention: roomMentioned(room, active) };
+// A row with nothing under it (the rooms of a tail, an archived project's rooms, a direct message). `counted` is the room that counts as read for
+// being open (countedActive).
+export function leafView(room, counted, chip = false) {
+  return { room, nest: false, chip, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: roomUnread(room, counted), mentioned: roomMentioned(room, counted), below: false, mention: roomMentioned(room, counted) };
+}
+
+// The room whose unread count and mention dot are not drawn because it is open: the open room, except one the person marked unread (`held`).
+export const countedActive = (active, held) => (active && active === held ? '' : active || '');
+
+// What the context menu of a room row offers, by the room and what the person may do (`role` in its project, `archivedProject`). Mark as read when
+// the room holds something unread (a count, or a message that addresses the person), else Mark unread; then the actions the row and the room
+// settings already have: the settings, the notification level and the mute, a new task room, hiding it, and archiving, reopening or leaving it as
+// the room settings allow (archive for an open task room, for the project's owner or an operator, as the archive quick command;
+// reopen as the row's own button; leave for a chat between agents, which the server allows even in an archived project). An archived project is
+// otherwise read-only: only the read marks, the settings, hiding and the person's own notification choices stay.
+export function rowMenu(room, { role = '', archivedProject = false } = {}) {
+  const open = !room.lifecycle || room.lifecycle === 'open';
+  const unread = (room.unread_count || 0) > 0 || (room.unread_addressed || 0) > 0;
+  const writer = role === 'owner' || role === 'operator';
+  return {
+    read: unread ? 'read' : 'unread',
+    settings: room.kind === 'home' ? 'Project settings' : 'Room settings',
+    notify: true,
+    newRoom: !archivedProject && open && room.kind !== 'dm',
+    hide: !room.hidden,
+    archive: !archivedProject && open && room.kind === 'task' && writer,
+    reopen: !archivedProject && room.lifecycle === 'closed',
+    leave: !!room.agent_chat,
+  };
 }

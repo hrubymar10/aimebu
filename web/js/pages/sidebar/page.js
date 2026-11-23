@@ -5,6 +5,8 @@ import { SORTS } from './model.js';
 import { SidebarList } from './sidebar-list.js';
 import { SortMenu } from './sort-menu.js';
 import { SidebarStore } from './store.js';
+import { bindContextMenu } from '../../components/context-menu.js';
+import { roomRowMenu } from './row-menu.js';
 
 export const SIDEBAR_PREVIEW_EVENT = 'aimebu:sidebar-preview';
 
@@ -16,6 +18,11 @@ export class Sidebar {
     this.store = new SidebarStore({ onSelect: (room, messageID) => this.onSelect(room, messageID) });
     this.projectButton = document.querySelector('#project-open');
     this.page = mountPreactPage(container, () => html`<${SidebarList} store=${this.store} projectButton=${this.projectButton} />`);
+    // A room row's context menu: right-click, a long press, or the context-menu key or Shift+F10 on the focused row (components/context-menu.js).
+    this.stopMenu = bindContextMenu(container, { selector: '.room-group[data-room-id] > .room-item', menu: row => {
+      const room = this.store.rooms.get(row.parentElement.dataset.roomId);
+      return room ? { ...roomRowMenu(this.store, room), returnFocus: document.activeElement && document.activeElement !== document.body ? document.activeElement : row.querySelector('.room-item-name') } : null;
+    } });
   }
 
   get rooms() { return this.store.rooms; }
@@ -35,6 +42,9 @@ export class Sidebar {
   set holdRead(value) { this.store.holdRead = value; }
   get holdRead() { return this.store.holdRead; }
   set shownSeq(value) { this.store.shownSeq = value; }
+  // What the row menu does through the open room (its settings, archiving it, leaving a chat): { settings(room), archive(room), leave(room) }.
+  set roomActions(value) { this.store.roomActions = value; }
+  get held() { return this.store.held.peek(); }
   get shownSeq() { return this.store.shownSeq; }
 
   reset() { this.store.reset(); }
@@ -42,7 +52,9 @@ export class Sidebar {
   expect(...ids) { this.store.expect(...ids); }
   firstRoom() { return this.store.firstRoom(); }
   addProject(project) { return this.store.addProject(project); }
-  refreshProject(id) { return this.store.refreshProject(id); }
+  refreshProject(id, options) { return this.store.refreshProject(id, options); }
+  markRead(room) { return this.store.markRead(room); }
+  markUnread(room, seq) { return this.store.markUnread(room, seq); }
   scheduleRefresh(id) { this.store.scheduleRefresh(id); }
   refreshAgentChats() { return this.store.refreshAgentChats(); }
   forgetRoom(id) { this.store.forgetRoom(id); }
@@ -99,7 +111,7 @@ export class Sidebar {
   closeSortMenu(refocus) { if (!this.sortMenu || this.sortMenu.hidden) return; this.sortMenu.hidden = true; this.sortButton.setAttribute('aria-expanded', 'false'); if (refocus) this.sortButton.focus(); }
 
   destroy() {
-    this.store.destroy();
+    this.store.destroy(); this.stopMenu?.();
     if (this.onPreview) document.removeEventListener(SIDEBAR_PREVIEW_EVENT, this.onPreview);
     if (this.onOutside) document.removeEventListener('click', this.onOutside);
     this.stopCollapse?.(); this.stopSort?.(); this.menuPage?.destroy(); this.page.destroy();

@@ -2,7 +2,7 @@ import { html, useEffect, useLayoutEffect, useRef, useState } from '../../ui.js'
 import { previewText } from '../../preview.js';
 import { formDialog } from '../../dialogs.js';
 import { roomSilenced, mutedNow } from '../../room-notify.js';
-import { leafView, roomStatus, roomType, tracksStatus, treeOf } from './model.js';
+import { countedActive, leafView, roomStatus, roomType, tracksStatus, treeOf } from './model.js';
 import { loadPreviewAll } from './store.js';
 
 const CHEVRONS = { down: '6 9 12 15 18 9', right: '9 18 15 12 9 6' };
@@ -77,6 +77,18 @@ function ProjectMenu({ project, room, controls, manual, store, onAdd, disabled }
     </div>`}</span>`;
 }
 
+// New task room under a room: the row's + button and its context menu ask the same questions and make the room the same way.
+export async function newRoomDialog(store, room) {
+  const generation = store.generation; // the answer belongs to the list the dialog was opened in
+  const answer = await formDialog({ title: `New task room under ${room.title}`, confirm: 'Create room', fields: [
+    { name: 'title', label: 'Room name', required: true, requiredMessage: 'Give the room a name.' },
+    { name: 'worktree', type: 'checkbox', label: 'Create a Git worktree for this room', hint: 'It starts from committed HEAD; uncommitted base changes stay in the project folder.' },
+    { name: 'base_ref', label: 'Base branch or ref (optional)', placeholder: 'Current HEAD', showIf: values => values.worktree },
+  ] });
+  if (!answer || !store.owns(generation)) return;
+  await store.createRoom(room, answer, generation);
+}
+
 function Row({ view, store, ctx, preview, onToggle }) {
   const { room } = view, project = store.projects.get(room.project_id), [reopening, setReopening] = useState(false);
   const archivedProject = !!project?.archived_at, projectName = project?.name || '';
@@ -85,19 +97,10 @@ function Row({ view, store, ctx, preview, onToggle }) {
     attention = room.kind === 'home' ? ctx.projectAttention.get(room.project_id) || 0 : room.attention_count || 0,
     members = room.member_count || 0;
   const isActive = ctx.active === room.id, type = roomType(room), status = roomStatus(room), counted = !tracksStatus(room);
-  const classes = ['room-item', isActive ? 'active' : '', room.kind === 'dm' ? 'dm' : '', view.unread > 0 && !isActive ? 'has-unread' : '', attention > 0 ? 'has-attention' : '', room.lifecycle === 'closed' ? 'archived' : '', room.lifecycle === 'closing' ? 'closing' : '', controls && manual ? 'project-draggable' : ''].filter(Boolean).join(' ');
+  const classes = ['room-item', isActive ? 'active' : '', room.kind === 'dm' ? 'dm' : '', view.unread > 0 ? 'has-unread' : '', attention > 0 ? 'has-attention' : '', room.lifecycle === 'closed' ? 'archived' : '', room.lifecycle === 'closing' ? 'closing' : '', controls && manual ? 'project-draggable' : ''].filter(Boolean).join(' ');
   const select = () => store.onSelect(store.rooms.get(room.id) || room);
   const label = `${view.collapsible && view.folded ? 'Expand' : 'Collapse'} ${room.title}`;
-  const add = async () => {
-    const generation = store.generation; // the answer belongs to the list the dialog was opened in
-    const answer = await formDialog({ title: `New task room under ${room.title}`, confirm: 'Create room', fields: [
-      { name: 'title', label: 'Room name', required: true, requiredMessage: 'Give the room a name.' },
-      { name: 'worktree', type: 'checkbox', label: 'Create a Git worktree for this room', hint: 'It starts from committed HEAD; uncommitted base changes stay in the project folder.' },
-      { name: 'base_ref', label: 'Base branch or ref (optional)', placeholder: 'Current HEAD', showIf: values => values.worktree },
-    ] });
-    if (!answer || !store.owns(generation)) return;
-    await store.createRoom(room, answer, generation);
-  };
+  const add = () => newRoomDialog(store, room);
   const reopen = async () => { setReopening(true); if (!(await store.reopen(room))) setReopening(false); };
   const drag = controls ? dragHandlers(room, store) : {};
   const row = html`<div class=${classes} onClick=${event => { if (!event.target.closest('button, input, select, a')) select(); }} ...${drag}>
@@ -144,8 +147,8 @@ function ArchivedProject({ project, rooms, store, ctx, filtering }) {
   const home = rooms.find(room => room.kind === 'home') || rooms[0];
   if (!home) return null;
   const id = `archived-project:${project.id}`, open = filtering || !!store.folds.get(id);
-  const view = { ...leafView(home, ctx.active), nest: true, collapsible: true, folded: !open,
-    children: rooms.filter(room => room.id !== home.id).map(room => leafView(room, ctx.active)) };
+  const view = { ...leafView(home, ctx.counted), nest: true, collapsible: true, folded: !open,
+    children: rooms.filter(room => room.id !== home.id).map(room => leafView(room, ctx.counted)) };
   return html`<${Group} view=${view} store=${store} ctx=${ctx} className="archived-project" onToggle=${() => store.setFold(id, !open)} />`;
 }
 
@@ -163,7 +166,7 @@ function Tail({ node, store, ctx }) {
   const { project } = node;
   if (node.kind === 'archived') {
     const id = `archived:${project.id}`;
-    return html`<${Fold} id=${id} className="archived-rooms" open=${!!store.folds.get(id)} store=${store} summary=${`Archived (${node.count})`}><${ArchiveSearch} project=${project} store=${store} /><${ArchiveHits} project=${project} store=${store} />${node.rooms.map(room => html`<${Group} key=${room.id} view=${leafView(room, ctx.active)} store=${store} ctx=${ctx} />`)}<//>`;
+    return html`<${Fold} id=${id} className="archived-rooms" open=${!!store.folds.get(id)} store=${store} summary=${`Archived (${node.count})`}><${ArchiveSearch} project=${project} store=${store} /><${ArchiveHits} project=${project} store=${store} />${node.rooms.map(room => html`<${Group} key=${room.id} view=${leafView(room, ctx.counted)} store=${store} ctx=${ctx} />`)}<//>`;
   }
   const id = `hidden:${project.id}`;
   return html`<${Fold} id=${id} className="hidden-rooms" open=${!!store.folds.get(id)} store=${store} summary=${`Hidden (${node.rooms.length})`}>${node.rooms.map(room => html`<button type="button" key=${room.id} class="row-btn hidden-room-show" data-hidden-room-id=${room.id} title=${`Show ${room.title}`} aria-label=${`Show ${room.title}`} onClick=${async () => { if (await store.setPreference(room, 'hidden', false)) store.onSelect(store.rooms.get(room.id) || room); }}><span class="icon-mask icon-mask-eye" aria-hidden="true"></span>${room.title}</button>`)}<//>`;
@@ -189,8 +192,9 @@ function FilterBox({ store, button }) {
 
 export function SidebarList({ store, projectButton }) {
   store.version.value;
-  const shown = store.shown.value, sort = store.sort.value, active = store.active.value, filter = store.filter.value, manual = store.manual.value;
-  const build = () => treeOf({ projects: store.projects, rooms: store.rooms, filter, sort, manual, collapsed: store.collapsedRooms, active, archiveFilter: store.archiveFilter, offers: store.joinable,
+  const shown = store.shown.value, sort = store.sort.value, active = store.active.value, filter = store.filter.value, manual = store.manual.value, held = store.held.value;
+  const counted = countedActive(active, held);
+  const build = () => treeOf({ projects: store.projects, rooms: store.rooms, filter, sort, manual, collapsed: store.collapsedRooms, active, held, archiveFilter: store.archiveFilter, offers: store.joinable,
     pending: store.pending, provisional: store.holdFolds, seen: store.seenRooms, expected: store.focusRoom() });
   if (shown) store.revealActive(active);
   let tree = shown ? build() : null;
@@ -214,7 +218,7 @@ export function SidebarList({ store, projectButton }) {
     if (!room || room.kind === 'dm' || !room.attention_count) continue;
     projectAttention.set(room.project_id, (projectAttention.get(room.project_id) || 0) + room.attention_count);
   }
-  const ctx = { sort, active, previewAll: loadPreviewAll(), filtering: !!tree?.filtering, projectAttention };
+  const ctx = { sort, active, counted, previewAll: loadPreviewAll(), filtering: !!tree?.filtering, projectAttention };
   useLayoutEffect(() => {
     if (!tree) return;
     store.collapsible.value = tree.collapsible;
@@ -228,6 +232,6 @@ export function SidebarList({ store, projectButton }) {
     ${tree.sections.map(section => section.placeholder ? html`<${Placeholder} key=${`placeholder:${section.project.id}`} project=${section.project} preview=${ctx.previewAll} />` : section.tailOnly ? html`<${Tail} key=${`${section.node.kind}:${section.node.project.id}`} node=${section.node} store=${store} ctx=${ctx} />` : html`<${Group} key=${section.room.id} view=${section} store=${store} ctx=${ctx} />`)}
     ${tree.noMatch && html`<p class="rooms-empty">${tree.noMatch}</p>`}
     ${tree.archived.length > 0 && html`<${Fold} id="archived-projects" className="archived-projects" open=${tree.filtering ? true : !!store.folds.get('archived-projects')} store=${store} summary=${`Archived projects (${tree.archived.length})`} heading>${tree.archived.map(({ project, rooms }) => html`<${ArchivedProject} key=${project.id} project=${project} rooms=${rooms} store=${store} ctx=${ctx} filtering=${tree.filtering} />`)}<//>`}
-    <div class="direct-rooms"><h3>Direct messages</h3>${tree.direct.map(room => html`<${Group} key=${room.id} view=${leafView(room, active, tree.many)} store=${store} ctx=${ctx} />`)}
+    <div class="direct-rooms"><h3>Direct messages</h3>${tree.direct.map(room => html`<${Group} key=${room.id} view=${leafView(room, counted, tree.many)} store=${store} ctx=${ctx} />`)}
       ${tree.offers.length > 0 && html`<${Fold} id="offers" className="agent-chat-offers" open=${offersOpen} store=${store} summary=${`Agent chats you can join (${tree.offers.length})`}>${tree.offers.map(offer => html`<${Offer} key=${offer.id} offer=${offer} store=${store} />`)}<//>`}</div>`;
 }

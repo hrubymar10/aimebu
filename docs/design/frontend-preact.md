@@ -392,6 +392,14 @@ Owner's decision (2026-10-28): continue with the remaining units.
   nothing that was drawn. `scripts/perf-sidebar-paint.cjs` measures it.
   Under a project's home row `treeOf` puts the system rooms first (`systemRank` in `model.js`: general, routing, other flow rooms, read from `kind`, `purpose` and
   `team_flow_room_key`, never the title), and gives the home view a `divider` index where the rest begin; `Group` draws a `.room-divider` (`role=separator`) there.
+- The context menus of a room row and of a message share one component, `web/js/components/context-menu.js`: a body-level Preact root holding at most
+  one `role=menu` (menuitem and menuitemradio items, a labelled group, separators), opened by `bindContextMenu` on a right-click, a 500 ms touch long
+  press (the click that ends it is swallowed) or the context-menu key or Shift+F10 inside the target; the first item takes the focus, the arrows, Home,
+  End and a letter move it, Escape and Tab close it and give the focus back, a click elsewhere, a scroll, a resize or leaving the window close it.
+  Links, images, fields and selected text keep the browser's own menu. Its placement (flipped and clamped into the viewport), keys and rows are
+  `context-menu-model.js`, vm-tested by `scripts/test-context-menu-model.cjs`. The room row's items are `pages/sidebar/row-menu.js` over `rowMenu` in
+  `model.js`; the message's are `pages/chat/message-menu.js`. Mark unread in the open room sets the store's `held`: `markSeen` sends nothing for it and
+  `treeOf` draws its count and dot (`countedActive`) until the room is left; `ReadMarker.idle` makes a mark unread wait for the marks already out.
 - Done for the room header's phone overflow menu: `web/js/pages/room-menu/` (`store.js` reads the header's buttons through a mutation observer and the
   phone breakpoint, `room-menu.js` has the button and the menu, `page.js` mounts them in two box-less hosts, the menu on the body). Its items still click
   the real header buttons. `room-menu.js` is gone.

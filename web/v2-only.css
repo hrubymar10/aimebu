@@ -1109,3 +1109,26 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
 .usages-b .switcher-tile-profile { padding-top: 6px; }
 .usages-b .switcher-tile-head { margin-bottom: 2px; }
 .usages-b .usages-b-profile .usages-window-row + .usages-window-row { margin-top: 4px; }
+
+/* The context menu of a room row and of a message (components/context-menu.js): fixed to the viewport, placed by the script, scrolling inside
+   itself when it is taller than the screen. A long press on a room row opens it, so the row gives no callout of its own on iOS. */
+.room-item { -webkit-touch-callout: none; }
+.context-menu { position: fixed; z-index: 1000; display: grid; min-width: 210px; max-width: min(320px, calc(100vw - 16px)); overflow: auto; padding: 4px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); font-size: 13px; }
+.context-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 12px 4px 8px; text-align: left; white-space: nowrap; color: var(--text-primary); background: transparent; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
+.context-menu-item:hover:not(:disabled), .context-menu-item:focus { background: var(--bg-hover); outline: none; }
+.context-menu-item:disabled { opacity: .45; cursor: default; }
+.context-menu-item.danger { color: var(--red); }
+.context-menu-label { overflow: hidden; text-overflow: ellipsis; }
+.context-menu-icon { display: inline-flex; flex: 0 0 16px; align-items: center; justify-content: center; width: 16px; height: 16px; }
+.context-menu-icon.icon-mask { width: 14px; height: 14px; margin: 1px; flex-basis: 14px; }
+.context-menu-separator { height: 1px; margin: 4px 6px; background: var(--border); }
+.context-menu-group { display: grid; }
+.context-menu-caption { padding: 6px 12px 2px 32px; color: var(--text-muted); font-size: 11px; }
+@media (pointer: coarse) { .context-menu-item { min-height: 40px; } }
+[data-theme^="high-contrast"] .context-menu { border: 2px solid var(--text-primary); box-shadow: none; }
+[data-theme^="high-contrast"] .context-menu-item { background: transparent; color: var(--text-primary); }
+[data-theme^="high-contrast"] .context-menu-item:is(:hover, :focus):not(:disabled) { background: var(--bg-tertiary); outline: 2px solid var(--accent); outline-offset: -2px; }
+[data-theme^="high-contrast"] .context-menu-item:disabled { opacity: 1; color: var(--text-muted); }
+[data-theme^="high-contrast"] .context-menu-item.danger { color: var(--red); }
+[data-theme^="high-contrast"] .context-menu-separator { background: var(--text-primary); }
+[data-theme^="high-contrast"] .context-menu-caption { color: var(--text-secondary); }

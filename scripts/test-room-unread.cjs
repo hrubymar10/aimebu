@@ -60,5 +60,21 @@ assert.equal(roomUnread({ id: 'x', unread_count: 4 }, 'x'), 0);
   calm.mark('t', 2, state => again.push(state));
   await settle(); await settle();
   assert.equal(again.length, 1, 'the room could not be marked again after a throwing onState');
+  // idle(): settles at once with nothing in flight, else only after the mark in flight and the one queued behind it are answered (a mark unread is
+  // sent after them, so the server applies it last); a reset lets every waiter go.
+  const held = [], gate = new ReadMarker(() => new Promise(resolve => held.push(resolve)));
+  let idle = false;
+  await gate.idle('u');
+  gate.mark('u', 4); gate.mark('u', 6);
+  gate.idle('u').then(() => { idle = true; });
+  await settle();
+  held.shift()({}); await settle(); await settle();
+  assert.equal(idle, false, 'idle settled while the queued mark was still out');
+  held.shift()({}); await settle(); await settle();
+  assert.equal(idle, true, 'idle did not settle once the room had nothing out');
+  let released = false;
+  gate.mark('u', 9); gate.idle('u').then(() => { released = true; });
+  gate.reset(); await settle();
+  assert.equal(released, true, 'a reset kept a waiter waiting');
   console.log('room unread test passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

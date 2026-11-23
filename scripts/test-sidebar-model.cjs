@@ -9,8 +9,8 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'sidebar', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomMentioned, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT };', context);
-const { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomMentioned, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT } = context.api;
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomMentioned, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT, countedActive, rowMenu };', context);
+const { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomMentioned, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT, countedActive, rowMenu } = context.api;
 
 // A general room by default: it counts every unread message, which is what the nesting and folding checks below are about. Task and research rooms
 // (told by their status, counting only what addresses the person) are checked further down.
@@ -202,4 +202,40 @@ tree = treeOf(state(mentionRooms.map(item => (item.id === 'deep' ? { ...item, un
 assert.equal(mention('home'), false, 'read clears the dot');
 tree = treeOf(state(mentionRooms, { collapsed: new Set(['home']), active: 'deep' }));
 assert.equal(mention('home'), false, 'the open room does not light the folded home');
+
+// Mark unread in the open room: the room the person marked (`held`) shows its count and dot although it is open; any other open room still reads
+// as read. countedActive names the room that counts as read for being open.
+assert.equal(countedActive('r', ''), 'r');
+assert.equal(countedActive('r', 'r'), '', 'the marked open room does not count as read');
+assert.equal(countedActive('r', 'other'), 'r', 'a mark held for a room that is no longer open changes nothing');
+assert.equal(countedActive('', ''), '');
+tree = treeOf(state([room('home', 'a', { kind: 'home', unread_count: 4 }), room('deep', 'a', { parent_id: 'home', purpose: 'task', unread_count: 2, unread_addressed: 1 })], { active: 'home', held: 'home' }));
+assert.equal(tree.sections[0].unread, 4, 'the open home marked unread shows its own count (the home bubble)');
+tree = treeOf(state([room('home', 'a', { kind: 'home', unread_count: 4 }), room('deep', 'a', { parent_id: 'home', purpose: 'task', unread_count: 2, unread_addressed: 1 })], { active: 'deep', held: 'deep' }));
+assert.equal(mention('deep'), true, 'the open child marked unread shows its mention dot');
+tree = treeOf(state([room('home', 'a', { kind: 'home', unread_count: 4 }), room('deep', 'a', { parent_id: 'home', purpose: 'task', unread_count: 2, unread_addressed: 1 })], { active: 'deep', held: '' }));
+assert.equal(mention('deep'), false, 'without the mark the open room is read');
+same(leafView(room('d', 'a', { kind: 'dm', unread_count: 3 }), countedActive('d', 'd')).unread, 3, 'a direct message marked unread while open keeps its count');
+
+// The row menu: Mark as read while something is unread, else Mark unread; then what the person may do with the room.
+const plan = (extra, options) => JSON.parse(JSON.stringify(rowMenu({ id: 'r', kind: 'task', purpose: 'task', lifecycle: 'open', unread_count: 0, ...extra }, options)));
+assert.equal(plan({ unread_count: 2 }).read, 'read');
+assert.equal(plan({ unread_addressed: 1 }).read, 'read', 'a mention alone counts as unread');
+assert.equal(plan({}).read, 'unread');
+assert.equal(plan({ kind: 'home' }).settings, 'Project settings');
+assert.equal(plan({}).settings, 'Room settings');
+assert.equal(plan({}, { role: 'owner' }).archive, true, 'the owner may archive an open task room');
+assert.equal(plan({}, { role: 'operator' }).archive, true, 'so may an operator');
+assert.equal(plan({}, { role: 'viewer' }).archive, false, 'a viewer may not');
+assert.equal(plan({ kind: 'home' }, { role: 'owner' }).archive, false, 'a home room is never archived');
+assert.equal(plan({ kind: 'dm' }, { role: 'owner' }).archive, false, 'nor a direct message');
+assert.equal(plan({ lifecycle: 'closing' }, { role: 'owner' }).archive, false, 'nor a room already closing');
+assert.equal(plan({ lifecycle: 'closed' }, { role: 'owner' }).reopen, true, 'a closed room reopens');
+assert.equal(plan({ kind: 'dm' }).newRoom, false, 'no task room under a direct message');
+assert.equal(plan({}).newRoom, true);
+assert.equal(plan({ agent_chat: true, kind: 'dm' }).leave, true, 'a chat between agents may be left');
+assert.equal(plan({}).leave, false);
+same(plan({ lifecycle: 'closed', unread_count: 1 }, { role: 'owner', archivedProject: true }), { read: 'read', settings: 'Room settings', notify: true, newRoom: false, hide: true, archive: false, reopen: false, leave: false },
+  'an archived project keeps only the read marks, the settings, hiding and the notification choices');
+
 console.log('sidebar model: ok');

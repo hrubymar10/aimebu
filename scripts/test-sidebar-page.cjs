@@ -1594,6 +1594,162 @@ async function main() {
     await page.close();
   }
 
+  // A room row's context menu (components/context-menu.js): right-click, the context-menu key, Shift+F10 and a long press open it; it is a menu with
+  // the arrows, Escape and the focus given back; Mark as read and Mark unread move the person's own read position and the home bubble and the mention dot
+  // follow the answer; in the open room Mark unread holds the room unread (no automatic mark) until the person leaves it; the other items call the
+  // list's own handlers and the app's room actions; the menu stays inside the viewport and is legible in every theme.
+  {
+    const list = rooms().prj_a.map(item => (item.id === 'rm_ah' ? { ...item, unread_count: 21 } : item.id === 'rm_api' ? { ...item, purpose: 'task', unread_count: 0, unread_addressed: 0, attention_count: 0 } : item));
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': list }) });
+    await page.evaluate(() => { window.__actions = []; window.__sidebar.roomActions = { settings: room => window.__actions.push(['settings', room.id]), archive: room => window.__actions.push(['archive', room.id]), leave: room => window.__actions.push(['leave', room.id]) }; });
+    const menu = () => page.evaluate(() => { const node = document.querySelector('.context-menu[role=menu]'); return node ? { label: node.getAttribute('aria-label'), items: [...node.querySelectorAll('[role^=menuitem]')].map(item => `${item.getAttribute('role') === 'menuitemradio' ? (item.getAttribute('aria-checked') === 'true' ? '(x) ' : '( ) ') : ''}${item.textContent.trim()}`), focused: document.activeElement?.closest('.context-menu') ? document.activeElement.textContent.trim() : null, groups: [...node.querySelectorAll('[role=group]')].map(group => group.getAttribute('aria-label')) } : null; });
+    const bubble = id => page.evaluate(id => document.querySelector(`[data-room-id=${id}] > .room-item .room-item-unread`)?.textContent || '', id);
+    const dot = id => page.evaluate(id => !!document.querySelector(`[data-room-id=${id}] > .room-item .room-item-mention`), id);
+    const pick = label => page.evaluate(label => [...document.querySelectorAll('.context-menu [role^=menuitem]')].find(item => item.textContent.trim().startsWith(label)).click(), label);
+
+    // Right-click on the folded home row: the menu names the room, its first item has the focus, and it lists what the row and the settings offer.
+    await page.click('[data-room-id=rm_ah] > .room-item .room-item-name', { button: 'right' });
+    let shown = await menu();
+    assert.equal(shown.label, 'Alpha actions');
+    assert.equal(shown.focused, 'Mark as read', 'the first item takes the focus');
+    assert.deepEqual(shown.items, ['Mark as read', 'Project settings', 'New task room…', '(x) Default', '( ) All messages', '( ) Only mentions and replies to me', '( ) Nothing', 'Mute for 1 hour', 'Mute for 8 hours', 'Mute until tomorrow', 'Hide room'], 'a home room: no archive, reopen or leave');
+    assert.deepEqual(shown.groups, ['Notify me about']);
+    assert.deepEqual(await calls(page), [], 'the right-click opens no room');
+    // The arrows wrap, End and Home go to the ends, Escape closes and the focus goes back where it was (here: nowhere in particular).
+    await page.keyboard.press('ArrowUp'); assert.equal((await menu()).focused, 'Hide room', 'up from the first wraps to the last');
+    await page.keyboard.press('Home'); await page.keyboard.press('ArrowDown'); assert.equal((await menu()).focused, 'Project settings');
+    await page.keyboard.press('Escape');
+    assert.equal(await menu(), null, 'Escape closes the menu');
+    // Mark as read reads the room to its newest message: the home bubble goes with the answer.
+    await page.click('[data-room-id=rm_ah] > .room-item .room-item-name', { button: 'right' });
+    await pick('Mark as read');
+    const read = await waitRequest(page, 'POST', '/api/rooms/rm_ah/read');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, read), {});
+    assert.equal(await menu(), null, 'choosing an item closes the menu');
+    await answer(page, read, 200, { unread_count: 0, unread_addressed: 0, read_cursor: 90, attention_count: 0 }); await settle(page);
+    assert.equal(await bubble('rm_ah'), '', 'the home bubble is gone');
+    // The context-menu key on the focused row: Mark unread now, and the bubble comes back with the server's count; the focus goes back to the row.
+    await page.focus('[data-room-id=rm_ah] > .room-item .room-item-name');
+    await page.keyboard.press('ContextMenu');
+    shown = await menu();
+    assert.equal(shown.focused, 'Mark unread', 'with nothing unread the menu offers Mark unread');
+    await page.keyboard.press('Enter');
+    const unread = await waitRequest(page, 'POST', '/api/rooms/rm_ah/unread');
+    assert.equal(await page.evaluate(() => document.activeElement.closest('[data-room-id]')?.dataset.roomId), 'rm_ah', 'the focus is back on the row');
+    await answer(page, unread, 200, { unread_count: 1, unread_addressed: 0, read_cursor: 89, attention_count: 0 }); await settle(page);
+    assert.equal(await bubble('rm_ah'), '1', 'the home bubble counts the message marked unread');
+
+    // A child room: Shift+F10 on it, Mark unread, and the mention dot shows when what came back addresses the person; Mark as read clears it.
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click());
+    await page.focus('[data-room-id=rm_api] > .room-item .room-item-name');
+    await page.keyboard.down('Shift'); await page.keyboard.press('F10'); await page.keyboard.up('Shift');
+    shown = await menu();
+    assert.deepEqual([shown.label, shown.focused], ['api-work actions', 'Mark unread']);
+    assert.ok(shown.items.includes('Room settings') && shown.items.includes('Archive room…'), 'an owner may archive a task room from its menu');
+    await page.keyboard.press('Enter');
+    const childUnread = await waitRequest(page, 'POST', '/api/rooms/rm_api/unread');
+    await answer(page, childUnread, 200, { unread_count: 3, unread_addressed: 1, read_cursor: 10, attention_count: 0 }); await settle(page);
+    assert.deepEqual([await bubble('rm_api'), await dot('rm_api')], ['', true], 'a child room shows no count but its mention dot');
+    await page.click('[data-room-id=rm_api] > .room-item .room-item-name', { button: 'right' });
+    await pick('Mark as read');
+    const childRead = await waitRequest(page, 'POST', '/api/rooms/rm_api/read');
+    await answer(page, childRead, 200, { unread_count: 0, unread_addressed: 0, read_cursor: 13, attention_count: 0 }); await settle(page);
+    assert.equal(await dot('rm_api'), false, 'Mark as read clears the dot');
+
+    // The other items: the settings and archive go to the app's room actions; a notification level and a mute are the room's preferences.
+    await page.click('[data-room-id=rm_api] > .room-item .room-item-name', { button: 'right' });
+    await pick('Room settings');
+    await page.click('[data-room-id=rm_api] > .room-item .room-item-name', { button: 'right' });
+    await pick('Archive room');
+    assert.deepEqual(await page.evaluate(() => window.__actions), [['settings', 'rm_api'], ['archive', 'rm_api']]);
+    await page.click('[data-room-id=rm_api] > .room-item .room-item-name', { button: 'right' });
+    await pick('Only mentions');
+    const level = await waitRequest(page, 'PATCH', '/api/rooms/rm_api/preferences');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, level), { notify: 'mentions' });
+    await answer(page, level, 200, { hidden: false, notify: 'mentions' }); await settle(page);
+    const mute = await page.evaluate(() => { const items = [...document.querySelectorAll('.context-menu [role^=menuitem]')]; return items.length; });
+    assert.equal(mute, 0, 'the menu closed with the choice');
+
+    // The open room: Mark unread holds it unread. Its bubble shows although it is open, no automatic mark goes out while it stays open, and leaving it
+    // lets it go (the next opening reads it as usual).
+    await page.evaluate(() => { window.__shown = { rm_ah: 90 }; window.__sidebar.setActive('rm_ah'); });
+    await settle(page);
+    assert.equal(await bubble('rm_ah'), '', 'the open room counts as read');
+    await page.click('[data-room-id=rm_ah] > .room-item .room-item-name', { button: 'right' });
+    assert.equal((await menu()).focused, 'Mark as read', 'it still holds an unread message on the server');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => { const room = window.__sidebar.rooms.get('rm_ah'); room.unread_count = 0; room.read_cursor = 90; window.__sidebar.render(); });
+    await page.click('[data-room-id=rm_ah] > .room-item .room-item-name', { button: 'right' });
+    await pick('Mark unread');
+    const held = await waitRequest(page, 'POST', '/api/rooms/rm_ah/unread');
+    await answer(page, held, 200, { unread_count: 1, unread_addressed: 0, read_cursor: 89, attention_count: 0 }); await settle(page);
+    assert.equal(await bubble('rm_ah'), '1', 'the open room marked unread shows its bubble');
+    const reads = () => count(page, 'POST', '/api/rooms/rm_ah/read');
+    const before = await reads();
+    await page.evaluate(() => { window.__shown = { rm_ah: 95 }; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_ah')); });
+    // The server's list now says what the mark unread left: one unread message in the home room.
+    await page.evaluate(() => { window.__auto['GET /api/projects/prj_a/rooms'] = window.__auto['GET /api/projects/prj_a/rooms'].map(item => (item.id === 'rm_ah' ? { ...item, unread_count: 1, read_cursor: 89 } : item)); return window.__sidebar.refreshProject('prj_a'); });
+    await settle(page);
+    assert.equal(await reads(), before, 'no automatic mark while the room is held unread');
+    await page.evaluate(() => window.__sidebar.setActive('rm_gen')); await settle(page);
+    assert.equal(await bubble('rm_ah'), '1', 'leaving the room keeps it unread');
+    await page.evaluate(() => { window.__sidebar.setActive('rm_ah'); window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_ah')); });
+    await waitRequest(page, 'POST', '/api/rooms/rm_ah/read');
+    assert.equal(await reads(), before + 1, 'opened again, the room is read as usual');
+
+    // A refused mark unread says so and lets the open room go.
+    await page.evaluate(() => { window.__sidebar.setActive('rm_dm'); });
+    await page.click('[data-room-id=rm_dm] > .room-item .room-item-name', { button: 'right' });
+    await pick('Mark');
+    const refused = await waitRequest(page, 'POST', (await page.evaluate(() => window.__requests[window.__requests.length - 1].path)));
+    await answer(page, refused, 500, { error: 'internal', message: 'nope' }); await settle(page);
+    assert.equal(await page.evaluate(() => window.__sidebar.held), '', 'a refused mark holds nothing');
+    await page.evaluate(() => document.querySelector('#app-dialog')?.close());
+
+    // The menu stays inside the viewport at the bottom right corner, and it is legible in every theme (text against the menu at 4.5:1 or more).
+    await page.setViewport({ width: 900, height: 500 }); await settle(page); // the resize closes an open menu: let it land first
+    await page.evaluate(() => { const row = document.querySelector('[data-room-id=rm_gen] > .room-item'); row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 895, clientY: 495, button: 2 })); });
+    const box = await page.$eval('.context-menu', node => { const rect = node.getBoundingClientRect(); return [rect.left, rect.top, rect.right, rect.bottom]; });
+    assert.ok(box[0] >= 8 && box[1] >= 8 && box[2] <= 892 && box[3] <= 492, `the menu is clamped into the viewport: ${box}`);
+    for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
+      const got = await page.evaluate(async theme => {
+        document.documentElement.dataset.theme = theme;
+        await new Promise(resolve => setTimeout(resolve, 300)); // buttons fade their colours over .15s
+        const lum = text => { const [r, g, b] = text.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+        const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+        const menu = getComputedStyle(document.querySelector('.context-menu')), item = document.querySelector('.context-menu-item');
+        item.focus();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const focused = getComputedStyle(item);
+        return { text: ratio(getComputedStyle(item).color, menu.backgroundColor), focus: focused.outlineStyle !== 'none' || focused.backgroundColor !== menu.backgroundColor, border: menu.borderTopWidth };
+      }, theme);
+      assert.ok(got.text >= 4.5, `${theme}: menu text contrast ${got.text.toFixed(2)}`);
+      assert.ok(got.focus, `${theme}: the focused item is marked`);
+      if (theme.startsWith('high-contrast')) assert.equal(got.border, '2px', `${theme}: the menu has a strong border`);
+    }
+    await page.keyboard.press('Escape');
+
+    // A long press on a touch screen opens the menu, and the click that ends the press neither opens the room nor reaches the row.
+    await page.evaluate(() => {
+      const row = document.querySelector('[data-room-id=rm_gen] > .room-item .room-item-name'), box = row.getBoundingClientRect();
+      row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', isPrimary: true, clientX: box.left + 5, clientY: box.top + 5 }));
+    });
+    await page.waitForSelector('.context-menu', { timeout: 2000 });
+    assert.equal((await menu()).label, 'general actions');
+    await page.evaluate(() => { const row = document.querySelector('[data-room-id=rm_gen] > .room-item .room-item-name'); row.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch', isPrimary: true })); row.click(); });
+    assert.deepEqual((await calls(page)).filter(call => call[1] === 'rm_gen'), [], 'the click that ends the long press opens nothing');
+    // A press that moves is a scroll, not a long press.
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => {
+      const row = document.querySelector('[data-room-id=rm_gen] > .room-item .room-item-name'), box = row.getBoundingClientRect();
+      row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', isPrimary: true, clientX: box.left + 5, clientY: box.top + 5 }));
+      row.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'touch', isPrimary: true, clientX: box.left + 5, clientY: box.top + 40 }));
+    });
+    await new Promise(resolve => setTimeout(resolve, 700));
+    assert.equal(await menu(), null, 'a moving press opens no menu');
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('sidebar page: ok');

@@ -825,7 +825,15 @@ a history window is shown do not mark the
 room read; returning to the latest view does. The open room is only ever marked
 read up to the newest message the chat has shown: if a window cannot load the
 messages that arrived while it was shown, it stays a window with them counted
-and the room stays unread until they are shown. Room settings → Notifications sets, per person and room, how the room notifies you: **Default** (the Inbox, and chat messages that address you), **All messages**, **Only mentions and replies to me** (the room's unread badge then counts only those) or **Nothing** (no sound or notification from the room, its Inbox items included; they still arrive in the Inbox), plus a mute for 1 hour, 8 hours or until tomorrow 08:00. A room that is quiet this way (Nothing, or a running mute) shows a disabled bell in the room list; the open room, in a focused tab, needs no alert. The settings are stored on the server with the rest of the person's view of the room (`PATCH /api/rooms/{room}/preferences`). Hide is a per-user button in Room settings (the rows carry none). Nothing is
+and the room stays unread until they are shown.
+Right-click a room row (or long-press it on a touch screen, or press the context-menu key or Shift+F10 on the focused row) for its menu: **Mark as
+read** when it holds something unread, else **Mark unread** (its newest message becomes unread again), then the room or project settings, a new task
+room, the notification level, a mute, Hide and, as the room settings allow, Archive, Reopen or Leave chat. A message has the same kind of menu with
+**Mark unread from here**: your own read position moves to just before that message, so it and everything after count as unread (the home room's
+bubble and a child room's mention dot follow), then the message's own actions (react, reply, the conversation, copy the text or the link, and the
+debug inspector while it is on). A link, an image or selected text keeps the browser's own menu. Marking the open room unread holds it unread: it is
+not marked read again while you stay in it, and is read as usual the next time you open it. Only your own position moves; nobody else's, and no
+agent's. Room settings → Notifications sets, per person and room, how the room notifies you: **Default** (the Inbox, and chat messages that address you), **All messages**, **Only mentions and replies to me** (the room's unread badge then counts only those) or **Nothing** (no sound or notification from the room, its Inbox items included; they still arrive in the Inbox), plus a mute for 1 hour, 8 hours or until tomorrow 08:00. A room that is quiet this way (Nothing, or a running mute) shows a disabled bell in the room list; the open room, in a focused tab, needs no alert. The settings are stored on the server with the rest of the person's view of the room (`PATCH /api/rooms/{room}/preferences`). Hide is a per-user button in Room settings (the rows carry none). Nothing is
 pinned. The sort button in the ROOMS header orders projects, and the rooms inside them, by name, by latest
 activity, or manually (drag a project by its ☰ handle; the whole row opens the project's home room; in the manual sort the rooms keep
 the order the server lists them); the choice and the manual order are personal preferences that follow the person across devices. The room list is

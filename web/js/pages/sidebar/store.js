@@ -30,6 +30,8 @@ export class SidebarStore {
     this.version = signal(0);
     this.shown = signal(false); this.collapsible = signal(new Set()); this.seenHealth = new Set();
     this.filter = signal(''); this.sort = signal(DEFAULT_SORT); this.manual = signal([]); this.active = signal('');
+    // The open room the person marked unread: it is not marked read again, and it shows its count, until they leave it or mark it read.
+    this.held = signal('');
     this.collapsedRooms = loadCollapsed(); this.seenRooms = loadSeen(); this.revealedFor = '';
     this.health = new Map(); this.joinable = []; this.agentChatProject = '';
     this.folds = new Map(); this.archiveFilter = new Map(); this.archiveHits = new Map();
@@ -73,7 +75,7 @@ export class SidebarStore {
   owns(generation) { return this.alive && generation === this.generation; }
 
   reset() {
-    this.reads.reset();
+    this.reads.reset(); this.readQueue?.clear();
     this.generation++;
     clearTimeout(this.muteTimer);
     for (const timer of this.refreshTimers.values()) clearTimeout(timer);
@@ -85,7 +87,7 @@ export class SidebarStore {
     for (const cache of [this.projects, this.rooms, this.health, this.folds, this.archiveFilter, this.archiveHits, this.archiveTimers, this.archiveRequests, this.listSeqs]) cache.clear();
     this.joinable = []; this.agentChatProject = ''; this.chatSeq = null; this.loadedUser = null; this.dragging = null;
     this.holdFolds = true; this.pending.clear(); this.expected = []; this.revealedFor = '';
-    batch(() => { this.active.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
+    batch(() => { this.active.value = ''; this.held.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
   }
 
   // Every call and read of the list goes through here: a destroyed list sends nothing, and a reset aborts what is out.
@@ -124,12 +126,12 @@ export class SidebarStore {
   isAgentChatProject(id) { return !!id && (id === AGENT_CHAT_PROJECT || id === this.agentChatProject); }
 
   // The chats between agents the person has joined, and the ones they could join. A room that is no longer listed (left, or taken away) leaves.
-  applyAgentChats(data) {
+  applyAgentChats(data, mark = true) {
     if (!data?.project_id) return;
     this.agentChatProject = data.project_id;
     const listed = new Set((data.rooms || []).map(room => room.id));
     for (const [id, room] of [...this.rooms]) if (room.project_id === data.project_id && !listed.has(id)) this.rooms.delete(id);
-    for (const room of data.rooms || []) { const kept = this.keep(room); if (room.id === this.active.peek() && !this.holdRead?.(room.id)) this.markSeen(kept); }
+    for (const room of data.rooms || []) { const kept = this.keep(room); if (mark && room.id === this.active.peek() && !this.holdRead?.(room.id)) this.markSeen(kept); }
     this.joinable = data.joinable || [];
   }
 
@@ -198,22 +200,24 @@ export class SidebarStore {
     return list;
   }
 
-  async refreshAgentChats() {
+  async refreshAgentChats({ mark = true } = {}) {
     const generation = this.generation, ticket = this.chatTicket();
     let data;
     try { data = await this.roomRequest('/api/agent-dms'); } catch (error) { if (!this.owns(generation)) return; throw error; }
     if (!this.owns(generation) || !this.chatCurrent(ticket)) return;
-    this.applyAgentChats(data); this.touch();
+    this.applyAgentChats(data, mark); this.touch();
   }
 
-  async refreshProject(id) {
-    if (this.isAgentChatProject(id)) return this.refreshAgentChats();
+  // `mark: false` reads the list without marking the open room read: the refresh that follows the person's own read position moving (another tab
+  // or device marked a room read or unread) must not undo a mark unread made there by reading the room here at once.
+  async refreshProject(id, { mark = true } = {}) {
+    if (this.isAgentChatProject(id)) return this.refreshAgentChats({ mark });
     const generation = this.generation, ticket = this.listTicket(id);
     let list;
     try { list = await this.roomRequest(`/api/projects/${id}/rooms`); } catch (error) { if (!this.owns(generation)) return; throw error; }
     if (!this.listCurrent(id, ticket)) return;
     this.dropUnlisted(id, list);
-    for (const room of list) { const kept = this.keep(room); if (room.id === this.active.peek() && !this.holdRead?.(room.id)) this.markSeen(kept); }
+    for (const room of list) { const kept = this.keep(room); if (mark && room.id === this.active.peek() && !this.holdRead?.(room.id)) this.markSeen(kept); }
     this.touch();
   }
 
@@ -242,7 +246,8 @@ export class SidebarStore {
   }
 
   // Selecting does not mark read by itself: the chat marks the room once it has rendered the latest page (Chat.open).
-  setActive(id) { this.holdFolds = false; batch(() => { this.shown.value = true; this.active.value = id; }); }
+  // Leaving a room the person marked unread lets it go: it stays unread, and is read as usual when it is opened again.
+  setActive(id) { this.holdFolds = false; batch(() => { this.shown.value = true; this.active.value = id; if (this.held.peek() !== id) this.held.value = ''; }); }
 
   // The app opened no room (none to restore): the projects may fold now.
   releaseFolds() { if (!this.holdFolds) return; this.holdFolds = false; this.version.value++; }
@@ -252,7 +257,7 @@ export class SidebarStore {
   // Read position lives on the server so every device shares it. Only the open room is marked read, and only up to the newest message its chat has
   // rendered (shownSeq), so no path can move the cursor past what the reader saw. The unread count left after the mark comes back from the server.
   markSeen(room) {
-    if (!room || !this.alive) return;
+    if (!room || !this.alive || this.held.peek() === room.id) return;
     const seq = this.shownSeq ? this.shownSeq(room.id) : 0;
     // A room set to mentions only has nothing to count for most of what it shows, yet it is read all the same: the position moves on.
     if (!this.unreadCount(room) && !room.attention_count && !(room.notify === 'mentions' && seq > (room.read_cursor || 0))) return;
@@ -265,6 +270,46 @@ export class SidebarStore {
       if (Number.isInteger(state?.attention_count)) room.attention_count = state.attention_count;
       this.touch();
     });
+  }
+
+  // The counts the server answered for a read position, written into the record the list holds for the room now.
+  applyReadState(roomID, state) {
+    const room = this.rooms.get(roomID);
+    if (!room || !state) return;
+    for (const field of ['unread_count', 'unread_addressed', 'read_cursor', 'attention_count']) if (Number.isInteger(state[field])) room[field] = state[field];
+    this.touch();
+  }
+
+  // Mark as read and Mark unread, from a row's or a message's menu. Each waits for the automatic marks already on their way for the room (and for
+  // the previous one of these), so the server applies them in the order the person made them. Mark as read reads up to the newest message. Mark
+  // unread moves the person's own cursor back to just before message `seq` (the newest message when 0); in the open room it also holds the room
+  // unread until the person leaves it (`held`), and a refused mark lets the room go again.
+  markRead(room) { return this.moveRead(room, 'read', 0); }
+  markUnread(room, seq = 0) { return this.moveRead(room, 'unread', seq); }
+  moveRead(room, kind, seq) {
+    if (!room || !this.alive) return Promise.resolve(false);
+    const generation = this.generation, id = room.id;
+    if (kind === 'unread' && this.active.peek() === id) this.held.value = id;
+    if (kind === 'read' && this.held.peek() === id) this.held.value = '';
+    this.readQueue ||= new Map();
+    const run = async () => {
+      await this.reads.idle(id);
+      if (!this.owns(generation)) return false;
+      try {
+        const state = await this.roomRequest(`/api/rooms/${id}/${kind}`, { method: 'POST', body: seq > 0 ? { seq } : {} });
+        if (!this.owns(generation)) return false;
+        this.applyReadState(id, state);
+        return true;
+      } catch (error) {
+        if (!this.owns(generation)) return false;
+        if (kind === 'unread' && this.held.peek() === id) this.held.value = '';
+        void noticeDialog(error.message, { title: kind === 'read' ? 'Could not mark the room read' : 'Could not mark the room unread' });
+        return false;
+      }
+    };
+    const next = (this.readQueue.get(id) || Promise.resolve()).then(run, run);
+    this.readQueue.set(id, next);
+    return next;
   }
 
   async setPreference(room, field, value) {

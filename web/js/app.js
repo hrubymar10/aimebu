@@ -103,6 +103,14 @@ setProjectNames(projectID => sidebar.projects.get(projectID)?.name || '');
 sidebar.holdRead = id => chat.room?.id === id && (chat.contextMode || chat.catchingUp);
 sidebar.shownSeq = id => chat.room?.id === id ? chat.newestShownSeq() : 0;
 chat.onLatest = room => { if (sidebar.active === room.id) sidebar.markSeen(sidebar.rooms.get(room.id)); };
+// Mark unread from here, from a message's menu: the person's own read position moves to just before the message (the room list holds the open room unread).
+chat.markUnreadFrom = (room, seq) => sidebar.markUnread(sidebar.rooms.get(room.id) || room, seq);
+// The room row menu's settings, archive and leave are the room settings' own: the room is opened first when it is not the open one.
+const throughRoom = action => async room => {
+  if (chat.room?.id !== room.id && !(await selectByPerson(sidebar.rooms.get(room.id) || room))) return;
+  if (chat.room?.id === room.id) await action();
+};
+sidebar.roomActions = { settings: throughRoom(() => chat.showRoomInfo()), archive: throughRoom(() => chat.changeRoomLifecycle('archive')), leave: throughRoom(() => chat.leaveChat()) };
 // A room that was open here is closed: no chat or project content, and no room in the address.
 function closeOpenRoom() {
   chat.reset(); teamFlowHome.reset(); knowledge.setRoom(null); handbook.setRoom(null);
@@ -596,7 +604,10 @@ async function signedIn(session) {
       if (event.kind === 'snapshot_required') { await resync(generation); return; }
       let payload = {}; try { payload = JSON.parse(event.payload_json); } catch {}
       if (event.kind === 'project_created' || event.kind === 'project_updated' || event.kind === 'project_archived' || event.kind === 'project_reopened') { const projects = await request('/api/projects'); if (!active()) return; const project = projects.find(p => p.id === event.project_id); if (project) { await sidebar.addProject(project); if (!active()) return; refreshEmptyState(); const open = chat.room && sidebar.rooms.get(chat.room.id); if (open && open.project_id === event.project_id && event.kind !== 'project_created') { chat.title.textContent = open.title; chat.setRoomFacts(open); teamFlowHome.refreshIfProject(event.project_id); } if (event.kind === 'project_updated' && settings.project.store.projectID.peek() === event.project_id) void settings.project.store.flow.load(event.project_id); } }
-      else if ((event.kind === 'room_preference_changed' || event.kind === 'room_read_changed') && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id);
+      // The person's own read position moved (a mark here, or in another tab or device): read the counts, without marking the open room read
+      // again, which would undo a Mark unread made elsewhere.
+      else if (event.kind === 'room_read_changed' && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id, { mark: false });
+      else if (event.kind === 'room_preference_changed' && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id);
       else if (event.kind === 'room_removed') await roomRemoved(event.project_id, payload.room_id);
       else if (event.kind === 'project_removed') await projectRemoved(payload.project_id);
       else if (event.kind === 'room_created' || ['room_renamed', 'room_closing', 'room_closed', 'room_reopened', 'room_close_blocked'].includes(event.kind)) {
