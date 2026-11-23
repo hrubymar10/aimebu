@@ -230,3 +230,76 @@ func TestMigrationNinetySixBackfillsSeenFromEvents(t *testing.T) {
 		t.Fatalf("a skip meant for the agent was backfilled: seen %d, blocked message %d, %v", seen, blocked.Seq, err)
 	}
 }
+
+// Mark unread moves the person's own cursor back to just before the message named, so it and everything after count again (the mention part
+// too); it never moves a cursor forward, never touches another person's cursor, and leaves the Inbox's seen state alone.
+func TestMarkRoomUnreadMovesOnlyTheOwnCursorBack(t *testing.T) {
+	t.Parallel()
+	s, room, ctx := notifyFixture(t)
+	var seqs []int64
+	for _, body := range []string{"first", "@one look", "third"} {
+		message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "two", Body: body})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seqs = append(seqs, message.Seq)
+	}
+	for _, user := range []string{"one", "two"} {
+		if _, err := s.MarkRoomRead(ctx, user, room.ID, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events := func() int {
+		t.Helper()
+		var n int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='room_read_changed' AND room_id=?`, room.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	emitted := events()
+	state, err := s.MarkRoomUnread(ctx, "one", room.ID, seqs[1])
+	if err != nil || state.ReadCursor != seqs[1]-1 || state.UnreadCount != 2 || state.UnreadAddressed != 1 {
+		t.Fatalf("unread from the mention: %+v, %v", state, err)
+	}
+	if view := notifyView(t, s, ctx, room, "one"); view.ReadCursor != seqs[1]-1 || view.UnreadCount != 2 || view.UnreadAddressed != 1 {
+		t.Fatalf("the room list after mark unread: cursor=%d unread=%d addressed=%d", view.ReadCursor, view.UnreadCount, view.UnreadAddressed)
+	}
+	if view := notifyView(t, s, ctx, room, "two"); view.ReadCursor != seqs[2] || view.UnreadCount != 0 {
+		t.Fatalf("another person's cursor moved: cursor=%d unread=%d", view.ReadCursor, view.UnreadCount)
+	}
+	if got := events(); got != emitted+1 {
+		t.Fatalf("room_read_changed events = %d, want %d", got, emitted+1)
+	}
+	// A later message named while the cursor is already before it: nothing moves forward, nothing is emitted.
+	if state, err := s.MarkRoomUnread(ctx, "one", room.ID, seqs[2]); err != nil || state.ReadCursor != seqs[1]-1 || state.UnreadCount != 2 {
+		t.Fatalf("unread from a later message moved the cursor: %+v, %v", state, err)
+	}
+	if got := events(); got != emitted+1 {
+		t.Fatalf("a no-op mark unread emitted an event: %d", got)
+	}
+	// No seq (or one past the newest) marks the newest message unread.
+	if _, err := s.MarkRoomRead(ctx, "one", room.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, seq := range []int64{0, seqs[2] + 1000} {
+		if _, err := s.MarkRoomRead(ctx, "one", room.ID, 0); err != nil {
+			t.Fatal(err)
+		}
+		if state, err := s.MarkRoomUnread(ctx, "one", room.ID, seq); err != nil || state.ReadCursor != seqs[2]-1 || state.UnreadCount != 1 {
+			t.Fatalf("unread with seq %d: %+v, %v", seq, state, err)
+		}
+	}
+	// A person with no cursor has read nothing: there is nothing to move back.
+	if _, err := s.db.Exec(`DELETE FROM room_read_cursor WHERE user_id='one'`); err != nil {
+		t.Fatal(err)
+	}
+	all := notifyView(t, s, ctx, room, "one").UnreadCount
+	if state, err := s.MarkRoomUnread(ctx, "one", room.ID, seqs[0]); err != nil || state.ReadCursor != 0 || state.UnreadCount != all {
+		t.Fatalf("unread with no cursor: %+v, %v", state, err)
+	}
+	// Someone who cannot reach the room is refused.
+	if _, err := s.MarkRoomUnread(ctx, "nobody", room.ID, 0); err == nil {
+		t.Fatal("a stranger marked the room unread")
+	}
+}

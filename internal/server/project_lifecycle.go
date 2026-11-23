@@ -10,7 +10,7 @@ import (
 )
 
 // An archived project is read-only: every change a person makes to it, its rooms, its agents and its Inbox is refused with 409
-// project_archived, whatever the route. These are the few changes that stay possible (reopening and deleting it, reading a room, a
+// project_archived, whatever the route. These are the few changes that stay possible (reopening and deleting it, reading a room or marking it unread, a
 // person's own notification preference, leaving a chat between agents, stopping or pausing an agent, resolving a recovery or a failed delivery, and taking a worktree
 // away so that the project can be deleted). Starting an agent is refused inside the store; a recovery decision there can only abandon,
 // and ends with the agent stopped.
@@ -28,7 +28,7 @@ func archivedAllows(method, path string) bool {
 		// What resolves a problem that was already there (a recovery decision, a failed delivery) is how a stuck agent is freed so the
 		// project can be deleted; the closed gate keeps anything from running meanwhile.
 		return true
-	case len(parts) == 4 && parts[1] == "rooms" && ((parts[3] == "read" && method == http.MethodPost) || (parts[3] == "leave" && method == http.MethodPost) || (parts[3] == "preferences" && method == http.MethodPatch) || (parts[3] == "worktree" && method == http.MethodDelete)):
+	case len(parts) == 4 && parts[1] == "rooms" && (((parts[3] == "read" || parts[3] == "unread") && method == http.MethodPost) || (parts[3] == "leave" && method == http.MethodPost) || (parts[3] == "preferences" && method == http.MethodPatch) || (parts[3] == "worktree" && method == http.MethodDelete)):
 		return true
 	}
 	return false

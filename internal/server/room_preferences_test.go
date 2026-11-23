@@ -148,6 +148,35 @@ func TestRoomReadCursorIsServerSideAndMonotonic(t *testing.T) {
 	if resp.StatusCode != 400 {
 		t.Fatalf("negative seq status=%d", resp.StatusCode)
 	}
+	// Mark unread moves only the caller's own cursor back, to just before the message named.
+	unread := func(body any) store.ReadState {
+		t.Helper()
+		resp := f.request(http.MethodPost, "/api/rooms/"+f.room.ID+"/unread", body, true)
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("unread status=%d", resp.StatusCode)
+		}
+		var state store.ReadState
+		if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	before := room(secondCookie)
+	if state := unread(map[string]int64{"seq": 1001}); state.ReadCursor != 1000 || state.UnreadCount != 3 {
+		t.Fatalf("unread from 1001: %+v", state)
+	}
+	if r := room(f.cookie); r.ReadCursor != 1000 || r.UnreadCount != 3 {
+		t.Fatalf("room after unread: %+v", r)
+	}
+	if r := room(secondCookie); r.ReadCursor != before.ReadCursor || r.UnreadCount != before.UnreadCount {
+		t.Fatalf("unread moved another user's cursor: %+v, was %+v", r, before)
+	}
+	resp = f.request(http.MethodPost, "/api/rooms/"+f.room.ID+"/unread", map[string]int64{"seq": -1}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("negative unread seq status=%d", resp.StatusCode)
+	}
 }
 
 func TestRoomReadReceiptsListHumansAndAgents(t *testing.T) {

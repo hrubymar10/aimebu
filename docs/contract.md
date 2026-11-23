@@ -798,7 +798,10 @@ Inbox, usage, events, settings
   setting (primary key user_id + room_id); `notify` and `muted_until` (an
   instant in the future) arrive in migration 73; `pinned` was dropped.
 - **room_read_cursor**(user_id, room_id, last_read_seq) — how far a person has
-  read a room (migration 43).
+  read a room (migration 43). Reading moves it forward only; the person's own
+  "mark unread" (`POST /api/rooms/{room}/unread`) is the one way it moves back,
+  to just before a message, and never touches another person's cursor or an
+  agent's seen marker.
 - **agent_room_seen**(room_id, agent_id, seq) — the newest message of a room
   the router handed an agent with nothing for it to do (not addressed to it,
   system chatter, or an unaddressed message for the worker while it is the
@@ -1193,7 +1196,7 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
 - Read-only: while `archived_at` is set the server refuses, with `409
   project_archived`, every change a person makes through a project, room,
   agent, inbox or message route (`POST|PUT|PATCH|DELETE`), except reopening,
-  deleting, archiving again, marking a room read, a person's own room
+  deleting, archiving again, marking a room read or unread, a person's own room
   notification preference, resolving a recovery decision or a failed delivery
   (`POST /api/inbox/{item}/decision|dismiss`), stopping or pausing one agent
   (`POST /api/agents/{id}/control`, whose `active` is refused inside the store),

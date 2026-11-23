@@ -64,23 +64,67 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 				return err
 			}
 		}
-		// A room set to mentions only counts the messages that address this person, as the room list does.
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?
-			AND (COALESCE((SELECT notify FROM room_view_preference WHERE user_id=? AND room_id=?),'default')<>'mentions'
-				OR EXISTS (SELECT 1 FROM json_each(message.targets_json) WHERE value=?))`,
-			roomID, state.ReadCursor, userID, roomID, userID).Scan(&state.UnreadCount); err != nil {
-			return err
-		}
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?
-			AND EXISTS (SELECT 1 FROM json_each(message.targets_json) WHERE value=?)`,
-			roomID, state.ReadCursor, userID).Scan(&state.UnreadAddressed); err != nil {
-			return err
-		}
-		return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) `+inboxFromSQL+` `+inboxCountWhereSQL+`
-			AND i.room_id=? AND NOT EXISTS (SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)`,
-			userID, userID, roomID, userID).Scan(&state.AttentionCount)
+		return tx.readCounts(userID, roomID, &state)
 	})
 	return state, err
+}
+
+// MarkRoomUnread moves the user's own read cursor back to just before the
+// message with seq (the room's newest message when seq is 0 or above the
+// newest), so that message and everything after it count as unread again.
+// It only ever moves the cursor backwards: a cursor already before seq stays
+// where it is, so marking unread never marks anything read. Other people's
+// cursors, agents' seen markers and the Inbox's seen state are left alone. A
+// change emits room_read_changed for the user's other sessions.
+func (s *Store) MarkRoomUnread(ctx context.Context, userID, roomID string, seq int64) (ReadState, error) {
+	if err := s.UserRoomAccess(ctx, userID, roomID); err != nil {
+		return ReadState{}, err
+	}
+	var state ReadState
+	err := s.Tx(ctx, func(tx *Tx) error {
+		var projectID string
+		var newest int64
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,COALESCE((SELECT MAX(seq) FROM message WHERE room_id=room.id),0) FROM room WHERE id=?`, roomID).Scan(&projectID, &newest); err != nil {
+			return err
+		}
+		if seq <= 0 || seq > newest {
+			seq = newest
+		}
+		var current int64
+		_ = tx.tx.QueryRowContext(tx.ctx, `SELECT last_read_seq FROM room_read_cursor WHERE user_id=? AND room_id=?`, userID, roomID).Scan(&current)
+		state.ReadCursor = current
+		if seq > 0 && seq-1 < current {
+			if _, err := tx.Exec(`UPDATE room_read_cursor SET last_read_seq=? WHERE user_id=? AND room_id=?`, seq-1, userID, roomID); err != nil {
+				return err
+			}
+			state.ReadCursor = seq - 1
+			if _, err := tx.AppendEvent(Event{Kind: "room_read_changed", ProjectID: projectID, RoomID: roomID,
+				PayloadJSON: payloadJSON(map[string]string{"user_id": userID})}); err != nil {
+				return err
+			}
+		}
+		return tx.readCounts(userID, roomID, &state)
+	})
+	return state, err
+}
+
+// readCounts fills the unread and attention counts of state from its ReadCursor.
+func (tx *Tx) readCounts(userID, roomID string, state *ReadState) error {
+	// A room set to mentions only counts the messages that address this person, as the room list does.
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?
+		AND (COALESCE((SELECT notify FROM room_view_preference WHERE user_id=? AND room_id=?),'default')<>'mentions'
+		OR EXISTS (SELECT 1 FROM json_each(message.targets_json) WHERE value=?))`,
+		roomID, state.ReadCursor, userID, roomID, userID).Scan(&state.UnreadCount); err != nil {
+		return err
+	}
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?
+		AND EXISTS (SELECT 1 FROM json_each(message.targets_json) WHERE value=?)`,
+		roomID, state.ReadCursor, userID).Scan(&state.UnreadAddressed); err != nil {
+		return err
+	}
+	return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) `+inboxFromSQL+` `+inboxCountWhereSQL+`
+		AND i.room_id=? AND NOT EXISTS (SELECT 1 FROM inbox_item_seen seen WHERE seen.item_id=i.id AND seen.user_id=?)`,
+		userID, userID, roomID, userID).Scan(&state.AttentionCount)
 }
 
 // openAttentionByRoom counts every open inbox entry the user can see per room, seen or not: a room still waits for a person while an

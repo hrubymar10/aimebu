@@ -60,6 +60,30 @@ func (s *Server) roomRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, state)
 }
 
+// roomUnread moves the caller's own read cursor back to just before message seq ("mark unread from here").
+func (s *Server) roomUnread(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomAccess(w, r, r.PathValue("room"))
+	if !ok {
+		return
+	}
+	var body struct {
+		Seq int64 `json:"seq"`
+	}
+	if r.ContentLength != 0 && !readJSON(w, r, &body) {
+		return
+	}
+	if body.Seq < 0 {
+		apiError(w, 400, "invalid_request", "seq must not be negative")
+		return
+	}
+	state, err := s.Store.MarkRoomUnread(r.Context(), userID(r), room.ID, body.Seq)
+	if err != nil {
+		userError(w, err)
+		return
+	}
+	writeJSON(w, 200, state)
+}
+
 // roomReadReceipts reports where each member's read position lands.
 func (s *Server) roomReadReceipts(w http.ResponseWriter, r *http.Request) {
 	room, ok := s.roomAccess(w, r, r.PathValue("room"))

@@ -343,6 +343,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PATCH /api/rooms/{room}", s.Auth.RequireUser(http.HandlerFunc(s.roomRename)))
 	mux.Handle("PATCH /api/rooms/{room}/preferences", s.Auth.RequireUser(http.HandlerFunc(s.roomPreferences)))
 	mux.Handle("POST /api/rooms/{room}/read", s.Auth.RequireUser(http.HandlerFunc(s.roomRead)))
+	mux.Handle("POST /api/rooms/{room}/unread", s.Auth.RequireUser(http.HandlerFunc(s.roomUnread)))
 	mux.Handle("GET /api/rooms/{room}/read-receipts", s.Auth.RequireUser(http.HandlerFunc(s.roomReadReceipts)))
 	mux.Handle("PUT /api/rooms/{room}/memory-enabled", s.Auth.RequireUser(http.HandlerFunc(s.roomMemoryEnabled)))
 	mux.Handle("POST /api/rooms/{room}/close", s.Auth.RequireUser(http.HandlerFunc(s.closeRoom)))

@@ -243,6 +243,11 @@ func TestProjectArchiveReopenAndDelete(t *testing.T) {
 	if resp.StatusCode == 409 {
 		t.Errorf("marking a room read was refused")
 	}
+	resp = f.request("POST", "/api/rooms/"+f.room.ID+"/unread", map[string]any{}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("marking a room unread in an archived project: %d", resp.StatusCode)
+	}
 	// Archiving again changes nothing.
 	resp = archive("/archive")
 	resp.Body.Close()
