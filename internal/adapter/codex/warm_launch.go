@@ -163,6 +163,12 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	cmd := exec.CommandContext(ctx, l.command, l.args...)
 	cmd.Dir, cmd.Env = l.dir, l.env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var container *adapter.ContainerIdentity
+	if l.containerized && spec.LauncherReportsContainer {
+		// Asked of the process only, not of the fingerprint: what the launcher prints about itself changes nothing the harness is started with.
+		container = &adapter.ContainerIdentity{}
+		cmd.Env = append(cmd.Env[:len(cmd.Env):len(cmd.Env)], adapter.DockerReportExecIDEnv+"=1")
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -180,6 +186,7 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	}
 	w := newWarmSession(cmd, stdin, l.fingerprint(), l.runtimeDir, l.visibleCheckout, l.authPath,
 		l.containerized, adapter.JoinWriters(spec.StderrSink, a.stderrCapture), a.stdoutCapture)
+	w.container = container
 	go w.read(stdout, stderr)
 	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

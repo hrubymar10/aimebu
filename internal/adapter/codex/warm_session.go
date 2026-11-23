@@ -29,6 +29,7 @@ type codexWarmSession struct {
 	fp, runtimeDir, cwd, authPath string
 	initialAuth                   codexWarmAuth
 	containerized                 bool
+	container                     *adapter.ContainerIdentity // which container the launcher started the process in (nil: it was not asked)
 	capture, stdoutCapture        io.Writer
 	exited                        chan struct{}
 	reap                          adapter.Reaper
@@ -80,6 +81,9 @@ func newWarmSession(cmd *exec.Cmd, stdin io.WriteCloser, fp, runtimeDir, cwd, au
 		cwd: cwd, containerized: containerized, capture: capture, stdoutCapture: stdoutCapture,
 		exited: make(chan struct{}), pending: make(map[int64]chan rpcReply)}
 }
+
+// Container implements adapter.ContainerSession: the container the launcher said it started the process in.
+func (w *codexWarmSession) Container() (id string, neverStarted bool) { return w.container.Container() }
 
 func (w *codexWarmSession) Fingerprint() string     { return w.fp }
 func (w *codexWarmSession) Exited() <-chan struct{} { return w.exited }
@@ -158,7 +162,9 @@ func (w *codexWarmSession) read(stdout, stderr io.Reader) {
 		output = io.MultiWriter(&w.tail, warmCaptureWriter{w})
 	}
 	stderrDone := make(chan struct{})
-	go func() { _, _ = io.Copy(output, stderr); close(stderrDone) }()
+	// The launcher's exec ID line is the identity's, not the harness's output; the filter is closed before the session counts as exited.
+	filtered := w.container.Filter(output)
+	go func() { _, _ = io.Copy(filtered, stderr); _ = filtered.Close(); close(stderrDone) }()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for scanner.Scan() {

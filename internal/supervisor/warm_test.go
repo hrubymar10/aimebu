@@ -85,6 +85,13 @@ type warmFake struct {
 	cumulativeUsage bool
 	// compactedPing emits a compaction event inside every ping's turn, so a test can see the report carry it.
 	compactedPing bool
+	// failStderr is what a failing turn's process wrote; coldFailures makes that many cold starts fail before one answers.
+	failStderr   string
+	coldFailures int
+	// container is the container ID the next warm sessions say their launcher started them in; neverStartedNext makes the next one's
+	// launcher end without having started anything in a container.
+	container        string
+	neverStartedNext bool
 }
 
 func (f *warmFake) Catalog() []adapter.CatalogEntry { return nil }
@@ -96,6 +103,11 @@ func (f *warmFake) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tu
 	f.cold++
 	f.coldSpecs = append(f.coldSpecs, spec)
 	block, fail, summary := f.coldBlock, f.coldFail, f.coldErrorSummary
+	stderr := f.failStderr
+	if f.coldFailures > 0 {
+		f.coldFailures--
+		fail = true
+	}
 	f.mu.Unlock()
 	if block != nil {
 		hold := newHoldTurn(block)
@@ -109,6 +121,9 @@ func (f *warmFake) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tu
 	}
 	turn := newFakeTurn(!fail, f.cumulativeUsage)
 	turn.exit.ErrorSummary = summary
+	if fail {
+		turn.exit.StderrTail = stderr
+	}
 	return turn, nil
 }
 
@@ -134,6 +149,8 @@ func (f *warmFake) StartWarm(_ context.Context, spec adapter.TurnSpec) (adapter.
 	f.lastSpec = spec
 	fp, _ := f.WarmFingerprint(spec)
 	s := &warmFakeSession{f: f, fp: fp, pid: 1000 + f.nextPid, exited: make(chan struct{}), key: spec.AgentTools}
+	s.container, s.neverStarted = f.container, f.neverStartedNext
+	f.neverStartedNext = false
 	f.sessions = append(f.sessions, s)
 	return s, nil
 }
@@ -160,6 +177,16 @@ type warmFakeSession struct {
 	onKill func()
 	// kills counts Kill calls, what a backoff test looks at.
 	kills atomic.Int32
+	// container and neverStarted are what the session says of its launcher's container (adapter.ContainerSession); "" and false: nothing.
+	container    string
+	neverStarted bool
+}
+
+// Container implements adapter.ContainerSession. A launcher that started nothing is only known as such once it has ended.
+func (s *warmFakeSession) Container() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.container, s.neverStarted && s.ended
 }
 
 func (s *warmFakeSession) Fingerprint() string     { return s.fp }
@@ -251,7 +278,9 @@ func (s *warmFakeSession) Run(adapter.TurnSpec) (adapter.Turn, error) {
 	s.f.mu.Unlock()
 	if mode == "fail" {
 		s.end()
-		return newFakeTurn(false, s.f.cumulativeUsage), nil
+		turn := newFakeTurn(false, s.f.cumulativeUsage)
+		turn.exit.StderrTail = s.f.failStderr
+		return turn, nil
 	}
 	if s.f.runHold {
 		turn := &sessionHeldTurn{events: make(chan adapter.Event, 2)}
@@ -331,6 +360,8 @@ type warmHarness struct {
 	cred   credentials
 	errs   []error
 	ka     *protocol.KeepAliveSettings // the keep-alive setting a delivery carries (nil: none)
+	// restartable runs a turn the way a delivery to a container does: with the means to start it again (see containerRestart).
+	restartable bool
 }
 
 type fakeTimer struct {
@@ -406,7 +437,11 @@ func (h *warmHarness) run(agent string, mutate func(*adapter.TurnSpec)) adapter.
 	h.c.mu.Lock()
 	h.c.running[agent] = turn
 	h.c.mu.Unlock()
-	h.c.runTurn(ctx, protocol.Delivery{AgentID: agent, TurnID: id, Generation: 1, DesiredRev: 1, Mode: spec.Mode, Agent: spec.Agent, CheckoutPath: spec.CheckoutPath}, turn)
+	var restart func() (adapter.Turn, error)
+	if h.restartable {
+		restart = func() (adapter.Turn, error) { return h.c.startTurn(ctx, spec, nil, h.cred) }
+	}
+	h.c.runTurnRestartable(ctx, protocol.Delivery{AgentID: agent, TurnID: id, Generation: 1, DesiredRev: 1, Mode: spec.Mode, Agent: spec.Agent, CheckoutPath: spec.CheckoutPath}, turn, restart)
 	return turn
 }
 

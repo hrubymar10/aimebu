@@ -73,6 +73,9 @@ type TurnSpec struct {
 	LauncherArgs          []string
 	LauncherEnvRefs       map[string]string
 	LauncherContainerized bool
+	// LauncherReportsContainer says the Docker launcher has turn_activity: asked to, it prints the ID of the container it starts the harness
+	// in before it does. A warm process is then started with that request, and its session is an adapter.ContainerSession that knows the ID.
+	LauncherReportsContainer bool
 	// LauncherCodexHome is the running Docker container's CODEX_HOME, reported
 	// by the cached launcher feature probe. Empty means warm Codex is unsafe.
 	LauncherCodexHome   string

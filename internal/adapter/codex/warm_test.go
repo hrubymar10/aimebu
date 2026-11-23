@@ -409,3 +409,42 @@ func TestWarmResumedThreadCountsEveryUsageUpdate(t *testing.T) {
 		t.Fatalf("resumed turn usage from two updates = input %d output %d", input, output)
 	}
 }
+
+// A warm Codex process in a container whose launcher can say so is asked which container it starts the harness in, and its session knows the
+// ID; the launcher's line is not part of what starts the process, so the fingerprint is the same either way.
+func TestWarmAppServerKnowsItsContainer(t *testing.T) {
+	const container = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	helper := warmHelperScript(t, "stale")
+	launcher := filepath.Join(t.TempDir(), "codex-docker")
+	body := "#!/bin/sh\nif [ \"$HARNESS_DOCKER_REPORT_EXEC_ID\" = 1 ]; then echo 'HARNESS_DOCKER_EXEC_ID=" + container + ":7-8-9' >&2; fi\nexec " + strconv.Quote(helper) + " \"$@\"\n"
+	if err := testenv.WriteExecutable(launcher, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a, spec := warmSpec(t, launcher)
+	spec.LauncherContainerized = true
+	plain, err := a.WarmFingerprint(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := a.StartWarm(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(2 * time.Second)
+	if id, never := w.(adapter.ContainerSession).Container(); id != "" || never {
+		t.Fatalf("a launcher that was not asked: id %q never started %t", id, never)
+	}
+	spec.LauncherReportsContainer = true
+	if asked, err := a.WarmFingerprint(spec); err != nil || asked != plain {
+		t.Fatalf("asking the launcher for its container changed the fingerprint: %v", err)
+	}
+	w, err = a.StartWarm(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(2 * time.Second)
+	// The line comes before the handshake the start waited for.
+	if id, never := w.(adapter.ContainerSession).Container(); id != container || never {
+		t.Fatalf("id %q never started %t", id, never)
+	}
+}

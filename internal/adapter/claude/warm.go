@@ -75,6 +75,13 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 		return nil, err
 	}
 	cmd := l.command(ctx)
+	containerized := a.variant() == "docker" || spec.LauncherContainerized
+	var container *adapter.ContainerIdentity
+	if containerized && spec.LauncherReportsContainer {
+		// Asked of the process only, not of the fingerprint: what the launcher prints about itself changes nothing the harness is started with.
+		container = &adapter.ContainerIdentity{}
+		cmd.Env = append(cmd.Env[:len(cmd.Env):len(cmd.Env)], adapter.DockerReportExecIDEnv+"=1")
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -90,7 +97,7 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	w := &warmSession{fp: l.fingerprint(), cmd: cmd, stdin: stdin, exited: make(chan struct{}), capture: adapter.JoinWriters(spec.StderrSink, a.stderrCapture), containerized: a.variant() == "docker" || spec.LauncherContainerized, onBackground: spec.OnBackgroundResult}
+	w := &warmSession{fp: l.fingerprint(), cmd: cmd, stdin: stdin, exited: make(chan struct{}), capture: adapter.JoinWriters(spec.StderrSink, a.stderrCapture), containerized: containerized, container: container, onBackground: spec.OnBackgroundResult}
 	w.lastOutput.Store(time.Now().UnixNano())
 	go w.run(stdout, stderr)
 	return w, nil
@@ -119,6 +126,8 @@ type warmSession struct {
 	termSent      bool // it was asked to terminate (after its input was closed)
 	exitCode      int
 	containerized bool
+	// container is which container the launcher started the process in (nil: the launcher was not asked).
+	container *adapter.ContainerIdentity
 	// stray is what the process wrote while no turn was running, reported with the next turn (see noteStray).
 	stray strayOutput
 	// onBackground is told of a background job's answer between turns (see backgroundResult and adapter.TurnSpec.OnBackgroundResult); nil: nobody is.
@@ -195,6 +204,9 @@ func (s strayOutput) detail() string {
 	return adapter.SanitizeStderr(text)
 }
 
+// Container implements adapter.ContainerSession: the container the launcher said it started the process in.
+func (w *warmSession) Container() (id string, neverStarted bool) { return w.container.Container() }
+
 func (w *warmSession) Fingerprint() string     { return w.fp }
 func (w *warmSession) Exited() <-chan struct{} { return w.exited }
 func (w *warmSession) Alive() bool {
@@ -266,7 +278,10 @@ func (w *warmSession) run(stdout, stderr io.Reader) {
 		output = io.MultiWriter(&w.tail, w.capture)
 	}
 	stderrDone := make(chan struct{})
-	go func() { _, _ = io.Copy(output, stderr); close(stderrDone) }()
+	// The launcher's exec ID line is the identity's, not the harness's output. The filter is closed once the stderr is read to its end, which
+	// is before the session counts as exited, so an identity that says "never started" has seen everything the launcher wrote.
+	filtered := w.container.Filter(output)
+	go func() { _, _ = io.Copy(filtered, stderr); _ = filtered.Close(); close(stderrDone) }()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for scanner.Scan() {

@@ -869,7 +869,9 @@ processes are never on one session.
   (the loop that reads the server's frames goes on), for up to 150 s: long enough for the two-minute
   quarantine of a process whose container end is unconfirmed (below), so the automatic continuation
   of a turn-limit kill starts once the quarantine is over instead of failing in under a second and
-  sending the agent to recovery. It looks again every second, nudging the stuck watcher. A stop of
+  sending the agent to recovery. It looks again every second, nudging the stuck watcher, and goes on
+  as soon as the process is confirmed gone, which for a process whose container is gone is at once
+  (see Containers below). A stop of
   the agent (or the supervisor stopping) during the wait wins: no process is started and the turn
   is reported as the stop's cancel (exit 130, `cancel_intent`). A process still provably alive
   after the 150 s is not released, and the turn fails to start as before.
@@ -918,6 +920,41 @@ processes are never on one session.
   always closed first (input, then SIGTERM with about eight seconds for the wrapper's own cleanup, only
   then SIGKILL). A running container gets the faster in-container wrapper only after
   `harness-docker-ctrl rebuild`; until then the terminate takes about two seconds.
+- **A process is gone once its container is.** An end the launcher did not confirm is still confirmed, at
+  once and with no quarantine and no report, when the container the process ran in is gone: whatever was
+  in it died with it. The supervisor knows that container by its **ID, never by its name** (a container
+  that is made again keeps its name and gets a new ID). A launcher with `turn_activity` is started with
+  `HARNESS_DOCKER_REPORT_EXEC_ID=1` for a warm process too and prints
+  `HARNESS_DOCKER_EXEC_ID=<container id>:<session>` on stderr before its `docker exec`; the adapter keeps
+  the ID (12 to 64 hexadecimal digits, anything else is not an identity) and takes the line out of the
+  agent's output log. The request is not part of the warm fingerprint. When the host wrapper has been
+  reaped and its end is unconfirmed, the supervisor asks Docker about that ID
+  (`docker ps --all --no-trunc --filter id=<id>`, 5-second limit), when the end is first tried, at every
+  retry, and every 5 seconds while the slot is stuck:
+  - Docker lists no container with that ID (it was removed, or made again under a new ID), or lists it as
+    `removing`, `exited` or `dead`: the process is confirmed gone and the slot is released at once.
+  - It is `running` (or paused, or restarting): nothing is known, and the quarantine above holds as before.
+    A container restarted under the same ID is in this case.
+  - Docker cannot be asked (the command fails or does not answer): nothing is known, the failure goes to
+    the local log once, and the quarantine holds.
+
+  An absence counts only for a container Docker has shown the supervisor before: it takes a first look
+  when the launcher names the container (up to three tries), so a launcher that talks to another Docker
+  than the supervisor's own `docker` does not make every container look gone. A launcher that was asked
+  for its container and ended without naming one never reached its `docker exec`, so nothing of it ran in
+  a container: that end is confirmed too, without asking Docker. A launcher without `turn_activity`, a
+  line that names no ID, and a wrapper that is still alive all leave the quarantine as the only answer.
+  Keep-alive pings and interrupted one-process turns in a container keep their own 150-second hold.
+- **A container that is being replaced.** A Docker launcher that finds its harness container on the way
+  out says `Harness container is removing` (or `does not exist`, when it vanished between the launcher's
+  two looks at it), starts nothing and exits. That is a rebuild of the container, seconds before the new
+  one is current, so a turn whose process ended that way, with a failure status and without having said
+  anything else, is not reported: the supervisor starts it again after 2 seconds, and again, for up to
+  60 seconds from the first such failure. The start that finds a container runs the turn as usual; when
+  the minute is over the last failure is reported as it always was. A stop of the agent during the wait
+  wins (the turn ends as the stop's cancel, exit 130), and a turn the server asked to be interrupted is
+  not started again. Any other launcher failure (`Docker is not running`, `Harness is not started`, a
+  folder that is not mounted) fails at once, as before.
 - An idle process is ended gracefully first (its input is closed and it gets a few seconds to go;
   with a Docker launcher that lets the wrapper clean its session up properly, which is also the
   roughly one second the wrapper's cleanup costs a one-process turn), and killed if it does not;

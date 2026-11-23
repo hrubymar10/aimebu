@@ -102,6 +102,9 @@ type Client struct {
 	FreeMemory func() (free, total int64, err error)
 	// FreeDockerMemory reports the containers' use and the Docker host's total for the guard; nil asks docker (tests set it).
 	FreeDockerMemory func() (used, total int64, err error)
+	// ContainerState reports the state of the container with an ID ("" when Docker knows none) for a warm process whose end its launcher did
+	// not confirm; nil asks docker (tests set it).
+	ContainerState func(id string) (state string, err error)
 	// ProcessStart reports a process's own start time for the warm journal; nil asks the system (tests set it).
 	ProcessStart    func(pid int) string
 	warmPool        *warmPool
@@ -1146,6 +1149,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		}
 		sharesHome = !row.Containerized || slices.Contains(row.Features, feature)
 		launcherConfirmsEnd = slices.Contains(row.Features, containerEndFeature)
+		spec.LauncherReportsContainer = row.Containerized && slices.Contains(row.Features, adapter.FeatureTurnActivity)
 	}
 	if delivery.DockerOnly && !containerized && delivery.Agent.Tool != "fake" {
 		c.retireWarm(delivery.AgentID, "native launcher while docker-only is on")
@@ -1344,7 +1348,12 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	tracked = false
 	go func() {
 		defer telemetry.Recover(ctx)
-		c.runTurn(ctx, delivery, turn)
+		var restart func() (adapter.Turn, error)
+		if containerized {
+			// A Docker launcher that found its container being replaced started nothing: the same turn is started again (see containerRestart).
+			restart = func() (adapter.Turn, error) { return c.startTurn(ctx, spec, sinkWriter, cred) }
+		}
+		c.runTurnRestartable(ctx, delivery, turn, restart)
 		if sink != nil {
 			// The adapter closes its event stream only after it has read the harness's stderr to the end, so nothing is written after this.
 			_ = sink.Close()
@@ -1407,6 +1416,12 @@ func turnEventFrame(agentID string, generation int, turnID string, event adapter
 }
 
 func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn adapter.Turn) {
+	c.runTurnRestartable(ctx, delivery, turn, nil)
+}
+
+// runTurnRestartable runs a turn to its end like runTurn. restart, when it is not nil, starts the turn's process again: it is used for a
+// turn whose launcher found its container being replaced and started nothing (see containerRestart).
+func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Delivery, turn adapter.Turn, restart func() (adapter.Turn, error)) {
 	defer c.turns.Done()
 	// The connection or process context may be cancelled while the harness is
 	// exiting. Keep its final journal writes possible so a replacement can
@@ -1508,63 +1523,84 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 			}
 		}
 	}
-	events := turn.Events()
-events:
+	var exit adapter.ExitInfo
+	var retryUntil time.Time // when the wait for a container that is being replaced is over; zero until the first such failure
 	for {
-		var event adapter.Event
-		select {
-		case e, open := <-events:
-			if !open {
-				break events
-			}
-			event = e
-			watch.observe(event.Tools, time.Now())
-			if event.Kind == adapter.EventFinalAnswer {
-				// The answer is in; whatever the harness does while exiting is
-				// no longer a stall of the work itself.
-				watch = newTurnWatch(TurnLimits{}, time.Now())
-			}
-			rearm()
-		case <-timer.C:
-			// Partial streaming output is not an adapter event, but it proves
-			// the harness is alive.
-			if lo, ok := turn.(interface{ LastOutput() time.Time }); ok {
-				watch.touch(lo.LastOutput())
-			}
-			// A harness that announces no tool start (OpenCode, Vibe) shows a long command only as a process under it: ask when the
-			// idle deadline is due, and again while one runs, so that an end is noticed.
-			if prober, ok := turn.(toolProber); ok && (watch.busy || watch.idleDue(time.Now())) {
-				watch.setBusy(prober.ToolProcessSince(watch.last), time.Now())
-			}
-			deadline, reason, ok := watch.next()
-			if !ok || time.Now().Before(deadline) {
+		worked := false // the process of this attempt said something: it is not a launcher that started nothing
+		events := turn.Events()
+	events:
+		for {
+			var event adapter.Event
+			select {
+			case e, open := <-events:
+				if !open {
+					break events
+				}
+				event = e
+				worked = worked || event.Kind != adapter.EventProcessExit
+				watch.observe(event.Tools, time.Now())
+				if event.Kind == adapter.EventFinalAnswer {
+					// The answer is in; whatever the harness does while exiting is
+					// no longer a stall of the work itself.
+					watch = newTurnWatch(TurnLimits{}, time.Now())
+				}
 				rearm()
+			case <-timer.C:
+				// Partial streaming output is not an adapter event, but it proves
+				// the harness is alive.
+				if lo, ok := turn.(interface{ LastOutput() time.Time }); ok {
+					watch.touch(lo.LastOutput())
+				}
+				// A harness that announces no tool start (OpenCode, Vibe) shows a long command only as a process under it: ask when the
+				// idle deadline is due, and again while one runs, so that an end is noticed.
+				if prober, ok := turn.(toolProber); ok && (watch.busy || watch.idleDue(time.Now())) {
+					watch.setBusy(prober.ToolProcessSince(watch.last), time.Now())
+				}
+				deadline, reason, ok := watch.next()
+				if !ok || time.Now().Before(deadline) {
+					rearm()
+					continue
+				}
+				stall = reason
+				// A limit kill is the watchdog doing its job, not a failure to triage: the local log keeps the whole error, and telemetry
+				// gets it as a warning (a degraded state the system recovers from by continuing the turn once on its own).
+				c.degraded("a turn stalled; killing harness", fmt.Errorf("agent %s turn %s stalled: %s; killing harness", delivery.AgentID, delivery.TurnID, stall.describe(limits)))
+				if killer, ok := turn.(interface{ Kill() error }); ok {
+					_ = killer.Kill()
+				} else {
+					_ = turn.Cancel()
+				}
 				continue
 			}
-			stall = reason
-			// A limit kill is the watchdog doing its job, not a failure to triage: the local log keeps the whole error, and telemetry
-			// gets it as a warning (a degraded state the system recovers from by continuing the turn once on its own).
-			c.degraded("a turn stalled; killing harness", fmt.Errorf("agent %s turn %s stalled: %s; killing harness", delivery.AgentID, delivery.TurnID, stall.describe(limits)))
-			if killer, ok := turn.(interface{ Kill() error }); ok {
-				_ = killer.Kill()
-			} else {
-				_ = turn.Cancel()
+			if event.Kind == adapter.EventProcessExit || journalErr != nil {
+				continue
 			}
-			continue
+			if event.Kind == adapter.EventFinalAnswer && emptyAnswer(event.Answer) {
+				// An answer with no content cannot be told from a harness cut off mid-turn until its exit is known: hold it.
+				held = &event
+				continue
+			}
+			forward(event)
 		}
-		if event.Kind == adapter.EventProcessExit || journalErr != nil {
-			continue
+		var err error
+		exit, err = turn.Wait()
+		if err != nil {
+			c.report("waiting for a turn failed", err)
 		}
-		if event.Kind == adapter.EventFinalAnswer && emptyAnswer(event.Answer) {
-			// An answer with no content cannot be told from a harness cut off mid-turn until its exit is known: hold it.
-			held = &event
-			continue
+		if restart == nil || worked || held != nil || stall != "" || journalErr != nil || !containerBeingReplaced(exit) {
+			break
 		}
-		forward(event)
-	}
-	exit, err := turn.Wait()
-	if err != nil {
-		c.report("waiting for a turn failed", err)
+		next, again := c.containerRestart(ctx, delivery, turn, exit, restart, &retryUntil)
+		if next == nil {
+			break
+		}
+		turn = next
+		if !again {
+			exit, _ = turn.Wait()
+			break
+		}
+		watch = newTurnWatch(limits, time.Now())
+		rearm()
 	}
 	// A turn the supervisor ended on purpose without the agent being stopped (the owner's restart of the local supervisor, or the server's
 	// turn interrupt) is reported interrupted, not cancelled. An answer that arrived first wins, and so does a stop of the agent.

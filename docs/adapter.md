@@ -266,6 +266,13 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   stays up. Any other ending (an error result, a crash, a cancel, input the CLI refuses)
   ends the process too, and the turn's exit is the process's own. A live session takes one
   turn at a time (`ErrWarmBusy`).
+- **Which container.** With `TurnSpec.LauncherReportsContainer` (the launcher has
+  `turn_activity`), a warm Claude or Codex process in a container is started with
+  `HARNESS_DOCKER_REPORT_EXEC_ID=1`, outside the fingerprint, and its session is an
+  `adapter.ContainerSession`: `Container()` returns the ID of the container the launcher
+  named before its `docker exec` (never a name), and says when a launcher that was asked
+  ended without naming one, which means it started nothing in a container. The supervisor
+  uses both to confirm an end the launcher did not (see `docs/supervisor.md`, Containers).
 - **Which result is the turn's.** Claude Code runs queries of its own in the session: when
   a background task (a `run_in_background` command) ends, or a resumed session finds one
   that outlived its previous process (a deploy, the warm window's end), it reports it in a

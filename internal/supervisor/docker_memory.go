@@ -39,6 +39,10 @@ func dockerMemory() (used, total int64, err error) {
 }
 
 func dockerOutput(args ...string) (string, error) {
+	return dockerOutputWithin(15*time.Second, args...)
+}
+
+func dockerOutputWithin(limit time.Duration, args ...string) (string, error) {
 	cmd := exec.Command("docker", args...)
 	done := make(chan struct{})
 	var out []byte
@@ -49,7 +53,7 @@ func dockerOutput(args ...string) (string, error) {
 	select {
 	case <-done:
 		return string(out), err
-	case <-time.After(15 * time.Second):
+	case <-time.After(limit):
 		_ = cmd.Process.Kill()
 		<-done
 		return "", errors.New("docker did not answer in time")

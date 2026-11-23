@@ -536,3 +536,95 @@ func TestMarkerTurnKeepsTheWarmFingerprint(t *testing.T) {
 		t.Fatalf("a changed role body must change the fingerprint: %v %v", fp, err)
 	}
 }
+
+// A warm process whose launcher can say so is asked which container it starts the harness in, and its session knows the ID from then on. The
+// request is the process's own: it is not part of the fingerprint, and the launcher's line stays out of the harness's stderr.
+func TestWarmSessionKnowsItsContainer(t *testing.T) {
+	const container = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	root := t.TempDir()
+	path := filepath.Join(root, "claude-docker")
+	script := "#!/bin/sh\n" +
+		"if [ \"$HARNESS_DOCKER_REPORT_EXEC_ID\" = 1 ]; then echo 'HARNESS_DOCKER_EXEC_ID=" + container + ":7-8-9' >&2; fi\n" +
+		"echo 'harness stderr' >&2\ncat >/dev/null\nexit 0\n"
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker"}
+	spec := warmSpec(t, "t1")
+	spec.Agent.Variant = "docker"
+	plain, err := a.WarmFingerprint(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Not asked: the session knows nothing, and says nothing about a launcher that never started.
+	session, err := a.StartWarm(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Close(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if id, never := session.(adapter.ContainerSession).Container(); id != "" || never {
+		t.Fatalf("a launcher that was not asked: id %q never started %t", id, never)
+	}
+	spec.LauncherReportsContainer = true
+	if asked, err := a.WarmFingerprint(spec); err != nil || asked != plain {
+		t.Fatalf("asking the launcher for its container changed the fingerprint: %v", err)
+	}
+	var stderr lockedBuffer
+	spec.StderrSink = &stderr
+	session, err = a.StartWarm(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if id, _ := session.(adapter.ContainerSession).Container(); id == container {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the session never learned its container")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := session.Close(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if id, never := session.(adapter.ContainerSession).Container(); id != container || never {
+		t.Fatalf("after its end: id %q never started %t", id, never)
+	}
+	if got := stderr.String(); strings.Contains(got, "HARNESS_DOCKER_EXEC_ID") || !strings.Contains(got, "harness stderr") {
+		t.Fatalf("stderr kept %q", got)
+	}
+}
+
+// A launcher that was asked for its container and ended without naming one never reached its `docker exec`: the session says so once the
+// process is gone, which is how a launcher that found its container being removed is told from one that left a process behind.
+func TestWarmSessionKnowsALauncherThatStartedNothing(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude-docker")
+	script := "#!/bin/sh\necho 'Error: Harness container is removing. Run: bin/harness-docker-ctrl start' >&2\nexit 1\n"
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker"}
+	spec := warmSpec(t, "t1")
+	spec.Agent.Variant = "docker"
+	spec.LauncherReportsContainer = true
+	session, err := a.StartWarm(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-session.Exited():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the launcher did not end")
+	}
+	if id, never := session.(adapter.ContainerSession).Container(); id != "" || !never {
+		t.Fatalf("id %q never started %t", id, never)
+	}
+	// Its launcher confirmed nothing, as before: it is the supervisor that reads the identity.
+	if err := session.Kill(); !errors.Is(err, ErrContainerSideUnconfirmed) {
+		t.Fatalf("the end of a launcher that exited 1: %v", err)
+	}
+}

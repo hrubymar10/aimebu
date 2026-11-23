@@ -113,13 +113,17 @@ type warmEntry struct {
 	retire              bool          // an end was asked for while it ran a turn: it ends when the turn does
 	gone                atomic.Bool   // its end was confirmed and counted (warmLive), once
 	unconfirmedReported atomic.Bool   // retries must not report the same uncertain end repeatedly
-	quarantineReported  atomic.Bool   // a still-live process past the quarantine is reported once
-	stuckAt             time.Time
-	lastNudge           time.Time     // when the watcher was last woken early (guarded by the slot's lock)
-	stuckNudge          chan struct{} // wakes the stuck watcher early (buffered, one pending): a stop or delivery that finds the slot stuck asks for a retry now (guarded by the slot's lock)
-	stuckReason         string        // why the process was ended and not confirmed gone (the reason its slot went stuck)
-	plannedEnd          bool          // the end was decided by a stop of the agent, a requested turn interrupt or the supervisor's shutdown, whatever reason text the path gave (guarded by the slot's lock)
-	kept                bool          // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
+	// containerSeen says Docker has shown the container the launcher started the process in (see sightContainer); containerCheckFailed that a
+	// question about it failed and was reported.
+	containerSeen        atomic.Bool
+	containerCheckFailed atomic.Bool
+	quarantineReported   atomic.Bool // a still-live process past the quarantine is reported once
+	stuckAt              time.Time
+	lastNudge            time.Time     // when the watcher was last woken early (guarded by the slot's lock)
+	stuckNudge           chan struct{} // wakes the stuck watcher early (buffered, one pending): a stop or delivery that finds the slot stuck asks for a retry now (guarded by the slot's lock)
+	stuckReason          string        // why the process was ended and not confirmed gone (the reason its slot went stuck)
+	plannedEnd           bool          // the end was decided by a stop of the agent, a requested turn interrupt or the supervisor's shutdown, whatever reason text the path gave (guarded by the slot's lock)
+	kept                 bool          // it was reported as alive after a turn (kept idle): its real end is then reported too (guarded by the slot's lock)
 }
 
 // swapWriter is the stderr sink of a warm process: it writes to the output log of the turn that is running, and to nothing between turns (a
@@ -175,6 +179,8 @@ type warmPool struct {
 	after   func(time.Duration, func()) *time.Timer
 	started int // warm processes started
 	reused  int // turns that went into a live process
+	// watchers counts the goroutines that watch a stuck process or take a first look at a container; they end when ctx does.
+	watchers sync.WaitGroup
 }
 
 func newWarmPool() *warmPool {
@@ -272,6 +278,11 @@ func (c *Client) tryEndWarm(entry *warmEntry, reason string, grace time.Duration
 	}
 	if err != nil {
 		if entry.containerized || entry.session.Alive() {
+			if why, gone := c.warmContainerGone(entry); gone {
+				// The launcher did not say so, but nothing runs in a container that is gone: the process is confirmed gone without a quarantine.
+				log.Printf("agent %s: its warm process is confirmed gone (%s): %s", entry.agentID, reason, why)
+				return true
+			}
 			if entry.unconfirmedReported.CompareAndSwap(false, true) {
 				werr := fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err)
 				if entry.containerized && !entry.session.Alive() {
@@ -356,7 +367,8 @@ func (c *Client) finish(slot *warmSlot, entry *warmEntry, reason string, grace t
 		entry.stuckReason = reason
 		entry.stuckNudge = make(chan struct{}, 1)
 		pool := c.pool()
-		telemetry.Go(context.Background(), func() { c.watchStuck(pool, slot, entry) })
+		pool.watchers.Add(1)
+		telemetry.Go(context.Background(), func() { defer pool.watchers.Done(); c.watchStuck(pool, slot, entry) })
 	}
 	return false
 }
@@ -373,9 +385,21 @@ func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
 	quarantine := time.NewTimer(time.Until(entry.stuckAt.Add(warmStuckQuarantine)))
 	defer quarantine.Stop()
 	quarantineDone := quarantine.C
+	// Between its retries the watcher asks Docker whether the process's container is still there: one that is gone settles the slot at once.
+	var containerPoll <-chan time.Time
+	if _, ok := entry.session.(adapter.ContainerSession); ok && entry.containerized {
+		ticker := time.NewTicker(warmContainerPollEvery)
+		defer ticker.Stop()
+		containerPoll = ticker.C
+	}
+	retryAt := time.Now().Add(wait)
 	for {
-		timer := time.NewTimer(wait)
+		timer := time.NewTimer(time.Until(retryAt))
+		containerOnly := false
 		select {
+		case <-containerPoll:
+			timer.Stop()
+			containerOnly = true
 		case <-entry.stuckNudge:
 			timer.Stop()
 		case <-quarantineDone:
@@ -397,6 +421,20 @@ func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
 		cleared := c.clearStuck(slot)
 		slot.mu.Unlock()
 		if cleared {
+			return
+		}
+		if containerOnly {
+			why, gone := c.warmContainerGone(entry)
+			if !gone {
+				continue // the retry keeps its own time
+			}
+			slot.mu.Lock()
+			if slot.stuck == entry {
+				log.Printf("agent %s: its warm process is confirmed gone: %s", entry.agentID, why)
+				c.recordWarmEnd(entry, "its container is gone")
+				slot.setStuck(nil)
+			}
+			slot.mu.Unlock()
 			return
 		}
 		confirmed := c.tryEndWarm(entry, "a background retry", 0)
@@ -423,6 +461,7 @@ func (c *Client) watchStuck(pool *warmPool, slot *warmSlot, entry *warmEntry) {
 				wait = warmStuckRetryMax
 			}
 		}
+		retryAt = time.Now().Add(wait)
 	}
 }
 
@@ -1059,6 +1098,7 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		pool.mu.Lock()
 		pool.started++
 		pool.mu.Unlock()
+		c.sightContainer(pool, entry)
 	}
 	if sink != nil {
 		entry.stderr.Set(sink)
