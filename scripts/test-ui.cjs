@@ -4115,14 +4115,14 @@ async function main() {
       });
       assert.deepEqual(marked[0], [['@owner', true, null], ['@ada', false, 'button'], ['@bert', false, null], ['@here', false, null]], 'only a mention of the viewer is marked as theirs; only an agent opens a profile');
       assert.deepEqual([marked[1][0], marked[1][1][1]], [['rgb(227, 160, 8)', '500'], '500'], 'a mention reads as in v1: weight 500, the viewer\'s own in amber');
-      // The qualified form names the agent even when a person's login shares its slug (the plain form is then ambiguous and not a mention).
+      // A slug one agent shares with a person's login addresses both (the server's rule), so the plain form is a live mention that opens the agent; the qualified form names the agent alone.
       const qualified = await agentPage.evaluate(async () => {
         const { MentionIndex, highlightMentions } = await import('/js/mentions.js');
         const host = document.createElement('div'); host.innerHTML = '<p>@ada and @ada@proj-1 and @ada@other</p>'; document.body.append(host);
         highlightMentions(host, new MentionIndex([{ slug: 'ada', role_key: 'worker' }], 'proj-1', ['ada'], [], ''));
         const out = [...host.querySelectorAll('.mention')].map(node => [node.textContent, node.getAttribute('role')]); host.remove(); return out;
       });
-      assert.deepEqual(qualified, [['@ada@proj-1', 'button']], 'a qualified mention opens the agent even when a login shares the slug');
+      assert.deepEqual(qualified, [['@ada', 'button'], ['@ada@proj-1', 'button']], 'a plain mention of a slug shared by one agent and a login is live and opens the agent; the qualified form does too');
       await agentPage.focus('#composer textarea'); // the clicks above moved the focus; the typing below goes to the composer
     }
     await agentPage.keyboard.type('x @ad there'); for (let i = 0; i < 6; i++) await agentPage.keyboard.press('ArrowLeft');
@@ -4449,7 +4449,7 @@ async function main() {
       highlightMentions(host, index);
       return { marked: [...host.querySelectorAll('.mention')].map(el => el.textContent), offered: index.candidates('').map(item => item.insertText).slice(6) };
     });
-    assert.deepEqual(humans.marked, ['@reviewer', '@casey', '@ada', '@leader'], 'human logins share the slug namespace; deleted roles still resolve');
+    assert.deepEqual(humans.marked, ['@reviewer', '@kim', '@casey', '@ada', '@leader'], 'human logins share the slug namespace (a name one agent shares with a login is still live); deleted roles still resolve');
     assert.deepEqual(humans.offered, ['@leader', '@ada', '@casey', '@kim@proj-1', '@reviewer'], 'a login equal to a role key is offered as the human; a colliding login is not offered');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-health', el => el.textContent.includes('Not responding')), true);
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-health', el => el.textContent.includes('Needs your decision')), true);
