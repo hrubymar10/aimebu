@@ -62,6 +62,7 @@ func applySnapshot(base Profile, snap providers.Snapshot) Profile {
 	base.Plan = snap.Plan
 	base.Error = snap.Error
 	base.ErrorDetail = snap.ErrorDetail
+	base.ErrorKind = errorKind(snap)
 	base.Windows = nil
 	for _, window := range snap.Windows {
 		item := Window{Key: window.Key, PercentUsed: window.PercentUsed, ResetAt: window.ResetAt, WindowDurationSeconds: window.WindowDurationSeconds}
@@ -231,4 +232,20 @@ func (r *Reader) ModelFlag(tool string) string {
 		return cfg.CodexModelFlag
 	}
 	return cfg.ClaudeModelFlag
+}
+
+// errorKind is the failure class of a snapshot: rate_limited when the provider
+// answered HTTP 429, fetch_failed for any other failed fetch, else empty.
+func errorKind(snap providers.Snapshot) string {
+	if snap.Status != providers.StatusFetchError && snap.Status != providers.StatusTimeout {
+		return ""
+	}
+	if snap.ErrorDetail != nil {
+		for key, value := range snap.ErrorDetail.Fields {
+			if strings.HasSuffix(key, ".http_status") && value == "http_429" {
+				return "rate_limited"
+			}
+		}
+	}
+	return "fetch_failed"
 }

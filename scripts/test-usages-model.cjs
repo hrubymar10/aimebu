@@ -58,11 +58,12 @@ assert.equal(m.profileStatusLine({ status: 'token_expired', last_refresh_at: '20
 assert.equal(m.profileStatusLine({ stale: true, status: 'ok' }, clock), 'Stale snapshot');
 assert.equal(m.profileStatusLine({ status: 'not_configured' }, clock), 'not configured');
 assert.equal(m.profileStatusLine({}, clock), 'No snapshot');
-assert.equal(m.staleReason({ status: 'backing_off', retry_at: '2026-01-01T10:07:00Z' }, clock), 'Rate limited by the provider, retrying at T7');
-assert.equal(m.staleReason({ status: 'backing_off' }, clock), 'Rate limited by the provider', 'no retry time, none claimed');
-assert.equal(m.staleReason({ status: 'fetch_error', error: 'Claude usage endpoint returned HTTP 429.' }, clock), 'Rate limited by the provider');
-assert.equal(m.staleReason({ status: 'fetch_error', error: 'timeout' }, clock), 'Last fetch failed');
-assert.equal(m.staleReason({ status: 'token_expired' }, clock), '');
+assert.equal(m.staleReason({ status: 'backing_off', error_kind: 'rate_limited', retry_at: '2026-01-01T10:07:00Z' }, clock), 'Rate limited by the provider, retrying at T7');
+assert.equal(m.staleReason({ status: 'fetch_error', error_kind: 'rate_limited' }, clock), 'Rate limited by the provider', 'no retry time, none claimed');
+assert.equal(m.staleReason({ status: 'fetch_error', error: 'Claude usage endpoint returned HTTP 429.' }, clock), '', 'the text is never searched');
+assert.equal(m.staleReason({ status: 'backing_off', error_kind: 'fetch_failed', retry_at: '2026-01-01T10:07:00Z' }, clock), 'Last fetch failed, retrying at T7');
+assert.equal(m.staleReason({ status: 'fetch_error', error_kind: 'fetch_failed' }, clock), 'Last fetch failed');
+assert.equal(m.staleReason({ status: 'token_expired', error_kind: 'token_expired' }, clock), '');
 const base = { switchable: true, enabled: true, owner: true, configured: true, profile: { active: false }, hasActive: true, eligible: { eligible: true } };
 assert.deepEqual(plain(m.switchView(base)), { hidden: false, disabled: false, title: '' });
 assert.equal(m.switchView({ ...base, profile: { active: true } }).hidden, true, 'the active profile has no Switch');

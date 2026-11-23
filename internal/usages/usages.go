@@ -62,6 +62,9 @@ type Profile struct {
 	Stale          bool       `json:"stale,omitempty"`
 	// RetryAt is when a backing-off profile is next fetched; the web app says it
 	// in local time so it does not read it out of Error.
+	// ErrorKind classifies a failure once, so a reader need not search Error:
+	// rate_limited (HTTP 429), fetch_failed (any other failed fetch) or token_expired.
+	ErrorKind   string                 `json:"error_kind,omitempty"`
 	RetryAt     *time.Time             `json:"retry_at,omitempty"`
 	Error       string                 `json:"error,omitempty"`
 	ErrorDetail *providers.ErrorDetail `json:"error_detail,omitempty"`
@@ -507,6 +510,7 @@ func (r *Reader) fetchLocal(ctx context.Context, p Profile, login providers.Logi
 		p.ExpiresAt = login.ExpiresAt
 		if !login.ExpiresAt.After(time.Now()) {
 			p.Status = "token_expired"
+			p.ErrorKind = "token_expired"
 			p.Error = "Stale – token expired"
 			return p, errors.New(p.Error)
 		}

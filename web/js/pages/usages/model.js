@@ -50,14 +50,13 @@ export const flowText = flow => `Code: ${flow.user_code} · ${flow.status || 'Wa
 export const pollDelay = (result, flow) => Math.max(1, result.retry_after || result.interval || flow.interval || 5);
 export const flowExpired = (flow, now = Date.now()) => now >= new Date(flow.expires_at).getTime();
 
-// Why a profile is not refreshing, and when it tries again when that is known. An admin's response has the status and retry_at but no error text.
+// Why a profile is not refreshing, and when it tries again when that is known, from the server's error_kind and retry_at (an admin's response has no error text).
 export function staleReason(profile, time) {
-  if (profile.status === 'token_expired') return '';
-  if (profile.status === 'backing_off' || /\b429\b/.test(profile.error || '')) {
-    const at = profile.retry_at ? new Date(profile.retry_at) : null;
-    return `Rate limited by the provider${at && !Number.isNaN(at.getTime()) ? `, retrying at ${time(at)}` : ''}`;
-  }
-  return profile.status === 'fetch_error' ? 'Last fetch failed' : '';
+  const kind = profile.error_kind || (profile.status === 'token_expired' ? 'token_expired' : '');
+  if (kind !== 'rate_limited' && kind !== 'fetch_failed') return '';
+  const at = profile.retry_at ? new Date(profile.retry_at) : null;
+  const retry = at && !Number.isNaN(at.getTime()) ? `, retrying at ${time(at)}` : '';
+  return `${kind === 'rate_limited' ? 'Rate limited by the provider' : 'Last fetch failed'}${retry}`;
 }
 
 export function profileStatusLine(profile, time) {

@@ -495,10 +495,10 @@ async function main() {
     // A stale profile says why it is not refreshing: a backoff names the retry time (local), a failed fetch has the error in the tooltip, an admin has no error text.
     {
       const cases = [
-        { name: 'backoff', patch: { status: 'backing_off', retry_at: '2026-05-01T16:06:00Z', error: 'Usage endpoint failed; retrying after 16:06 UTC (Claude usage endpoint returned HTTP 429.)' }, owner: /^Stale, last update 2d ago · Rate limited by the provider, retrying at \d{1,2}:\d{2}/, admin: /· Rate limited by the provider, retrying at \d{1,2}:\d{2}/ },
-        { name: 'http 429', patch: { status: 'fetch_error', error: 'Claude usage endpoint returned HTTP 429.' }, owner: /· Rate limited by the provider$/, admin: /^Stale, last update 2d ago · Last fetch failed$/ },
-        { name: 'fetch_error', patch: { status: 'fetch_error', error: 'connection reset' }, owner: /· Last fetch failed$/, admin: /· Last fetch failed$/ },
-        { name: 'token_expired', patch: { status: 'token_expired' }, owner: /^Stale, last update 2d ago$/, admin: /^Stale, last update 2d ago$/ },
+        { name: 'backoff', patch: { status: 'backing_off', error_kind: 'rate_limited', retry_at: '2026-05-01T16:06:00Z', error: 'Usage endpoint failed; retrying after 16:06 UTC (Claude usage endpoint returned HTTP 429.)' }, owner: /^Stale, last update 2d ago · Rate limited by the provider, retrying at \d{1,2}:\d{2}/, admin: /^Stale, last update 2d ago · Rate limited by the provider, retrying at \d{1,2}:\d{2}/ },
+        { name: 'http 429', patch: { status: 'fetch_error', error_kind: 'rate_limited', error: 'Claude usage endpoint returned HTTP 429.' }, owner: /· Rate limited by the provider$/, admin: /^Stale, last update 2d ago · Rate limited by the provider$/ },
+        { name: 'fetch_error', patch: { status: 'fetch_error', error_kind: 'fetch_failed', error: 'connection reset' }, owner: /· Last fetch failed$/, admin: /· Last fetch failed$/ },
+        { name: 'token_expired', patch: { status: 'token_expired', error_kind: 'token_expired' }, owner: /^Stale, last update 2d ago$/, admin: /^Stale, last update 2d ago$/ },
       ];
       for (const owner of [true, false]) for (const c of cases) {
         const page = await mount({ owner });
