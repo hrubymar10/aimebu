@@ -322,6 +322,21 @@ host that room's worktree agents.
 The server first sends a `validate` action to check the Git root before it
 persists the room opt-in. The supervisor returns typed Git error codes so the
 API can explain invalid roots and path conflicts.
+Every Git command the supervisor runs on the host in a checkout an agent can
+write to (the worktree operations, the work-tree description of a limit kill,
+the Docker adapter's lookup of the repository's shared directory) goes through
+one helper that keeps the repository's own config from running a program as
+the host user: `core.fsmonitor` off, hooks pointed at the null device,
+`log.showSignature` off (so a signed tip never calls `gpg.program`), and for
+each filter driver the repository's own config (local or worktree scope,
+includes followed) defines or changes, only the commands the system, global
+and command-line config give it (none when they give none). These are passed
+as command-line config in the environment (`GIT_CONFIG_COUNT`), which wins
+over every config file. Optional locks and prompts are off. So repository
+hooks no longer run on these host-side calls (a `worktree add` runs no
+`post-checkout`), while filters from the global and system config (git-lfs
+installed globally, say) still do. A filter driver added between the read of
+the config and the command is not covered.
 The server resends an unconfirmed active spawn after reconnect and
 periodically while the machine remains connected, at most 16 per pass; a
 retry with the same HTTP idempotency key also resends it. Stopped agents are
@@ -1014,7 +1029,9 @@ process group, and reports the
 exit as a failure (not an owner cancel) whose evidence names the deadline.
 The exit also says what the killed turn left in its checkout:
 `git log -1 --oneline` and the count of dirty files (`git status --porcelain`,
-untracked files included, run with optional locks off and a 5-second limit),
+untracked files included, run with optional locks off, with the programs the
+repository's config can name turned off (see `worktree_op`) and a
+5-second limit),
 as `tip ab31772 <subject>, tree clean` or `…, 3 dirty files`, in the
 evidence (`work tree at the kill: …`) and in the exit's `work_tree`, which
 the journal keeps for a replay. It is left out when the folder is not a git

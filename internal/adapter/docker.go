@@ -15,6 +15,7 @@ import (
 
 	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/v2/internal/runtimeignore"
+	"github.com/hrubymar10/aimebu/v2/internal/worktree"
 )
 
 // DockerPreflight checks the requested checkout through the actual launcher.
@@ -181,7 +182,7 @@ func ExcludeRuntimeState(checkout string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	cmd := worktree.GitCommand(ctx, checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	out, err := cmdprobe.Output(cmd)
 	if err != nil {
 		return nil // not a git checkout (or git is not here): nothing to exclude it from

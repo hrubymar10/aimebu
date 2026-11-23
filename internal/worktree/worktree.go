@@ -43,8 +43,7 @@ func (e *Error) Unwrap() error           { return e.Err }
 func problem(code, message string) error { return &Error{Code: code, Err: errors.New(message)} }
 
 func git(ctx context.Context, root string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	output, err := cmd.CombinedOutput()
+	output, err := GitCommand(ctx, root, args...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(output)))
 	}
@@ -186,8 +185,7 @@ func dirtyCount(ctx context.Context, root string, ignored bool) (int, error) {
 	if ignored {
 		args = append(args, "--ignored")
 	}
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	output, err := cmd.Output()
+	output, err := GitCommand(ctx, root, args...).Output()
 	if err != nil {
 		return 0, err
 	}
