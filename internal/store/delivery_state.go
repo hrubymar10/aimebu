@@ -37,8 +37,8 @@ func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
 		if machineID != input.MachineID || revoked {
 			return ErrForbidden
 		}
-		var approved, machineRevoked bool
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT approved,revoked_at IS NOT NULL FROM machine WHERE id=?`, machineID).Scan(&approved, &machineRevoked); err != nil {
+		var approved, machineRevoked, onHost bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT approved,revoked_at IS NOT NULL,is_host=1 FROM machine WHERE id=?`, machineID).Scan(&approved, &machineRevoked, &onHost); err != nil {
 			return err
 		}
 		if !approved || machineRevoked {
@@ -184,6 +184,12 @@ func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
 		}
 		if _, err := tx.Exec(`UPDATE turn SET policy_json=? WHERE id=? AND policy_json IS NULL`, policy, input.TurnID); err != nil {
 			return err
+		}
+		// The login the turn starts on: a provider limit it meets belongs to this login, not to one a switch installs while it runs.
+		if onHost {
+			if _, err := tx.Exec(`UPDATE turn SET login=? WHERE id=?`, nullable(s.HostLogin(tool)), input.TurnID); err != nil {
+				return err
+			}
 		}
 		_, err = tx.AppendEvent(Event{Kind: "turn_dispatch_requested", ProjectID: projectID, RoomID: roomID, AgentID: input.AgentID, TurnID: input.TurnID, PayloadJSON: payloadJSON(map[string]string{"turn_id": input.TurnID})})
 		return err
@@ -516,7 +522,7 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 				return err
 			}
 		} else if providerLimited {
-			if err := tx.recordProviderLimit(turnID, agentID, projectID, roomID, tool, resetAt); err != nil {
+			if err := tx.recordProviderLimit(turnID, agentID, projectID, roomID, tool, resetAt, func() string { return s.HostLogin(tool) }); err != nil {
 				return err
 			}
 		} else if requeued {

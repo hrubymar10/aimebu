@@ -14,7 +14,6 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
-	"github.com/hrubymar10/aimebu/v2/internal/switcher"
 	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 )
 
@@ -478,58 +477,4 @@ func (s *Server) switchBackgroundContext() context.Context {
 		s.switchBgCtx, s.switchBgCancel = context.WithCancel(context.Background())
 	}
 	return s.switchBgCtx
-}
-
-// codexOverwriteChecks are when, counted from the switch, the live auth.json of Codex is looked at again.
-var codexOverwriteChecks = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
-
-// watchCodexOverwrite looks at the live Codex login at about +5 s, +30 s and +2 min after a switch. A codex process that was running at the switch
-// can write its own tokens, the old account's, back into auth.json (an in-flight persist_tokens takes no lock). When the file no longer names the
-// account the switch installed, the installed login is put back, and one switch_overwritten event is raised for the owner however many checks had to.
-func (s *Server) watchCodexOverwrite() {
-	profile, err := s.Switcher.Active(switcher.ToolCodex)
-	if err != nil || profile == "" {
-		return
-	}
-	snapshot, account, err := s.Switcher.LiveSnapshot(switcher.ToolCodex)
-	if err != nil || account == "" {
-		return
-	}
-	ctx := s.switchBackgroundContext()
-	after := s.switchCheckAfter
-	if after == nil {
-		after = time.After
-	}
-	s.switchBg.Add(1)
-	telemetry.Go(context.Background(), func() {
-		defer s.switchBg.Done()
-		raised := false
-		var elapsed time.Duration
-		for _, at := range codexOverwriteChecks {
-			select {
-			case <-after(at - elapsed):
-			case <-ctx.Done():
-				return
-			}
-			elapsed = at
-			reinstalled, err := s.Switcher.ReinstallIfOverwritten(switcher.ToolCodex, profile, account, snapshot)
-			if err != nil {
-				log.Printf("switcher: codex: the check after the switch failed: %v", err)
-				continue
-			}
-			if !reinstalled {
-				continue
-			}
-			log.Printf("switcher: codex: a running session wrote the old login back after the switch; %s was installed again", profile)
-			if raised {
-				continue
-			}
-			raised = true
-			eventCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := s.Store.RecordQuotaEvent(eventCtx, "switch_overwritten", map[string]string{"tool": switcher.ToolCodex}); err != nil {
-				log.Printf("switcher: codex: recording the switch_overwritten event: %v", err)
-			}
-			cancel()
-		}
-	})
 }

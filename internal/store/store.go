@@ -50,6 +50,8 @@ type Store struct {
 	holds  map[string]string
 	// switchHolds counts the account switches in progress per tool: while one runs no new turn of the tool is dispatched on the host (see HoldDispatch).
 	switchHolds map[string]int
+	// hostLogin names the login of a tool live on the host machine now (see SetHostLogin); nil or "" is unknown.
+	hostLogin func(tool string) string
 }
 
 // defaultTurnGateWait is far longer than the file swap HoldTurns exists for (a few seconds at worst, a busy Claude

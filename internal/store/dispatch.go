@@ -115,7 +115,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				return nil
 			}
 		}
-		limited, err := tx.providerLimitBlocked(agentID, tool)
+		limited, err := tx.providerLimitBlocked(agentID, tool, func() string { return s.HostLogin(tool) })
 		if err != nil {
 			return err
 		}

@@ -917,6 +917,13 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	if err != nil {
 		return err
 	}
+	if agent.Tool == "codex" && s.codexWatch.Load() != nil {
+		// Before a Codex turn starts on the host, the live login is looked at again: one a running session wrote back after a switch is put right
+		// first, so the turn starts on the installed login.
+		if host, err := s.Store.HostMachine(ctx); err == nil && host.ID == agent.MachineID {
+			s.checkCodexOverwrite()
+		}
+	}
 	if err := s.Auth.VerifyMachineKeyHash(ctx, c.id, c.keyHash); err != nil {
 		_ = c.conn.Close(websocket.StatusPolicyViolation, "machine credential revoked")
 		c.stop()

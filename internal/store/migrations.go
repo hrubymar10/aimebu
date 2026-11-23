@@ -2084,6 +2084,13 @@ CREATE TABLE IF NOT EXISTS turn_room_read (
   room_id TEXT NOT NULL REFERENCES room(id),
   PRIMARY KEY (turn_id, room_id)
 );
+`}, {130, `
+-- The host login (the switcher profile of the agent's tool) that was live when a turn was admitted, and the one a provider limit was met on. A
+-- limit counts only against its own login: after a switch that does not wait for agents, a turn still running on the old login can end on the old
+-- login's limit, and that must not mark the new login limited or pause the agent on it. NULL (every row written before this, a remote machine,
+-- a host with no switcher profile) is counted as before, against whatever login is live.
+ALTER TABLE turn ADD COLUMN login TEXT;
+ALTER TABLE provider_limit ADD COLUMN login TEXT;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

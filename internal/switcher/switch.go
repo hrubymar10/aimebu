@@ -436,11 +436,12 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force 
 		}
 		m.markIncomingStale(tool, name, liveEmail)
 		m.recordSwitchAway(tool, activeProfile)
+		m.recordInstalled(tool, name, nil)
 		return name, true, nil
 	}
 
 	// Non-empty target: restore credentials first (step 5), then update state (step 6).
-	restoreErr := m.restoreProfile(tool, name, livePath, preLive)
+	installedData, restoreErr := m.restoreProfile(tool, name, livePath, preLive)
 	if restoreErr != nil {
 		// For liveAbsent the live file was absent before the switch and restore
 		// failed before writing (atomicWrite is temp+rename, so no partial), so
@@ -479,6 +480,7 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force 
 	}
 
 	m.recordSwitchAway(tool, activeProfile)
+	m.recordInstalled(tool, name, installedData)
 
 	// 8. Link the now-active profile's stored file to the live file. First
 	// back up the bytes being replaced by the link: they are this profile's
@@ -524,34 +526,34 @@ func (m *Manager) markIncomingStale(tool, name, liveEmail string) {
 // livePath, with the MCP logins of the outgoing live file (live) merged in for Claude.
 // Only called for non-empty profiles — empty-profile clearing is handled
 // directly in Switch so state.json can be written first.
-func (m *Manager) restoreProfile(tool, name, livePath string, live []byte) error {
+func (m *Manager) restoreProfile(tool, name, livePath string, live []byte) ([]byte, error) {
 	targetCredPath := m.profileCredPath(tool, name)
 	targetData, err := os.ReadFile(targetCredPath)
 	if err != nil {
-		return fmt.Errorf("read target credentials: %w", err)
+		return nil, fmt.Errorf("read target credentials: %w", err)
 	}
 
 	// Validate the target credentials before overwriting live.
 	if valErr := validateStoredCred(tool, targetCredPath); valErr != nil {
-		return fmt.Errorf("%w: target profile: %s", ErrInvalidCredentials, valErr)
+		return nil, fmt.Errorf("%w: target profile: %s", ErrInvalidCredentials, valErr)
 	}
 	if tool == ToolClaude {
 		if targetData, err = m.carryMCPLogins(tool, name, targetData, live); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	liveDir, err := m.liveCredDir(tool)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.MkdirAll(liveDir, 0o700); err != nil {
-		return fmt.Errorf("restore: mkdir live dir: %w", err)
+		return nil, fmt.Errorf("restore: mkdir live dir: %w", err)
 	}
 	if err := atomicWrite(livePath, targetData, 0o600); err != nil {
-		return fmt.Errorf("restore: write live credentials: %w", err)
+		return nil, fmt.Errorf("restore: write live credentials: %w", err)
 	}
-	return nil
+	return targetData, nil
 }
 
 // validateStoredCred validates a stored credential file. The asymmetry with

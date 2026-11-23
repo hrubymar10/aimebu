@@ -78,13 +78,34 @@ func providerCapWording(lower string) bool {
 	return false
 }
 
-func (tx *Tx) recordProviderLimit(turnID, agentID, projectID, roomID, tool, resetAt string) error {
+// loginGone says a provider limit met on login no longer concerns the agent: a switch has installed another login of the tool on the host since
+// (live names the one installed now). A limit with no login recorded, or with no live login known, is never gone this way.
+func loginGone(login string, live func() string) bool {
+	if login == "" || live == nil {
+		return false
+	}
+	current := live()
+	return current != "" && current != login
+}
+
+// recordProviderLimit pauses the agent's new turns after its turn met the provider's usage limit, until resetAt (or until a switch, Retry now or a
+// stop lifts it). The limit is recorded against the login the turn was admitted on (turn.login). When a switch has installed another login since
+// (live answers the login live now), the limit is the old login's and does not pause the agent: its notes go back to the queue for the new login,
+// and no limit, notice or event is recorded.
+func (tx *Tx) recordProviderLimit(turnID, agentID, projectID, roomID, tool, resetAt string, live func() string) error {
 	if err := tx.requeueTurnNotes(turnID, agentID, "failed"); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES (?,?,?,?,?)
+	var login string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(login,'') FROM turn WHERE id=?`, turnID).Scan(&login); err != nil {
+		return err
+	}
+	if loginGone(login, live) {
+		return nil
+	}
+	if _, err := tx.Exec(`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool,login) VALUES (?,?,?,?,?,?)
 		ON CONFLICT(agent_id) DO UPDATE SET turn_id=excluded.turn_id,detected_at=excluded.detected_at,
-		reset_at=excluded.reset_at,tool=excluded.tool`, agentID, turnID, timestamp(), nullable(resetAt), tool); err != nil {
+		reset_at=excluded.reset_at,tool=excluded.tool,login=excluded.login`, agentID, turnID, timestamp(), nullable(resetAt), tool, nullable(login)); err != nil {
 		return err
 	}
 	var existing int
@@ -166,17 +187,19 @@ func (tx *Tx) clearProviderLimit(agentID string) error {
 	return err
 }
 
-func (tx *Tx) providerLimitBlocked(agentID, tool string) (bool, error) {
+// providerLimitBlocked says the agent's provider limit holds its new turns. A limit that no longer applies is lifted here: its reset time has come,
+// the agent's tool changed, or the login it was met on is no longer the one live (live, see loginGone).
+func (tx *Tx) providerLimitBlocked(agentID, tool string, live func() string) (bool, error) {
 	var resetAt sql.NullString
-	var limitedTool string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT reset_at,tool FROM provider_limit WHERE agent_id=?`, agentID).Scan(&resetAt, &limitedTool)
+	var limitedTool, login string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT reset_at,tool,COALESCE(login,'') FROM provider_limit WHERE agent_id=?`, agentID).Scan(&resetAt, &limitedTool, &login)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if limitedTool != tool || resetAt.Valid && resetAt.String <= timestamp() {
+	if limitedTool != tool || resetAt.Valid && resetAt.String <= timestamp() || loginGone(login, live) {
 		return false, tx.clearProviderLimit(agentID)
 	}
 	return true, nil
@@ -186,19 +209,22 @@ func (tx *Tx) providerLimitBlocked(agentID, tool string) (bool, error) {
 // queued notes. The dispatcher calls this at a coarse cadence.
 func (s *Store) AdvanceProviderLimits(ctx context.Context) error {
 	return s.Tx(ctx, func(tx *Tx) error {
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT p.agent_id FROM provider_limit p JOIN agent a ON a.id=p.agent_id
-			WHERE (p.reset_at IS NOT NULL AND p.reset_at<=?) OR p.tool<>a.tool ORDER BY p.agent_id`, timestamp())
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT p.agent_id,(p.reset_at IS NOT NULL AND p.reset_at<=?) OR p.tool<>a.tool,p.tool,COALESCE(p.login,'')
+			FROM provider_limit p JOIN agent a ON a.id=p.agent_id ORDER BY p.agent_id`, timestamp())
 		if err != nil {
 			return err
 		}
 		ids := []string{}
 		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
+			var id, tool, login string
+			var expired bool
+			if err := rows.Scan(&id, &expired, &tool, &login); err != nil {
 				rows.Close()
 				return err
 			}
-			ids = append(ids, id)
+			if expired || loginGone(login, func() string { return s.HostLogin(tool) }) {
+				ids = append(ids, id)
+			}
 		}
 		err = rows.Err()
 		rows.Close()
@@ -265,7 +291,7 @@ func (s *Store) ProviderLimitedAgents(ctx context.Context, machineID string) ([]
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.agent_id FROM provider_limit p JOIN agent a ON a.id=p.agent_id
+	rows, err := s.db.QueryContext(ctx, `SELECT p.agent_id,p.tool,COALESCE(p.login,'') FROM provider_limit p JOIN agent a ON a.id=p.agent_id
 		WHERE a.machine_id=? AND p.tool=a.tool AND (p.reset_at IS NULL OR p.reset_at>?) ORDER BY p.agent_id`, machineID, timestamp())
 	if err != nil {
 		return nil, err
@@ -273,9 +299,12 @@ func (s *Store) ProviderLimitedAgents(ctx context.Context, machineID string) ([]
 	defer rows.Close()
 	out := []string{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, tool, login string
+		if err := rows.Scan(&id, &tool, &login); err != nil {
 			return nil, err
+		}
+		if loginGone(login, func() string { return s.HostLogin(tool) }) {
+			continue // the old login's limit: the agent goes on with the login live now
 		}
 		out = append(out, id)
 	}
@@ -283,14 +312,18 @@ func (s *Store) ProviderLimitedAgents(ctx context.Context, machineID string) ([]
 }
 
 // ToolProviderLimited says whether a provider limit is in force now for an agent of tool on the machine: a harness met the provider's usage limit on
-// the login the machine's agents of that tool share. The quota switcher counts the host's active profile as exhausted while it is.
+// the login the machine's agents of that tool share. The quota switcher counts the host's active profile as exhausted while it is. Only a limit
+// met on the login live now counts (one with no login recorded counts as well): a turn that ran on the previous login and met its limit after a
+// switch never marks the new login limited.
 func (s *Store) ToolProviderLimited(ctx context.Context, machineID, tool string) (bool, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return false, err
 	}
+	current := s.HostLogin(tool)
 	var limited bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM provider_limit p JOIN agent a ON a.id=p.agent_id
-		WHERE a.machine_id=? AND a.tool=? AND p.tool=a.tool AND (p.reset_at IS NULL OR p.reset_at>?))`, machineID, tool, timestamp()).Scan(&limited)
+		WHERE a.machine_id=? AND a.tool=? AND p.tool=a.tool AND (p.reset_at IS NULL OR p.reset_at>?)
+		AND (p.login IS NULL OR p.login='' OR ?='' OR p.login=?))`, machineID, tool, timestamp(), current, current).Scan(&limited)
 	return limited, err
 }
 

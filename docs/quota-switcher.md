@@ -38,9 +38,14 @@ A profile is usable when all of these hold:
   (`reauth_required`, `needs_relogin_soon`);
 - it is not **limited**: no agent of the tool on the host machine has a
   provider limit in force (its harness ended a turn with the provider's
-  usage-limit error, a 429 `usage_limit_reached`). Only the active profile can
-  be limited, and a limited one is exhausted whatever its snapshot reads (the
-  snapshot lags behind the limit). Recording such a limit also asks the
+  usage-limit error, a 429 `usage_limit_reached`) that was met on this login.
+  Each turn on the host records the profile that was live when it started, and
+  its limit counts only against that profile: a turn still running on the old
+  login after a switch can end on the old login's limit, and that never marks
+  the new one limited. Limits recorded before logins were (and those of a host
+  with no switcher profile) count against whatever profile is active. Only the
+  active profile can be limited, and a limited one is exhausted whatever its
+  snapshot reads (the snapshot lags behind the limit). Recording such a limit also asks the
   switcher to decide at once instead of at its next 15-second tick. Decisions
   show it as `limited: true` on the profile.
 
@@ -86,16 +91,21 @@ and its System event commit together, so one cannot be stored without the other.
 
 - **A switch never waits for agents.** Running turns keep the token they hold and
   finish on it; a turn that then fails on the limit goes through the ordinary
-  failed/limit path, and the queue continues on the new login. The web switch is
-  the same ([switcher.md](switcher.md)).
+  failed/limit path, and the queue continues on the new login: the limit
+  belongs to the old login, so it neither pauses the agent nor marks the new
+  login limited (its request is queued again). The web switch is the same
+  ([switcher.md](switcher.md)).
 - **Warm agents are ended afterwards, in the background.** The host's supervisor
   ends the idle warm processes and cache pings of the tool, best effort and
   without blocking; the next turn starts on the new login. A Codex login that a
-  running session writes back is installed again (`switch_overwritten`).
+  running session writes back is installed again (`switch_overwritten`); see
+  [switcher.md](switcher.md) for when it is checked.
 - **Provider limits are lifted.** A switch that changed the login lifts the
   provider limits of the host's agents of the tool (each with its
   `provider_limit_cleared` event and its inbox notice resolved): the limit belonged to
-  the old login, so they go on with the new one. A web switch does the same.
+  the old login, so they go on with the new one. A web switch does the same. A
+  limit met on a login that is no longer active is also lifted at the agent's
+  next dispatch, whichever of the reset and the switch comes first.
 - **Account maintenance waits.** Refresh or warm-up of either the active or the
   target account holds the switch. The switch acquires distinct account locks in
   a fixed order before the switcher lock; if the active profile changed while

@@ -151,7 +151,9 @@ it (there are no tombstones).
 The UI lists host agents on the selected tool before a switch, for information.
 **A switch never waits for agents**: a running turn keeps the token it holds and
 finishes on it (a turn that then fails on the limit goes through the ordinary
-failed/limit path, and the queue continues on the new login). The swap keeps the
+failed/limit path, and the queue continues on the new login: each host turn
+records the profile it started on, and a limit it meets counts only against that
+profile, so it neither pauses the agent nor marks the new login limited). The swap keeps the
 account lock, the incoming refresh and, for Claude, Claude's own
 `.oauth_refresh.lock` and `.storage-write.lock` held across the file swap
 (Claude re-reads the file before every refresh and saves compare-and-swap, so a
@@ -160,9 +162,15 @@ the warm processes and cache pings of the tool are retired in the background,
 best effort; the next turn starts a fresh process on the new login. A running
 codex may write the old account's tokens back into `auth.json` (an in-flight
 write takes no lock), so after a Codex switch the live account id is checked at
-about +5 s, +30 s and +2 min; if it no longer matches the active profile, the
-profile is installed again and a `switch_overwritten` owner event is raised. The
-stored profile copy is never overwritten by the old one. A standalone CLI switch should be made while the
+about +5 s, +30 s and +2 min, and after that on every usage refresh and before
+every Codex turn on the host, until the next Codex switch. The account expected
+is the one the switch installed (taken from the stored profile it wrote, never
+from re-reading the live file, which may already hold the old account). Each
+check compares the account id only; when the file names another stored
+profile's account instead, the active profile is installed again (with the
+newest tokens a check saw for it) and one `switch_overwritten` owner event is
+raised per switch. A login of an account no profile holds, or a logged-out
+file, is left alone. The stored profile copy is never overwritten by the old one. A standalone CLI switch should be made while the
 server and any harness sessions using that login are stopped. Remote-machine
 switching is not available in this slice.
 

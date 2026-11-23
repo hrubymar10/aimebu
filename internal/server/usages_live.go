@@ -89,6 +89,7 @@ func (s *Server) watchUsages() (<-chan struct{}, func()) {
 // usagesChanged is the usages Reader's update hook. It never blocks.
 func (s *Server) usagesChanged() {
 	s.signalUsageAlerts()
+	s.kickCodexOverwrite() // a refresh is a moment to look at the live Codex login again (in the background: the reader holds its lock)
 	if runner := s.quotaRunner(); runner != nil {
 		runner.Trigger() // a new snapshot is a reason to evaluate the quota policy
 		if guard := s.limitGuard(); guard != nil {

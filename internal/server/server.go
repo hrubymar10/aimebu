@@ -77,9 +77,11 @@ type Server struct {
 	switchBgCancel context.CancelFunc
 	// switchCheckAfter is the clock of the Codex overwrite check: tests replace it; nil is time.After.
 	switchCheckAfter func(time.Duration) <-chan time.Time
-	refresher        *usages.TargetRefresher
-	claimsDone       chan struct{} // closed once the live-file claims are released after shutdown
-	liveClaims       *switcher.LiveClaims
+	// codexWatch is the Codex overwrite check of the last Codex switch (see codex_overwrite.go); nil when none is running.
+	codexWatch atomic.Pointer[codexWatch]
+	refresher  *usages.TargetRefresher
+	claimsDone chan struct{} // closed once the live-file claims are released after shutdown
+	liveClaims *switcher.LiveClaims
 	// refresherBlocked is why this process may not refresh a tool's live login: another refresher's claim, or another
 	// root's token-copy marker for the same live file. "" means it may.
 	refresherBlocked func(tool string) string
@@ -177,6 +179,7 @@ func New(db *store.Store) *Server {
 	s.Presence = newHumanPresence()
 	s.Auth.ActivityHook = s.Presence.Touch
 	if db != nil {
+		db.SetHostLogin(s.hostLogin)
 		if value, _, err := db.GlobalSettingValue(context.Background(), codexWarmEnabledKey); err == nil {
 			s.codexWarmOn.Store(value == "1")
 		}

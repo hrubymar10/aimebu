@@ -1382,15 +1382,18 @@ the journal, for debugging (retention 14 d): see "Agent output" in
   one, and neither does the removal of the active profile: running turns keep
   the token they hold and finish on it; a turn that then fails on the limit goes
   through the ordinary failed/limit path, and the queue continues on the new
-  login. The swap keeps what protects the credentials (the account lock, the
+  login (a host turn records the profile it started on, and its provider limit
+  counts only against that profile). The swap keeps what protects the credentials (the account lock, the
   incoming-profile refresh and, for Claude, Claude's own `.oauth_refresh.lock`
   and `.storage-write.lock` held across the file swap). After the swap the
   host's warm processes and cache pings of the tool are retired in the
   background, best effort and without blocking; the next turn starts a fresh
   process on the new login. For Codex, whose running process may write the old
   account's tokens back into `auth.json`, the live account id is checked at
-  about +5 s, +30 s and +2 min; when it no longer matches the active profile
-  the active profile is installed again and one owner event
+  about +5 s, +30 s and +2 min, then on every usage refresh and before every
+  Codex turn on the host until the next switch, against the account the switch
+  installed; when it names another stored profile's account the active profile
+  is installed again and one owner event
   `switch_overwritten` (with the tool) is raised. The stored profile copy is
   never overwritten by the old one. Remote-machine switching and a persistent
   dispatch gate are later work.

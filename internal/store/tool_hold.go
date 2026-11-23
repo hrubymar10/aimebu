@@ -13,6 +13,26 @@ import (
 // memory only. It is derived from the usage snapshot and re-derived within seconds of a
 // restart, so a stale hold can never outlive the process that set it.
 
+// SetHostLogin gives the store the way to read which login of a tool is live on the host machine now (the switcher's active profile). The store
+// records it on each turn admitted on the host and on the provider limit such a turn meets, and counts a limit only against its own login (see
+// provider_limit.go). Without it, or when it answers "", every limit counts against whatever login is live, as before logins were recorded.
+func (s *Store) SetHostLogin(fn func(tool string) string) {
+	s.holdMu.Lock()
+	defer s.holdMu.Unlock()
+	s.hostLogin = fn
+}
+
+// HostLogin is the login of tool live on the host machine now, or "" when it is not known.
+func (s *Store) HostLogin(tool string) string {
+	s.holdMu.RLock()
+	fn := s.hostLogin
+	s.holdMu.RUnlock()
+	if fn == nil || (tool != "claude" && tool != "codex") {
+		return ""
+	}
+	return fn(tool)
+}
+
 // SetToolHold holds new turns of tool with reason; an empty reason releases the hold.
 func (s *Store) SetToolHold(tool, reason string) {
 	s.holdMu.Lock()

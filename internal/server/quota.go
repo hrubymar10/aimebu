@@ -174,6 +174,20 @@ func (s *Server) accountSwitched(ctx context.Context, tool string) {
 	}
 }
 
+// hostLogin is Store.SetHostLogin's source: the switcher's active profile of tool, the login live on the host ("" when there is no switcher or
+// no active profile, and the store then counts provider limits as it did before logins were recorded).
+func (s *Server) hostLogin(tool string) string {
+	sw := s.Switcher
+	if sw == nil {
+		return ""
+	}
+	active, err := sw.Active(tool)
+	if err != nil {
+		return ""
+	}
+	return active
+}
+
 func (s *Server) currentRefresher() *usages.TargetRefresher {
 	s.refresherMu.Lock()
 	defer s.refresherMu.Unlock()

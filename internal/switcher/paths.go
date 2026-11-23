@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -85,6 +86,10 @@ type Manager struct {
 	// beforeStorageLock is a test seam: it runs in a link-model Claude Switch after the eligibility
 	// checks and before Claude's storage-write lock is taken, the window in which a login can land.
 	beforeStorageLock func()
+
+	// installed is what the last switch of each tool made by this Manager put into the live file (see LastInstalled).
+	installedMu sync.Mutex
+	installed   map[string]Installed
 }
 
 // DefaultRoot resolves the switcher root from AIMEBU_CONFIG_DIR (or the default
