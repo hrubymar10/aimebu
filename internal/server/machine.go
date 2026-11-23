@@ -886,6 +886,7 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 		if err := s.Store.RecordProcessInfo(ctx, frame.TurnID, frame.AgentID, frame.Generation, exit); err != nil {
 			return err
 		}
+		s.noteProviderLimit(ctx, frame.AgentID)
 		if err := s.Store.ConfirmAgentProcessExit(ctx, frame.AgentID); err != nil {
 			return err
 		}

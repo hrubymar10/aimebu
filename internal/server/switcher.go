@@ -179,7 +179,7 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if changed {
-		s.refreshSwitchedUsage(r.PathValue("tool"))
+		s.accountSwitched(r.Context(), r.PathValue("tool"))
 	}
 	writeJSON(w, 200, map[string]any{"active": active, "switched": changed})
 }

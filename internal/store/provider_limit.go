@@ -281,3 +281,62 @@ func (s *Store) ProviderLimitedAgents(ctx context.Context, machineID string) ([]
 	}
 	return out, rows.Err()
 }
+
+// ToolProviderLimited says whether a provider limit is in force now for an agent of tool on the machine: a harness met the provider's usage limit on
+// the login the machine's agents of that tool share. The quota switcher counts the host's active profile as exhausted while it is.
+func (s *Store) ToolProviderLimited(ctx context.Context, machineID, tool string) (bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return false, err
+	}
+	var limited bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM provider_limit p JOIN agent a ON a.id=p.agent_id
+		WHERE a.machine_id=? AND a.tool=? AND p.tool=a.tool AND (p.reset_at IS NULL OR p.reset_at>?))`, machineID, tool, timestamp()).Scan(&limited)
+	return limited, err
+}
+
+// AgentProviderLimited says whether the agent has a provider limit on record.
+func (s *Store) AgentProviderLimited(ctx context.Context, agentID string) (bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return false, err
+	}
+	var limited bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM provider_limit WHERE agent_id=?)`, agentID).Scan(&limited)
+	return limited, err
+}
+
+// ClearToolProviderLimits lifts the provider limits of the machine's agents of tool, after the account they share was switched: the limit belonged to the
+// login that is gone, so the agents go on with the new one instead of waiting for the old one's reset. Each lift is the ordinary one (its
+// provider_limit_cleared event, its open inbox notice resolved). It returns how many it lifted.
+func (s *Store) ClearToolProviderLimits(ctx context.Context, machineID, tool string) (int, error) {
+	cleared := 0
+	err := s.Tx(ctx, func(tx *Tx) error {
+		cleared = 0
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT p.agent_id FROM provider_limit p JOIN agent a ON a.id=p.agent_id
+			WHERE a.machine_id=? AND a.tool=? AND p.tool=a.tool ORDER BY p.agent_id`, machineID, tool)
+		if err != nil {
+			return err
+		}
+		ids := []string{}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := tx.clearProviderLimit(id); err != nil {
+				return err
+			}
+			cleared++
+		}
+		return nil
+	})
+	return cleared, err
+}

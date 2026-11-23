@@ -144,6 +144,21 @@ func (r *Runner) CanSwitch(ctx context.Context, tool string, obs Observation, g 
 	return HasTarget(cfg, state.State, g, obs)
 }
 
+// DryRunTarget reports whether tool is in dry run and would have a target if it were not: the limit guard's notice then says the switch is due but
+// dry run keeps it from happening.
+func (r *Runner) DryRunTarget(ctx context.Context, tool string, obs Observation, g GuardConfig) bool {
+	cfg, _, err := r.loadConfig(ctx, tool)
+	if err != nil || !cfg.DryRun {
+		return false
+	}
+	state, err := r.loadState(ctx, tool)
+	if err != nil {
+		return false
+	}
+	cfg.DryRun = false
+	return HasTarget(cfg, state.State, g, obs)
+}
+
 // SetGuard makes the runner clamp every profile's limits to the guard's soft threshold.
 func (r *Runner) SetGuard(f func(ctx context.Context, tool string) GuardConfig) { r.guard = f }
 
@@ -228,6 +243,18 @@ func (r *Runner) record(ctx context.Context, d Decision) {
 	}
 	if d.Profiles == nil {
 		d.Profiles = map[string]ProfileView{}
+	}
+	if d.Action == ActionSwitch && d.DryRun && (!known || !previous.Same(d)) {
+		// A dry run records the switch it would make and makes none. Said once per change (a restart that finds the same decision in the journal
+		// stays quiet), so an owner who left dry run on learns that a switch was due instead of finding agents stalled at the limit.
+		payload := map[string]string{"tool": d.Tool, "reason": d.Reason}
+		if d.From != nil {
+			payload["from"] = *d.From
+		}
+		if d.To != nil {
+			payload["to"] = *d.To
+		}
+		r.event("quota_switch_dry_run", payload)
 	}
 	if d.Action != ActionHold || !transientReason(d.Reason) {
 		delete(r.quiet, d.Tool)
@@ -371,7 +398,7 @@ func (r *Runner) track(tool string, profiles []Obs, now time.Time, maxAge time.D
 		} else if g, ok := r.good[key]; ok && transientRead(profiles[i]) && now.Sub(g.at) <= bridge {
 			cur := profiles[i]
 			profiles[i] = g.obs
-			profiles[i].Parked, profiles[i].HasCredentials, profiles[i].TokenExpiresAt = cur.Parked, cur.HasCredentials, cur.TokenExpiresAt
+			profiles[i].Parked, profiles[i].HasCredentials, profiles[i].TokenExpiresAt, profiles[i].Limited = cur.Parked, cur.HasCredentials, cur.TokenExpiresAt, cur.Limited
 		}
 	}
 	AgeObs(profiles, now, maxAge)

@@ -361,8 +361,51 @@ func TestADryRunRecordsTheDecisionAndNeverSwitches(t *testing.T) {
 	if len(v.Decisions) != 1 {
 		t.Fatalf("an unchanged decision is recorded once, got %d", len(v.Decisions))
 	}
-	if len(h.ev.events) != 0 || v.State.LastSwitchAt != nil {
-		t.Fatalf("a dry run counts and announces nothing: %v %+v", h.ev.events, v.State)
+	// It counts nothing, but says once that a switch was due: the owner who left dry run on must not find agents stalled at the limit silently.
+	if got := h.ev.kinds(); len(got) != 1 || got[0] != "quota_switch_dry_run" || h.ev.events[0]["from"] != "b" || h.ev.events[0]["to"] != "a" || h.ev.events[0]["reason"] != ReasonHigherUsable {
+		t.Fatalf("a dry run announces the due switch once: %v", h.ev.events)
+	}
+	if v.State.LastSwitchAt != nil {
+		t.Fatalf("a dry run counts nothing: %+v", v.State)
+	}
+	// A restart finds the same decision in the journal and stays quiet; a changed decision is said again.
+	h.r = NewRunner(h.store, h.src, h.act, h.ev)
+	h.r.SetClock(func() time.Time { return h.now })
+	h.tick(time.Minute)
+	if len(h.ev.events) != 1 {
+		t.Fatalf("a restart repeated the dry-run notice: %v", h.ev.events)
+	}
+	h.observe("b", ob("a", 1, 1), ob("b", 99, 1), ob("c", 1, 1))
+	h.tick(time.Minute)
+	if got := h.ev.kinds(); len(got) != 2 || got[1] != "quota_switch_dry_run" || h.ev.events[1]["reason"] != ReasonOverLimit {
+		t.Fatalf("a changed dry-run decision is said again: %v", h.ev.events)
+	}
+}
+
+// A harness that met the provider's usage limit marks the active login exhausted although the snapshot still reads under the threshold (the
+// snapshot lags behind the 429): the switcher moves off it at once.
+func TestAProviderLimitedActiveProfileIsExhaustedWhateverTheSnapshotSays(t *testing.T) {
+	h := newHarness(t)
+	cfg := claudeCfg()
+	cfg.WarmupSeconds, cfg.MinDwellMinutes = 0, 0
+	h.save(ToolClaude, cfg)
+	h.observe("a", ob("a", 40, 10), ob("b", 1, 1), ob("c", 1, 1))
+	h.tick(0)
+	if len(h.act.calls) != 0 {
+		t.Fatalf("an unlimited best profile was switched away from: %v", h.act.calls)
+	}
+	limited := ob("a", 40, 10)
+	limited.Limited = true
+	h.observe("a", limited, ob("b", 1, 1), ob("c", 1, 1))
+	h.tick(time.Second)
+	if len(h.act.calls) != 1 || h.act.calls[0] != [2]string{ToolClaude, "b"} {
+		t.Fatalf("calls = %v", h.act.calls)
+	}
+	if action, reason := h.lastReason(); action != ActionSwitch || reason != ReasonOverLimit {
+		t.Fatalf("decision = %s %s", action, reason)
+	}
+	if v := h.view(); !v.LastDecision.Profiles["a"].Limited {
+		t.Fatalf("the decision does not show the limit: %+v", v.LastDecision.Profiles)
 	}
 }
 

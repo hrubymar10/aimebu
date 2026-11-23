@@ -33,6 +33,9 @@ const (
 
 	// Reasons the runner gives to what happens around the switch itself.
 	ReasonAgentsRunning = "agents running"
+	// ReasonWarmAgents: agents of the tool kept warm (or their cache pings) could not be confirmed ended, so the login they hold cannot be
+	// swapped yet. It is its own hold, not "agents running": no turn runs, and the web switch names the agents and offers to switch anyway.
+	ReasonWarmAgents    = "agents kept warm could not be ended"
 	ReasonActiveChanged = "the active profile changed; deciding again"
 	ReasonRefreshFailed = "incoming refresh failed"
 	ReasonAccountBusy   = "account busy"
@@ -65,6 +68,9 @@ type Obs struct {
 	Parked bool
 	// TokenExpiresAt is the stored token's expiry, nil when unknown.
 	TokenExpiresAt *time.Time
+	// Limited: a harness of the tool on the host machine met the provider's usage limit on this login (a provider limit is in force for one of
+	// its agents), whatever the usage snapshot says. Only the active profile can carry it. A limited profile is exhausted: never usable.
+	Limited bool
 	// ObservedAt is when the usage reader last read this profile (the snapshot's own
 	// timestamp), nil when it has none. The runner measures the warm-up in these times
 	// and marks a reading that is too old as stale.
@@ -92,6 +98,7 @@ type ProfileView struct {
 	Session      *float64 `json:"session"`
 	Weekly       *float64 `json:"weekly"`
 	OKForSeconds float64  `json:"ok_for_seconds"`
+	Limited      bool     `json:"limited,omitempty"`
 }
 
 // Decision is the structured outcome of one evaluation.
@@ -151,7 +158,7 @@ func strp(s string) *string {
 
 // usable: ok and settled, under both limits, with credentials and not parked.
 func usable(o Obs, l Limit, warmup time.Duration) bool {
-	if !o.OK() || o.OKFor < warmup || !o.HasCredentials || o.Parked {
+	if !o.OK() || o.OKFor < warmup || !o.HasCredentials || o.Parked || o.Limited {
 		return false
 	}
 	if o.Session != nil && !(*o.Session < l.SessionMax) {
@@ -177,7 +184,7 @@ func Decide(in Input) Result {
 	}
 	d := Decision{At: now, Tool: in.Tool, DryRun: cfg.DryRun, Profiles: map[string]ProfileView{}}
 	for _, o := range in.Profiles {
-		d.Profiles[o.Name] = ProfileView{Status: viewStatus(o), Session: o.Session, Weekly: o.Weekly, OKForSeconds: o.OKFor.Seconds()}
+		d.Profiles[o.Name] = ProfileView{Status: viewStatus(o), Session: o.Session, Weekly: o.Weekly, OKForSeconds: o.OKFor.Seconds(), Limited: o.Limited}
 	}
 	finish := func(action, reason string) Result {
 		d.Action, d.Reason = action, reason

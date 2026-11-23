@@ -11,6 +11,10 @@ design and its reasoning are in
 It needs the account switcher enabled and the usage reader running
 (`AIMEBU_USAGES` not `0`). It is **off by default**; enabling it starts in
 **dry run**, which computes and records every decision and switches nothing.
+A dry run that decides a switch is due also raises one `quota_switch_dry_run`
+owner event (with `from`, `to` and the reason) per change of decision, so an
+owner who left dry run on learns that a profile reached its limit instead of
+finding agents stalled; turn dry run off in Settings to let it act.
 
 ## What "usable" means
 
@@ -31,7 +35,14 @@ A profile is usable when all of these hold:
   profile with no weekly figure is not usable). Limits are percent used and the
   comparison is strict: a profile at exactly its limit is exhausted;
 - it has stored credentials and the token refresher has not parked it
-  (`reauth_required`, `needs_relogin_soon`).
+  (`reauth_required`, `needs_relogin_soon`);
+- it is not **limited**: no agent of the tool on the host machine has a
+  provider limit in force (its harness ended a turn with the provider's
+  usage-limit error, a 429 `usage_limit_reached`). Only the active profile can
+  be limited, and a limited one is exhausted whatever its snapshot reads (the
+  snapshot lags behind the limit). Recording such a limit also asks the
+  switcher to decide at once instead of at its next 15-second tick. Decisions
+  show it as `limited: true` on the profile.
 
 ## The decision, in order
 
@@ -76,6 +87,15 @@ and its System event commit together, so one cannot be stored without the other.
 - **Running turns wait.** If an agent of the tool is in a turn, the switch is held
   (`agents running`) and retried; it never interrupts. This is the same check the
   web switch makes.
+- **Warm agents are ended first.** The host's supervisor ends the idle warm
+  processes and cache pings of the tool, which hold the old login, the same as for a
+  web switch ([switcher.md](switcher.md)). One it cannot confirm ended holds the switch
+  with its own reason, `agents kept warm could not be ended`, retried like the
+  others; the automatic switch never forces past it.
+- **Provider limits are lifted.** A switch that changed the login lifts the
+  provider limits of the host's agents of the tool (each with its
+  `provider_limit_cleared` event and its inbox notice resolved): the limit belonged to
+  the old login, so they go on with the new one. A web switch does the same.
 - **Account maintenance waits.** Refresh or warm-up of either the active or the
   target account holds the switch. The switch acquires distinct account locks in
   a fixed order before the switcher lock; if the active profile changed while
@@ -157,7 +177,8 @@ reads the fuller of the session and weekly percentages and compares with `>=`:
 - **hard** (default 99): the profile is at its limit. New turns stay held, and the owner gets one
   `limit_guard_hard` system event. Both notices say what happens next: `next` is `switching` when the
   switcher could move off the profile now (it is enabled, not a dry run, not tripped, the active
-  profile is not protected, and a listed profile is usable under the soft threshold), else `held`.
+  profile is not protected, and a listed profile is usable under the soft threshold), `dry_run` when
+  it would but is in dry run, else `held`.
   Nothing is paused or stopped: the hold clears itself, and agents keep their sessions.
 
 Only a healthy, fresh reading is acted on, with the same ageing as the switcher (a reading older than three

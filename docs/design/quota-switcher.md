@@ -271,8 +271,8 @@ POST /api/quota-switcher/{tool}/reenable   {}            -> <Tool>   (clears the
 
 All `reason` strings are fixed sentences chosen by the server (never CLI output or
 error text with paths); errors from the switch are mapped to a short fixed reason
-(`agents running`, `incoming refresh failed`, `account busy`, `login pending`,
-`switch failed`) with the detail in the server log only.
+(`agents running`, `agents kept warm could not be ended`, `incoming refresh failed`,
+`account busy`, `login pending`, `switch failed`) with the detail in the server log only.
 
 ## 10. Tests
 

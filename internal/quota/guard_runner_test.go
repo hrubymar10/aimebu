@@ -95,6 +95,36 @@ func TestGuardHardAnnouncesOnceNamesTheNextStepAndWakesTheSwitcher(t *testing.T)
 	if h2.ev.events[0]["next"] != "switching" {
 		t.Fatalf("event = %v", h2.ev.events[0])
 	}
+	// A switch that is due but kept from happening by dry run says so, instead of a plain "held".
+	h3 := newGuardHarness()
+	h3.g.DryRunTarget = func(context.Context, string, Observation, GuardConfig) bool { return true }
+	h3.observe(okObs("a", 100, 10))
+	if h3.ev.events[0]["next"] != "dry_run" {
+		t.Fatalf("event = %v", h3.ev.events[0])
+	}
+}
+
+// DryRunTarget is HasTarget with dry run lifted, and only for a tool in dry run.
+func TestRunnerDryRunTargetOnlyForADryRunWithATarget(t *testing.T) {
+	h := newHarness(t)
+	obs := Observation{Profiles: []Obs{ob("a", 1, 1), ob("b", 99, 1)}, Active: "b", Ready: true}
+	g := DefaultGuard(ToolClaude)
+	if h.r.DryRunTarget(context.Background(), ToolClaude, obs, g) {
+		t.Fatal("a real (not dry-run) tool is not a dry-run target")
+	}
+	cfg := claudeCfg()
+	cfg.DryRun = true
+	h.save(ToolClaude, cfg)
+	if !h.r.DryRunTarget(context.Background(), ToolClaude, obs, g) {
+		t.Fatal("a dry run with a usable target is one")
+	}
+	if h.r.CanSwitch(context.Background(), ToolClaude, obs, g) {
+		t.Fatal("a dry run can never switch")
+	}
+	obs.Profiles[0] = ob("a", 99, 1)
+	if h.r.DryRunTarget(context.Background(), ToolClaude, obs, g) {
+		t.Fatal("no usable target: not one")
+	}
 }
 
 func TestGuardSoftSaysWhetherASwitchWillLiftTheHold(t *testing.T) {

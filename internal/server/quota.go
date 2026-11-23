@@ -32,6 +32,7 @@ func (s *Server) StartQuotaSwitcher(ctx context.Context) *quota.Runner {
 	quota.Report = reportQuota
 	guard := quota.NewGuard(s.Store, quotaSource{s}, s.Store, quotaEvents{s})
 	guard.CanSwitch = runner.CanSwitch
+	guard.DryRunTarget = runner.DryRunTarget
 	guard.OnHold = runner.Trigger
 	guard.OnHoldChange = s.guardHoldChanged
 	runner.SetGuard(guard.ConfigOrDefault)
@@ -71,7 +72,7 @@ func (q quotaSource) Profiles(_ context.Context, tool string) ([]string, error) 
 	return names, nil
 }
 
-func (q quotaSource) Observe(_ context.Context, tool string) (quota.Observation, error) {
+func (q quotaSource) Observe(ctx context.Context, tool string) (quota.Observation, error) {
 	response := q.s.Usages.Snapshot()
 	if err := q.s.Switcher.OverlayUsages(&response); err != nil {
 		return quota.Observation{}, err
@@ -114,12 +115,57 @@ func (q quotaSource) Observe(_ context.Context, tool string) (quota.Observation,
 			}
 			if profile.Active {
 				obs.Active = profile.ProfileName
+				// A harness on the host met the provider's usage limit: the active login is exhausted now, even while the usage snapshot still
+				// reads under the threshold (it lags, or the limit is one the endpoint does not show). A switch lifts the agents' limits.
+				o.Limited = q.s.hostToolLimited(ctx, tool)
 			}
 			obs.Profiles = append(obs.Profiles, o)
 		}
 		obs.Ready = len(obs.Profiles) > 0
 	}
 	return obs, nil
+}
+
+// hostToolLimited says a provider limit is in force for an agent of tool on the host machine (see Store.ToolProviderLimited). A failed read counts
+// as no limit: the usage snapshot still guards the profile.
+func (s *Server) hostToolLimited(ctx context.Context, tool string) bool {
+	host, err := s.Store.HostMachine(ctx)
+	if err != nil {
+		return false
+	}
+	limited, err := s.Store.ToolProviderLimited(ctx, host.ID, tool)
+	if err != nil {
+		log.Printf("quota: %s: reading the host's provider limits: %v", tool, err)
+		return false
+	}
+	return limited
+}
+
+// noteProviderLimit asks the quota switcher to decide at once when the agent's process ended at the provider's usage limit (a 429
+// usage_limit_reached), instead of at its next tick.
+func (s *Server) noteProviderLimit(ctx context.Context, agentID string) {
+	runner := s.quotaRunner()
+	if runner == nil {
+		return
+	}
+	if limited, err := s.Store.AgentProviderLimited(ctx, agentID); err == nil && limited {
+		runner.Trigger()
+	}
+}
+
+// accountSwitched is what follows a switch that changed the host's login of tool: the usage snapshot is refreshed, and the provider limits the
+// host's agents of the tool met on the old login are lifted, so they go on with the new one instead of waiting for the old one's reset.
+func (s *Server) accountSwitched(ctx context.Context, tool string) {
+	s.refreshSwitchedUsage(tool)
+	host, err := s.Store.HostMachine(ctx)
+	if err != nil {
+		log.Printf("switcher: %s switched, but the host's provider limits were not lifted: %v", tool, err)
+		return
+	}
+	if _, err := s.Store.ClearToolProviderLimits(context.WithoutCancel(ctx), host.ID, tool); err != nil {
+		log.Printf("switcher: %s switched, but the host's provider limits were not lifted: %v", tool, err)
+		telemetry.ReportError(context.Background(), "switcher", fmt.Errorf("lifting the provider limits after an account switch: %w", err))
+	}
 }
 
 func (s *Server) currentRefresher() *usages.TargetRefresher {
@@ -150,7 +196,8 @@ func (a quotaActuator) Switch(ctx context.Context, tool, from, to string) (bool,
 	// Agents kept warm hold the login they started with: they are ended, and confirmed gone, before the swap.
 	releaseWarm, err := a.s.retireHostWarm(ctx, tool)
 	if err != nil {
-		return false, quota.ReasonAgentsRunning, nil
+		log.Printf("quota: switch %s %s -> %s held: %v", tool, from, to, err)
+		return false, quota.ReasonWarmAgents, nil
 	}
 	defer releaseWarm() // cache pings of the tool stay held back until the switch is over, whatever it came to
 	if a.afterPreCheck != nil {
@@ -164,7 +211,7 @@ func (a quotaActuator) Switch(ctx context.Context, tool, from, to string) (bool,
 	switch {
 	case err == nil:
 		if changed {
-			a.s.refreshSwitchedUsage(tool)
+			a.s.accountSwitched(ctx, tool)
 		}
 		return changed, "", nil
 	case errors.Is(err, switcher.ErrMaintenanceBusy), errors.Is(err, switcher.ErrMigrationRaced):

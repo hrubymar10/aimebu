@@ -30,7 +30,7 @@ const labels = {
   machine_created: 'Machine added', machine_approved: 'Machine approved', machine_revoked: 'Machine revoked', machine_key_rotated: 'Machine key rotated', machine_pairing_created: 'Machine pairing created',
   user_created: 'User created', user_deactivated: 'User deactivated', user_admin_changed: 'Admin changed', user_invite_created: 'Invite created', user_invite_redeemed: 'Invite redeemed',
   credential_alert: 'Credential alert', update_status: 'Update status',
-  quota_switch: 'Automatic account switch', quota_hold: 'Automatic account switch held', quota_switch_failed: 'Automatic account switch failed',
+  quota_switch: 'Automatic account switch', quota_switch_dry_run: 'Automatic account switch due, not made: dry run is on', quota_hold: 'Automatic account switch held', quota_switch_failed: 'Automatic account switch failed',
   quota_reset_seen: 'Weekly window reset seen', quota_switcher_tripped: 'Automatic switching tripped',
   limit_guard_soft: 'Usage limit near: new turns held', limit_guard_hard: 'Usage limit reached', limit_guard_clear: 'Usage back under the limit: new turns resume',
 };
@@ -102,7 +102,7 @@ export function describeEvent(event, names = {}) {
   if (event.kind.startsWith('limit_guard_')) {
     // {tool, profile, percent, window, soft, hard, next}: which profile is how full, and what happens next.
     const full = payload.percent ? `${payload.percent}% ${payload.window ?? ''}`.trim() : '';
-    const next = { held: 'new turns stay held', switching: 'the quota switcher moves off it' }[payload.next] ?? '';
+    const next = { held: 'new turns stay held', switching: 'the quota switcher moves off it', dry_run: 'the quota switcher would move off it, but it is in dry run' }[payload.next] ?? '';
     return { text: parts[0], where, details: [payload.tool, payload.profile, full, next].filter(Boolean).map(String).join(' · ') };
   }
   const details = detailKeys.filter(key => payload[key] !== undefined && payload[key] !== '').map(key => `${key.replace('_', ' ')}: ${payload[key]}`);

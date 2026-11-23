@@ -824,7 +824,10 @@ call can retry without the notice. Later queued work waits behind the same
 provider-limit gate. An owner or operator receives one informational inbox
 item with a `Retry now` action. A parsed reset time appears on the item and
 health flag and clears the gate automatically when reached. Reactivate,
-Switch, or Retry now clears a limit without a known reset. A general
+Switch, or Retry now clears a limit without a known reset. An account switch
+of the tool on the host (web or automatic) lifts the limits of the host's agents
+of that tool, since they belonged to the old login, and a limit in force marks the
+host's active profile exhausted for the [quota switcher](quota-switcher.md). A general
 rate-limit error does not use this path.
 
 Agent cards contain `id`, `slug`, `room_id`, `project_id`, `role_key`,

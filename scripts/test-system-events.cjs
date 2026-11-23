@@ -78,6 +78,9 @@ assert.equal(describe(quota('quota_reset_seen', { tool: 'claude', profile: 'a', 
 assert.equal(describe(quota('quota_switcher_tripped', { tool: 'codex', reason: 'too many automatic switch attempts this hour' })).text, 'Automatic switching tripped');
 assert.equal(describe(quota('quota_switch_failed', { tool: 'claude', from: 'a', to: 'b', reason: 'switch failed' })).text, 'Automatic account switch failed');
 assert.equal(describe(quota('quota_hold', { tool: 'claude', reason: 'active snapshot not ok' })).text, 'Automatic account switch held');
+view = describe(quota('quota_switch_dry_run', { tool: 'claude', from: 'main', to: 'bkp', reason: 'the active profile is over its limit or unusable' }));
+assert.equal(view.text, 'Automatic account switch due, not made: dry run is on');
+assert.equal(view.details, 'claude · main → bkp · the active profile is over its limit or unusable');
 assert.equal(describe(quota('quota_switch', { tool: '<b>x</b>' })).details, '<b>x</b>', 'markup stays text');
 assert.equal(describe({ kind: 'agent_stopped', payload_json: JSON.stringify({ tool: 'claude', from: 'a', to: 'b' }) }).details, '', 'quota keys must not leak into other events');
 
@@ -87,6 +90,7 @@ assert.equal(view.text, 'Usage limit reached');
 assert.equal(view.details, 'claude · a · 96% weekly · the quota switcher moves off it');
 assert.equal(describe(quota('limit_guard_soft', { tool: 'codex', profile: 'b', percent: '91', window: 'session' })).details, 'codex · b · 91% session');
 assert.equal(describe(quota('limit_guard_hard', { tool: 'codex', profile: 'b', percent: '97', window: 'session', next: 'held' })).details, 'codex · b · 97% session · new turns stay held');
+assert.equal(describe(quota('limit_guard_hard', { tool: 'claude', profile: 'main', percent: '100', window: 'session', next: 'dry_run' })).details, 'claude · main · 100% session · the quota switcher would move off it, but it is in dry run');
 assert.equal(describe(quota('limit_guard_clear', { tool: 'codex', profile: 'b', percent: '5', window: 'weekly' })).text, 'Usage back under the limit: new turns resume');
 
 // Who an id is: the server names the ids of an event (an agent as slug@project, a user by login), so the feed does not show agt_… or usr_…. The server's name

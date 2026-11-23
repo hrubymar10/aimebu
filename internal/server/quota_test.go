@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/quota"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
@@ -348,10 +349,18 @@ func TestADryRunNeverTouchesTheSwitcher(t *testing.T) {
 	if d := o.Tools["claude"].LastDecision; d == nil || d.Action != quota.ActionSwitch || !d.DryRun {
 		t.Fatalf("decision = %+v", d)
 	}
+	// It switches nothing and counts nothing, but the owner is told once that a switch was due and dry run kept it from happening.
+	var dryRun int
 	for _, event := range systemEvents(t, f) {
-		if strings.HasPrefix(event.Kind, "quota_") {
-			t.Fatalf("a dry run announces nothing, got %s", event.Kind)
+		switch {
+		case event.Kind == "quota_switch_dry_run" && strings.Contains(event.PayloadJSON, `"from":"A"`) && strings.Contains(event.PayloadJSON, `"to":"B"`):
+			dryRun++
+		case strings.HasPrefix(event.Kind, "quota_"):
+			t.Fatalf("a dry run announces only the due switch, got %s", event.Kind)
 		}
+	}
+	if dryRun != 1 {
+		t.Fatalf("the due switch was announced %d times", dryRun)
 	}
 }
 
@@ -641,5 +650,153 @@ func TestRemovingTheActiveProfileRetiresWarmAgentsFirst(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 204 {
 		t.Fatalf("confirmed: status=%d", resp.StatusCode)
+	}
+}
+
+// limitHostAgent gives the fixture's room an agent of tool on the host machine whose last turn met the provider's usage limit (a 429
+// usage_limit_reached), in force until an hour from now. It returns the agent's id.
+func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
+	t.Helper()
+	host, err := f.srv.Store.HostMachine(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.machineMu.Lock()
+	if f.srv.machines[f.machineID] == nil {
+		f.srv.machines[f.machineID] = &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{},
+			capabilities: []protocol.CapabilityReport{{Tool: "fake", Environment: adapter.Environment{Variant: "test"}}}}
+	}
+	f.srv.machineMu.Unlock()
+	status, card, raw := f.spawnRequest(t, key, "worker")
+	if status != 201 || card.ID == "" {
+		t.Fatalf("spawn=%d %+v", status, raw)
+	}
+	stamp := func(at time.Time) string { return at.UTC().Format("2006-01-02T15:04:05.000000000Z") }
+	turnID := "turn_" + key
+	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
+		for _, statement := range []struct {
+			query string
+			args  []any
+		}{
+			{`UPDATE agent SET tool=?, machine_id=? WHERE id=?`, []any{tool, host.ID, card.ID}},
+			{`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec,outcome,settle)
+				SELECT ?,?,s.id,0,?,1,'normal','exited','failed','settled' FROM session s WHERE s.agent_id=? LIMIT 1`, []any{turnID, card.ID, f.room.ID, card.ID}},
+			{`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES (?,?,?,?,?)`, []any{card.ID, turnID, stamp(time.Now()), stamp(time.Now().Add(time.Hour)), tool}},
+		} {
+			if _, err := tx.Exec(statement.query, statement.args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return card.ID
+}
+
+// A harness that met the provider's usage limit marks the host's active profile exhausted although the usage snapshot still reads under the
+// threshold; the automatic switch moves off it, and lifts the limits the host's agents of the tool met on the old login, so they go on with the new
+// one instead of waiting for the old one's reset.
+func TestAProviderLimitOnTheHostSwitchesAutomaticallyAndTheSwitchLiftsIt(t *testing.T) {
+	f, m, _ := quotaEnv(t)
+	f.seed()
+	ctx := context.Background()
+	if f.srv.hostToolLimited(ctx, "claude") {
+		t.Fatal("no limit yet")
+	}
+	agentID := limitHostAgent(t, f, "limit-claude", "claude")
+	if !f.srv.hostToolLimited(ctx, "claude") || f.srv.hostToolLimited(ctx, "codex") {
+		t.Fatal("the host's claude login is limited, codex is not")
+	}
+
+	// The real source marks only the active profile limited.
+	exp := time.Now().Add(time.Hour).UTC()
+	snapshot := usages.Response{Providers: []usages.Provider{{ProviderName: "codex", Profiles: []usages.Profile{{ProfileName: "local", Active: true, Status: "not_configured"}}}, {ProviderName: "claude-code", Profiles: []usages.Profile{
+		{ProfileName: "local", Active: true, Status: "ok", HasCredentials: true, ExpiresAt: &exp, LastRefreshAt: &exp, Windows: []usages.Window{{Key: "session", PercentUsed: 40}, {Key: "weekly", PercentUsed: 10}}},
+		{ProfileName: "B", Status: "ok", HasCredentials: true, Windows: []usages.Window{{Key: "session", PercentUsed: 1}, {Key: "weekly", PercentUsed: 5}}},
+	}}}}
+	dir := t.TempDir()
+	data, _ := json.Marshal(snapshot)
+	if err := os.WriteFile(filepath.Join(dir, "cache.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := usages.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.useUsages(reader)
+	obs, err := quotaSource{f.srv}.Observe(ctx, switcher.ToolClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited := map[string]bool{}
+	for _, p := range obs.Profiles {
+		limited[p.Name] = p.Limited
+	}
+	if obs.Active != "A" || !limited["A"] || limited["B"] {
+		t.Fatalf("only the active profile is limited: active=%s %v", obs.Active, limited)
+	}
+
+	// The runner over the real actuator: A reads 40 % but is limited, B is fine.
+	src := &quotaFakeSource{}
+	runner, _ := runnerOver(t, f, src)
+	quotaConfig(t, runner, nil)
+	a := qobs("A", 40, 10)
+	a.Limited = true
+	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{a, qobs("B", 1, 5)}})
+	runner.Evaluate(ctx)
+	if got := activeProfile(t, m); got != "B" {
+		t.Fatalf("active = %s, want B", got)
+	}
+	_, o, _ := getQuota(t, f)
+	if last := o.Tools["claude"].LastDecision; last == nil || last.Action != quota.ActionSwitch || last.Reason != quota.ReasonOverLimit {
+		t.Fatalf("last decision = %+v", last)
+	}
+	if still, err := f.srv.Store.AgentProviderLimited(ctx, agentID); err != nil || still {
+		t.Fatalf("the switch did not lift the agent's provider limit: %v %v", still, err)
+	}
+	if f.srv.hostToolLimited(ctx, "claude") {
+		t.Fatal("the host's claude login still reads limited after the switch")
+	}
+	f.srv.WaitUsageRefreshes()
+}
+
+// A codex limit is not lifted by a claude switch, and a web switch lifts the claude ones like the automatic one.
+func TestAWebSwitchLiftsOnlyTheSwitchedToolsProviderLimits(t *testing.T) {
+	f, m, _ := quotaEnv(t)
+	f.seed()
+	ctx := context.Background()
+	claudeAgent := limitHostAgent(t, f, "limit-web-claude", "claude")
+	codexAgent := limitHostAgent(t, f, "limit-web-codex", "codex")
+	resp := f.request(http.MethodPost, "/api/switcher/claude/use", map[string]string{"name": "B"}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || activeProfile(t, m) != "B" {
+		t.Fatalf("status=%d active=%s", resp.StatusCode, activeProfile(t, m))
+	}
+	if still, _ := f.srv.Store.AgentProviderLimited(ctx, claudeAgent); still {
+		t.Fatal("the web switch did not lift the claude agent's limit")
+	}
+	if still, _ := f.srv.Store.AgentProviderLimited(ctx, codexAgent); !still {
+		t.Fatal("a claude switch lifted a codex limit")
+	}
+	f.srv.WaitUsageRefreshes()
+}
+
+// Warm agents the host's supervisor cannot confirm ended hold the automatic switch with their own reason, not "agents running": no turn runs.
+func TestUnconfirmedWarmAgentsHoldTheAutomaticSwitchWithTheirOwnReason(t *testing.T) {
+	f, m, _ := quotaEnv(t)
+	machine := connectHost(t, f, true)
+	src := &quotaFakeSource{}
+	runner, _ := runnerOver(t, f, src)
+	quotaConfig(t, runner, nil)
+	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
+	go answerRetire(machine, "error", "a warm process of the tool is not confirmed gone")
+	runner.Evaluate(context.Background())
+	if got := activeProfile(t, m); got != "A" {
+		t.Fatalf("active = %s: switched under an unconfirmed warm process", got)
+	}
+	_, o, _ := getQuota(t, f)
+	if last := o.Tools["claude"].LastDecision; last == nil || last.Action != quota.ActionHold || last.Reason != quota.ReasonWarmAgents {
+		t.Fatalf("last decision = %+v", last)
 	}
 }

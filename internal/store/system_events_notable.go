@@ -20,7 +20,7 @@ var notableKinds = []string{
 	"agent_spawn_confirmed", "agent_spawn_failed", "agent_stopped", "agent_revoked", "agent_switch_failed",
 	"agent_turn_budget_exceeded", "turn_lost", "turn_never_started", "special_turn_abandoned", "answer_held", "notes_dropped", "loop_guard",
 	"credential_alert", "provider_limit_detected", "provider_limit_cleared", "usage_limit_threshold", "usage_limit_reset", "limit_guard_soft", "limit_guard_hard", "limit_guard_clear",
-	"quota_switch", "quota_hold", "quota_switch_failed", "quota_reset_seen", "quota_switcher_tripped",
+	"quota_switch", "quota_switch_dry_run", "quota_hold", "quota_switch_failed", "quota_reset_seen", "quota_switcher_tripped",
 	"native_session_reset", "user_admin_changed", "user_deactivated",
 	"agent_context_cleared", "agent_context_compacted",
 	"room_close_blocked", "machine_revoked",
