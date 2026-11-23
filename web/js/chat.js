@@ -20,6 +20,8 @@ import { closeEmojiPicker, openEmojiPicker } from './emoji-picker.js';
 import { LiveAnnouncer } from './live-region.js';
 import { ComposerFormatting } from './composer.js';
 import { wakeMessageActions, releaseMessageActions } from './message-actions.js';
+import { bindContextMenu } from './components/context-menu.js';
+import { messageMenu } from './pages/chat/message-menu.js';
 import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
 import { ChatStore } from './pages/chat/store.js';
@@ -245,6 +247,11 @@ export class Chat {
     // A row's toolbar is made when the row is reached by the pointer, the keyboard or a touch (see message-actions.js), and the oldest ones are
     // released as others are reached.
     for (const type of ['pointerover', 'focusin', 'pointerdown']) container.addEventListener(type, event => this.wakeActions(event, container));
+    // A message's context menu: right-click, a long press, or the context-menu key or Shift+F10 inside the row (pages/chat/message-menu.js).
+    bindContextMenu(container, { selector: 'article.chat-msg, article.thread-entry', menu: row => {
+      const message = this.entryMessage(row.dataset.messageId);
+      return message ? messageMenu(this, message, { thread: row.classList.contains('thread-entry'), anchor: row }) : null;
+    } });
   }
   wakeActions(event, container) {
     const target = event.target;

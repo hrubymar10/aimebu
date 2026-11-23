@@ -2836,6 +2836,65 @@ async function main() {
     assert.deepEqual(result, { wren: 'mention', ada: null, profile: true }, 'one agent sharing its slug with a login is a mention; two agents are not');
     await page.close();
   }
+  // A message's context menu (pages/chat/message-menu.js): a right-click or Shift+F10 inside a row opens it on that message; Mark unread from here hands
+  // the app the message's seq; the toolbar's actions follow (reply, the conversation, react, copy) and the debug inspector while it is on; the thread panel
+  // offers neither reply nor the conversation, a system notice only the read mark, the copies and the inspector; Escape gives the focus back.
+  {
+    const page = await mount({ rooms: { rm_a: 5 } });
+    await page.evaluate(() => {
+      window.__seed('rm_s', 3, i => (i === 2 ? { author_kind: 'system', author_id: 'system', author_name: '' } : {}));
+      window.__chat.markUnreadFrom = (room, seq) => window.__calls.push(['unread', room.id, seq]);
+      window.__chat.setDebugInspector(message => window.__calls.push(['debug', message.id]));
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page); await calls(page);
+    const menu = () => page.evaluate(() => { const node = document.querySelector('.context-menu[role=menu]'); return node ? { label: node.getAttribute('aria-label'), items: [...node.querySelectorAll('[role=menuitem]')].map(item => item.textContent.trim()), focused: document.activeElement?.closest('.context-menu') ? document.activeElement.textContent.trim() : null } : null; });
+    const pick = label => page.evaluate(label => [...document.querySelectorAll('.context-menu [role=menuitem]')].find(item => item.textContent.trim().startsWith(label)).click(), label);
+    await hover(page, '[data-message-id=rm_a_m3] .chat-msg-body');
+    await page.click('[data-message-id=rm_a_m3] .chat-msg-body', { button: 'right' });
+    let shown = await menu();
+    assert.deepEqual(shown, { label: 'Actions for message #3', items: ['Mark unread from here', 'Add reaction…', 'Reply to #3', 'Reply in thread', 'Copy message text', 'Copy link to #3'], focused: 'Mark unread from here' }, 'the menu of a message, with no debug item while the inspector is off');
+    await pick('Mark unread from here');
+    assert.deepEqual(await calls(page), [['unread', 'rm_a', 3]], 'Mark unread from here names the room and the message');
+    assert.equal(await menu(), null);
+    // Shift+F10 with the focus in a row's toolbar: the menu of that row; Escape gives the focus back to the button; Reply sets the reply.
+    await page.focus('[data-message-id=rm_a_m4] .message-actions-wake');
+    await page.waitForFunction(() => document.activeElement?.closest('[data-message-id=rm_a_m4] .message-actions') && !document.activeElement.classList.contains('message-actions-wake'));
+    const button = await page.evaluate(() => document.activeElement.getAttribute('aria-label'));
+    await page.keyboard.down('Shift'); await page.keyboard.press('F10'); await page.keyboard.up('Shift');
+    assert.equal((await menu()).label, 'Actions for message #4');
+    await page.keyboard.press('Escape');
+    assert.deepEqual([await menu(), await page.evaluate(() => document.activeElement.getAttribute('aria-label'))], [null, button], 'Escape closes it and the focus is back on the toolbar button');
+    await page.keyboard.press('ContextMenu');
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
+    assert.equal((await menu()).focused, 'Reply to #4');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.__chat.reply?.id), 'rm_a_m4', 'Reply sets the reply to the message');
+    // The debug inspector while it is on.
+    await page.evaluate(() => { document.documentElement.dataset.debugInspector = 'on'; });
+    await page.click('[data-message-id=rm_a_m2] .chat-msg-body', { button: 'right' });
+    assert.equal((await menu()).items.at(-1), 'Open debug inspector');
+    await pick('Open debug inspector');
+    assert.deepEqual(await calls(page), [['debug', 'rm_a_m2']]);
+    // The thread panel: no reply and no conversation item.
+    await page.evaluate(() => window.__chat.openConversation(window.__chat.messages.get('rm_a_m2')));
+    await page.waitForSelector('#thread-messages article.thread-entry[data-message-id=rm_a_m2]');
+    await page.click('#thread-messages [data-message-id=rm_a_m2] .chat-msg-body', { button: 'right' });
+    assert.deepEqual((await menu()).items, ['Mark unread from here', 'Add reaction…', 'Copy message text', 'Copy link to #2', 'Open debug inspector']);
+    await page.keyboard.press('Escape');
+    // A system notice: the read mark, the copies and the inspector.
+    await page.evaluate(() => window.__chat.closeThread());
+    await openRoom(page, 'rm_s'); await opened(page); await settle(page);
+    await page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_s_m2]'), box = row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + 20, clientY: box.top + 5, button: 2 })); });
+    assert.deepEqual((await menu()).items, ['Mark unread from here', 'Copy message text', 'Copy link to #2', 'Open debug inspector']);
+    await page.keyboard.press('Escape');
+    // A link in a message keeps the browser's own menu.
+    await page.evaluate(() => { const body = document.querySelector('[data-message-id=rm_s_m3] .chat-msg-body'); const link = document.createElement('a'); link.href = 'https://example.invalid/'; link.textContent = 'link'; body.append(link); });
+    const native = await page.evaluate(() => { const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }); document.querySelector('[data-message-id=rm_s_m3] .chat-msg-body a').dispatchEvent(event); return event.defaultPrevented; });
+    assert.equal(native, false, 'a right-click on a link is left to the browser');
+    assert.equal(await menu(), null);
+    await page.close();
+  }
+
   assert.deepEqual(errors, []);
   await browser.close(); server.close();
   console.log('chat page: ok');
