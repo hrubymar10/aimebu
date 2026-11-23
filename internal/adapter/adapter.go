@@ -94,6 +94,10 @@ type TurnSpec struct {
 	// supervisor-owned and process-only like the capabilities above: it is never journaled, and the adapter tees into it beside the tail
 	// it keeps as exit evidence. A sink that fails changes nothing for the turn.
 	StderrSink io.Writer `json:"-"`
+	// ConversationSink, when set, receives the turn's conversation as the adapter parses it from the harness's event stream: the model's
+	// text, each tool call with its input and each tool result (the per-agent conversation log). Supervisor-owned and process-only like
+	// StderrSink, and never journaled. Adapters write to it through ConversationFor, which masks secrets and bounds each record.
+	ConversationSink ConversationSink `json:"-"`
 	// OnBackgroundResult, when set, is called (without blocking) when a live process answers, between turns, a query its harness ran on its own
 	// because a background job of the agent's ended (Claude Code's `task-notification`): that answer belongs to no turn, so the supervisor has
 	// the server give the agent a real turn. Supervisor-owned and process-only like StderrSink; only a warm adapter that can tell calls it.

@@ -203,7 +203,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	input := l.input
 	go func() { _, _ = stdin.Write(input); _ = stdin.Close() }()
-	t := &turn{id: spec.TurnID, cmd: cmd, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, forkOf: forkOf(spec), events: make(chan adapter.Event, 32), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink)}
+	t := &turn{id: spec.TurnID, cmd: cmd, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, forkOf: forkOf(spec), events: make(chan adapter.Event, 32), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink), conv: adapter.ConversationFor(spec)}
 	go t.run(stdout, stderr)
 	return t, nil
 }
@@ -395,6 +395,8 @@ type turn struct {
 	// echoMarker is how this turn's own input begins (`{"turn_id":"…"`), set for a turn in a live process: there the CLI repeats each input
 	// line it reads (--replay-user-messages), and only a result that follows that repeat answers this turn (see ignoreResult).
 	echoMarker string
+	// conv is the turn's conversation log (nil when it has none); see adapter.TurnSpec.ConversationSink.
+	conv *adapter.Conversation
 }
 
 // LastOutput is when the harness last wrote any stdout line, parsed or not.
@@ -539,6 +541,7 @@ func (t *turn) handleLine(s *runState, line []byte) {
 		return
 	}
 	t.confirmSession(event.Raw)
+	t.transcribe(event)
 	switch event.Type {
 	case "assistant", "tool_progress", "system", "rate_limit_event", "user":
 		if event.Type == "user" && t.echoMarker != "" && !s.echoed && isEcho(event.Raw, t.echoMarker) {

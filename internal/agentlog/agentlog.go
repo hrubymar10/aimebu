@@ -1,5 +1,7 @@
 // Package agentlog keeps what each agent's harness wrote to stderr, on the machine that ran it: one rotating log per agent under
-// supervisor/agent-logs/, kept for a bounded time and size, for an owner or admin to read when a turn went wrong.
+// supervisor/agent-logs/, kept for a bounded time and size, for an owner or admin to read when a turn went wrong. Beside it is the
+// agent's conversation log: what the adapters parsed from the harness's event stream (the prompt, the model's text, each tool call and
+// result), one record per event, with the same retention and its own rotation.
 //
 // The output is the harness's own and can carry whatever its tools printed, so it never leaves the machine on its own: the server asks for
 // a bounded tail when a person who may see it asks. Agent keys and bearer tokens are removed before a line is written (across the
@@ -28,10 +30,16 @@ const (
 	// FileName is an agent's current log; its rotated backups are FileName.1 to .Backups.
 	FileName = "stderr.log"
 
+	// ConversationFileName is an agent's conversation log (what the adapters parsed from the harness's event stream), rotated the same way.
+	ConversationFileName = "conversation.log"
+
 	DefaultMaxFileBytes = 1 << 20 // one file; with the backups that is 4 MiB for an agent
-	DefaultBackups      = 3
-	DefaultMaxAge       = 14 * 24 * time.Hour // what a file's last write may be before it is removed
-	DefaultMaxTotal     = 256 << 20           // all agents together; the oldest agents' files go first
+	// DefaultConversationFileBytes is one conversation file: a conversation is far more text than stderr, so with the backups an agent
+	// may hold 16 MiB of it.
+	DefaultConversationFileBytes = 4 << 20
+	DefaultBackups               = 3
+	DefaultMaxAge                = 14 * 24 * time.Hour // what a file's last write may be before it is removed
+	DefaultMaxTotal              = 256 << 20           // all agents together; the oldest agents' files go first
 
 	DefaultTailLines = 200
 	MaxTailLines     = 2000
@@ -48,6 +56,35 @@ const (
 
 // ErrNoLog says an agent has no captured output.
 var ErrNoLog = errors.New("no captured output for this agent")
+
+// ErrUnknownStream says a read named a stream this store does not keep.
+var ErrUnknownStream = errors.New("unknown output stream")
+
+// Stream names one of the two logs an agent has.
+type Stream string
+
+const (
+	StreamStderr       Stream = "stderr"
+	StreamConversation Stream = "conversation"
+)
+
+// ParseStream is the stream a name means; the empty name is stderr, which is what a reader that predates streams asks for.
+func ParseStream(name string) (Stream, error) {
+	switch Stream(name) {
+	case "", StreamStderr:
+		return StreamStderr, nil
+	case StreamConversation:
+		return StreamConversation, nil
+	}
+	return "", ErrUnknownStream
+}
+
+func (s Stream) fileName() string {
+	if s == StreamConversation {
+		return ConversationFileName
+	}
+	return FileName
+}
 
 var (
 	unsafeName     = regexp.MustCompile(`[^a-z0-9_-]+`)
@@ -76,9 +113,13 @@ type Store struct {
 	// maxFile and backups are the rotation settings (the defaults; tests make them small).
 	maxFile int64
 	backups int
+	// maxConversation is the rotation size of a conversation file.
+	maxConversation int64
 
 	mu   sync.Mutex
 	open map[string]*shared // by directory name: one writer per agent however many turns hold it
+	// conversations are the open conversation logs, by directory name like open.
+	conversations map[string]*shared
 }
 
 type shared struct {
@@ -88,7 +129,8 @@ type shared struct {
 
 // New makes a store rooted at dir (created on first use).
 func New(dir string) *Store {
-	return &Store{dir: dir, now: time.Now, maxFile: DefaultMaxFileBytes, backups: DefaultBackups, open: map[string]*shared{}}
+	return &Store{dir: dir, now: time.Now, maxFile: DefaultMaxFileBytes, backups: DefaultBackups, maxConversation: DefaultConversationFileBytes,
+		open: map[string]*shared{}, conversations: map[string]*shared{}}
 }
 
 // Dir is where the logs are.
@@ -326,6 +368,106 @@ func (t *Turn) Close() error {
 	return nil
 }
 
+// continuation starts every line of a record after its first, so a line that begins with a time is always a record's own.
+const continuation = "\t"
+
+// Conversation is the writer for one turn's conversation records. Each record is a line `<UTC time> <kind> <first line of text>`, and
+// the rest of its text follows on lines that start with a tab. It writes what it is given: masking secrets and bounding a record are
+// done by adapter.Conversation, which is the only thing that feeds it.
+type Conversation struct {
+	store *Store
+	key   string
+
+	mu     sync.Mutex
+	shared *shared
+	closed bool
+}
+
+// OpenConversation starts capturing the conversation of one turn of an agent.
+func (s *Store) OpenConversation(agentID string) (*Conversation, error) {
+	if agentID == "" {
+		return nil, errors.New("agent id is empty")
+	}
+	key := DirName(agentID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.conversations[key]
+	if entry == nil {
+		dir := filepath.Join(s.dir, key)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, err
+		}
+		writer, err := logfile.Open(filepath.Join(dir, ConversationFileName), s.maxConversation, s.backups)
+		if err != nil {
+			return nil, err
+		}
+		entry = &shared{writer: writer}
+		s.conversations[key] = entry
+	}
+	entry.refs++
+	return &Conversation{store: s, key: key, shared: entry}, nil
+}
+
+// Record writes one record. It never fails the turn it is fed from.
+func (c *Conversation) Record(kind adapter.ConversationKind, text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	label := strings.Trim(unsafeName.ReplaceAllString(strings.ToLower(string(kind)), "_"), "_")
+	if label == "" {
+		label = "record"
+	}
+	text = strings.ToValidUTF8(strings.ReplaceAll(strings.TrimRight(text, "\r\n"), "\r\n", "\n"), "�")
+	first, rest, more := strings.Cut(text, "\n")
+	var out strings.Builder
+	out.Grow(len(text) + 64)
+	out.WriteString(c.store.now().UTC().Format("2006-01-02T15:04:05Z") + " " + label)
+	if first = cleanLine(first); first != "" {
+		out.WriteString(" " + first)
+	}
+	out.WriteByte('\n')
+	if more {
+		for _, line := range strings.Split(rest, "\n") {
+			out.WriteString(continuation + cleanLine(line) + "\n")
+		}
+	}
+	_, _ = c.shared.writer.Write([]byte(out.String()))
+}
+
+// cleanLine keeps a line of a record from carrying a control character (a carriage return, an escape sequence's start) into the log; a
+// tab stays.
+func cleanLine(line string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, line)
+}
+
+// Close lets go of the file.
+func (c *Conversation) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
+	c.shared.refs--
+	if c.shared.refs <= 0 {
+		_ = c.shared.writer.Close()
+		delete(c.store.conversations, c.key)
+	}
+	return nil
+}
+
 // Page is a tail of an agent's output.
 type Page struct {
 	Text      string    `json:"text"`
@@ -338,6 +480,12 @@ type Page struct {
 // Tail returns the last lines of an agent's output: at most lines of them (DefaultTailLines when 0, never more than MaxTailLines) and at
 // most maxBytes (MaxTailBytes when 0, never more), cut at a line start. ErrNoLog when the agent has none.
 func (s *Store) Tail(agentID string, lines, maxBytes int) (Page, error) {
+	return s.TailStream(agentID, StreamStderr, lines, maxBytes)
+}
+
+// TailStream is Tail for one of an agent's two logs. A conversation tail starts at a record: the lines of a record whose first line is
+// not in the tail are left out.
+func (s *Store) TailStream(agentID string, stream Stream, lines, maxBytes int) (Page, error) {
 	if lines <= 0 {
 		lines = DefaultTailLines
 	}
@@ -348,7 +496,7 @@ func (s *Store) Tail(agentID string, lines, maxBytes int) (Page, error) {
 		maxBytes = MaxTailBytes
 	}
 	dir := s.agentDir(agentID)
-	names := logfile.Names(filepath.Join(dir, FileName), s.backups)
+	names := logfile.Names(filepath.Join(dir, stream.fileName()), s.backups)
 	var page Page
 	var parts []string // newest file first
 	for _, name := range names {
@@ -393,6 +541,17 @@ func (s *Store) Tail(agentID string, lines, maxBytes int) (Page, error) {
 			text = text[cut+1:]
 		}
 		page.Truncated = true
+	}
+	if stream == StreamConversation && page.Truncated {
+		// The tail was cut inside a record: what is left of that record has no first line to say what it is.
+		for strings.HasPrefix(text, continuation) {
+			cut := strings.IndexByte(text, '\n')
+			if cut < 0 {
+				text = ""
+				break
+			}
+			text = text[cut+1:]
+		}
 	}
 	page.Text = strings.ToValidUTF8(text, "�")
 	if int64(len(page.Text)) < page.Bytes {
@@ -468,8 +627,11 @@ func (s *Store) Sweep(maxAge time.Duration, maxTotal int64) (SweepResult, error)
 		return result, err
 	}
 	s.mu.Lock()
-	active := make(map[string]bool, len(s.open))
+	active := make(map[string]bool, len(s.open)+len(s.conversations))
 	for key := range s.open {
+		active[key] = true
+	}
+	for key := range s.conversations {
 		active[key] = true
 	}
 	s.mu.Unlock()

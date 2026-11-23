@@ -251,7 +251,7 @@ func (w *warmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
 		w.mu.Unlock()
 		return nil, adapter.ErrWarmBusy
 	}
-	t := &turn{id: spec.TurnID, warm: w, echoMarker: `{"turn_id":` + string(marker), expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted || w.confirmed, events: make(chan adapter.Event, 32), done: make(chan struct{})}
+	t := &turn{id: spec.TurnID, warm: w, echoMarker: `{"turn_id":` + string(marker), expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted || w.confirmed, events: make(chan adapter.Event, 32), done: make(chan struct{}), conv: adapter.ConversationFor(spec)}
 	t.cmd = w.cmd
 	w.cur, w.state = t, newRunState()
 	if w.killTimer != nil {

@@ -46,6 +46,7 @@ type codexWarmTurn struct {
 	firstResumed        bool
 	total               codexTokenUsage
 	resumedBaseline     codexTokenUsage
+	conv                *adapter.Conversation // the turn's conversation log, nil when it has none
 }
 
 func (w *codexWarmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
@@ -70,7 +71,7 @@ func (w *codexWarmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
 		return nil, fmt.Errorf("Codex warm thread differs from the requested session")
 	}
 	t := &codexWarmTurn{id: spec.TurnID, model: spec.Agent.Model, warm: w, firstResumed: w.threadID == "" && spec.NativeSessionStarted,
-		events: make(chan adapter.Event, 128), done: make(chan struct{})}
+		events: make(chan adapter.Event, 128), done: make(chan struct{}), conv: adapter.ConversationFor(spec)}
 	w.cur = t
 	threadID := w.threadID
 	w.mu.Unlock()
@@ -214,6 +215,7 @@ func (t *codexWarmTurn) handleNotification(method string, raw json.RawMessage) {
 		if json.Unmarshal(raw, &value) != nil {
 			return
 		}
+		transcribeItem(t.conv, itemOf(raw), method == "item/completed")
 		if value.Item.Type == "agentMessage" {
 			if method == "item/completed" && value.Item.Text != "" {
 				if value.Item.Phase == "final_answer" {
@@ -266,6 +268,7 @@ func (t *codexWarmTurn) handleNotification(method string, raw json.RawMessage) {
 		if !value.WillRetry {
 			t.errorText = adapter.SanitizeStderr(string(value.Error))
 		}
+		transcribeFailure(t.conv, raw)
 		t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: "error"})
 	case "turn/completed":
 		var value struct {
@@ -299,6 +302,9 @@ func (t *codexWarmTurn) handleNotification(method string, raw json.RawMessage) {
 			}
 		}
 		t.errorText = adapter.SanitizeStderr(string(value.Turn.Error))
+		if len(value.Turn.Error) > 0 && string(value.Turn.Error) != "null" {
+			transcribeFailure(t.conv, value.Turn.Error)
+		}
 		if t.errorText == "" || t.errorText == "null" {
 			t.errorText = "Codex app-server turn ended without a final answer"
 		}

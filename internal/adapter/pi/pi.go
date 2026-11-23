@@ -218,7 +218,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted,
-		cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: spec.StderrSink}
+		cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: spec.StderrSink, conv: adapter.ConversationFor(spec)}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -339,6 +339,8 @@ type turn struct {
 	next                int
 	// stderrCapture receives the harness's stderr as it is written (the per-agent output log); see adapter.TurnSpec.StderrSink.
 	stderrCapture io.Writer
+	// conv is the turn's conversation log (nil when it has none); see adapter.TurnSpec.ConversationSink.
+	conv *adapter.Conversation
 }
 
 // LastOutput is when the harness last wrote any stdout line, parsed or not.
@@ -406,6 +408,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		if json.Unmarshal(scanner.Bytes(), &event) != nil {
 			continue
 		}
+		transcribe(t.conv, event, scanner.Bytes())
 		switch event.Type {
 		case "session":
 			if event.ID != t.expectedSession {

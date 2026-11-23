@@ -211,7 +211,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	t := &turn{id: spec.TurnID, model: spec.Agent.Model, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink), stdoutCapture: a.stdoutCapture}
+	t := &turn{id: spec.TurnID, model: spec.Agent.Model, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink), stdoutCapture: a.stdoutCapture, conv: adapter.ConversationFor(spec)}
 	go func() { _, _ = stdin.Write(input); _ = stdin.Close() }()
 	go func() {
 		select {
@@ -461,6 +461,7 @@ type turn struct {
 	next                       int
 	stderrCapture              io.Writer
 	stdoutCapture              io.Writer
+	conv                       *adapter.Conversation // the turn's conversation log, nil when it has none
 }
 
 // LastOutput is when the harness last wrote any stdout line, parsed or not.
@@ -604,6 +605,9 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		case "turn.started":
 			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type})
 		case "item.started", "item.updated", "item.completed":
+			if event.Type != "item.updated" {
+				transcribeItem(t.conv, itemOf(event.Raw), event.Type == "item.completed")
+			}
 			if text, ok := harness.CodexAgentMessage(event); ok {
 				candidate = append(candidate[:0], text...)
 			} else {
@@ -660,6 +664,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		case "turn.failed", "error":
 			failed = true
 			errorEvent = adapter.SanitizeStderr(string(event.Raw))
+			transcribeFailure(t.conv, event.Raw)
 			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type})
 		}
 	}
