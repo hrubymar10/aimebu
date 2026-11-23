@@ -223,6 +223,7 @@ func defaultResponse() Response {
 // Snapshot returns an independent value safe for concurrent JSON encoding.
 func (r *Reader) Snapshot() Response {
 	cfg, configErr := r.extra.LoadConfig()
+	names := r.liveHistoryNames()
 	r.mu.Lock()
 	if configErr == nil {
 		for i := range r.response.Providers {
@@ -238,7 +239,7 @@ func (r *Reader) Snapshot() Response {
 		for j := range out.Providers[i].Profiles {
 			p := &out.Providers[i].Profiles[j]
 			p.Windows = append([]Window(nil), p.Windows...)
-			r.attachHistory(out.Providers[i].ProviderName, p)
+			r.attachHistory(out.Providers[i].ProviderName, p, names)
 		}
 	}
 	setting := r.tokenSetting
@@ -306,6 +307,7 @@ func (r *Reader) SetHTTPClient(client *http.Client) {
 // Invalidate clears the one local snapshot after a credential swap. The next
 // refresh must fetch limits with the newly active account.
 func (r *Reader) Invalidate(provider string) {
+	names := r.liveHistoryNames()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.generation++
@@ -313,8 +315,12 @@ func (r *Reader) Invalidate(provider string) {
 	for i := range r.response.Providers {
 		if r.response.Providers[i].ProviderName == provider {
 			r.response.Providers[i].Profiles = []Profile{{ProfileName: "local", Active: true, Status: "refreshing"}}
-			// The live account changed: its past samples belong to another login.
-			r.forgetHistoryLocked(provider, "local")
+			// Without switcher profiles the live account changed, so its past
+			// "local" samples belong to another login. With them the series are
+			// kept per profile name and a switch must not drop any.
+			if _, managed := names[provider]; !managed {
+				r.forgetHistoryLocked(provider, "local")
+			}
 		}
 	}
 	r.signalLocked()
@@ -421,11 +427,13 @@ func (r *Reader) refreshLocalOne(ctx context.Context, i int) {
 	// while the request was in flight: that result describes a login that is no
 	// longer live, so drop it. The next poll tick sees the new fingerprint.
 	printAfter := fileFingerprint(livePath)
+	names := r.liveHistoryNames()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if generation != r.generation || providerGeneration != r.providerGeneration[key] || printBefore != printAfter {
 		return
 	}
+	r.migrateLocalHistoryLocked(names)
 	r.activePrint[key] = printAfter
 	previous := r.response.Providers[i].Profiles[0]
 	if err != nil {
@@ -436,7 +444,7 @@ func (r *Reader) refreshLocalOne(ctx context.Context, i int) {
 		p.Stale = len(previous.Windows) > 0
 	}
 	r.response.Providers[i].Profiles[0] = p
-	r.recordHistoryLocked(key, p)
+	r.recordHistoryLocked(key, p, historySeries(key, p, names))
 	if data, marshalErr := json.Marshal(r.response); marshalErr == nil {
 		_ = writeCache(r.cachePath, data)
 	}

@@ -178,7 +178,7 @@ func (r *Reader) refreshExtraOne(ctx context.Context, key string) {
 			profile.Status = "stale_cache"
 		}
 		r.response.Providers[i].Profiles = []Profile{profile}
-		r.recordHistoryLocked(key, profile)
+		r.recordHistoryLocked(key, profile, profile.ProfileName)
 		r.extraOwners[key] = identity
 		break
 	}

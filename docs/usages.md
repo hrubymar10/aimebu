@@ -398,9 +398,21 @@ ring per provider, profile and window in `usages/history.json` (mode 0600, not
 in SQLite): one sample of the used percentage at most every 15 minutes, only
 from a fresh successful snapshot (a stale or failed read leaves a gap, not a
 flat line), the last 48 hours and at most 193 samples per series. It survives a
-restart, a removed profile takes its series with it, and a credential swap on
-the live account starts that account's series over, since the old samples
-belong to another login. The samples are added to `GET /api/usages` as
+restart and a removed profile takes its series with it. A series is keyed by the
+switcher profile name: the live account is recorded under the name of the
+profile whose credentials are live (never `local`), so an account switch, from
+the web, the CLI or automatic, keeps every profile's series and a switch A to B
+to A stays one continuous series per name. `local` is only the series of a host
+with no switcher profiles for that provider, and only there does a credential
+swap start the live account's series over, since the old samples belong to
+another login. Older versions recorded the live account under `local` and
+deleted it at each switch; on load, a one-time idempotent migration folds any
+remaining `local` series of a switcher-managed provider into the profile that is
+live now (those samples were taken since the last switch, because each switch
+deleted the earlier ones, so no journal is needed), merged in time order. A
+profile whose stored login has expired cannot be polled while it is inactive and
+so records nothing until it is live again; its series is no longer lost when it
+becomes live. The samples are added to `GET /api/usages` as
 `windows[].history` (`{t: unix seconds, p: percent used}`) and are not part of
 `cache.json`; the line plots used or left to match the percent display.
 

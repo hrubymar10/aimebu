@@ -71,8 +71,21 @@ func sameProfileNames(a, b map[string]bool) bool {
 // read-only: no token is ever refreshed and no credential file is written.
 func (r *Reader) SetProfiles(lister ProfileLister, withLock func(func() error) error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.profiles, r.profileLock = lister, withLock
+	r.mu.Unlock()
+	r.migrateLocalHistory()
+}
+
+// migrateLocalHistory runs the one-time fold of "local" history series into the
+// live switcher profile; it does nothing once none are left.
+func (r *Reader) migrateLocalHistory() {
+	names := r.liveHistoryNames()
+	if len(names) == 0 {
+		return
+	}
+	r.mu.Lock()
+	r.migrateLocalHistoryLocked(names)
+	r.mu.Unlock()
 }
 
 // StoredProfile returns the last read-only snapshot of an inactive profile.
@@ -107,7 +120,7 @@ func (r *Reader) setStoredLocked(i int, profile Profile) {
 	if !replaced {
 		r.response.Providers[i].Profiles = append(profiles, profile)
 	}
-	r.recordHistoryLocked(r.response.Providers[i].ProviderName, profile)
+	r.recordHistoryLocked(r.response.Providers[i].ProviderName, profile, profile.ProfileName)
 	r.persistLocked()
 }
 
@@ -119,9 +132,9 @@ func (r *Reader) dropStoredLocked(i int, keep map[string]bool) {
 	for _, p := range profiles[1:] {
 		if keep[p.ProfileName] {
 			kept = append(kept, p)
-		} else {
-			r.forgetHistoryLocked(r.response.Providers[i].ProviderName, p.ProfileName)
 		}
+		// The series stays: a profile that merely became the live one keeps its
+		// history. ForgetProfile deletes it when the profile is removed.
 	}
 	if len(kept) != len(profiles) {
 		r.response.Providers[i].Profiles = kept
