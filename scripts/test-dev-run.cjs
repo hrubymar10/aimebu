@@ -6,13 +6,14 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dev-run-test-'));
-const stub = path.join(work, 'stub');
-fs.writeFileSync(stub, '#!/bin/sh\nenv | grep "^AIMEBU_" | sort\n');
-fs.chmodSync(stub, 0o755);
+// dev-run.sh runs `$bin server`. The stub is /bin/sh and a script named `server` in the working directory, so nothing has to be executable
+// from the temp directory: the Docker runner mounts /tmp noexec, where an executable stub never ran (the output was empty).
+const stub = '/bin/sh';
+fs.writeFileSync(path.join(work, 'server'), 'env | grep "^AIMEBU_" | sort\n');
 const script = path.join(__dirname, 'dev-run.sh');
 const run = extra => {
   const env = { PATH: process.env.PATH, HOME: work, ...extra };
-  const result = spawnSync('sh', [script, stub], { env, encoding: 'utf8', timeout: 30000 });
+  const result = spawnSync('sh', [script, stub], { env, cwd: work, encoding: 'utf8', timeout: 30000 });
   assert.equal(result.status, 0, result.stderr);
   return Object.fromEntries(result.stdout.split('\n').filter(Boolean).map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
 };
