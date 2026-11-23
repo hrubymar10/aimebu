@@ -89,19 +89,86 @@ func TestTranscriptFoundUnderAnotherFolderName(t *testing.T) {
 	}
 }
 
-// A read problem, a fork and an unusable id keep the flag as it was.
+// A fork, an unreadable config dir, an unusable id and an unmappable launcher keep the flag as it was.
 func TestResumeDecisionFallsBack(t *testing.T) {
 	a := &Adapter{}
-	if !a.resumeOrFresh(transcriptID, true, false, false, []string{"CLAUDE_CONFIG_DIR="}, "/x") {
-		t.Fatal("no usable config dir must keep started")
+	env := func(dir string) []string { return []string{"CLAUDE_CONFIG_DIR=" + dir} }
+	spec := func(mod func(*adapter.TurnSpec)) adapter.TurnSpec {
+		s := adapter.TurnSpec{NativeSessionHandle: transcriptID, NativeSessionStarted: true}
+		mod(&s)
+		return s
 	}
-	if !a.resumeOrFresh(transcriptID, true, true, false, []string{"CLAUDE_CONFIG_DIR=" + t.TempDir()}, "/x") {
-		t.Fatal("a fork must keep resuming")
+	cases := map[string]adapter.TurnSpec{
+		"fork":     spec(func(s *adapter.TurnSpec) { s.ForkSession = true }),
+		"bad id":   spec(func(s *adapter.TurnSpec) { s.NativeSessionHandle = "../bad" }),
+		"own home": spec(func(s *adapter.TurnSpec) { s.LauncherContainerized = true }),
+		"unmapped": spec(func(s *adapter.TurnSpec) {
+			s.LauncherContainerized = true
+			s.LauncherEnvRefs = map[string]string{"CLAUDE_CONFIG_DIR": "X"}
+		}),
 	}
-	if !a.resumeOrFresh(transcriptID, true, false, true, []string{"CLAUDE_CONFIG_DIR=" + t.TempDir()}, "/x") {
-		t.Fatal("a containerized launch must keep started")
+	for name, s := range cases {
+		if !a.resumeOrFresh(s, env(t.TempDir()), "/x") {
+			t.Errorf("%s must keep started", name)
+		}
 	}
-	if !a.resumeOrFresh("../bad", true, false, false, []string{"CLAUDE_CONFIG_DIR=" + t.TempDir()}, "/x") {
-		t.Fatal("an unusable id must keep started")
+	if !a.resumeOrFresh(spec(func(*adapter.TurnSpec) {}), env(""), "/x") {
+		t.Error("no usable config dir must keep started")
 	}
+}
+
+func dockerSpec(t *testing.T, started bool, mod func(*adapter.TurnSpec)) adapter.TurnSpec {
+	spec := transcriptSpec(t, started)
+	spec.LauncherContainerized = true
+	mod(&spec)
+	return spec
+}
+
+// A Docker launcher is checked in the host's directory: the host's own config dir when it shares the host's Claude home, the host path of
+// the container's remapped one otherwise.
+func TestDockerLauncherTranscriptCheck(t *testing.T) {
+	a := &Adapter{Command: "claude", Variant: "native", AllowNative: true}
+	shared := func(s *adapter.TurnSpec) { s.LauncherSharesClaudeHome = true }
+	host := t.TempDir()
+	t.Run("shared home without a transcript starts fresh", func(t *testing.T) {
+		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+		if got := sessionArgs(t, a, dockerSpec(t, true, shared)); got != "--session-id "+transcriptID {
+			t.Fatal(got)
+		}
+	})
+	t.Run("shared home with a transcript resumes", func(t *testing.T) {
+		cfg := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+		spec := dockerSpec(t, true, shared)
+		writeTranscript(t, cfg, spec.CheckoutPath)
+		if got := sessionArgs(t, a, spec); got != "--resume "+transcriptID {
+			t.Fatal(got)
+		}
+	})
+	t.Run("a dir under no path map keeps the flag", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		spec := dockerSpec(t, true, func(s *adapter.TurnSpec) {
+			s.LauncherEnvRefs = map[string]string{"CLAUDE_CONFIG_DIR": "AIMEBU_TEST_CFG"}
+			s.LauncherPathMaps = []adapter.LauncherPathMap{{Host: host, Visible: "/other"}}
+		})
+		t.Setenv("AIMEBU_TEST_CFG", "/config")
+		if got := sessionArgs(t, a, spec); got != "--resume "+transcriptID {
+			t.Fatal(got)
+		}
+	})
+	t.Run("a mounted own config dir resolves to its host path", func(t *testing.T) {
+		t.Setenv("AIMEBU_TEST_CFG", "/config/acct")
+		mapped := func(s *adapter.TurnSpec) {
+			s.LauncherEnvRefs = map[string]string{"CLAUDE_CONFIG_DIR": "AIMEBU_TEST_CFG"}
+			s.LauncherPathMaps = []adapter.LauncherPathMap{{Host: "/nowhere", Visible: "/"}, {Host: host, Visible: "/config"}}
+		}
+		spec := dockerSpec(t, true, mapped)
+		if got := sessionArgs(t, a, spec); got != "--session-id "+transcriptID {
+			t.Fatalf("no transcript: %s", got)
+		}
+		writeTranscript(t, filepath.Join(host, "acct"), spec.CheckoutPath)
+		if got := sessionArgs(t, a, spec); got != "--resume "+transcriptID {
+			t.Fatalf("transcript: %s", got)
+		}
+	})
 }

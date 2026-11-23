@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/ccsessions"
 )
 
@@ -55,15 +56,61 @@ func transcriptExists(configDir, cwd, id string) (bool, error) {
 	return false, nil
 }
 
+// hostConfigDir is the host path of the Claude state directory this launch uses, or why none can be named. A native launch uses the
+// environment's own. A Docker launcher that shares the host's Claude home uses the host's too; one that remaps CLAUDE_CONFIG_DIR to a path
+// inside its container is mapped back through the launcher's path maps (the longest matching container prefix).
+func hostConfigDir(spec adapter.TurnSpec, docker bool, env []string) (string, string) {
+	if docker {
+		return "", "the docker variant has no path map to the container's config dir"
+	}
+	if !spec.LauncherContainerized {
+		return launchConfigDir(env), ""
+	}
+	if _, remapped := spec.LauncherEnvRefs["CLAUDE_CONFIG_DIR"]; remapped {
+		visible := ""
+		for _, item := range env {
+			if v, ok := strings.CutPrefix(item, "CLAUDE_CONFIG_DIR="); ok {
+				visible = v
+			}
+		}
+		if visible == "" {
+			return "", "the launcher's CLAUDE_CONFIG_DIR reference has no value"
+		}
+		best, host := -1, ""
+		for _, m := range spec.LauncherPathMaps {
+			rel, err := filepath.Rel(m.Visible, visible)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || len(m.Visible) <= best {
+				continue
+			}
+			best, host = len(m.Visible), filepath.Join(m.Host, rel)
+		}
+		if host == "" {
+			return "", "the container's config dir is not under a launcher path map"
+		}
+		return host, ""
+	}
+	if spec.LauncherSharesClaudeHome {
+		return launchConfigDir(env), ""
+	}
+	return "", "the launcher does not share the host's Claude home"
+}
+
 // resumeOrFresh decides whether a turn continues its session with --resume, from whether the transcript is in the config dir this launch
 // uses rather than from the started flag alone: --resume fails when there is no transcript (an account switch moved the agent to another
 // config dir, or the first turn died before Claude wrote one) and --session-id collides when there is. The id never changes, so the
-// server's record stays right. A turn this cannot see into (a container) and a fork (which must resume) keep the flag; so does any read error.
-func (a *Adapter) resumeOrFresh(handle string, started, fork, hidden bool, env []string, cwd string) bool {
-	if handle == "" || fork || hidden {
+// server's record stays right. A fork (which must resume), a launch whose host config dir cannot be named, and any read error keep the
+// flag; the last two are logged.
+func (a *Adapter) resumeOrFresh(spec adapter.TurnSpec, env []string, cwd string) bool {
+	handle, started := spec.NativeSessionHandle, spec.NativeSessionStarted
+	if handle == "" || spec.ForkSession {
 		return started
 	}
-	exists, err := transcriptExists(launchConfigDir(env), cwd, handle)
+	dir, why := hostConfigDir(spec, a.variant() == "docker", env)
+	if why != "" {
+		log.Printf("claude: not checking the transcript of session %s: %s; keeping started=%t", handle, why, started)
+		return started
+	}
+	exists, err := transcriptExists(dir, cwd, handle)
 	if err != nil {
 		log.Printf("claude: could not check the transcript of session %s (%v); keeping started=%t", handle, err, started)
 		return started

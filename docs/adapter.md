@@ -158,9 +158,15 @@ collide. Each change is logged in one line (no secrets), for example
 `claude: session <id> has no transcript in this launch's config dir; starting it fresh with the same id instead of --resume`,
 `claude: session <id> already has a transcript in this launch's config dir; resuming it instead of --session-id`, or, when the read fails with
 anything but "not found", `claude: could not check the transcript of session <id> (<error>); keeping started=<flag>`. The id never changes, so
-the server's record stays right. A read error, a fork, a containerized launch
-(whose config dir the host cannot see) or an id that is not a plain session id
-keeps the flag's behaviour (an error is logged).
+the server's record stays right. The directory is the host's: for a Docker
+launcher that shares the host's Claude home (`claude_home_shared`) it is the
+host's own config dir; for one whose `CLAUDE_CONFIG_DIR` reference points at a
+path inside its container, the supervisor's launcher path maps translate that
+path back (longest container prefix) to the host path. When no host path can be
+named (the Docker variant without a launcher, a launcher that neither shares the
+home nor maps the dir, an empty reference) the flag decides, and one line says
+why: `claude: not checking the transcript of session <id>: <reason>; keeping
+started=<flag>`. A read error and a fork also keep the flag's behaviour (an error is logged).
 It never uses ambiguous
 continue-last-session flags. The input prompt is one JSON object containing
 the turn ID, notes, context, and allowed tools.

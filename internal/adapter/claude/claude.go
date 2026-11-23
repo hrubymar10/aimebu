@@ -265,7 +265,7 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 	}
 	env := adapter.LauncherEnv(childEnv(), spec.LauncherEnvRefs)
 	cwd := cmp.Or(spec.LaunchPath, spec.CheckoutPath)
-	resume := a.resumeOrFresh(spec.NativeSessionHandle, spec.NativeSessionStarted, spec.ForkSession, a.variant() == "docker" || spec.LauncherContainerized, env, cwd)
+	resume := a.resumeOrFresh(spec, env, cwd)
 	sessionStart := len(args)
 	if resume {
 		args = append(args, "--resume", spec.NativeSessionHandle)

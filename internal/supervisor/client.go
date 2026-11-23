@@ -1163,6 +1163,10 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		spec.LauncherArgs = append([]string(nil), row.Args...)
 		spec.LauncherEnvRefs = row.EnvRefs
 		spec.LauncherContainerized = row.Containerized
+		spec.LauncherSharesClaudeHome = row.Containerized && slices.Contains(row.Features, "claude_home_shared")
+		for _, mapping := range row.PathMaps {
+			spec.LauncherPathMaps = append(spec.LauncherPathMaps, adapter.LauncherPathMap{Host: mapping.Host, Visible: mapping.Visible})
+		}
 		if row.Containerized && delivery.Agent.Tool == "codex" {
 			spec.LauncherCodexHome = row.CodexHome
 			if delivery.Mode == adapter.ModeNormal && !delivery.ForkSession {

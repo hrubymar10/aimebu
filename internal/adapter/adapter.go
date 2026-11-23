@@ -73,6 +73,10 @@ type TurnSpec struct {
 	LauncherArgs          []string
 	LauncherEnvRefs       map[string]string
 	LauncherContainerized bool
+	// LauncherSharesClaudeHome says the Docker launcher runs Claude in the host's Claude home (its claude_home_shared feature), so the
+	// host's own config dir is the one the container uses. LauncherPathMaps are the launcher's host-to-container path prefixes.
+	LauncherSharesClaudeHome bool
+	LauncherPathMaps         []LauncherPathMap
 	// LauncherReportsContainer says the Docker launcher has turn_activity: asked to, it prints the ID of the container it starts the harness
 	// in before it does. A warm process is then started with that request, and its session is an adapter.ContainerSession that knows the ID.
 	LauncherReportsContainer bool
@@ -260,3 +264,7 @@ type CatalogEntry struct {
 
 var ErrNoScript = errors.New("no fake adapter script for turn")
 var ErrTurnAlreadyStarted = errors.New("fake adapter turn already started")
+
+// LauncherPathMap is one prefix a launcher's process sees at another path: Host is the canonical path on the supervisor, Visible the path
+// inside the launcher's process.
+type LauncherPathMap struct{ Host, Visible string }
