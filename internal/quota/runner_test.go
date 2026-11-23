@@ -3,6 +3,8 @@ package quota
 import (
 	"context"
 	"errors"
+	"log"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -343,44 +345,6 @@ func TestAFailedPollBetweenOkReadingsDoesNotRestartTheWarmupOrHold(t *testing.T)
 }
 
 // tests ─────────────────────────────────────────────────────────────────────
-
-func TestADryRunRecordsTheDecisionAndNeverSwitches(t *testing.T) {
-	h := newHarness(t)
-	cfg := claudeCfg()
-	cfg.WarmupSeconds, cfg.MinDwellMinutes, cfg.DryRun = 0, 0, true
-	h.save(ToolClaude, cfg)
-	h.tick(0)
-	h.tick(time.Minute)
-	if len(h.act.calls) != 0 {
-		t.Fatalf("a dry run switched: %v", h.act.calls)
-	}
-	v := h.view()
-	if v.LastDecision == nil || v.LastDecision.Action != ActionSwitch || !v.LastDecision.DryRun || *v.LastDecision.To != "a" {
-		t.Fatalf("last decision = %+v", v.LastDecision)
-	}
-	if len(v.Decisions) != 1 {
-		t.Fatalf("an unchanged decision is recorded once, got %d", len(v.Decisions))
-	}
-	// It counts nothing, but says once that a switch was due: the owner who left dry run on must not find agents stalled at the limit silently.
-	if got := h.ev.kinds(); len(got) != 1 || got[0] != "quota_switch_dry_run" || h.ev.events[0]["from"] != "b" || h.ev.events[0]["to"] != "a" || h.ev.events[0]["reason"] != ReasonHigherUsable {
-		t.Fatalf("a dry run announces the due switch once: %v", h.ev.events)
-	}
-	if v.State.LastSwitchAt != nil {
-		t.Fatalf("a dry run counts nothing: %+v", v.State)
-	}
-	// A restart finds the same decision in the journal and stays quiet; a changed decision is said again.
-	h.r = NewRunner(h.store, h.src, h.act, h.ev)
-	h.r.SetClock(func() time.Time { return h.now })
-	h.tick(time.Minute)
-	if len(h.ev.events) != 1 {
-		t.Fatalf("a restart repeated the dry-run notice: %v", h.ev.events)
-	}
-	h.observe("b", ob("a", 1, 1), ob("b", 99, 1), ob("c", 1, 1))
-	h.tick(time.Minute)
-	if got := h.ev.kinds(); len(got) != 2 || got[1] != "quota_switch_dry_run" || h.ev.events[1]["reason"] != ReasonOverLimit {
-		t.Fatalf("a changed dry-run decision is said again: %v", h.ev.events)
-	}
-}
 
 // A harness that met the provider's usage limit marks the active login exhausted although the snapshot still reads under the threshold (the
 // snapshot lags behind the 429): the switcher moves off it at once.
@@ -735,7 +699,7 @@ func TestNoSnapshotAndASwitcherThatIsOffAreHoldsRecordedOnce(t *testing.T) {
 func TestTheResetLatchPersistsRaisesOneEventAndIsRearmedByHand(t *testing.T) {
 	h := newHarness(t)
 	cfg := resetCfg()
-	cfg.WarmupSeconds, cfg.MinDwellMinutes, cfg.DryRun = 0, 0, true
+	cfg.WarmupSeconds, cfg.MinDwellMinutes = 0, 0
 	h.save(ToolClaude, cfg)
 	h.observe("b", ob("a", 1, 84), ob("b", 1, 10), ob("c", 1, 10))
 	h.tick(time.Second)
@@ -774,7 +738,7 @@ func TestTheResetLatchPersistsRaisesOneEventAndIsRearmedByHand(t *testing.T) {
 func TestChangingTheWatchedProfileForgetsTheLatch(t *testing.T) {
 	h := newHarness(t)
 	cfg := resetCfg()
-	cfg.WarmupSeconds, cfg.MinDwellMinutes, cfg.DryRun = 0, 0, true
+	cfg.WarmupSeconds, cfg.MinDwellMinutes = 0, 0
 	h.save(ToolClaude, cfg)
 	h.observe("b", ob("a", 1, 84), ob("b", 1, 10), ob("c", 1, 10))
 	h.tick(time.Second)
@@ -924,7 +888,7 @@ func TestOverviewPrefillsAnUnsavedToolFromTheExistingProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	codex := o.Tools[ToolCodex]
-	if codex.Saved || codex.Config.Enabled || !codex.Config.DryRun || len(codex.Config.Profiles) != 2 ||
+	if codex.Saved || codex.Config.Enabled || len(codex.Config.Profiles) != 2 ||
 		codex.Config.Profiles[0].Name != "a" || codex.Config.Profiles[0].SessionMax != 93 || codex.Config.Profiles[1].SessionMax != 98 {
 		t.Fatalf("codex default = %+v", codex)
 	}
@@ -1015,22 +979,8 @@ func TestAnUnsavedDefaultIsNeverActedOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	codex := o.Tools[ToolCodex]
-	if codex.Saved || codex.Config.Enabled || !codex.Config.DryRun || len(codex.Config.Protected) != 0 {
-		t.Fatalf("the unsaved default must be off, dry-run and protect nothing: %+v", codex)
-	}
-	// A save that turns it on but leaves dry run on still switches nothing.
-	cfg := Default(ToolCodex, []string{"a", "b"})
-	cfg.Enabled, cfg.WarmupSeconds, cfg.MinDwellMinutes = true, 0, 0
-	if _, err := h.r.SaveConfig(context.Background(), ToolCodex, cfg); err != nil {
-		t.Fatal(err)
-	}
-	h.tick(time.Minute)
-	if len(h.act.calls) != 0 {
-		t.Fatalf("a dry-run save switched: %v", h.act.calls)
-	}
-	v, _ := h.r.Tool(context.Background(), ToolCodex)
-	if v.LastDecision == nil || v.LastDecision.Action != ActionSwitch || !v.LastDecision.DryRun {
-		t.Fatalf("the dry run should have recorded the would-be switch: %+v", v.LastDecision)
+	if codex.Saved || codex.Config.Enabled || len(codex.Config.Protected) != 0 {
+		t.Fatalf("the unsaved default must be off and protect nothing: %+v", codex)
 	}
 }
 
@@ -1090,5 +1040,38 @@ func TestAReadingOlderThanTheMaximumAgeIsStaleAndHoldsTheTool(t *testing.T) {
 	h.tick(0)
 	if len(h.act.calls) != 1 {
 		t.Fatalf("a reading at the limit must still count: %v", h.act.calls)
+	}
+}
+
+// A configuration stored while dry run existed and asked for it, on an enabled tool, switches for real after the upgrade: the log says so, the
+// owner gets one event per tool, and the rewritten document (no dry_run) keeps a second start quiet.
+func TestAnEnabledDryRunConfigSwitchesForRealAfterTheUpgradeAndSaysSoOnce(t *testing.T) {
+	h := newHarness(t)
+	h.store.config[ToolClaude] = `{"enabled":true,"dry_run":true,"profiles":[{"name":"a","session_max":95,"weekly_max":95},{"name":"b","session_max":95,"weekly_max":95}],"protected":[],"after_reset":null,"warmup_seconds":0,"min_dwell_minutes":0}`
+	h.store.config[ToolCodex] = `{"enabled":false,"dry_run":true,"profiles":[],"protected":[],"after_reset":null,"warmup_seconds":60,"min_dwell_minutes":5}`
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	h.r.MigrateDryRun(context.Background())
+	if got := h.ev.kinds(); len(got) != 1 || got[0] != EventDryRunRemoved || h.ev.events[0]["tool"] != ToolClaude {
+		t.Fatalf("one owner event for the one enabled tool: %v", h.ev.events)
+	}
+	if got := strings.Count(logged.String(), "dry run removed, now switching for real"); got != 1 {
+		t.Fatalf("one log line per tool: %d in %q", got, logged.String())
+	}
+	for tool, doc := range h.store.config {
+		if strings.Contains(doc, "dry_run") {
+			t.Fatalf("%s: the rewritten configuration still carries dry_run: %s", tool, doc)
+		}
+	}
+	h.r.MigrateDryRun(context.Background())
+	if len(h.ev.events) != 1 {
+		t.Fatalf("said again: %v", h.ev.events)
+	}
+	// The order prefers a over the active b: the runner moves to it for real.
+	h.tick(0)
+	h.tick(time.Minute)
+	if len(h.act.calls) == 0 || h.act.calls[0][1] != "a" {
+		t.Fatalf("the old dry-run configuration did not switch for real: %v", h.act.calls)
 	}
 }

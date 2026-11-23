@@ -18,7 +18,7 @@ class QuotaMock {
   }
   freshState() { return { reset_latched_at: null, weekly_max_seen: null, last_switch_at: null, tripped: false, tripped_at: null, hold: null, evaluated_at: new Date().toISOString() }; }
   defaults(tool) {
-    return { enabled: false, dry_run: true, profiles: this.names[tool].filter(name => name !== 'parked').map(name => ({ name, session_max: 95, weekly_max: 95 })), protected: tool === 'claude' ? ['parked'] : [], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5 };
+    return { enabled: false, profiles: this.names[tool].filter(name => name !== 'parked').map(name => ({ name, session_max: 95, weekly_max: 95 })), protected: tool === 'claude' ? ['parked'] : [], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5 };
   }
   decision(tool, action, from, to, reason, dry_run = false) {
     return { at: new Date().toISOString(), tool, action, from, to, reason, dry_run, profiles: { [from]: { status: 'ok', session: 42, weekly: 96, ok_for_seconds: 300 }, ...(to ? { [to]: { status: 'ok', session: 10, weekly: 12, ok_for_seconds: 300 } } : {}) } };

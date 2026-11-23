@@ -144,19 +144,47 @@ func (r *Runner) CanSwitch(ctx context.Context, tool string, obs Observation, g 
 	return HasTarget(cfg, state.State, g, obs)
 }
 
-// DryRunTarget reports whether tool is in dry run and would have a target if it were not: the limit guard's notice then says the switch is due but
-// dry run keeps it from happening.
-func (r *Runner) DryRunTarget(ctx context.Context, tool string, obs Observation, g GuardConfig) bool {
-	cfg, _, err := r.loadConfig(ctx, tool)
-	if err != nil || !cfg.DryRun {
-		return false
+// EventDryRunRemoved is the owner event raised once per tool whose stored configuration still asked for dry run while it was enabled: dry run no
+// longer exists, so that tool now switches for real.
+const EventDryRunRemoved = "quota_dry_run_removed"
+
+// MigrateDryRun upgrades stored configurations that still carry the removed `dry_run` field. A tool that was enabled in dry run now switches for
+// real: one log line and one owner event say so, and the configuration is rewritten without the field, so neither repeats. A configuration that
+// only carries the field (dry run off, or the tool disabled) is rewritten silently. Call it once before Run.
+func (r *Runner) MigrateDryRun(ctx context.Context) {
+	for _, tool := range Tools() {
+		doc, found, err := r.store.QuotaConfig(ctx, tool)
+		if err != nil || !found {
+			if err != nil {
+				log.Printf("quota: read %s config: %v", tool, err)
+			}
+			continue
+		}
+		var legacy struct {
+			Enabled bool  `json:"enabled"`
+			DryRun  *bool `json:"dry_run"`
+		}
+		if json.Unmarshal([]byte(doc), &legacy) != nil || legacy.DryRun == nil {
+			continue
+		}
+		r.mu.Lock()
+		cfg, _, err := r.loadConfig(ctx, tool)
+		if err == nil {
+			var raw []byte
+			if raw, err = json.Marshal(cfg); err == nil {
+				err = r.store.SaveQuotaConfig(ctx, tool, string(raw))
+			}
+		}
+		r.mu.Unlock()
+		if err != nil {
+			log.Printf("quota: rewrite %s config without dry run: %v", tool, err)
+			continue
+		}
+		if legacy.Enabled && *legacy.DryRun {
+			log.Printf("quota: %s: automatic switch: dry run removed, now switching for real", tool)
+			r.event(EventDryRunRemoved, map[string]string{"tool": tool})
+		}
 	}
-	state, err := r.loadState(ctx, tool)
-	if err != nil {
-		return false
-	}
-	cfg.DryRun = false
-	return HasTarget(cfg, state.State, g, obs)
 }
 
 // SetGuard makes the runner clamp every profile's limits to the guard's soft threshold.
@@ -243,18 +271,6 @@ func (r *Runner) record(ctx context.Context, d Decision) {
 	}
 	if d.Profiles == nil {
 		d.Profiles = map[string]ProfileView{}
-	}
-	if d.Action == ActionSwitch && d.DryRun && (!known || !previous.Same(d)) {
-		// A dry run records the switch it would make and makes none. Said once per change (a restart that finds the same decision in the journal
-		// stays quiet), so an owner who left dry run on learns that a switch was due instead of finding agents stalled at the limit.
-		payload := map[string]string{"tool": d.Tool, "reason": d.Reason}
-		if d.From != nil {
-			payload["from"] = *d.From
-		}
-		if d.To != nil {
-			payload["to"] = *d.To
-		}
-		r.event("quota_switch_dry_run", payload)
 	}
 	if d.Action != ActionHold || !transientReason(d.Reason) {
 		delete(r.quiet, d.Tool)
@@ -454,7 +470,7 @@ func (r *Runner) evaluateTool(ctx context.Context, tool string) error {
 		return err
 	}
 	fixed := func(action, reason string) {
-		d := Decision{At: now, Tool: tool, Action: action, Reason: reason, DryRun: cfg.DryRun, Profiles: map[string]ProfileView{}}
+		d := Decision{At: now, Tool: tool, Action: action, Reason: reason, Profiles: map[string]ProfileView{}}
 		if obs.Active != "" {
 			a := obs.Active
 			d.From = &a
@@ -512,11 +528,6 @@ func (r *Runner) evaluateTool(ctx context.Context, tool string) error {
 		finish(d, next)
 		return nil
 	}
-	if cfg.DryRun {
-		finish(d, next) // the decision says dry_run; nothing is switched, nothing is counted
-		return nil
-	}
-
 	to := *d.To
 	from := ""
 	if d.From != nil {
@@ -787,8 +798,7 @@ func (r *Runner) clear(ctx context.Context, tool, reason string, f func(*persist
 		r.mu.Unlock()
 		return ToolView{}, err
 	}
-	cfg, _, _ := r.loadConfig(ctx, tool)
-	d := Decision{At: r.now(), Tool: tool, Action: ActionStay, Reason: reason, DryRun: cfg.DryRun, Profiles: map[string]ProfileView{}}
+	d := Decision{At: r.now(), Tool: tool, Action: ActionStay, Reason: reason, Profiles: map[string]ProfileView{}}
 	r.record(ctx, d)
 	delete(r.backoff, tool)
 	view, err := r.view(ctx, tool)

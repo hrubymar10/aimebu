@@ -37,7 +37,7 @@ var systemEventKinds = []string{
 	"user_created", "user_deactivated", "user_admin_changed", "user_invite_created", "user_invite_redeemed",
 	"credential_alert",
 	"update_status",
-	"quota_switch", "quota_switch_dry_run", "quota_hold", "quota_switch_failed", "quota_reset_seen", "quota_switcher_tripped",
+	"quota_switch", "quota_switch_dry_run", "quota_dry_run_removed", "quota_hold", "quota_switch_failed", "quota_reset_seen", "quota_switcher_tripped",
 	"limit_guard_soft", "limit_guard_hard", "limit_guard_clear",
 	"switch_overwritten",
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -86,7 +87,7 @@ func runnerOver(t *testing.T, f *fixture, src quota.Source) (*quota.Runner, *tim
 func quotaConfig(t *testing.T, runner *quota.Runner, mutate func(*quota.Config)) {
 	t.Helper()
 	cfg := quota.Default(quota.ToolClaude, []string{"A", "B"})
-	cfg.Enabled, cfg.DryRun, cfg.WarmupSeconds, cfg.MinDwellMinutes = true, false, 0, 0
+	cfg.Enabled, cfg.WarmupSeconds, cfg.MinDwellMinutes = true, 0, 0
 	if mutate != nil {
 		mutate(&cfg)
 	}
@@ -193,7 +194,7 @@ func TestQuotaRoutesRoundTripValidateAndClear(t *testing.T) {
 		t.Fatalf("overview: %d %s", code, raw)
 	}
 	cl := o.Tools["claude"].Config
-	if !cl.DryRun || len(cl.Profiles) != 2 || cl.Profiles[0].SessionMax != 95 || cl.WarmupSeconds != 60 || cl.MinDwellMinutes != 5 {
+	if len(cl.Profiles) != 2 || cl.Profiles[0].SessionMax != 95 || cl.WarmupSeconds != 60 || cl.MinDwellMinutes != 5 {
 		t.Fatalf("pre-filled claude config = %+v", cl)
 	}
 	for _, field := range []string{`"protected":[]`, `"decisions":[]`, `"last_decision":null`, `"after_reset":null`} {
@@ -217,7 +218,7 @@ func TestQuotaRoutesRoundTripValidateAndClear(t *testing.T) {
 		t.Fatalf("an unknown tool: %d", code)
 	}
 	good := cl
-	good.Enabled, good.DryRun = true, true
+	good.Enabled = true
 	good.Profiles = []quota.Limit{{Name: "B", SessionMax: 90, WeeklyMax: 80}, {Name: "A", SessionMax: 95, WeeklyMax: 95}}
 	if code, body := put("claude", good); code != 200 || !strings.Contains(body, `"saved":true`) {
 		t.Fatalf("a valid save: %d %s", code, body)
@@ -264,7 +265,7 @@ func TestAQuotaSwitchGoesThroughTheRealSwitcherAndIsRecordedAndAnnounced(t *test
 	}
 	_, o, _ := getQuota(t, f)
 	last := o.Tools["claude"].LastDecision
-	if last == nil || last.Action != quota.ActionSwitch || *last.From != "A" || *last.To != "B" || last.Reason != quota.ReasonOverLimit || last.DryRun {
+	if last == nil || last.Action != quota.ActionSwitch || *last.From != "A" || *last.To != "B" || last.Reason != quota.ReasonOverLimit {
 		t.Fatalf("last decision = %+v", last)
 	}
 	if o.Tools["claude"].State.LastSwitchAt == nil {
@@ -331,36 +332,6 @@ func TestAManualSwitchBetweenDecisionAndActuatorIsNotOverridden(t *testing.T) {
 		if event.Kind == "quota_switch" {
 			t.Fatalf("no switch happened, yet %s was announced", event.Kind)
 		}
-	}
-}
-
-func TestADryRunNeverTouchesTheSwitcher(t *testing.T) {
-	f, m, live := quotaEnv(t)
-	before := fileString(t, live)
-	src := &quotaFakeSource{}
-	runner, _ := runnerOver(t, f, src)
-	quotaConfig(t, runner, func(c *quota.Config) { c.DryRun = true })
-	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
-	runner.Evaluate(context.Background())
-	if activeProfile(t, m) != "A" || fileString(t, live) != before {
-		t.Fatal("a dry run changed the active profile or the live file")
-	}
-	_, o, _ := getQuota(t, f)
-	if d := o.Tools["claude"].LastDecision; d == nil || d.Action != quota.ActionSwitch || !d.DryRun {
-		t.Fatalf("decision = %+v", d)
-	}
-	// It switches nothing and counts nothing, but the owner is told once that a switch was due and dry run kept it from happening.
-	var dryRun int
-	for _, event := range systemEvents(t, f) {
-		switch {
-		case event.Kind == "quota_switch_dry_run" && strings.Contains(event.PayloadJSON, `"from":"A"`) && strings.Contains(event.PayloadJSON, `"to":"B"`):
-			dryRun++
-		case strings.HasPrefix(event.Kind, "quota_"):
-			t.Fatalf("a dry run announces only the due switch, got %s", event.Kind)
-		}
-	}
-	if dryRun != 1 {
-		t.Fatalf("the due switch was announced %d times", dryRun)
 	}
 }
 
@@ -679,6 +650,74 @@ func TestUnconfirmedWarmAgentsDoNotHoldTheAutomaticSwitch(t *testing.T) {
 	case <-asked:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the supervisor was not asked to end its warm agents after the switch")
+	}
+	f.srv.WaitUsageRefreshes()
+}
+
+// The configuration endpoint answers an old client that still sends dry_run as if it had not: 200, a logged warning, and no dry_run in the view.
+// A backup written while dry run existed imports the same way, the field ignored.
+func TestTheConfigEndpointAndABackupIgnoreTheRemovedDryRunField(t *testing.T) {
+	f, _, _ := quotaEnv(t)
+	src := &quotaFakeSource{}
+	runnerOver(t, f, src)
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	old := `{"enabled":true,"dry_run":true,"profiles":[{"name":"A","session_max":95,"weekly_max":95},{"name":"B","session_max":95,"weekly_max":95}],"protected":[],"after_reset":null,"warmup_seconds":0,"min_dwell_minutes":0}`
+	resp := f.request("PUT", "/api/quota-switcher/claude", json.RawMessage(old), true)
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || strings.Contains(string(raw), "dry_run") || !strings.Contains(string(raw), `"saved":true`) {
+		t.Fatalf("an old client's save: %d %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(logged.String(), "ignoring dry_run") {
+		t.Fatalf("no warning logged: %q", logged.String())
+	}
+	backup := `{"schema":"` + settingsBackupSchema + `","version":1,"quota_switcher":{"claude":` + strings.Replace(old, `"warmup_seconds":0`, `"warmup_seconds":30`, 1) + `}}`
+	var file map[string]any
+	if err := json.Unmarshal([]byte(backup), &file); err != nil {
+		t.Fatal(err)
+	}
+	status, preview := previewBackup(t, f, file)
+	if status != 200 {
+		t.Fatalf("an old backup's preview: %d", status)
+	}
+	resp = f.request("POST", "/api/settings-backup/apply", map[string]any{"backup": file, "digest": preview.Digest}, true)
+	raw, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("an old backup: %d %s", resp.StatusCode, raw)
+	}
+	if _, o, _ := getQuota(t, f); o.Tools["claude"].Config.WarmupSeconds != 30 {
+		t.Fatalf("the backup's quota switcher was not applied: %+v", o.Tools["claude"].Config)
+	}
+}
+
+// A stored enabled dry-run configuration, in the real store with the real actuator, switches for real once the server starts the switcher's
+// upgrade, and the owner's feed carries the one-time event once.
+func TestAStoredDryRunConfigSwitchesForRealAndTheOwnerIsToldOnce(t *testing.T) {
+	f, m, _ := quotaEnv(t)
+	src := &quotaFakeSource{}
+	runner, _ := runnerOver(t, f, src)
+	old := `{"enabled":true,"dry_run":true,"profiles":[{"name":"B","session_max":95,"weekly_max":95},{"name":"A","session_max":95,"weekly_max":95}],"protected":[],"after_reset":null,"warmup_seconds":0,"min_dwell_minutes":0}`
+	if err := f.srv.Store.SaveQuotaConfig(context.Background(), "claude", old); err != nil {
+		t.Fatal(err)
+	}
+	runner.MigrateDryRun(context.Background())
+	runner.MigrateDryRun(context.Background())
+	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
+	runner.Evaluate(context.Background())
+	if got := activeProfile(t, m); got != "B" {
+		t.Fatalf("the old dry-run configuration did not switch for real: active %s", got)
+	}
+	told := 0
+	for _, event := range systemEvents(t, f) {
+		if event.Kind == quota.EventDryRunRemoved && strings.Contains(event.PayloadJSON, `"tool":"claude"`) {
+			told++
+		}
+	}
+	if told != 1 {
+		t.Fatalf("the owner was told %d times, want once", told)
 	}
 	f.srv.WaitUsageRefreshes()
 }

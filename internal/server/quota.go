@@ -16,7 +16,7 @@ import (
 
 // StartQuotaSwitcher starts the automatic account switcher: the quota Runner over
 // this server's usage snapshots, switcher, token refresher and store. It does
-// nothing until the owner enables a tool (dry run first), and everything it does is
+// nothing until the owner enables a tool, and everything it does is
 // an ordinary Switcher.Switch, so lock order, the incoming refresh and the
 // quiescence rule are the ones the web switch has. It needs the usage reader and
 // the switcher; without them it returns nil. Calling it twice is a no-op.
@@ -32,11 +32,11 @@ func (s *Server) StartQuotaSwitcher(ctx context.Context) *quota.Runner {
 	quota.Report = reportQuota
 	guard := quota.NewGuard(s.Store, quotaSource{s}, s.Store, quotaEvents{s})
 	guard.CanSwitch = runner.CanSwitch
-	guard.DryRunTarget = runner.DryRunTarget
 	guard.OnHold = runner.Trigger
 	guard.OnHoldChange = s.guardHoldChanged
 	runner.SetGuard(guard.ConfigOrDefault)
 	s.guard.Store(guard)
+	runner.MigrateDryRun(ctx)
 	telemetry.Go(ctx, func() { runner.Run(ctx) })
 	telemetry.Go(ctx, func() { guard.Run(ctx) })
 	return runner
@@ -277,11 +277,18 @@ func (s *Server) quotaSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var cfg quota.Config
-	if !readJSON(w, r, &cfg) {
+	// `dry_run` is gone: an old client may still send it, and is answered as if it had not.
+	var body struct {
+		quota.Config
+		DryRun *bool `json:"dry_run"`
+	}
+	if !readJSON(w, r, &body) {
 		return
 	}
-	view, err := runner.SaveConfig(r.Context(), r.PathValue("tool"), cfg)
+	if body.DryRun != nil {
+		log.Printf("quota: PUT %s: ignoring dry_run (the automatic switch has no dry run any more)", r.PathValue("tool"))
+	}
+	view, err := runner.SaveConfig(r.Context(), r.PathValue("tool"), body.Config)
 	if err != nil {
 		quotaError(w, err)
 		return

@@ -30,7 +30,7 @@ const labels = {
   machine_created: 'Machine added', machine_approved: 'Machine approved', machine_revoked: 'Machine revoked', machine_key_rotated: 'Machine key rotated', machine_pairing_created: 'Machine pairing created',
   user_created: 'User created', user_deactivated: 'User deactivated', user_admin_changed: 'Admin changed', user_invite_created: 'Invite created', user_invite_redeemed: 'Invite redeemed',
   credential_alert: 'Credential alert', update_status: 'Update status',
-  quota_switch: 'Automatic account switch', quota_switch_dry_run: 'Automatic account switch due, not made: dry run is on', quota_hold: 'Automatic account switch held', quota_switch_failed: 'Automatic account switch failed',
+  quota_switch: 'Automatic account switch', quota_switch_dry_run: 'Automatic account switch due, not made: dry run is on', quota_dry_run_removed: 'Automatic account switching has no dry run any more: it now switches for real', quota_hold: 'Automatic account switch held', quota_switch_failed: 'Automatic account switch failed',
   switch_overwritten: 'A running session wrote the old login back after a switch: the new login was installed again', quota_reset_seen: 'Weekly window reset seen', quota_switcher_tripped: 'Automatic switching tripped',
   limit_guard_soft: 'Usage limit near: new turns held', limit_guard_hard: 'Usage limit reached', limit_guard_clear: 'Usage back under the limit: new turns resume',
 };

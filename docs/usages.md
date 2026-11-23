@@ -288,9 +288,8 @@ the quota switcher (the rules and the runner are described in
 switcher is enabled, and is hidden if the server does not serve it. Per tool (Claude,
 Codex) it shows and edits:
 
-- **Switch automatically** and **Dry run**. Both are saved with the rest of the
-  configuration. In dry run the server records what it would do and switches
-  nothing; the section says so while an enabled tool is in dry run.
+- **Switch automatically**, saved with the rest of the configuration. There is
+  no dry run: an enabled tool switches for real.
 - **Profile order**: one row per profile with its session and weekly limits (whole
   percentages, 1 to 100), Up, Down and Remove buttons, and an Add select of profiles
   that are not yet listed or protected. The first usable profile in the order wins.

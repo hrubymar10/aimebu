@@ -112,7 +112,6 @@ func TestHasTarget(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*Config){
 		"switcher off": func(c *Config) { c.Enabled = false },
-		"dry run":      func(c *Config) { c.DryRun = true },
 		"protected":    func(c *Config) { c.Protected = []string{"a"} },
 	} {
 		c := cfg

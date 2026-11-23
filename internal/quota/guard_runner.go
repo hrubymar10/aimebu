@@ -47,9 +47,6 @@ type Guard struct {
 	// CanSwitch reports whether the quota switcher could move tool off its active profile now; it
 	// only words the owner's notice ("switching" or "held"). Nil means no.
 	CanSwitch func(ctx context.Context, tool string, obs Observation, g GuardConfig) bool
-	// DryRunTarget reports whether the switcher would move tool off its active profile now but is in dry run: the notice then says "dry_run"
-	// instead of "held". Nil means no.
-	DryRunTarget func(ctx context.Context, tool string, obs Observation, g GuardConfig) bool
 	// OnHold is called when a tool enters the soft or hard state, so the switcher decides at
 	// once instead of at its next tick. May be nil.
 	OnHold func()
@@ -307,8 +304,6 @@ func (g *Guard) announce(ctx context.Context, tool, prev string, res GuardResult
 	if res.State != GuardOK && res.State != GuardOff {
 		if g.CanSwitch != nil && g.CanSwitch(ctx, tool, obs, cfg) {
 			next = "switching"
-		} else if g.DryRunTarget != nil && g.DryRunTarget(ctx, tool, obs, cfg) {
-			next = "dry_run"
 		}
 	}
 	payload["next"] = next

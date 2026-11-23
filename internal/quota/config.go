@@ -41,8 +41,6 @@ type AfterReset struct {
 // Config is one tool's settings.
 type Config struct {
 	Enabled bool `json:"enabled"`
-	// DryRun computes and records every decision but never switches.
-	DryRun bool `json:"dry_run"`
 	// Profiles is the order: the first usable entry wins.
 	Profiles []Limit `json:"profiles"`
 	// Protected profiles are never switched away from or to; while one is active the
@@ -66,10 +64,9 @@ const (
 
 // Default is the pre-filled configuration of tool for the profiles that exist, in
 // the order given: today's thresholds by position (Claude 95/95 for every entry;
-// Codex 93/98 for the first entry and 98/98 for the rest). It is disabled and in dry
-// run, and it names nothing but the profiles it was given.
+// Codex 93/98 for the first entry and 98/98 for the rest). It is disabled, and it names nothing but the profiles it was given.
 func Default(tool string, names []string) Config {
-	c := Config{DryRun: true, WarmupSeconds: DefaultWarmupSeconds, MinDwellMinutes: DefaultMinDwellMinutes, Profiles: []Limit{}, Protected: []string{}}
+	c := Config{WarmupSeconds: DefaultWarmupSeconds, MinDwellMinutes: DefaultMinDwellMinutes, Profiles: []Limit{}, Protected: []string{}}
 	for i, name := range names {
 		l := Limit{Name: name, SessionMax: 95, WeeklyMax: 95}
 		if tool == ToolCodex {

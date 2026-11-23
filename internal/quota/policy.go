@@ -105,14 +105,13 @@ type Decision struct {
 	From     *string                `json:"from"`
 	To       *string                `json:"to"`
 	Reason   string                 `json:"reason"`
-	DryRun   bool                   `json:"dry_run"`
 	Profiles map[string]ProfileView `json:"profiles"`
 }
 
 // Same reports whether two decisions say the same thing, ignoring the time and the
 // numbers: the runner records a change, not every evaluation.
 func (d Decision) Same(o Decision) bool {
-	return d.Tool == o.Tool && d.Action == o.Action && d.Reason == o.Reason && d.DryRun == o.DryRun &&
+	return d.Tool == o.Tool && d.Action == o.Action && d.Reason == o.Reason &&
 		eq(d.From, o.From) && eq(d.To, o.To)
 }
 
@@ -178,7 +177,7 @@ func Decide(in Input) Result {
 	for _, o := range in.Profiles {
 		obs[o.Name] = o
 	}
-	d := Decision{At: now, Tool: in.Tool, DryRun: cfg.DryRun, Profiles: map[string]ProfileView{}}
+	d := Decision{At: now, Tool: in.Tool, Profiles: map[string]ProfileView{}}
 	for _, o := range in.Profiles {
 		d.Profiles[o.Name] = ProfileView{Status: viewStatus(o), Session: o.Session, Weekly: o.Weekly, OKForSeconds: o.OKFor.Seconds(), Limited: o.Limited}
 	}

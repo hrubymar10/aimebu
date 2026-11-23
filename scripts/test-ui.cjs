@@ -3657,7 +3657,7 @@ async function main() {
       await settingsPage.waitForFunction(selector => document.querySelector(`${selector} .quota-note`)?.textContent === 'Saving… (waits for a running switch)' && document.querySelector(`${selector} .quota-save`).disabled, {}, claude);
       release(); quotaMock.gate = null;
       await settingsPage.waitForFunction(selector => document.querySelector(`${selector} .quota-note`)?.textContent === 'Saved.', {}, claude);
-      assert.match(await settingsPage.$eval(`${claude} .quota-dry-run`, el => el.textContent), /Dry run: decisions are recorded/, 'an enabled tool in dry run says nothing is switched');
+      assert.equal(await settingsPage.$eval(claude, el => /dry.?run/i.test(el.textContent) || !!el.querySelector('[id$="-dry-run"]')), false, 'no dry run left in the tool block');
       assert.equal(await settingsPage.$(`${claude} .quota-defaults`) === null && await settingsPage.$eval(`${claude} .quota-save`, el => el.disabled), true, 'saved: no defaults note, Save disabled again');
       // Discarding restores the saved copy; protecting a listed profile takes it out of the order.
       await domClick(settingsPage, `${claude} [data-quota-focus="protect:local"]`);
@@ -3725,22 +3725,22 @@ async function main() {
         await new Promise(resolve => setTimeout(resolve, 100));
         out.codexAfterBlur = node().querySelector('#quota-codex-enabled').checked; out.draftKept = node().querySelector('[aria-label="local weekly limit (%)"]').value;
         // A focused field whose tool has no typed edits is rebuilt at once when the server's configuration changed.
-        node().querySelector('#quota-codex-dry-run').focus();
+        node().querySelector('#quota-codex-enabled').focus();
         return out;
       });
-      quotaMock.tools.codex.config.dry_run = !quotaMock.tools.codex.config.dry_run;
-      typing.cleanFocusRefreshed = await settingsPage.evaluate(async dryRun => {
+      quotaMock.tools.codex.config.enabled = !quotaMock.tools.codex.config.enabled;
+      typing.cleanFocusRefreshed = await settingsPage.evaluate(async enabled => {
         const quota = window.__quota;
         await quota.sync({ owner: true, enabled: true });
-        const refreshed = quota.node().querySelector('#quota-codex-dry-run').checked === dryRun && document.activeElement?.id === 'quota-codex-dry-run';
+        const refreshed = quota.node().querySelector('#quota-codex-enabled').checked === enabled && document.activeElement?.id === 'quota-codex-enabled';
         quota.remove();
         return refreshed;
-      }, quotaMock.tools.codex.config.dry_run);
+      }, quotaMock.tools.codex.config.enabled);
       assert.deepEqual(typing, { same: true, value: '9', statusMoved: true, decisions: 3, codexDuringEdit: false, codexAfterBlur: true, draftKept: '9', cleanFocusRefreshed: true }, 'a live push rebuilt the field being typed in, or the server copy never arrived after focus left (the field element and its value must survive the push; the rest catches up on blur)');
       // Server text is plain text, and a tripped breaker is a visible alert with a re-enable button.
       await settingsPage.evaluate(() => {
-        const decision = { at: new Date().toISOString(), tool: 'claude', action: 'hold', from: '<img src=x onerror=window.__quotaXss=1>', to: null, reason: '<b>bold</b>', dry_run: false, profiles: { '<i>p</i>': { status: '<u>ok</u>', session: 1, weekly: 2, ok_for_seconds: 3 } } };
-        const tool = { config: { enabled: true, dry_run: false, profiles: [{ name: '<i>p</i>', session_max: 95, weekly_max: 95 }, { name: 'q', session_max: 95, weekly_max: 95 }], protected: [], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5 }, saved: true, state: { tripped: true, tripped_at: new Date().toISOString(), hold: '<b>hold</b>', evaluated_at: null }, last_decision: decision, decisions: [decision] };
+        const decision = { at: new Date().toISOString(), tool: 'claude', action: 'hold', from: '<img src=x onerror=window.__quotaXss=1>', to: null, reason: '<b>bold</b>', profiles: { '<i>p</i>': { status: '<u>ok</u>', session: 1, weekly: 2, ok_for_seconds: 3 } } };
+        const tool = { config: { enabled: true, profiles: [{ name: '<i>p</i>', session_max: 95, weekly_max: 95 }, { name: 'q', session_max: 95, weekly_max: 95 }], protected: [], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5 }, saved: true, state: { tripped: true, tripped_at: new Date().toISOString(), hold: '<b>hold</b>', evaluated_at: null }, last_decision: decision, decisions: [decision] };
         window.__hostileData = { profiles: { claude: ['<i>p</i>', 'q'], codex: [] }, tools: { claude: tool, codex: { ...tool, state: {}, decisions: [], last_decision: null } } };
       });
       await mountQuota(true);

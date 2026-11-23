@@ -11,14 +11,14 @@ vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { TOOLS, 
 const plain = value => JSON.parse(JSON.stringify(value));
 const m = Object.fromEntries(Object.entries(context.api).map(([name, value]) => [name, typeof value === 'function' ? (...args) => { const out = value(...args); return out === undefined ? undefined : plain(out); } : plain(value)]));
 
-const draft = () => ({ enabled: true, dry_run: false, profiles: [{ name: 'a', session_max: 95, weekly_max: 90 }, { name: 'b', session_max: 80, weekly_max: 70 }], protected: ['p'], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5 });
+const draft = () => ({ enabled: true, profiles: [{ name: 'a', session_max: 95, weekly_max: 90 }, { name: 'b', session_max: 80, weekly_max: 70 }], protected: ['p'], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5 });
 
 // Equality ignores key order; a draft is dirty against the stored copy, and unsaved defaults can be saved as they are.
 assert.equal(m.same({ a: 1, b: [{ x: 1, y: 2 }] }, { b: [{ y: 2, x: 1 }], a: 1 }), true);
 assert.equal(m.same({ a: 1 }, { a: 2 }), false);
 const data = { tools: { claude: { config: draft(), saved: false }, codex: { config: draft(), saved: true } } };
 assert.deepEqual([m.isDirty(data, { claude: draft() }, 'claude'), m.isDirty(data, { claude: { ...draft(), enabled: false } }, 'claude'), m.isDirty(data, {}, 'claude'), m.isDirty(null, { claude: draft() }, 'claude')], [false, true, false, false]);
-assert.deepEqual([m.isSavable(data, { claude: draft() }, 'claude'), m.isSavable(data, { codex: draft() }, 'codex'), m.isSavable(data, { codex: { ...draft(), dry_run: true } }, 'codex')], [true, false, true]);
+assert.deepEqual([m.isSavable(data, { claude: draft() }, 'claude'), m.isSavable(data, { codex: draft() }, 'codex'), m.isSavable(data, { codex: { ...draft(), enabled: false } }, 'codex')], [true, false, true]);
 
 // A number box: empty is not a number, and a number that is not finite shows as empty.
 assert.equal(Number.isNaN(context.api.numberOf('')), true, 'an empty box is NaN');
@@ -58,8 +58,8 @@ assert.deepEqual([m.describeDecision({ action: 'switch', from: 'a', to: 'b' }), 
 assert.deepEqual([m.percent(41.6), m.percent('x'), m.when(null), m.when('nope')], ['42%', '-', 'never', 'unknown']);
 assert.equal(m.decisionAction({ action: 'sw<i>tch!' }), 'switch', 'only letters of the action reach a data attribute');
 assert.deepEqual(m.decisionProfiles({ profiles: { a: { status: 'ok', session: 1, weekly: 2 }, b: null } }), ['a: ok, session 1%, weekly 2%', 'b: ?, session -, weekly -']);
-assert.match(m.decisionText({ at: '2026-01-01T00:00:00Z', action: 'hold', dry_run: true }), /: hold \(dry run\)$/);
-assert.match(m.decisionText({ at: '2026-01-01T00:00:00Z', action: 'switch', from: 'a', to: 'b', dry_run: true }), /: would switch a → b$/, 'a dry-run switch already says so');
+assert.match(m.decisionText({ at: '2026-01-01T00:00:00Z', action: 'hold', dry_run: true }), /: hold$/, 'no dry-run suffix any more');
+assert.match(m.decisionText({ at: '2026-01-01T00:00:00Z', action: 'switch', from: 'a', to: 'b', dry_run: true }), /: would switch a → b$/, 'an old journal entry of a dry-run switch still says it was not made');
 assert.match(m.resetText({ reset_latched_at: '2026-01-01T00:00:00Z', weekly_max_seen: 91.2 }), /\(the weekly peak was 91%\); the order after the reset is in effect\. Re-arm when the next week starts\.$/);
 assert.match(m.trippedText({ tripped_at: null }), /paused: it switched too often in one hour \(never\)/);
 

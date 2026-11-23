@@ -853,7 +853,10 @@ Inbox, usage, events, settings
   **quota_switcher_state**(tool, state_json, updated_at) and
   **quota_switcher_decision**(id, tool, at, decision_json) — the automatic
   provider account switcher's per-tool settings, current state and decision
-  log (migration 48).
+  log (migration 48). The config has no `dry_run` (removed): a stored document
+  that still carries it is rewritten without it at startup, and an enabled
+  `dry_run: true` tool then switches for real, announced once by the owner
+  event `quota_dry_run_removed`.
 - **update_status_ack**(user_id, version, state, kind, until) — per person the
   last update-status notice they answered: `version` is the release the state
   was about, `state` is `available`, `installed` or `unbuilt`, `kind` is `skip`

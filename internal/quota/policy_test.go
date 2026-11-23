@@ -24,13 +24,13 @@ func ob(name string, session, weekly float64) Obs {
 
 func claudeCfg() Config {
 	c := Default(ToolClaude, []string{"a", "b", "c"})
-	c.Enabled, c.DryRun = true, false
+	c.Enabled = true
 	return c
 }
 
 func codexCfg() Config {
 	c := Default(ToolCodex, []string{"a", "b"})
-	c.Enabled, c.DryRun = true, false
+	c.Enabled = true
 	return c
 }
 
@@ -70,7 +70,7 @@ func TestDefaultsFollowTodaysThresholdsByPosition(t *testing.T) {
 	if x.Profiles[0].SessionMax != 93 || x.Profiles[0].WeeklyMax != 98 || x.Profiles[1].SessionMax != 98 || x.Profiles[2].WeeklyMax != 98 {
 		t.Fatalf("codex default %+v", x.Profiles)
 	}
-	if x.Enabled || !x.DryRun || x.WarmupSeconds != 60 || x.MinDwellMinutes != 5 {
+	if x.Enabled || x.WarmupSeconds != 60 || x.MinDwellMinutes != 5 {
 		t.Fatalf("a default must be off, dry-run, 60 s, 5 min: %+v", x)
 	}
 }
@@ -241,16 +241,6 @@ func TestDwellHoldsASecondSwitch(t *testing.T) {
 	zero.MinDwellMinutes = 0
 	last = t0.Add(-time.Second)
 	want(t, decide(zero, State{LastSwitchAt: &last}, "b", true, args...), ActionSwitch, ReasonHigherUsable, "b", "a")
-}
-
-func TestDryRunIsRecordedOnTheDecision(t *testing.T) {
-	cfg := claudeCfg()
-	cfg.DryRun = true
-	r := decide(cfg, State{}, "b", true, ob("a", 1, 1), ob("b", 1, 1), ob("c", 1, 1))
-	want(t, r, ActionSwitch, ReasonHigherUsable, "b", "a")
-	if !r.Decision.DryRun {
-		t.Fatal("the decision must say it was a dry run")
-	}
 }
 
 // ── the reset latch ─────────────────────────────────────────────────────────

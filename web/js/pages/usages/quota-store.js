@@ -3,7 +3,7 @@ import { ToolStore } from './tool-store.js';
 import { TOOLS, clone, same, numbersProblem } from './quota-model.js';
 
 // Settings -> Usages -> Automatic account switching: the owner's per-tool ordered profile list, limits, protected profiles, after-reset
-// order, dry run, and the server's decisions. Only the owner of an enabled account switcher sees it.
+// order, and the server's decisions. Only the owner of an enabled account switcher sees it.
 export class QuotaStore extends ToolStore {
   constructor({ source, isEditing }) {
     super({ source, tools: TOOLS, isEditing });

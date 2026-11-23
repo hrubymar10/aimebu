@@ -79,8 +79,11 @@ assert.equal(describe(quota('quota_switcher_tripped', { tool: 'codex', reason: '
 assert.equal(describe(quota('quota_switch_failed', { tool: 'claude', from: 'a', to: 'b', reason: 'switch failed' })).text, 'Automatic account switch failed');
 assert.equal(describe(quota('quota_hold', { tool: 'claude', reason: 'active snapshot not ok' })).text, 'Automatic account switch held');
 view = describe(quota('quota_switch_dry_run', { tool: 'claude', from: 'main', to: 'bkp', reason: 'the active profile is over its limit or unusable' }));
-assert.equal(view.text, 'Automatic account switch due, not made: dry run is on');
+assert.equal(view.text, 'Automatic account switch due, not made: dry run is on', 'an event written while dry run existed still renders');
 assert.equal(view.details, 'claude · main → bkp · the active profile is over its limit or unusable');
+view = describe(quota('quota_dry_run_removed', { tool: 'claude' }));
+assert.equal(view.text, 'Automatic account switching has no dry run any more: it now switches for real');
+assert.match(view.details, /claude/);
 view = describe(quota('switch_overwritten', { tool: 'codex' }));
 assert.equal(view.details, 'tool: codex');
 assert.match(view.text, /installed again/);

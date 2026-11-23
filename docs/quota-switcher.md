@@ -10,11 +10,19 @@ design and its reasoning are in
 
 It needs the account switcher enabled and the usage reader running
 (`AIMEBU_USAGES` not `0`). It is **off by default**; enabling it starts in
-**dry run**, which computes and records every decision and switches nothing.
-A dry run that decides a switch is due also raises one `quota_switch_dry_run`
-owner event (with `from`, `to` and the reason) per change of decision, so an
-owner who left dry run on learns that a profile reached its limit instead of
-finding agents stalled; turn dry run off in Settings to let it act.
+when the owner turns it on, it switches for real. There is **no dry run**: it was
+removed (an enabled tool held at its limit with a usable backup, stalled only
+because dry run was on, was too easy to miss).
+
+**Upgrade from a version with dry run.** A stored configuration that still has
+`dry_run` is rewritten without it when the server starts. If it was `enabled`
+with `dry_run: true`, that tool now **switches for real**: the server logs one
+line per such tool ("automatic switch: dry run removed, now switching for
+real") and raises one `quota_dry_run_removed` owner event (payload `tool`), once:
+the rewritten configuration carries no `dry_run`, so a restart is silent. The
+`quota_switch_dry_run` event type is no longer raised; old events still render.
+Decisions already in the journal may carry `dry_run: true`; it is ignored apart
+from their wording.
 
 ## What "usable" means
 
@@ -143,7 +151,7 @@ Per tool (stored in the server database, so plain `aimebu prune` keeps it and
 
 | Field | Meaning |
 | --- | --- |
-| `enabled`, `dry_run` | off by default; dry run records but never switches |
+| `enabled` | off by default |
 | `profiles` | the order; each `{name, session_max, weekly_max}` (1 to 100) |
 | `protected` | profiles never switched from or to |
 | `after_reset` | `{profile, drop_points, profiles}` or `null`; enabling with fewer than two `after_reset.profiles` is refused |
@@ -167,7 +175,7 @@ Owner session; writes need the CSRF token; `503` until the quota switcher is run
 
 `state` is `{reset_latched_at, weekly_max_seen, last_switch_at, tripped,
 tripped_at, hold, evaluated_at}`; a decision is `{at, tool, action, from, to,
-reason, dry_run, profiles}` with `action` one of `idle`, `stay`, `hold`, `switch`,
+reason, profiles}` with `action` one of `idle`, `stay`, `hold`, `switch`,
 `error`. The warm-up clock is kept in memory: after a restart the server waits one
 warm-up before it acts.
 
@@ -186,9 +194,8 @@ reads the fuller of the session and weekly percentages and compares with `>=`:
   lasts until usage falls back under the threshold (a window reset).
 - **hard** (default 99): the profile is at its limit. New turns stay held, and the owner gets one
   `limit_guard_hard` system event. Both notices say what happens next: `next` is `switching` when the
-  switcher could move off the profile now (it is enabled, not a dry run, not tripped, the active
-  profile is not protected, and a listed profile is usable under the soft threshold), `dry_run` when
-  it would but is in dry run, else `held`.
+  switcher could move off the profile now (it is enabled, not tripped, the active
+  profile is not protected, and a listed profile is usable under the soft threshold), else `held`.
   Nothing is paused or stopped: the hold clears itself, and agents keep their sessions.
 
 Only a healthy, fresh reading is acted on, with the same ageing as the switcher (a reading older than three

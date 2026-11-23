@@ -36,7 +36,7 @@ async function main() {
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(async (held, fail) => {
-      const config = (names, extra = {}) => ({ enabled: false, dry_run: true, profiles: names.map(name => ({ name, session_max: 95, weekly_max: 95 })), protected: [], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5, ...extra });
+      const config = (names, extra = {}) => ({ enabled: false, profiles: names.map(name => ({ name, session_max: 95, weekly_max: 95 })), protected: [], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5, ...extra });
       const tool = (names, extra = {}, top = {}) => ({ config: config(names, extra), saved: false, state: { evaluated_at: '2026-01-01T10:00:00Z' }, last_decision: null, decisions: [], ...top });
       window.__quotaData = { profiles: { claude: ['local', 'spare', 'parked'], codex: ['main', 'backup'] }, tools: {
         claude: tool(['local', 'spare'], { protected: ['parked'] }, { state: { evaluated_at: '2026-01-01T10:00:00Z', reset_latched_at: '2026-01-01T09:00:00Z', weekly_max_seen: 91, hold: 'warming up' }, decisions: [{ at: '2026-01-01T10:00:00Z', action: 'hold', from: 'local', reason: 'warming up' }] }),
@@ -124,7 +124,8 @@ async function main() {
       await page.evaluate(() => window.__release('save'));
       await page.waitForFunction(() => document.querySelector('.quota-tool[data-tool="claude"] .quota-note')?.textContent === 'Saved.');
       assert.deepEqual(await page.evaluate(() => [document.activeElement === document.querySelector('.quota-tool[data-tool="claude"] .quota-note'), document.querySelectorAll('.quota-tool[data-tool="claude"] .quota-defaults').length, document.querySelector('.quota-tool[data-tool="claude"] .quota-save').disabled, window.__calls.find(call => call[0] === 'save')[2].enabled]), [true, 0, true, true], 'saved: focus on the note, no defaults note, Save disabled again');
-      assert.match(await page.$eval(`${claude} .quota-dry-run`, el => el.textContent), /Dry run: decisions are recorded/);
+      // Dry run is gone: no control, no notice, and no word of it anywhere in the tool's block.
+      assert.deepEqual(await page.evaluate(selector => [!!document.querySelector('.quota-dry-run'), !!document.querySelector('[id$="-dry-run"]'), /dry.?run/i.test(document.querySelector(selector).textContent)], claude), [false, false, false]);
       await page.close();
     }
     // Protecting leaves the order, discard restores, after-reset reselects its watched profile, and a draft below two profiles is refused.
@@ -205,10 +206,10 @@ async function main() {
       await page.evaluate(() => document.activeElement.blur());
       await page.waitForFunction(() => document.querySelector('#quota-codex-enabled').checked);
       assert.equal(await page.$eval(input, el => el.value), '9', 'the draft survives the catch-up');
-      await page.focus('#quota-codex-dry-run');
-      await page.evaluate(() => { window.__quotaData.tools.codex.config.dry_run = false; });
+      await page.focus('#quota-codex-enabled');
+      await page.evaluate(() => { window.__quotaData.tools.codex.config.enabled = false; });
       await sync(page, 'quota', { owner: true, enabled: true });
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#quota-codex-dry-run').checked, document.activeElement?.id]), [false, 'quota-codex-dry-run'], 'a clean focused field is updated at once and keeps focus');
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#quota-codex-enabled').checked, document.activeElement?.id]), [false, 'quota-codex-enabled'], 'a clean focused field is updated at once and keeps focus');
       await page.close();
     }
     // A save answered after the page is gone draws nothing.

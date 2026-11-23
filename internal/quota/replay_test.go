@@ -72,7 +72,7 @@ func replayConfig(tool string, warmup time.Duration) Config {
 	default:
 		c = Default(ToolCodex, []string{"alpha", "bravo"})
 	}
-	c.Enabled, c.DryRun = true, false
+	c.Enabled = true
 	c.WarmupSeconds = int(warmup / time.Second)
 	c.MinDwellMinutes = 0 // the watchdog had no dwell
 	return c

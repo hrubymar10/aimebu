@@ -13,6 +13,7 @@ export const percent = value => (typeof value === 'number' ? `${Math.round(value
 export function describeDecision(decision) {
   const route = decision.from && decision.to ? `${decision.from} → ${decision.to}` : decision.from || decision.to || '';
   const text = ({
+    // An entry of the journal written while dry run existed says it was never made.
     switch: decision.dry_run ? `would switch ${route}` : `switched ${route}`,
     stay: `stay on ${decision.from || 'the active profile'}`,
     hold: 'hold', idle: 'idle', error: 'error',
@@ -68,7 +69,7 @@ export function moveEntry(entries, index, delta) {
   [entries[index], entries[target]] = [entries[target], entries[index]];
 }
 
-export const decisionText = decision => `${when(decision.at)}: ${describeDecision(decision)}${decision.dry_run && decision.action === 'switch' ? '' : decision.dry_run ? ' (dry run)' : ''}`;
+export const decisionText = decision => `${when(decision.at)}: ${describeDecision(decision)}`;
 export const decisionProfiles = decision => Object.entries(decision.profiles || {}).map(([name, value]) => `${name}: ${value?.status || '?'}, session ${percent(value?.session)}, weekly ${percent(value?.weekly)}`);
 export const decisionAction = decision => String(decision.action || '').replace(/[^a-z]/g, '');
 export const resetText = state => `A weekly reset was seen at ${when(state.reset_latched_at)}${typeof state.weekly_max_seen === 'number' ? ` (the weekly peak was ${percent(state.weekly_max_seen)})` : ''}; the order after the reset is in effect. Re-arm when the next week starts.`;

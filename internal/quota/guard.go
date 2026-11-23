@@ -182,11 +182,11 @@ func AgeObs(profiles []Obs, now time.Time, maxAge time.Duration) {
 }
 
 // HasTarget reports whether the quota switcher could move tool off its active profile: it really
-// switches (enabled, not a dry run, not tripped), the active profile is not protected, and some
+// switches (enabled, not tripped), the active profile is not protected, and some
 // other listed profile is usable under the guard's soft threshold. Warm-up and dwell only delay a
 // switch, so they do not count against it.
 func HasTarget(cfg Config, state State, g GuardConfig, obs Observation) bool {
-	if !cfg.Enabled || cfg.DryRun || state.Tripped || obs.Active == "" {
+	if !cfg.Enabled || state.Tripped || obs.Active == "" {
 		return false
 	}
 	for _, name := range cfg.Protected {

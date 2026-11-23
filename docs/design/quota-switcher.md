@@ -44,8 +44,7 @@ driven by the reader's update hook plus a slow ticker.
 ```
 quota_switcher: {
   claude: {
-    enabled: false,               // default off; dry_run first (see 8)
-    dry_run: true,
+    enabled: false,               // default off (dry run was removed: enabling switches for real)
     profiles: [                    // ORDER MATTERS: first usable wins
       { name: "main",      session_max: 95, weekly_max: 95 },
       { name: "bkp",       session_max: 95, weekly_max: 95 },
@@ -211,13 +210,12 @@ Retries after an action error (`409`, busy, refresh failed) back off 30 s, 1 min
 
 ## 8. Rollout and safety defaults
 
-- Off by default; enabling starts in **dry run**: the full decision is computed,
-  recorded and shown ("would switch claude main -> bkp: main weekly 96%"), and nothing
-  is switched. A second explicit step turns dry run off.
-- **Shadow comparison** before the script is retired: while `usage-policy.py` is still
-  running, v2 in dry run logs its decision next to what the script did; they should
-  agree except for the documented differences (quiescence, dwell). Retire the script
-  only after a week of agreement.
+- Off by default; enabling switches for real. The first design had a dry run (compute
+  and record, never switch) as the first step; it was removed because an owner who left
+  it on found agents held at the limit with a usable backup and no sign of why. A
+  stored configuration written then (`enabled`, `dry_run`) is rewritten without the field at
+  startup and switches for real, with one log line and one `quota_dry_run_removed` owner event per tool.
+  The shadow comparison against `usage-policy.py` that dry run served is over.
 - Disabled when the switcher is disabled, when the usage reader is off
   (`AIMEBU_USAGES=0`), and while the server is in maintenance mode.
 - Only the owner can read or change any of it; there is no per-project scope.
@@ -227,7 +225,7 @@ Retries after an action error (`409`, busy, refresh failed) back off 30 s, 1 min
 Settings → Usages gets an **Automatic account switching** section per tool, owner
 only, built from the existing `SettingsRow`/`SettingsGroup` components (`web/js/components/settings-row.js`):
 
-- Toggle (enabled), toggle (dry run), a status line: *last decision* (action, reason,
+- Toggle (enabled), a status line: *last decision* (action, reason,
   time), *next evaluation*, and the current hold if any. Plain text only.
 - The ordered list: rows with up/down buttons (keyboard-operable, same pattern as the
   provider ordering), per-row session and weekly limits (number inputs, 1..100), a
@@ -254,7 +252,7 @@ POST /api/quota-switcher/{tool}/reenable   {}            -> <Tool>   (clears the
 <Tool>  = { "config": <Config>, "saved": bool,       // saved=false: config is the pre-filled default
             "state": <State>, "last_decision": <Decision|null>,
             "decisions": [<Decision>]  /* newest first, at most 50 */ }
-<Config>= { "enabled": bool, "dry_run": bool,
+<Config>= { "enabled": bool,
             "profiles": [ {"name": s, "session_max": 1..100, "weekly_max": 1..100} ],
             "protected": [s],
             "after_reset": null | { "profile": s, "drop_points": 1..100,
@@ -264,7 +262,7 @@ POST /api/quota-switcher/{tool}/reenable   {}            -> <Tool>   (clears the
             "last_switch_at": ts|null, "tripped": bool, "tripped_at": ts|null,
             "hold": s|null /* the current hold's reason */, "evaluated_at": ts|null }
 <Decision> = { "at": ts, "tool": s, "action": "idle"|"stay"|"hold"|"switch"|"error",
-               "from": s|null, "to": s|null, "reason": s, "dry_run": bool,
+               "from": s|null, "to": s|null, "reason": s,
                "profiles": { "<name>": { "status": s, "session": number|null,
                                           "weekly": number|null, "ok_for_seconds": number } } }
 ```
@@ -290,7 +288,7 @@ All fake data, no host credentials, no network, a fake clock.
 3. **Runner** with a fake switcher and snapshot source: acts exactly once per
    decision; `agents_running`, `ErrIncomingRefresh`, `ErrMaintenanceBusy`,
    `ErrLoginPending` become holds with backoff and never an error storm; dwell; the
-   circuit breaker; dry run never calls `Switch`; disabled/maintenance never evaluates.
+   circuit breaker; disabled/maintenance never evaluates.
 4. **Replay**: sanitised sequences from the live watchdog log (profile names and
    percentages only; the log already has `claude active=.. want=.. bkp=0/88 ..` lines)
    fed through `Decide`; the decisions must equal the script's `SWITCH`/`HOLD` lines
@@ -308,7 +306,7 @@ All fake data, no host credentials, no network, a fake clock.
 ## 11. Phasing
 
 1. `internal/quota` pure policy + config + table/replay tests (no wiring).
-2. SQLite migration and store; runner with fake adapters; dry run only.
+2. SQLite migration and store; runner with fake adapters.
 3. Server wiring, API, `switchBlockers` extraction, system events.
 4. Settings UI section and docs.
 5. Shadow week, then enable per tool; retire the script.

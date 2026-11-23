@@ -3,14 +3,13 @@ import { SettingsGroup, SettingsRow } from '../../components/settings-row.js';
 import { FieldsRow, NumberField, EntryField, ActionButton, AddRow } from './fields.js';
 import { TOOLS, RANGES, when, describeDecision, isSavable, addable, protectNames, watchChoices, orderEntry, moveEntry, protectProfile, afterResetFor, decisionText, decisionProfiles, decisionAction, resetText, trippedText, focusFallbacks } from './quota-model.js';
 
-const INTRO = 'The server picks the first profile in each order that is still under its limits and switches to it, the same way the Switch button does. A switch waits until no agent is running a turn. Nothing is switched while dry run is on.';
+const INTRO = 'The server picks the first profile in each order that is still under its limits and switches to it, the same way the Switch button does. A switch waits until no agent is running a turn.';
 
 function Live({ store, tool, label, info }) {
   const state = info.state || {}, busy = store.busy.value.has(tool);
   return html`<div class="quota-live">
     <div class="quota-status">
       ${!info.saved && html`<p class="settings-desc quota-defaults">These are suggested defaults built from your profile names. Nothing is saved until you press Save.</p>`}
-      ${info.config.enabled && info.config.dry_run && html`<p class="settings-desc quota-dry-run">Dry run: decisions are recorded below, nothing is switched.</p>`}
       <p class="settings-desc quota-last">${info.last_decision ? `Last decision (${when(info.last_decision.at)}): ${describeDecision(info.last_decision)}` : 'No decision yet.'}</p>
       ${state.hold && html`<p class="settings-desc quota-hold">${`Current hold: ${state.hold}`}</p>`}
       <p class="settings-desc quota-evaluated">${`Last evaluated: ${when(state.evaluated_at)}`}</p>
@@ -105,9 +104,6 @@ function Tool({ store, tool, label }) {
     <${SettingsGroup} label=${`${label} switching`}>
       <${SettingsRow} label=${`Switch ${label} automatically`} desc=${`Move ${label} to the first usable profile in the order below when the active one runs out of quota.`} id=${`quota-${tool}-enabled`} className="settings-row-toggle">
         <input type="checkbox" checked=${!!draft.enabled} data-quota-focus=${`${tool}-enabled`} onChange=${event => store.change(tool, d => { d.enabled = event.currentTarget.checked; }, `${tool}-enabled`)} />
-      <//>
-      <${SettingsRow} label="Dry run" desc="Record what would be switched without switching. Turn this off to switch for real." id=${`quota-${tool}-dry-run`} className="settings-row-toggle">
-        <input type="checkbox" checked=${!!draft.dry_run} data-quota-focus=${`${tool}-dry-run`} onChange=${event => store.change(tool, d => { d.dry_run = event.currentTarget.checked; }, `${tool}-dry-run`)} />
       <//>
     <//>
     <${Order} store=${store} tool=${tool} kind="order" entries=${draft.profiles} stored=${stored} groupLabel=${`${label} profile order`} protectedNames=${draft.protected} />
