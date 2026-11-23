@@ -207,7 +207,8 @@ in CI; its web unit tests run in a pinned Docker image, so it needs Docker (or
 and conventions).
 
 For local development, `make dev` defaults to `~/.aimebu-dev`, HTTP port
-9897, HTTPS port 9896, and telemetry environment `development`. Set
+9897, HTTPS port 9896, and telemetry environment `development`, with Sentry off (a sandbox run can never
+report unless `AIMEBU_DEV_SENTRY_DSN` is set explicitly). Set
 `AIMEBU_DEV_CONFIG_DIR`, `AIMEBU_DEV_PORT`, `AIMEBU_DEV_TLS_PORT`, or
 `AIMEBU_DEV_SENTRY_ENV` to override them. The dev runner ignores inherited
 production `AIMEBU_*` settings except `AIMEBU_FORCE_BUILD` and

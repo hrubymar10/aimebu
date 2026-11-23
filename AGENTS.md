@@ -52,5 +52,9 @@ SHA in the handoff.
 restarts `scripts/dev-run.sh`, which runs `aimebu server` with its embedded
 local supervisor. Environment variables
 (`AIMEBU_BIND`, `AIMEBU_OWNER_LOGIN`, …) pass through from the shell.
+`make dev` exports `AIMEBU_SENTRY_DSN=off`: a sandbox run can never report to
+Sentry unless `AIMEBU_DEV_SENTRY_DSN` sets a DSN explicitly (then the
+`development` environment tag applies). Scripts that start a scratch server set
+it too; `scripts/test-sentry-off.cjs` fails when one does not.
 Point it at a deploy worktree that only moves when a reviewed commit is
 checked out, never at a worktree with work in progress.

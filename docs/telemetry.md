@@ -33,7 +33,7 @@ Other variables (all optional):
 | Variable | Meaning | Default |
 |---|---|---|
 | `AIMEBU_SENTRY_DSN` | A DSN, or `off`/empty to disable; overrides Settings. | unset |
-| `AIMEBU_SENTRY_ENV` | The Sentry environment name. A normal server run (including `bin/aimebu server`) reports `production`; `make dev` sets `development` itself. | `production` |
+| `AIMEBU_SENTRY_ENV` | The Sentry environment name. A normal server run (including `bin/aimebu server`) reports `production`; `make dev` sets `development` itself, and also sets the DSN to `off` (a sandbox run never reports unless `AIMEBU_DEV_SENTRY_DSN` is set explicitly). | `production` |
 | `AIMEBU_SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (server) and of page loads traced (browser), 0 to 1. Settings → Server → Telemetry shows the value in effect. | `1` |
 
 A DSN must be https (http only for a Sentry on this machine: localhost, 127.x, ::1); anything else is refused. A rate outside 0 to 1 (or not a number) is reported on stderr and the process runs with telemetry **off**; it never refuses to start

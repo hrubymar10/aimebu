@@ -26,6 +26,9 @@ done
 export AIMEBU_CONFIG_DIR="${AIMEBU_CONFIG_DIR:-$HOME/.aimebu-dev}"
 export AIMEBU_PORT="${AIMEBU_PORT:-9897}"
 export AIMEBU_TLS_PORT="${AIMEBU_TLS_PORT:-9896}"
+# A sandbox run never reports to Sentry (a build that ships the default DSN would otherwise): off unless
+# AIMEBU_DEV_SENTRY_DSN names a DSN on purpose.
+export AIMEBU_SENTRY_DSN="${AIMEBU_SENTRY_DSN:-off}"
 export AIMEBU_SENTRY_ENV="${AIMEBU_SENTRY_ENV:-development}"
 export AIMEBU_DEV_SKIP_V1_PROBE="${AIMEBU_DEV_SKIP_V1_PROBE:-1}"
 

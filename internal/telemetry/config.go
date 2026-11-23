@@ -117,7 +117,7 @@ func loopbackHost(host string) bool {
 }
 
 // FromEnv reads AIMEBU_SENTRY_DSN ("off" or empty disables), AIMEBU_SENTRY_ENV (default "production": a server run
-// the normal way reports as production; `make dev` sets "development" itself), AIMEBU_SENTRY_TRACES_SAMPLE_RATE
+// the normal way reports as production; `make dev` sets "development" itself and sets the DSN to "off": a sandbox run never reports unless the DSN is set explicitly), AIMEBU_SENTRY_TRACES_SAMPLE_RATE
 // (default DefaultTracesSampleRate). A bad rate is an error: the caller says so and runs with telemetry off, rather
 // than guessing.
 func FromEnv(lookup func(string) (string, bool), version string) (Config, error) {
