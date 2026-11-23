@@ -8923,6 +8923,40 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     await largePage.waitForFunction(() => document.querySelector('#thread-messages')?.textContent.includes('Live reply during latest probe') && document.querySelector('.thread-latest')?.hidden && document.querySelector('.thread-new')?.hidden);
     assert.equal(await largePage.$eval('.thread-new', node => node.hidden), true, 'probe race left a new-reply marker for an inline reply');
     await largeContext.close();
+    // A person's read position moves from one tab or device and reaches their other open session live (the person-scoped read_cursor_moved
+    // event): Mark unread in one tab shows the unread bubble in the other, and marking read there clears it again.
+    {
+      const syncRepo = path.join(tmp, 'sync-project-repo'); fs.mkdirSync(syncRepo);
+      for (const args of [['init', '-q'], ['config', 'user.name', 'UI Test'], ['config', 'user.email', 'ui@example.invalid']]) { const result = spawnSync('git', args, { cwd: syncRepo }); if (result.status !== 0) throw new Error(`git ${args[0]} failed`); }
+      fs.writeFileSync(path.join(syncRepo, 'README.md'), 'sync\n');
+      for (const args of [['add', 'README.md'], ['commit', '-qm', 'base']]) { const result = spawnSync('git', args, { cwd: syncRepo }); if (result.status !== 0) throw new Error(`git ${args[0]} failed`); }
+      const [contextA, contextB] = await Promise.all([browser.createBrowserContext(), browser.createBrowserContext()]);
+      try {
+        const pageA = await contextA.newPage(), pageB = await contextB.newPage();
+        await login(pageA); await login(pageB);
+        const api = (method, url, body) => pageA.evaluate(async (m, u, b) => {
+          const { csrf_token } = await (await fetch('/api/me')).json();
+          const response = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: b === undefined ? undefined : JSON.stringify(b) });
+          if (!response.ok) throw new Error(`${m} ${u}: ${response.status}`);
+          return response.json();
+        }, method, url, body);
+        const syncProject = await api('POST', '/api/projects', { name: 'Sync project', folder: syncRepo });
+        const syncHome = (await api('GET', `/api/projects/${syncProject.id}/rooms`)).find(room => room.kind === 'home');
+        const quiet = await api('POST', `/api/projects/${syncProject.id}/rooms`, { title: 'Quiet', parent_id: syncHome.id, worktree: { enabled: false, base_ref: '' } });
+        await api('POST', `/api/rooms/${syncHome.id}/messages`, { body: 'Read in both tabs' });
+        await pageB.goto(`${origin}#${quiet.id}`); await appReady(pageB);
+        await pageB.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-item-name`), {}, syncHome.id);
+        const bubble = () => pageB.evaluate(id => document.querySelector(`[data-room-id="${id}"] > .room-item .room-item-unread`)?.textContent || '', syncHome.id);
+        assert.equal(await bubble(), '', 'the home room starts read in the second tab');
+        await api('POST', `/api/rooms/${syncHome.id}/unread`, {});
+        await pageB.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-item .room-item-unread`)?.textContent === '1', { timeout: 15000 }, syncHome.id);
+        await api('POST', `/api/rooms/${syncHome.id}/read`, {});
+        await pageB.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-item .room-item-unread`), { timeout: 15000 }, syncHome.id);
+        assert.equal(await bubble(), '', 'marking read in the first tab clears the bubble in the second');
+        // The scratch project goes again: the project list later in this run counts the projects of the account.
+        await pageA.evaluate(async (id, name) => { const { csrf_token } = await (await fetch('/api/me')).json(); const response = await fetch(`/api/projects/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ name }) }); if (!response.ok) throw new Error(`delete project: ${response.status}`); }, syncProject.id, 'Sync project');
+      } finally { await contextA.close().catch(() => {}); await contextB.close().catch(() => {}); }
+    }
     // Room list. One list across projects: each project's home room is a parent row (no section labels) with its task rooms
     // nested one level, one Direct messages section last. Layouts a and b close a project's tree with an
     // "Archived (N)" row that lists them inline; layout c has no archived rooms in the list and the filter box finds them.

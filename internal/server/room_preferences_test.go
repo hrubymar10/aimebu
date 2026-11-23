@@ -287,3 +287,84 @@ func TestNothingCanBePinned(t *testing.T) {
 		t.Fatalf("pinning a room status=%d, want 400", resp.StatusCode)
 	}
 }
+
+// A person's own cursor move reaches only that person on the event stream (read_cursor_moved), so their other tabs and devices update live;
+// the room-wide room_read_changed stays visible to the other member, whose read receipts follow it.
+func TestReadCursorMovedReachesOnlyThatPerson(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	secondCookie, secondCSRF := registerSecondUser(t, f, "second")
+	second, err := f.db.UserByLogin(t.Context(), "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := f.ownerUserID(t)
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,'operator')`, f.project.ID, second.ID); err != nil {
+			return err
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := tx.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at)
+				VALUES (?,?,?,'agent','agt_a','hi','[]','2026-10-16T00:00:00Z')`, "msg_rm"+string(rune('a'+i)), 2000+i, f.room.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	post := func(path string) {
+		t.Helper()
+		resp := f.request(http.MethodPost, "/api/rooms/"+f.room.ID+path, map[string]int64{}, true)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s: %d", path, resp.StatusCode)
+		}
+	}
+	post("/read")   // the owner reads: the cursor moves forward
+	post("/unread") // and back
+	count := func(user, kind, about string) int {
+		t.Helper()
+		events, err := f.db.EventsAfter(t.Context(), user, 0, 1<<62)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, event := range events {
+			if event.Kind != kind {
+				continue
+			}
+			var payload struct {
+				UserID string `json:"user_id"`
+			}
+			if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.UserID == about {
+				n++
+			}
+		}
+		return n
+	}
+	if got := count(owner, "read_cursor_moved", owner); got != 2 {
+		t.Fatalf("the owner's own sessions got %d read_cursor_moved events, want 2 (read, unread)", got)
+	}
+	if got := count(second.ID, "read_cursor_moved", owner); got != 0 {
+		t.Fatalf("another person got %d read_cursor_moved events", got)
+	}
+	if got := count(second.ID, "room_read_changed", owner); got != 2 {
+		t.Fatalf("the other member got %d room_read_changed events, want 2", got)
+	}
+	// The second person's own move reaches them and not the owner.
+	resp := f.requestAs(t, secondCookie, secondCSRF, http.MethodPost, "/api/rooms/"+f.room.ID+"/read", map[string]int64{})
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("second read: %d", resp.StatusCode)
+	}
+	if got := count(owner, "read_cursor_moved", second.ID); got != 0 {
+		t.Fatalf("the owner saw the second person's move: %d", got)
+	}
+	if got := count(second.ID, "read_cursor_moved", second.ID); got != 1 {
+		t.Fatalf("the second person's own move reached them %d times, want 1", got)
+	}
+}

@@ -604,9 +604,9 @@ async function signedIn(session) {
       if (event.kind === 'snapshot_required') { await resync(generation); return; }
       let payload = {}; try { payload = JSON.parse(event.payload_json); } catch {}
       if (event.kind === 'project_created' || event.kind === 'project_updated' || event.kind === 'project_archived' || event.kind === 'project_reopened') { const projects = await request('/api/projects'); if (!active()) return; const project = projects.find(p => p.id === event.project_id); if (project) { await sidebar.addProject(project); if (!active()) return; refreshEmptyState(); const open = chat.room && sidebar.rooms.get(chat.room.id); if (open && open.project_id === event.project_id && event.kind !== 'project_created') { chat.title.textContent = open.title; chat.setRoomFacts(open); teamFlowHome.refreshIfProject(event.project_id); } if (event.kind === 'project_updated' && settings.project.store.projectID.peek() === event.project_id) void settings.project.store.flow.load(event.project_id); } }
-      // The person's own read position moved (a mark here, or in another tab or device): read the counts, without marking the open room read
-      // again, which would undo a Mark unread made elsewhere.
-      else if (event.kind === 'room_read_changed' && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id, { mark: false });
+      // The person's own read position moved (a mark here, or in another tab or device; the server sends this event to that person's sessions only):
+      // read the counts, without marking the open room read again, which would undo a Mark unread made elsewhere.
+      else if (event.kind === 'read_cursor_moved' && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id, { mark: false });
       else if (event.kind === 'room_preference_changed' && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id);
       else if (event.kind === 'room_removed') await roomRemoved(event.project_id, payload.room_id);
       else if (event.kind === 'project_removed') await projectRemoved(payload.project_id);

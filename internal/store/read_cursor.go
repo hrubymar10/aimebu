@@ -59,8 +59,7 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 			changed = true
 		}
 		if changed {
-			if _, err := tx.AppendEvent(Event{Kind: "room_read_changed", ProjectID: projectID, RoomID: roomID,
-				PayloadJSON: payloadJSON(map[string]string{"user_id": userID})}); err != nil {
+			if err := tx.appendReadEvents(projectID, roomID, userID); err != nil {
 				return err
 			}
 		}
@@ -98,14 +97,27 @@ func (s *Store) MarkRoomUnread(ctx context.Context, userID, roomID string, seq i
 				return err
 			}
 			state.ReadCursor = seq - 1
-			if _, err := tx.AppendEvent(Event{Kind: "room_read_changed", ProjectID: projectID, RoomID: roomID,
-				PayloadJSON: payloadJSON(map[string]string{"user_id": userID})}); err != nil {
+			if err := tx.appendReadEvents(projectID, roomID, userID); err != nil {
 				return err
 			}
 		}
 		return tx.readCounts(userID, roomID, &state)
 	})
 	return state, err
+}
+
+// appendReadEvents announces a move of userID's read cursor: room_read_changed
+// for everybody in the room (the read receipts follow it) and read_cursor_moved,
+// which only that person's own sessions are sent, so their other tabs and
+// devices update their counts live.
+func (tx *Tx) appendReadEvents(projectID, roomID, userID string) error {
+	for _, kind := range []string{"room_read_changed", "read_cursor_moved"} {
+		if _, err := tx.AppendEvent(Event{Kind: kind, ProjectID: projectID, RoomID: roomID,
+			PayloadJSON: payloadJSON(map[string]string{"user_id": userID})}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // readCounts fills the unread and attention counts of state from its ReadCursor.

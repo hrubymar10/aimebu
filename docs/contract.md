@@ -829,6 +829,9 @@ Inbox, usage, events, settings
   "mark unread" (`POST /api/rooms/{room}/unread`) is the one way it moves back,
   to just before a message, and never touches another person's cursor or an
   agent's seen marker.
+  A move emits `room_read_changed` (room-wide) and `read_cursor_moved`, which the
+  event stream sends only to the person named in its payload, so their other
+  tabs and devices update live.
 - **agent_room_seen**(room_id, agent_id, seq) — the newest message of a room
   the router handed an agent with nothing for it to do (not addressed to it,
   system chatter, or an unaddressed message for the worker while it is the
