@@ -399,6 +399,10 @@ type CommandExit struct {
 // handover after the drain): the exit code is -1 and the agent may run the command again.
 const CommandEndSupervisorReplaced = "supervisor_replaced"
 
+// CommandEndLostInSwap is the Reason of a command whose process a supervisor watched after it took over from another (a swap, or a crash)
+// and found gone without an exit marker: its exit code is unknown, and is reported as -1 with Lost.
+const CommandEndLostInSwap = "lost_in_swap"
+
 // CommandOpen is a command this supervisor runs, reported with hello after a restart.
 type CommandOpen struct {
 	JobID      string `json:"job_id"`

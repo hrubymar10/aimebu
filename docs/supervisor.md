@@ -67,16 +67,32 @@ heartbeat sweeps it, about fifteen seconds after the host side is gone. For a
 container turn the no-overlap guarantee therefore holds only after that
 sweep: for up to about fifteen seconds the old process can still write in the
 checkout while the new supervisor continues the turn. The journal keeps what its turns reported, and
-the replacement delivers it. A supervisor of this build that is asked to exit
-while it is being replaced does not wait for its `run_command` jobs: it ends
-each one (SIGTERM to its group, SIGKILL after the grace) and records the end
-with exit code `-1` and the reason `supervisor_replaced`. The job is
-`cancelled` with the error `supervisor_replaced: the supervisor was replaced
-while the command ran; run it again if you still need it`, and the wake note
-reaches the agent like any other command end (replayed by the replacement if
-the old connection was already gone). An older build ends its jobs as
-cancelled without the reason. A job that died with a supervisor that had to be
-killed is reported `lost` by the replacement.
+the replacement delivers it.
+**`run_command` jobs survive a swap.** A native job runs in a session of its
+own and writes its log and exit marker without the supervisor (see "Long
+commands outside a turn" below), so a supervisor that retires or is replaced
+does not wait for it: it lets go of it and exits, the job keeps running, and
+the replacement adopts it from the journal and reports its real end (exit
+code, output) to the agent. Only a job that cannot be left behind holds or is
+ended by the exit: a job in a container (its output passes through the
+launcher the supervisor runs) and a job started by an older build (its output
+passes through that supervisor). Asked to exit for a replacement, a supervisor
+of this build ends such a job (SIGTERM to its group, SIGKILL after the grace)
+and records the end with exit code `-1` and the reason `supervisor_replaced`:
+the job is `cancelled` with the error `supervisor_replaced: the supervisor was
+replaced while the command ran; run it again if you still need it`, and the
+wake note reaches the agent (replayed by the replacement if the old connection
+was already gone). An older build ends its jobs as cancelled without the
+reason. A job whose process the replacement finds gone without an exit marker
+(it died with a supervisor that had to be killed, whose tree kill takes the
+jobs too, or with one that crashed) is `lost` with exit code `-1` and the error
+`lost_in_swap: …`, and its agent is woken. Between the old supervisor's exit and the
+replacement's connection the machine is not connected: a `run_command` call in
+that window is refused (`command_refused`, machine unavailable) and can simply
+be made again once the replacement is up. Only `run_command` jobs are adopted:
+a process an agent started from its own shell (with `nohup`, in the
+background) belongs to its harness process group (or its harness container
+session) and can end with it when the swap interrupts its turn, with no note.
 While its server connection is down, the supervisor logs the failed sends
 (`machine socket disconnected`) once, with the reconnect interval, and one line
 with their count once the connection is back. The drain also leaves
@@ -1180,8 +1196,9 @@ appear in the supervisor's catalog.
 An agent can start a long command (a test gate, 15–30 minutes) that runs
 outside its turn, so it neither holds the turn nor dies with it: `run_command`
 in the agent toolbox, which records a `command_job` and sends `command_run` to
-the machine (see the contract for the frames). The supervisor runs it in its
-own process group, in the agent's own checkout (`cwd` may not leave it: it is
+the machine (see the contract for the frames). The supervisor runs a native
+one in a session of its own (a container one in its own process group), in
+the agent's own checkout (`cwd` may not leave it: it is
 cleaned first, so `..`, `./..` or `a/../..` is refused on the server and again
 on the machine), with
 the same rights that agent's own Bash has there and nothing more: none of the
@@ -1234,7 +1251,14 @@ and the turn limits do not apply to it.
   own Bash, native or in a container. Each line is redacted (agent keys,
   bearer and basic credentials, cookies, anything named like a key, token,
   secret or password) before it is written; the log is capped at 10 MiB with a
-  truncation marker, and the note carries only its last 8 KiB.
+  truncation marker, and the note carries only its last 8 KiB. A native job's
+  output goes through a log writer of its own (`aimebu command-log <log>`, an
+  internal subcommand that is not part of the CLI: the supervisor's own
+  executable by its absolute path, resolved at the job's start, in the job's
+  session; it outlives a SIGTERM to finish the
+  log and ends with the output), and the exit marker is put in place only once
+  that writer is done, so the job needs nothing of the supervisor that started
+  it. A container job's output passes through the supervisor, as before.
 - **The wake note.** When the process ends (exit, timeout, cancel, a kill on
   stop), the supervisor journals the end and reports it; the server writes a
   system message in the room the command was started from and wakes the agent

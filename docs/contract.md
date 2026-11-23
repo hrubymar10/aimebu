@@ -1465,10 +1465,15 @@ Restart now), waits 30 seconds for it to release the journal, sends SIGTERM,
 and 15 seconds later kills it and the processes it started with SIGKILL. A
 signal goes only to the process the exit was requested of, verified by pid
 and process start time; a reused pid is never signalled. A command outside a
-turn no longer holds the swap: the old supervisor ends its commands on that
-exit (or they are killed with it), and this build reports each such end with
-`exit_code` -1 and `reason: supervisor_replaced` (§4.1), which makes the job
-`cancelled` with that reason and wakes its agent. A grace of `0` turns the
+turn no longer holds the swap: a native one runs in a session of its own with
+its own log writer and exit marker, so the old supervisor lets go of it on
+that exit and the replacement adopts it from the journal and reports its real
+end. A command that cannot be left behind (one in a container, or started by
+an older build) is ended on that exit (or killed with the supervisor), and
+this build reports each such end with `exit_code` -1 and
+`reason: supervisor_replaced` (§4.1), which makes the job `cancelled` with that
+reason and wakes its agent. An adopted command whose process is gone without
+an exit marker ends `lost` with `exit_code` -1 and `reason: lost_in_swap`. A grace of `0` turns the
 bound off. A turn whose process in a
 container is not confirmed gone holds the supervisor for its quarantine
 (§4.2) first. The owner can choose Restart now to interrupt current
@@ -1503,7 +1508,8 @@ it never silently reruns a turn with uncertain effects.
   are the long commands outside a turn this supervisor still runs and the ends
   it has not been acknowledged for.
 - S→M `retire_at_idle{v}` asks a detached supervisor to reject new work, finish
-  its running turns and commands, and exit. The wait is bounded by the drain
+  its running turns and the commands it cannot leave to its replacement, and
+  exit. The wait is bounded by the drain
   grace and the handover (§3), not by the supervisor's work.
 - `supports_turn_interrupt=true` in `hello` says the supervisor cuts one
   running turn on a `turn_interrupt` frame (§4.2) and leaves its agent
@@ -1764,6 +1770,9 @@ it never silently reruns a turn with uncertain effects.
   supervisor ended the command on its exit while being replaced: the job is
   `cancelled` with the error `supervisor_replaced: …` and the agent is woken;
   a server that does not know the reason reads the end as a kill.
+  `reason: lost_in_swap` (with `lost` and `exit_code` -1) says a supervisor
+  that adopted the command found its process gone without an exit marker: the
+  job is `lost` with the error `lost_in_swap: …` and the agent is woken.
 - M→S `background_job_ended{v, agent_id, generation}` — the agent's live
   (warm) harness process answered, between turns, a query it ran on its own
   because a background job the agent had started ended (Claude Code's

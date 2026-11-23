@@ -217,8 +217,8 @@ func TestAdoptedCommandIsReconciledFromItsExitMarker(t *testing.T) {
 	if code := exits["cmd_old"]; code.ExitCode == nil || *code.ExitCode != 7 || code.Lost {
 		t.Fatalf("the marker's exit code was not reported: %+v", code)
 	}
-	if lost := exits["cmd_lost"]; !lost.Lost || lost.ExitCode != nil {
-		t.Fatalf("a job with no marker and no process is lost: %+v", lost)
+	if lost := exits["cmd_lost"]; !lost.Lost || lost.ExitCode == nil || *lost.ExitCode != -1 || lost.Reason != protocol.CommandEndLostInSwap {
+		t.Fatalf("a job with no marker and no process is lost in the swap (exit -1): %+v", lost)
 	}
 	if open, err := j.OpenCommands(t.Context()); err != nil || len(open) != 0 {
 		t.Fatalf("the journal still lists them as open: %v %v", open, err)
@@ -309,7 +309,8 @@ func TestAdoptedCommandWithAReusedPidIsLost(t *testing.T) {
 	}
 	c.reconcileCommands(t.Context())
 	exit := waitCommandExit(t, sink)
-	if exit.JobID != "cmd_reused" || !exit.Lost || exit.Killed || exit.ExitCode != nil {
+	if exit.JobID != "cmd_reused" || !exit.Lost || exit.Killed || exit.ExitCode == nil || *exit.ExitCode != -1 ||
+		exit.Reason != protocol.CommandEndLostInSwap {
 		t.Fatalf("exit %+v", exit)
 	}
 	if c.runner().has("cmd_reused") {
@@ -404,8 +405,9 @@ func TestReplacedSupervisorEndsItsCommandsAsSupervisorReplaced(t *testing.T) {
 	}
 }
 
-// A command adopted from a dead predecessor is ended the same way when this supervisor is replaced in turn.
-func TestReplacedSupervisorEndsAnAdoptedCommandAsSupervisorReplaced(t *testing.T) {
+// A command adopted from a dead predecessor is not this process's to end when it is replaced in turn: it is left running, still open in
+// the journal, for the next supervisor to adopt.
+func TestReplacedSupervisorLeavesAnAdoptedCommandRunning(t *testing.T) {
 	c, j, _ := commandTestClient(t)
 	sink := make(chan protocol.CommandExit, 1)
 	c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
@@ -417,11 +419,127 @@ func TestReplacedSupervisorEndsAnAdoptedCommandAsSupervisorReplaced(t *testing.T
 	if err := c.StopAcceptingAndDrain(ctx); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
+	select {
+	case exit := <-sink:
+		t.Fatalf("a command left to the replacement was reported: %+v", exit)
+	case <-time.After(3 * commandWaitPoll):
+	}
+	if !commandProcessAlive(pid) {
+		t.Fatal("the adopted process was ended")
+	}
+	if open, err := j.OpenCommands(t.Context()); err != nil || len(open) != 1 {
+		t.Fatalf("the command is not open in the journal: %v %v", open, err)
+	}
+}
+
+// detachableClient is a supervisor whose long commands write their own log through this test binary (TestMain runs it as
+// `command-log`), as the aimebu binary does for a real supervisor.
+func detachableClient(t *testing.T, journalPath string) (*Client, *Journal, chan protocol.CommandExit) {
+	t.Helper()
+	j, err := OpenJournal(t.Context(), journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewClient("mch_test", "key", "http://127.0.0.1:1", j, adapter.NewFake())
+	c.OnError = func(error) {}
+	c.CommandLogger = func() (string, error) { return filepath.Abs(os.Args[0]) }
+	sink := make(chan protocol.CommandExit, 4)
+	c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
+	return c, j, sink
+}
+
+// A command run in its own session, with its own log writer, still reports its end, the redacted tail and the log to the supervisor that
+// started it.
+func TestDetachableCommandReportsItsEnd(t *testing.T) {
+	c, j, sink := detachableClient(t, filepath.Join(t.TempDir(), "journal.sqlite"))
+	defer j.Close()
+	result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_own", AgentID: "agt_one", Generation: 1,
+		CheckoutPath: t.TempDir(), Cmd: "echo 'Bearer aak_secret_value'; echo done; exit 3", TimeoutSeconds: 60})
+	if result.Result != "ok" {
+		t.Fatalf("start: %+v", result)
+	}
 	exit := waitCommandExit(t, sink)
-	if exit.JobID != "cmd_adopted" || exit.ExitCode == nil || *exit.ExitCode != -1 || exit.Reason != protocol.CommandEndSupervisorReplaced || !exit.Killed {
+	if exit.ExitCode == nil || *exit.ExitCode != 3 || exit.Killed || exit.Lost || !strings.Contains(exit.Tail, "done") {
 		t.Fatalf("exit %+v", exit)
 	}
-	if commandProcessAlive(pid) {
-		t.Fatal("the adopted process is still running")
+	data, err := os.ReadFile(result.LogPath)
+	if err != nil || strings.Contains(string(data), "aak_secret_value") || !strings.Contains(string(data), "Bearer [redacted]") {
+		t.Fatalf("log %q %v", data, err)
+	}
+	if code, ok := readExitMarker(commandExitMarker(result.LogPath)); !ok || code != 3 {
+		t.Fatalf("exit marker %d %t", code, ok)
+	}
+}
+
+// The swap: a command started on supervisor A survives A's exit for its replacement (it is not ended, and A reports nothing), and B,
+// opening the same journal, adopts it and reports its real end, exit code and output, which wakes the agent. A cancel reaches a command B
+// adopted.
+func TestCommandSurvivesTheSwapAndIsAdoptedByTheReplacement(t *testing.T) {
+	for _, how := range []string{"finishes", "cancelled"} {
+		t.Run(how, func(t *testing.T) {
+			journalPath := filepath.Join(t.TempDir(), "journal.sqlite")
+			a, ja, sinkA := detachableClient(t, journalPath)
+			script := "sleep 2; echo 'output after the swap'; exit 7"
+			if how == "cancelled" {
+				script = "sleep 600"
+			}
+			result := a.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_gate", AgentID: "agt_one", Generation: 1,
+				CheckoutPath: t.TempDir(), Cmd: script, TimeoutSeconds: 3600})
+			if result.Result != "ok" {
+				t.Fatalf("start: %+v", result)
+			}
+			pid := a.runner().get("cmd_gate").pid
+			t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+			a.MarkRestartInterruption()
+			ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+			defer cancel()
+			began := time.Now()
+			if err := a.StopAcceptingAndDrain(ctx); err != nil {
+				t.Fatalf("drain: %v", err)
+			}
+			if waited := time.Since(began); waited > 5*time.Second {
+				t.Fatalf("A's exit waited %s for the command", waited)
+			}
+			if a.hasRetireBlockingWork() {
+				t.Fatal("the command still holds A")
+			}
+			if err := ja.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if !commandProcessAlive(pid) {
+				t.Fatal("the command did not survive A's exit")
+			}
+			b, jb, sinkB := detachableClient(t, journalPath)
+			defer jb.Close()
+			b.reconcileCommands(t.Context())
+			if !b.runner().has("cmd_gate") {
+				t.Fatal("B did not adopt the command")
+			}
+			if how == "cancelled" {
+				if r := b.commandCancel("cmd_gate"); r.Result != "ok" {
+					t.Fatalf("cancel: %+v", r)
+				}
+			}
+			exit := waitCommandExit(t, sinkB)
+			switch how {
+			case "finishes":
+				if exit.ExitCode == nil || *exit.ExitCode != 7 || exit.Lost || exit.Killed || exit.Reason != "" ||
+					!strings.Contains(exit.Tail, "output after the swap") {
+					t.Fatalf("exit %+v", exit)
+				}
+			case "cancelled":
+				if !exit.Killed || exit.Lost || exit.Reason != "" {
+					t.Fatalf("exit %+v", exit)
+				}
+				if commandProcessAlive(pid) {
+					t.Fatal("the cancelled command still runs")
+				}
+			}
+			select {
+			case got := <-sinkA:
+				t.Fatalf("A reported the command it left: %+v", got)
+			default:
+			}
+		})
 	}
 }

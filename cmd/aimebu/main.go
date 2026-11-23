@@ -71,6 +71,10 @@ func reserveV1History(ctx context.Context, db *store.Store, root string, stderr 
 }
 
 func main() {
+	// The log writer of a long command (supervisor.CommandLogMain) runs in the command's session: nothing else of the CLI starts for it.
+	if len(os.Args) > 1 && os.Args[1] == "command-log" {
+		os.Exit(supervisor.CommandLogMain(os.Args[2:], os.Stdin))
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	startTelemetry(os.LookupEnv, os.Stderr)
 	// Registered whether or not reporting is on: Settings can turn it on while the server runs (a statement costs one atomic load while off).
@@ -378,6 +382,9 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer, loc
 	}
 	client.TurnLimits = turnLimits
 	client.ConfigDir = config.root
+	// A long command writes its own log through this executable (its absolute path, resolved at each job's start), so it survives this
+	// supervisor's exit and its replacement adopts it.
+	client.CommandLogger = daemonExecutable
 	// A supervisor reports the way the server tells it to (unless its own AIMEBU_SENTRY_DSN says otherwise).
 	client.OnTelemetry = func(settings protocol.TelemetrySettings) {
 		applySupervisorTelemetry(settings, resolveVersion(), os.LookupEnv, client, nil, stderr)

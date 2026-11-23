@@ -307,6 +307,9 @@ func (s *Server) ownedCommand(w http.ResponseWriter, r *http.Request, caller sto
 // commandSupervisorReplaced is the error a command's end carries when its supervisor ended it on its way out, being replaced.
 const commandSupervisorReplaced = protocol.CommandEndSupervisorReplaced + ": the supervisor was replaced while the command ran"
 
+// commandLostInSwap is the error of a command whose process the supervisor that took over found gone without an exit code.
+const commandLostInSwap = protocol.CommandEndLostInSwap + ": its process ended without an exit code while its supervisor was replaced; run it again if you still need it"
+
 func commandTerminal(state string) bool {
 	return state != "queued" && state != "running"
 }
@@ -337,6 +340,9 @@ func (s *Server) handleCommandEnd(ctx context.Context, conn *machineConn, frame 
 		exit.ExitCode = nil
 	case exit.Lost:
 		state = "lost"
+		if exit.Reason == protocol.CommandEndLostInSwap {
+			message = commandLostInSwap
+		}
 	case exit.Unconfirmed:
 		// A kill whose end in the container is not confirmed may have left the process running: that outranks why it was killed.
 		state = "cancelled_unconfirmed"

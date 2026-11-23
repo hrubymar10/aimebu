@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
@@ -20,6 +21,10 @@ var packageTestRoot string
 // (which a running v1 server holds for as long as it works, and the test then waits for it, at 0% CPU, with nothing printed), and read
 // their credentials.
 func TestMain(m *testing.M) {
+	// A long command a supervisor of this test binary runs writes its log through the binary (`command-log`): that, and nothing else.
+	if len(os.Args) > 1 && os.Args[1] == "command-log" {
+		os.Exit(supervisor.CommandLogMain(os.Args[2:], os.Stdin))
+	}
 	// `server start` runs this test binary as the detached server (see daemon_test.go): it already has the parent test's isolated
 	// environment, so it runs the command line it was given and nothing else.
 	if os.Getenv(daemonHelperEnv) == "1" {

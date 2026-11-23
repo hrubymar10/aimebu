@@ -2,7 +2,9 @@ package supervisor
 
 import (
 	"bytes"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -32,6 +34,50 @@ func openCommandLog(path string) (*commandLog, error) {
 		return nil, err
 	}
 	return &commandLog{file: file}, nil
+}
+
+// createCommandLog makes the empty log of a job whose output a log writer of its own will fill (CommandLogMain): the start fails here, in the
+// supervisor, when the log cannot be made.
+func createCommandLog(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
+// commandLogTruncatedLine ends a log that reached its cap, so whoever reads the file knows the rest was dropped.
+const commandLogTruncatedLine = "[aimebu: the output passed 10 MiB; the rest was dropped]\n"
+
+// CommandLogMain is `aimebu command-log <log>`: the log writer of a long command, a process in the command's own session that reads the
+// command's output on stdin and writes it to the log the supervisor made, redacted line by line and capped like an in-process log. The
+// command's output then never passes through the supervisor, so the command survives the supervisor's exit (a swap) and its replacement
+// adopts it. It outlives a SIGTERM to the command's group (a cancel), to write the last of the output, and ends when its input does.
+func CommandLogMain(args []string, in io.Reader) int {
+	if len(args) != 1 {
+		return 2
+	}
+	signal.Ignore(syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	file, err := os.OpenFile(args[0], os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		_, _ = io.Copy(io.Discard, in) // the command must not die of a closed pipe for want of its log
+		return 1
+	}
+	log := &commandLog{file: file}
+	_, _ = io.Copy(log, in)
+	log.mu.Lock()
+	log.flushLine()
+	if log.truncated {
+		_, _ = file.WriteString(commandLogTruncatedLine)
+	}
+	log.mu.Unlock()
+	if err := file.Close(); err != nil {
+		return 1
+	}
+	return 0
 }
 
 // Write takes the process's output as it comes, and keeps it whole only in the tail: a line is redacted before it reaches the file.

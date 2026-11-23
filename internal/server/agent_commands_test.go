@@ -567,3 +567,30 @@ func TestCommandEndedBySupervisorReplacementWakesTheAgent(t *testing.T) {
 		t.Fatal("the agent was not woken by its command's end")
 	}
 }
+
+// A command whose process the supervisor that took over found gone without an exit marker is recorded lost, with exit code -1 and the
+// lost_in_swap reason, and wakes its agent.
+func TestCommandLostInASwapWakesTheAgent(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	conn := f.dialCommandMachine(t, nil, nil)
+	answer, run := f.startCommandCall(t, conn, key, "lost-in-swap")
+	writeCommandFrame(t, conn, commandStartedFrame(run))
+	if call := waitCommandCall(t, answer); call.status != 201 {
+		t.Fatalf("run_command %d %s", call.status, call.body)
+	}
+	frame := commandEndedFrame(run, run.Generation, -1)
+	frame.CommandExit.Lost, frame.CommandExit.Reason = true, protocol.CommandEndLostInSwap
+	writeCommandFrame(t, conn, frame)
+	waitCommandAck(t, conn, run.JobID)
+	job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID)
+	if err != nil || job.State != "lost" || job.ExitCode == nil || *job.ExitCode != -1 ||
+		!strings.HasPrefix(job.Error, protocol.CommandEndLostInSwap+": ") {
+		t.Fatalf("job %+v err=%v", job, err)
+	}
+	if commandNotes(t, f, agent.ID) != 1 {
+		t.Fatal("the agent was not woken by its command's end")
+	}
+}

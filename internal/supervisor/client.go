@@ -113,7 +113,12 @@ type Client struct {
 	// not confirm; nil asks docker (tests set it).
 	ContainerState func(id string) (state string, err error)
 	// ProcessStart reports a process's own start time for the warm journal; nil asks the system (tests set it).
-	ProcessStart    func(pid int) string
+	ProcessStart func(pid int) string
+	// CommandLogger resolves, at each job's start, the absolute path of the program that writes a long command's log as a process of the
+	// command's own (`aimebu command-log`, see CommandLogMain): set, a native command runs in a session of its own and writes its log and
+	// exit marker without this process, so it survives this supervisor's exit and its replacement adopts it. Nil (or an error), the
+	// output passes through this process as before.
+	CommandLogger   func() (string, error)
 	warmPool        *warmPool
 	warmReports     chan struct{} // a change of the warm picture, to be reported
 	warmReportMu    sync.Mutex    // build and send warm reports in sequence, including turn-end reports
@@ -255,7 +260,7 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if c.retireRequested.Load() && !c.hasActiveWork() {
+		if c.retireRequested.Load() && !c.hasRetireBlockingWork() {
 			return nil
 		}
 		if c.IdleDisconnectLimit > 0 {
@@ -572,7 +577,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				ticker := time.NewTicker(250 * time.Millisecond)
 				defer ticker.Stop()
 				for {
-					if !c.hasActiveWork() {
+					if !c.hasRetireBlockingWork() {
 						_ = conn.CloseNow()
 						return
 					}
@@ -1786,6 +1791,9 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 			c.report("a turn could not be cancelled on shutdown", err)
 		}
 	}
+	// A long command that runs without this process (its own session, log writer and exit marker) is left to the replacement, which
+	// adopts it from the journal; this process only lets go of it.
+	c.detachCommands()
 	if c.restartInterrupted.Load() {
 		runner := c.runner()
 		runner.mu.Lock()
@@ -1794,8 +1802,8 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 			jobs = append(jobs, id)
 		}
 		runner.mu.Unlock()
-		// A replacement does not wait for a long command: it is ended, and its end (exit code -1, reason supervisor_replaced) wakes its
-		// agent, which can run it again on the new supervisor.
+		// A replacement does not wait for a command it cannot leave behind (one whose output passes through this process, as a Docker
+		// launcher's does): it is ended, and its end (exit code -1, reason supervisor_replaced) wakes its agent, which can run it again.
 		for _, id := range jobs {
 			go c.commandReplace(id)
 		}
@@ -1806,7 +1814,7 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 		if c.restartInterrupted.Load() {
 			ticker := time.NewTicker(50 * time.Millisecond)
 			defer ticker.Stop()
-			for c.hasActiveWork() {
+			for c.hasRetireBlockingWork() {
 				select {
 				case <-ctx.Done():
 					return

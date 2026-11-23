@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,6 +84,11 @@ type commandJob struct {
 	adopted bool
 	// notOurs is set when a kill finds an adopted job's pid owned by another process: its watcher then reports it lost.
 	notOurs bool
+	// detachable says the command runs without this process (CommandLogger): a session of its own, its own log writer and exit marker.
+	// A supervisor that exits leaves it running for its replacement to adopt. detached says this process let go of it: nothing of it is
+	// reported or journaled here any more.
+	detachable bool
+	detached   bool
 	// container says the process is a Docker launcher running the command in the agent's container: a kill is confirmed only by the
 	// launcher's own exit status (or the command's exit marker), and a launcher that refused the command is not the command's end.
 	container bool
@@ -93,6 +99,27 @@ func (j *commandJob) markKilled(timedOut bool) {
 	defer j.mu.Unlock()
 	j.killed = true
 	j.timedOut = j.timedOut || timedOut
+}
+
+func (j *commandJob) markDetached() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.detached = true
+	if j.timer != nil {
+		j.timer.Stop()
+	}
+}
+
+func (j *commandJob) isDetached() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.detached
+}
+
+// leavable says the job does not hold a retiring supervisor: it runs without this process (see detachable), or it is a predecessor's this
+// process only watches.
+func (j *commandJob) leavable() bool {
+	return j.detachable || j.adopted
 }
 
 func (j *commandJob) markReplaced() {
@@ -161,6 +188,45 @@ func (c *Client) hasActiveWork() bool {
 	// those are journaled but are not children in its in-memory runner.
 	open, err := c.Journal.OpenCommands(context.Background())
 	return err != nil || len(open) > 0
+}
+
+// hasRetireBlockingWork is hasActiveWork for a supervisor that retires or is replaced: a turn holds it, a command only when it cannot be
+// left to the replacement (its output passes through this process). The journal's open commands do not: the replacement adopts them.
+func (c *Client) hasRetireBlockingWork() bool {
+	c.mu.Lock()
+	active := len(c.active) > 0 || len(c.running) > 0
+	runner := c.commands
+	c.mu.Unlock()
+	if active || runner == nil {
+		return active
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	for _, job := range runner.jobs {
+		if !job.leavable() {
+			return true
+		}
+	}
+	return false
+}
+
+// detachCommands lets go of every command this supervisor can leave to its replacement: its timer stops, its end is no longer reported or
+// journaled here, and it stays open in the journal, where the replacement adopts it (reconcileCommands) and reports its real end.
+func (c *Client) detachCommands() {
+	runner := c.runner()
+	runner.mu.Lock()
+	var left []string
+	for id, job := range runner.jobs {
+		if job.leavable() {
+			job.markDetached()
+			delete(runner.jobs, id)
+			left = append(left, id)
+		}
+	}
+	runner.mu.Unlock()
+	if len(left) > 0 {
+		log.Printf("supervisor exit: %d command(s) left running for the replacement to adopt", len(left))
+	}
 }
 
 // runner is the client's command table; a client built without NewClient gets one on first use.
@@ -299,7 +365,21 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	if c.runner().has(spec.JobID) {
 		return fail(errors.New("that command is already running here"))
 	}
-	log, err := openCommandLog(spec.LogPath)
+	logger := ""
+	if docker == nil && c.CommandLogger != nil {
+		if path, err := c.CommandLogger(); err == nil && filepath.IsAbs(path) {
+			logger = path
+		} else {
+			c.reportLocal(fmt.Errorf("job %s will not survive a supervisor swap: its log writer cannot be found: %v", spec.JobID, err))
+		}
+	}
+	detachable := logger != ""
+	var log *commandLog
+	if detachable {
+		err = createCommandLog(spec.LogPath)
+	} else {
+		log, err = openCommandLog(spec.LogPath)
+	}
 	if err != nil {
 		return fail(fmt.Errorf("the job log could not be opened: %w", err))
 	}
@@ -311,24 +391,39 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	// The wrapper writes its exit code beside the log before it exits: a supervisor that restarts (and cannot wait for a process it did not
 	// start) still learns how the command ended.
 	var cmd *exec.Cmd
-	if docker == nil {
+	switch {
+	case detachable:
+		// The command's output goes to its own log writer, and the exit marker is put in place only after that writer has written the
+		// last of it: a supervisor that reads the marker finds the whole log.
+		wrapped := `{ ( eval "$3" ); printf %s "$?" > "$1.part"; } 2>&1 | "$4" command-log "$2"; mv -f "$1.part" "$1"; ` +
+			`rc=$(cat "$1" 2>/dev/null); exit "${rc:-1}"`
+		cmd = exec.Command("sh", "-c", wrapped, "sh", marker, spec.LogPath, spec.Cmd, logger)
+		cmd.Dir = filepath.Join(spec.CheckoutPath, spec.Cwd)
+	case docker == nil:
 		wrapped := `( eval "$2" ); rc=$?; printf %s "$rc" > "$1"; exit $rc`
 		cmd = exec.Command("sh", "-c", wrapped, "sh", visibleMarker, spec.Cmd)
 		cmd.Dir = filepath.Join(spec.CheckoutPath, spec.Cwd)
-	} else {
+	default:
 		cmd = dockerCommand(docker, spec, visibleMarker)
 		// The launcher's exit is the command's end: a host-side process it left in its group (a `docker exec` client that outlived it) may
 		// still hold the log's pipe, and must not hold the end with it.
 		cmd.WaitDelay = dockerOutputGrace
 	}
-	cmd.Stdout, cmd.Stderr = log, log
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if detachable {
+		// A session of its own: the command is no part of this supervisor's, and outlives it.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	} else {
+		cmd.Stdout, cmd.Stderr = log, log
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	if err := cmd.Start(); err != nil {
-		log.CloseTail()
+		if log != nil {
+			log.CloseTail()
+		}
 		return fail(fmt.Errorf("the command could not be started: %w", err))
 	}
 	job := &commandJob{spec: spec, pid: cmd.Process.Pid, started: time.Now(), logPath: spec.LogPath, marker: marker, log: log,
-		container: docker != nil}
+		container: docker != nil, detachable: detachable}
 	// The start time tells this process from a later one that reuses its pid, for a supervisor that adopts the job after a restart.
 	job.pidStart = c.identityOf(job.pid)
 	already, err := c.Journal.RecordCommandStart(ctx, CommandStartRecord{JobID: spec.JobID, AgentID: spec.AgentID,
@@ -337,7 +432,9 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	if err != nil || already {
 		// No command runs without its journal record: kill it now rather than leave one this machine cannot account for.
 		stopUnjournaled(job, cmd)
-		log.CloseTail()
+		if log != nil {
+			log.CloseTail()
+		}
 		if err != nil {
 			return fail(fmt.Errorf("the command's journal record could not be written: %w", err))
 		}
@@ -359,6 +456,9 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 // waitCommand reaps one command, journals how it ended and reports it to the server.
 func (c *Client) waitCommand(ctx context.Context, job *commandJob, cmd *exec.Cmd) {
 	err := cmd.Wait()
+	if job.isDetached() {
+		return // left to the replacement, which reports its end from the exit marker
+	}
 	killed, timedOut := job.flags()
 	exit := protocol.CommandExit{JobID: job.spec.JobID, AgentID: job.spec.AgentID, Generation: job.spec.Generation,
 		StartedAt: job.started.UTC().Format(commandTimeLayout), Killed: killed, TimedOut: timedOut}
@@ -406,8 +506,13 @@ func settleContainerExit(job *commandJob, exit *protocol.CommandExit) {
 // reconnect in between finds it either held or ended, never open and unheld (which would adopt it a second time).
 func (c *Client) finishCommand(ctx context.Context, job *commandJob, exit protocol.CommandExit) {
 	exit.EndedAt = time.Now().UTC().Format(commandTimeLayout)
-	tail, written, truncated := job.log.CloseTail()
-	exit.LogBytes, exit.TailTruncated, exit.Tail = written, truncated, adapter.RedactSecrets(tail)
+	if job.log != nil {
+		tail, written, truncated := job.log.CloseTail()
+		exit.LogBytes, exit.TailTruncated, exit.Tail = written, truncated, adapter.RedactSecrets(tail)
+	} else if tail, size, _, err := tailFile(job.logPath, commandTailBytes); err == nil {
+		// Its own log writer wrote the log: the tail is read from the file, and the log was cut when it reached the cap.
+		exit.LogBytes, exit.TailTruncated, exit.Tail = size, size >= commandLogMaxBytes, adapter.RedactSecrets(tail)
+	}
 	if job.timer != nil {
 		job.timer.Stop()
 	}
@@ -597,6 +702,9 @@ func (c *Client) watchAdoptedCommand(ctx context.Context, job *commandJob) {
 			c.finishAdoptedCommand(ctx, job, exit)
 			return
 		}
+		if job.isDetached() {
+			return // this supervisor exits: its replacement watches the command
+		}
 		if !alive || job.isNotOurs() || !commandProcessAlive(job.pid) {
 			c.finishAdoptedCommand(ctx, job, protocol.CommandExit{JobID: job.spec.JobID, AgentID: job.spec.AgentID,
 				Generation: job.spec.Generation, Lost: true})
@@ -627,6 +735,11 @@ func (c *Client) finishAdoptedCommand(ctx context.Context, job *commandJob, exit
 			// that the command in the container is gone.
 			exit.Unconfirmed = job.container
 		}
+	}
+	if exit.Lost && exit.ExitCode == nil {
+		// Its process went without leaving an exit code: it died with a supervisor that was replaced (or crashed).
+		code := -1
+		exit.ExitCode, exit.Reason = &code, protocol.CommandEndLostInSwap
 	}
 	job.settleReplaced(&exit)
 	if tail, written, truncated, err := tailFile(job.logPath, commandTailBytes); err == nil {
