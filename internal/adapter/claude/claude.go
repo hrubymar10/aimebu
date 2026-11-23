@@ -534,6 +534,7 @@ func newRunState() *runState { return &runState{steps: map[string]claudeStep{}} 
 func (t *turn) handleLine(s *runState, line []byte) {
 	event, known := harness.ParseClaude(line)
 	if !known {
+		t.transcribeUnknown(event, line)
 		return
 	}
 	if compact, ok := harness.ParseClaudeCompaction(event); ok {

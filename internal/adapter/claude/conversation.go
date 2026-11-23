@@ -23,6 +23,7 @@ func (t *turn) transcribe(event harness.ClaudeEvent) {
 			} `json:"message"`
 		}
 		if json.Unmarshal(event.Raw, &value) != nil {
+			t.conv.Unreadable(event.Type)
 			return
 		}
 		var text string
@@ -42,6 +43,7 @@ func (t *turn) transcribe(event harness.ClaudeEvent) {
 			IsError   bool            `json:"is_error"`
 		}
 		if json.Unmarshal(value.Message.Content, &blocks) != nil {
+			t.conv.Unreadable(event.Type)
 			return
 		}
 		for _, block := range blocks {
@@ -54,6 +56,10 @@ func (t *turn) transcribe(event harness.ClaudeEvent) {
 				t.conv.ToolCall(block.ID, block.Name, adapter.ConversationJSON(block.Input))
 			case "tool_result":
 				t.conv.ToolResult(block.ToolUseID, "", blockText(block.Content), block.IsError)
+			case "redacted_thinking", "image", "document":
+				// nothing readable to write
+			default:
+				t.conv.Event(event.Type + " block " + block.Type)
 			}
 		}
 	case "result":
@@ -62,7 +68,11 @@ func (t *turn) transcribe(event harness.ClaudeEvent) {
 			IsError bool    `json:"is_error"`
 			Subtype string  `json:"subtype"`
 		}
-		if json.Unmarshal(event.Raw, &result) != nil || !result.IsError {
+		if json.Unmarshal(event.Raw, &result) != nil {
+			t.conv.Unreadable(event.Type)
+			return
+		}
+		if !result.IsError {
 			return
 		}
 		text := result.Subtype
@@ -70,6 +80,17 @@ func (t *turn) transcribe(event harness.ClaudeEvent) {
 			text = *result.Result
 		}
 		t.conv.Error(text)
+	}
+}
+
+// transcribeUnknown notes a line of the stream that is no event the adapter knows: its type, or that it was not an event at all.
+func (t *turn) transcribeUnknown(event harness.ClaudeEvent, line []byte) {
+	switch {
+	case !t.conv.Active() || strings.TrimSpace(string(line)) == "":
+	case event.Type == "":
+		t.conv.Event("(not an event)")
+	default:
+		t.conv.Event(event.Type)
 	}
 }
 

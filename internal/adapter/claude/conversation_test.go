@@ -76,3 +76,31 @@ func TestConversationOfALiveProcessSkipsTheRepeatedInput(t *testing.T) {
 	event, _ := harness.ParseClaude([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"x"}]}}`))
 	(&turn{}).transcribe(event)
 }
+
+// An event, or a content block, of a type this adapter does not know, a line that is no event, and an event it cannot read each leave
+// an event record with the type and none of the content; the turn runs on.
+func TestConversationNotesUnknownEvents(t *testing.T) {
+	root := t.TempDir()
+	stream := adaptertest.ConversationStream(t, root,
+		m{"type": "system", "subtype": "init", "session_id": "s1"},
+		m{"type": "hologram_frame", "secret": adaptertest.ConversationKey},
+		m{"type": "hologram_frame", "secret": adaptertest.ConversationKey},
+		"a plain line "+adaptertest.ConversationKey,
+		m{"type": "assistant", "message": m{"id": "m1", "content": []m{{"type": "hologram", "data": adaptertest.ConversationKey}, {"type": "text", "text": "Still here."}}}},
+		m{"type": "assistant", "message": m{"id": "m2", "content": 42}},
+		m{"type": "result", "subtype": "success", "is_error": false, "result": `{"messages":[]}`, "session_id": "s1"},
+	)
+	path := filepath.Join(root, "claude")
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ncat >/dev/null\ncat '"+stream+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, AllowNative: true}
+	spec := adapter.TurnSpec{TurnID: "conv", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeCorrection}
+	adaptertest.RunUnknownEvents(t, a, spec, []adaptertest.ConversationRecord{
+		{Kind: adapter.ConversationEvent, Text: "hologram_frame"},
+		{Kind: adapter.ConversationEvent, Text: "(not an event)"},
+		{Kind: adapter.ConversationEvent, Text: "assistant block hologram"},
+		{Kind: adapter.ConversationAssistant, Text: "Still here."},
+		{Kind: adapter.ConversationEvent, Text: "assistant (unreadable)"},
+	})
+}

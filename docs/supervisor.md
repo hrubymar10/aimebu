@@ -1333,10 +1333,20 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   `assistant` (text the model wrote), `thinking` (reasoning the harness reported
   as text), `tool_call` (the tool's name and its input), `tool_result` (the
   tool's name, `(failed)` when it failed, and its output), `error` (a failure
-  the harness or the supervisor reported) and `turn_end` (`answered` or `no
-  answer`, why when the supervisor ended it, and the exit status, or `process
-  kept warm`). OpenCode and Vibe report a tool only once it has finished, so
+  the harness or the supervisor reported), `event` (see below) and `turn_end`
+  (`answered` or `no answer`, why when the supervisor ended it, and the exit
+  status, or `process kept warm`). OpenCode and Vibe report a tool only once it has finished, so
   their call and result records are written together.
+- **Unknown events.** A harness can change its stream. An event of a type the
+  adapter does not know, a line that is not an event, and an event of a known
+  type whose content is not what the adapter reads (`<type> (unreadable)`) each
+  leave an `event` record that names the type and carries none of the content,
+  so a change shows up in the log as a trace instead of a silent gap, and never
+  stops the turn. The same note many times in a row is written once. Events
+  that only frame or stream what a later event carries whole (message deltas,
+  a running tool's progress, thread and account state) leave no record. A Codex
+  item of an unknown type is written as a tool call and result under its own
+  type name, with the rest of the item as its input.
 - **Secret hygiene.** Every text passes the same redaction as stderr (agent,
   machine and session keys, provider and host API keys by prefix, bearer and
   basic credentials, cookies, and the value of anything named like a key, token,

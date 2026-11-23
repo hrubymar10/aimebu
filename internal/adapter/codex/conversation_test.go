@@ -70,7 +70,7 @@ func TestConversationOfAppServerItems(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		transcribeItem(conv, raw, completed)
+		transcribeItem(conv, "item", raw, completed)
 	}
 	item(true, m{"id": "r1", "type": "reasoning", "summary": []string{"plan the check"}, "content": []string{}})
 	item(false, m{"id": "a1", "type": "agentMessage", "text": ""})
@@ -96,5 +96,61 @@ func TestConversationOfAppServerItems(t *testing.T) {
 		if sink.got[i] != want[i] {
 			t.Fatalf("record %d=%+v want %+v", i, sink.got[i], want[i])
 		}
+	}
+}
+
+// An event of a type this adapter does not know, a line that is no event and an item it cannot read each leave an event record with the
+// type and none of the content. An item of an unknown type is written like a tool, under its own type name; the turn runs on.
+func TestConversationNotesUnknownEvents(t *testing.T) {
+	root := t.TempDir()
+	stream := adaptertest.ConversationStream(t, root,
+		m{"type": "thread.started", "thread_id": "th1"},
+		m{"type": "hologram.frame", "secret": adaptertest.ConversationKey},
+		"a plain line "+adaptertest.ConversationKey,
+		m{"type": "item.completed", "item": "not an item " + adaptertest.ConversationKey},
+		m{"type": "item.completed", "item": m{"id": "x1", "secret": adaptertest.ConversationKey}},
+		m{"type": "item.completed", "item": m{"id": "x2", "type": "hologram_call", "payload": m{"a": 1}, "status": "completed"}},
+		m{"type": "item.completed", "item": m{"id": "a1", "type": "agent_message", "text": `{"messages":[]}`}},
+		m{"type": "turn.completed", "usage": m{"input_tokens": 10, "output_tokens": 2}},
+	)
+	path := filepath.Join(root, "codex")
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ncat >/dev/null\ncat '"+stream+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := New(filepath.Join(root, "runtime"))
+	a.Command, a.AllowNative, a.AuthPath = path, true, ""
+	spec := adapter.TurnSpec{TurnID: "conv", Agent: adapter.AgentSpec{ID: "agt_test", Model: "gpt-6-sol"}, CheckoutPath: root, Mode: adapter.ModeCorrection}
+	adaptertest.RunUnknownEvents(t, a, spec, []adaptertest.ConversationRecord{
+		{Kind: adapter.ConversationEvent, Text: "hologram.frame"},
+		{Kind: adapter.ConversationEvent, Text: "(not an event)"},
+		{Kind: adapter.ConversationEvent, Text: "item.completed (unreadable)"},
+		{Kind: adapter.ConversationEvent, Text: "item.completed item (no type)"},
+		{Kind: adapter.ConversationToolCall, Text: `hologram_call {"payload":{"a":1}}`},
+		{Kind: adapter.ConversationToolResult, Text: "hologram_call\ncompleted"},
+		{Kind: adapter.ConversationAssistant, Text: `{"messages":[]}`},
+	})
+}
+
+// The app-server of a warm process: a notification this adapter does not read leaves an event record, the streamed pieces of an item
+// and the thread's state do not, and an item that is not an object is noted and does not stop the turn.
+func TestConversationNotesUnknownAppServerNotifications(t *testing.T) {
+	sink := &records{}
+	turn := &codexWarmTurn{id: "t1", events: make(chan adapter.Event, 16), done: make(chan struct{}), conv: adapter.NewConversation(sink), warm: &codexWarmSession{}}
+	for _, call := range [][2]string{
+		{"hologram/frame", `{"secret":"` + adaptertest.ConversationKey + `"}`},
+		{"hologram/frame", `{"secret":"again"}`},
+		{"item/agentMessage/delta", `{"delta":"pie"}`},
+		{"thread/status/changed", `{}`},
+		{"item/completed", `{"item":"` + adaptertest.ConversationKey + `"}`},
+		{"item/completed", `[1,2]`},
+	} {
+		turn.handleNotification(call[0], json.RawMessage(call[1]))
+	}
+	want := []adaptertest.ConversationRecord{
+		{Kind: adapter.ConversationEvent, Text: "hologram/frame"},
+		{Kind: adapter.ConversationEvent, Text: "item/completed (unreadable)"},
+	}
+	if len(sink.got) != len(want) || sink.got[0] != want[0] || sink.got[1] != want[1] {
+		t.Fatalf("records=%+v", sink.got)
 	}
 }

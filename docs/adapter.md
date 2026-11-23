@@ -87,9 +87,13 @@ reasoning, each tool call with its input, each tool result and each error, from
 the event stream it already parses, never from the harness's transcript files.
 An adapter writes through `adapter.ConversationFor(spec)`, whose methods are
 safe when there is no sink, and which masks secrets and bounds every record
-before the sink sees it. `adaptertest.RunConversation` is the contract: a
+before the sink sees it. An event the adapter does not know or cannot read is
+written with `Event` or `Unreadable` (its type, none of its content), never
+dropped silently. `adaptertest.RunConversation` is the contract: a
 recorded stream gives the expected records, its key and bearer token reach none
-of them, and its long tool result is cut.
+of them, and its long tool result is cut. `adaptertest.RunUnknownEvents` is its
+other half: a stream with unknown and mis-shaped events runs to its end and
+leaves an `event` record for each.
 Normal turns carry `AgentTools` (`adapter.AgentToolsAccess`): the server address, the agent's own id and `aak_` key, the path of the `aimebu`
 executable and the rest of the bridge's environment (telemetry). It is built per turn from the supervisor's memory, never journaled (`json:"-"`) and
 never written to a file, and it holds no other agent's key. An adapter gives the key to the harness through the harness's **environment**

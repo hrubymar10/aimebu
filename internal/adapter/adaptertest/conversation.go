@@ -78,6 +78,42 @@ func (r *conversationRecorder) Record(kind adapter.ConversationKind, text string
 // use ConversationCommand as a tool's input, ConversationKeyOutput as a tool's result and ConversationLongOutput as another's.
 func RunConversation(t *testing.T, implementation adapter.Adapter, spec adapter.TurnSpec, want []ConversationRecord) {
 	t.Helper()
+	CheckConversation(t, ConversationRecords(t, implementation, spec), want)
+}
+
+// RunUnknownEvents is the other half of the contract: a stream with events the adapter does not know, or cannot read, still runs to its
+// end, and each of them leaves an `event` record naming it (and nothing of its content) among the records the adapter does understand.
+// The stream must carry ConversationKey inside every unknown or unreadable event.
+func RunUnknownEvents(t *testing.T, implementation adapter.Adapter, spec adapter.TurnSpec, want []ConversationRecord) {
+	t.Helper()
+	got := ConversationRecords(t, implementation, spec)
+	events := 0
+	for i := 0; i < len(got) || i < len(want); i++ {
+		switch {
+		case i >= len(got):
+			t.Errorf("record %d is missing: want %s %q", i, want[i].Kind, short(want[i].Text))
+		case i >= len(want):
+			t.Errorf("record %d is not expected: %s %q", i, got[i].Kind, short(got[i].Text))
+		case got[i] != want[i]:
+			t.Errorf("record %d: got %s %q, want %s %q", i, got[i].Kind, short(got[i].Text), want[i].Kind, short(want[i].Text))
+		}
+	}
+	for _, record := range got {
+		if record.Kind == adapter.ConversationEvent {
+			events++
+		}
+		if strings.Contains(record.Text, ConversationKey) || strings.Contains(record.Text, "[redacted]") {
+			t.Errorf("a %s record carries the content of an event the adapter does not know: %q", record.Kind, short(record.Text))
+		}
+	}
+	if events == 0 {
+		t.Error("no event record was written for an unknown event")
+	}
+}
+
+// ConversationRecords runs one turn of an adapter with a sink in the spec, to its end, and returns what the adapter wrote.
+func ConversationRecords(t *testing.T, implementation adapter.Adapter, spec adapter.TurnSpec) []ConversationRecord {
+	t.Helper()
 	recorder := &conversationRecorder{}
 	spec.ConversationSink = recorder
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -91,9 +127,8 @@ func RunConversation(t *testing.T, implementation adapter.Adapter, spec adapter.
 		t.Fatal(err)
 	}
 	recorder.mu.Lock()
-	got := append([]ConversationRecord(nil), recorder.records...)
-	recorder.mu.Unlock()
-	CheckConversation(t, got, want)
+	defer recorder.mu.Unlock()
+	return append([]ConversationRecord(nil), recorder.records...)
 }
 
 // CheckConversation is the comparison RunConversation makes, for an adapter path that is not driven through Start.

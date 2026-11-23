@@ -23,7 +23,8 @@ func transcribeTool(conv *adapter.Conversation, line []byte) {
 			} `json:"state"`
 		} `json:"part"`
 	}
-	if json.Unmarshal(line, &event) != nil {
+	if json.Unmarshal(line, &event) != nil || event.Part.Tool == "" && event.Part.CallID == "" {
+		conv.Unreadable("tool_use")
 		return
 	}
 	state := event.Part.State

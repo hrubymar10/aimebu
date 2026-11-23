@@ -3,6 +3,7 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -585,6 +586,13 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		}
 		event, known := harness.ParseCodex(scanner.Bytes())
 		if !known {
+			if t.conv.Active() && len(bytes.TrimSpace(scanner.Bytes())) > 0 {
+				if event.Type == "" {
+					t.conv.Event("(not an event)")
+				} else {
+					t.conv.Event(event.Type)
+				}
+			}
 			continue
 		}
 		switch event.Type {
@@ -606,7 +614,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type})
 		case "item.started", "item.updated", "item.completed":
 			if event.Type != "item.updated" {
-				transcribeItem(t.conv, itemOf(event.Raw), event.Type == "item.completed")
+				transcribeItem(t.conv, event.Type, itemOf(event.Raw), event.Type == "item.completed")
 			}
 			if text, ok := harness.CodexAgentMessage(event); ok {
 				candidate = append(candidate[:0], text...)

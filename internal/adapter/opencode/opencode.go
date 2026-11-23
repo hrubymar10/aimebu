@@ -629,6 +629,9 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		t.lastOutput.Store(time.Now().UnixNano())
 		var event ocEvent
 		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+			if len(bytes.TrimSpace(scanner.Bytes())) > 0 {
+				t.conv.Event("(not an event)")
+			}
 			continue
 		}
 		if event.SessionID != "" {
@@ -665,6 +668,8 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		case "error":
 			lastError = formatError(event)
 			t.conv.Error(lastError)
+		default:
+			t.conv.Event(event.Type)
 		}
 	}
 	if scanner.Err() != nil {

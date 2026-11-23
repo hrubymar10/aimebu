@@ -24,7 +24,9 @@ func transcribe(conv *adapter.Conversation, event piEvent, line []byte) {
 			Text     string `json:"text"`
 			Thinking string `json:"thinking"`
 		}
-		_ = json.Unmarshal(event.Message.Content, &blocks)
+		if len(event.Message.Content) > 0 && json.Unmarshal(event.Message.Content, &blocks) != nil {
+			conv.Unreadable(event.Type)
+		}
 		var thinking, text strings.Builder
 		for _, block := range blocks {
 			switch block.Type {
@@ -47,6 +49,7 @@ func transcribe(conv *adapter.Conversation, event piEvent, line []byte) {
 			IsError  bool            `json:"isError"`
 		}
 		if json.Unmarshal(line, &tool) != nil {
+			conv.Unreadable(event.Type)
 			return
 		}
 		if event.Type == "tool_execution_start" {
@@ -58,7 +61,19 @@ func transcribe(conv *adapter.Conversation, event piEvent, line []byte) {
 		conv.Error(event.ErrorMessage)
 	case "auto_retry_end":
 		conv.Error(event.FinalError)
+	default:
+		if !quietEvents[event.Type] {
+			conv.Event(event.Type)
+		}
 	}
+}
+
+// quietEvents are the events of Pi's stream that say nothing the log keeps: the turn and agent framing, the streamed pieces of a message
+// (it comes whole at message_end), the progress of a running tool, and compaction, which is reported as an event of its own kind.
+var quietEvents = map[string]bool{
+	"session": true, "agent_start": true, "agent_end": true, "agent_settled": true, "turn_start": true, "turn_end": true,
+	"message_start": true, "message_update": true, "tool_execution_update": true, "queue_update": true,
+	"compaction_start": true, "compaction_end": true, "auto_compaction_start": true, "auto_compaction_end": true,
 }
 
 // resultText is the text of a tool's result: the text blocks of its content, or the result as the JSON it is.

@@ -48,3 +48,36 @@ func TestConversationConformance(t *testing.T) {
 		{Kind: adapter.ConversationAssistant, Text: `{"messages":[]}`},
 	})
 }
+
+// An entry of a type this adapter does not know, a line that is no entry, a message of an unknown role and an effect it cannot read
+// each leave an event record with the type and none of the content; the turn runs on.
+func TestConversationNotesUnknownEvents(t *testing.T) {
+	type m = map[string]any
+	root := t.TempDir()
+	entry := func(id, kind string, rest m) m {
+		rest["id"], rest["sessionId"], rest["type"], rest["generationStatus"] = id, testSession, kind, "completed"
+		return rest
+	}
+	text := func(value string) []m { return []m{{"type": "text", "text": value}} }
+	stream := adaptertest.ConversationStream(t, root,
+		entry("e0", "hologram", m{"secret": "replayed history is not this turn's"}),
+		entry("e1", "message", m{"role": "user", "source": "turn_start", "content": text("the prompt")}),
+		entry("e2", "hologram", m{"secret": adaptertest.ConversationKey}),
+		"a plain line "+adaptertest.ConversationKey,
+		entry("e3", "message", m{"role": "narrator", "content": text(adaptertest.ConversationKey)}),
+		entry("e4", "effect", m{"title": "bash", "detail": "not a detail " + adaptertest.ConversationKey}),
+		entry("e5", "message", m{"role": "assistant", "content": text(`{"messages":[]}`)}),
+	)
+	path := filepath.Join(root, "vibe")
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ncat >/dev/null\ncat '"+stream+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, RuntimeRoot: filepath.Join(root, "runtime")}
+	adaptertest.RunUnknownEvents(t, a, spec(t, root), []adaptertest.ConversationRecord{
+		{Kind: adapter.ConversationEvent, Text: "hologram"},
+		{Kind: adapter.ConversationEvent, Text: "(not an entry)"},
+		{Kind: adapter.ConversationEvent, Text: "message role narrator"},
+		{Kind: adapter.ConversationEvent, Text: "effect (unreadable)"},
+		{Kind: adapter.ConversationAssistant, Text: `{"messages":[]}`},
+	})
+}

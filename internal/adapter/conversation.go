@@ -20,7 +20,10 @@ const (
 	ConversationToolCall   ConversationKind = "tool_call"
 	ConversationToolResult ConversationKind = "tool_result"
 	ConversationError      ConversationKind = "error"
-	ConversationTurnEnd    ConversationKind = "turn_end"
+	// ConversationEvent is an event of the harness's stream the adapter does not know, or could not read: its type and nothing of its
+	// content, so a harness that changes its stream leaves a trace in the log instead of a silent gap.
+	ConversationEvent   ConversationKind = "event"
+	ConversationTurnEnd ConversationKind = "turn_end"
 )
 
 const (
@@ -50,6 +53,7 @@ type Conversation struct {
 	mu    sync.Mutex
 	names map[string]string // tool call id to tool name, until its result
 	last  string            // the last assistant text, so an event that repeats it is written once
+	event string            // the last unknown event, while nothing else has been written since
 }
 
 // NewConversation wraps a sink; nil when there is none.
@@ -111,6 +115,35 @@ func (c *Conversation) Error(text string) {
 	}
 }
 
+// Event notes an event of the harness's stream that the adapter does not know (its type), or one it knows and could not read (its type
+// and why). Nothing of the event's content is written. The same note many times in a row (a stream of deltas of an unknown type) is
+// written once.
+func (c *Conversation) Event(note string) {
+	if c == nil {
+		return
+	}
+	note = strings.Join(strings.Fields(note), " ")
+	if note == "" {
+		note = "(no type)"
+	}
+	if len(note) > 200 {
+		note = strings.ToValidUTF8(note[:200], "")
+	}
+	c.mu.Lock()
+	repeat := c.event == note
+	c.mu.Unlock()
+	if repeat {
+		return
+	}
+	c.record(ConversationEvent, note, ConversationTextLimit)
+	c.mu.Lock()
+	c.event = note
+	c.mu.Unlock()
+}
+
+// Unreadable notes an event of a known type whose content was not what the adapter reads.
+func (c *Conversation) Unreadable(eventType string) { c.Event(eventType + " (unreadable)") }
+
 // ToolCall is a tool the model called, with its input (JSON or plain text). id pairs it with its result when the harness gives one.
 func (c *Conversation) ToolCall(id, name, input string) {
 	if c == nil {
@@ -154,6 +187,9 @@ func (c *Conversation) ToolResult(id, name, output string, failed bool) {
 		head += " (failed)"
 	}
 	// The cap is the output's own: the head line is never what is cut.
+	c.mu.Lock()
+	c.event = ""
+	c.mu.Unlock()
 	c.sink.Record(ConversationToolResult, head+"\n"+CleanConversationText(output, ConversationToolLimit))
 }
 
@@ -173,6 +209,9 @@ func (c *Conversation) record(kind ConversationKind, text string, limit int) {
 	if c == nil {
 		return
 	}
+	c.mu.Lock()
+	c.event = ""
+	c.mu.Unlock()
 	c.sink.Record(kind, CleanConversationText(text, limit))
 }
 

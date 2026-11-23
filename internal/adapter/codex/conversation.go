@@ -10,12 +10,15 @@ import (
 // transcribeItem writes one item of a Codex turn to the conversation log. `codex exec --json` and the app-server report the same items
 // with differently spelled keys (command_execution and aggregated_output, commandExecution and aggregatedOutput), so both spellings are
 // read. A tool item is a call when it starts and a result when it completes; one that is only ever reported complete is written as both.
-func transcribeItem(conv *adapter.Conversation, raw json.RawMessage, completed bool) {
+// An item of a type this adapter does not know is written like a tool, under its own type name with the rest of the item as its input;
+// an item that is not an object is noted as unreadable under the event's name.
+func transcribeItem(conv *adapter.Conversation, event string, raw json.RawMessage, completed bool) {
 	if !conv.Active() {
 		return
 	}
 	var item map[string]json.RawMessage
-	if json.Unmarshal(raw, &item) != nil {
+	if json.Unmarshal(raw, &item) != nil || item == nil {
+		conv.Unreadable(event)
 		return
 	}
 	text := func(keys ...string) string {
@@ -30,7 +33,10 @@ func transcribeItem(conv *adapter.Conversation, raw json.RawMessage, completed b
 	kind := strings.ToLower(strings.ReplaceAll(text("type"), "_", ""))
 	status := text("status")
 	switch kind {
-	case "", "usermessage", "todolist":
+	case "":
+		conv.Event(event + " item (no type)")
+		return
+	case "usermessage", "todolist":
 		return
 	case "agentmessage":
 		if completed {
@@ -128,4 +134,11 @@ func itemOf(raw json.RawMessage) json.RawMessage {
 	}
 	_ = json.Unmarshal(raw, &value)
 	return value.Item
+}
+
+// quietNotifications are app-server notifications that say nothing the log keeps: the state of the thread, the account and the MCP
+// servers.
+var quietNotifications = map[string]bool{
+	"thread/started": true, "thread/status/changed": true, "thread/compacted": true,
+	"account/rateLimits/updated": true, "mcpServer/startupStatus/updated": true,
 }

@@ -213,9 +213,10 @@ func (t *codexWarmTurn) handleNotification(method string, raw json.RawMessage) {
 			} `json:"item"`
 		}
 		if json.Unmarshal(raw, &value) != nil {
+			t.conv.Unreadable(method)
 			return
 		}
-		transcribeItem(t.conv, itemOf(raw), method == "item/completed")
+		transcribeItem(t.conv, method, itemOf(raw), method == "item/completed")
 		if value.Item.Type == "agentMessage" {
 			if method == "item/completed" && value.Item.Text != "" {
 				if value.Item.Phase == "final_answer" {
@@ -232,6 +233,11 @@ func (t *codexWarmTurn) handleNotification(method string, raw json.RawMessage) {
 			event.Tools = []adapter.ToolEvent{{ID: value.Item.ID, Done: method == "item/completed"}}
 		}
 		t.emit(event)
+	default:
+		// A notification this adapter does not read. The streamed pieces of an item (its deltas) come whole when the item completes.
+		if !strings.Contains(strings.ToLower(method), "delta") && !quietNotifications[method] {
+			t.conv.Event(method)
+		}
 	case "thread/tokenUsage/updated":
 		var value struct {
 			TokenUsage struct {

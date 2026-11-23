@@ -105,3 +105,27 @@ func TestConversationWithoutASink(t *testing.T) {
 		t.Fatal("a turn with a sink has no conversation")
 	}
 }
+
+// An unknown event is a record of its type alone; many in a row are written once, and once more after anything else was written.
+func TestConversationEventRecordsNameTheTypeOnce(t *testing.T) {
+	sink := &conversationRecords{}
+	conv := NewConversation(sink)
+	conv.Event("stream.delta")
+	conv.Event("stream.delta")
+	conv.Event("stream\n.other  type")
+	conv.Assistant("text")
+	conv.Event("stream.delta")
+	conv.ToolResult("", "t", "out", false)
+	conv.Event("stream.delta")
+	conv.Unreadable("item.completed")
+	conv.Event("")
+	conv.Event(strings.Repeat("x", 500))
+	want := []string{"event|stream.delta", "event|stream .other type", "assistant|text", "event|stream.delta", "tool_result|t\nout",
+		"event|stream.delta", "event|item.completed (unreadable)", "event|(no type)", "event|" + strings.Repeat("x", 200)}
+	if strings.Join(sink.got, "\n--\n") != strings.Join(want, "\n--\n") {
+		t.Fatalf("records:\n%s", strings.Join(sink.got, "\n--\n"))
+	}
+	var none *Conversation
+	none.Event("x")
+	none.Unreadable("x")
+}

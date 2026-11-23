@@ -406,6 +406,9 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		t.lastOutput.Store(time.Now().UnixNano())
 		var event piEvent
 		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+			if len(bytes.TrimSpace(scanner.Bytes())) > 0 {
+				t.conv.Event("(not an event)")
+			}
 			continue
 		}
 		transcribe(t.conv, event, scanner.Bytes())

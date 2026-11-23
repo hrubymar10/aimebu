@@ -43,3 +43,31 @@ func TestConversationConformance(t *testing.T) {
 		{Kind: adapter.ConversationError, Text: "APIError (HTTP 429): provider said no"},
 	})
 }
+
+// An event of a type this adapter does not know, a line that is no event and a tool part it cannot read each leave an event record
+// with the type and none of the content; the turn runs on.
+func TestConversationNotesUnknownEvents(t *testing.T) {
+	type m = map[string]any
+	root := t.TempDir()
+	stream := adaptertest.ConversationStream(t, root,
+		m{"type": "step_start", "sessionID": testSession, "part": m{"type": "step-start"}},
+		m{"type": "hologram", "sessionID": testSession, "part": m{"type": "hologram", "text": adaptertest.ConversationKey}},
+		"a plain line "+adaptertest.ConversationKey,
+		m{"type": "tool_use", "sessionID": testSession, "part": m{"type": "tool", "secret": adaptertest.ConversationKey}},
+		m{"sessionID": testSession, "secret": adaptertest.ConversationKey},
+		m{"type": "text", "sessionID": testSession, "part": m{"type": "text", "text": `{"messages":[]}`}},
+		m{"type": "step_finish", "sessionID": testSession, "part": m{"type": "step-finish", "reason": "stop"}},
+	)
+	path := filepath.Join(root, "opencode")
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ncat >/dev/null\ncat '"+stream+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, RuntimeRoot: filepath.Join(root, "runtime")}
+	adaptertest.RunUnknownEvents(t, a, spec(t, root), []adaptertest.ConversationRecord{
+		{Kind: adapter.ConversationEvent, Text: "hologram"},
+		{Kind: adapter.ConversationEvent, Text: "(not an event)"},
+		{Kind: adapter.ConversationEvent, Text: "tool_use (unreadable)"},
+		{Kind: adapter.ConversationEvent, Text: "(no type)"},
+		{Kind: adapter.ConversationAssistant, Text: `{"messages":[]}`},
+	})
+}

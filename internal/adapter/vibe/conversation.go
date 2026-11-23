@@ -14,16 +14,21 @@ func transcribe(conv *adapter.Conversation, item entry, line []byte) {
 	}
 	switch item.Type {
 	case "message":
-		if item.Role == "assistant" && item.GenerationStatus == "completed" {
+		switch {
+		case item.Role == "assistant" && item.GenerationStatus == "completed":
 			conv.Assistant(item.text())
+		case item.Role != "assistant" && item.Role != "user":
+			conv.Event("message role " + item.Role)
 		}
 	case "reasoning":
 		var value struct {
 			Text string `json:"text"`
 		}
-		if json.Unmarshal(line, &value) == nil {
-			conv.Thinking(value.Text)
+		if json.Unmarshal(line, &value) != nil {
+			conv.Unreadable(item.Type)
+			return
 		}
+		conv.Thinking(value.Text)
 	case "effect":
 		var effect struct {
 			Title  string `json:"title"`
@@ -38,6 +43,7 @@ func transcribe(conv *adapter.Conversation, item entry, line []byte) {
 			} `json:"state"`
 		}
 		if json.Unmarshal(line, &effect) != nil {
+			conv.Unreadable(item.Type)
 			return
 		}
 		name := effect.Detail.ToolName
@@ -59,5 +65,7 @@ func transcribe(conv *adapter.Conversation, item entry, line []byte) {
 		if item.Level == "error" {
 			conv.Error(item.Message)
 		}
+	default:
+		conv.Event(item.Type)
 	}
 }

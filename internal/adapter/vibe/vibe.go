@@ -601,6 +601,9 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		t.lastOutput.Store(time.Now().UnixNano())
 		var item entry
 		if json.Unmarshal(scanner.Bytes(), &item) != nil || item.Type == "" {
+			if turnSeen && len(bytes.TrimSpace(scanner.Bytes())) > 0 {
+				t.conv.Event("(not an entry)")
+			}
 			continue
 		}
 		if item.SessionID != "" {
