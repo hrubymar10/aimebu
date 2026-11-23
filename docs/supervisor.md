@@ -356,8 +356,12 @@ worktree even after `git submodule deinit` empties its folder); and when a
 `.git` is anywhere below the top level, since a repository made inside a
 folder the parent tracks is invisible to the status and its own branches
 would be deleted. That walk does not use git or follow symlinks; a path it
-cannot read, or a tree of more than 200,000 entries, also keeps the worktree
-(`could not read <path>`, `too many files to check`). `git worktree add` never
+cannot read (`could not read <path>`, a path inside the worktree; `could not read
+the worktree's submodule data` for the `modules/` check), a tree of more than
+200,000 entries (`too many files to check`), or a walk the request's deadline
+interrupts (`check interrupted`) also keeps the worktree. The walk reads each
+folder in chunks and checks the deadline at every entry, so it ends soon after
+it and does not hold the repository's worktree lock longer. `git worktree add` never
 populates a submodule and leaves its folder empty, so a clean worktree of a
 repository that commits one is still removed. Repository-local filter drivers, such as the ones
 `git lfs install --local` writes, do not run on these calls either: a

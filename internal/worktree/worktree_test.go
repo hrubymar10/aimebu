@@ -578,3 +578,42 @@ func TestRemoveKeepsATreeTooLargeToCheck(t *testing.T) {
 		t.Fatalf("tree over the bound: %+v %v", kept, err)
 	}
 }
+
+// A cancelled context ends the walk with the worktree kept and nothing deleted.
+func TestWalkForReposHonoursTheContext(t *testing.T) {
+	root := repoFixture(t)
+	item, err := Ensure(t.Context(), root, "room_cancelled", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if why := walkForRepos(ctx, item.Path); why != "check interrupted" {
+		t.Fatalf("walk with a cancelled context=%q", why)
+	}
+	if why := walkForRepos(t.Context(), item.Path); why != "" {
+		t.Fatalf("walk with a live context=%q", why)
+	}
+	if _, err := os.Stat(item.Path); err != nil {
+		t.Fatalf("the worktree must remain: %v", err)
+	}
+}
+
+// Reasons name a path inside the worktree, never a host path.
+func TestWalkReasonsAreRelativeToTheWorktree(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(dir, "a", "b")
+	if err := os.Chmod(locked, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("the folder is still readable: this file system ignores the mode")
+	}
+	if why := walkForRepos(t.Context(), dir); why != "could not read a/b" {
+		t.Fatalf("reason=%q", why)
+	}
+}
