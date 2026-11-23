@@ -99,7 +99,7 @@ export function logStatus(view) {
   if (!view?.text) return 'No output has been captured for this agent yet.';
   const withheld = Number(view.withheld) || 0;
   return [view.truncated ? 'Earlier output is not shown.' : '',
-    withheld ? `${withheld} ${withheld === 1 ? 'turn is' : 'turns are'} withheld: a private chat you are not in, or a turn the server cannot place in a room.` : ''].filter(Boolean).join(' ');
+    withheld ? `${withheld} ${withheld === 1 ? 'turn is' : 'turns are'} withheld: a private chat you are not in, a restricted room you cannot read, or a turn the server cannot place in a room.` : ''].filter(Boolean).join(' ');
 }
 
 export function logFailure(error, now = Date.now(), blockedUntil = 0) {
@@ -118,7 +118,7 @@ export const STREAM_DEFAULT = 'conversation';
 export function streamOf(value) { return STREAMS.some(stream => stream.id === value) ? value : STREAM_DEFAULT; }
 
 // What stands in front of a conversation record for its kind. `withheld` is the server's line for a turn the reader may not see (a private chat
-// they are not in, or a turn it cannot place in a room), `event` an event of the harness the adapter did not know, and `cut` the end of a record
+// they are not in, a restricted room they cannot read, or a turn it cannot place in a room), `event` an event of the harness the adapter did not know, and `cut` the end of a record
 // too long for one read (the log's "... earlier part cut" line).
 export const KIND_LABELS = { turn_start: 'Turn', prompt: 'Prompt', assistant: 'Assistant', thinking: 'Thinking', tool_call: 'Tool call', tool_result: 'Tool result',
   error: 'Error', event: 'Event', withheld: 'Withheld', turn_end: 'Turn end', cut: 'Cut' };

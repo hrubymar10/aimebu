@@ -263,12 +263,15 @@ const (
 	// withheldKind is the kind of the one line that stands for a turn whose records the reader may not see.
 	withheldKind = "withheld"
 	// privateTurnText and unknownTurnText are what that line says.
-	privateTurnText = "private chat turn: content withheld"
-	unknownTurnText = "turn the server cannot place in a room: content withheld"
+	privateTurnText    = "private chat turn: content withheld"
+	restrictedTurnText = "restricted room turn: content withheld"
+	unknownTurnText    = "turn the server cannot place in a room: content withheld"
 )
 
 // withholdPrivateTurns returns a conversation page's text with every turn the reader may not see replaced by one line. A turn that
-// served a private chat is shown only to an active member of that chat. A turn the server cannot place (its room was removed, the
+// served a private chat is shown only to an active member of that chat, and one that served a restricted room (routing, advice) only to a
+// person who can read that room (the project's owner or operator, or a person seated in it; a global admin is not one by being admin).
+// A turn the server cannot place (its room was removed, the
 // supervisor did not say which turn the page begins in, the line is not in the log's format) is withheld too: what cannot be shown to
 // be open is not shown. The turn of a record is the last turn_start before it, which the supervisor writes and a tool's output cannot
 // forge (its lines start with a tab); for the records before the page's first turn_start it is the turn the machine named.
@@ -281,7 +284,7 @@ func (s *Server) withholdPrivateTurns(ctx context.Context, agentID, reader strin
 		if text, seen := verdicts[turnID]; seen {
 			return text, nil
 		}
-		known, private, err := s.Store.TurnWithheldFrom(ctx, turnID, agentID, reader)
+		known, private, restricted, err := s.Store.TurnWithheldFrom(ctx, turnID, agentID, reader)
 		if err != nil {
 			return "", err
 		}
@@ -291,6 +294,8 @@ func (s *Server) withholdPrivateTurns(ctx context.Context, agentID, reader strin
 			text = unknownTurnText
 		case private:
 			text = privateTurnText
+		case restricted:
+			text = restrictedTurnText
 		}
 		verdicts[turnID] = text
 		return text, nil

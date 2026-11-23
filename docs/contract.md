@@ -1641,7 +1641,10 @@ it never silently reruns a turn with uncertain effects.
   turn of every record: before it returns a conversation it replaces each turn
   that served a private chat by one line unless the reader is an active member
   of that chat (private chats require room membership, see the room rules
-  above), and it does the same, for every reader, with a turn it cannot place
+  above), each turn that served a restricted room unless the reader can read
+  that room under the same room rules (project owner or operator, or a seat in
+  it; being a global admin does not open it), and it does the same, for every
+  reader, with a turn it cannot place
   in a room, which includes the records before the first `turn_start` of a page
   that carries no `turn`;
   `code` is `no_log` when nothing was captured for the agent in that stream,

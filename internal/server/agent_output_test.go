@@ -497,11 +497,89 @@ func TestAgentConversationDoesNotPlaceAnotherAgentsTurn(t *testing.T) {
 	o := newOutputFixture(t)
 	o.conversationTurn(t, "trn_mine", o.room.ID)
 	for turn, want := range map[string]bool{"trn_mine": true, "trn_missing": false} {
-		if known, private, err := o.db.TurnWithheldFrom(t.Context(), turn, o.agent.ID, "usr_nobody"); err != nil || known != want || private {
-			t.Fatalf("%s: known=%t private=%t %v", turn, known, private, err)
+		if known, private, restricted, err := o.db.TurnWithheldFrom(t.Context(), turn, o.agent.ID, "usr_nobody"); err != nil || known != want || private || restricted {
+			t.Fatalf("%s: known=%t private=%t restricted=%t %v", turn, known, private, restricted, err)
 		}
 	}
-	if known, _, err := o.db.TurnWithheldFrom(t.Context(), "trn_mine", "agt_other", "usr_nobody"); err != nil || known {
+	if known, _, _, err := o.db.TurnWithheldFrom(t.Context(), "trn_mine", "agt_other", "usr_nobody"); err != nil || known {
 		t.Fatalf("another agent's turn was placed: %t %v", known, err)
+	}
+}
+
+// A turn that served a restricted room (routing, advice), as its own room or through a message it was given, is withheld from a reader who
+// could not read that room: a global admin who is only a plain member of the project gets one line for it, while the project's owner reads
+// it, and so does the admin once seated in the room.
+func TestAgentConversationWithholdsRestrictedRoomTurnsFromNonReaders(t *testing.T) {
+	o := newOutputFixture(t)
+	ctx := t.Context()
+	routing, err := o.db.CreateRoom(ctx, store.Room{ProjectID: o.project.ID, ParentID: o.room.ID, Kind: "task", Title: "routing", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`UPDATE room SET restricted=1 WHERE id=?`, routing.ID); err != nil {
+		t.Fatal(err)
+	}
+	o.conversationTurn(t, "trn_open", o.room.ID)
+	o.conversationTurn(t, "trn_routing", routing.ID)
+	o.conversationTurn(t, "trn_relay", o.room.ID, routing.ID)
+	open := "2026-10-22T12:00:01Z turn_start turn trn_open gen 0 normal claude/native test\n2026-10-22T12:00:01Z assistant built it\n"
+	text := open +
+		"2026-10-22T12:00:02Z turn_start turn trn_routing gen 0 normal claude/native test\n2026-10-22T12:00:02Z assistant a routing secret\n" +
+		"2026-10-22T12:00:03Z turn_start turn trn_relay gen 0 normal claude/native test\n2026-10-22T12:00:03Z prompt [{\"body\":\"a relayed secret\"}]\n"
+	o.mu.Lock()
+	o.answer = func(request protocol.Frame) protocol.Frame {
+		page, _ := json.Marshal(agentlog.Page{Text: text, Bytes: int64(len(text)), Files: 1, Turn: "trn_open", UpdatedAt: time.Date(2026, 10, 22, 12, 0, 9, 0, time.UTC)})
+		return protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: request.ReqID, AgentID: request.AgentID, Details: page}
+	}
+	o.mu.Unlock()
+
+	// The project's owner can read the routing room, so the conversation is whole.
+	if status, body, _ := o.get(t, o.path(o.agent.ID)+"?stream=conversation"); status != 200 || body["text"] != text || body["withheld"] != nil {
+		t.Fatalf("the owner: %d withheld=%v\n%s", status, body["withheld"], body["text"])
+	}
+
+	// A global admin who is only a viewer of the project may read the agent's output, but not the restricted room's turns.
+	cookie, csrf := registerSecondUser(t, o.fixture, "admin")
+	admin, err := o.db.UserByLogin(ctx, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`UPDATE user SET admin=1 WHERE id=?`, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,'viewer')`, o.project.ID, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	read := func() (string, float64) {
+		t.Helper()
+		resp := o.requestAs(t, cookie, csrf, http.MethodGet, o.path(o.agent.ID)+"?stream=conversation", nil)
+		defer resp.Body.Close()
+		var view struct {
+			Text     string  `json:"text"`
+			Withheld float64 `json:"withheld"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&view); err != nil || resp.StatusCode != 200 {
+			t.Fatalf("read as the admin: %d %v", resp.StatusCode, err)
+		}
+		return view.Text, view.Withheld
+	}
+	restricted := "restricted room turn: content withheld\n"
+	want := open + "2026-10-22T12:00:02Z withheld " + restricted + "2026-10-22T12:00:03Z withheld " + restricted
+	got, withheld := read()
+	if got != want || withheld != 2 {
+		t.Fatalf("an admin outside the restricted room (withheld=%v):\n%s\nwant:\n%s", withheld, got, want)
+	}
+	for _, secret := range []string{"routing secret", "relayed secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("%q reached a person who cannot read the restricted room", secret)
+		}
+	}
+
+	// Seated in the room, the admin reads it under the same rule as every other read of a restricted room.
+	if _, err := o.exec(`INSERT INTO room_member(room_id,member_kind,member_id,joined_at) VALUES (?,'user',?,'2026-01-01T00:00:00.000Z')`, routing.ID, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, withheld := read(); got != text || withheld != 0 {
+		t.Fatalf("a seated admin (withheld=%v):\n%s", withheld, got)
 	}
 }

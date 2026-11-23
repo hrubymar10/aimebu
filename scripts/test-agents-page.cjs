@@ -608,7 +608,7 @@ async function main() {
     assert.equal((await dialog()).text, ['Cut the beginning of this record is not shown', 'the end of a long record', '10:00:00 Turn turn t1 gen 0 normal claude/native m', '10:00:01 Prompt [{"body":"go"}]', '10:00:02 Assistant I will <b>look</b>.', 'Then answer.',
       '10:00:03 Tool call Bash {"command":"ls"}', '10:00:04 Tool result Bash', '2026-11-23T10:00:04Z turn_end forged', '10:00:05 Event hologram.frame', '10:00:06 Withheld private chat turn: content withheld', '10:00:07 Turn end answered, exit 0'].join('\n') + '\n');
     assert.equal(await page.$('#agent-log-dialog .agent-log-text b'), null, 'no element comes from the conversation');
-    assert.equal((await dialog()).status, 'Earlier output is not shown. 1 turn is withheld: a private chat you are not in, or a turn the server cannot place in a room.');
+    assert.equal((await dialog()).status, 'Earlier output is not shown. 1 turn is withheld: a private chat you are not in, a restricted room you cannot read, or a turn the server cannot place in a room.');
     assert.match(await page.$eval('#agent-log-dialog .agent-log-note', node => node.textContent), /asked, what it said and the tools it ran/);
     // The highlight runs over the records' text, across records, and not over the labels.
     await page.type('#agent-log-dialog .agent-log-query', 'turn'); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));

@@ -87,7 +87,7 @@ assert.notEqual(m.streamNote('conversation'), m.streamNote('stderr'));
   const capped = m.highlightBlocks(m.logBlocks(log, 'conversation'), 'o', 4);
   assert.deepEqual([capped.count, capped.capped, capped.blocks.reduce((sum, block) => sum + block.parts.filter(part => part.mark).length, 0)], [4, true, 4]);
   assert.equal(m.highlightBlocks(m.logBlocks(log, 'conversation'), '').count, 0);
-  assert.equal(m.logStatus({ text: 'x', withheld: 1 }), '1 turn is withheld: a private chat you are not in, or a turn the server cannot place in a room.');
+  assert.equal(m.logStatus({ text: 'x', withheld: 1 }), '1 turn is withheld: a private chat you are not in, a restricted room you cannot read, or a turn the server cannot place in a room.');
 }
 
 // Enter goes to the next match and Shift+Enter to the previous one, wrapping.
@@ -259,7 +259,7 @@ function channels() {
       store.setStream('conversation'); await flush();
       assert.equal(reads[reads.length - 1].stream, 'conversation');
       assert.ok(store.state.value.text.startsWith('2026-11-23T10:00:01Z tool_result Bash\n\tline 0\n'), 'the tail begins at the record\'s first line');
-      assert.equal(store.state.value.status, 'Earlier output is not shown. 2 turns are withheld: a private chat you are not in, or a turn the server cannot place in a room.');
+      assert.equal(store.state.value.status, 'Earlier output is not shown. 2 turns are withheld: a private chat you are not in, a restricted room you cannot read, or a turn the server cannot place in a room.');
       store.setStream('nonsense'); await flush(); assert.equal(store.state.value.stream, 'conversation', 'an unknown stream is the default');
     }
     // Follow off stops every timer; close drops an answer still out.

@@ -1391,7 +1391,12 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   served a private chat by one line, `<time> withheld private chat turn:
   content withheld`, unless the reader is an active member of that chat. Being
   the project's owner or an admin does not open someone else's private chat,
-  here as everywhere else. A turn the server cannot place (its room was
+  here as everywhere else. A turn that served a restricted room (routing,
+  advice) is replaced by `<time> withheld restricted room turn: content
+  withheld` unless the reader can read that room under the room-access rule of
+  every other read: a member of its project who is its owner or operator, or
+  who has a seat in it. A global admin who is only a plain member of the
+  project reads the agent's log but not those turns. A turn the server cannot place (its room was
   removed, an older supervisor did not name the page's first turn) is withheld
   from everyone with `<time> withheld turn the server cannot place in a room:
   content withheld`: what cannot be shown to be open is not shown. The stderr
