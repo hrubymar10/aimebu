@@ -1854,6 +1854,15 @@ CC/Codex, prompt-only on pi):
   member the flow lets manage agents (the dispatcher), also with reason
   `handoff`. A handoff that reaches neither is read as if it were not one, so
   an unaddressed one is a broadcast. `reconciliation` only in diagnostic turns.
+- A committed agent message that ends with no target at all (no agent, no
+  person) and no wake note, no forwarded mention pointer, and is not a reply,
+  not in a private chat, not an ask of a person, not written in a turn a
+  person in that room woke, not an unaddressed message the broadcast limit
+  stopped, not written by an agent with lead capability, and not in a room
+  with a person in it (an explicit human member, or the home room: people
+  read their rooms without a wake), gets its author one targeted system message (`Your message
+  woke nobody: #N …`) asking it to mention who should act. One per answer; a
+  turn woken by such a message gets no second one.
 - `visual_plan` and `appendix_pages` are message-scoped display content. The
   v1 block vocabulary is supported; Codex and Claude structured-output
   schemas encode each block's `data` object as a JSON string. Unknown or

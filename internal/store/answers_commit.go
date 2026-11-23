@@ -92,6 +92,7 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 	for _, d := range dropped {
 		heldAt[d.index] = d
 	}
+	var wokeNobody []int64
 	for index, item := range input.Parsed.Messages {
 		if d, held := heldAt[index]; held {
 			// Held alone: the row keeps what the agent wrote (its target may not exist or be readable), and the rest of the reply goes on.
@@ -143,9 +144,19 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 			return err
 		}
 		receipt.MessageIDs = append(receipt.MessageIDs, message.ID)
+		forwarded := 0
 		if !item.Force {
-			if err := tx.forwardMissingMentions(message); err != nil {
+			if forwarded, err = tx.forwardMissingMentions(message); err != nil {
 				return err
+			}
+		}
+		if forwarded == 0 {
+			silent, err := tx.messageWokeNobody(turn, message)
+			if err != nil {
+				return err
+			}
+			if silent {
+				wokeNobody = append(wokeNobody, message.No)
 			}
 		}
 		if defaulted {
@@ -185,20 +196,81 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 			return err
 		}
 	}
-	return nil
+	return tx.noWakeNote(turn, wokeNobody)
+}
+
+const noWakeNotePrefix = "Your message woke nobody: "
+
+// messageWokeNobody says an agent's message addressed nobody at all and woke nobody, so whoever should act next never hears of it: no target (a
+// person counts), no note. Not when it was not meant to reach anyone, or was meant to and was stopped on purpose: a reply (to a person it
+// targets them; to an agent with no wake it was stopped by the reply guard), a private chat, a message that asks a person for something, a
+// message in a turn a person in that room woke (it is said to them), and an unaddressed message the broadcast limit stopped. Nor a lead's
+// message, nor any message in a room with a person in it (an explicit human member, or the home room): people read their rooms without being
+// woken, so a lead's status line to them is not lost. The note is for rooms of agents alone, where nobody will ever read it.
+func (tx *Tx) messageWokeNobody(turn answerTurn, message Message) (bool, error) {
+	if message.ReplyTo != "" || asksAPerson(message) {
+		return false, nil
+	}
+	if t := strings.TrimSpace(message.TargetsJSON); t != "" && t != "[]" && t != "null" {
+		return false, nil
+	}
+	var kind string
+	var notes int
+	var human, lead bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.kind,(SELECT COUNT(*) FROM note WHERE message_id=?),
+		EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='user' AND m.left_at IS NULL),
+		COALESCE((SELECT ro.cap_is_lead FROM agent a JOIN role ro ON ro.id=a.role_id WHERE a.id=?),0)
+		FROM room r WHERE r.id=?`, message.ID, message.AuthorID, message.RoomID).Scan(&kind, &notes, &human, &lead); err != nil {
+		return false, err
+	}
+	if kind == "dm" || kind == "home" || human || lead || notes > 0 {
+		return false, nil
+	}
+	if answersPerson, err := tx.turnHasPersonNote(message.SourceOutID, message.RoomID); err != nil || answersPerson {
+		return false, err
+	}
+	if len(proseMentions(message.Body)) == 0 {
+		prior, err := tx.recentReplyWakes(message.RoomID, message.ID)
+		if err != nil || prior >= ReplyWakeHops {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// noWakeNote tells an agent, as a system note only it can see, that messages it just wrote woke nobody, so it can say again who should act.
+// A turn woken by such a note gets no second one: an agent that again writes to nobody ends there rather than in a loop of notes.
+func (tx *Tx) noWakeNote(turn answerTurn, numbers []int64) error {
+	if len(numbers) == 0 || turn.mode != "normal" {
+		return nil
+	}
+	var woken bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
+		WHERE tn.turn_id=? AND m.author_kind='system' AND m.body LIKE ?)`, turn.id, noWakeNotePrefix+"%").Scan(&woken); err != nil || woken {
+		return err
+	}
+	refs := make([]string, len(numbers))
+	for i, no := range numbers {
+		refs[i] = fmt.Sprintf("#%d", no)
+	}
+	body := noWakeNotePrefix + strings.Join(refs, ", ") + " reached no agent and no person. Mention who should act (a live @name in ordinary prose) or reply to their message; do not repeat the whole message, a short pointer to it is enough."
+	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
+	return err
 }
 
 // forwardMissingMentions posts a short pointer in a room shared by the
 // author and each absent addressee. The grant exposes only this message,
 // never the rest of its room, and the targeted note wakes its recipient.
-func (tx *Tx) forwardMissingMentions(message Message) error {
+// It reports how many pointers it posted.
+func (tx *Tx) forwardMissingMentions(message Message) (int, error) {
 	var projectID, title, kind string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,title,kind FROM room WHERE id=?`, message.RoomID).Scan(&projectID, &title, &kind); err != nil {
-		return err
+		return 0, err
 	}
 	if kind == "dm" {
-		return nil
+		return 0, nil
 	}
+	forwarded := 0
 	seen := map[string]bool{}
 	for _, token := range proseMentions(message.Body) {
 		if groupTag(token) != "" {
@@ -213,7 +285,7 @@ func (tx *Tx) forwardMissingMentions(message Message) error {
 			continue
 		}
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if seen[recipientID] || recipientID == message.AuthorID {
 			continue
@@ -222,14 +294,14 @@ func (tx *Tx) forwardMissingMentions(message Message) error {
 		var member bool
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`,
 			message.RoomID, recipientID).Scan(&member); err != nil {
-			return err
+			return 0, err
 		}
 		if member {
 			continue
 		}
 		sharedID, _, err := tx.sharedMentionRoom(message.RoomID, projectID, message.AuthorID, recipientID)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if sharedID == "" {
 			continue
@@ -238,13 +310,14 @@ func (tx *Tx) forwardMissingMentions(message Message) error {
 			Body:        fmt.Sprintf("%s mentioned you in %s: #%d", authorLabel(tx.ctx, tx.tx, "agent", message.AuthorID), title, message.No),
 			OnlyTargets: []string{recipientID}})
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no) VALUES (?,?)`, pointer.ID, message.No); err != nil {
-			return err
+			return 0, err
 		}
+		forwarded++
 	}
-	return nil
+	return forwarded, nil
 }
 
 func jsonList[T any](items []T) string {

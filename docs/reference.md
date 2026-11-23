@@ -693,7 +693,9 @@ Assignments to spawned agents need a live mention in ordinary prose to wake
 them. Agent replies to other agents keep their thread link without waking the
 parent author; an explicit mention or handoff wakes the intended agent. A
 handoff wakes the room's lead, or in a task room of the leader-dispatcher flow
-(which has no lead) the dispatcher. Agent
+(which has no lead) the dispatcher. An agent message that reached nobody at all,
+in a room of agents alone (no human member, not home), earns its author a short
+system note saying so, so a chain never stops silently; a lead's messages never do. Agent
 replies to humans still target them, and human replies still wake their parent
 author, and also the agent that started the conversation when that is someone
 else. A message has one link, `reply_to`; the conversation it belongs to

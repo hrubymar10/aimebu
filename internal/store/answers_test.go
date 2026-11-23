@@ -950,3 +950,131 @@ func TestHeldReplyNoteDoesNotChain(t *testing.T) {
 		t.Fatalf("held reply notes=%d, want 1 (no chain): %+v", notes, again)
 	}
 }
+
+// A message that addresses nobody and wakes nobody gets its author a system note saying so, so the chain does not stop without a word. A
+// message that reaches somebody (a handoff that wakes the dispatcher, a mention of a person) gets none, and a turn woken by that note gets
+// no second one.
+func TestMessageThatWokeNobodyNotesItsAuthor(t *testing.T) {
+	t.Parallel()
+	notes := func(t *testing.T, s *Store, f executionFixture) []string {
+		t.Helper()
+		rows, err := s.db.Query(`SELECT m.body FROM message m JOIN note n ON n.message_id=m.id WHERE m.author_kind='system' AND n.agent_id=? AND m.body LIKE ?`, f.agent.ID, noWakeNotePrefix+"%")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var body string
+			if err := rows.Scan(&body); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, body)
+		}
+		return out
+	}
+	commit := func(t *testing.T, s *Store, f executionFixture, raw string) AnswerReceipt {
+		t.Helper()
+		receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+		if err != nil || receipt.Result != "committed" {
+			t.Fatalf("receipt=%+v err=%v", receipt, err)
+		}
+		return receipt
+	}
+	// The fixture's room is the home room, which a person reads: make it a task room of agents alone.
+	agentsOnly := func(t *testing.T) (*Store, executionFixture) {
+		t.Helper()
+		s, f := answerFixture(t, false)
+		if _, err := s.db.Exec(`UPDATE room SET kind='task' WHERE id=?`, f.room.ID); err != nil {
+			t.Fatal(err)
+		}
+		return s, f
+	}
+	t.Run("alone in the room", func(t *testing.T) {
+		t.Parallel()
+		s, f := agentsOnly(t)
+		receipt := commit(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"done"}]}`, f.room.ID))
+		var no int64
+		if err := s.db.QueryRow(`SELECT no FROM message WHERE id=?`, receipt.MessageIDs[0]).Scan(&no); err != nil {
+			t.Fatal(err)
+		}
+		got := notes(t, s, f)
+		if len(got) != 1 || !strings.Contains(got[0], fmt.Sprintf("#%d", no)) {
+			t.Fatalf("notes=%q, want one naming #%d", got, no)
+		}
+	})
+	t.Run("a handoff the dispatcher receives", func(t *testing.T) {
+		t.Parallel()
+		s, f := agentsOnly(t)
+		dispatcher, err := s.CreateAgent(context.Background(), Agent{Slug: "disp", ProjectID: f.project.ID, RoleID: "role_dispatcher_default", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "hash", CreatedBy: "usr_test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AddMember(context.Background(), f.room.ID, "agent", dispatcher.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`UPDATE project SET team_flow_key='leader-dispatcher' WHERE id=?`, f.project.ID); err != nil {
+			t.Fatal(err)
+		}
+		receipt := commit(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"done","handoff":true}]}`, f.room.ID))
+		if got := wakeReasons(t, s, receipt.MessageIDs[0]); !sameWakes(got, map[string]string{"disp": "handoff"}) {
+			t.Fatalf("handoff woke %v, want the dispatcher", got)
+		}
+		if got := notes(t, s, f); len(got) != 0 {
+			t.Fatalf("notes=%q, want none", got)
+		}
+	})
+	t.Run("a lead's message", func(t *testing.T) {
+		t.Parallel()
+		s, f := agentsOnly(t)
+		if _, err := s.db.Exec(`UPDATE role SET cap_is_lead=1 WHERE id=(SELECT role_id FROM agent WHERE id=?)`, f.agent.ID); err != nil {
+			t.Fatal(err)
+		}
+		commit(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"status"}]}`, f.room.ID))
+		if got := notes(t, s, f); len(got) != 0 {
+			t.Fatalf("notes=%q, want none for a lead", got)
+		}
+	})
+	t.Run("a room with a human member", func(t *testing.T) {
+		t.Parallel()
+		s, f := agentsOnly(t)
+		if err := s.AddMember(context.Background(), f.room.ID, "user", "usr_answers"); err != nil {
+			t.Fatal(err)
+		}
+		commit(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"status"}]}`, f.room.ID))
+		if got := notes(t, s, f); len(got) != 0 {
+			t.Fatalf("notes=%q, want none where a person reads the room", got)
+		}
+	})
+	t.Run("the home room", func(t *testing.T) {
+		t.Parallel()
+		s, f := answerFixture(t, false)
+		commit(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"status"}]}`, f.room.ID))
+		if got := notes(t, s, f); len(got) != 0 {
+			t.Fatalf("notes=%q, want none in the home room", got)
+		}
+	})
+	t.Run("a mention of a person", func(t *testing.T) {
+		t.Parallel()
+		s, f := agentsOnly(t)
+		commit(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"@owner done"}]}`, f.room.ID))
+		if got := notes(t, s, f); len(got) != 0 {
+			t.Fatalf("notes=%q, want none", got)
+		}
+	})
+	t.Run("a turn woken by the note", func(t *testing.T) {
+		t.Parallel()
+		s, f := agentsOnly(t)
+		earlier, err := s.InsertMessage(context.Background(), Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: noWakeNotePrefix + "#1 reached nobody", OnlyTargets: []string{f.agent.ID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) SELECT ?,id FROM note WHERE message_id=? AND agent_id=?`, f.turn.ID, earlier.ID, f.agent.ID); err != nil {
+			t.Fatal(err)
+		}
+		commit(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"done"}]}`, f.room.ID))
+		if got := notes(t, s, f); len(got) != 1 {
+			t.Fatalf("notes=%q, want only the one that woke the turn", got)
+		}
+	})
+}
