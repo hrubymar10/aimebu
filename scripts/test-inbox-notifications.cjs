@@ -195,6 +195,19 @@ for (const [notify, message, plays] of [['default', mention, 1], ['default', pla
   assert.equal(await reader.notifier.snippetOf('r1', 'm1', async () => [{ id: 'zzz', body: 'x' }]), '', 'not in the answer: nothing');
 })().catch(error => { console.error(error); process.exit(1); });
 
+{ // A notice (a usage window reset) is good news, not a task: a toast, and a desktop note only while the tab is hidden; never a sound, never
+  // a call for attention, whatever the mute.
+  const notice = { id: 'usage_alert_n1', kind: 'usage_notice', state: 'notice', question: 'Codex · work · session: the window reset; a fresh allowance is available.' };
+  const t = setup(); const toasts = [], attention = [];
+  t.notifier.onToast = text => toasts.push(text); t.notifier.onAttention = () => attention.push('x');
+  t.notifier.notice(notice);
+  assert.deepEqual(toasts, [notice.question]);
+  assert.deepEqual([t.log.plays, attention.length, t.log.notes.length, t.log.notes[0].title, t.log.notes[0].tag], [0, 0, 1, 'aimebu · Usages', 'aimebu-notice-usage_alert_n1']);
+  const shown = setup({ hidden: false }); const seen = []; shown.notifier.onToast = text => seen.push(text);
+  shown.notifier.notice(notice);
+  assert.deepEqual([seen.length, shown.log.notes.length, shown.log.plays], [1, 0, 0], 'a visible tab gets the toast only');
+}
+
 (async () => { // Asking for the permission (the Settings button) tells whoever offers notifications, so the bar can re-read the answer; nothing when it
   // was asked before or notifications are unavailable.
   const t = setup({ permission: 'default' }); let told = 0; t.notifier.onPermission = () => { told++; };

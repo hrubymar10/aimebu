@@ -18,7 +18,7 @@ export class InboxNotifications {
   constructor(onOpen, onOpenRoom) {
     this.onOpen = onOpen; this.onOpenRoom = onOpenRoom;
     // Called whenever something needs the person's attention (an Inbox item or a message that addresses them), whatever the room's sound level.
-    this.onAttention = null; this.onPermission = null;
+    this.onAttention = null; this.onPermission = null; this.onToast = null;
     this.messageClaimed = new Map(); this.inboxClaimed = new Map();
     this.audio = new Audio('/sounds/chime.wav');
     this.audio.preload = 'auto';
@@ -116,6 +116,17 @@ export class InboxNotifications {
         note.onclick = () => { window.focus(); this.onOpen(item); note.close(); };
       } catch { /* Permission may have changed between the check and display. */ }
     }
+  }
+  // A notice (a usage window reset: good news, not a task) is a toast, plus a desktop notification while the tab is hidden; no sound, and it
+  // never asks for attention.
+  notice(item) {
+    const text = item.question || 'Usage notice';
+    this.onToast?.(text);
+    if (!this.available || Notification.permission !== 'granted' || !document.hidden) return;
+    try {
+      const note = new Notification('aimebu · Usages', { body: text.slice(0, 180), icon: '/icons/icon-192.png', tag: `aimebu-notice-${item.id}`, silent: true });
+      note.onclick = () => { window.focus(); note.close(); };
+    } catch { /* Permission may have changed between the check and display. */ }
   }
   recent(claims, roomID) { return Date.now() - (claims.get(roomID) || 0) < COALESCE_MS; }
   // A chat message from the event stream. `watching` is true when the person is looking at that room right now, which needs no alert.

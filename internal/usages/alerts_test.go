@@ -482,12 +482,17 @@ func TestResetNoticeOncePerCycle(t *testing.T) {
 	response.Providers[0].Profiles[0].Windows[0].ResetAt = &reset
 	response.Providers[0].Profiles[0].Windows[0].PercentUsed = 1
 	observe(true)
-	open := tracker.OpenAlerts()
+	// A reset notice is good news, not a task: it is a toast (Notices),
+	// never an Inbox item (OpenAlerts).
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("a reset notice must not be an Inbox alert: %+v", got)
+	}
+	open := tracker.Notices()
 	if len(open) != 1 || open[0].Tier != "reset" || open[0].Window != "weekly" {
 		t.Fatalf("reset notice: %+v", open)
 	}
 	observe(false) // the same cycle never repeats it
-	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].ID != open[0].ID {
+	if got := tracker.Notices(); len(got) != 1 || got[0].ID != open[0].ID {
 		t.Fatalf("one notice per cycle: %+v", got)
 	}
 	// The next cycle closes the old notice and raises a fresh one: the
@@ -496,14 +501,14 @@ func TestResetNoticeOncePerCycle(t *testing.T) {
 	reset = reset.Add(7 * 24 * time.Hour)
 	response.Providers[0].Profiles[0].Windows[0].ResetAt = &reset
 	observe(true)
-	got := tracker.OpenAlerts()
+	got := tracker.Notices()
 	if len(got) != 1 || got[0].ID == open[0].ID {
 		t.Fatalf("the next cycle replaces the notice: %+v", got)
 	}
 	// Off again closes what it opened.
 	response.Settings.AlertResetNoticeEnabled = false
 	observe(true)
-	if got := tracker.OpenAlerts(); len(got) != 0 {
+	if got := tracker.Notices(); len(got) != 0 {
 		t.Fatalf("the reset toggle must close its notices: %+v", got)
 	}
 }
@@ -859,14 +864,14 @@ func TestResetNoticeIgnoresSlidingRollingWindow(t *testing.T) {
 	reset = now.Add(5 * time.Hour)
 	response.Providers[0].Profiles[0].Windows[0].PercentUsed = 0
 	observe()
-	got := tracker.OpenAlerts()
-	if len(got) != 1 || got[0].Tier != "reset" {
+	got := tracker.Notices()
+	if len(got) != 1 || got[0].Tier != "reset" || len(tracker.OpenAlerts()) != 0 {
 		t.Fatalf("exactly one reset notice: %+v", got)
 	}
 	now = now.Add(15 * time.Minute)
 	reset = now.Add(5 * time.Hour)
 	observe()
-	if again := tracker.OpenAlerts(); len(again) != 1 || again[0].ID != got[0].ID {
+	if again := tracker.Notices(); len(again) != 1 || again[0].ID != got[0].ID {
 		t.Fatalf("drift after the reset repeats the notice: %+v", again)
 	}
 }
@@ -892,7 +897,7 @@ func TestResetNoticeTreatsAnEarlierResetAsANewCycle(t *testing.T) {
 		if _, err := tracker.Observe(response); err != nil {
 			t.Fatal(err)
 		}
-		return tracker.OpenAlerts()
+		return append(tracker.OpenAlerts(), tracker.Notices()...)
 	}
 	first := observe()
 	if len(first) != 1 || first[0].Tier != "warning" {
@@ -911,5 +916,91 @@ func TestResetNoticeTreatsAnEarlierResetAsANewCycle(t *testing.T) {
 	}
 	if tiers["reset"] != 1 {
 		t.Fatalf("an earlier reset is a new cycle and sends one reset notice: %+v", got)
+	}
+}
+
+// A reset notice is delivered as a toast, never as an Inbox item: only the
+// threshold, pace and expiry tiers are OpenAlerts. The notice stays readable
+// for an hour, then the next observation drops it, and a reset notice an
+// older version left open in alerts.json is out of the Inbox at once and
+// closes on the next observation once it is an hour old.
+func TestResetNoticeIsNotAnInboxAlertAndExpires(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	tracker, err := NewAlertTracker(root, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", AlertIdentity: "stable", Status: "ok", LastRefreshAt: &now,
+			Windows: []Window{{Key: "session", PercentUsed: 50, ResetAt: &reset}}}}}}}
+	response.Settings.AlertResetNoticeEnabled = true
+	observe := func() {
+		t.Helper()
+		response.Providers[0].Profiles[0].LastRefreshAt = &now
+		response.Providers[0].Profiles[0].Windows[0].ResetAt = &reset
+		if _, err := tracker.Observe(response); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe()
+	// A new cycle that is already past the warning threshold: the reset is
+	// a notice, the warning stays an Inbox alert.
+	now = reset.Add(time.Minute)
+	reset = now.Add(5 * time.Hour)
+	response.Providers[0].Profiles[0].Windows[0].PercentUsed = 85
+	observe()
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "warning" {
+		t.Fatalf("only the warning is an Inbox alert: %+v", got)
+	}
+	notices := tracker.Notices()
+	if len(notices) != 1 || notices[0].Tier != "reset" {
+		t.Fatalf("one reset notice: %+v", notices)
+	}
+	now = now.Add(59 * time.Minute)
+	observe()
+	if got := tracker.Notices(); len(got) != 1 {
+		t.Fatalf("the notice stays readable within the hour: %+v", got)
+	}
+	now = now.Add(time.Minute)
+	if got := tracker.Notices(); len(got) != 0 {
+		t.Fatalf("an hour-old notice is no longer offered: %+v", got)
+	}
+	observe()
+	if _, kept := tracker.state.Alerts[notices[0].ID]; kept {
+		t.Fatal("the next observation drops an hour-old notice")
+	}
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "warning" {
+		t.Fatalf("the warning outlives the notice: %+v", got)
+	}
+
+	// A reset notice an older version stored as an open Inbox alert.
+	legacy := UsageAlert{ID: "usage_alert_legacyreset", Provider: "codex", Profile: "main", Window: "session", Tier: "reset",
+		CreatedAt: now.Add(-3 * time.Hour), Open: true, BaseKey: notices[0].BaseKey}
+	tracker.mu.Lock()
+	tracker.state.Alerts[legacy.ID] = legacy
+	if err := tracker.save(); err != nil {
+		tracker.mu.Unlock()
+		t.Fatal(err)
+	}
+	tracker.mu.Unlock()
+	reloaded, err := NewAlertTracker(root, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, alert := range append(reloaded.OpenAlerts(), reloaded.Notices()...) {
+		if alert.ID == legacy.ID {
+			t.Fatalf("a stored reset notice is out of the Inbox at once: %+v", alert)
+		}
+	}
+	tracker = reloaded
+	now = now.Add(time.Minute)
+	changed, err := tracker.Observe(response)
+	if err != nil || !changed {
+		t.Fatalf("closing the stored notice is a visible change: changed=%v err=%v", changed, err)
+	}
+	if _, kept := tracker.state.Alerts[legacy.ID]; kept {
+		t.Fatal("the next usage refresh closes a stored reset notice")
 	}
 }

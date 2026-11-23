@@ -42,12 +42,17 @@ export class InboxStore {
     });
     this.onItems?.(entries);
     if (notify && previous) this.notifications?.arrived(items.filter(item => !previous.has(item.id)), this.projects, this.rooms);
+    // A `notice` row (a usage window reset) is good news, not a task: never in the Inbox, it is shown once as a toast when it first appears.
+    // The first read only learns what is already there, so a reload does not repeat an old notice.
+    const notices = entries.filter(item => item.state === 'notice');
+    if (notify && this.noticed) for (const item of notices) if (!this.noticed.has(item.id)) this.notifications?.notice?.(item);
+    this.noticed = new Set([...(this.noticed || []), ...notices.map(item => item.id)]);
   }
 
   reset() {
     this.requestSeq++; this.generation++;
     batch(() => { this.items.value = undefined; this.pending.value = new Set(); this.bulkBusy.value = false; this.error.value = ''; });
-    this.keys.clear();
+    this.keys.clear(); this.noticed = undefined;
     this.onItems?.([]);
   }
 

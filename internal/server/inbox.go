@@ -43,6 +43,13 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				items = append(items, store.InboxEntry{ID: alert.ID, Kind: "usage_alert", Question: question, State: "open",
 					Options: []string{}, CreatedAt: alert.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")})
 			}
+			// A window reset is good news, not a task: it rides along as a
+			// `notice` row the browser shows once as a toast, and the Inbox
+			// (its list and its count) leaves it out on its state.
+			for _, notice := range s.usageAlerts.Notices() {
+				items = append(items, store.InboxEntry{ID: notice.ID, Kind: "usage_notice", Question: usageAlertQuestion(notice), State: "notice",
+					Options: []string{}, CreatedAt: notice.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")})
+			}
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {

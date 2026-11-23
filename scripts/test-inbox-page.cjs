@@ -75,7 +75,8 @@ async function main() {
       window.__release = name => (window.__waiting[name] || []).shift()?.();
       const projects = new Map([['p1', { name: 'Alpha' }], ['p2', { name: 'Beta' }]]);
       const rooms = new Map([['r1', { id: 'r1', title: 'Fix login' }], ['r2', { id: 'r2', title: 'Docs' }]]);
-      const notifications = { arrived: (arrived, p, r) => window.__arrived.push(arrived.map(item => item.id)) };
+      window.__notices = [];
+      const notifications = { arrived: (arrived, p, r) => window.__arrived.push(arrived.map(item => item.id)), notice: item => window.__notices.push(item.id) };
       window.__inbox = new Inbox(source, projects, rooms, item => window.__jumps.push(item.id), notifications, list => window.__onItems.push(list.map(item => item.id)));
       if (usages) window.__inbox.openUsages = () => window.__calls.push(['usages']);
       if (refresh) window.__first = window.__inbox.refresh({ notify: false });
@@ -243,6 +244,21 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => ({ kept: ['q1', 'ap1', 'ro1'].every(id => document.querySelector(`[data-inbox-id=${id}]`).__marked), typed: document.querySelector('[data-inbox-id=q1] .inbox-answer textarea').value, replaced: !document.querySelector('[data-inbox-id=rec1]').__marked,
         gone: !document.querySelector('[data-inbox-id=q2]'), groups: [...document.querySelectorAll('.inbox-group h2')].map(h => h.textContent), arrived: window.__arrived, count: document.querySelector('#inbox-count').textContent })),
         { kept: true, typed: 'half an answer', replaced: true, gone: true, groups: ['Alpha / Fix login', 'Usages'], arrived: [['new1']], count: '14' });
+      await page.close();
+    }
+    // A usage reset notice is never an Inbox card nor counted: a notice already there on the first read stays quiet, a new one is shown once
+    // (the notifier's toast), and a later read of the same notice does not repeat it.
+    {
+      const notice = id => ({ id, project_id: '', room_id: '', kind: 'usage_notice', question: 'Codex · work · session: the window reset; a fresh allowance is available.', rev: 0, state: 'notice' });
+      const page = await mount({ list: [...items(), notice('un_old')] });
+      await waitList(page);
+      await page.evaluate(() => window.__first);
+      const count = await page.$eval('#inbox-count', el => el.textContent);
+      await page.evaluate(item => { window.__items.push(item); return window.__inbox.refresh(); }, notice('un_new'));
+      await page.evaluate(() => window.__inbox.refresh());
+      assert.deepEqual(await page.evaluate(() => ({ cards: ['un_old', 'un_new'].filter(id => document.querySelector(`[data-inbox-id=${id}]`)), notices: window.__notices, arrived: window.__arrived, count: document.querySelector('#inbox-count').textContent })),
+        { cards: [], notices: ['un_new'], arrived: [[], []], count }, 'a notice is a toast, never an Inbox card or count');
+      assert.equal(count, String(items().length), 'the count leaves the notice out');
       await page.close();
     }
     // Two reads answered out of order: the newer list is the one drawn.

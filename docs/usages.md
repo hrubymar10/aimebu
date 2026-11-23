@@ -147,9 +147,15 @@ server, and turning a toggle off closes what it had opened.
   the window has been continuously at risk for ten minutes (a safe reading
   restarts that clock), so a jittery projection cannot flip the alert back
   on. A new reset cycle closes and re-arms it too.
-- **Reset notices**: one Inbox note per provider, profile and window when a
-  new reset cycle is observed (never for the very first observation). The
-  next cycle's observation closes it, as does dismissal.
+- **Reset notices**: one notice per provider, profile and window when a
+  new reset cycle is observed (never for the very first observation). A
+  fresh allowance is good news, not a task, so it never enters the Inbox:
+  the browser shows it once as a toast, plus a desktop notification (no
+  sound) while the tab is hidden and notifications are allowed. The notice
+  stays readable for an hour, so a page that reconnects meanwhile still
+  shows it; a page loaded later does not repeat it. A reset notice an
+  earlier version left open in the Inbox leaves it at once and is dropped on
+  the next usage refresh.
 - **Credential expiry alerts**: from the same expiry data that drives the
   Usages token-expiry badge, a notice when a Claude or Codex credential is
   within its expiry alert window (15 minutes) or has expired — one per
@@ -161,7 +167,8 @@ server, and turning a toggle off closes what it had opened.
 
 All three share the remaining-quota alerts' storage and lifecycle otherwise:
 private `usages/alerts.json` (0600, hashed accounts), the owner-and-admin
-Inbox visibility, dismissal, and the corrupt-state recovery. An active limit
+visibility, and the corrupt-state recovery; the pace and expiry alerts are
+Inbox items with the same dismissal. An active limit
 guard hides the threshold and pace notices of its tool, but never the reset
 notice or the expiry alert.
 

@@ -254,7 +254,7 @@ and reconnects the event stream from its last seen `seq`.
 | GET | `/api/messages/referenced/{no}` | `source_message_id` query parameter | `{no,available,room_id?,room?,from?,body?,created_at?}` for exactly the target cited by the source message. The caller must be able to read the source room; for a missed-mention system pointer, only project owners and operators may open the cited target this way. Other source-room members receive `{no,available:false}`. A missing grant also returns `{no,available:false}` without identifying the target. This does not grant access to the target room or its history |
 | GET | `/api/events?after=<seq>` | WebSocket upgrade | event stream: project events for project members (private chats for their members), events with no project for the instance owner only; owners and global admins also get transient `{type:"usages_updated",alert_revision}` frames (no `seq`, never replayed). `alert_revision` advances when a synthetic usage alert changes or is dismissed, or a limit guard hold changes; the browser refreshes Inbox on those changes and after reconnect. Server shutdown closes this socket with 1001 (server restarting), so clients reconnect quietly |
 | GET | `/api/events/cursor` | — | `{seq}` current global event watermark |
-| GET | `/api/inbox` | — | open questions, approvals, recovery, and delivery failures visible to authorized project members and private-chat peers, plus superseded agent asks (with `state: superseded`) so the chat can still answer them; the Inbox list and badge count only open entries. Each stored entry includes the caller's `seen` flag, which does not remove it from the Inbox. An `approval` entry with `note_id` is a shared agent note waiting for approval (only the owner and admins who own the agent's project see it; its card sits in the project's home room): `POST /api/inbox/{item}/decision` with choice `approve` switches the note on for every project's agents, `deny` deletes it, and either closes the card, as does any other change to the note |
+| GET | `/api/inbox` | — | open questions, approvals, recovery, and delivery failures visible to authorized project members and private-chat peers, plus superseded agent asks (with `state: superseded`) so the chat can still answer them, and, for global admins, usage alerts (`usage_alert`, open) and usage reset notices (`usage_notice`, `state: notice`, shown as a toast); the Inbox list and badge count only open entries. Each stored entry includes the caller's `seen` flag, which does not remove it from the Inbox. An `approval` entry with `note_id` is a shared agent note waiting for approval (only the owner and admins who own the agent's project see it; its card sits in the project's home room): `POST /api/inbox/{item}/decision` with choice `approve` switches the note on for every project's agents, `deny` deletes it, and either closes the card, as does any other change to the note |
 | GET | `/api/agent/rooms` | active or not-accepting agent key | rooms where the caller is an active member, including archived rooms; no message previews |
 | GET/POST | `/api/agent/rooms/{room}/schedules` | joined agent key; POST requires active lead, schedule fields above and `Idempotency-Key` | list or create schedules in a joined task room or the project home room |
 | POST | `/api/agent/rooms` | active lead key; `{title,parent_id?,worktree?:{enabled,base_ref?}}` and `Idempotency-Key` | create task room beneath the home room by default (also in the dispatcher flow) or a joined parent, join the lead, and post one parent-room system notice |
@@ -557,8 +557,7 @@ other saved usage settings and credentials remain intact.
 Behind the three opt-in alert toggles, a `usage_alert` row can also carry a
 `pace` tier (one per risk episode while a fresh Codex or Claude Code session
 or weekly window is projected to run out before its reset, re-arming only
-after recovery), a `reset` tier (one note per window and reset cycle, closed
-by the next cycle) or an `expiring`/`expired` tier (from the same expiry data
+after recovery) or an `expiring`/`expired` tier (from the same expiry data
 as the Usages token-expiry badge, one per account and expiry time, replaced
 by the stronger wording once the expiry passes; no reset time, closed when
 the credential is renewed). A pace alert's question names the window and its
@@ -567,6 +566,14 @@ says when the token expires or that it has expired, and names the CLI to run.
 An active limit guard hides the threshold and pace rows of its tool, never
 the reset or expiry rows; each toggle going off closes the rows its alerts
 had opened.
+A window reset (the `alert_reset_notice_enabled` toggle, one per window and
+reset cycle) is not an Inbox item: `GET /api/inbox` carries it for the same
+readers as a `usage_notice` row with `state: "notice"` for an hour after it
+was observed, then drops it on the next usage refresh. The Inbox list and
+count leave it out; the browser shows a notice it had not read before once as
+a toast, with a silent desktop notification while the tab is hidden. A reset
+`usage_alert` an earlier version left open is not listed and is dropped on the
+next usage refresh.
 
 Project responses set `repo_url` to `null` when absent. Message responses
 expose `targets` as a JSON array and omit the raw `targets_json` column.

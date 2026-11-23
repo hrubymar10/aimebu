@@ -705,6 +705,9 @@ Inbox, usage, events, settings
   `usage_alert` is not a stored kind: the inbox listing appends it as a
   virtual row for each open provider usage alert (built in
   `internal/server/inbox.go`, shown to admins), with no table row behind it.
+  A usage window reset is not an alert: it is listed as a virtual
+  `usage_notice` row in state `notice` for an hour, which the Inbox list and
+  count leave out and the browser shows once as a toast.
   An open agent `ask` question or approval becomes `superseded` when a later
   message from a person or that asking agent commits in the same room; system
   messages and messages in other rooms do not supersede it. Supersession and

@@ -422,3 +422,82 @@ func TestUsagesRefreshCooldown(t *testing.T) {
 		t.Fatalf("second refresh status=%d body=%+v retry-after=%q", resp.StatusCode, body, resp.Header.Get("Retry-After"))
 	}
 }
+
+// A window reset is good news, not a task: GET /api/inbox carries it as a
+// `usage_notice` row in state `notice` (the browser toasts it and the Inbox
+// leaves it out), while the threshold and pace alerts stay open `usage_alert`
+// Inbox items.
+func TestUsageResetNoticeIsNoOpenInboxItem(t *testing.T) {
+	f := newFixture(t)
+	root := t.TempDir()
+	var err error
+	f.srv.Usages, err = usages.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker, err := usages.NewAlertTracker(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.usageAlerts = tracker
+	// The real clock: an alert closes once its reset time passes.
+	now := time.Now().UTC().Truncate(time.Second)
+	reset := now.Add(5 * time.Hour)
+	eta := time.Hour.Seconds()
+	snapshot := usages.Response{Providers: []usages.Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []usages.Profile{{ProfileName: "work", AlertIdentity: "stable", Status: "ok", LastRefreshAt: &now,
+			Windows: []usages.Window{{Key: "session", PercentUsed: 40, ResetAt: &reset}}}}}}}
+	snapshot.Settings.AlertWarningRemaining, snapshot.Settings.AlertCriticalRemaining = 20, 10
+	snapshot.Settings.AlertResetNoticeEnabled, snapshot.Settings.AlertPaceEnabled = true, true
+	if _, err := tracker.Observe(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	// A reset an hour earlier is a new cycle: the reset notice, plus a
+	// warning and a pace alert for the new cycle's reading.
+	later := now.Add(time.Second)
+	earlier := reset.Add(-time.Hour)
+	profile := &snapshot.Providers[0].Profiles[0]
+	profile.LastRefreshAt = &later
+	profile.Windows[0] = usages.Window{Key: "session", PercentUsed: 85, ResetAt: &earlier,
+		Pace: &usages.Pace{ExpectedPercent: 40, DeltaPercent: 45, State: "deficit", EtaSeconds: &eta}}
+	if changed, err := tracker.Observe(snapshot); err != nil || !changed {
+		t.Fatalf("new cycle: %v %v", changed, err)
+	}
+	resp := f.requestAs(t, f.cookie, f.csrf, http.MethodGet, "/api/inbox", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("inbox status: %d", resp.StatusCode)
+	}
+	var items []struct {
+		Kind     string `json:"kind"`
+		State    string `json:"state"`
+		Question string `json:"question"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		t.Fatal(err)
+	}
+	open, notices := map[string]int{}, 0
+	for _, item := range items {
+		switch {
+		case item.Kind == "usage_alert" && item.State == "open":
+			switch {
+			case strings.Contains(item.Question, "projected to run out"):
+				open["pace"]++
+			case strings.Contains(item.Question, "15.0% remaining"):
+				open["warning"]++
+			default:
+				t.Fatalf("unexpected open alert: %+v", item)
+			}
+		case item.Kind == "usage_notice" && item.State == "notice":
+			if !strings.Contains(item.Question, "the window reset") {
+				t.Fatalf("notice text: %+v", item)
+			}
+			notices++
+		default:
+			t.Fatalf("unexpected inbox row: %+v", item)
+		}
+	}
+	if notices != 1 || open["warning"] != 1 || open["pace"] != 1 {
+		t.Fatalf("one reset notice outside the Inbox, the warning and pace alerts in it: %+v", items)
+	}
+}

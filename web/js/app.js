@@ -174,6 +174,7 @@ const notificationBanner = new NotificationBanner({ notifications, saveDismissed
 const updateBanner = new UpdateBanner({ getStatus: () => request('/api/update-status'), ack: kind => request(`/api/update-status/${kind}`, { method: 'POST' }), anchor: notificationBanner.bar });
 notifications.onAttention = () => notificationBanner.attention();
 notifications.onPermission = () => notificationBanner.sync();
+notifications.onToast = message => showToast(message);
 const inbox = new Inbox(createInboxSource(), sidebar.projects, sidebar.rooms, async item => {
   const room = sidebar.rooms.get(item.room_id); if (!room) return;
   const generation = sessionGeneration;

@@ -20,11 +20,12 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
-// UsageAlert is a global inbox notice. It contains no credentials or email.
+// UsageAlert is a global usage notice. It contains no credentials or email.
 // Tier is warning, critical, pace (a window projected to run out before its
 // reset), reset (a window reset notice) or expiry (an expiring or expired
 // credential). The pace, reset and expiry tiers exist only while their opt-in
-// setting is on.
+// setting is on. Every tier but reset is an Inbox item; a reset notice is
+// only a toast (see Notices).
 type UsageAlert struct {
 	ID        string     `json:"id"`
 	Provider  string     `json:"provider"`
@@ -61,6 +62,13 @@ type alertWindow struct {
 	Recovered bool      `json:"pace_recovered,omitempty"`
 	RiskSince time.Time `json:"risk_since,omitempty"`
 }
+
+// resetNoticeTTL is how long a reset notice stays readable. A reset notice
+// is good news, not a task: it never enters the Inbox, and the browser shows
+// it once as a toast (and a desktop notification while the tab is hidden).
+// It is kept this long so a page that reconnects meanwhile still sees it,
+// then the next observation drops it.
+const resetNoticeTTL = time.Hour
 
 // paceHysteresis is how long a window must stay continuously at risk after a
 // recovery before its pace alert re-arms, so one jittery reading cannot flip
@@ -386,6 +394,15 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 		if !alert.Open {
 			continue
 		}
+		if alert.Tier == "reset" && !t.clock().Before(alert.CreatedAt.Add(resetNoticeTTL)) {
+			// A reset notice is a toast, not an Inbox item: it is dropped
+			// once its delivery window is over (an older version kept it
+			// open in the Inbox; such a notice closes here too).
+			alert.Open = false
+			t.state.Alerts[id] = alert
+			visibleChanged, changed = true, true
+			continue
+		}
 		name, present := "", false
 		if alert.Tier == "expiry" || alert.Tier == "expiring" || alert.Tier == "expired" {
 			name, present = liveAccounts[alert.BaseKey]
@@ -531,12 +548,26 @@ func alertHash(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// OpenAlerts returns the alerts that belong in the Inbox: every open tier
+// except the reset notice, which Notices returns.
 func (t *AlertTracker) OpenAlerts() []UsageAlert {
+	return t.open(func(alert UsageAlert) bool { return alert.Tier != "reset" })
+}
+
+// Notices returns the reset notices still inside their delivery window. They
+// are shown once as a toast, never as an Inbox item.
+func (t *AlertTracker) Notices() []UsageAlert {
+	return t.open(func(alert UsageAlert) bool {
+		return alert.Tier == "reset" && t.clock().Before(alert.CreatedAt.Add(resetNoticeTTL))
+	})
+}
+
+func (t *AlertTracker) open(keep func(UsageAlert) bool) []UsageAlert {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	alerts := []UsageAlert{}
 	for _, alert := range t.state.Alerts {
-		if alert.Open && (alert.ResetAt == nil || t.clock().Before(*alert.ResetAt)) {
+		if alert.Open && (alert.ResetAt == nil || t.clock().Before(*alert.ResetAt)) && keep(alert) {
 			alerts = append(alerts, alert)
 		}
 	}
