@@ -92,6 +92,38 @@ func TestBroadcastIsOnlyForAMessageThatAddressesNobody(t *testing.T) {
 	}
 }
 
+// A task room of the leader-dispatcher flow has no lead (the leader is not a member), so a handoff there reaches the flow's coordinator, the
+// dispatcher, with reason handoff; with no coordinator either, the handoff addressed nobody and is a broadcast rather than a message no one sees.
+func TestHandoffWithoutALeadReachesTheFlowCoordinator(t *testing.T) {
+	t.Parallel()
+	s, project, room, worker, dispatcher := wakeFixture(t)
+	ctx := context.Background()
+	for _, statement := range []string{
+		`UPDATE project SET team_flow_key='leader-dispatcher' WHERE id='` + project.ID + `'`,
+		`UPDATE agent SET role_id='role_dispatcher_default' WHERE id='` + dispatcher.ID + `'`,
+	} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handoff := func() Message {
+		m, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: worker.ID, Body: "done, commit abc", Handoff: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if got := wakeReasons(t, s, handoff().ID); !sameWakes(got, map[string]string{"lead": "handoff"}) {
+		t.Fatalf("a handoff in a room with a dispatcher and no lead woke %v, want the dispatcher (handoff)", got)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET role_id='role_worker' WHERE id=?`, dispatcher.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := wakeReasons(t, s, handoff().ID); !sameWakes(got, map[string]string{"lead": "broadcast"}) {
+		t.Fatalf("a handoff in a room with no lead and no coordinator woke %v, want a broadcast", got)
+	}
+}
+
 // A message that asks a person for something (an Inbox ask, needs_attention, proposed answers, open questions) is addressed to that person, who
 // sees it in the Inbox: it is not a broadcast, so the other agents are not put through an FYI turn for it. The same message without the request is.
 func TestBroadcastLeavesAMessageThatAsksAPersonAlone(t *testing.T) {

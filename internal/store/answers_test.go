@@ -741,6 +741,26 @@ func TestSingleAnswerToTheWakingPersonDefaultsItsReply(t *testing.T) {
 		t.Fatalf("reply_defaulted events=%d err=%v", events, err)
 	}
 
+	// A handoff answers whoever briefed or nudged the worker, a person or an agent, and keeps the link back to them.
+	handoff := func(room string) string {
+		return fmt.Sprintf(`{"messages":[{"room":%q,"body":"over to you","handoff":true}]}`, room)
+	}
+	for name, prepare := range map[string]func(*Store, executionFixture){
+		"handoff after a person's note": nil,
+		"handoff after an agent's note": func(s *Store, f executionFixture) {
+			if _, err := s.db.Exec(`UPDATE message SET author_kind='agent',author_id=? WHERE id=?`, f.agent.ID, f.message.ID); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f, receipt := run(t, prepare, handoff)
+			if got := replyOf(t, s, receipt.MessageIDs[0]); got != f.message.ID {
+				t.Fatalf("reply_to=%q, want the waking message %q", got, f.message.ID)
+			}
+		})
+	}
+
 	var otherRoom string
 	for name, c := range map[string]struct {
 		prepare func(*Store, executionFixture)
@@ -764,9 +784,6 @@ func TestSingleAnswerToTheWakingPersonDefaultsItsReply(t *testing.T) {
 		}},
 		"ask": {nil, func(room string) string {
 			return fmt.Sprintf(`{"messages":[{"room":%q,"body":"q","ask":{"kind":"question","text":"Which?","options":["A","B"]}}]}`, room)
-		}},
-		"handoff": {nil, func(room string) string {
-			return fmt.Sprintf(`{"messages":[{"room":%q,"body":"over to you","handoff":true}]}`, room)
 		}},
 		"agent note": {func(s *Store, f executionFixture) {
 			if _, err := s.db.Exec(`UPDATE message SET author_kind='agent',author_id=? WHERE id=?`, f.agent.ID, f.message.ID); err != nil {

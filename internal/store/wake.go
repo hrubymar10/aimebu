@@ -144,6 +144,30 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 	// one agent to another wakes the parent's author as well, behind a hop
 	// guard: after ReplyWakeHops automatic replies in a row with no person's
 	// message between them, the next reply still threads but wakes nobody.
+	// A handoff wakes the room's lead. A room with no lead (a task room in the leader-dispatcher flow: the leader is not in it) hands off to the
+	// flow's coordinator instead, the member the flow lets manage agents (the dispatcher), which is who briefed the worker. Resolved before the
+	// reply, so a handoff that also replies to the coordinator is woken as a handoff and never stopped by the reply guard.
+	handedOff := false
+	if message.Handoff && (message.AuthorKind == "agent" || message.AuthorKind == "user") {
+		for _, member := range members {
+			if member.kind == "agent" && member.lead && member.id != message.AuthorID {
+				add(member, "handoff")
+				handedOff = true
+			}
+		}
+		if !handedOff {
+			coordinators, err := tx.roomFlowCoordinators(message.RoomID)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			for _, member := range members {
+				if coordinators[member.id] && member.id != message.AuthorID {
+					add(member, "handoff")
+					handedOff = true
+				}
+			}
+		}
+	}
 	var guard *LoopGuard
 	if message.ReplyTo != "" {
 		var author string
@@ -202,14 +226,8 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 				}
 			}
 		}
-		if message.Handoff {
-			for _, member := range members {
-				if member.kind == "agent" && member.lead {
-					add(member, "handoff")
-				}
-			}
-		}
-		// An agent's message that names nobody and answers nothing (no live @mention of any kind, no reply, no handoff, not a private chat with a
+		// An agent's message that names nobody and answers nothing (no live @mention of any kind, no reply, no handoff that reached a lead or
+		// coordinator, not a private chat with a
 		// person) is a broadcast: it wakes every other agent in the room, as an FYI (the note says it was not addressed to them, and they answer only
 		// if they have to act). Without it such a message wakes nobody, and a chain of agents that forgot a mention stops there without a word. A
 		// mention that reaches nobody (an unknown name, a person) is still a mention: it addresses somebody, it is not a broadcast. Neither is what an
@@ -217,7 +235,7 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 		// person, whether or not the reply link could be defaulted (it cannot with two notes or two messages), and waking the room for it would put
 		// every agent through an FYI turn on the most common flow there is. Neither is a message that asks a person for something (an Inbox ask,
 		// needs_attention, proposed answers, open questions): it is addressed to that person, who sees it in the Inbox, and the agents have nothing to add.
-		if message.AuthorKind == "agent" && message.OnlyTargets == nil && message.ReplyTo == "" && !message.Handoff && kind != "dm" && len(proseMentions(message.Body)) == 0 && !asksAPerson(message) {
+		if message.AuthorKind == "agent" && message.OnlyTargets == nil && message.ReplyTo == "" && !handedOff && kind != "dm" && len(proseMentions(message.Body)) == 0 && !asksAPerson(message) {
 			answersPerson, err := tx.turnHasPersonNote(message.SourceOutID, message.RoomID)
 			if err != nil {
 				return nil, nil, nil, err
@@ -261,6 +279,30 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 	}
 	sort.Strings(ids)
 	return ids, targets, guard, nil
+}
+
+// roomFlowCoordinators is the set of the room's live agent members that the project's team flow lets manage agents: the lead, or in the
+// leader-dispatcher flow the dispatcher too (see flowManages).
+func (tx *Tx) roomFlowCoordinators(roomID string) (map[string]bool, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.id,r.role_key,r.cap_is_lead,r.cap_can_spawn,p.team_flow_key
+		FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role r ON r.id=a.role_id JOIN project p ON p.id=a.project_id
+		WHERE m.room_id=? AND m.member_kind='agent' AND m.left_at IS NULL AND a.revoked_at IS NULL`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id, role, flow string
+		var lead, spawn bool
+		if err := rows.Scan(&id, &role, &lead, &spawn, &flow); err != nil {
+			return nil, err
+		}
+		if flowManages(flow, role, lead, spawn) {
+			out[id] = true
+		}
+	}
+	return out, rows.Err()
 }
 
 // turnHasPersonNote says the turn that wrote a message (named by the outbox row the message came from; none for a message not written by a turn) was

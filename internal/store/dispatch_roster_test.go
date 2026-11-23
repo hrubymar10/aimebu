@@ -129,7 +129,7 @@ func TestDispatcherFlowRoleGuidance(t *testing.T) {
 	for _, item := range []struct {
 		agent Agent
 		want  string
-	}{{worker, "report to the agent who briefed you"}, {dispatcher, "Add a reviewer only when the specification or leader asks"}} {
+	}{{worker, "report to the agent who briefed you (normally the dispatcher) and @mention them; a handoff reaches the dispatcher."}, {dispatcher, "Add a reviewer only when the specification or leader asks"}} {
 		delivery, ready, err := s.PrepareDispatch(ctx, item.agent.ID, "")
 		if err != nil || !ready {
 			t.Fatalf("dispatch %s: ready=%t err=%v", item.agent.ID, ready, err)

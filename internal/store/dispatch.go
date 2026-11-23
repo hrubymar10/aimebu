@@ -85,7 +85,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			}
 		}
 		if flowKey == "leader-dispatcher" && (roleKey == "worker" || roleKey == "reviewer" || strings.HasSuffix(roleKey, "-reviewer")) {
-			roleBody += "\n\nIn a task room, report to the agent who briefed you (normally the dispatcher). Do not @mention the leader there; the leader is not a member of task rooms in this flow."
+			roleBody += "\n\nIn a task room, report to the agent who briefed you (normally the dispatcher) and @mention them; a handoff reaches the dispatcher. Do not @mention the leader there; the leader is not a member of task rooms in this flow."
 		}
 		if roleBody, err = tx.withInlinePlan(roleID, roleBody); err != nil {
 			return err

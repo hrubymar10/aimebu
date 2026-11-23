@@ -691,7 +691,9 @@ global defaults; edited roles retain their
 instructions.
 Assignments to spawned agents need a live mention in ordinary prose to wake
 them. Agent replies to other agents keep their thread link without waking the
-parent author; an explicit mention or handoff wakes the intended agent. Agent
+parent author; an explicit mention or handoff wakes the intended agent. A
+handoff wakes the room's lead, or in a task room of the leader-dispatcher flow
+(which has no lead) the dispatcher. Agent
 replies to humans still target them, and human replies still wake their parent
 author, and also the agent that started the conversation when that is someone
 else. A message has one link, `reply_to`; the conversation it belongs to

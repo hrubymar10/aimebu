@@ -1836,14 +1836,19 @@ CC/Codex, prompt-only on pi):
   that started it, when that is not the author replied to (wake reason
   `conversation`); an agent's reply never widens this way.
 - Default `reply_to` (server-side, conservative): when a normal turn was woken
-  by exactly one note, written by a person in the turn's room, and the answer
-  holds exactly one message to that room with no `reply_to`, no `ask` and no
-  `handoff`, the server sets `reply_to` to that note's message and records a
-  `reply_defaulted` event (`message_id`, `reply_to`) on the turn. Any other
-  shape (several notes, several messages, another room, an agent's note) keeps
-  exactly the link the agent wrote, or none; the server never guesses there.
-- `handoff:true` addressed to the lead = task-result handoff (wakes the
-  lead). `reconciliation` only in diagnostic turns.
+  by exactly one note, written in the turn's room by a person (or by an agent,
+  when the answer is a `handoff`), and the answer holds exactly one message to
+  that room with no `reply_to` and no `ask`, the server sets `reply_to` to that
+  note's message and records a `reply_defaulted` event (`message_id`,
+  `reply_to`) on the turn. Any other shape (several notes, several messages,
+  another room, a plain message after an agent's note) keeps exactly the link
+  the agent wrote, or none; the server never guesses there.
+- `handoff:true` = task-result handoff: it wakes the room's lead (reason
+  `handoff`). A room with no lead member (a task room in the
+  leader-dispatcher flow) hands off to the flow's coordinator instead, the
+  member the flow lets manage agents (the dispatcher), also with reason
+  `handoff`. A handoff that reaches neither is read as if it were not one, so
+  an unaddressed one is a broadcast. `reconciliation` only in diagnostic turns.
 - `visual_plan` and `appendix_pages` are message-scoped display content. The
   v1 block vocabulary is supported; Codex and Claude structured-output
   schemas encode each block's `data` object as a JSON string. Unknown or
@@ -1969,8 +1974,10 @@ Computed in the message-insert transaction; every decision → note or
   (`message_not_woken` reason `auto_member`), only when addressed by name,
   role, group tag, reply or handoff;
 - AI message → resolved targets (mentions, addressed role), the human peer in
-  a DM; `handoff` → the lead. An AI message that names nobody and answers
-  nothing (no live `@mention` token of any kind, no `reply_to`, no `handoff`,
+  a DM; `handoff` → the lead, or with no lead in the room the flow's
+  coordinator (the dispatcher). An AI message that names nobody and answers
+  nothing (no live `@mention` token of any kind, no `reply_to`, no `handoff`
+  that reached a lead or coordinator,
   not in a private chat with a person, not `OnlyTargets`) is a **broadcast**: it
   wakes every other AI agent in the room as an FYI (reason `broadcast`; the
   sender is never woken; a lead whose membership is `auto` is skipped with

@@ -61,9 +61,11 @@ func (tx *Tx) insertOutbox(turn answerTurn, input AnswerInput, index int, item a
 	return id, err
 }
 
-// defaultReplyTarget is the one message an answer that names no reply_to is plainly about: the turn was woken by exactly one note, from a person
-// writing in the room, and the answer is a single plain message back to that room. It returns "" in every other case, because a guess is worse than
-// no link: a turn that carries several notes, a message to another room (alone or beside one to this room), an ask or a handoff, or a second message could each be about anything.
+// defaultReplyTarget is the one message an answer that names no reply_to is plainly about: the turn was woken by exactly one note written in the
+// room, and the answer is a single message back to that room (not an ask). The note must be a person's, unless the answer is a handoff: a handoff
+// answers whoever briefed or nudged the worker, an agent as often as a person, and the link carries it back to them. It returns "" in every other
+// case, because a guess is worse than no link: a turn that carries several notes, a message to another room (alone or beside one to this room), an
+// ask, a plain message after an agent's note, or a second message could each be about anything.
 func (tx *Tx) defaultReplyTarget(turn answerTurn, input AnswerInput) (string, error) {
 	if turn.mode != "normal" || input.Parsed == nil {
 		return "", nil
@@ -75,7 +77,7 @@ func (tx *Tx) defaultReplyTarget(turn answerTurn, input AnswerInput) (string, er
 	var messageID, authorKind, roomID string
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*),COALESCE(MIN(m.id),''),COALESCE(MIN(m.author_kind),''),COALESCE(MIN(m.room_id),'') FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=?`, turn.id).
 		Scan(&notes, &messageID, &authorKind, &roomID)
-	if err != nil || notes != 1 || authorKind != "user" || roomID != turn.roomID {
+	if err != nil || notes != 1 || roomID != turn.roomID || authorKind != "user" && !(authorKind == "agent" && input.Parsed.Messages[0].Handoff) {
 		return "", err
 	}
 	return messageID, nil
@@ -111,7 +113,7 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 			receipt.HeldMessages = append(receipt.HeldMessages, HeldMessage{Index: index, Reason: d.reason, Error: d.detail, Room: item.Room, Body: item.Body})
 			continue
 		}
-		defaulted := defaultTo != "" && item.Room == turn.roomID && item.ReplyTo == "" && item.Ask == nil && !item.Handoff
+		defaulted := defaultTo != "" && item.Room == turn.roomID && item.ReplyTo == "" && item.Ask == nil
 		if defaulted {
 			item.ReplyTo = defaultTo
 		}
