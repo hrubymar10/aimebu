@@ -9,8 +9,8 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'sidebar', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT };', context);
-const { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT } = context.api;
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomMentioned, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT };', context);
+const { matchesRoom, treeOf, leafView, activityOrder, roomUnread, roomMentioned, roomType, roomStatus, tracksStatus, AGENT_CHAT_PROJECT } = context.api;
 
 // A general room by default: it counts every unread message, which is what the nesting and folding checks below are about. Task and research rooms
 // (told by their status, counting only what addresses the person) are checked further down.
@@ -126,7 +126,7 @@ tree = treeOf(state([], { offers: [{ id: 'o1', title: 'Alpha chat' }, { id: 'o2'
 same(tree.offers.map(offer => offer.id), ['o1']);
 
 // A leaf row is a view with nothing under it.
-same(leafView(room('l', 'a', { kind: 'dm', unread_count: 3 }), 'other', true), { room: room('l', 'a', { kind: 'dm', unread_count: 3 }), nest: false, chip: true, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: 3 });
+same(leafView(room('l', 'a', { kind: 'dm', unread_count: 3 }), 'other', true), { room: room('l', 'a', { kind: 'dm', unread_count: 3 }), nest: false, chip: true, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: 3, mentioned: false, below: false, mention: false });
 assert.equal(leafView(room('l', 'a', { kind: 'dm', unread_count: 3 }), 'l').unread, 0);
 assert.equal(leafView(room('old', 'a', { kind: 'dm', lifecycle: 'closed', unread_count: 3 }), 'other').unread, 0, 'archived history does not advertise unread activity');
 
@@ -177,4 +177,29 @@ assert.equal(unreadOf({ kind: 'home' }, 'r'), 0, 'the open room is read');
 tree = treeOf(state([room('home', 'a', { kind: 'home', unread_count: 2 }), room('t1', 'a', { parent_id: 'home', purpose: 'task', unread_count: 20, unread_addressed: 1 }),
   room('g', 'a', { parent_id: 'home', unread_count: 3 })], { collapsed: new Set(['home']) }));
 assert.equal(tree.sections[0].unread, 2, 'the folded home shows only its own 2');
+
+// The mention dot: a child room with an unread message that names the person shows one (the child shows no count); a home row and a direct message
+// have their own bubble and no dot; the open room and an archived room are read. A folded row shows the dot when any room under it is mentioned.
+const mentionOf = (extra, active = '') => roomMentioned({ id: 'r', kind: 'task', lifecycle: 'open', unread_count: 9, unread_addressed: 2, ...extra }, active);
+assert.equal(mentionOf({}), true, 'a task room with an addressed message is mentioned');
+assert.equal(mentionOf({ purpose: 'general' }), true, 'so is a general room');
+assert.equal(mentionOf({ unread_addressed: 0, unread_count: 20 }), false, 'chatter alone is no mention');
+assert.equal(mentionOf({ unread_addressed: undefined }), false, 'an older server that sends no addressed count shows none');
+assert.equal(mentionOf({}, 'r'), false, 'the open room is read');
+assert.equal(mentionOf({ lifecycle: 'closed' }), false, 'an archived room shows none');
+assert.equal(mentionOf({ kind: 'home' }), false, 'a home row has its bubble');
+assert.equal(mentionOf({ kind: 'dm' }), false, 'a direct message has its bubble');
+const mention = id => { const walk = (list, found) => list.reduce((hit, view) => hit || (view.room.id === id ? view : walk(view.children, null)), found); return walk(tree.sections, null).mention; };
+const mentionRooms = [home, room('gen', 'a', { parent_id: 'home' }), room('deep', 'a', { parent_id: 'gen', purpose: 'task', unread_addressed: 1 }), room('quiet', 'a', { parent_id: 'home', purpose: 'task', unread_count: 30 })];
+tree = treeOf(state(mentionRooms));
+assert.deepEqual([mention('home'), mention('gen'), mention('deep'), mention('quiet')], [false, false, true, false], 'expanded: only the mentioned room shows the dot');
+tree = treeOf(state(mentionRooms, { collapsed: new Set(['gen']) }));
+assert.deepEqual([mention('home'), mention('gen')], [false, true], 'a folded child shows the dot of the room under it');
+tree = treeOf(state(mentionRooms, { collapsed: new Set(['home']) }));
+assert.deepEqual([mention('home'), mention('gen')], [true, false], 'a folded home shows the dot of any descendant, at any depth');
+assert.equal(tree.sections[0].unread, 0, 'and still adds no count');
+tree = treeOf(state(mentionRooms.map(item => (item.id === 'deep' ? { ...item, unread_addressed: 0 } : item)), { collapsed: new Set(['home']) }));
+assert.equal(mention('home'), false, 'read clears the dot');
+tree = treeOf(state(mentionRooms, { collapsed: new Set(['home']), active: 'deep' }));
+assert.equal(mention('home'), false, 'the open room does not light the folded home');
 console.log('sidebar model: ok');

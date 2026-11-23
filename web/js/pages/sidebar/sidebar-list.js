@@ -114,6 +114,7 @@ function Row({ view, store, ctx, preview, onToggle }) {
     ${status ? html`<span class=${`room-state room-status room-status-${status.key}`} role="img" title=${status.title} aria-label=${`${status.label}: ${status.title}`}>${status.label}</span>` : room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
     ${counted && html`<span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>`}
     ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`}
+    ${view.mention && html`<span class="room-item-mention" role="img" title="You were mentioned" aria-label="You were mentioned"></span>`}
     ${view.unread > 0 && html`<span class="room-item-unread" role="img" title=${`${view.unread} unread ${view.unread === 1 ? 'message' : 'messages'}`} aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
     </div>${preview && html`<div class="room-item-preview">${previewText(room.last_message_body) || (room.user_message_count > 0 ? '📎 Attachment' : room.message_count > 0 ? 'Only system messages' : 'No messages yet')}</div>`}</div>
     ${room.lifecycle === 'closed' && !archivedProject && html`<${GlyphButton} name="reopen" label=${`Reopen ${room.title}`} className="row-btn reopen-room" disabled=${reopening} onClick=${reopen} />`}</div>`;

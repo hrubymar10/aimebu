@@ -82,6 +82,13 @@ export function roomUnread(room, activeID) {
   return Math.max(0, room.unread_count || 0);
 }
 
+// Whether a child room holds a message that names the person or replies to them (`unread_addressed`): its row shows a small mention dot, since a child
+// shows no count. A home row and a direct message have their own bubble and need no dot; the open room and an archived room count as read.
+export function roomMentioned(room, activeID) {
+  if (room.id === activeID || room.lifecycle === 'closed' || room.kind === 'home' || room.kind === 'dm') return false;
+  return (room.unread_addressed || 0) > 0;
+}
+
 // What kind of room a row is, as the server's `kind`, `purpose` and `agent_chat` say, never guessed from who is in it: the glyph (an icon-mask name) and the tooltip.
 export function roomType(room) {
   if (room.kind === 'home') return { key: 'home', icon: 'house', label: 'Project home room' };
@@ -152,7 +159,7 @@ function tailOf(project, all, archiveFilter) {
 }
 
 // The tree of rows the list draws. `state` is { projects: Map, rooms: Map, filter, sort, manual, collapsed: Set, active, archiveFilter: Map, offers }.
-// Every row is a view: { room, nest, chip, controls, children, tail, collapsible, collapsed, unread }.
+// Every row is a view: { room, nest, chip, controls, children, tail, collapsible, collapsed, unread, mention }.
 export function treeOf(state) {
   const { projects, rooms, filter, sort, manual, collapsed, active, archiveFilter, offers } = state;
   // While the lists are still arriving (`pending`: projects with no list yet), a project is drawn as a placeholder in its place, and the projects that
@@ -199,7 +206,10 @@ export function treeOf(state) {
     if (opts.nest && kids) collapsible.add(room.id);
     const folded = kids > 0 && (collapsed.has(room.id) || (provisional && opts.nest && !seen.has(room.id) && !holders.has(room.id)));
     const childViews = children.map(child => view(child, { chip: false, nest: false, deep: true }));
-    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, ...(divider > 0 ? { divider } : {}), tail, collapsible: expands && kids > 0, folded, unread: roomUnread(room, active) };
+    // A folded row stands for the rooms under it, at any depth, for the mention dot only (never for a count): `below` says whether one of them is mentioned.
+    const below = childViews.some(child => child.mentioned || child.below);
+    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, ...(divider > 0 ? { divider } : {}), tail, collapsible: expands && kids > 0, folded, unread: roomUnread(room, active),
+      mentioned: roomMentioned(room, active), below, mention: roomMentioned(room, active) || (folded && below) };
   };
   const place = (room, nest, extra) => {
     const tail = room.kind === 'home' && tails.get(room.project_id)?.length && !tailed.has(room.project_id) ? tails.get(room.project_id) : null;
@@ -231,5 +241,5 @@ export function treeOf(state) {
 
 // A row with nothing under it (the rooms of a tail, an archived project's rooms, a direct message).
 export function leafView(room, active, chip = false) {
-  return { room, nest: false, chip, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: roomUnread(room, active) };
+  return { room, nest: false, chip, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: roomUnread(room, active), mentioned: roomMentioned(room, active), below: false, mention: roomMentioned(room, active) };
 }

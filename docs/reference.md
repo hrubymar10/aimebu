@@ -814,7 +814,7 @@ count, and each counts only its own unread messages: the home row's count is the
 nested under a home row (general, routing, advice, task and research rooms, at any depth) shows no unread count at all. A task or research room shows in
 its place a small status: Working (an agent has a running turn), Waiting (an open Inbox item needs an answer), Idle, Done (a research room that has been
 written in and is quiet) or Closing…; its member count is in the row's tooltip instead of a grey number. General, coordination, home and direct-message
-rooms keep the member count. A child room keeps its 🔔 for the open Inbox items that wait on the person.
+rooms keep the member count. A child room keeps its 🔔 for the open Inbox items that wait on the person, and shows a small mention dot, in the theme's accent colour (tooltip and label "You were mentioned"), while it holds an unread message that names the person or replies to them (`unread_addressed`); reading the room clears the dot. A folded row, at any depth, shows the dot when any room under it does, and still no count. High-contrast themes use their own accent for the dot.
 The warning and bell badges stay on every row. A turn starting or ending redraws the status.
 Unread counts come from per-user read cursors; the 🔔 counts open Inbox items
 this person has not seen. Both states live on the server and follow you across
@@ -844,7 +844,7 @@ always comes last. The box on top only filters the list as you type (Enter does 
 are created with a row's `+` or a project's ☰ menu. A project's tree ends with an
 `Archived (N)` row that lists its archived rooms inline. A chevron on a root room hides or shows
 its children (and that Archived row). A project starts collapsed the first time this browser sees it; after that the choice is remembered in this browser (a project you opened stays open), and a collapsed
-root shows no more than an expanded one: its own unread count, never its children's. The collapse button in the ROOMS header folds every project at once
+root shows no more than an expanded one: its own unread count, never its children's, plus the mention dot of any room under it. The collapse button in the ROOMS header folds every project at once
 (or opens them all again once everything is folded). A `Hidden (N)` row closes the tree the same way and can show a room again.
 The home row's attention bell counts the rooms represented in its tree; an
 archived room with an actionable Inbox item also has its own bell, while a

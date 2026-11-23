@@ -527,6 +527,46 @@ async function main() {
     assert.equal(await page.$eval('[data-room-id=rm_ah] > .room-item .room-item-unread', node => node.title), '21 unread messages', 'the home unread chip says what it counts');
     await page.close();
   }
+  // A child room with an unread message that names the person shows a mention dot (it shows no count); a folded row shows the dot of any room under
+  // it; reading the room clears it; the dot is drawn in the theme accent against the row in every theme.
+  {
+    const list = rooms().prj_a.map(item => (item.id === 'rm_api' ? { ...item, purpose: 'task', unread_addressed: 2, unread_count: 9 } : item.id === 'rm_gen' ? { ...item, unread_addressed: 0, unread_count: 30 } : item))
+      .concat(room('rm_dd', 'prj_a', 'deep-task', { parent_id: 'rm_gen', purpose: 'task', unread_addressed: 1 }));
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': list }) });
+    const dots = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('[data-room-id]')].map(group => { const dot = group.querySelector(':scope > .room-item .room-item-mention'); return [group.dataset.roomId, dot ? [dot.title, dot.getAttribute('aria-label'), dot.getAttribute('role')].join('|') : '']; })));
+    const said = 'You were mentioned|You were mentioned|img';
+    const foldedDots = await dots();
+    assert.equal(foldedDots.rm_ah, said, 'a folded project row shows the dot when a room under it is mentioned');
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click());
+    const open = await dots();
+    assert.deepEqual([open.rm_ah, open.rm_api, open.rm_gen, open.rm_dd, open.rm_notes, open.rm_dm], ['', said, '', said, '', ''], 'an open project shows the dot only on the mentioned children; chatter alone shows none');
+    await page.$eval('[data-room-id=rm_gen] > .room-item > .room-collapse', node => node.click());
+    assert.equal((await dots()).rm_gen, said, 'a folded child shows the dot of the room under it');
+    await page.$eval('[data-room-id=rm_gen] > .room-item > .room-collapse', node => node.click());
+    const contrast = theme => page.evaluate(theme => {
+      document.documentElement.dataset.theme = theme;
+      const channels = text => text.match(/[\d.]+/g).slice(0, 3).map(Number), lum = text => { const [r, g, b] = channels(text).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const dot = document.querySelector('[data-room-id=rm_api] .room-item-mention'), row = getComputedStyle(document.querySelector('[data-room-id=rm_api] > .room-item')), accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+      const back = getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim();
+      const probe = text => { const node = document.createElement('i'); node.style.color = text; document.body.append(node); const value = getComputedStyle(node).color; node.remove(); return value; };
+      const style = getComputedStyle(dot), a = lum(style.backgroundColor), b = lum(probe(back)), ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      return { same: style.backgroundColor === probe(accent), ratio, size: [style.width, style.height], shown: dot.getClientRects().length > 0 };
+    }, theme);
+    for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
+      const got = await contrast(theme);
+      assert.deepEqual([got.same, got.shown, got.size], [true, true, ['9px', '9px']], `${theme}: the dot is drawn in the theme accent colour`);
+      assert.ok(got.ratio >= 3, `${theme}: the dot reaches 3:1 against the page colour (${got.ratio.toFixed(2)})`);
+    }
+    await page.evaluate(() => { window.__shown = { rm_api: 40 }; window.__sidebar.setActive('rm_api'); window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); });
+    const read = await waitRequest(page, 'POST', '/api/rooms/rm_api/read');
+    await answer(page, read, 200, { unread_count: 0, unread_addressed: 0, read_cursor: 40, attention_count: 0 }); await settle(page);
+    await page.evaluate(() => window.__sidebar.setActive('rm_gen'));
+    await settle(page);
+    assert.equal((await dots()).rm_api, '', 'reading the room clears its dot, also once another room is open');
+    assert.equal((await dots()).rm_dd, said, 'and leaves the dot of another room');
+    await page.close();
+  }
+
   // A project starts folded; the chevron opens it and the browser remembers that, collapse all and expand all work
   // on every root and say what the next click does, and a root the person opened is not folded again on the next load.
   {
