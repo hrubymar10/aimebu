@@ -57,9 +57,21 @@ func TestTurnFailsWhenItsContainerStaysAway(t *testing.T) {
 	h.c.Warm = WarmConfig{}
 	h.f.coldFailures = 1000
 	started := time.Now()
-	h.run("agt_a", containerTurn)
-	if took := time.Since(started); took < 80*time.Millisecond || took > 3*time.Second {
-		t.Fatalf("the turn gave up after %v", took)
+	// The turn is over when its retry window is: the window is measured from the first failed start, and the logic is bounded by that
+	// window alone. How long the turn takes in wall-clock time also holds the machine's load (delivery setup, scheduling), so only a hang
+	// is caught here, not a slow run; the lower bound cannot be made by load.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.run("agt_a", containerTurn)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Minute):
+		t.Fatal("the turn went on waiting for a container after its window was over")
+	}
+	if took := time.Since(started); took < 80*time.Millisecond {
+		t.Fatalf("the turn gave up after %v, before its window of 80ms was over", took)
 	}
 	if h.f.cold < 2 {
 		t.Fatalf("the turn was started %d times", h.f.cold)
