@@ -108,12 +108,14 @@ func (f *warmFake) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tu
 		f.coldFailures--
 		fail = true
 	}
-	f.mu.Unlock()
+	// lastHold is published in the same critical section as the cold count: a test that sees the count reach its value must find the hold too.
+	var hold *holdTurn
 	if block != nil {
-		hold := newHoldTurn(block)
-		f.mu.Lock()
+		hold = newHoldTurn(block)
 		f.lastHold = hold
-		f.mu.Unlock()
+	}
+	f.mu.Unlock()
+	if hold != nil {
 		return hold, nil
 	}
 	if spec.KeepAlive && f.compactedPing {
