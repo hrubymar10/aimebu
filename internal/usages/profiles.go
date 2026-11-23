@@ -340,6 +340,7 @@ func (r *Reader) refreshStoredProfile(ctx context.Context, i int, key string, sp
 		r.mu.RUnlock()
 		retryAt := r.now().Add(backoffDelay(failures))
 		profile.Status = "backing_off"
+		profile.RetryAt = &retryAt
 		profile.Error = "Usage endpoint failed; retrying after " + retryAt.UTC().Format("15:04") + " UTC (" + profile.Error + ")"
 	}
 	if fetchErr != nil {

@@ -5,7 +5,7 @@ import { creditsText, percent, windowLabel, paceExplanation, sparkGeometry, dail
 import { mergeAlerts, staleAge } from '../../usage-alerts.js';
 import { expiryBadge } from '../../usage-expiry.js';
 import { maskEmail, maskName, maskNames, usagePrivacy, toggleUsagePrivacy } from '../../usage-privacy.js';
-import { toolOf, isSwitchable, sortProviders, providerConfigured, canEnable, movedOrder, profileKey, profileStatusLine, switchView, affectedText } from './model.js';
+import { toolOf, isSwitchable, sortProviders, providerConfigured, canEnable, movedOrder, profileKey, profileStatusLine, staleReason, switchView, affectedText } from './model.js';
 import { CopilotSetup, MistralSetup, OllamaSetup } from './provider-setup.js';
 import { profileActions } from './profile-actions.js';
 
@@ -65,6 +65,7 @@ function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, 
   const stale = staleAge(profile.last_refresh_at, refreshSec);
   const status = profileStatusLine(profile, time), credits = profile.credits ? creditsText(profile.credits) : '';
   const { use, installAnyway, rename, remove } = profileActions({ store, tool, profile, affected });
+  const reason = stale ? staleReason(profile, time) : '';
   const badge = expiryBadge(token);
   const managed = manage && switchable && state.enabled && state.owner && configured;
   const windows = profile.windows || [];
@@ -83,7 +84,7 @@ function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, 
       : profile.has_credentials === false ? html`<div class="usages-empty usages-empty-compact">Needs login</div>` : html`<div class="usages-empty usages-empty-compact">No usage data yet.</div>`}
     ${credits && html`<div class="usages-credits-row"><span>${credits}</span></div>`}
     ${status && html`<div class="usages-error-line usages-b-status">${status}</div>`}
-    ${stale && html`<div class="usages-stale-line">Stale, last update ${stale} ago${state.owner && !readOnly && html` <${IconButton} name="refresh" label="Refresh now" className="usages-b-refresh" onClick=${() => store.mutateUsage(() => store.source.refresh(provider.provider_name))} />`}</div>`}
+    ${stale && html`<div class="usages-stale-line" title=${profile.error || ''}>Stale, last update ${stale} ago${reason && ` · ${reason}`}${state.owner && !readOnly && html` <${IconButton} name="refresh" label="Refresh now" className="usages-b-refresh" onClick=${() => store.mutateUsage(() => store.source.refresh(provider.provider_name))} />`}</div>`}
   </div>`;
 }
 

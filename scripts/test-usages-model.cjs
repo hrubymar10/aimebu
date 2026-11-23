@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'usages', 'model.js'), 'utf8');
 const context = vm.createContext({});
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { toolOf, isSwitchable, sortProviders, providerStatus, profileKey, affectedText, impactText, canEnable, providerConfigured, movedOrder, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenStatesPending, tokenStateLine, alertKind, ollamaBody, flowText, pollDelay, flowExpired, profileStatusLine, switchView };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { toolOf, isSwitchable, sortProviders, providerStatus, profileKey, affectedText, impactText, canEnable, providerConfigured, movedOrder, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenStatesPending, tokenStateLine, alertKind, ollamaBody, flowText, pollDelay, flowExpired, profileStatusLine, staleReason, switchView };', context);
 const plain = value => JSON.parse(JSON.stringify(value));
 // What the vm returns carries its own Object and Array, which deepStrictEqual tells apart: results are copied into this realm.
 const m = Object.fromEntries(Object.entries(context.api).map(([name, value]) => [name, typeof value === 'function' ? (...args) => plain(value(...args)) : plain(value)]));
@@ -58,6 +58,11 @@ assert.equal(m.profileStatusLine({ status: 'token_expired', last_refresh_at: '20
 assert.equal(m.profileStatusLine({ stale: true, status: 'ok' }, clock), 'Stale snapshot');
 assert.equal(m.profileStatusLine({ status: 'not_configured' }, clock), 'not configured');
 assert.equal(m.profileStatusLine({}, clock), 'No snapshot');
+assert.equal(m.staleReason({ status: 'backing_off', retry_at: '2026-01-01T10:07:00Z' }, clock), 'Rate limited by the provider, retrying at T7');
+assert.equal(m.staleReason({ status: 'backing_off' }, clock), 'Rate limited by the provider', 'no retry time, none claimed');
+assert.equal(m.staleReason({ status: 'fetch_error', error: 'Claude usage endpoint returned HTTP 429.' }, clock), 'Rate limited by the provider');
+assert.equal(m.staleReason({ status: 'fetch_error', error: 'timeout' }, clock), 'Last fetch failed');
+assert.equal(m.staleReason({ status: 'token_expired' }, clock), '');
 const base = { switchable: true, enabled: true, owner: true, configured: true, profile: { active: false }, hasActive: true, eligible: { eligible: true } };
 assert.deepEqual(plain(m.switchView(base)), { hidden: false, disabled: false, title: '' });
 assert.equal(m.switchView({ ...base, profile: { active: true } }).hidden, true, 'the active profile has no Switch');

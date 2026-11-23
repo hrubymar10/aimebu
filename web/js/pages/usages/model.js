@@ -50,6 +50,16 @@ export const flowText = flow => `Code: ${flow.user_code} · ${flow.status || 'Wa
 export const pollDelay = (result, flow) => Math.max(1, result.retry_after || result.interval || flow.interval || 5);
 export const flowExpired = (flow, now = Date.now()) => now >= new Date(flow.expires_at).getTime();
 
+// Why a profile is not refreshing, and when it tries again when that is known. An admin's response has the status and retry_at but no error text.
+export function staleReason(profile, time) {
+  if (profile.status === 'token_expired') return '';
+  if (profile.status === 'backing_off' || /\b429\b/.test(profile.error || '')) {
+    const at = profile.retry_at ? new Date(profile.retry_at) : null;
+    return `Rate limited by the provider${at && !Number.isNaN(at.getTime()) ? `, retrying at ${time(at)}` : ''}`;
+  }
+  return profile.status === 'fetch_error' ? 'Last fetch failed' : '';
+}
+
 export function profileStatusLine(profile, time) {
   const refreshed = profile.last_refresh_at ? `Updated ${time(new Date(profile.last_refresh_at))}` : '';
   const detail = profile.status === 'token_expired' ? 'Stale – token expired' : profile.stale ? 'Stale snapshot' : profile.status === 'ok' ? '' : (profile.status || 'No snapshot').replaceAll('_', ' ');

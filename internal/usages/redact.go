@@ -15,7 +15,7 @@ func (r Response) ForAdmin() Response {
 			Profiles: make([]Profile, 0, len(provider.Profiles))}
 		for _, profile := range provider.Profiles {
 			shown.Profiles = append(shown.Profiles, Profile{ProfileName: profile.ProfileName, Active: profile.Active, HasCredentials: profile.HasCredentials, Status: profile.Status, Plan: profile.Plan,
-				Windows: profile.Windows, Credits: profile.Credits, LastRefreshAt: profile.LastRefreshAt, Stale: profile.Stale})
+				Windows: profile.Windows, Credits: profile.Credits, LastRefreshAt: profile.LastRefreshAt, Stale: profile.Stale, RetryAt: profile.RetryAt})
 		}
 		out.Providers = append(out.Providers, shown)
 	}
