@@ -42,6 +42,7 @@ export async function request(path, options = {}) {
     error.code = problem.error;
     error.detectDir = problem.detect_dir;
     error.retryAfter = problem.retry_after_sec;
+    error.retryAfterHeader = response.headers.get('Retry-After') || ''; // a 429's wait as the header gives it (agent output sends only the header)
     error.body = problem; // the fields an answer carries beyond its message (a refused provider's id and model count)
     throw lost(error, sentWith);
   }

@@ -822,9 +822,9 @@ body:has(.import-v1-dialog[open]) #app-view { visibility: hidden; }
 
 /* Touch dialogs: every control is a 40px target. Checkboxes and radios are sized through their label row. */
 @media (hover: none) and (pointer: coarse) {
-  :is(#project-dialog, #spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, .invite-dialog, .import-v1-dialog) :is(button, select, textarea, input:not([type=checkbox], [type=radio], [type=file], [type=range], [type=hidden])) { min-height: 40px; }
-  :is(#project-dialog, #spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, .invite-dialog, .import-v1-dialog) button { min-width: 40px; }
-  :is(#project-dialog, #spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, .invite-dialog, .import-v1-dialog) label:has(> input:is([type=checkbox], [type=radio])) { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+  :is(#project-dialog, #spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, #agent-log-dialog, .invite-dialog, .import-v1-dialog) :is(button, select, textarea, input:not([type=checkbox], [type=radio], [type=file], [type=range], [type=hidden])) { min-height: 40px; }
+  :is(#project-dialog, #spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, #agent-log-dialog, .invite-dialog, .import-v1-dialog) button { min-width: 40px; }
+  :is(#project-dialog, #spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, #agent-log-dialog, .invite-dialog, .import-v1-dialog) label:has(> input:is([type=checkbox], [type=radio])) { display: flex; align-items: center; gap: 8px; min-height: 40px; }
 }
 
 /* Touch: the thread panel's close button and both composers' buttons (the room's and the panel's are the same .send-form) are 40px targets. */
@@ -1383,6 +1383,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-check { -webkit-mask-image: url("/icons/check.svg"); mask-image: url("/icons/check.svg"); }
 .icon-mask-reopen { -webkit-mask-image: url("/icons/reopen.svg"); mask-image: url("/icons/reopen.svg"); }
 .icon-mask-list-checks { -webkit-mask-image: url("/icons/list-checks.svg"); mask-image: url("/icons/list-checks.svg"); }
+.icon-mask-scroll-text { -webkit-mask-image: url("/icons/scroll-text.svg"); mask-image: url("/icons/scroll-text.svg"); }
 .icon-mask-hash { -webkit-mask-image: url("/icons/hash.svg"); mask-image: url("/icons/hash.svg"); }
 .icon-mask-route { -webkit-mask-image: url("/icons/route.svg"); mask-image: url("/icons/route.svg"); }
 .icon-mask-minimize { -webkit-mask-image: url("/icons/minimize.svg"); mask-image: url("/icons/minimize.svg"); }
@@ -1773,6 +1774,35 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .profile-output-text { margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 11px/1.4 var(--font-mono); background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
 .profile-output-status { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .profile-output-status:empty { display: none; }
+/* The agent log popup: a wide dialog whose text scrolls under a header of controls; full screen on a phone, with the controls on two rows. */
+#agent-log-dialog { width: min(960px, calc(100vw - 32px)); height: min(80dvh, 760px); max-width: none; padding: 0; display: none; flex-direction: column; overflow: hidden; }
+#agent-log-dialog[open] { display: flex; }
+#agent-log-dialog:focus { outline: none; }
+.agent-log-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+#agent-log-dialog .agent-log-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.agent-log-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.agent-log-lines, .agent-log-follow { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.agent-log-lines input { width: 72px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font: inherit; }
+.agent-log-find { display: inline-flex; align-items: center; gap: 6px; }
+.agent-log-query { width: 160px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font: inherit; font-size: 12px; }
+.agent-log-count { min-width: 6ch; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.agent-log-tools { display: inline-flex; gap: 4px; }
+.agent-log-note { margin: 6px 14px 0; font-size: 11px; color: var(--text-muted); }
+.agent-log-summary:empty { display: none; }
+.agent-log-text { flex: 1 1 auto; min-height: 0; margin: 8px 14px 0; padding: 8px 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12px/1.45 var(--font-mono); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; }
+.agent-log-mark { background: rgba(250, 204, 21, .35); color: inherit; border-radius: 2px; }
+.agent-log-mark.current { outline: 2px solid var(--accent); }
+.agent-log-status { margin: 6px 14px 10px; min-height: 1.2em; font-size: 11px; color: var(--text-muted); }
+@media (max-width: 599px) {
+  #agent-log-dialog { width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; border: 0; }
+  .agent-log-head { padding: 8px 10px; }
+  .agent-log-controls { width: 100%; }
+  .agent-log-find { flex: 1 1 100%; order: 2; }
+  .agent-log-query { flex: 1 1 auto; width: auto; min-width: 0; }
+  .agent-log-tools { margin-left: auto; }
+  .agent-log-text { margin: 6px 8px 0; }
+  .agent-log-note, .agent-log-status { margin-left: 10px; margin-right: 10px; }
+}
 /* Settings → Harnesses & models: the default-model radio is a 16px control, not the full-width field the generic settings rule makes of an input. */
 :is(#settings-dialog, #onboarding-harnesses) .settings-section .harness-model-default input[type="radio"] { flex: none; box-sizing: content-box; width: 16px; min-width: 0; height: 16px; min-height: 0; margin: 0; padding: 0; }
 :is(#settings-dialog, #onboarding-harnesses) .settings-section .harness-role-head-line select { width: auto; min-width: 110px; }

@@ -1,4 +1,5 @@
-import { request } from './api.js';
+import { request, currentUser } from './api.js';
+import { OutputShare } from './agent-output-share.js';
 import { uuid } from './uuid.js';
 
 export class MockAgentSource {
@@ -13,6 +14,7 @@ export class MockAgentSource {
     return [...this.agents.values()].filter(agent => agent.room_id === roomID).map(agent => ({ ...agent }));
   }
   async output() { throw Object.assign(new Error('no output has been captured for this agent'), { status: 404, code: 'no_output' }); }
+  readOutput(roomID, agentID, lines) { return this.output(roomID, agentID, lines); }
   async catalog() { return { tools: [
     { tool: 'fake', variant: 'test', label: 'Fake', cli_version: 'fixture-1', models: [{ id: 'test', label: 'Test' }, { id: 'fake-reviewer', label: 'Fake reviewer' }], available: true },
     { tool: 'claude', variant: 'native', label: 'Claude Code', cli_version: '', models: [{ id: 'haiku', label: 'Haiku' }], available: false, unavailable_reason: 'not offered by a connected machine' },
@@ -79,7 +81,11 @@ export class MockAgentSource {
 }
 
 export class HttpAgentSource {
-  constructor() { this.available = true; this.agents = new Map(); this.activity = new Map(); this.listeners = new Set(); }
+  constructor() {
+    this.available = true; this.agents = new Map(); this.activity = new Map(); this.listeners = new Set();
+    let channel = null; try { channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('aimebu-agent-output') : null; } catch { channel = null; }
+    this.outputShare = new OutputShare({ fetch: (roomID, agentID, lines) => this.output(roomID, agentID, lines), channel, user: () => currentUser || '' });
+  }
   normalize(agent) { const activity = this.activity.get(agent.id); return { ...agent, name: agent.slug, role: agent.role_key, activity: activity?.summary || '', activity_at: activity?.at || agent.last_activity_at || '' }; }
   catalog(machineID) { return request('/api/spawn-catalog' + (machineID ? `?machine_id=${encodeURIComponent(machineID)}` : '')); }
   roles() { return request('/api/roles'); }
@@ -91,6 +97,8 @@ export class HttpAgentSource {
   async output(roomID, agentID, lines = 200) {
     return request(`/api/rooms/${encodeURIComponent(roomID)}/agents/${encodeURIComponent(agentID)}/output?lines=${encodeURIComponent(lines)}`);
   }
+  // The same read, shared with a read already out in this tab or another (agent-output-share.js); `fresh` lets a follow read take an answer that recent.
+  readOutput(roomID, agentID, lines, options) { return this.outputShare.read(roomID, agentID, lines, options); }
   async list(roomID) {
     try {
       const cards = await request(`/api/rooms/${roomID}/agents`);

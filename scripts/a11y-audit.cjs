@@ -18,6 +18,7 @@ const SURFACES = [
   { name: 'knowledge dialog', root: '#knowledge-dialog', dialog: true },
   { name: 'spawn dialog', root: '#spawn-dialog', dialog: true },
   { name: 'switch dialog', root: '#switch-dialog', dialog: true },
+  { name: 'agent log dialog', root: '#agent-log-dialog', dialog: true },
   { name: 'machine pair dialog', root: '#machine-pair-dialog', dialog: true },
   { name: 'project dialog', root: '#project-dialog', dialog: true },
   { name: 'import wizard (blocked)', root: '#import-v1-blocked', dialog: true },

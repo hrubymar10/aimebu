@@ -160,7 +160,7 @@ function surfaceAudit(MIN) {
   // Health popover
   const health = document.querySelector('#health-popover'); health.hidden = false; fits(health, 'health popover'); small(health, 'health popover'); health.hidden = true;
   // Dialogs
-  for (const id of ['project-dialog', 'spawn-dialog', 'switch-dialog', 'machine-pair-dialog', 'room-export-dialog', 'room-info-dialog', 'knowledge-dialog', 'import-v1-blocked']) {
+  for (const id of ['project-dialog', 'spawn-dialog', 'switch-dialog', 'agent-log-dialog', 'machine-pair-dialog', 'room-export-dialog', 'room-info-dialog', 'knowledge-dialog', 'import-v1-blocked']) {
     const dialog = document.querySelector('#' + id); dialog.showModal();
     fits(dialog, id); small(dialog, id);
     dialog.close();

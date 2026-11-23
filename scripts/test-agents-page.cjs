@@ -33,12 +33,12 @@ function installFetch(auto) {
   window.__requests = []; window.__auto = auto;
   window.fetch = (input, options = {}) => new Promise(resolve => {
     const request = { path: String(input), method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : undefined, answered: false };
-    request.answer = (status, body) => { request.answered = true; resolve(new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })); };
+    request.answer = (status, body, headers = {}) => { request.answered = true; resolve(new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })); };
     window.__requests.push(request);
     const rule = window.__auto[`${request.method} ${request.path}`];
     if (rule) request.answer(rule.status || 200, rule.status ? rule.body : rule);
   });
-  window.__answer = (index, status, body) => window.__requests[index].answer(status, body);
+  window.__answer = (index, status, body, headers) => window.__requests[index].answer(status, body, headers);
 }
 
 async function main() {
@@ -69,7 +69,7 @@ async function main() {
     await page.waitForFunction((method, requestPath) => window.__requests.some(request => !request.answered && request.method === method && request.path === requestPath), {}, method, requestPath);
     return page.evaluate((method, requestPath) => window.__requests.findIndex(request => !request.answered && request.method === method && request.path === requestPath), method, requestPath);
   };
-  const answer = (page, index, status, body) => page.evaluate((index, status, body) => window.__answer(index, status, body), index, status, body);
+  const answer = (page, index, status, body, headers) => page.evaluate((index, status, body, headers) => window.__answer(index, status, body, headers), index, status, body, headers);
   const count = (page, method, requestPath) => page.evaluate((method, requestPath) => window.__requests.filter(request => request.method === method && request.path === requestPath).length, method, requestPath);
   const settle = page => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
   const cards = page => page.$$eval('#agents-list .agent-card', nodes => nodes.map(node => [node.dataset.agentId, node.querySelector('.agent-name').textContent, node.querySelector('.agent-state-label').textContent]));
@@ -567,6 +567,109 @@ async function main() {
     await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
     await answer(page, stale, 200, { text: 'old read', truncated: false }); await settle(page);
     assert.deepEqual([(await output()).open, (await output()).text], [false, ''], 'a new section starts closed and empty');
+    await page.close();
+  }
+
+  // Show agent's logs: an icon button on an open profile, for the project's owner or an admin only. It opens a popup over the same output: the last
+  // 200 lines with ANSI codes taken out, a lines field that reads again, a highlight that marks literal text (never HTML, never a pattern) and steps
+  // through it with Enter and Shift+Enter, Follow that reads on the agent's events at most every 4 s and backs off on a 429, and Escape that closes
+  // it and gives the focus back to the button.
+  {
+    const viewer = await mount({ owner: false, role: 'viewer' });
+    await show(viewer, 'r1', [agent('a1', 'ada')]);
+    await viewer.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    assert.equal(await viewer.$('[data-agent-id=a1] .agent-logs'), null, 'a viewer has no logs button');
+    await viewer.close();
+    const page = await mount({ owner: false, role: 'owner' });
+    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn' }), agent('a2', 'bert')]);
+    assert.equal(await page.$('[data-agent-id=a1] .agent-logs'), null, 'a closed card has no logs button');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    const button = await page.$eval('[data-agent-id=a1] .agent-logs', node => ({ label: node.getAttribute('aria-label'), title: node.title, text: node.textContent.trim(), icon: !!node.querySelector('.icon-mask-scroll-text'), mask: getComputedStyle(node.querySelector('.icon-mask')).maskImage || getComputedStyle(node.querySelector('.icon-mask')).webkitMaskImage }));
+    assert.deepEqual([button.label, button.title, button.text, button.icon], ["Show agent's logs", "Show agent's logs", '', true], 'an icon button with a tooltip, no text');
+    assert.match(button.mask, /scroll-text\.svg/);
+    await page.$eval('[data-agent-id=a1] .agent-logs', node => { node.focus(); node.click(); });
+    const first = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200');
+    const dialog = () => page.$eval('#agent-log-dialog', node => ({ open: node.open, title: node.querySelector('h2')?.textContent, text: node.querySelector('.agent-log-text')?.textContent, marks: [...node.querySelectorAll('mark')].map(mark => mark.textContent),
+      current: node.querySelector('mark.current')?.textContent || '', count: node.querySelector('.agent-log-count')?.textContent, status: node.querySelector('.agent-log-status')?.textContent, focus: node.contains(document.activeElement), lines: node.querySelector('.agent-log-lines input')?.value,
+      inputmode: node.querySelector('.agent-log-lines input')?.getAttribute('inputmode'), html: node.querySelector('.agent-log-text')?.innerHTML }));
+    assert.deepEqual([(await dialog()).open, (await dialog()).title, (await dialog()).focus, (await dialog()).lines, (await dialog()).inputmode], [true, 'Logs · ada', true, '200', 'numeric']);
+    await answer(page, first, 200, { text: '\u001b[31mError\u001b[0m: <b>bold</b> one\nok\nERROR again\n', truncated: false }); await settle(page);
+    assert.equal((await dialog()).text, 'Error: <b>bold</b> one\nok\nERROR again\n', 'ANSI codes are stripped and markup is text');
+    assert.equal(await page.$('#agent-log-dialog .agent-log-text b'), null, 'no element comes from the log');
+    // Highlight: literal and case-insensitive; a pattern's characters are text.
+    await page.type('#agent-log-dialog .agent-log-query', 'error'); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));
+    assert.deepEqual([(await dialog()).marks, (await dialog()).count], [['Error', 'ERROR'], '2 matches']);
+    await page.keyboard.press('Enter'); await settle(page);
+    assert.deepEqual([(await dialog()).current, (await dialog()).count], ['Error', '1 of 2']);
+    await page.keyboard.press('Enter'); await settle(page); assert.equal((await dialog()).current, 'ERROR');
+    await page.keyboard.down('Shift'); await page.keyboard.press('Enter'); await page.keyboard.up('Shift'); await settle(page); assert.equal((await dialog()).current, 'Error', 'Shift+Enter goes back');
+    await page.$eval('#agent-log-dialog .agent-log-query', node => { node.select(); });
+    await page.type('#agent-log-dialog .agent-log-query', '<b>'); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));
+    assert.deepEqual([(await dialog()).marks, (await dialog()).count], [['<b>'], '1 match']);
+    assert.match((await dialog()).html, /<mark class="agent-log-mark">&lt;b&gt;<\/mark>/, 'the match is a <mark> around text');
+    await page.$eval('#agent-log-dialog .agent-log-query', node => { node.select(); });
+    await page.type('#agent-log-dialog .agent-log-query', '.*'); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));
+    assert.deepEqual([(await dialog()).marks, (await dialog()).count], [[], 'No matches'], 'a pattern is not a pattern');
+    // Lines: a new number reads again; out-of-range numbers are brought into 50..2000.
+    await page.$eval('#agent-log-dialog .agent-log-lines input', node => { node.value = '5000'; node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true })); });
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=2000'), 200, { text: 'many\n', truncated: true }); await settle(page);
+    assert.deepEqual([(await dialog()).lines, (await dialog()).text, (await dialog()).status], ['2000', 'many\n', 'Earlier output is not shown.']);
+    // Follow: an event of this agent reads again, 4 s after the last read at the earliest; another agent's event does not.
+    const reads = () => count(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=2000');
+    await page.$eval('#agent-log-dialog .agent-log-follow input', node => node.click());
+    await page.evaluate(() => { window.__panel.logs.lastReadAt = 0; window.__panel.logs.timers.clearTimeout(window.__panel.logs.timer); window.__panel.logs.timer = 0; });
+    const before = await reads();
+    await page.evaluate(() => { void window.__panel.source.changed({ kind: 'supervisor_activity', agent_id: 'a2', room_id: 'r1', payload_json: '{}' }); });
+    await page.evaluate(() => { void window.__panel.source.changed({ kind: 'supervisor_activity', agent_id: 'a1', room_id: 'r1', payload_json: '{}' }); });
+    await page.waitForFunction(() => window.__requests.some(request => !request.answered && request.path === '/api/rooms/r1/agents/a1/output?lines=2000'));
+    assert.equal(await reads(), before + 1, 'one read for the agent\'s event');
+    const lines = Array.from({ length: 300 }, (_, index) => `line ${index}`).join('\n');
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=2000'), 200, { text: lines, truncated: false }); await settle(page);
+    assert.equal(await page.$eval('#agent-log-dialog .agent-log-text', node => node.scrollHeight - node.scrollTop - node.clientHeight <= 8), true, 'Follow sticks to the end');
+    // Scrolling up pauses the stick: the next read leaves the view where it is.
+    await page.$eval('#agent-log-dialog .agent-log-text', node => { node.scrollTop = 0; node.dispatchEvent(new Event('scroll')); }); await settle(page);
+    assert.match((await dialog()).status, /Scrolled up/);
+    // A 429 keeps the text and waits for Retry-After before the next read.
+    await page.evaluate(() => { window.__panel.logs.lastReadAt = 0; });
+    await page.evaluate(() => { void window.__panel.source.changed({ kind: 'turn_finished', agent_id: 'a1', room_id: 'r1', payload_json: '{}' }); });
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=2000'), 429, { error: 'rate_limited', message: 'agent output was read too often' }, { 'Retry-After': '60' }); await settle(page);
+    assert.equal(await page.$eval('#agent-log-dialog .agent-log-text', node => node.scrollTop), 0, 'the view stayed where the person left it');
+    assert.match((await dialog()).status, /Logs were read too often; trying again in (59|60)s\./);
+    assert.ok((await dialog()).text.startsWith('line 0'), 'the text stays on a 429');
+    const blocked = await reads();
+    await page.evaluate(() => { void window.__panel.source.changed({ kind: 'turn_finished', agent_id: 'a1', room_id: 'r1', payload_json: '{}' }); }); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
+    assert.equal(await reads(), blocked, 'no read while the 429 waits');
+    assert.ok(await page.evaluate(() => window.__panel.logs.blockedUntil - Date.now() > 55000), 'the wait is the Retry-After');
+    // Escape closes the popup, stops Follow and gives the focus back to the button; the profile stays open.
+    await page.focus('#agent-log-dialog .agent-log-query');
+    await page.keyboard.press('Escape'); await settle(page);
+    assert.deepEqual([(await dialog()).open, await page.evaluate(() => document.activeElement?.classList.contains('agent-logs')), await page.evaluate(() => window.__panel.logs.state.value), await page.evaluate(() => window.__panel.store.profileId.value)], [false, true, null, 'a1']);
+    // Opened again while the 429's wait runs, it says so and reads once the wait is over.
+    await page.$eval('[data-agent-id=a1] .agent-logs', node => node.click()); await settle(page);
+    assert.deepEqual([(await dialog()).open, await count(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200')], [true, 1]);
+    assert.match((await dialog()).status, /trying again in \d+s/);
+    await page.evaluate(() => { const logs = window.__panel.logs; logs.blockedUntil = Date.now() + 200; logs.timers.clearTimeout(logs.timer); logs.timer = 0; void logs.read(); });
+    // A refusal is shown in the popup in the server's words, or as the owner-or-admin rule for a 403.
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200'), 403, { error: 'forbidden', message: 'forbidden' }); await settle(page);
+    assert.deepEqual([(await dialog()).open, (await dialog()).text, (await dialog()).status], [true, '', "Only the project owner or an admin can read an agent's logs."]);
+    // Moving to another room closes the popup.
+    await page.evaluate(room => { window.__panel.setRoomFacts(room); }, room('r2')); await settle(page);
+    assert.equal((await dialog()).open, false);
+    await page.close();
+  }
+
+  // Phone: the popup is the whole screen and its controls wrap.
+  {
+    const page = await mount({ owner: true });
+    await page.setViewport({ width: 390, height: 780 });
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    await page.$eval('[data-agent-id=a1] .agent-logs', node => node.click());
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200'), 200, { text: 'x\n', truncated: false }); await settle(page);
+    const box = await page.$eval('#agent-log-dialog', node => { const rect = node.getBoundingClientRect(), head = node.querySelector('.agent-log-head'); const tops = new Set([...head.querySelectorAll('input, button')].map(item => Math.round(item.getBoundingClientRect().top)));
+      return { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height), rows: tops.size, sideways: node.scrollWidth > node.clientWidth + 1 }; });
+    assert.deepEqual([box.left, box.top, box.width, box.height, box.sideways], [0, 0, 390, 780, false], `full screen: ${JSON.stringify(box)}`);
+    assert.ok(box.rows >= 2, `the controls wrap: ${box.rows} rows`);
     await page.close();
   }
 

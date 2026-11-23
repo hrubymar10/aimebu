@@ -7,6 +7,9 @@ import { SpawnForm } from './spawn-dialog.js';
 import { SpawnStore } from './spawn-store.js';
 import { SwitchForm } from './switch-form.js';
 import { SwitchStore } from './switch-store.js';
+import { LogStore } from './log-store.js';
+import { LogDialog } from './log-dialog.js';
+import { agentLabel } from '../../sender-identity.js';
 import { captureError } from '../../telemetry.js';
 
 // How long after a read of the room's agents the next one may start (events that come in the meantime ask for one more, together).
@@ -25,7 +28,7 @@ export class AgentsPanel {
     this.cardListeners = new Set();
     this.store = new AgentsStore({ source, onError: message => { this.error.textContent = message; }, onChange: agents => this.onChange?.(agents), onCards: () => this.notifyCards(), onSync: () => this.syncSpawnControl() });
     this.api = { store: this.store, source, onPrivate: agent => this.onPrivate?.(agent), onRecovery: agent => this.onRecovery(agent), onPrivateHuman: human => this.onPrivateHuman?.(human),
-      openSwitch: id => this.switch.open(id), switchAction: (id, action) => this.switchAction(id, action), canReadOutput: () => this.canReadOutput(), canControl: () => !!this.room && ['owner', 'operator'].includes(this.projectRole?.(this.room.project_id)) };
+      openSwitch: id => this.switch.open(id), switchAction: (id, action) => this.switchAction(id, action), canReadOutput: () => this.canReadOutput(), openLogs: (agent, opener) => this.openLogs(agent, opener), canControl: () => !!this.room && ['owner', 'operator'].includes(this.projectRole?.(this.room.project_id)) };
     this.spawnDialog = document.querySelector('#spawn-dialog');
     this.spawn = new SpawnStore(this);
     this.switchDialog = document.querySelector('#switch-dialog');
@@ -33,6 +36,11 @@ export class AgentsPanel {
     this.switchPage = mountPreactPage(this.switchDialog, () => html`<${SwitchForm} store=${this.switch} host=${this} />`);
     this.spawnPage = mountPreactPage(this.spawnDialog, () => html`<${SpawnForm} store=${this.spawn} host=${this} />`);
     this.spawnDialog.addEventListener('close', () => this.spawn.closed());
+    // The agent log popup: one dialog for the panel, its contents Preact's, opened from the Show agent's logs button of a profile.
+    this.logDialog = document.querySelector('#agent-log-dialog');
+    this.logs = new LogStore({ source, roomID: () => this.room?.id, agent: id => this.cards.get(id) });
+    this.logPage = mountPreactPage(this.logDialog, () => html`<${LogDialog} store=${this.logs} host=${this} />`);
+    this.logDialog.addEventListener('close', () => this.logsClosed());
     document.querySelector('#spawn-open').onclick = () => this.openSpawn();
     document.querySelector('#spawn-open').disabled = !source.available;
     document.querySelector('#agents-toggle').onclick = () => {
@@ -103,12 +111,13 @@ export class AgentsPanel {
   }
   notifyCards() { for (const listener of this.cardListeners) listener(); }
   reset() {
+    this.closeLogs();
     this.store.reset();
     this.drawerRoomID = null;
     this.setMobileOpen(false); this.spawn.invalidate(); this.switch.invalidate(); document.querySelector('#spawn-open').disabled = true;
   }
   setRoomFacts(room) {
-    if (this.store.cardsRoomID !== room.id) { this.switch.invalidate(); this.spawn.invalidate(); }
+    if (this.store.cardsRoomID !== room.id) { this.switch.invalidate(); this.spawn.invalidate(); this.closeLogs(); }
     this.store.setRoomFacts(room);
     this.spawn.touchRoom();
     this.syncSpawnControl();
@@ -172,9 +181,28 @@ export class AgentsPanel {
   }
   // What an agent's harness printed to stderr is for a project's owner or an admin: it can hold whatever its tools printed.
   canReadOutput() { return !!this.room && (rights.admin || this.projectRole?.(this.room.project_id) === 'owner'); }
+  // The log popup opens over the panel with the focus on the dialog itself (not the lines field, which would raise a phone's keyboard); closing it,
+  // by its button, Escape or a room change, gives the focus back to the button that opened it.
+  openLogs(agent, opener) {
+    if (!this.canReadOutput() || !agent) return;
+    this.logOpener = opener || null; this.logAgentID = agent.id;
+    this.logs.open(agent.id);
+    if (!this.logDialog.open) this.logDialog.showModal();
+    this.logDialog.tabIndex = -1; this.logDialog.focus({ preventScroll: true });
+  }
+  closeLogs() { if (this.logDialog?.open) this.logDialog.close(); else this.logs?.close(); }
+  logsClosed() {
+    this.logs.close();
+    const id = this.logAgentID, opener = this.logOpener; this.logOpener = null; this.logAgentID = '';
+    const target = opener?.isConnected ? opener : id ? this.list.querySelector(`[data-agent-id="${CSS.escape(id)}"] .agent-logs`) : null;
+    target?.focus();
+  }
+  agentName(id) { const agent = this.cards.get(id); return agent ? agentLabel(agent) || agent.slug || id : id; }
+  agentSlug(id) { return this.cards.get(id)?.slug || ''; }
 
   destroy() {
     clearTimeout(this.refreshTimer); this.refreshAgain = false;
     this.stopPanel(); document.removeEventListener('keydown', this.onKey); this.unsubscribe?.(); clearInterval(this.switchPoll); this.store.destroy(); this.spawn.destroy(); this.switch.destroy(); this.listPage.destroy(); this.humansPage.destroy(); this.spawnPage.destroy(); this.switchPage.destroy();
+    this.logOpener = null; if (this.logDialog.open) this.logDialog.close(); this.logs.destroy(); this.logPage.destroy();
   }
 }

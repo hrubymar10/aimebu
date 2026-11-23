@@ -101,11 +101,15 @@ const FIXTURE = async () => {
     // The real member card, opened as a profile (a working agent, so Reactivate is unavailable and says why), plus the facts the server adds.
     const { html, render } = await import('/js/ui.js');
     const { AgentCard } = await import('/js/pages/agents/agents-list.js');
-    const api = { store: { now: { value: Date.now() }, toggleProfile() {}, control() {}, setOutputOpen() {}, loadOutput() {} }, onPrivate() {}, onRecovery() {}, openSwitch() {} };
+    const api = { store: { now: { value: Date.now() }, toggleProfile() {}, control() {}, setOutputOpen() {}, loadOutput() {} }, onPrivate() {}, onRecovery() {}, openSwitch() {}, openLogs() {} };
     const agent = { id: 'agt_fixture', name: 'claude-reviewer', slug: 'claude-reviewer', role: 'worker', role_key: 'worker', role_emoji: '🛠', tool: 'codex', model: 'm', desired: 'active', observed: 'in_turn', activity: 'tool inspect', activity_at: new Date(Date.now() - 74000).toISOString(), health_flags: [], recovery_block: false };
     const profile = { native_session_id: '3b241101-e2bb-4255-8caf-4136c566a962', resume_command: 'cd /tmp/work && claude --resume 3b241101', cwd: '/tmp/work', machine_name: 'host' };
     const slot = document.createElement('div'); slot.style.display = 'contents'; agents.append(slot);
-    render(html`<${AgentCard} agent=${agent} expanded=${true} profile=${profile} output=${null} readOutput=${false} down="" lifecycle="open" api=${api} />`, slot);
+    render(html`<${AgentCard} agent=${agent} expanded=${true} profile=${profile} output=${null} readOutput=${true} down="" lifecycle="open" api=${api} />`, slot);
+    // The agent log popup with a read drawn and a highlight, from the real dialog over a store that holds one answer.
+    const { LogDialog } = await import('/js/pages/agents/log-dialog.js'), { signal } = await import('/js/ui.js');
+    const logs = { state: signal({ agentID: agent.id, lines: 200, follow: true, text: 'Error: first\nworking\nerror again\n', status: 'Earlier output is not shown.', loading: false }), setLines() {}, setFollow() {}, read() {} };
+    render(html`<${LogDialog} store=${logs} host=${{ agentName: () => 'claude-reviewer', agentSlug: () => 'claude-reviewer', closeLogs() {} }} />`, document.querySelector('#agent-log-dialog'));
   }
   // The Settings dialog is a chunk the app fetches on first use, and nothing opens it here: make it, so its navigation and sections are in the page for the audits.
   {
