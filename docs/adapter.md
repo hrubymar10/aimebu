@@ -46,6 +46,17 @@ turn reflects joins, leaves, and role changes. A recipient may be absent from
 the roster after leaving a room but is still identified by `you_are` for a
 recovery turn. The roster is a snapshot, not an access grant; room membership
 is still checked when a candidate is committed.
+A normal turn in a room whose worktree is ready on the host machine may carry
+`worktree_base_drift`: `{line, newest_subjects}`, where `line` reads "your
+worktree is N commits behind `<base>`" and `newest_subjects` holds the subjects
+of the 5 newest of those commits (control and format characters removed, each
+capped at 120 characters; untrusted text). It is present only when N reaches
+`AIMEBU_BASE_DRIFT_MIN` (default 5; 0 turns it off) and is absent when there is
+no drift or the base ref cannot be resolved. The git lookup (`rev-list --count`,
+then `log -5`, each with a 5 s limit) never runs inside the dispatch: the
+dispatch reads a 30 s cache and a missing or stale entry starts a background
+refresh, so a room's first dispatch carries nothing and a lookup that fails is
+silent. Remote machines carry nothing.
 The context's `role_body` and `knowledge` blocks are the same from turn to turn,
 and the harness session keeps what an earlier turn delivered in its own
 context, so a wake whose session already holds the current text carries a short

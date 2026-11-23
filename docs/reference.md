@@ -519,6 +519,11 @@ Set `AIMEBU_STUCK_MINUTES` to a whole number from 1 to 1440 to change the
 stuck-turn threshold (default 10 minutes). The server compares the running
 turn's latest activity or usage event with that threshold.
 
+Set `AIMEBU_BASE_DRIFT_MIN` (default 5; 0 turns it off) to the number of
+commits a room worktree must be behind the tip of its base ref before the
+turn context says so (see [adapter.md](adapter.md)). `AIMEBU_DEBUG=1` logs
+the lookups that could not be answered.
+
 
 ## The web UI: chat, composer, messages and settings
 

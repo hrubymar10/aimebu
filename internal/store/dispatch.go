@@ -576,6 +576,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			// marker. The adapter strips this key from the turn JSON it hands the model, so it is never turn tokens.
 			contextData["role_body_system"] = roleBody
 		}
+		if drift := s.baseDriftContext(tx, roomID, machineID); drift != nil {
+			contextData["worktree_base_drift"] = drift
+		}
 		var startMode string
 		var nativeStarted sql.NullString
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT start_mode,native_session_started_at FROM session WHERE id=?`, sessionID).Scan(&startMode, &nativeStarted); err != nil {

@@ -80,6 +80,10 @@ var environment = []envVar{
 		"make dev only: the Sentry DSN the dev server reports to; without it",
 		"make dev runs with AIMEBU_SENTRY_DSN=off"}},
 	{[]string{"AIMEBU_STUCK_MINUTES"}, []string{"Minutes of silence (1-1440, default 10) before a running turn counts as stuck"}},
+	{[]string{"AIMEBU_DEBUG"}, []string{"Set to log lookups the server could not answer (a worktree's base drift, for now)"}},
+	{[]string{"AIMEBU_BASE_DRIFT_MIN"}, []string{
+		"Commits a room worktree must be behind its base ref before the turn context says so",
+		"(default 5, 0 turns it off)"}},
 	{[]string{"AIMEBU_TURN_IDLE", "AIMEBU_TURN_MAX"}, []string{
 		"Supervisor stall deadlines per turn: silence with no tool running (default",
 		"30m) and the wall-clock cap (default 90m) (Go durations, 0 disables)"}},

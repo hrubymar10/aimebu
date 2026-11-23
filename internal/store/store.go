@@ -52,6 +52,8 @@ type Store struct {
 	switchHolds map[string]int
 	// hostLogin names the login of a tool live on the host machine now (see SetHostLogin); nil or "" is unknown.
 	hostLogin func(tool string) string
+	// drift caches how far a room worktree is behind its base ref (see base_drift.go).
+	drift baseDriftCache
 }
 
 // defaultTurnGateWait is far longer than the file swap HoldTurns exists for (a few seconds at worst, a busy Claude
