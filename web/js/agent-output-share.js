@@ -3,6 +3,10 @@
 // lines answers a second ask in this tab, and the tabs of this browser tell each other through a BroadcastChannel when they start a read and
 // what it answered: another tab waits for that answer instead of asking the server again, and a follow read takes an answer that is still
 // fresh. The text only crosses between tabs of the same signed-in person (the message carries the user id); it is never stored.
+// Everything here belongs to one signed-in person: a read in flight, an answer kept, a read another tab announced and every message are keyed
+// by the user id the read began under. When the signed-in person changes (a sign-out, another account signing in on the same page) all of it
+// is dropped, a read that began under the earlier person keeps its answer to itself, and a message of another person is ignored, so an
+// answer the server gave one account never reaches another.
 // Import-free apart from what is passed in, so scripts/test-agent-log-model.cjs runs it in a vm.
 
 // How long a tab waits for another tab's announced read before it reads for itself (the server gives a machine 15 s to answer).
@@ -14,42 +18,67 @@ function lineCount(text) { const value = String(text ?? ''); const body = value.
 export class OutputShare {
   constructor({ fetch, channel = null, user = () => '', now = () => Date.now(), timers = globalThis }) {
     this.fetch = fetch; this.channel = channel; this.user = user; this.now = now; this.timers = timers;
+    this.owner = ''; // the person the maps below belong to
     this.inflight = new Map(); // agentID -> { lines, promise }
     this.recent = new Map(); // agentID -> { lines, view, at }, answers of this tab and the others
     this.remote = new Map(); // agentID -> { lines, promise, resolve, timer }, reads another tab announced
     if (this.channel) this.channel.onmessage = event => this.heard(event.data);
   }
 
+  // The signed-in person now. Another one than the maps belong to drops them all first.
+  current() {
+    const user = String(this.user() || '');
+    if (user !== this.owner) { this.reset(); this.owner = user; }
+    return user;
+  }
+
+  // Drops every read and answer of the person signed in until now (sign-out, or another account signing in): a read waiting on another tab
+  // reads for itself, and a read in flight here keeps its answer to the one who asked for it.
+  reset() {
+    for (const agentID of [...this.remote.keys()]) this.settle(agentID, null);
+    this.inflight.clear(); this.recent.clear();
+  }
+
   // A view for `lines` or more lines: a read in flight here or in another tab for at least that many, else an answer at most `fresh` ms old,
   // else a read of its own. A shared answer longer than asked keeps all its lines; the popup shows the last `lines` of it.
   async read(roomID, agentID, lines, { fresh = 0 } = {}) {
+    const user = this.current();
+    if (!user) return this.fetch(roomID, agentID, lines); // signed out: nothing to share with
     const own = this.inflight.get(agentID);
     if (own && own.lines >= lines) return own.promise;
     const remote = this.remote.get(agentID);
     if (remote && remote.lines >= lines) {
       const view = await remote.promise;
-      if (view) return view;
+      // An answer heard for this person; a person who changed while it was awaited reads for themselves.
+      if (view && this.current() === user) return view;
     }
     const recent = this.recent.get(agentID);
     if (fresh > 0 && recent && recent.lines >= lines && this.now() - recent.at <= fresh) return recent.view;
-    return this.start(roomID, agentID, lines);
+    return this.start(roomID, agentID, lines, user);
   }
 
-  start(roomID, agentID, lines) {
-    this.post({ type: 'reading', agentID, lines });
-    const promise = Promise.resolve().then(() => this.fetch(roomID, agentID, lines)).then(view => {
-      this.recent.set(agentID, { lines, view, at: this.now() });
-      this.post({ type: 'result', agentID, lines, view });
+  // A read of the server for `user`. Its answer is kept and told to the other tabs under `user`, the person it was read for, and kept here
+  // only while that person is still signed in; a read the reset dropped is no longer what a later ask joins.
+  start(roomID, agentID, lines, user) {
+    this.post({ type: 'reading', agentID, lines }, user);
+    const entry = { lines, promise: null };
+    const mine = () => this.owner === user && this.inflight.get(agentID) === entry;
+    entry.promise = Promise.resolve().then(() => this.fetch(roomID, agentID, lines)).then(view => {
+      if (mine()) this.recent.set(agentID, { lines, view, at: this.now() });
+      this.post({ type: 'result', agentID, lines, view }, user);
       return view;
-    }, error => { this.post({ type: 'failed', agentID }); throw error; }).finally(() => { if (this.inflight.get(agentID)?.promise === promise) this.inflight.delete(agentID); });
-    this.inflight.set(agentID, { lines, promise });
-    return promise;
+    }, error => { this.post({ type: 'failed', agentID }, user); throw error; }).finally(() => { if (mine()) this.inflight.delete(agentID); });
+    this.inflight.set(agentID, entry);
+    return entry.promise;
   }
 
-  post(message) { try { this.channel?.postMessage({ ...message, user: this.user() }); } catch { /* a closed channel only loses the sharing */ } }
+  // A message always names the person it was read for, never whoever is signed in when it is sent.
+  post(message, user) { if (!user) return; try { this.channel?.postMessage({ ...message, user }); } catch { /* a closed channel only loses the sharing */ } }
 
   heard(message) {
-    if (!message || typeof message !== 'object' || !message.agentID || message.user !== this.user()) return;
+    if (!message || typeof message !== 'object' || !message.agentID) return;
+    const user = this.current();
+    if (!user || message.user !== user) return;
     const { agentID } = message;
     if (message.type === 'reading') {
       if (this.remote.has(agentID)) return;

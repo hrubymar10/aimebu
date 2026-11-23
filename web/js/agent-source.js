@@ -107,6 +107,8 @@ export class HttpAgentSource {
   readOutput(roomID, agentID, lines, { stream = 'stderr', ...options } = {}) {
     return this.outputShare.read(roomID, stream === 'conversation' ? `${agentID}${STREAM_KEY}conversation` : agentID, lines, options);
   }
+  // Sign-out (or the session ending): every shared read and answer of the person who was signed in goes.
+  resetOutput() { this.outputShare.reset(); }
   async list(roomID) {
     try {
       const cards = await request(`/api/rooms/${roomID}/agents`);

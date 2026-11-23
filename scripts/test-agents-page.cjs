@@ -687,6 +687,42 @@ async function main() {
     await page.close();
   }
 
+  // Shared reads belong to the person they were read for: account A starts a conversation read, B signs in on the same page before it ends, and
+  // B neither joins A's read nor takes its answer (not as a fresh follow answer, not over the channel the tabs share); B's own read goes out.
+  {
+    const page = await mount({ owner: true });
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    await page.evaluate(() => {
+      window.__heard = []; window.__tab = new BroadcastChannel('aimebu-agent-output'); window.__tab.onmessage = event => window.__heard.push(event.data);
+      window.__a = window.__panel.source.readOutput('r1', 'a1', 200, { stream: 'conversation' });
+    });
+    const forA = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200&stream=conversation');
+    await page.evaluate(async () => { (await import('/js/api.js')).setSession({ csrf_token: 'token-b', id: 'usr_b', owner: true, admin: true }); });
+    await page.evaluate(() => { window.__b = window.__panel.source.readOutput('r1', 'a1', 200, { stream: 'conversation' }).then(view => view.text); });
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/rooms/r1/agents/a1/output?lines=200&stream=conversation').length === 2);
+    const forB = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/rooms/r1/agents/a1/output?lines=200&stream=conversation'));
+    assert.notEqual(forB, forA, "B's read is its own request, not A's pending one");
+    await answer(page, forA, 200, { text: 'private to A\n', truncated: false }); await settle(page);
+    assert.equal(await page.evaluate(() => window.__a.then(view => view.text)), 'private to A\n', "A's read still answers A");
+    // A follow read of B right after A's answer does not take it as fresh.
+    await page.evaluate(() => { window.__follow = window.__panel.source.readOutput('r1', 'a1', 200, { stream: 'conversation', fresh: 60000 }).then(view => view.text); });
+    await answer(page, forB, 200, { text: 'for B\n', truncated: false }); await settle(page);
+    assert.deepEqual(await page.evaluate(async () => [await window.__b, await window.__follow]), ['for B\n', 'for B\n'], 'B only ever sees its own answer');
+    const heard = await page.evaluate(() => window.__heard.map(message => [message.type, message.user, message.view?.text || '']));
+    assert.equal(heard.some(([, user, text]) => user === 'usr_b' && text.includes('private to A')), false, `A's answer is never told as B's: ${JSON.stringify(heard)}`);
+    assert.ok(heard.some(([type, user, text]) => type === 'result' && user === 'usr_me' && text === 'private to A\n'), 'it is told under A, the person it was read for');
+    // A message another tab sends for A is not taken by B.
+    await page.evaluate(() => { window.__tab.postMessage({ type: 'result', agentID: 'a2', lines: 200, view: { text: 'A elsewhere\n' }, user: 'usr_me' }); });
+    await settle(page);
+    assert.equal(await page.evaluate(() => window.__panel.source.outputShare.recent.has('a2')), false, "another person's broadcast is ignored");
+    // Sign-out drops what B had.
+    assert.equal(await page.evaluate(() => window.__panel.source.outputShare.recent.size > 0), true);
+    await page.evaluate(() => window.__panel.reset());
+    assert.deepEqual(await page.evaluate(() => { const share = window.__panel.source.outputShare; return [share.recent.size, share.inflight.size, share.remote.size]; }), [0, 0, 0], 'a reset drops every shared read');
+    await page.evaluate(() => window.__tab.close());
+    await page.close();
+  }
+
   // Phone: the popup is the whole screen and its controls wrap.
   {
     const page = await mount({ owner: true });

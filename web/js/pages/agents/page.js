@@ -111,7 +111,7 @@ export class AgentsPanel {
   }
   notifyCards() { for (const listener of this.cardListeners) listener(); }
   reset() {
-    this.closeLogs();
+    this.closeLogs(); this.source.resetOutput?.();
     this.store.reset();
     this.drawerRoomID = null;
     this.setMobileOpen(false); this.spawn.invalidate(); this.switch.invalidate(); document.querySelector('#spawn-open').disabled = true;

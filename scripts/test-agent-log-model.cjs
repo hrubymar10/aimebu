@@ -179,6 +179,28 @@ function channels() {
     stranger.heard({ type: 'result', agentID: 'a9', lines: 200, view: { text: 'secret' }, user: 'u2' });
     assert.equal(stranger.recent.has('a9'), false, 'an answer of another signed-in person is ignored');
   }
+  // Another person signing in on the same page: a read of the earlier one in flight is not joined, its answer is neither kept nor told under the
+  // new person, and a fresh answer of the earlier one does not serve a follow read of the new one.
+  {
+    const time = clock(); const [left, right] = channels(); let who = 'uA'; const calls = []; const answers = [];
+    const share = new context.OutputShare({ fetch: (room, agent, lines) => { calls.push(who); return new Promise(resolve => answers.push(resolve)); }, channel: left, now: time.now, timers: time, user: () => who });
+    const heard = []; right.onmessage = event => heard.push(event.data);
+    const forA = share.read('r1', 'a1', 200); await flush();
+    who = 'uB';
+    const forB = share.read('r1', 'a1', 200); await flush();
+    assert.deepEqual(calls, ['uA', 'uB'], "B does not join A's read");
+    answers[0]({ text: 'A only\n' }); assert.equal((await forA).text, 'A only\n');
+    const follow = share.read('r1', 'a1', 200, { fresh: 60000 }); await flush();
+    answers[1]({ text: 'B\n' });
+    assert.deepEqual([(await forB).text, (await follow).text], ['B\n', 'B\n'], "B never takes A's answer");
+    assert.deepEqual(heard.filter(message => message.type === 'result').map(message => [message.user, message.view.text]), [['uA', 'A only\n'], ['uB', 'B\n']], 'each answer is told under the person it was read for');
+    // A read announced for B is dropped when B signs out; nothing is told while signed out.
+    right.postMessage({ type: 'reading', agentID: 'a5', lines: 200, user: 'uB' }); assert.equal(share.remote.has('a5'), true);
+    who = ''; share.heard({ type: 'result', agentID: 'a6', lines: 200, view: { text: 'x' }, user: '' });
+    assert.deepEqual([share.remote.size, share.recent.size, share.inflight.size], [0, 0, 0], 'a sign-out drops everything');
+    const posted = left.posted.length; share.read('r1', 'a1', 200); await flush(); assert.equal(left.posted.length, posted, 'a signed-out read is not shared');
+    answers[answers.length - 1]({ text: '' });
+  }
 
   // The store: open reads at once; Follow reads on the agent's events at most once in 4 s, falls back to every 15 s in a turn, waits while the
   // tab is hidden, and after a 429 waits for Retry-After.
