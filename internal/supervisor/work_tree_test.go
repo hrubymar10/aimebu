@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // The description of a limit-killed turn's checkout runs git on the host in a checkout the agent could write to, config included. A program that
@@ -16,7 +18,7 @@ func TestWorkTreeStateRunsNoProgramTheRepositoryNames(t *testing.T) {
 	marks := t.TempDir()
 	script := func(name, tail string) string {
 		path := filepath.Join(t.TempDir(), name+".sh")
-		if err := os.WriteFile(path, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, name)+"'\n"+tail), 0o755); err != nil {
+		if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, name)+"'\n"+tail), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return path

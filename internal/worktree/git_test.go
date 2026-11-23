@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // plantRepoPrograms sets up, in repo's own config and hooks (what an agent with the checkout mounted can write), every program git would run for
@@ -17,7 +19,7 @@ func plantRepoPrograms(t *testing.T, repo string) string {
 	script := func(name, tail string) string {
 		path := filepath.Join(t.TempDir(), name+".sh")
 		body := "#!/bin/sh\ntouch '" + filepath.Join(marks, name) + "'\n" + tail
-		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		if err := testenv.WriteExecutable(path, []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return path
@@ -44,7 +46,7 @@ func plantRepoPrograms(t *testing.T, repo string) string {
 	if err := os.MkdirAll(hooks, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(hooks, "post-checkout"), []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, "hook")+"'\n"), 0o755); err != nil {
+	if err := testenv.WriteExecutable(filepath.Join(hooks, "post-checkout"), []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, "hook")+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// The repository's own hooks folder is the one git uses: a hooks path set for the whole machine would hide the planted hook.
@@ -113,7 +115,7 @@ func TestHostGitTurnsOffAFilterWithAnOddName(t *testing.T) {
 	root := repoFixture(t)
 	marks := t.TempDir()
 	path := filepath.Join(t.TempDir(), "filter.sh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, "filter")+"'\ncat\n"), 0o755); err != nil {
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, "filter")+"'\ncat\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command("git", "-C", root, "config", "filter.a=b.c.clean", path).CombinedOutput(); err != nil {
@@ -161,7 +163,7 @@ func TestHostGitKeepsGlobalFiltersAndDropsLocalOnes(t *testing.T) {
 	marks := t.TempDir()
 	script := func(name string) string {
 		path := filepath.Join(t.TempDir(), name+".sh")
-		if err := os.WriteFile(path, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, name)+"'\ncat\n"), 0o755); err != nil {
+		if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, name)+"'\ncat\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return path
