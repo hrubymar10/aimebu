@@ -281,7 +281,6 @@ settings.project.onFlowApplied = async projectID => {
   await sidebar.refreshProject(projectID);
   teamFlowHome.refreshIfProject(projectID);
 };
-inbox.openUsages = () => settings.open('usages');
 chat.projectSettings = settings.project; // the project's settings form, shown in the home room's settings
 // Archiving or reopening a project in Settings: take its new state from the server now, as the event that follows would.
 settings.project.onLifecycle = async projectID => {
@@ -353,6 +352,8 @@ const onboarding = new LazyOnboarding({ create: createFirstProject, spawn: () =>
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
 importWizard.onClose(() => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'), () => rights.owner);
+// An Inbox usage alert's "Open Usages": leave the Inbox for the chat and show the side panel the top-bar toggle opens.
+inbox.openUsages = () => { inbox.hide(); usagesPopover.show(); };
 const topbarMenu = new TopbarMenu();
 new ColumnResize();
 const roomMenu = new RoomMenu();

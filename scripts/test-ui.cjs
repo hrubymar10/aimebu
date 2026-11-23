@@ -2794,7 +2794,9 @@ async function main() {
     await usageAlertPage.waitForFunction(() => document.querySelector('[data-inbox-id="mock_usage_alert"] h3')?.textContent.includes('renamed'));
     assert.equal(await usageAlertPage.$eval('[data-inbox-id="mock_usage_alert"] .btn-icon[aria-label="Dismiss usage alert"]', el => el.title), 'Dismiss usage alert');
     await domClick(usageAlertPage, '[data-inbox-id="mock_usage_alert"] .btn-primary');
-    await usageAlertPage.waitForFunction(() => document.querySelector('#settings-dialog')?.open && !document.querySelector('#settings-usages').hidden);
+    // "Open Usages" opens the Usages side panel (the top-bar toggle's view), not Settings, and leaves the Inbox for the chat that holds it.
+    await usageAlertPage.waitForFunction(() => !document.querySelector('#usages-popover').hidden && document.querySelector('#usages-toggle').getAttribute('aria-expanded') === 'true' && document.querySelector('#inbox-view').hidden);
+    assert.equal(await usageAlertPage.evaluate(() => !!document.querySelector('#settings-dialog')?.open), false, 'Open Usages leaves Settings closed');
     await usageAlertPage.close();
     const dismissedUsagePage = await a.newPage();
     await dismissedUsagePage.goto(`${origin}/?mock_usage_alert=1`);

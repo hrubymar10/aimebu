@@ -48,7 +48,9 @@ async function main() {
   try {
     for (const owner of [true, false]) {
       const page = await mount(owner);
-      await page.$eval('#usages-toggle', node => node.click());
+      // show() (the Inbox alert's "Open Usages") opens the panel like the toggle, and a second call keeps it open.
+      await page.evaluate(() => { window.__popover.show(); window.__popover.show(); });
+      assert.deepEqual(await page.evaluate(() => [!document.querySelector('#usages-popover').hidden, document.querySelector('#usages-toggle').getAttribute('aria-expanded')]), [true, 'true'], 'show() opens the panel and stays open');
       await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile'));
       assert.deepEqual(await page.evaluate(() => {
         const view = document.querySelector('.usages-popover-alt .usages-b');

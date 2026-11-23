@@ -15,7 +15,7 @@ remaining by default; each must be between 1 and 99, with warning above
 critical). Each fresh, successful provider window that reaches a threshold
 opens a global Inbox alert for the owner and global admins. The alert shows
 the provider, profile name, window, remaining percentage, and reset time
-inline. The owner alone gets an **Open Usages** action; the Usages cards and
+inline. The owner alone gets an **Open Usages** action, which opens the Usages side panel (the top-bar Usages view); the Usages cards and
 `GET /api/usages` is the owner's whole snapshot; a global admin reads a redacted one (the limits and the profile names, nothing that names an account or how it signs in) and sees the cards read-only, and every change stays owner-only. Inbox alerts omit email and credentials.
 The five-second background scan also notices switcher profiles added, renamed
 or removed by a separate CLI process. It drops removed profile snapshots and

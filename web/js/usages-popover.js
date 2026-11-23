@@ -44,6 +44,8 @@ export class UsagesPopover {
   // Nothing of what was drawn stays after a sign-out: the tiles, the cached usage, switcher state and credential tokens.
   reset() { this.store.forget(); render(null, this.body); this.ticket++; this.status.hidden = true; }
   open() { this.syncRefresh(); this.status.hidden = true; this.popover.hidden = false; this.chat.classList.add('usages-open'); this.toggle.setAttribute('aria-expanded', 'true'); focusPopover(this.popover); this.load(); }
+  // Open the panel unless it already is (a second call must not toggle it shut); the load is refreshed either way.
+  show() { if (this.popover.hidden) this.open(); else this.load(); }
   close() { this.ticket++; returnFocus(this.popover, this.toggle); this.popover.hidden = true; this.chat.classList.remove('usages-open'); this.toggle.setAttribute('aria-expanded', 'false'); }
   // Ask the server to fetch fresh snapshots (rate limited to one forced refresh per cooldown
   // window, shared with Settings), then re-read the overview the usual way.
