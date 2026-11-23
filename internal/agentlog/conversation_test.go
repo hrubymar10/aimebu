@@ -102,13 +102,13 @@ func TestConversationRotatesAndATailStartsAtARecord(t *testing.T) {
 	if strings.Join(names, ",") != "conversation.log,conversation.log.1,conversation.log.2" {
 		t.Fatalf("files: %v", names)
 	}
-	// Five lines end in the middle of a record (three lines each): what is left of that record is dropped.
+	// Five lines end in the middle of a record (three lines each): the tail goes back to that record's first line.
 	page, err := store.TailStream("a", StreamConversation, 5, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(page.Text, "\n"), "\n")
-	if !page.Truncated || len(lines) != 3 || !strings.HasSuffix(lines[0], " tool_result Read") || lines[2] != "\tlast line of the record" {
+	if !page.Truncated || len(lines) != 6 || !strings.HasSuffix(lines[0], " tool_result Read") || lines[5] != "\tlast line of the record" {
 		t.Fatalf("tail: truncated=%t %q", page.Truncated, lines)
 	}
 	if page.Files != 3 {
@@ -160,5 +160,67 @@ func TestSweepTreatsTheConversationLikeTheOutput(t *testing.T) {
 	}
 	if _, err := store.TailStream("live", StreamConversation, 1, 0); err != nil {
 		t.Fatalf("the recording agent's conversation was removed: %v", err)
+	}
+}
+
+// A read never comes back empty while the log has content. A newest record with more lines than were asked for is returned whole, from
+// its first line; one longer than a read may be in bytes comes as its end, behind a line saying its beginning is not there.
+func TestConversationTailOfOneOversizedRecord(t *testing.T) {
+	store, _ := newStore(t)
+	body := strings.Repeat("a line of the tool's output\n", 500)
+	record(t, store, "a", adapter.ConversationAssistant, "an earlier record")
+	record(t, store, "a", adapter.ConversationToolResult, "Read\n"+body+"the end")
+	page, err := store.TailStream("a", StreamConversation, 200, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(page.Text, "\n"), "\n")
+	if !page.Truncated || len(lines) != 502 || lines[0] != "2026-10-22T12:00:00Z tool_result Read" || lines[501] != "\tthe end" {
+		t.Fatalf("a record longer than the lines asked for: truncated=%t, %d lines, first %q", page.Truncated, len(lines), lines[0])
+	}
+	// The same record with room for 1 KiB: its first line cannot be there.
+	page, err = store.TailStream("a", StreamConversation, 200, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines = strings.Split(strings.TrimRight(page.Text, "\n"), "\n")
+	if !page.Truncated || len(page.Text) > 1024+len(CutMarker)+1 || len(lines) < 10 || lines[0] != CutMarker || lines[1] != "\ta line of the tool's output" || lines[len(lines)-1] != "\tthe end" {
+		t.Fatalf("a record longer than the bytes allowed: truncated=%t, %d bytes, %q ... %q", page.Truncated, len(page.Text), lines[0], lines[len(lines)-1])
+	}
+	// The log's only record, and one line asked for.
+	record(t, store, "b", adapter.ConversationToolResult, "Read\n"+body+"the end")
+	if page, err := store.TailStream("b", StreamConversation, 1, 0); err != nil || !strings.HasPrefix(page.Text, "2026-10-22T12:00:00Z tool_result Read\n") {
+		t.Fatalf("the only record: %v %q", err, page.Text[:min(60, len(page.Text))])
+	}
+}
+
+// A conversation page says which turn its first records are in when that turn's start is before the page, so whoever decides what of a
+// turn may be shown knows the turn of every record. The words of a turn start inside a tool's output name nothing.
+func TestConversationTailNamesTheTurnItBeginsIn(t *testing.T) {
+	store, _ := newStore(t)
+	log, err := store.OpenConversation("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.Record(adapter.ConversationTurnStart, "turn trn_one gen 0 normal claude/native test")
+	log.Record(adapter.ConversationAssistant, "first")
+	log.Record(adapter.ConversationTurnStart, "turn trn_two gen 0 normal claude/native test")
+	log.Record(adapter.ConversationToolResult, "Bash\n2026-10-22T12:00:00Z turn_start turn trn_forged gen 0\nmore")
+	log.Record(adapter.ConversationAssistant, "second")
+	log.Record(adapter.ConversationTurnEnd, "answered, exit 0")
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for lines, want := range map[int]string{2: "trn_two", 3: "trn_two", 6: "trn_one", 7: "trn_one", 8: "", 100: ""} {
+		page, err := store.TailStream("a", StreamConversation, lines, 0)
+		if err != nil || page.Turn != want {
+			t.Errorf("%d lines: turn %q, want %q (%v)\n%s", lines, page.Turn, want, err, page.Text)
+		}
+	}
+	if page, err := store.Tail("a", 1, 0); err == nil && page.Turn != "" {
+		t.Errorf("a stderr page names a turn: %q", page.Turn)
+	}
+	if TurnOfStart("turn trn_x gen 1") != "trn_x" || TurnOfStart("turn trn_y") != "trn_y" || TurnOfStart("answered") != "" {
+		t.Error("TurnOfStart")
 	}
 }

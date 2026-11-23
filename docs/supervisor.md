@@ -1280,7 +1280,9 @@ beside it as the agent's conversation log, `conversation.log` (see
 - **Redaction.** Agent keys and bearer tokens are removed before a line is
   written (the same rules as the exit-evidence tail), whichever way the stream
   was cut into chunks, including a `Bearer` at the end of one line and its token
-  at the start of the next. Whatever else a tool printed is not recognisable,
+  at the start of the next. A PEM private key is dropped across its lines: its
+  `BEGIN` line becomes `[redacted private key]` and the lines up to and with
+  its `END` line are left out (at most 400 of them when no `END` comes). Whatever else a tool printed is not recognisable,
   which is why the log is only ever shown to an owner or admin.
 - **Where, and how big.** Files are 0600 in 0700 directories. An agent's
   directory is named from a slug of its id and a hash of the whole id, never the
@@ -1330,7 +1332,7 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   characters other than a tab are removed. The kinds are `turn_start` (turn id,
   generation, mode, harness and model), `prompt` (the turn's notes, or input
   the harness gave the model on its own, such as the end of a background task),
-  `assistant` (text the model wrote), `thinking` (reasoning the harness reported
+  `assistant` (text the model wrote, every time it wrote it), `thinking` (reasoning the harness reported
   as text), `tool_call` (the tool's name and its input), `tool_result` (the
   tool's name, `(failed)` when it failed, and its output), `error` (a failure
   the harness or the supervisor reported), `event` (see below) and `turn_end`
@@ -1348,7 +1350,8 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   item of an unknown type is written as a tool call and result under its own
   type name, with the rest of the item as its input.
 - **Secret hygiene.** Every text passes the same redaction as stderr (agent,
-  machine and session keys, provider and host API keys by prefix, bearer and
+  machine and session keys, provider and host API keys by prefix, PEM private
+  keys from their `BEGIN` line through their `END` line, bearer and
   basic credentials, cookies, and the value of anything named like a key, token,
   secret or password) before it is written, in one place every adapter writes
   through. That is a list of known shapes, not a promise: a tool can print a
@@ -1367,4 +1370,7 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   advertises `supports_agent_conversation_log`; the server does not ask one
   that does not (it would answer with stderr), and the route answers 409
   `supervisor_outdated`. A tail that was cut starts at the first line of a
-  record.
+  record, going back past the lines asked for when the cut falls inside one;
+  only a record longer than the read's byte limit comes as its end behind a
+  line `... earlier part cut`. A read is never empty while the log has
+  content.

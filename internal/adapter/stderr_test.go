@@ -110,3 +110,44 @@ func TestJoinWritersNeverLetsOneFailureStopTheOthers(t *testing.T) {
 		t.Fatalf("a failing capture failed the copy: %v", err)
 	}
 }
+
+// The shapes a secret has when nothing names it: a private key in PEM armour, across its lines, and the tokens of the common hosts and
+// providers by their prefixes, wherever they stand in a line. Ordinary text that only looks a little like one is left as it is.
+func TestRedactSecretsCoversPrivateKeysAndPrefixedTokens(t *testing.T) {
+	body := "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn\nNhAAAAAwEAAQAAAYEAu1vPz0Zq8dQw0n3J5mXo2b7yq9sKf4hT6LrWc1pVgEaYxN2UoBdI\n"
+	for _, tc := range []struct{ name, in, want string }{
+		{"an OpenSSH key over several lines", "before\n-----BEGIN OPENSSH PRIVATE KEY-----\n" + body + "-----END OPENSSH PRIVATE KEY-----\nafter", "before\n[redacted private key]\nafter"},
+		{"an RSA key", "-----BEGIN RSA PRIVATE KEY-----\n" + body + "-----END RSA PRIVATE KEY-----", "[redacted private key]"},
+		{"a PKCS#8 key", "x -----BEGIN PRIVATE KEY-----\n" + body + "-----END PRIVATE KEY----- y", "x [redacted private key] y"},
+		{"an encrypted key", "-----BEGIN ENCRYPTED PRIVATE KEY-----\n" + body + "-----END ENCRYPTED PRIVATE KEY-----", "[redacted private key]"},
+		{"a key inside a JSON string", `{"content":"-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIIrYSSNQFaA2Hwf1duRSxKtLYX5CB04fSeQ6tF1aY\n-----END EC PRIVATE KEY-----\n","ok":true}`, `{"content":"[redacted private key]\n","ok":true}`},
+		{"two keys keep what is between them", "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\nmiddle\n-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY-----", "[redacted private key]\nmiddle\n[redacted private key]"},
+		{"a key cut before its end", "log line\n-----BEGIN OPENSSH PRIVATE KEY-----\n" + body, "log line\n[redacted private key]"},
+		{"a key cut before its beginning", "kept text\n" + body + "-----END OPENSSH PRIVATE KEY-----\nafter", "kept text\n[redacted private key]\nafter"},
+		{"a public key is not a secret", "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYI\n-----END PUBLIC KEY-----", "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYI\n-----END PUBLIC KEY-----"},
+		{"a certificate is not a secret", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"},
+		{"a classic host token in a longer line", "remote: pushing with ghp_0123456789abcdefghijABCDEFGHIJ0123456789 to origin", "remote: pushing with [redacted] to origin"},
+		{"an OAuth host token", "(gho_0123456789abcdefghijABCDEFGHIJ0123456789)", "([redacted])"},
+		{"a fine-grained host token", "url=https://x:github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz@example.test/r.git", "url=https://x:[redacted]@example.test/r.git"},
+		{"a provider key", "using sk-ant-api03-0123456789abcdefghij-ABCDEFGHIJ for this", "using [redacted] for this"},
+		{"a short provider key", "export K=sk-0123456789abcdefghij0123", "export K=[redacted]"},
+		{"a chat bot token", "posting as xoxb-1234567890-abcdefghijkl now", "posting as [redacted] now"},
+		{"a chat user token", "xoxp-1234567890-abcdefghijkl", "[redacted]"},
+		{"a cloud access key id", "aws configure set id AKIAIOSFODNN7EXAMPLE ok", "aws configure set id [redacted] ok"},
+		{"ordinary words with the same letters", "the task-list has_value asks: skip the sk-ip step, ghp is short, xoxo, AKIA is a prefix", "the task-list has_value asks: skip the sk-ip step, ghp is short, xoxo, AKIA is a prefix"},
+		{"a path, a hash and a sentence", "internal/agentlog/agentlog.go:533 at 8a5c3ce9767e8126b9883d5ad0c9dd34699b232c: BEGIN and END are words", "internal/agentlog/agentlog.go:533 at 8a5c3ce9767e8126b9883d5ad0c9dd34699b232c: BEGIN and END are words"},
+		{"a dashed rule", "----- BEGIN the report -----\nbody\n----- END -----", "----- BEGIN the report -----\nbody\n----- END -----"},
+	} {
+		if got := RedactSecrets(tc.in); got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
+		}
+		// The conversation log uses the same rules, and so does the tail kept as exit evidence.
+		if got := CleanConversationText(tc.in, ConversationToolLimit); got != tc.want {
+			t.Errorf("%s in a conversation record:\n got %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+	if !OpensPrivateKey("x -----BEGIN RSA PRIVATE KEY-----") || OpensPrivateKey("-----BEGIN PRIVATE KEY-----AAAA-----END PRIVATE KEY-----") ||
+		OpensPrivateKey("-----BEGIN PUBLIC KEY-----") || !ClosesPrivateKey("-----END EC PRIVATE KEY-----") || ClosesPrivateKey("-----END CERTIFICATE-----") {
+		t.Error("the line-by-line reader's view of a private key is wrong")
+	}
+}

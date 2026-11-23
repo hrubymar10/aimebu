@@ -72,7 +72,7 @@ as wake delivery. Mentions only in visual blocks or appendix pages do not
 affect roster order.
 On an exit without a final answer, both native and Docker adapters attach the
 last 4 KiB of launcher stderr to the exit evidence. Agent, machine and session
-keys (`aak_`, `amk_`, `as_`), provider API keys (`sk-ant-…`, `sk-…`), bearer tokens,
+keys (`aak_`, `amk_`, `as_`), provider and host API keys (`sk-ant-…`, `sk-…`, `ghp_…`, `gho_…`, `github_pat_…`, `xox?-…`, `AKIA…`), PEM private keys, bearer tokens,
 `x-api-key` values, cookie and set-cookie headers and `api_key`/`token`/`secret`
 assignments are redacted before the tail enters the supervisor journal, server
 events, recovery inbox, or agent-card tooltip (and before the per-agent output log is written). Every adapter also tees the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -142,5 +143,41 @@ func TestTurnEndText(t *testing.T) {
 		if got := turnEndText(exit); got != want {
 			t.Errorf("%+v: %q, want %q", exit, got, want)
 		}
+	}
+}
+
+type turnEndSink struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (s *turnEndSink) Record(kind adapter.ConversationKind, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.got = append(s.got, string(kind)+"|"+text)
+}
+
+// Whether a turn's process was kept warm is known only once the pool has settled it, which is after the exit is journaled: the
+// conversation log's turn end is written after that, so a turn that left its process idle says so, and one whose process ended says
+// its exit.
+func TestConversationTurnEndIsWrittenAfterTheWarmProcessIsSettled(t *testing.T) {
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	sink := &turnEndSink{}
+	follow := func(spec *adapter.TurnSpec) {
+		h.c.conversations.Store(spec.TurnID, &turnConversation{conv: adapter.NewConversation(sink)})
+	}
+	h.run("agt_a", follow)
+	if !h.idle("agt_a") {
+		t.Fatal("the turn did not leave a warm process")
+	}
+	h.run("agt_a", func(spec *adapter.TurnSpec) {
+		follow(spec)
+		spec.Mode = adapter.ModeCorrection // a turn that runs cold: its own process ends with it
+	})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.got) != 2 || sink.got[0] != "turn_end|answered, process kept warm" || !strings.HasPrefix(sink.got[1], "turn_end|") || strings.Contains(sink.got[1], "kept warm") {
+		t.Fatalf("turn ends: %q", sink.got)
 	}
 }

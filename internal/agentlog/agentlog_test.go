@@ -586,3 +586,32 @@ func TestOpenTurnNeedsAnAgent(t *testing.T) {
 		t.Fatal("an empty agent id was accepted")
 	}
 }
+
+// The output log is written a line at a time, so a private key that spans lines is dropped as its lines come: the BEGIN line becomes a
+// marker, and the lines up to and with the END line are left out. A BEGIN line that is never closed cannot swallow the rest of the log.
+func TestAPrivateKeyAcrossLinesIsDroppedFromTheOutputLog(t *testing.T) {
+	store, _ := newStore(t)
+	key := "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\nAAAAEbm9uZQAAAAAAAAABAAABlwAAAAd\n-----END OPENSSH PRIVATE KEY-----\n"
+	write(t, store, "a", "t1", "cat id_ed25519\n"+key+"after the key\n-----BEGIN PRIVATE KEY-----AAAA-----END PRIVATE KEY----- on one line\nlast\n")
+	got := readAll(t, store, "a")
+	for _, secret := range []string{"b3Blbn", "AAAAEbm9", "AAAA-", "END OPENSSH"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("%q reached the log:\n%s", secret, got)
+		}
+	}
+	for _, want := range []string{" cat id_ed25519\n", " [redacted private key]\n", " after the key\n", " [redacted private key] on one line\n", " last\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the log lacks %q:\n%s", want, got)
+		}
+	}
+	var open strings.Builder
+	open.WriteString("-----BEGIN RSA PRIVATE KEY-----\n")
+	for i := 0; i < privateKeyLines+5; i++ {
+		open.WriteString("line of something else\n")
+	}
+	open.WriteString("shown again\n")
+	write(t, store, "b", "t1", open.String())
+	if got := readAll(t, store, "b"); !strings.Contains(got, " shown again\n") || strings.Count(got, "line of something else") != 5 {
+		t.Fatalf("a key that never ends: %d lines kept, %q", strings.Count(got, "line of something else"), got[max(0, len(got)-120):])
+	}
+}

@@ -19,7 +19,8 @@ func TestConversationMasksAndBoundsEveryRecord(t *testing.T) {
 	conv.TurnStart("turn t1")
 	conv.Prompt(`[{"body":"use Bearer abc.def.ghi and aak_live_key"}]`)
 	conv.Assistant("my key is sk-ant-0123456789abcdefghij")
-	conv.Assistant("my key is sk-ant-0123456789abcdefghij") // the same message reported twice
+	conv.Assistant("said twice")
+	conv.Assistant("said twice") // the model said it twice: both are written
 	conv.Assistant("   ")
 	conv.ToolCall("c1", "Bash  tool", `{"command":"export GH_TOKEN=ghp_0123456789abcdefghij0123"}`)
 	conv.ToolResult("c1", "", "password=hunter2 ok", false)
@@ -31,6 +32,8 @@ func TestConversationMasksAndBoundsEveryRecord(t *testing.T) {
 		"turn_start|turn t1",
 		`prompt|[{"body":"use Bearer [redacted] and [redacted]"}]`,
 		"assistant|my key is [redacted]",
+		"assistant|said twice",
+		"assistant|said twice",
 		`tool_call|Bash_tool {"command":"export GH_TOKEN=[redacted]"}`,
 		"tool_result|Bash_tool\npassword=[redacted] ok",
 		"tool_result|tool (failed)\nno call was seen",

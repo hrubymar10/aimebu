@@ -52,7 +52,6 @@ type Conversation struct {
 
 	mu    sync.Mutex
 	names map[string]string // tool call id to tool name, until its result
-	last  string            // the last assistant text, so an event that repeats it is written once
 	event string            // the last unknown event, while nothing else has been written since
 }
 
@@ -86,17 +85,10 @@ func (c *Conversation) TurnEnd(text string) {
 // Prompt is what the agent was asked this turn.
 func (c *Conversation) Prompt(text string) { c.record(ConversationPrompt, text, ConversationTextLimit) }
 
-// Assistant is text the model wrote. The same text twice in a row (a harness that reports a message at its end and again at the end of
-// its turn) is written once.
+// Assistant is text the model wrote. Every text is written, the same one twice when the model said it twice: an adapter whose harness
+// reports one message in two events picks the one event to write it from.
 func (c *Conversation) Assistant(text string) {
-	if c == nil || strings.TrimSpace(text) == "" {
-		return
-	}
-	c.mu.Lock()
-	repeat := c.last == text
-	c.last = text
-	c.mu.Unlock()
-	if !repeat {
+	if strings.TrimSpace(text) != "" {
 		c.record(ConversationAssistant, text, ConversationTextLimit)
 	}
 }
@@ -158,9 +150,6 @@ func (c *Conversation) ToolCall(id, name, input string) {
 		c.names[id] = name
 		c.mu.Unlock()
 	}
-	c.mu.Lock()
-	c.last = ""
-	c.mu.Unlock()
 	text := name
 	if input = strings.TrimSpace(input); input != "" && input != "null" && input != "{}" {
 		text += " " + input
@@ -180,7 +169,6 @@ func (c *Conversation) ToolResult(id, name, output string, failed bool) {
 		}
 		delete(c.names, id)
 	}
-	c.last = ""
 	c.mu.Unlock()
 	head := toolName(name)
 	if failed {

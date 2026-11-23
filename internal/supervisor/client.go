@@ -1682,10 +1682,11 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 		exit.ErrorEvent = reason
 		exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\n" + reason)
 	}
-	c.conversationTurnEnd(delivery.TurnID, exit)
 	if err := c.Journal.RecordExitInfo(journalCtx, delivery.TurnID, exit); err != nil {
 		c.report("the exit info of a turn could not be recorded", err)
-		c.warmTurnEnded(turn, adapter.ExitInfo{})
+		unrecorded := exit
+		unrecorded.ProcessAlive = c.warmTurnEnded(turn, adapter.ExitInfo{})
+		c.conversationTurnEnd(delivery.TurnID, unrecorded)
 		c.keepAliveTurnEnded(delivery.AgentID, adapter.ExitInfo{})
 		release()
 		c.sendDeferredStopAck(ctx, delivery.AgentID)
@@ -1695,6 +1696,8 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 	// delivery admitted next finds it in the pool or finds it gone; then local admission is freed so an immediate follow-up delivery is not
 	// rejected.
 	exit.ProcessAlive = c.warmTurnEnded(turn, exit) // a kept warm process outlives its turn: the server is told the turn finished, not that a process exited
+	// The conversation log says how the turn ended only now: whether its process was kept warm is known once the pool has settled it.
+	c.conversationTurnEnd(delivery.TurnID, exit)
 	// The turn-finished frame refreshes the agent card. Publish the settled
 	// process state first so that refresh sees its idle warm process immediately.
 	if _, warmTurn := turn.(*warmTurn); warmTurn {

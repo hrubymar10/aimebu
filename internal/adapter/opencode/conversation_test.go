@@ -44,6 +44,33 @@ func TestConversationConformance(t *testing.T) {
 	})
 }
 
+// The answer is the text parts of the last step joined, so the log has every part: the same fragment twice in one step, and the same
+// text in two steps with no tool call between them, are each written as often as they came.
+func TestConversationKeepsRepeatedText(t *testing.T) {
+	type m = map[string]any
+	root := t.TempDir()
+	part := func(text string) m {
+		return m{"type": "text", "sessionID": testSession, "part": m{"type": "text", "text": text}}
+	}
+	step := func(kind, reason string) m {
+		return m{"type": kind, "sessionID": testSession, "part": m{"type": kind, "reason": reason}}
+	}
+	stream := adaptertest.ConversationStream(t, root,
+		step("step_start", ""), part("ha"), part("ha"), step("step_finish", "length"),
+		step("step_start", ""), part("ha"), step("step_finish", "stop"),
+	)
+	path := filepath.Join(root, "opencode")
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\ncat >/dev/null\ncat '"+stream+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, RuntimeRoot: filepath.Join(root, "runtime")}
+	got := adaptertest.ConversationRecords(t, a, spec(t, root))
+	want := adaptertest.ConversationRecord{Kind: adapter.ConversationAssistant, Text: "ha"}
+	if len(got) != 3 || got[0] != want || got[1] != want || got[2] != want {
+		t.Fatalf("records=%+v", got)
+	}
+}
+
 // An event of a type this adapter does not know, a line that is no event and a tool part it cannot read each leave an event record
 // with the type and none of the content; the turn runs on.
 func TestConversationNotesUnknownEvents(t *testing.T) {

@@ -27,6 +27,27 @@ var basicPattern = regexp.MustCompile(`(?i)(authorization["']?[[:space:]]*[:=][[
 var cookieHeaderPattern = regexp.MustCompile(`(?i)\b((?:set-)?cookie)[[:space:]]*[:=][[:space:]]*[^\r\n]+`)
 var secretValuePattern = regexp.MustCompile(`(?i)(x-api-key|[a-z0-9_-]*api[_-]?key|[a-z0-9_-]*token|[a-z0-9_-]*secret|[a-z0-9_-]*passw(?:or)?d)(["']?[[:space:]]*[:=][[:space:]]*)["']?[^[:space:]"',;]+`)
 
+// A private key in PEM armour (RSA, EC, OpenSSH, PKCS#8, a PGP private key block): from its BEGIN line through the matching END line,
+// across the lines between them, whether those are real line breaks or the \n of a JSON string. One whose END is not in the text (the
+// text was cut) goes to the end of the text. privateKeyTailPattern is the other cut: the END line and the base64 lines before it, when
+// the BEGIN line is not in the text.
+var privateKeyPattern = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\z)`)
+var privateKeyTailPattern = regexp.MustCompile(`(?:[A-Za-z0-9+/=]{16,}(?:\\[nr]|[[:space:]])+)*-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`)
+var privateKeyOpenPattern = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`)
+var privateKeyClosePattern = regexp.MustCompile(`-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`)
+
+const privateKeyMark = "[redacted private key]"
+
+// OpensPrivateKey says whether text begins a PEM private key that it does not end: a reader that redacts a stream line by line drops the
+// lines that follow, up to the one ClosesPrivateKey names.
+func OpensPrivateKey(text string) bool {
+	open := privateKeyOpenPattern.FindAllStringIndex(text, -1)
+	return len(open) > 0 && !privateKeyClosePattern.MatchString(text[open[len(open)-1][1]:])
+}
+
+// ClosesPrivateKey says whether text holds the END line of a PEM private key.
+func ClosesPrivateKey(text string) bool { return privateKeyClosePattern.MatchString(text) }
+
 // StderrTail keeps a bounded launcher error tail without retaining full output.
 type StderrTail struct {
 	mu   sync.Mutex
@@ -56,11 +77,13 @@ func (t *StderrTail) String() string {
 }
 
 // RedactSecrets removes what a harness's output must never carry into storage: aimebu's keys and tokens, provider and host API keys and tokens
-// by their prefixes, bearer and basic credentials, cookies, and the value of anything named like a key, token, secret or password. It is a list
+// by their prefixes, PEM private keys, bearer and basic credentials, cookies, and the value of anything named like a key, token, secret or password. It is a list
 // of known shapes, not a promise: a secret with a shape not listed here and a name that does not say what it is is not recognised. It does not bound the
 // length; SanitizeStderr (the tail kept as exit evidence) and the per-agent output log both start from it.
 func RedactSecrets(raw string) string {
 	raw = strings.ToValidUTF8(raw, "�")
+	raw = privateKeyPattern.ReplaceAllString(raw, privateKeyMark)
+	raw = privateKeyTailPattern.ReplaceAllString(raw, privateKeyMark)
 	raw = agentKeyPattern.ReplaceAllString(raw, "[redacted]")
 	raw = prefixedKeyPattern.ReplaceAllString(raw, "${1}[redacted]")
 	raw = bearerPattern.ReplaceAllString(raw, "Bearer [redacted]")

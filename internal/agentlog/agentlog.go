@@ -154,6 +154,9 @@ type Turn struct {
 	afterBearer bool
 	// dropLine is set when a blob was replaced by a marker: the rest of that line is dropped, up to its newline.
 	dropLine bool
+	// inKey counts the lines still to drop after one that began a PEM private key without ending it: the lines of the key, up to its END
+	// line. It is bounded, so a BEGIN line with no END cannot swallow the rest of a log.
+	inKey int
 	// held is how much of the buffer is known to hold no place to cut (see pieceEnd).
 	held int
 	// scanned is how much of the buffer has been searched for a newline.
@@ -253,6 +256,9 @@ func (t *Turn) Write(p []byte) (int, error) {
 	return written, nil
 }
 
+// privateKeyLines is how many lines after a private key's BEGIN line are taken for the key when no END line comes.
+const privateKeyLines = 400
+
 const (
 	// hardLine is how long a line with no space in it may grow before it is replaced.
 	hardLine  = 4 * maxLine
@@ -317,6 +323,17 @@ func indexByte(b []byte, c byte) int {
 
 // emit writes one redacted, timestamped line, after the turn's marker if this is the turn's first.
 func (t *Turn) emit(line string) {
+	if t.inKey > 0 {
+		// A line of a private key whose BEGIN line was replaced by a marker: it is dropped, and so is the END line that closes it.
+		t.inKey--
+		if adapter.ClosesPrivateKey(line) {
+			t.inKey = 0
+		}
+		return
+	}
+	if adapter.OpensPrivateKey(line) {
+		t.inKey = privateKeyLines
+	}
 	stamp := t.store.now().UTC().Format("2006-01-02T15:04:05Z") + " "
 	var out strings.Builder
 	if !t.opened {
@@ -366,6 +383,47 @@ func (t *Turn) Close() error {
 		delete(t.store.open, t.key)
 	}
 	return nil
+}
+
+// CutMarker is the first line of a conversation tail that begins inside a record: the record is longer than one read may be, so its
+// first line, which says what it is, is not in the tail.
+const CutMarker = "... earlier part cut"
+
+// TurnStartPrefix is how the text of a turn_start record begins; the turn's id follows it.
+const TurnStartPrefix = "turn "
+
+// TurnOfStart is the turn id a turn_start record's text names, or "".
+func TurnOfStart(text string) string {
+	rest, ok := strings.CutPrefix(text, TurnStartPrefix)
+	if !ok {
+		return ""
+	}
+	id, _, _ := strings.Cut(rest, " ")
+	return id
+}
+
+// turnBefore is the id of the last turn that starts in the first n bytes of a conversation log's text: the turn the record at n is in.
+func turnBefore(log string, n int) string {
+	if n <= 0 || n > len(log) {
+		return ""
+	}
+	marker := " " + string(adapter.ConversationTurnStart) + " "
+	for before := log[:n]; ; {
+		at := strings.LastIndex(before, marker)
+		if at < 0 {
+			return ""
+		}
+		line := strings.LastIndexByte(before[:at], '\n') + 1
+		// Only a record's own first line counts: the same words in a tool's output are on a line that starts with a tab.
+		if !strings.HasPrefix(before[line:], continuation) && !strings.ContainsAny(before[line:at], " \t") {
+			end := strings.IndexByte(log[at:], '\n')
+			if end < 0 {
+				end = len(log) - at
+			}
+			return TurnOfStart(log[at+len(marker) : at+end])
+		}
+		before = before[:line]
+	}
 }
 
 // continuation starts every line of a record after its first, so a line that begins with a time is always a record's own.
@@ -475,6 +533,9 @@ type Page struct {
 	Truncated bool      `json:"truncated,omitempty"` // earlier output exists that this page does not show
 	Files     int       `json:"files"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Turn is the id of the turn the page's first records belong to, when that turn's start is before the page (a conversation only):
+	// whoever decides what of a turn may be shown needs to know the turn of every record. Empty when the start is not in what was read.
+	Turn string `json:"turn,omitempty"`
 }
 
 // Tail returns the last lines of an agent's output: at most lines of them (DefaultTailLines when 0, never more than MaxTailLines) and at
@@ -483,8 +544,9 @@ func (s *Store) Tail(agentID string, lines, maxBytes int) (Page, error) {
 	return s.TailStream(agentID, StreamStderr, lines, maxBytes)
 }
 
-// TailStream is Tail for one of an agent's two logs. A conversation tail starts at a record: the lines of a record whose first line is
-// not in the tail are left out.
+// TailStream is Tail for one of an agent's two logs. A conversation tail starts at a record's first line, so it may hold more lines than
+// were asked for (never more bytes); only when one record is longer than a read may be does it start with CutMarker and the end of that
+// record.
 func (s *Store) TailStream(agentID string, stream Stream, lines, maxBytes int) (Page, error) {
 	if lines <= 0 {
 		lines = DefaultTailLines
@@ -530,9 +592,21 @@ func (s *Store) TailStream(agentID string, stream Stream, lines, maxBytes int) (
 	if n := len(all); n > 0 && all[n-1] == "" {
 		all = all[:n-1]
 	}
+	whole := ""
+	if stream == StreamConversation {
+		whole = strings.Join(all, "")
+	}
 	if len(all) > lines {
-		all = all[len(all)-lines:]
-		page.Truncated = true
+		start := len(all) - lines
+		// A conversation tail begins at a record: when the cut falls inside one, the tail is extended back to that record's first line (the
+		// byte limit below still bounds it).
+		for stream == StreamConversation && start > 0 && strings.HasPrefix(all[start], continuation) {
+			start--
+		}
+		if start > 0 {
+			all = all[start:]
+			page.Truncated = true
+		}
 	}
 	text := strings.Join(all, "")
 	if len(text) > maxBytes {
@@ -542,16 +616,14 @@ func (s *Store) TailStream(agentID string, stream Stream, lines, maxBytes int) (
 		}
 		page.Truncated = true
 	}
-	if stream == StreamConversation && page.Truncated {
-		// The tail was cut inside a record: what is left of that record has no first line to say what it is.
-		for strings.HasPrefix(text, continuation) {
-			cut := strings.IndexByte(text, '\n')
-			if cut < 0 {
-				text = ""
-				break
-			}
-			text = text[cut+1:]
-		}
+	tail := text
+	if stream == StreamConversation && strings.HasPrefix(text, continuation) {
+		// One record is longer than a read may be: what fits of its end is kept, behind a line that says its beginning is not here. A read
+		// never comes back empty while the log has content.
+		text = CutMarker + "\n" + text
+	}
+	if stream == StreamConversation {
+		page.Turn = turnBefore(whole, len(whole)-len(tail))
 	}
 	page.Text = strings.ToValidUTF8(text, "�")
 	if int64(len(page.Text)) < page.Bytes {
