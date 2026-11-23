@@ -131,6 +131,7 @@ var catalog = []tool{
 		"machine_id":  map[string]string{"type": "string", "description": "Optional target machine; defaults to the host"},
 		"worktree":    map[string]string{"type": "boolean", "description": "Create or use this task room's Git worktree"},
 		"base_ref":    map[string]string{"type": "string", "description": "Committed base ref for a newly created worktree"},
+		"join_parent": map[string]string{"type": "boolean", "description": "Also join the new agent, quietly, to the room's parent room (for example general) so it can post there; the team flow's join rules apply and a refusal fails the spawn (409 join_parent_refused). Lead or dispatcher only"},
 		"request_key": map[string]string{"type": "string", "description": "Stable idempotency key for this spawn request"},
 	}, "required": []string{"room_id", "request_key", "role_key"}}},
 	{"stop_agent", "Active lead, or the flow's coordinator (the dispatcher). Stop a non-lead agent in your project that you manage (one the flow lets you manage, one you spawned, or one in a room you created), or yourself, using the current desired_rev. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
@@ -516,7 +517,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		if role == "" {
 			return toolResult("role_key required", true)
 		}
-		body = map[string]any{"room_id": roomID, "role_key": role, "tool": toolName, "variant": variant, "model": model, "provider": provider, "machine_id": machineID, "reason": getString("reason"), "worktree": getBool("worktree"), "base_ref": getString("base_ref")}
+		body = map[string]any{"room_id": roomID, "role_key": role, "tool": toolName, "variant": variant, "model": model, "provider": provider, "machine_id": machineID, "reason": getString("reason"), "worktree": getBool("worktree"), "base_ref": getString("base_ref"), "join_parent": getBool("join_parent")}
 	case "stop_agent":
 		agentID := getString("agent_id")
 		if !agentIDPattern.MatchString(agentID) {

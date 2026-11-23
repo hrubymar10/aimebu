@@ -37,6 +37,8 @@ type spawnRequest struct {
 	Reason     string `json:"reason,omitempty"`
 	Worktree   bool   `json:"worktree,omitempty"`
 	BaseRef    string `json:"base_ref,omitempty"`
+	// JoinParent also joins the new agent, quietly, to its room's parent room (lead or dispatcher only; see store.SpawnInput.JoinParent).
+	JoinParent bool `json:"join_parent,omitempty"`
 	// Name is the agent's name; empty lets the server pick a free one from its pool. A v1 agent that is resumed keeps its own name.
 	Name string `json:"name,omitempty"`
 	// ResumeLegacy starts the agent from an imported v1 agent: the same name, and its harness session continued when the harness can.
@@ -1193,7 +1195,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	// an agent-specific worktree is used only for an explicit session copy.
 	spawn := func(where string, own *store.AgentWorktree) (string, bool, error) {
 		return s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
-			input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: where, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, KeyHash: hex.EncodeToString(keyHashBytes[:])}
+			input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: where, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, JoinParent: req.JoinParent, KeyHash: hex.EncodeToString(keyHashBytes[:])}
 			input.Slug = slug
 			input.LaunchPath = sessionSpelling // the agent's turns start here; the checkout itself stays the canonical path
 			if session != nil {
@@ -1399,6 +1401,8 @@ func spawnError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "reviewer_agents_disabled", "Reviewer agents are disabled for this project")
 	case errors.Is(err, store.ErrTeamFlowRule):
 		apiError(w, 409, "team_flow_rule", "this team flow does not allow that role to be spawned here by this actor")
+	case errors.Is(err, store.ErrJoinParentRefused):
+		apiError(w, 409, "join_parent_refused", "join_parent cannot join the new agent to the room's parent: the room has no parent, the parent is the home room or is not open, or the team flow keeps this role out of it")
 	case errors.Is(err, store.ErrProjectArchived):
 		apiError(w, 409, "project_archived", "this project is archived and read-only; reopen it to change anything")
 	case errors.Is(err, store.ErrInvalidScope):

@@ -1219,7 +1219,7 @@ choosing a different harness or model from an available
 default supplies a reason, recorded in the room. Using a default is recorded
 there too. An explicit choice is required when the role has no available
 default. One agent is started per call; the response identifies a default
-that was used.
+that was used. The optional `join_parent: true` (lead or dispatcher only) also joins the new agent, quietly, to its room's parent room such as `general`, subject to the flow's join rules (409 `join_parent_refused` otherwise).
 `run_command` starts a long command outside the turn: it runs under the
 supervisor in the agent's own checkout (the same rights its Bash has there,
 with none of its keys), and when it ends the agent is woken with a note — exit

@@ -855,6 +855,7 @@ The key alone identifies the caller. Room and agent control mutations require
 an active leader, or an active coordinator allowed by the selected flow's
 spawn rules. `spawn_agent` also requires the role's spawn capability and an
 allowed actor-to-target role pair. In Custom, the prior lead rules apply.
+`spawn_agent` accepts an optional `join_parent: true` (JSON field of `POST /api/agent/agents`): the new agent also joins its room's parent room as a quiet (`auto`) member, so it can post there (a review worker posting findings to `general`). Active lead or dispatcher only (otherwise 403); the flow's join rules apply, and a refusal (parent is home, not open, absent, or excludes the role) fails the spawn with 409 `join_parent_refused`.
 `POST /api/agent/dms` (`{target_agent_id,body}`, where `target_agent_id` is an agent ID or `slug@project-slug`, the project's name or ID; `Idempotency-Key` required; the
 `dm_agent` tool) sends a private message and returns
 `{room_id,message_id,no,created}`. An active lead may message any agent of

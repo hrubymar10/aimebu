@@ -112,7 +112,14 @@ type SpawnInput struct {
 	NewRoomTitle  string
 	// NewRoomID, when set with NewRoomTitle, is the ID the new room is created with (see NewRoomID).
 	NewRoomID string
+	// JoinParent also joins the new agent, quietly (auto), to its room's parent room, so it can post there. Only an agent lead or the flow's
+	// dispatcher may ask (a person with spawn rights may too); the flow's join rules decide the join, and a refusal fails the spawn.
+	JoinParent bool
 }
+
+// ErrJoinParentRefused is a spawn with JoinParent whose parent join cannot happen: the room has no parent, the parent is the home room or is
+// not open, or the team flow's join rules keep this role out of it.
+var ErrJoinParentRefused = errors.New("join_parent refused")
 
 // ErrHomeLeadOnly is a spawn of a role without the lead capability into a home room whose project keeps it for the lead.
 var ErrHomeLeadOnly = errors.New("home room is lead only")
@@ -173,6 +180,16 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	}
 	if err := tx.authorizeSpawnActor(projectID, actorKind, in.ActorID, true); err != nil {
 		return AgentCard{}, err
+	}
+	if in.JoinParent && actorKind == "agent" {
+		var lead bool
+		var roleKey string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead,r.role_key FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, in.ActorID).Scan(&lead, &roleKey); err != nil {
+			return AgentCard{}, err
+		}
+		if !lead && roleKey != "dispatcher" {
+			return AgentCard{}, ErrForbidden
+		}
 	}
 	if actorKind == "agent" {
 		// A coordinator spawning into a task room under home or general it was never joined to (made before a flow switch) joins it, to brief
@@ -366,6 +383,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	}
 	if err = tx.AddMember(in.RoomID, "agent", agent.ID); err != nil {
 		return AgentCard{}, err
+	}
+	if in.JoinParent {
+		if err = tx.joinParentQuietly(in.RoomID, agent.ID); err != nil {
+			return AgentCard{}, err
+		}
 	}
 	notice := fmt.Sprintf("%s joined as %s", slug, in.RoleKey)
 	if in.ResumeLegacyID != "" {
@@ -1164,4 +1186,31 @@ func describeSession(session *ResumeSession) string {
 		return short
 	}
 	return fmt.Sprintf("%q (%s)", session.Title, short)
+}
+
+// joinParentQuietly joins an agent to its room's parent as an automatic member: it can post there and is woken when addressed, but not by
+// every unaddressed message. The home room, a closed parent or a room without one is refused, and so is a parent the team flow's join rules
+// keep the agent's role out of; every refusal is ErrJoinParentRefused.
+func (tx *Tx) joinParentQuietly(roomID, agentID string) error {
+	var parentID sql.NullString
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT parent_id FROM room WHERE id=?`, roomID).Scan(&parentID); err != nil {
+		return err
+	}
+	if !parentID.Valid {
+		return ErrJoinParentRefused
+	}
+	var kind, lifecycle string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind,lifecycle FROM room WHERE id=?`, parentID.String).Scan(&kind, &lifecycle); err != nil {
+		return err
+	}
+	if kind == "home" || lifecycle != "open" {
+		return ErrJoinParentRefused
+	}
+	if err := tx.addMemberOnly(parentID.String, "agent", agentID, true); err != nil {
+		if errors.Is(err, ErrTeamFlowRule) {
+			return ErrJoinParentRefused
+		}
+		return err
+	}
+	return nil
 }

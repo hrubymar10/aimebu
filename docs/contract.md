@@ -155,6 +155,17 @@ Projects, rooms, people
   (e.g. docker)". In flows A and B the leader belongs
   to `general`; in the dispatcher flow, specs still go through routing and
   task work stays in task rooms.
+  `spawn_agent` takes an optional `join_parent: true`, which also joins the new
+  agent to its room's parent room (for example a review worker in a task room
+  under `general`, so it can post findings where the leader reads them). Only
+  an active lead or the flow's dispatcher may set it (any other caller: 403).
+  The join goes through the ordinary membership rules, so the flow's join
+  rules decide it, and it is quiet (`auto`): no join event, and unaddressed
+  messages there do not wake the agent, only mentions, replies and handoffs.
+  A parent that is the home room, is not open, does not exist, or whose join
+  rules exclude the agent's role fails the whole spawn with 409
+  `join_parent_refused`; there is no silent skip. Without the flag nothing about
+  membership or posting changes.
   In this flow, the leader's specification states worker count and whether
   review is needed. The dispatcher spawns only the requested team and asks
   the leader in routing if review is unspecified. Workers and reviewers
