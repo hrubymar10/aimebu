@@ -2563,6 +2563,7 @@ async function main() {
       await first.waitForFunction(title => document.querySelector('#room-title').textContent === title, {}, originalTitle);
     }
     assert.ok(actualProjectID);
+    await first.waitForFunction(title => document.title === title, { timeout: 10000 }, 'aimebu').catch(() => {}); // the Inbox writes the title once its items arrive
     assert.equal(await first.title(), 'aimebu');
     // The chat never scrolls sideways: wide content (code, tables, URLs, plans, diffs) scrolls inside its own block or wraps, at desktop
     // and phone widths. The messages are rendered by the real Chat into the real list and removed again.
@@ -2725,6 +2726,7 @@ async function main() {
       assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, banner: document.querySelector('#spawn-resume').hidden })), { title: 'Spawn', banner: true }, 'closing the start dialog restores the ordinary one');
       assert.equal(await first.$eval('#spawn-start-in', el => el.hidden), true, 'the ordinary spawn dialog has no Start in picker');
     }
+    await first.waitForFunction(title => document.title === title, { timeout: 10000 }, '(2) aimebu').catch(() => {}); // the Inbox writes the title once its items arrive
     assert.equal(await first.title(), '(2) aimebu');
     assert.ok(await first.evaluate(() => window.__soundPlays > 0), 'new inbox items did not play the chime');
     assert.equal(await first.evaluate(async () => {
@@ -2755,6 +2757,7 @@ async function main() {
     await second.locator('.inbox-card .inbox-answer textarea').fill('A written answer');
     await domClick(second, '.inbox-card .inbox-answer button');
     await first.waitForFunction(() => document.querySelector('.inbox-empty')?.textContent === 'All caught up');
+    await first.waitForFunction(title => document.title === title, { timeout: 10000 }, 'aimebu').catch(() => {}); // the Inbox writes the title once its items arrive
     assert.equal(await first.title(), 'aimebu');
     const recoverySeed = spawnSync(seedBinary, [path.join(tmp, 'server', 'aimebu.sqlite'), actualProjectID, roomID, id, 'recovery']);
     if (recoverySeed.status !== 0) throw new Error(`recovery seed failed: ${recoverySeed.stderr}`);
