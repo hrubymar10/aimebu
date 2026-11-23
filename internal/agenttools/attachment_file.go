@@ -62,9 +62,9 @@ func sanitizeAttachmentName(name string) string {
 	return name
 }
 
-// attachmentFileName reads the original name from a download's Content-Disposition; the server always sets one for a file it does not show
+// AttachmentFileName reads the original name from a download's Content-Disposition; the server always sets one for a file it does not show
 // inline, and an inline image has none.
-func attachmentFileName(contentDisposition string) string {
+func AttachmentFileName(contentDisposition string) string {
 	_, params, err := mime.ParseMediaType(contentDisposition)
 	if err != nil {
 		return ""
@@ -72,11 +72,11 @@ func attachmentFileName(contentDisposition string) string {
 	return params["filename"]
 }
 
-// saveAttachment writes data to <workdir>/.aimebu/attachments/<id>/<name> with mode 0600 and returns the absolute path. It never writes
+// SaveAttachment writes data to <workdir>/.aimebu/attachments/<id>/<name> with mode 0600 and returns the absolute path. It never writes
 // outside the workspace: every directory on the way is created by it or must already be a real directory (a link is refused), and the final
 // path is checked against the resolved workspace. The file is written under a temporary name and renamed into place, so a partial write is
 // never seen under the final name and an earlier copy, or a link planted at that name, is replaced rather than followed.
-func saveAttachment(workdir, id, name string, data []byte) (string, error) {
+func SaveAttachment(workdir, id, name string, data []byte) (string, error) {
 	if !savedAttachmentID.MatchString(id) {
 		return "", errors.New("invalid attachment_id")
 	}

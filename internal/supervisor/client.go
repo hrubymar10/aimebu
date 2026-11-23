@@ -75,7 +75,9 @@ type Client struct {
 	lastDisconnected    atomic.Int64
 	// NoTurnInterrupt makes the client behave like a build from before turn_interrupt: it does not announce the frame and does not act
 	// on one. Tests use it to stand in for the older supervisor a newer server finds running after an upgrade.
-	NoTurnInterrupt    bool
+	NoTurnInterrupt bool
+	// NoAttachmentSave makes the client behave like a build from before attachment_save, for the same kind of test.
+	NoAttachmentSave   bool
 	retireRequested    atomic.Bool
 	shutdownRequested  atomic.Bool
 	restartInterrupted atomic.Bool
@@ -363,7 +365,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsAgentConversationLog: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: !c.NoTurnInterrupt, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsAgentConversationLog: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: !c.NoTurnInterrupt, SupportsAttachmentSave: !c.NoAttachmentSave, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -589,6 +591,21 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			if err := c.send(ctx, conn, result); err != nil {
 				return err
 			}
+		case protocol.AttachmentSave:
+			if c.NoAttachmentSave {
+				continue // a build from before the frame does not know its type
+			}
+			// The save downloads the file from the server, so it runs off the read loop.
+			go func(request protocol.Frame) {
+				defer telemetry.Recover(ctx)
+				result := c.saveAttachment(probeCtx, request)
+				if probeCtx.Err() != nil {
+					return
+				}
+				if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
+					c.report("an attachment save answer could not be sent", err)
+				}
+			}(frame)
 		case protocol.WorktreeOp:
 			result := protocol.Frame{V: protocol.Version, Type: protocol.WorktreeResult, ReqID: frame.ReqID}
 			var info worktree.Result
@@ -1261,7 +1278,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		return fmt.Errorf("delivery admission rejected for agent %s", delivery.AgentID)
 	}
 	c.active[delivery.AgentID] = delivery.TurnID
-	c.noteActiveTurn(delivery.AgentID, activeTurn{turnID: delivery.TurnID, mode: delivery.Mode, containerized: containerized, confirmsEnd: launcherConfirmsEnd})
+	c.noteActiveTurn(delivery.AgentID, activeTurn{turnID: delivery.TurnID, mode: delivery.Mode, containerized: containerized, confirmsEnd: launcherConfirmsEnd, checkout: delivery.CheckoutPath, launcherID: delivery.Agent.LauncherID})
 	c.turns.Add(1)
 	c.mu.Unlock()
 	release := true

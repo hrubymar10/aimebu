@@ -233,8 +233,14 @@ the tool runs decides that:
 - Docker variants (Claude, Codex, OpenCode, Vibe) and native Pi, OpenCode and
   Vibe reach the HTTP MCP endpoint, which runs the same tool inside the
   server. The server may be on another machine and does not know the agent's
-  checkout, so it saves nothing: such a file is answered with its type, its
-  size and a line saying it cannot be saved there.
+  checkout, so it asks the agent's supervisor (`POST
+  /api/agent/attachments/{id}/save`, then the `attachment_save` frame; see
+  [the supervisor guide](supervisor.md)). The supervisor writes the file into
+  the turn's checkout with the same helper and the same rules, and the answer
+  carries the path the agent sees: for a Docker launcher, the host path mapped
+  through its path map (a mirrored checkout keeps the host path). A supervisor
+  from before the frame, or a machine that is offline, gets the file answered
+  with its type, its size and the reason it could not be saved.
 - Pi Docker has no MCP channel; its prompt receives a turn-scoped HTTP bearer
   and reachable URL for on-demand download to its own temporary directory. The
   bearer is omitted from the supervisor journal and stops working when the

@@ -173,10 +173,39 @@ func TestAttachmentGetKeepsImageAndSmallTextInline(t *testing.T) {
 	}
 }
 
-func TestAttachmentGetWithoutWorkspaceSaysSo(t *testing.T) {
-	server := attachmentServer(t, "application/pdf", "spec.pdf", []byte("%PDF-1.7"))
+// Without a workspace of its own (the server's HTTP endpoint) the tool asks the server to have the agent's supervisor save the file, and
+// passes on the path, or the reason it could not be saved.
+func TestAttachmentGetWithoutWorkspaceAsksTheServerToSave(t *testing.T) {
+	saveAnswer := `{"saved":true,"path":"/workspace/.aimebu/attachments/att_01TEST/spec.pdf","mime":"application/pdf","size":8}`
+	saveStatus := http.StatusOK
+	saves := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/agent/attachments/att_01TEST":
+			w.Header().Set("Content-Type", "application/pdf")
+			w.Header().Set("Content-Disposition", `attachment; filename="spec.pdf"`)
+			_, _ = w.Write([]byte("%PDF-1.7"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/agent/attachments/att_01TEST/save" && r.Header.Get("Authorization") == "Bearer aak_test":
+			saves++
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(saveStatus)
+			_, _ = w.Write([]byte(saveAnswer))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
 	content, failed := callAttachmentGet(t, Server{URL: server.URL, Key: "aak_test"}, `{"attachment_id":"att_01TEST"}`)
-	if failed || len(content) != 1 || !strings.Contains(content[0].Text, "cannot save the file") || !strings.Contains(content[0].Text, "application/pdf, 8 bytes") {
+	if failed || saves != 1 {
+		t.Fatalf("failed=%v saves=%d content=%+v", failed, saves, content)
+	}
+	if path, size, mimeType := savedPath(t, content); path != "/workspace/.aimebu/attachments/att_01TEST/spec.pdf" || size != 8 || mimeType != "application/pdf" {
+		t.Fatalf("saved %q %d %q", path, size, mimeType)
+	}
+
+	saveStatus, saveAnswer = http.StatusConflict, `{"error":"attachment_save_unsupported","message":"the agent's supervisor is too old to save attachments; update it"}`
+	content, failed = callAttachmentGet(t, Server{URL: server.URL, Key: "aak_test"}, `{"attachment_id":"att_01TEST"}`)
+	if failed || len(content) != 1 || !strings.Contains(content[0].Text, "cannot be saved to your workspace here: the agent's supervisor is too old") || !strings.Contains(content[0].Text, "application/pdf, 8 bytes") {
 		t.Fatalf("failed=%v content=%+v", failed, content)
 	}
 	content, failed = callAttachmentGet(t, Server{URL: server.URL, Key: "aak_test"}, `{"attachment_id":"att_01TEST","save":"yes"}`)
@@ -225,8 +254,8 @@ func TestSaveAttachmentRejectsBadInput(t *testing.T) {
 		{"relative/dir", "att_01TEST"},
 		{"", "att_01TEST"},
 	} {
-		if path, err := saveAttachment(tc.workdir, tc.id, "x.zip", []byte("PK")); err == nil {
-			t.Fatalf("saveAttachment(%q, %q) = %q", tc.workdir, tc.id, path)
+		if path, err := SaveAttachment(tc.workdir, tc.id, "x.zip", []byte("PK")); err == nil {
+			t.Fatalf("SaveAttachment(%q, %q) = %q", tc.workdir, tc.id, path)
 		}
 	}
 }

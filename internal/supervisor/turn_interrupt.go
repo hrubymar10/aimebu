@@ -31,6 +31,8 @@ type activeTurn struct {
 	mode          adapter.Mode
 	containerized bool
 	confirmsEnd   bool
+	checkout      string // the turn's checkout on this machine (where attachment_save writes)
+	launcherID    string // the agent's launcher, whose path map turns a path in the checkout into the one the agent sees
 }
 
 // turnInterrupt is one requested interrupt. terminated, when it is set, gets the answer of the terminate the turn's process was sent: whether

@@ -78,6 +78,11 @@ const (
 	// as its Process frame, marked interrupted and not as a cancel.
 	TurnInterrupt       = "turn_interrupt"
 	TurnInterruptResult = "turn_interrupt_result"
+	// AttachmentSave asks a supervisor to save one attachment into the workspace of an agent's running turn (Frame.AgentID, TurnID,
+	// AttachmentID): the attachment_get tool, called over the server's HTTP MCP endpoint, cannot reach the agent's files itself.
+	// AttachmentSaveResult is the answer (the same ReqID): Details is an AttachmentSaved, or Code and Message say why nothing was saved.
+	AttachmentSave       = "attachment_save"
+	AttachmentSaveResult = "attachment_save_result"
 	// RetireWarm asks a supervisor to end the idle warm processes of one tool (an account switch is about to change the login they hold) and to answer
 	// with RetireWarmResult: Result "ok" once every one is confirmed gone, "error" (with Message) when one is not.
 	RetireWarm       = "retire_warm"
@@ -195,6 +200,9 @@ type Frame struct {
 	// SupportsTurnInterrupt says the supervisor cuts one turn on a turn_interrupt frame and leaves its agent running. An older one does not
 	// know the frame, so the server keeps to stopping the agent and starting it again.
 	SupportsTurnInterrupt bool `json:"supports_turn_interrupt,omitempty"`
+	// SupportsAttachmentSave says the supervisor answers an attachment_save frame. An older one does not know the frame, so the server never
+	// sends it one and attachment_get says the file cannot be saved.
+	SupportsAttachmentSave bool `json:"supports_attachment_save,omitempty"`
 	// SupportsTelemetryConfig says the supervisor takes the server's telemetry settings (a telemetry_config frame, and Telemetry in hello_ack). One that
 	// does not never gets the frame, whose type an older supervisor does not know.
 	SupportsTelemetryConfig bool `json:"supports_telemetry_config,omitempty"`
@@ -330,6 +338,8 @@ type Frame struct {
 	CommandExit *CommandExit `json:"command_exit,omitempty"`
 	// JobID names the command a CommandCancel or CommandLogRead frame is about.
 	JobID string `json:"job_id,omitempty"`
+	// AttachmentID names the attachment an attachment_save frame asks for.
+	AttachmentID string `json:"attachment_id,omitempty"`
 	// LogPath, VisibleLogPath and VisibleCwd name one job's log and working directory: the host spelling and the one the agent's container
 	// sees. Log is the bounded tail a CommandLogResult carries, and LogTruncated says the read was cut.
 	LogPath        string `json:"log_path,omitempty"`
@@ -747,4 +757,12 @@ type WarmAgent struct {
 	AgentID  string `json:"agent_id"`
 	State    string `json:"state"`
 	SleepsAt string `json:"sleeps_at,omitempty"`
+}
+
+// AttachmentSaved is the Details of a successful attachment_save_result: where the file is, as the agent sees it (the checkout path mapped
+// through the agent's launcher, for a container), its type and its size in bytes.
+type AttachmentSaved struct {
+	Path string `json:"path"`
+	MIME string `json:"mime"`
+	Size int    `json:"size"`
 }

@@ -80,6 +80,7 @@ var doctorCapabilities = []struct {
 	{"supports_agent_conversation_log", "an agent's conversation log cannot be read from the web UI", func(c *machineConn) bool { return c.supportsAgentConversation }},
 	{"supports_stop_replay", "a stop sent while the machine was offline is applied by a fallback that can kill a live process early", func(c *machineConn) bool { return c.supportsStopReplay }},
 	{"supports_turn_interrupt", "a turn cannot be cut without stopping its agent: interrupting an agent a team flow change waits for stops it and starts it again", func(c *machineConn) bool { return c.supportsTurnInterrupt }},
+	{"supports_attachment_save", "an agent that reaches its toolbox over HTTP (Docker, Pi, OpenCode, Vibe) cannot get an attachment saved as a file in its workspace", func(c *machineConn) bool { return c.supportsAttachmentSave }},
 }
 
 // sameHostPeer says whether a connection comes from the machine the server runs on: from a loopback address, or from the very address it

@@ -548,7 +548,7 @@ bridge next to the agent's files, so a file it cannot return inline (a zip, a
 PDF, text over 64 KB; at most 10 MB) is written, only when the agent asks for
 it, to `<checkout>/.aimebu/attachments/<attachment_id>/<name>` with mode 0600
 (see [the adapter guide](adapter.md)). The other channels run the tool in the
-server and cannot write into a checkout. Pi Docker has no MCP credential channel, so its private turn input
+server, which asks this supervisor to save it with `attachment_save` (below). Pi Docker has no MCP credential channel, so its private turn input
 includes a turn-scoped HTTP bearer and a server URL reachable from the
 container. That bearer is not journaled or included in receipts, and loses
 access when the turn ends or the agent leaves the room.
@@ -1102,6 +1102,19 @@ continues the turn once with the note `your previous turn was interrupted (<reas
 state and continue` and a `turn_interrupted_continuation` system event that carries
 `reason: turn_interrupted`, the detail and the exit code. A chain of turns has one automatic
 continuation in all, of either kind; a repeat takes the ordinary failure path below.
+
+The server can also ask a supervisor to **save an attachment** into an agent's workspace. A
+supervisor that announces `supports_attachment_save` in `hello` takes an `attachment_save`
+frame (agent, turn, attachment) when `attachment_get` runs in the server, over the HTTP MCP
+endpoint that Docker variants and native Pi, OpenCode and Vibe use: the server cannot reach
+the agent's files, the supervisor can. It saves only for that agent's active ordinary turn
+(`turn_not_running` otherwise), downloads the file from `/api/agent/attachments/{id}` with the
+agent's own key (the same checks as the tool: a note in the live turn, room membership), writes
+it with the bridge's helper to `<checkout>/.aimebu/attachments/<id>/<name>` (mode 0600, no
+linked folder, atomic, at most 10 MB) and answers with the path the agent sees: the host path
+mapped through the agent's launcher path map, the rule the Docker adapter uses for the checkout.
+The download runs off the read loop. A supervisor from before the frame never gets it; the
+tool then says the file cannot be saved, as it does when the machine is offline.
 
 The server can also **interrupt one turn on purpose** without stopping its agent. A supervisor
 that announces `supports_turn_interrupt` in `hello` takes a `turn_interrupt` frame for one

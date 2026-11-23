@@ -4,6 +4,7 @@ package agenttools
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -27,7 +28,8 @@ type Server struct {
 	Key    string
 	Client *http.Client
 	// Workdir is the agent's workspace as the agent sees it. Only the stdio bridge, which runs next to the agent's files, sets it; there
-	// attachment_get saves a file it cannot return inline under <Workdir>/.aimebu/attachments. The server's HTTP endpoint leaves it empty.
+	// attachment_get saves a file it cannot return inline under <Workdir>/.aimebu/attachments. The server's HTTP endpoint leaves it empty and
+	// asks the agent's supervisor to save the file instead.
 	Workdir     string
 	retryWindow time.Duration // tests shorten the default minute
 }
@@ -117,7 +119,7 @@ var catalog = []tool{
 	{"memory_recall", "Search curated project memory, task notes in joined rooms, and messages in joined rooms. Does not advance read state.", map[string]any{"type": "object", "properties": map[string]any{
 		"query": map[string]string{"type": "string"}, "limit": map[string]string{"type": "integer"},
 	}, "required": []string{"query"}}},
-	{"attachment_get", "Read a file attached to a note in your current turn while you remain a member of its room. Images and text up to 64 KB come back inline. Any other file (a zip, a PDF, larger text) up to 10 MB is saved into your workspace at .aimebu/attachments/<attachment_id>/<name> (mode 0600, ignored by Git, never extracted or run) and the result gives its path, type and size; open it with your own tools. Set save to also save an image or small text. Saving needs a workspace the tool can reach; where it cannot, the result says so.", map[string]any{"type": "object", "properties": map[string]any{
+	{"attachment_get", "Read a file attached to a note in your current turn while you remain a member of its room. Images and text up to 64 KB come back inline. Any other file (a zip, a PDF, larger text) up to 10 MB is saved into your workspace at .aimebu/attachments/<attachment_id>/<name> (mode 0600, ignored by Git, never extracted or run) and the result gives its path as you see it, its type and its size; open it with your own tools. Set save to also save an image or small text. When the file cannot be saved, the result says why.", map[string]any{"type": "object", "properties": map[string]any{
 		"attachment_id": map[string]string{"type": "string"},
 		"save":          map[string]string{"type": "boolean", "description": "Also save an image or small text to a file; other files are always saved"},
 	}, "required": []string{"attachment_id"}}},
@@ -666,7 +668,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		return toolResult(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, data), true)
 	}
 	if name == "attachment_get" {
-		return s.attachmentResult(getString("attachment_id"), resp.Header, data, saveAttachmentFile)
+		return s.attachmentResult(ctx, client, getString("attachment_id"), resp.Header, data, saveAttachmentFile)
 	}
 	if len(data) > 1<<20 {
 		return toolResult("tool response exceeds 1 MB", true)
@@ -675,8 +677,9 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 }
 
 // attachmentResult turns a downloaded attachment into the tool's answer: an image or small text inline, anything else saved into the agent's
-// workspace (when this side of the toolbox can reach it), and an image or small text saved too when the agent asked.
-func (s Server) attachmentResult(id string, header http.Header, data []byte, save bool) any {
+// workspace, and an image or small text saved too when the agent asked. The stdio bridge, which runs next to the files, saves it itself;
+// elsewhere (the server's HTTP endpoint) the agent's supervisor is asked to save it, through POST /api/agent/attachments/{id}/save.
+func (s Server) attachmentResult(ctx context.Context, client *http.Client, id string, header http.Header, data []byte, save bool) any {
 	if len(data) > MaxAttachmentBytes {
 		return toolResult(fmt.Sprintf("attachment is larger than %d MB, the most attachment_get returns; it was not saved", MaxAttachmentBytes>>20), true)
 	}
@@ -693,23 +696,64 @@ func (s Server) attachmentResult(id string, header http.Header, data []byte, sav
 	if inline != nil && !save {
 		return map[string]any{"content": []any{inline}, "isError": false}
 	}
+	path, size := "", len(data)
 	if s.Workdir == "" {
-		note := fmt.Sprintf("Attachment: %s, %d bytes. This toolbox runs apart from your workspace, so it cannot save the file there; it is not available as a file here.", contentType, len(data))
-		if inline != nil {
-			return map[string]any{"content": []any{inline, map[string]string{"type": "text", "text": note}}, "isError": false}
+		var err error
+		path, size, err = s.remoteSave(ctx, client, id)
+		if err != nil {
+			note := fmt.Sprintf("Attachment: %s, %d bytes. It cannot be saved to your workspace here: %v. It is not available as a file.", contentType, len(data), err)
+			if inline != nil {
+				return map[string]any{"content": []any{inline, map[string]string{"type": "text", "text": note}}, "isError": false}
+			}
+			return toolResult(note, false)
 		}
-		return toolResult(note, false)
+	} else {
+		var err error
+		path, err = SaveAttachment(s.Workdir, id, AttachmentFileName(header.Get("Content-Disposition")), data)
+		if err != nil {
+			return toolResult(fmt.Sprintf("Attachment: %s, %d bytes. It could not be saved: %v", contentType, len(data), err), true)
+		}
 	}
-	path, err := saveAttachment(s.Workdir, id, attachmentFileName(header.Get("Content-Disposition")), data)
-	if err != nil {
-		return toolResult(fmt.Sprintf("Attachment: %s, %d bytes. It could not be saved: %v", contentType, len(data), err), true)
-	}
-	saved, _ := json.Marshal(map[string]any{"saved": true, "path": path, "mime": contentType, "size": len(data)})
+	saved, _ := json.Marshal(map[string]any{"saved": true, "path": path, "mime": contentType, "size": size})
 	note := map[string]string{"type": "text", "text": string(saved) + "\nSaved to your workspace (mode 0600, ignored by Git). Open it with your own tools; it is never extracted or run for you."}
 	if inline != nil {
 		return map[string]any{"content": []any{inline, note}, "isError": false}
 	}
 	return map[string]any{"content": []any{note}, "isError": false}
+}
+
+// remoteSave asks the server to have the agent's supervisor save the attachment into the workspace of the agent's running turn, and returns
+// the path as the agent sees it. The error is the server's own message (an old supervisor, an offline machine, ...).
+func (s Server) remoteSave(ctx context.Context, client *http.Client, id string) (string, int, error) {
+	if !savedAttachmentID.MatchString(id) {
+		return "", 0, errors.New("invalid attachment_id")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.URL, "/")+"/api/agent/attachments/"+url.PathEscape(id)+"/save", nil)
+	if err != nil {
+		return "", 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.Key)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return "", 0, err
+	}
+	var answer struct {
+		Saved   bool   `json:"saved"`
+		Path    string `json:"path"`
+		Size    int    `json:"size"`
+		Message string `json:"message"` // an error answer's text
+	}
+	_ = json.Unmarshal(body, &answer)
+	if resp.StatusCode != http.StatusOK || !answer.Saved || answer.Path == "" {
+		message := cmp.Or(answer.Message, fmt.Sprintf("HTTP %d", resp.StatusCode))
+		return "", 0, errors.New(message)
+	}
+	return answer.Path, answer.Size, nil
 }
 
 func retryableConnectionError(err error) bool {

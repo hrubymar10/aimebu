@@ -1,11 +1,15 @@
 package server
 
 import (
+	"cmp"
+	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"mime"
@@ -14,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
@@ -172,4 +178,88 @@ func fStatTime(f *os.File) (t time.Time) {
 		return info.ModTime()
 	}
 	return
+}
+
+// attachmentSaveWait bounds how long agentAttachmentSave waits for the supervisor, which downloads up to 10 MB and writes it.
+var attachmentSaveWait = 2 * time.Minute
+
+var errAttachmentSaveUnsupported = errors.New("the agent's supervisor is too old to save attachments; update it")
+
+// agentAttachmentSave is behind attachment_get when the tool runs in the server (the HTTP MCP endpoint) and the file has to become a file in
+// the agent's workspace. The access rule is the download's: an attachment of a note delivered in the caller's live turn, while it is still a
+// member of the room. The server then asks the supervisor of the agent's machine to save it (attachment_save with that turn), and answers
+// with the path the agent sees.
+func (s *Server) agentAttachmentSave(w http.ResponseWriter, r *http.Request) {
+	caller := agentToolCaller(r)
+	a, _, turnID, _, err := s.Store.AgentTurnAttachment(r.Context(), "", caller.ID, r.PathValue("attachment"))
+	if errors.Is(err, sql.ErrNoRows) {
+		apiError(w, http.StatusNotFound, "not_found", "attachment unavailable")
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	machineID, _, err := s.Store.AgentPlacement(r.Context(), caller.ID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	saved, err := s.machineAttachmentSave(r.Context(), machineID, caller.ID, turnID, a.ID)
+	switch {
+	case errors.Is(err, ErrMachineUnavailable):
+		apiError(w, http.StatusServiceUnavailable, "machine_unavailable", "the agent's machine is not connected")
+	case errors.Is(err, errAttachmentSaveUnsupported):
+		apiError(w, http.StatusConflict, "attachment_save_unsupported", err.Error())
+	case err != nil:
+		apiError(w, http.StatusBadGateway, "attachment_save_failed", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"saved": true, "path": saved.Path, "mime": saved.MIME, "size": saved.Size})
+	}
+}
+
+// machineAttachmentSave sends attachment_save to the machine and waits for its answer.
+func (s *Server) machineAttachmentSave(ctx context.Context, machineID, agentID, turnID, attachmentID string) (protocol.AttachmentSaved, error) {
+	conn, err := s.machineForID(machineID)
+	if err != nil {
+		return protocol.AttachmentSaved{}, ErrMachineUnavailable
+	}
+	if !conn.supportsAttachmentSave {
+		return protocol.AttachmentSaved{}, errAttachmentSaveUnsupported
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return protocol.AttachmentSaved{}, err
+	}
+	id := hex.EncodeToString(nonce[:])
+	channel := make(chan protocol.Frame, 1)
+	conn.harnessMu.Lock()
+	if conn.pathPending == nil {
+		conn.pathPending = make(map[string]chan protocol.Frame)
+	}
+	conn.pathPending[id] = channel
+	conn.harnessMu.Unlock()
+	defer func() { conn.harnessMu.Lock(); delete(conn.pathPending, id); conn.harnessMu.Unlock() }()
+	if err := conn.send(protocol.Frame{V: protocol.Version, Type: protocol.AttachmentSave, ReqID: id, AgentID: agentID, TurnID: turnID, AttachmentID: attachmentID}); err != nil {
+		return protocol.AttachmentSaved{}, ErrMachineUnavailable
+	}
+	timer := time.NewTimer(attachmentSaveWait)
+	defer timer.Stop()
+	select {
+	case frame := <-channel:
+		if frame.Code != "" {
+			return protocol.AttachmentSaved{}, errors.New(cmp.Or(frame.Message, frame.Code))
+		}
+		var saved protocol.AttachmentSaved
+		if err := json.Unmarshal(frame.Details, &saved); err != nil || saved.Path == "" {
+			return protocol.AttachmentSaved{}, errors.New("the machine gave no path")
+		}
+		return saved, nil
+	case <-conn.done:
+		return protocol.AttachmentSaved{}, ErrMachineUnavailable
+	case <-ctx.Done():
+		return protocol.AttachmentSaved{}, ctx.Err()
+	case <-timer.C:
+		return protocol.AttachmentSaved{}, errors.New("the machine did not answer")
+	}
 }

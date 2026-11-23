@@ -1431,7 +1431,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version, supervisor_environment?, supports_retire_at_idle?,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_agent_conversation_log?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, held_keys?[agent_id],
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_agent_conversation_log?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, supports_attachment_save?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}], command_open?[{job_id, agent_id, generation, pid, pid_start?,
@@ -1447,6 +1447,10 @@ it never silently reruns a turn with uncertain effects.
   running turn on a `turn_interrupt` frame (§4.2) and leaves its agent
   running. The server sends the frame only to a supervisor that says so; for
   any other it keeps to stopping the agent and starting it again.
+- `supports_attachment_save=true` in `hello` says the supervisor answers an
+  `attachment_save` frame (§4.2). The server sends the frame only to a
+  supervisor that says so; for any other, `attachment_get` over the HTTP MCP
+  endpoint answers that the file cannot be saved, with the reason.
 - S→M `hello_ack{v, desired[{agent_id, generation, desired, desired_rev}],
   redeliver[...], resend_receipts[...], harness_settings[...],
   harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...], telemetry?}` — the optional probe directories are the
@@ -1759,6 +1763,28 @@ it never silently reruns a turn with uncertain effects.
   attachment bearer is used only by Pi Docker, never journaled, and authorizes
   reads only for a delivered file in a live turn while the agent remains a
   member of its room; MCP agents use `attachment_get` with the same checks.
+  `attachment_get` returns an image or text up to 64 KB inline; any other
+  file up to 10 MB, or any file with `save:true`, is saved into the agent's
+  workspace and the result carries `{saved:true, path, mime, size}` with the
+  path the agent sees (the stdio bridge writes it itself; over the HTTP MCP
+  endpoint the server asks the supervisor with `attachment_save`).
+- S→M `attachment_save{v, req_id, agent_id, turn_id, attachment_id}`; M→S
+  `attachment_save_result{v, req_id, agent_id, turn_id, attachment_id,
+  details?:{path, mime, size}, code?, message?}`. Sent only when the hello
+  advertised `supports_attachment_save`, when `attachment_get` runs in the
+  server (the HTTP MCP endpoint: Docker variants, native Pi, OpenCode and
+  Vibe) and the file must become a file in the agent's workspace. The server
+  first applies the download's rule (a note delivered in the caller's live
+  turn, room membership still held) and names that turn. The supervisor
+  saves only for the agent's active ordinary turn with that id (otherwise
+  `code:"turn_not_running"`), fetches the bytes from
+  `/api/agent/attachments/{id}` with the agent's own key (so the same rule
+  applies again), and writes `<checkout>/.aimebu/attachments/<id>/<name>`:
+  name reduced to one safe file name, mode 0600, no linked folder on the way,
+  an atomic write, at most 10 MB. `details.path` is the path as the agent sees
+  it: the host path mapped through the agent's launcher path map, as its
+  checkout is. Other codes: `no_workspace`, `no_key`, `fetch_failed`,
+  `save_failed`; `message` says why. Nothing is extracted or run.
 - S→M `turn_interrupt{v, req_id, agent_id, generation, turn_id, reason}`;
   M→S `turn_interrupt_result{v, req_id, agent_id, generation, turn_id,
   result[ok|not_running|unsupported_mode]}`. It cuts one running turn without
