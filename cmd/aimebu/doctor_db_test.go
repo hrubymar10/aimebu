@@ -522,3 +522,37 @@ func TestDoctorStrictTurnsWarningsIntoFailures(t *testing.T) {
 		t.Fatalf("JSON has no hint on the machines warning:\n%s", out)
 	}
 }
+
+func TestCheckNameCollisions(t *testing.T) {
+	user := func(f *doctorFixture, login string) {
+		f.exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES (?,?,?,?,?)`, "u-"+login, login, "h", "{}", stamp(doctorNow))
+	}
+	project := func(f *doctorFixture, id, name string) {
+		f.exec(`INSERT INTO project(id,name,folder,created_at) VALUES (?,?,?,?)`, id, name, "/tmp/"+id, stamp(doctorNow))
+	}
+	agent := func(f *doctorFixture, id, slug, projectID string) {
+		f.exec(`INSERT INTO agent(id,slug,project_id,role_id,tool,variant,model,provider,machine_id,checkout_id,key_hash,desired,desired_rev,observed,created_by,created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, slug, projectID, "role", "claude", "v", "m", "p", "m", "co", "h", "stopped", 1, "stopped", "u", stamp(doctorNow))
+	}
+	t.Run("none is ok", func(t *testing.T) {
+		f := newDoctorFixture(t)
+		user(f, "Alice")
+		project(f, "p1", "one")
+		agent(f, "a1", "alicia", "p1")
+		if got := only(t, f.run(true), "login and agent names"); got.Status != statusOK {
+			t.Fatalf("%+v", got)
+		}
+	})
+	t.Run("existing collision is listed, case-insensitively, in any project", func(t *testing.T) {
+		f := newDoctorFixture(t)
+		user(f, "Alice")
+		project(f, "p1", "one")
+		project(f, "p2", "two")
+		agent(f, "a1", "alice", "p1")
+		agent(f, "a2", "alice", "p2")
+		got := only(t, f.run(true), "login and agent names")
+		if got.Status != statusWarn || !strings.Contains(got.Description, `"Alice" and the agent alice@one`) || !strings.Contains(got.Description, "alice@two") {
+			t.Fatalf("%+v", got)
+		}
+	})
+}

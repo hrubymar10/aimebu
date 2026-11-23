@@ -89,6 +89,9 @@ func importV1NewUsers(ctx context.Context, tx *sql.Tx, data *v1ImportData, mappi
 			if count > 0 {
 				return nil, fmt.Errorf("new account for %q: the login %q is already taken", name, user.Login)
 			}
+			if err := checkLoginFree(ctx, tx, user.Login); err != nil {
+				return nil, fmt.Errorf("new account for %q: %w", name, err)
+			}
 			hash, params, err := unusablePassword()
 			if err != nil {
 				return nil, err

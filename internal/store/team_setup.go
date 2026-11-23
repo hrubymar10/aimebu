@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/goccy/go-json"
 )
@@ -180,10 +181,10 @@ func (tx *Tx) validateTeamSetup(projectID, actorID string, in TeamSetupInput) er
 		if target == nil || target.Name == "" {
 			continue
 		}
-		if taken[target.Name] {
-			return ErrSlugTaken
+		if taken[strings.ToLower(target.Name)] {
+			return slugInUse(tx.ctx, tx.tx, projectID, target.Name)
 		}
-		taken[target.Name] = true
+		taken[strings.ToLower(target.Name)] = true
 	}
 	for role, config := range in.RoleDefaults {
 		mode := config.PickMode

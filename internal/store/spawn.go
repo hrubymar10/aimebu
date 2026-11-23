@@ -308,8 +308,8 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		if err != nil {
 			return AgentCard{}, err
 		}
-		if taken[in.Slug] {
-			return AgentCard{}, ErrSlugTaken
+		if taken[strings.ToLower(in.Slug)] {
+			return AgentCard{}, slugInUse(tx.ctx, tx.tx, projectID, in.Slug)
 		}
 		slug = in.Slug
 	} else if slug, err = tx.nextAgentSlug(projectID); err != nil {
@@ -471,7 +471,7 @@ func (tx *Tx) authorizeSpawnActor(projectID, actorKind, actorID string, spawning
 
 var agentNamePool = []string{"alice", "bob", "carol", "dave", "eve", "frank", "grace", "hugo", "iris", "jack", "kate", "leo", "mia", "nate", "olive", "pete", "quinn", "ruth", "sam", "tina", "vera", "will", "xena", "yara", "zeke", "amy", "ben", "cora", "dan", "ella", "finn", "gina", "hal", "ivy", "jade", "kai", "lena", "max", "nora", "otto", "piper", "rhea", "seth", "theo", "una", "vince", "wren", "xavi", "yuki", "zoe", "arlo", "beth", "cleo", "drew", "elsa", "felix", "gus", "hana", "ian", "june", "kira", "luna", "milo", "nina", "owen", "penny", "rex", "sage", "tara", "uma", "vlad", "wade", "xio", "yann", "zane", "ada", "boris", "cass", "deon", "emma", "ford", "gwen", "hans", "ines", "jonas", "kyra", "lars", "mona", "nils", "opal", "pia", "quin", "remi", "sven", "tessa", "umar", "viv", "wes", "xan", "yael", "zeno"}
 
-// takenSlugs is every name a new agent in the project cannot have: an agent's, a person's, or a role key that @name would clash with.
+// takenSlugs is every name a new agent in the project cannot have: an agent's, any person's login (no name is shared by a login and an agent), or a role key that @name would clash with.
 func (tx *Tx) takenSlugs(projectID string) (map[string]bool, error) {
 	return takenSlugs(tx.ctx, tx.tx, projectID)
 }
@@ -482,7 +482,7 @@ type rowQuerier interface {
 }
 
 func takenSlugs(ctx context.Context, q rowQuerier, projectID string) (map[string]bool, error) {
-	rows, err := q.QueryContext(ctx, `SELECT slug FROM agent WHERE project_id=? UNION SELECT u.login FROM user u JOIN membership m ON m.user_id=u.id WHERE m.project_id=? UNION SELECT role_key FROM role WHERE deleted_at IS NULL AND (project_id IS NULL OR project_id=?)`, projectID, projectID, projectID)
+	rows, err := q.QueryContext(ctx, `SELECT slug FROM agent WHERE project_id=? UNION SELECT login FROM user UNION SELECT role_key FROM role WHERE deleted_at IS NULL AND (project_id IS NULL OR project_id=?)`, projectID, projectID)
 	if err != nil {
 		return nil, err
 	}

@@ -291,12 +291,15 @@ func (s *Server) prepareLegacyTarget(ctx context.Context, projectID string, conn
 	if err != nil {
 		return false, err
 	}
-	taken, err := s.Store.AgentSlugTaken(ctx, projectID, legacy.Slug)
-	if err != nil {
+	if err := s.Store.SlugInUse(ctx, projectID, legacy.Slug); err != nil {
+		var inUse *store.NameInUseError
+		if errors.As(err, &inUse) {
+			return false, &legacyCheckError{409, "name_in_use", inUse.Error()}
+		}
+		if errors.Is(err, store.ErrSlugTaken) {
+			return false, &legacyCheckError{409, "name_in_use", "the project already has an agent, person or role of the name " + legacy.Slug}
+		}
 		return false, err
-	}
-	if taken {
-		return false, &legacyCheckError{409, "name_in_use", "the project already has an agent, person or role of the name " + legacy.Slug}
 	}
 	target.Name, target.ResumeLegacy = legacy.Slug, legacy.AgentID
 	if !resuming {

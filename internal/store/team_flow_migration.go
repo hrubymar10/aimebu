@@ -270,10 +270,10 @@ func (s *Store) PreviewTeamFlowMigration(ctx context.Context, projectID, actorID
 					return fmt.Errorf("%w: a stopped core role keeps its name", ErrTeamFlowMigration)
 				}
 				if target != nil && target.Name != "" && len(agents) == 0 {
-					if takenNames[target.Name] {
-						return ErrSlugTaken
+					if takenNames[strings.ToLower(target.Name)] {
+						return slugInUse(tx.ctx, tx.tx, projectID, target.Name)
 					}
-					takenNames[target.Name] = true
+					takenNames[strings.ToLower(target.Name)] = true
 				}
 			} else if flowMigrationTarget(in, role) != nil {
 				return fmt.Errorf("%w: %s target is for a new agent only", ErrTeamFlowMigration, role)

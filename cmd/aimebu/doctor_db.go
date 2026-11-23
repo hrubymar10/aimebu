@@ -78,6 +78,7 @@ func doctorServerChecks(root string, now time.Time, serverUp, databaseUsable boo
 	checks = append(checks, checkMachines(db, now, serverUp)...)
 	checks = append(checks, checkPendingStops(db, now, serverUp)...)
 	checks = append(checks, checkLaunchers(db)...)
+	checks = append(checks, checkNameCollisions(db)...)
 	checks = append(checks, checkProviderLimits(db, now)...)
 	return scopeAll(checks, scopeServer)
 }
@@ -602,4 +603,40 @@ func checkProviderLimits(db *sql.DB, now time.Time) []doctorCheck {
 	}
 	return []doctorCheck{{Name: name, Status: statusWarn, Description: "held: " + strings.Join(parts, ", "),
 		Hint: "Wait for the limit to reset, or switch the account in Settings → Credentials."}}
+}
+
+// checkNameCollisions lists each person login that equals (case-insensitive) the slug of a live agent in any project. New ones are refused,
+// but ones made before that rule stay: a bare @name then addresses the agent and the people together. Doctor only reports them.
+func checkNameCollisions(db *sql.DB) []doctorCheck {
+	const name = "login and agent names"
+	if !tableExists(db, "user") || !tableExists(db, "agent") || !tableExists(db, "project") {
+		return nil
+	}
+	var found []string
+	err := sqliteutil.Retry(func() error {
+		found = found[:0]
+		rows, err := db.Query(`SELECT u.login,a.slug,COALESCE(p.name,'') FROM user u JOIN agent a ON lower(a.slug)=lower(u.login) AND a.revoked_at IS NULL
+			LEFT JOIN project p ON p.id=a.project_id ORDER BY lower(u.login),u.login,p.name,a.slug`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var login, slug, project string
+			if err := rows.Scan(&login, &slug, &project); err != nil {
+				return err
+			}
+			found = append(found, fmt.Sprintf("the login %q and the agent %s@%s", login, slug, project))
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return []doctorCheck{{Name: name, Status: statusWarn, Description: fmt.Sprintf("cannot read logins and agents: %v", err)}}
+	}
+	if len(found) == 0 {
+		return []doctorCheck{{Name: name, Status: statusOK, Description: "no login equals an agent slug"}}
+	}
+	return []doctorCheck{{Name: name, Status: statusWarn,
+		Description: "a name is shared by a person and an agent, so a bare @name addresses both: " + strings.Join(found, "; "),
+		Hint:        "Nothing is changed for you. Rename one side by removing the agent and spawning it again under another name, or give the person another login."}}
 }

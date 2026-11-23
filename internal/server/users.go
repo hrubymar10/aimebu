@@ -20,6 +20,8 @@ func userError(w http.ResponseWriter, err error) {
 		apiError(w, 403, "forbidden", "insufficient permission")
 	case errors.Is(err, store.ErrLastOwner):
 		apiError(w, 409, "last_owner", "a project needs an active owner")
+	case errors.Is(err, store.ErrLoginTaken):
+		apiError(w, 409, "login_in_use", err.Error())
 	case errors.Is(err, store.ErrInviteInvalid):
 		apiError(w, 401, "invalid_invite", "invite is invalid, expired, or already used")
 	case errors.Is(err, store.ErrConflict):

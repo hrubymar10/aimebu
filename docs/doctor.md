@@ -71,6 +71,9 @@ server) or `machine` (a supervisor host).
   do not block deletion and are not listed.
 - **launchers** — warns for an enabled launcher with no models, or a model list
   with no default. No launchers yet is ok.
+- **login and agent names** — warns for each person login that equals (any
+  case) the slug of a live agent in any project: new ones are refused, old ones
+  stay and a bare `@name` addresses both. Nothing is renamed or removed.
 - **provider limits** — warns while agents are held by a provider usage limit
   that has not reset (with the latest reset time per tool).
 

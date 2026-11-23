@@ -2194,7 +2194,11 @@ without a `room_member` row); a DM resolves only its peers. Group tags
 that equals the slug of exactly one agent of the room addresses that agent and
 every person with the login (a live mention of an agent always wakes it; the
 `@slug@<project>` form names the agent alone). Two agents with one slug are
-ambiguous and address nobody.
+ambiguous and address nobody. A new collision cannot arise: no name is shared
+by a login and an agent, so a login is refused when it equals (case-insensitive)
+the slug of any agent in any project, and an agent's slug is refused when it
+equals any login (409 `login_in_use` / `name_in_use`, naming the name and what
+holds it). Collisions that predate the rule stay, and `aimebu doctor` lists them.
 
 ## 7. Spawn / move / role change checks
 

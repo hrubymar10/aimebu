@@ -79,6 +79,9 @@ func (tx *Tx) CountUsers() (int, error) {
 }
 
 func (tx *Tx) CreateUser(user User) (User, error) {
+	if err := checkLoginFree(tx.ctx, tx.tx, user.Login); err != nil {
+		return User{}, err
+	}
 	var err error
 	user.ID, err = newID("usr")
 	if err != nil {

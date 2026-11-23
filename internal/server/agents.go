@@ -969,13 +969,8 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	// Before anything is prepared for the agent (a worktree, a folder check): a name that is already in use is the commonest refusal.
 	// The check in the spawn transaction stays the arbiter when two requests race for the same name.
 	if req.Name != "" {
-		taken, err := s.Store.AgentSlugTaken(r.Context(), room.ProjectID, req.Name)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		if taken {
-			spawnError(w, store.ErrSlugTaken)
+		if err := s.Store.SlugInUse(r.Context(), room.ProjectID, req.Name); err != nil {
+			spawnError(w, err)
 			return
 		}
 	}
@@ -1416,7 +1411,12 @@ func spawnError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrSpawnLimit):
 		apiError(w, 429, "spawn_limit", "agent or spawn rate limit reached")
 	case errors.Is(err, store.ErrSlugTaken):
-		apiError(w, 409, "name_in_use", "this project already has an agent, person or role with that name")
+		var inUse *store.NameInUseError
+		if errors.As(err, &inUse) {
+			apiError(w, 409, "name_in_use", inUse.Error())
+		} else {
+			apiError(w, 409, "name_in_use", "this project already has an agent, person or role with that name, or a person has that login")
+		}
 	case errors.Is(err, store.ErrSessionAttached):
 		apiError(w, 409, "already_started", "an agent already continues this Claude Code session; use that agent")
 	case errors.Is(err, store.ErrLegacyStarted):
