@@ -510,6 +510,26 @@ failed during the spike, so Codex does not claim `readonly_verified` or
 not carried to a new version or OS. Set `AIMEBU_LIVE_CODEX=1` to run the
 opt-in two-turn native resume canary.
 
+The Codex conversation log maps these item shapes, checked against real
+`codex exec --json` turns and written in both spellings (snake_case for exec,
+camelCase for the app-server): `agent_message` (assistant), `reasoning`
+(thinking), `command_execution` (`shell` call and result, the exit status when
+it is not 0), `mcp_tool_call` (`<server>.<tool>`; the result is its text
+content blocks, else its structured content, else the result as JSON; the
+error is the message of its error object), `file_change` (one `kind path`
+line per change; the app-server's kind object gives its type),
+`collab_tool_call` / `collabAgentToolCall` (`collab.<tool>` with its prompt
+and receiver threads; the result is the status and any agent states),
+`web_search`, an `error` item, and the `error` and `turn.failed` events
+(error records). `thread.started`, `turn.started`, `turn.completed`,
+`item.updated`, `user_message` and `todo_list` items, the app-server's
+deltas and its thread, rate-limit and MCP-startup notifications leave no
+record. Any other item type stays generic: a tool call and result under its
+own type name with the rest of the item as input. Any other event or
+notification, and one that cannot be read, is an `event` record. App-server
+shapes were not seen in a recorded stream; they follow the exec items and the
+Codex protocol's camelCase names.
+
 A v2 turn continues an existing harness session when the agent's session row
 has a native session id and `native_session_started_at`: `claude --resume <id>`,
 `codex exec resume <id>`, `opencode run -s <id>`, `vibe -p --resume <id>`; Pi passes `--session-id <id>` on

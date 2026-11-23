@@ -63,13 +63,21 @@ func transcribeItem(conv *adapter.Conversation, event string, raw json.RawMessag
 		}
 	case "mcptoolcall":
 		name, input = text("server")+"."+text("tool"), text("arguments")
-		if problem := text("error"); problem != "" {
+		if problem := messageOf(item["error"]); problem != "" {
 			failed, output = true, problem
-		} else if result := text("result"); result != "" {
+		} else if result := toolResultText(item["result"]); result != "" {
 			output = result
 		}
 	case "filechange":
-		name, input = "file_change", text("changes")
+		name, input = "file_change", fileChanges(item["changes"])
+	case "collabtoolcall", "collabagenttoolcall":
+		name, input = "collab", collabInput(item)
+		if tool := text("tool"); tool != "" {
+			name += "." + tool
+		}
+		if states := text("agents_states", "agentsStates"); states != "" && states != "{}" {
+			output = strings.TrimSpace(status + "\n" + states)
+		}
 	case "websearch":
 		name, input = "web_search", text("query")
 	default:
@@ -91,6 +99,107 @@ func transcribeItem(conv *adapter.Conversation, event string, raw json.RawMessag
 		conv.ToolCall(id, name, input)
 	}
 	conv.ToolResult(id, name, output, failed)
+}
+
+// messageOf is the text of an MCP tool's error: the message of an error object (`{"message": ...}`, what Codex reports), the string of a
+// plain one, or the value as JSON.
+func messageOf(raw json.RawMessage) string {
+	var value struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &value) == nil && strings.TrimSpace(value.Message) != "" {
+		return value.Message
+	}
+	return adapter.ConversationJSON(raw)
+}
+
+// toolResultText is the text of an MCP tool's result: its text content blocks joined, then its structured content (structured_content or
+// structuredContent), then the result itself as JSON when neither is there to read.
+func toolResultText(raw json.RawMessage) string {
+	var value struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		Structured      json.RawMessage `json:"structured_content"`
+		StructuredCamel json.RawMessage `json:"structuredContent"`
+	}
+	if json.Unmarshal(raw, &value) != nil {
+		return adapter.ConversationJSON(raw)
+	}
+	var parts []string
+	other := false
+	for _, block := range value.Content {
+		if block.Type == "text" {
+			parts = append(parts, block.Text)
+		} else {
+			other = true
+		}
+	}
+	if len(parts) > 0 && !other {
+		return strings.Join(parts, "\n")
+	}
+	if structured := adapter.ConversationJSON(value.Structured); structured != "" {
+		return structured
+	}
+	if structured := adapter.ConversationJSON(value.StructuredCamel); structured != "" {
+		return structured
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, "\n")
+	}
+	return adapter.ConversationJSON(raw)
+}
+
+// fileChanges is the input of a file_change item: one line per change, its kind and path (the kind a string in `codex exec --json`, an
+// object with a type in the app-server). Changes of another shape are written as JSON.
+func fileChanges(raw json.RawMessage) string {
+	var changes []struct {
+		Kind json.RawMessage `json:"kind"`
+		Path string          `json:"path"`
+	}
+	if json.Unmarshal(raw, &changes) != nil {
+		return adapter.ConversationJSON(raw)
+	}
+	lines := make([]string, 0, len(changes))
+	for _, change := range changes {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		label := adapter.ConversationJSON(change.Kind)
+		if json.Unmarshal(change.Kind, &kind) == nil && kind.Type != "" {
+			label = kind.Type
+		}
+		if change.Path == "" {
+			return adapter.ConversationJSON(raw)
+		}
+		lines = append(lines, strings.TrimSpace(label+" "+change.Path))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// collabInput is the input of a collab tool call (Codex's sub-agent tool: spawn, send_input, wait): its prompt and the threads it
+// addresses, whichever it has.
+func collabInput(item map[string]json.RawMessage) string {
+	input := map[string]json.RawMessage{}
+	for _, key := range []string{"prompt", "receiver_thread_ids", "receiverThreadIds"} {
+		if value := item[key]; len(value) > 0 && string(value) != "null" && string(value) != "[]" && string(value) != `""` {
+			input[key] = value
+		}
+	}
+	if len(input) == 0 {
+		return ""
+	}
+	if len(input) == 1 {
+		for _, value := range input {
+			return adapter.ConversationJSON(value)
+		}
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 // joinedText is the text of a reasoning item: its text, or the strings of its summary list.
