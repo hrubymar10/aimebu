@@ -193,6 +193,107 @@ func TestScheduleCloseNoticesCreatorAndTarget(t *testing.T) {
 	}
 }
 
+// A schedule in a restricted flow room must not leak its text when the room closes: the notice lands in general, which every project member
+// may read, so it names only the schedule and the room.
+func TestScheduleCloseNoticeFromRestrictedRoomLeavesTextOut(t *testing.T) {
+	t.Parallel()
+	s, project, room, worker, creator := wakeFixture(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`UPDATE room SET team_flow_room_key='routing',restricted=1,title='routing' WHERE id=?`, room.ID); err != nil {
+		t.Fatal(err)
+	}
+	general, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "task", Title: "general", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE room SET team_flow_room_key='general' WHERE id=?`, general.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range []Agent{worker, creator} {
+		if err := s.AddMember(ctx, general.ID, "agent", agent.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var item Schedule
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		var e error
+		item, e = tx.CreateSchedule(Schedule{RoomID: room.ID, CreatorKind: "agent", CreatorID: creator.ID, TargetAgentID: worker.ID, Body: "secret routing plan", Kind: "interval", Timezone: "UTC", IntervalSeconds: 300}, time.Now())
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, e := tx.beginRoomClose(room.ID, creator.ID, 0, false)
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var leaked int
+	if err := s.db.QueryRow(`SELECT count(*) FROM message WHERE room_id<>? AND body LIKE '%secret routing plan%'`, room.ID).Scan(&leaked); err != nil || leaked != 0 {
+		t.Fatalf("schedule text copied out of the restricted room %d times (err=%v)", leaked, err)
+	}
+	var id, body string
+	if err := s.db.QueryRow(`SELECT id,body FROM message WHERE room_id=? AND author_kind='system' AND body LIKE '%stopped because its room%'`, general.ID).Scan(&id, &body); err != nil {
+		t.Fatalf("no notice in general: %v", err)
+	}
+	if !strings.Contains(body, item.ID) || !strings.Contains(body, "routing") {
+		t.Fatalf("notice %q, want the schedule ID and the room title", body)
+	}
+	if got := wakeReasons(t, s, id); !sameWakes(got, map[string]string{"one": "inbox_answer", "lead": "inbox_answer"}) {
+		t.Fatalf("the notice woke %v, want the creator and the target", got)
+	}
+}
+
+// With no shared room, each agent hears in an open room it is a member of. An agent in no open room is skipped: a line in a room it has not
+// joined, such as the home room, would wake nobody.
+func TestScheduleCloseNoticeSkipsAgentInNoOpenRoom(t *testing.T) {
+	t.Parallel()
+	s, project, room, worker, creator := wakeFixture(t)
+	ctx := context.Background()
+	home, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "home", Title: project.Name, CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "task", Title: "creator only", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, own.ID, "agent", creator.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, e := tx.CreateSchedule(Schedule{RoomID: room.ID, CreatorKind: "agent", CreatorID: creator.ID, TargetAgentID: worker.ID, Body: "check the queue", Kind: "interval", Timezone: "UTC", IntervalSeconds: 300}, time.Now())
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, e := tx.beginRoomClose(room.ID, creator.ID, 0, false)
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.db.Query(`SELECT id,room_id FROM message WHERE author_kind='system' AND body LIKE '%stopped because its room%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rooms, ids []string
+	for rows.Next() {
+		var id, roomID string
+		if err := rows.Scan(&id, &roomID); err != nil {
+			t.Fatal(err)
+		}
+		rooms, ids = append(rooms, roomID), append(ids, id)
+	}
+	rows.Close()
+	if len(rooms) != 1 || rooms[0] != own.ID {
+		t.Fatalf("notices in %v, want one in the creator's room %s and none in home %s", rooms, own.ID, home.ID)
+	}
+	if got := wakeReasons(t, s, ids[0]); !sameWakes(got, map[string]string{"lead": "inbox_answer"}) {
+		t.Fatalf("the notice woke %v, want only the creator", got)
+	}
+}
+
 // A home-room schedule for the lead reaches the project lead, the same
 // targeted system message and wake note as in a task room. A stopped earlier
 // lead still listed in the room must not shadow the active one.

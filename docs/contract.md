@@ -1150,7 +1150,11 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
   the room's lead), get one targeted system message naming the schedule and
   the closed room, in an open room of the project they all share (routing,
   then general, then home, then the oldest); with none shared, each gets its
-  own in a room it is in. The server dispatcher processes each due
+  own in an open room it is a member of, and one in no open room gets none
+  (the server logs it). The message quotes the schedule's text only when the
+  closed room is neither restricted nor a private chat; otherwise it names
+  only the schedule ID and the room title, since the destination (general)
+  may be read by more people. The server dispatcher processes each due
   schedule transactionally before dispatch, including once at startup. It
   catches up at most one missed occurrence and advances directly to the next
   future occurrence. A delivered run is a targeted system message and normal

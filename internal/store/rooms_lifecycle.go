@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -175,12 +176,14 @@ func (tx *Tx) beginRoomClose(id, actor string, rev int64, cascade bool) (control
 // (for a lead-targeted schedule, the room's lead).
 type stoppedSchedule struct {
 	id, body, roomTitle string
-	agents              []string
+	// private is a restricted room or a private chat: fewer people may read it than the room the notice lands in.
+	private bool
+	agents  []string
 }
 
 // roomEnabledSchedules lists the room's enabled schedules before closing it disables them.
 func (tx *Tx) roomEnabledSchedules(roomID string) ([]stoppedSchedule, error) {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT s.id,s.body,r.title,s.creator_kind,s.creator_id,COALESCE(s.target_agent_id,''),s.target_lead
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT s.id,s.body,r.title,r.restricted=1 OR r.kind='dm',s.creator_kind,s.creator_id,COALESCE(s.target_agent_id,''),s.target_lead
 		FROM schedule s JOIN room r ON r.id=s.room_id WHERE s.room_id=? AND s.enabled=1 ORDER BY s.created_at,s.id`, roomID)
 	if err != nil {
 		return nil, err
@@ -193,7 +196,7 @@ func (tx *Tx) roomEnabledSchedules(roomID string) ([]stoppedSchedule, error) {
 	var found []row
 	for rows.Next() {
 		var x row
-		if err := rows.Scan(&x.item.id, &x.item.body, &x.item.roomTitle, &x.creatorKind, &x.creator, &x.target, &x.lead); err != nil {
+		if err := rows.Scan(&x.item.id, &x.item.body, &x.item.roomTitle, &x.item.private, &x.creatorKind, &x.creator, &x.target, &x.lead); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -228,13 +231,19 @@ func (tx *Tx) roomEnabledSchedules(roomID string) ([]stoppedSchedule, error) {
 
 // noticeScheduleStopped tells a stopped schedule's creator and target that it stopped, so a reminder someone relies on does not go quiet without
 // a word. The note goes, once, into an open room they all share (routing first, then general, then the home room, then the oldest); with no
-// shared room each agent gets it in a room of its own. A schedule a person made for nobody in particular has no agent to tell: the person sees
-// the room close.
+// shared room each agent gets it in an open room it is a member of, and an agent in no open room is skipped with a log line (a line in a room
+// it is not in would wake nobody). A schedule a person made for nobody in particular has no agent to tell: the person sees the room close.
+//
+// The destination is usually more widely read than a restricted room or a private chat (general is open to every project member), so for
+// such a room the note names only the schedule ID and the room title and leaves the schedule's text out.
 func (tx *Tx) noticeScheduleStopped(projectID string, item stoppedSchedule) error {
 	if len(item.agents) == 0 {
 		return nil
 	}
 	body := fmt.Sprintf("Schedule %s (%q) stopped because its room %s closed. Create it again in an open room if it is still needed.", item.id, excerptRunes(item.body, 80), item.roomTitle)
+	if item.private {
+		body = fmt.Sprintf("Schedule %s stopped because its room %s closed. Create it again in an open room if it is still needed.", item.id, item.roomTitle)
+	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(item.agents)), ",")
 	args := []any{projectID}
 	for _, id := range item.agents {
@@ -254,8 +263,12 @@ func (tx *Tx) noticeScheduleStopped(projectID string, item stoppedSchedule) erro
 		return err
 	}
 	for _, agentID := range item.agents {
-		roomID, err := tx.flowMigrationAgentRoom(projectID, agentID)
+		var roomID string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.id FROM room r JOIN room_member m ON m.room_id=r.id AND m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL
+			WHERE r.project_id=? AND r.lifecycle='open'
+			ORDER BY CASE WHEN r.team_flow_room_key='general' THEN 0 WHEN r.kind='task' THEN 1 ELSE 2 END,r.created_at,r.id LIMIT 1`, agentID, projectID).Scan(&roomID)
 		if errors.Is(err, sql.ErrNoRows) {
+			log.Printf("schedule %s stopped with its room %s; agent %s is in no open room, so it gets no notice", item.id, item.roomTitle, agentID)
 			continue
 		}
 		if err != nil {
