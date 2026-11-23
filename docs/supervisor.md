@@ -343,7 +343,12 @@ setting cannot override): a nested repository has its own config, whose
 filter drivers the helper never reads. The accepted tradeoff is that changes
 inside a submodule or an embedded repository do not count as dirty files in
 the worktree inspection or the description of a limit-killed turn's
-checkout.
+checkout. Repository-local filter drivers, such as the ones
+`git lfs install --local` writes, do not run on these calls either: a
+worktree the host creates gets LFS pointer files instead of their content,
+the git-lfs `post-checkout` hook is skipped with the other hooks, and a file
+such a driver cleans counts as modified once its timestamp changes. A global
+`git lfs install` is unaffected.
 The server resends an unconfirmed active spawn after reconnect and
 periodically while the machine remains connected, at most 16 per pass; a
 retry with the same HTTP idempotency key also resends it. Stopped agents are

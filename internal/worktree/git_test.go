@@ -258,3 +258,57 @@ func TestHostGitStatusSkipsNestedRepositories(t *testing.T) {
 		}
 	}
 }
+
+// A filter driver installed in the repository's own config (`git lfs install --local` does that) does not run on host-side git, so a file it
+// cleans reads as its raw content: once its stat changes, dirtyCount counts it as modified though git with the filter sees it clean. This pins
+// that consequence (see docs/supervisor.md); a driver installed globally keeps working (TestHostGitKeepsGlobalFiltersAndDropsLocalOnes).
+func TestHostGitCountsAFileALocalFilterCleansAsDirty(t *testing.T) {
+	root := repoFixture(t)
+	marks := t.TempDir()
+	clean := filepath.Join(t.TempDir(), "clean.sh")
+	if err := testenv.WriteExecutable(clean, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, "clean")+"'\ncat >/dev/null\necho pointer\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+		return string(out)
+	}
+	git("config", "filter.lfs.clean", clean)
+	git("config", "filter.lfs.smudge", "cat")
+	git("config", "filter.lfs.required", "true")
+	if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("*.bin filter=lfs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "big.bin"), []byte("payload\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitattributes", "big.bin")
+	git("commit", "-qm", "lfs")
+	if got := git("show", "HEAD:big.bin"); got != "pointer\n" {
+		t.Fatalf("committed blob %q, want the filter's pointer", got)
+	}
+	if err := os.Remove(filepath.Join(marks, "clean")); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(time.Second)
+	if err := os.Chtimes(filepath.Join(root, "big.bin"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := dirtyCount(context.Background(), root, false); err != nil || count != 1 {
+		t.Fatalf("dirtyCount=%d %v, want the unfiltered file counted as modified", count, err)
+	}
+	if got := planted(t, marks); len(got) != 0 {
+		t.Fatalf("host-side status ran the local filter: %v", got)
+	}
+	// With the filter, git sees the file clean.
+	if got := git("status", "--porcelain"); got != "" {
+		t.Fatalf("plain status: %q", got)
+	}
+	if got := planted(t, marks); len(got) != 1 {
+		t.Fatalf("plain status must run the local filter: %v", got)
+	}
+}
