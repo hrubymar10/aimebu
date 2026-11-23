@@ -2091,6 +2091,10 @@ CREATE TABLE IF NOT EXISTS turn_room_read (
 -- a host with no switcher profile) is counted as before, against whatever login is live.
 ALTER TABLE turn ADD COLUMN login TEXT;
 ALTER TABLE provider_limit ADD COLUMN login TEXT;
+`}, {131, `
+-- The outcome a task-result handoff reports: done, partial or failed. Only a handoff message has one; NULL is every other message and every
+-- handoff written before this, which a client shows without an outcome.
+ALTER TABLE message ADD COLUMN outcome TEXT CHECK (outcome IS NULL OR outcome IN ('done','partial','failed'));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

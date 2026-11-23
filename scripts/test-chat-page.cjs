@@ -2090,6 +2090,10 @@ async function main() {
         ['visual_plan', { visual_plan: [{ type: 'markdown', title: 'Plan', data: { markdown: 'Plan **text**' } }] }, () => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .visual-plan .visual-plan-block')],
         ['proposed_answers', { proposed_answers: ['Proceed', 'Hold'] }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .answer-history')?.textContent === 'No longer pending'],
         ['proposed_answers again', { proposed_answers: ['Other'] }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .answer-history')?.textContent === 'No longer pending'],
+        // a handoff's outcome: a word with a glyph; failed is filled, so it does not rest on the text colour alone, and done is not
+        ['outcome done', { outcome: 'done' }, () => { const badge = document.querySelector('#thread-messages [data-message-id=rm_a_t3] .handoff-outcome'); return badge?.dataset.outcome === 'done' && badge.textContent.trim() === '✓ Done' && getComputedStyle(badge).backgroundColor === 'rgba(0, 0, 0, 0)'; }],
+        ['outcome failed', { outcome: 'failed' }, () => { const badge = document.querySelector('#thread-messages [data-message-id=rm_a_t3] .handoff-outcome'); return badge?.classList.contains('handoff-outcome-failed') && badge.textContent.trim() === '✕ Failed' && badge.title.includes('could not be done') && getComputedStyle(badge).backgroundColor !== 'rgba(0, 0, 0, 0)' && getComputedStyle(badge).fontWeight === '700'; }],
+        ['outcome unknown', { outcome: null }, () => !document.querySelector('#thread-messages [data-message-id=rm_a_t3] .handoff-outcome')],
       ];
       for (const [name, change, check] of fields) {
         const drawn = await page.evaluate(async (change, source) => {

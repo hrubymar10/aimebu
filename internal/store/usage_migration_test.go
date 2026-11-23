@@ -8,7 +8,7 @@ import (
 
 // rewindUsageTotalMigration rewinds the schema to before migration 124 the way a database that already ran it looks after the version
 // rows are deleted: the total columns and the context-delivery table are dropped, so the migrations run again over them. Deleting the
-// version rows from 124 also replays the room purpose migration (126), which adds a column, so that column is dropped too, and so are the login columns (130).
+// version rows from 124 also replays the room purpose migration (126), which adds a column, so that column is dropped too, and so are the columns migrations 130 and 131 add.
 func rewindUsageTotalMigration(t *testing.T, s *Store) {
 	t.Helper()
 	for _, statement := range []string{
@@ -21,6 +21,7 @@ func rewindUsageTotalMigration(t *testing.T, s *Store) {
 		`ALTER TABLE room DROP COLUMN purpose`,
 		`ALTER TABLE turn DROP COLUMN login`,
 		`ALTER TABLE provider_limit DROP COLUMN login`,
+		`ALTER TABLE message DROP COLUMN outcome`,
 		`DELETE FROM schema_version WHERE version>=124`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -75,7 +76,7 @@ func TestMigrationRepairsLifetimeCostRowsAndTotalPings(t *testing.T) {
 	if _, err := s.db.Exec(`ALTER TABLE room DROP COLUMN purpose`); err != nil {
 		t.Fatal(err)
 	}
-	dropLoginColumns(t, s)
+	dropColumnsSince130(t, s)
 	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=124`); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestMigrationLeavesWarmAndColdTurnRowsIntact(t *testing.T) {
 	if _, err := s.db.Exec(`ALTER TABLE room DROP COLUMN purpose`); err != nil {
 		t.Fatal(err)
 	}
-	dropLoginColumns(t, s)
+	dropColumnsSince130(t, s)
 	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=124`); err != nil {
 		t.Fatal(err)
 	}

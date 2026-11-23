@@ -653,6 +653,12 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
 .chat-msg-switch-handoff { padding: 0; font-size: 12px; font-style: normal; text-align: center; }
 .chat-msg-switch-handoff > .system-popup-trigger { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-primary); padding: 9px 12px; font-weight: 600; }
 .switch-handoff-meta { display: flex; justify-content: center; align-items: center; gap: 8px; color: var(--text-muted); }
+/* A handoff's outcome: a bordered word with a glyph, so it never rests on colour alone; failed is white on solid red and bold to stand out in
+   every theme. The text keeps the theme's body colour (done, partial) or white on red (failed) so it passes AA contrast everywhere. */
+.handoff-outcome { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 16px; color: var(--text-secondary); vertical-align: middle; white-space: nowrap; }
+.handoff-outcome-done { color: var(--text-primary); border-color: var(--green-text); }
+.handoff-outcome-partial { color: var(--text-primary); border-color: var(--orange); border-style: dashed; }
+.handoff-outcome-failed { color: #fff; border-color: var(--red-bg); background: var(--red-bg); font-weight: 700; }
 
 /* The memory viewer's switch for a project's memory: a plain line under the filter row, in v1's field text. */
 .memory-enabled-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text-secondary); font-size: 0.78rem; }

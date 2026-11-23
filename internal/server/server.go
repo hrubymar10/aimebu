@@ -825,6 +825,9 @@ func messageView(m store.Message) map[string]any {
 	if m.SwitchHandoffJSON != "" {
 		view["switch_handoff"] = json.RawMessage(m.SwitchHandoffJSON)
 	}
+	if m.Outcome != "" {
+		view["outcome"] = m.Outcome
+	}
 	if m.AuthorName != "" {
 		view["author_name"] = m.AuthorName
 	}

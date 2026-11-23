@@ -1501,7 +1501,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version, supervisor_environment?, supports_retire_at_idle?,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_agent_conversation_log?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, supports_attachment_save?, held_keys?[agent_id],
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_agent_conversation_log?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, supports_attachment_save?, supports_handoff_outcome?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}], command_open?[{job_id, agent_id, generation, pid, pid_start?,
@@ -1522,6 +1522,10 @@ it never silently reruns a turn with uncertain effects.
   `attachment_save` frame (§4.2). The server sends the frame only to a
   supervisor that says so; for any other, `attachment_get` over the HTTP MCP
   endpoint answers that the file cannot be saved, with the reason.
+- `supports_handoff_outcome=true` in `hello` says the supervisor's adapters
+  put the handoff `outcome` (§4.4) in their prompts and response schemas. The
+  server rejects a handoff without an outcome only in an answer from a
+  supervisor that says so.
 - S→M `hello_ack{v, desired[{agent_id, generation, desired, desired_rev}],
   redeliver[...], resend_receipts[...], harness_settings[...],
   harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...], telemetry?}` — the optional probe directories are the
@@ -1962,7 +1966,7 @@ CC/Codex, prompt-only on pi):
 "text":"…","options":["…"]?,"free_text":bool}?,
 "needs_attention":bool?,"proposed_answers":["…"]?,
 "open_questions":[{"question":"…","description":"…"?,"options":["…"]}]?,
-"handoff":bool?,
+"handoff":bool?,"outcome":"done|partial|failed"?,
 "visual_plan":[{"id":"…"?,"type":"…","title":"…"?,"data":{},
 "order":0?}]?,"appendix_pages":[{"title":"…"?,"body":"…"}]?}],
 "reconciliation":{"status":"clean|uncertain","findings":["…"]}?}`
@@ -1999,6 +2003,18 @@ CC/Codex, prompt-only on pi):
   member the flow lets manage agents (the dispatcher), also with reason
   `handoff`. A handoff that reaches neither is read as if it were not one, so
   an unaddressed one is a broadcast. `reconciliation` only in diagnostic turns.
+- `outcome` (enum `done|failed|partial`) is required on `handoff:true`: `done`
+  = the task is complete and verified, `partial` = some of it is done and the
+  body names the rest, `failed` = the task could not be done and the body says
+  why. A handoff without one, or any other value, is an invalid answer whose
+  error names the allowed values (held, or a correction turn, as for any
+  invalid answer). It is stored with the message (`message.outcome`, NULL on
+  every other message and on older handoffs, which show no outcome) and
+  returned by the message API, delivery notes and agent history. An outcome
+  on a message that is not a handoff is dropped with a receipt warning. The
+  requirement applies only to a turn answered by a supervisor that reports
+  `supports_handoff_outcome` (§4.1): an older one's response schema has no
+  `outcome` field, so its agents' handoffs are committed without one.
 - A committed agent message that ends with no target at all (no agent, no
   person) and no wake note, no forwarded mention pointer, and is not a reply,
   not in a private chat, not an ask of a person, not written in a turn a

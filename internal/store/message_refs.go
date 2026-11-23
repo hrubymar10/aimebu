@@ -69,6 +69,8 @@ type AgentMessage struct {
 	AppendixPages     json.RawMessage `json:"appendix_pages,omitempty"`
 	// Project names the target's project when it is not the agent's own (a person's citation across projects); empty otherwise.
 	Project string `json:"project,omitempty"`
+	// Outcome is a task-result handoff's outcome (done, partial or failed); absent on any other message and on an older handoff.
+	Outcome string `json:"outcome,omitempty"`
 }
 
 // personReadsRoomSQL is true when the user given by the SQL expression user may read the room aliased tr right now, for a citation across
@@ -101,12 +103,12 @@ func appendixPageCount(raw string) int {
 
 func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectID string, no int64, limit int, withPages bool) (AgentMessage, error) {
 	unavailable := AgentMessage{No: no}
-	var roomID, title, kind, authorKind, authorID, body, createdAt, targetProject, targetProjectName, pages string
+	var roomID, title, kind, authorKind, authorID, body, createdAt, targetProject, targetProjectName, pages, outcome string
 	// System citation grants come from server-created missed-mention pointers.
 	// Their persisted targets_json records the sole agent allowed to follow one.
 	// A person's citation reaches across projects: the grant row is the person's message in a room the agent sits in, and the person must
 	// still read the target room now (a private chat never qualifies).
-	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at,r.project_id,COALESCE(p.name,''),COALESCE(m.appendix_pages_json,'')
+	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at,r.project_id,COALESCE(p.name,''),COALESCE(m.appendix_pages_json,''),COALESCE(m.outcome,'')
 		FROM message m JOIN room r ON r.id=m.room_id LEFT JOIN project p ON p.id=r.project_id
 		WHERE m.no=? AND m.no>0 AND (EXISTS (SELECT 1 FROM message_reference_grant xg JOIN message xs ON xs.id=xg.source_message_id AND xs.author_kind='user'
 				JOIN room xr ON xr.id=xs.room_id AND xr.project_id=?
@@ -128,14 +130,14 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 				WHERE g.target_no=m.no AND r.kind<>'dm' AND source.room_id<>r.id AND source.room_id IN (SELECT id FROM room WHERE project_id=r.project_id)
 				AND (source.author_kind<>'system' OR EXISTS (SELECT 1 FROM json_each(source.targets_json) WHERE value=?)))))`,
 		no, projectID, agentID, agentID, projectID, projectID, agentID, agentID, agentID).
-		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt, &targetProject, &targetProjectName, &pages)
+		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt, &targetProject, &targetProjectName, &pages, &outcome)
 	if err == sql.ErrNoRows {
 		return unavailable, nil
 	}
 	if err != nil {
 		return AgentMessage{}, err
 	}
-	out := AgentMessage{No: no, Available: true, RoomID: roomID, Room: title, From: authorLabel(ctx, q, authorKind, authorID), Body: excerptRunes(body, limit), CreatedAt: createdAt, AppendixPageCount: appendixPageCount(pages)}
+	out := AgentMessage{No: no, Available: true, RoomID: roomID, Room: title, From: authorLabel(ctx, q, authorKind, authorID), Body: excerptRunes(body, limit), CreatedAt: createdAt, AppendixPageCount: appendixPageCount(pages), Outcome: outcome}
 	if withPages && pages != "" {
 		out.AppendixPages = json.RawMessage(pages)
 	}

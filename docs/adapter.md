@@ -15,9 +15,18 @@ every adapter path. Other prose outside the document remains invalid. The
 wire retains the exact raw candidate, including any fence. A normal candidate has a
 `messages` array. Each entry requires `room` and `body` and may add
 `reply_to`, `attachments`, `ask`, `needs_attention`,
-`proposed_answers`, `open_questions`, `handoff`, `visual_plan`,
+`proposed_answers`, `open_questions`, `handoff`, `outcome`, `visual_plan`,
 `appendix_pages`, and `force`. Set `force:true` on a message to bypass the
-missed-agent-mention guard for that message. `needs_attention` creates a free-text human question;
+missed-agent-mention guard for that message. A message with `handoff:true`
+needs `outcome`: `done` (the task is complete and verified), `partial` (some
+of it is done; the body names the rest) or `failed` (the task could not be
+done; the body says why). Every adapter's prompt states this rule right after
+its output contract (`prompt.HandoffOutcome`, not an overridable sentence),
+and the Claude and Codex response schemas carry `outcome` as a nullable enum.
+A supervisor with these prompts reports `supports_handoff_outcome` in `hello`,
+and only then does the server hold a handoff without an outcome as invalid
+("message N is a handoff without an outcome; set outcome to done, partial or
+failed"); an outcome on any other message is dropped with a receipt warning. `needs_attention` creates a free-text human question;
 `proposed_answers` adds two to four quick choices, or `open_questions` adds
 up to ten questions with two to eight options each. The two answer formats
 cannot appear together. An `ask` already puts the message in the person's

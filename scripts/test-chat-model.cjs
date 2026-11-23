@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'chat', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { treeLayout, plainText, messageSnippet, threadCount, threadLabel, threadTitle, threadChip, newRepliesLabel, latestLabel, groupReactions, articleClass, liveArrival, liveRoute, newestShownSeq, trimCap, overCap, answerEligible, answerArea, answersThroughInbox, recallCandidates, recallStep };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { treeLayout, plainText, messageSnippet, threadCount, threadLabel, threadTitle, threadChip, newRepliesLabel, latestLabel, groupReactions, articleClass, liveArrival, liveRoute, newestShownSeq, trimCap, overCap, answerEligible, answerArea, answersThroughInbox, recallCandidates, recallStep, handoffOutcome };', context);
 const api = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -18,6 +18,12 @@ assert.equal(api.messageSnippet({ body: '', attachments: [{ id: 'a' }] }), '[att
 assert.equal(api.messageSnippet({ body: 'x'.repeat(100) }), `${'x'.repeat(95)}…`);
 assert.equal(api.messageSnippet({ body: 'y'.repeat(96) }), 'y'.repeat(96));
 assert.equal(api.messageSnippet(undefined), '');
+
+// A handoff's outcome badge: a word and a glyph for each known outcome, failed with its own class; none for any other message or an older handoff.
+assert.deepEqual(plain(api.handoffOutcome({ outcome: 'failed' })), { outcome: 'failed', className: 'handoff-outcome handoff-outcome-failed', glyph: '✕', label: 'Failed', title: 'Handoff: the task could not be done; the message says why' });
+assert.deepEqual(['done', 'partial'].map(outcome => api.handoffOutcome({ outcome }).label), ['Done', 'Partial']);
+assert.notEqual(api.handoffOutcome({ outcome: 'failed' }).className, api.handoffOutcome({ outcome: 'done' }).className);
+for (const message of [{}, { outcome: '' }, { outcome: 'unknown' }, { outcome: 'toString' }, { outcome: '__proto__' }, null, undefined]) assert.equal(api.handoffOutcome(message), null);
 
 const counts = new Map([['a', 2], ['b', 5]]), server = new Map([['a', 4]]);
 assert.deepEqual(['a', 'b', 'c'].map(id => api.threadCount(counts, server, id)), [4, 5, 0]);

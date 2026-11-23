@@ -1140,6 +1140,14 @@ state and continue` and a `turn_interrupted_continuation` system event that carr
 `reason: turn_interrupted`, the detail and the exit code. A chain of turns has one automatic
 continuation in all, of either kind; a repeat takes the ordinary failure path below.
 
+**Handoff outcome.** A supervisor announces `supports_handoff_outcome` in `hello` because its
+adapters ask every agent for the `outcome` of a task-result handoff (`done`, `partial` or
+`failed`) and the Claude and Codex response schemas carry the field. The server then holds an
+answer from it whose handoff has no outcome as invalid, telling the agent the allowed values. An
+older supervisor, still running until the swap replaces it or on a remote machine not yet
+updated, gives its agents a schema without the field: their handoffs are committed without an
+outcome and shown without one, and `aimebu doctor` lists the missing flag.
+
 The server can also ask a supervisor to **save an attachment** into an agent's workspace. A
 supervisor that announces `supports_attachment_save` in `hello` takes an `attachment_save`
 frame (agent, turn, attachment) when `attachment_get` runs in the server, over the HTTP MCP

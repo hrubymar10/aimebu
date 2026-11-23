@@ -553,6 +553,9 @@ type Message struct {
 	// instead of the account or agent id; AuthorProjectID is the removed agent's project, which names it (slug@project).
 	AuthorName      string `json:"-"`
 	AuthorProjectID string `json:"-"`
+	// Outcome is what a task-result handoff reports: done, partial or failed. Empty on every other message and on a handoff written
+	// before outcomes existed (or by an agent whose supervisor predates them), which a client shows without one.
+	Outcome string `json:"outcome,omitempty"`
 }
 
 func (s *Store) InsertMessage(ctx context.Context, message Message) (Message, error) {
@@ -607,14 +610,14 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 		(id, seq, room_id, author_kind, author_id, body, reply_to,
 		 thread_root, targets_json, ask_json, source_out_id, created_at,
 		 visual_plan_json, appendix_pages_json, needs_attention, proposed_answers_json, open_questions_json,
-		 author_harness, author_model, switch_handoff_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 author_harness, author_model, switch_handoff_json, outcome)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		message.ID, message.Seq, message.RoomID, message.AuthorKind, message.AuthorID,
 		message.Body, nullable(message.ReplyTo), nullable(message.ThreadRoot),
 		message.TargetsJSON, nullable(message.AskJSON), nullable(message.SourceOutID),
 		message.CreatedAt, nullable(message.VisualPlanJSON), nullable(message.AppendixPagesJSON),
 		message.NeedsAttention, nullable(message.ProposedAnswersJSON), nullable(message.OpenQuestionsJSON),
-		message.AuthorHarness, message.AuthorModel, nullable(message.SwitchHandoffJSON))
+		message.AuthorHarness, message.AuthorModel, nullable(message.SwitchHandoffJSON), nullable(message.Outcome))
 	if err != nil {
 		return Message{}, err
 	}
@@ -741,7 +744,7 @@ const messageSelect = `SELECT id, seq, no, room_id, author_kind, author_id,
 		(SELECT COALESCE(NULLIF(removed_slug,''),slug) FROM agent WHERE agent.id=message.author_id AND message.author_kind='agent' AND agent.revoked_at IS NOT NULL),''),
 	COALESCE((SELECT project_id FROM agent WHERE agent.id=message.author_id AND message.author_kind='agent' AND agent.revoked_at IS NOT NULL),''),
 	COALESCE(visual_plan_json,''), COALESCE(appendix_pages_json,''),
-	needs_attention, COALESCE(proposed_answers_json,''), COALESCE(open_questions_json,'')
+	needs_attention, COALESCE(proposed_answers_json,''), COALESCE(open_questions_json,''), COALESCE(outcome,'')
 	FROM message `
 
 func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([]Message, error) {
@@ -762,7 +765,7 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 			&threadRoot, &message.TargetsJSON, &askJSON, &sourceOutID,
 			&message.CreatedAt, &message.AuthorHarness, &message.AuthorModel, &message.SwitchHandoffJSON, &message.AuthorName, &message.AuthorProjectID,
 			&message.VisualPlanJSON, &message.AppendixPagesJSON, &message.NeedsAttention,
-			&message.ProposedAnswersJSON, &message.OpenQuestionsJSON); err != nil {
+			&message.ProposedAnswersJSON, &message.OpenQuestionsJSON, &message.Outcome); err != nil {
 			return nil, err
 		}
 		message.ReplyTo, message.ThreadRoot = replyTo.String, threadRoot.String

@@ -18,6 +18,9 @@ type AnswerInput struct {
 	Candidate               []byte
 	Parsed                  *answer.Candidate
 	ParseError              string
+	// RequireHandoffOutcome makes a handoff without an outcome invalid. The server sets it when the supervisor that ran the turn reports
+	// supports_handoff_outcome: only then did the agent's prompt and response schema offer the field.
+	RequireHandoffOutcome bool
 }
 
 type AnswerReceipt struct {
@@ -260,6 +263,9 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, warnings *[]str
 	// peer's reply has to tell its people). A chat with a person stays closed to everything else.
 	agentChat := turnRoomKind == "dm" && turnRoomProject == AgentDMProjectID
 	for i, item := range input.Parsed.Messages {
+		if item.Handoff && item.Outcome == "" && input.RequireHandoffOutcome {
+			return "invalid_answer", fmt.Sprintf("message %d is a handoff without an outcome; set outcome to %s", i, answer.OutcomeChoices), nil
+		}
 		if turnRoomKind == "dm" && item.Room != turn.roomID && !agentChat {
 			*dropped = append(*dropped, droppedMessage{i, "not_member", "private chat replies must stay in that chat"})
 			continue

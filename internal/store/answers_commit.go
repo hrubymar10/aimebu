@@ -138,7 +138,7 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 			askJSON = string(data)
 		}
 		message, err := tx.InsertMessage(Message{RoomID: item.Room, AuthorKind: "agent", AuthorID: turn.agentID,
-			Body: item.Body, ReplyTo: item.ReplyTo, AskJSON: askJSON, SourceOutID: outID, Handoff: item.Handoff,
+			Body: item.Body, ReplyTo: item.ReplyTo, AskJSON: askJSON, SourceOutID: outID, Handoff: item.Handoff, Outcome: handoffOutcome(item),
 			NeedsAttention: item.NeedsAttention, ProposedAnswersJSON: jsonList(item.ProposedAnswers), OpenQuestionsJSON: jsonList(item.OpenQuestions),
 			VisualPlanJSON: rawList(item.VisualPlan), AppendixPagesJSON: rawList(item.AppendixPages)})
 		if err != nil {
@@ -504,4 +504,12 @@ func (tx *Tx) recordReplyDefault(turn answerTurn, message Message) error {
 	_, err := tx.AppendEvent(Event{Kind: "reply_defaulted", ProjectID: projectID, RoomID: message.RoomID, AgentID: turn.agentID, TurnID: turn.id,
 		PayloadJSON: payloadJSON(map[string]string{"message_id": message.ID, "reply_to": message.ReplyTo})})
 	return err
+}
+
+// handoffOutcome is the outcome a message stores: a handoff's own, nothing for any other message (the parser already dropped one there).
+func handoffOutcome(item answer.Message) string {
+	if !item.Handoff {
+		return ""
+	}
+	return item.Outcome
 }

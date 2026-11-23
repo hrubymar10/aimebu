@@ -28,6 +28,18 @@ export function groupReactions(entries, me) {
   return [...grouped].map(([emoji, members]) => ({ emoji, count: members.length, title: members.map(member => member.member_name || member.member_id).join(', '), pressed: members.some(member => member.member_id === me) }));
 }
 
+// The badge of a task-result handoff's outcome: a word and a glyph, never colour alone, so failed reads as failed in every theme and to a screen
+// reader. A message without a known outcome (any other message, a handoff from before outcomes) gets none.
+const HANDOFF_OUTCOMES = {
+  done: { glyph: '✓', label: 'Done', title: 'Handoff: the task is complete and verified' },
+  partial: { glyph: '◐', label: 'Partial', title: 'Handoff: part of the task is done; the message names the rest' },
+  failed: { glyph: '✕', label: 'Failed', title: 'Handoff: the task could not be done; the message says why' },
+};
+export function handoffOutcome(message) {
+  const known = Object.prototype.hasOwnProperty.call(HANDOFF_OUTCOMES, message?.outcome || '') ? HANDOFF_OUTCOMES[message.outcome] : null;
+  return known && { outcome: message.outcome, className: `handoff-outcome handoff-outcome-${message.outcome}`, ...known };
+}
+
 export const articleClass = (message, me) => (message.author_kind === 'system' ? 'chat-msg chat-msg-system' : message.author_kind === 'user' && message.author_id === me ? 'chat-msg self' : 'chat-msg');
 
 export const liveArrival = (message, { initialLoading, contextMode }) => !initialLoading && !contextMode && message.author_kind !== 'system';

@@ -17,7 +17,7 @@ const (
 	identity        = `Use context.you_are for your identity and role, and context.team_roster for current room agent names, roles, harnesses, and models. If context.team_roster_more is present, more room agents were omitted from that list.`
 	attachmentsLead = `Input note attachments are files;`
 	retryNotice     = `A note retry_notice means the previous attempt was interrupted before it finished (for example by a provider limit or a lost session); check the state before repeating actions.`
-	inboxAsk        = `Use either proposed_answers or open_questions, never both. For an Inbox ask, set needs_attention:false, proposed_answers:null, and open_questions:null in that same message; for example: {"room":"room_id","body":"Choose a team","reply_to":null,"attachments":null,"ask":{"kind":"question","text":"Which team?","options":["Team A"],"free_text":false},"handoff":false,"visual_plan":null,"appendix_pages":null,"needs_attention":false,"proposed_answers":null,"open_questions":null}. Never combine ask with human attention controls.`
+	inboxAsk        = `Use either proposed_answers or open_questions, never both. For an Inbox ask, set needs_attention:false, proposed_answers:null, and open_questions:null in that same message; for example: {"room":"room_id","body":"Choose a team","reply_to":null,"attachments":null,"ask":{"kind":"question","text":"Which team?","options":["Team A"],"free_text":false},"handoff":false,"outcome":null,"visual_plan":null,"appendix_pages":null,"needs_attention":false,"proposed_answers":null,"open_questions":null}. Never combine ask with human attention controls.`
 	mentions        = `After spawning an agent, address its assignment with a live @slug or @agent_id mention in ordinary prose; a name inside backticks does not wake it. A mention only reaches members of the message's room; for a worker use their task room or dm_agent. A reply_to another agent's message wakes that agent, but only a few times in a row: after four automatic replies with no human message between them, replies stop waking anyone, so use a live @mention or a handoff for anything that still needs an answer. Never reply just to acknowledge; use a reaction. Replies to humans still target them. Always @mention whoever should act next: a message with no @mention and no reply_to is a broadcast that wakes every other agent in the room, so it should be rare. A note with fyi true was not addressed to you (another agent broadcast it): answer only if you have to act on it, otherwise end the turn with an empty messages array and write nothing.`
 	humanReply      = `Toward people: don't narrate. Message a person only for a decision, an answer, an approval, or a result they asked for; batch several questions into one numbered message; acknowledge with a reaction (👍 seen, ✅ done) instead of a text ack. When a person addresses you directly (mention, a reply to your message, a DM), always respond: answer if there is anything to say, otherwise react. Never leave them without any sign you saw it.`
 	// owedWork keeps a turn from ending silently while work is still running. It is not an override slot: a harness job that outlives the
@@ -48,6 +48,10 @@ const (
 	OutsideRoomContext = "Do not send messages outside the given room context.\n"
 	humanResponse      = `For a human response, set needs_attention with proposed_answers (2-4 %s), open_questions (up to 10 questions with 2-8 choices each), or neither for free text.`
 )
+
+// HandoffOutcome is the rule for a handoff's outcome, in every adapter's prompt right after its output contract. It belongs to that contract, so it
+// is not an overridable slot: a supervisor that reports supports_handoff_outcome makes the server reject a handoff without one.
+const HandoffOutcome = `Every message with handoff true needs outcome: done when the task is complete and verified, partial when some of it is done and the body names what remains, failed when the task could not be done and the body says why. A handoff without an outcome is rejected; leave outcome null on any other message.`
 
 // HumanResponse is the sentence on answering a human. choices names the
 // proposed-answer count, such as "choices" or "short choices".
@@ -124,7 +128,7 @@ func BuildWith(d Deltas, overrides map[string]string) string {
 	if d.Role != "" {
 		parts = append(parts, d.Role)
 	}
-	parts = append(parts, attachmentsLead+" "+d.Attachments, sentence("retry_notice", retryNotice), d.Output, sentence("inbox_ask", inboxAsk), sentence("mentions", mentions), d.Ack, owedWork, sentence("human_reply", humanReply), sentence("tail", tail), d.Closing)
+	parts = append(parts, attachmentsLead+" "+d.Attachments, sentence("retry_notice", retryNotice), d.Output, HandoffOutcome, sentence("inbox_ask", inboxAsk), sentence("mentions", mentions), d.Ack, owedWork, sentence("human_reply", humanReply), sentence("tail", tail), d.Closing)
 	return strings.Join(parts, " ")
 }
 

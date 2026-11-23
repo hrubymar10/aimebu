@@ -224,7 +224,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE((SELECT json_extract(payload_json,'$.choice') FROM event WHERE turn_id=? AND kind='recovery_decision' ORDER BY seq DESC LIMIT 1),'')`, special.ID).Scan(&choice); err != nil {
 					return err
 				}
-				rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.no,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,''),n.wake_reason FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=? AND n.state='queued' ORDER BY m.seq`, special.ID)
+				rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.no,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,''),n.wake_reason,COALESCE(m.outcome,'') FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=? AND n.state='queued' ORDER BY m.seq`, special.ID)
 				if err != nil {
 					return err
 				}
@@ -232,7 +232,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				for rows.Next() {
 					var note protocol.DeliveryNote
 					var planJSON, pagesJSON, wakeReason string
-					if err := rows.Scan(&note.NoteID, &note.MessageID, &note.No, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON, &wakeReason); err != nil {
+					if err := rows.Scan(&note.NoteID, &note.MessageID, &note.No, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON, &wakeReason, &note.Outcome); err != nil {
 						rows.Close()
 						return err
 					}
@@ -424,7 +424,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		}
 		rows, err = tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.no,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,''),m.author_kind,
 			EXISTS(SELECT 1 FROM provider_limit_retry retry WHERE retry.note_id=n.id AND retry.caution=1),n.wake_reason,m.created_at,
-			COALESCE((SELECT r.kind FROM room r WHERE r.id=m.room_id),'')
+			COALESCE((SELECT r.kind FROM room r WHERE r.id=m.room_id),''),COALESCE(m.outcome,'')
 			FROM note n JOIN message m ON m.id=n.message_id WHERE n.agent_id=? AND n.room_id=? AND n.state='queued'
 			ORDER BY m.seq LIMIT 20`, agentID, roomID)
 		if err != nil {
@@ -441,7 +441,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			var planJSON, pagesJSON string
 			var retryCaution bool
 			var wakeReason, createdAt, roomKind string
-			if err := rows.Scan(&note.NoteID, &note.MessageID, &note.No, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON, &authorKind, &retryCaution, &wakeReason, &createdAt, &roomKind); err != nil {
+			if err := rows.Scan(&note.NoteID, &note.MessageID, &note.No, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON, &authorKind, &retryCaution, &wakeReason, &createdAt, &roomKind, &note.Outcome); err != nil {
 				rows.Close()
 				return err
 			}
@@ -715,7 +715,7 @@ func (tx *Tx) importLegacySession(agentID, sessionID string) (bool, error) {
 // including imported history and the agent's own replies, rather than only
 // queued notes (which omit messages seen by the previous native session).
 func (tx *Tx) recentRoomHistory(agentID string) ([]AgentMessage, error) {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT m.no,r.id,r.title,m.author_kind,m.author_id,m.body,m.created_at
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT m.no,r.id,r.title,m.author_kind,m.author_id,m.body,m.created_at,COALESCE(m.outcome,'')
 		FROM message m JOIN room r ON r.id=m.room_id
 		JOIN room_member rm ON rm.room_id=r.id AND rm.member_kind='agent' AND rm.member_id=? AND rm.left_at IS NULL
 		WHERE m.no>0 ORDER BY m.seq DESC LIMIT 40`, agentID)
@@ -729,7 +729,7 @@ func (tx *Tx) recentRoomHistory(agentID string) ([]AgentMessage, error) {
 	for rows.Next() {
 		var item AgentMessage
 		var kind, authorID, body string
-		if err := rows.Scan(&item.No, &item.RoomID, &item.Room, &kind, &authorID, &body, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.No, &item.RoomID, &item.Room, &kind, &authorID, &body, &item.CreatedAt, &item.Outcome); err != nil {
 			return nil, err
 		}
 		item.Available = true

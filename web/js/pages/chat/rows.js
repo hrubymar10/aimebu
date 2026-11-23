@@ -3,7 +3,7 @@ import { teamFlowSource } from '../../team-flow-source.js';
 import { EXPIRED_HOURGLASS } from '../../usage-expiry.js';
 import { clearMessageActions, drawMessageActions, messageActionsProps } from '../../message-actions.js';
 import { stampTime } from '../../time.js';
-import { treeLayout } from './model.js';
+import { handoffOutcome, treeLayout } from './model.js';
 import { applySenderIdentity, fillSenderPresence, SENDER_PRESENCE_ROOT } from '../../sender-identity.js';
 import { fillVisualPlan, hasVisualPlan, VISUAL_PLAN_ROOT } from '../../visual-plan.js';
 import { AnswerControls, AnswerHistory } from '../../components/answer-controls.js';
@@ -39,6 +39,12 @@ function Stamp({ createdAt }) {
 
 const ExpiredMark = () => html`<span class="chat-msg-expired-icon" title="Older than the expiry window: AI room chatter this old is not delivered to agents. Still shown here." role="img" aria-label="Expired from AI context" dangerouslySetInnerHTML=${{ __html: EXPIRED_HOURGLASS }} />`;
 
+// A handoff's outcome next to its sender: the word is the label, the glyph is decoration.
+function OutcomeBadge({ message }) {
+  const badge = handoffOutcome(message);
+  return badge && html`<span class=${badge.className} data-outcome=${badge.outcome} title=${badge.title}><span aria-hidden="true">${badge.glyph}</span> ${badge.label}</span>`;
+}
+
 // The header line of a message, in the list and in the thread panel alike: sender, (bell), #number, bug, time.
 export function MessageMeta({ message, view }) {
   const author = view.author;
@@ -48,6 +54,7 @@ export function MessageMeta({ message, view }) {
     <span class="message-role" title=${author.roleTitle} hidden=${!author.roleEmoji}>${author.roleEmoji}</span>
   </span>
   ${message.needs_attention && html`<span class="chat-msg-attention-icon" title="Needs human attention" aria-label="Needs human attention">🔔</span>`}
+  <${OutcomeBadge} message=${message} />
   <button type="button" class="row-btn quiet-glyph chat-msg-id" title="Click to copy">${`#${message.no}`}</button>
   ${usageButton(view, message)}
   <button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button>

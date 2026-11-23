@@ -36,9 +36,26 @@ type Message struct {
 	ProposedAnswers []string          `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion    `json:"open_questions,omitempty"`
 	Handoff         bool              `json:"handoff,omitempty"`
+	Outcome         string            `json:"outcome,omitempty"`
 	Force           bool              `json:"force,omitempty"`
 	VisualPlan      []json.RawMessage `json:"visual_plan,omitempty"`
 	AppendixPages   []json.RawMessage `json:"appendix_pages,omitempty"`
+}
+
+// Outcomes a task-result handoff reports: done (the task is complete and verified), partial (some of it is done; the body names the
+// rest) and failed (the task could not be done; the body says why).
+const (
+	OutcomeDone    = "done"
+	OutcomePartial = "partial"
+	OutcomeFailed  = "failed"
+)
+
+// OutcomeChoices names the allowed outcomes in an error an agent reads, without quotes (a held-reply note keeps only unquoted texts).
+const OutcomeChoices = "done, partial or failed"
+
+// ValidOutcome says whether value is one of the handoff outcomes.
+func ValidOutcome(value string) bool {
+	return value == OutcomeDone || value == OutcomePartial || value == OutcomeFailed
 }
 
 type OpenQuestion struct {
@@ -105,6 +122,14 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 	for i, message := range candidate.Messages {
 		if strings.TrimSpace(message.Room) == "" || strings.TrimSpace(message.Body) == "" || len(message.Body) > 32<<10 {
 			return candidate, fmt.Errorf("%w: message %d needs a room and body of at most 32 KiB", ErrInvalid, i)
+		}
+		if message.Outcome != "" && !ValidOutcome(message.Outcome) {
+			return candidate, fmt.Errorf("%w: message %d has an invalid outcome; use %s", ErrInvalid, i, OutcomeChoices)
+		}
+		if message.Outcome != "" && !message.Handoff {
+			// Only a handoff reports an outcome: on any other message it means nothing, so it is dropped rather than costing the reply.
+			candidate.Warnings = append(candidate.Warnings, fmt.Sprintf("message %d: outcome applies only to a handoff and was dropped", i))
+			candidate.Messages[i].Outcome = ""
 		}
 		for _, attachment := range message.Attachments {
 			if attachment == "" {
@@ -277,7 +302,7 @@ func tolerateMessageMetadata(raw []byte) ([]byte, []string) {
 	if json.Unmarshal(envelope["messages"], &messages) != nil || len(messages) > 10 {
 		return raw, nil
 	}
-	known := map[string]bool{"room": true, "body": true, "reply_to": true, "attachments": true, "ask": true, "needs_attention": true, "proposed_answers": true, "open_questions": true, "handoff": true, "force": true, "visual_plan": true, "appendix_pages": true}
+	known := map[string]bool{"room": true, "body": true, "reply_to": true, "attachments": true, "ask": true, "needs_attention": true, "proposed_answers": true, "open_questions": true, "handoff": true, "outcome": true, "force": true, "visual_plan": true, "appendix_pages": true}
 	warnings := []string{}
 	changed := false
 	for i, encoded := range messages {

@@ -215,6 +215,10 @@ type Frame struct {
 	// through its tool's Docker harness) and never on the host. An older one ignores CommandSpec.Tool and Variant and would run a
 	// docker-variant agent's command on the host, so the server sends it no command that belongs in a container.
 	SupportsContainerCommands bool `json:"supports_container_commands,omitempty"`
+	// SupportsHandoffOutcome says the supervisor's adapters ask for, and their response schemas carry, the outcome of a task-result handoff
+	// (done, partial or failed). The server requires an outcome on a handoff only from such a supervisor: an older one's schema has no
+	// outcome field, so its agents could never send one, and their handoffs are committed without it.
+	SupportsHandoffOutcome bool `json:"supports_handoff_outcome,omitempty"`
 	// CommandOpen and CommandExits, in hello, are the commands this supervisor still runs and the ends it has not been acknowledged for.
 	CommandOpen  []CommandOpen `json:"command_open,omitempty"`
 	CommandExits []CommandExit `json:"command_exits,omitempty"`
@@ -630,6 +634,9 @@ type DeliveryNote struct {
 	// number, who wrote it, an excerpt, and whether the agent wrote it itself, so the agent knows what is being answered without looking it up.
 	InReplyTo    *NoteParent `json:"in_reply_to,omitempty"`
 	Conversation *NoteParent `json:"conversation,omitempty"`
+	// Outcome is what a task-result handoff reports (done, partial or failed), so the lead or dispatcher it wakes reads it without parsing the
+	// body. Absent on every other message and on a handoff written before outcomes.
+	Outcome string `json:"outcome,omitempty"`
 }
 
 // NoteParent is the message a delivered note replies to, or the first message of its conversation.

@@ -606,7 +606,11 @@ history has no model tooltip), and a liveness dot (green working or idle, amber 
 the agent waits for a recovery or approval decision, red when stopped or lost;
 a sender with no live agent record shows as departed, and one that exists only in imported v1 history is red too, with the tooltip
 "Imported from v1 (no live agent)"). A message that needs a
-human shows a 🔔. A model switch handoff appears as a compact card naming the
+human shows a 🔔. A task-result handoff shows its outcome next to the sender
+as a bordered word with a glyph: ✓ Done (green border), ◐ Partial (dashed
+amber border) or ✕ Failed (white on solid red, bold, so it stands out in every
+theme without relying on colour). A handoff from before outcomes, or from an agent
+whose supervisor predates them, shows no badge. A model switch handoff appears as a compact card naming the
 agent, old and new runtimes, and summary source; its **Show** button opens a
 dialog with the handoff and a Copy button. The dialog follows the viewer's
 rendered or raw Markdown setting. Older handoffs without card metadata still hide their
@@ -699,7 +703,10 @@ Assignments to spawned agents need a live mention in ordinary prose to wake
 them. Agent replies to other agents keep their thread link without waking the
 parent author; an explicit mention or handoff wakes the intended agent. A
 handoff wakes the room's lead, or in a task room of the leader-dispatcher flow
-(which has no lead) the dispatcher. An agent message that reached nobody at all,
+(which has no lead) the dispatcher. Every handoff carries an outcome, `done`,
+`partial` or `failed`, which the woken lead or dispatcher reads on the note,
+in room history and in `message_get`; a handoff without one is held and its
+author is told to resend it. An agent message that reached nobody at all,
 in a room of agents alone (no human member, not home), earns its author a short
 system note saying so, so a chain never stops silently; a lead's messages never do.
 Agent slugs and people's logins share one namespace: a name held by one agent

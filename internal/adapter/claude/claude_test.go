@@ -130,7 +130,7 @@ func TestClaudeSchemaDefinesStructuredInboxQuestion(t *testing.T) {
 	if len(ask.Required) != 4 || !strings.Contains(systemPrompt, "A room returned by create_room") || !strings.Contains(systemPrompt, `"ask":{"kind":`) {
 		t.Fatalf("lead question contract missing: required=%v prompt=%q", ask.Required, systemPrompt)
 	}
-	for _, want := range []string{`"reply_to":null,"attachments":null`, `"handoff":false,"visual_plan":null,"appendix_pages":null`, `"needs_attention":false,"proposed_answers":null,"open_questions":null`, "a live @slug or @agent_id mention", "after four automatic replies with no human message between them, replies stop waking anyone", "Do not send acknowledgement-only", "publish the home-room summary"} {
+	for _, want := range []string{`"reply_to":null,"attachments":null`, `"handoff":false,"outcome":null,"visual_plan":null,"appendix_pages":null`, "Every message with handoff true needs outcome: done when the task is complete and verified", `"needs_attention":false,"proposed_answers":null,"open_questions":null`, "a live @slug or @agent_id mention", "after four automatic replies with no human message between them, replies stop waking anyone", "Do not send acknowledgement-only", "publish the home-room summary"} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("missing prompt guidance %q", want)
 		}

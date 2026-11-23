@@ -79,6 +79,8 @@ const FIXTURE = async () => {
     return article;
   };
   const expiredFixture = message(); const boundaryFixture = message('self'); message('needs-attention');
+  // The three handoff outcome badges, as the chat row draws them, for the contrast audit in every theme.
+  { const meta = message('handoff-outcome-fixture').querySelector('.chat-msg-header'); for (const [outcome, glyph, word] of [['done', '✓', 'Done'], ['partial', '◐', 'Partial'], ['failed', '✕', 'Failed']]) { const badge = make('span', `handoff-outcome handoff-outcome-${outcome}`, '', meta); make('span', '', glyph, badge).setAttribute('aria-hidden', 'true'); badge.append(` ${word}`); } }
   // Proposed answers (the real renderer), for the accessibility and contrast audits.
   {
     const answerControls = await (async () => { const { html, render } = await import('/js/ui.js'), { AnswerControls } = await import('/js/components/answer-controls.js'); return (item, submit, options = {}) => { const host = document.createElement('div'); render(html`<${AnswerControls} item=${item} submit=${submit} ...${options} />`, host); return host.firstElementChild; }; })();
