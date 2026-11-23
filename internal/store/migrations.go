@@ -2073,6 +2073,17 @@ CREATE TABLE IF NOT EXISTS update_status_ack (
   kind TEXT NOT NULL CHECK (kind IN ('skip','remind')),
   until TEXT
 );
+`}, {129, `
+-- The rooms whose content a turn was given beyond its own room and the rooms of its
+-- notes: what a toolbox read (message_get, room_history, memory_recall, ...) returned
+-- and what the turn's context quoted from other rooms. The conversation log records
+-- it, so the server withholds such a turn from a reader who may not read one of these
+-- rooms, as it does for the turn's own rooms (Store.TurnWithheldFrom).
+CREATE TABLE IF NOT EXISTS turn_room_read (
+  turn_id TEXT NOT NULL REFERENCES turn(id),
+  room_id TEXT NOT NULL REFERENCES room(id),
+  PRIMARY KEY (turn_id, room_id)
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

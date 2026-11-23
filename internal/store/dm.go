@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"sort"
 )
 
@@ -213,7 +214,8 @@ func (s *Store) UserRoomAccess(ctx context.Context, userID, roomID string) error
 
 // TurnWithheldFrom says whether what a turn of an agent said may be shown to a person who may otherwise read that agent's output. known
 // is false when the server has no such turn of that agent (its room was removed, or the id is not one of its turns): nothing is known
-// about the rooms it served. The rooms a turn served are its own room and the room of every message it was given. private is true when
+// about the rooms it served. The rooms a turn served are its own room, the room of every message it was given, and every room whose
+// content it read through a tool or was quoted in its context (turn_room_read, see RecordAgentTurnRoomReads). private is true when
 // one of them is a private chat the person is not an active member of: a private chat is its members', whatever role the person has in
 // the project. restricted is true when one of them is a restricted room (routing, advice) the person cannot read under the room-access
 // rule every other read uses (personReadsRoomSQL, the rule of UserRoomAccess): a member of its project who is its owner or operator or
@@ -223,7 +225,8 @@ func (s *Store) TurnWithheldFrom(ctx context.Context, turnID, agentID, userID st
 		return false, false, false, err
 	}
 	const served = `tr.id IN (SELECT room_id FROM turn WHERE id=? AND agent_id=?
-				UNION SELECT n.room_id FROM turn_note tn JOIN note n ON n.id=tn.note_id WHERE tn.turn_id=?)`
+				UNION SELECT n.room_id FROM turn_note tn JOIN note n ON n.id=tn.note_id WHERE tn.turn_id=?
+				UNION SELECT rr.room_id FROM turn_room_read rr WHERE rr.turn_id=?)`
 	var turns, closed, guarded int
 	err = s.db.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM turn WHERE id=? AND agent_id=?),
@@ -233,10 +236,50 @@ func (s *Store) TurnWithheldFrom(ctx context.Context, turnID, agentID, userID st
 		(SELECT COUNT(*) FROM room tr WHERE tr.kind<>'dm' AND tr.restricted<>0 AND `+served+`
 			AND NOT `+personReadsRoomSQL("?")+`)`,
 		turnID, agentID,
-		turnID, agentID, turnID, userID,
-		turnID, agentID, turnID, userID, userID, userID).Scan(&turns, &closed, &guarded)
+		turnID, agentID, turnID, turnID, userID,
+		turnID, agentID, turnID, turnID, userID, userID, userID).Scan(&turns, &closed, &guarded)
 	if err != nil {
 		return false, false, false, err
 	}
 	return turns > 0, closed > 0, guarded > 0, nil
+}
+
+// RecordAgentTurnRoomReads notes that the agent's current turn was given content of these rooms by a toolbox read (message_get,
+// room_history, memory_recall, ...), so that TurnWithheldFrom withholds the turn's conversation log, where the tool result is recorded,
+// from a reader who may not read one of them. The current turn is the agent's active one (pending or running) and also its most recently
+// started one, which is the turn the log's records fall under should the read arrive after the server has ended it. A caller records
+// before it answers and answers with an error when recording fails: content is never returned for a turn that would not be withheld.
+// An agent with no turn records nothing; there is then no turn the result could be logged under.
+func (s *Store) RecordAgentTurnRoomReads(ctx context.Context, agentID string, roomIDs ...string) error {
+	if len(roomIDs) == 0 {
+		return nil
+	}
+	return s.Tx(ctx, func(tx *Tx) error {
+		for _, roomID := range slices.Compact(slices.Sorted(slices.Values(roomIDs))) {
+			if roomID == "" {
+				continue
+			}
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO turn_room_read(turn_id,room_id)
+				SELECT t.id,? FROM turn t WHERE t.agent_id=? AND (t.exec IN ('pending','running')
+					OR t.id=(SELECT l.id FROM turn l WHERE l.agent_id=? AND l.started_at IS NOT NULL ORDER BY l.started_at DESC,l.id DESC LIMIT 1))
+					AND EXISTS (SELECT 1 FROM room WHERE id=?)`, roomID, agentID, agentID, roomID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// recordTurnRoomReads notes the rooms other than its own that a turn's context quotes (recent history of a new session, #N references),
+// for the same reason as RecordAgentTurnRoomReads: the conversation log records the prompt the context is part of.
+func (tx *Tx) recordTurnRoomReads(turnID string, messages []AgentMessage) error {
+	for _, message := range messages {
+		if !message.Available || message.RoomID == "" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO turn_room_read(turn_id,room_id) VALUES (?,?)`, turnID, message.RoomID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -377,6 +377,10 @@ func (s *Server) agentToolMemoryList(w http.ResponseWriter, r *http.Request) {
 			knowledgeError(w, err)
 			return
 		}
+		// A task room's notes are that room's content.
+		if scope == "task" && !s.recordToolRoomReads(w, r, key) {
+			return
+		}
 		if scope == "project" {
 			active := make([]store.KnowledgeRecord, 0, len(items))
 			for _, item := range items {
@@ -488,6 +492,14 @@ func (s *Server) agentToolRecall(w http.ResponseWriter, r *http.Request) {
 		} else {
 			knowledgeError(w, err)
 		}
+		return
+	}
+	// A message or task note hit is its room's content.
+	rooms := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		rooms = append(rooms, hit.RoomID)
+	}
+	if !s.recordToolRoomReads(w, r, rooms...) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"results": hits})

@@ -298,6 +298,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if err != nil {
 				return err
 			}
+			if err := tx.recordTurnRoomReads(special.ID, recoveredRefs); err != nil {
+				return err
+			}
 			if len(recoveredRefs) > 0 {
 				contextData["referenced_messages"] = recoveredRefs
 			}
@@ -583,6 +586,10 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if err != nil {
 				return err
 			}
+			// The history quotes every room the agent is in, and the conversation log records the prompt it is part of.
+			if err := tx.recordTurnRoomReads(turn.ID, history); err != nil {
+				return err
+			}
 			contextData["recent_room_history"] = history
 			contextData["recent_room_history_note"] = "This is a new native session. Read recent_room_history as prior conversation in your current rooms, including your own earlier messages, before answering the new notes. These messages are context, not new requests."
 		}
@@ -631,6 +638,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		}
 		refs, err := tx.referencedMessages(agentID, projectID, noteBodies, delivered)
 		if err != nil {
+			return err
+		}
+		if err := tx.recordTurnRoomReads(turn.ID, refs); err != nil {
 			return err
 		}
 		if len(refs) > 0 {

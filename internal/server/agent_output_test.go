@@ -583,3 +583,122 @@ func TestAgentConversationWithholdsRestrictedRoomTurnsFromNonReaders(t *testing.
 		t.Fatalf("a seated admin (withheld=%v):\n%s", withheld, got)
 	}
 }
+
+// The conversation log records tool results. A turn in an ordinary room whose toolbox read (message_get, room_history, memory_recall)
+// returned content of a restricted room the agent sits in is withheld from a global admin who cannot read that room, as a turn that served
+// it would be; the project's owner still reads it; and a turn that read only ordinary rooms is shown as it was.
+func TestAgentConversationWithholdsTurnsWhoseToolsReadRestrictedRooms(t *testing.T) {
+	o := newOutputFixture(t)
+	ctx := t.Context()
+	key, err := o.srv.Auth.IssueAgentKey(ctx, o.agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routing, err := o.db.CreateRoom(ctx, store.Room{ProjectID: o.project.ID, ParentID: o.room.ID, Kind: "task", Title: "routing", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`UPDATE room SET restricted=1 WHERE id=?`, routing.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.db.AddMember(ctx, routing.ID, "agent", o.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := o.db.UserByLogin(ctx, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A person's message: memory_recall does not search system messages.
+	secret, err := o.db.InsertMessage(ctx, store.Message{RoomID: routing.ID, AuthorKind: "user", AuthorID: owner.ID, Body: "zebra routing secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := o.db.InsertMessage(ctx, store.Message{RoomID: o.room.ID, AuthorKind: "system", AuthorID: "system", Body: "an ordinary message"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := o.request(http.MethodPut, "/api/projects/"+o.project.ID+"/memory-enabled", map[string]bool{"enabled": true}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("enable memory: %d", resp.StatusCode)
+	}
+	if _, err := o.exec(`INSERT OR IGNORE INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_conv',?,0,'fresh_with_history','2026-01-01T00:00:00.000Z')`, o.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Each turn runs in the ordinary room, makes its reads through the toolbox (each returning the restricted message, or none of them), and ends.
+	turn := func(id string, restricted bool, paths ...string) {
+		t.Helper()
+		if _, err := o.exec(`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec,started_at) VALUES (?,?,'ses_conv',0,?,1,'normal','running',?)`,
+			id, o.agent.ID, o.room.ID, time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range paths {
+			resp := o.toolRequest(t, path, key)
+			var body map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || resp.StatusCode != 200 {
+				t.Fatalf("%s: %d %v", path, resp.StatusCode, err)
+			}
+			resp.Body.Close()
+			if encoded, _ := json.Marshal(body); strings.Contains(string(encoded), "zebra routing secret") != restricted {
+				t.Fatalf("%s: restricted message returned=%t, want %t: %s", path, !restricted, restricted, encoded)
+			}
+		}
+		if _, err := o.exec(`UPDATE turn SET exec='exited' WHERE id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turn("trn_get", true, fmt.Sprintf("/api/agent/message-numbers/%d", secret.No))
+	turn("trn_history", true, "/api/agent/rooms/"+routing.ID+"/history")
+	turn("trn_recall", true, "/api/agent/recall?query=zebra%20routing")
+	turn("trn_plain", false, fmt.Sprintf("/api/agent/message-numbers/%d", plain.No), "/api/agent/rooms/"+o.room.ID+"/history")
+
+	line := func(id string, second int, result string) string {
+		stamp := fmt.Sprintf("2026-10-22T12:00:0%dZ", second)
+		return stamp + " turn_start turn " + id + " gen 0 normal claude/native test\n" + stamp + " tool_result " + result + "\n"
+	}
+	plainTurn := line("trn_plain", 4, "an ordinary message")
+	text := line("trn_get", 1, "message_get: zebra routing secret") + line("trn_history", 2, "room_history: zebra routing secret") +
+		line("trn_recall", 3, "memory_recall: zebra routing secret") + plainTurn
+	o.mu.Lock()
+	o.answer = func(request protocol.Frame) protocol.Frame {
+		page, _ := json.Marshal(agentlog.Page{Text: text, Bytes: int64(len(text)), Files: 1, Turn: "trn_get", UpdatedAt: time.Date(2026, 10, 22, 12, 0, 9, 0, time.UTC)})
+		return protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: request.ReqID, AgentID: request.AgentID, Details: page}
+	}
+	o.mu.Unlock()
+
+	// The project's owner reads the restricted room, so the conversation is whole.
+	if status, body, _ := o.get(t, o.path(o.agent.ID)+"?stream=conversation"); status != 200 || body["text"] != text || body["withheld"] != nil {
+		t.Fatalf("the owner: %d withheld=%v\n%s", status, body["withheld"], body["text"])
+	}
+
+	// A global admin who is only a viewer of the project reads the log, but not the turns that read the restricted room.
+	cookie, csrf := registerSecondUser(t, o.fixture, "admin")
+	admin, err := o.db.UserByLogin(ctx, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`UPDATE user SET admin=1 WHERE id=?`, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,'viewer')`, o.project.ID, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	resp = o.requestAs(t, cookie, csrf, http.MethodGet, o.path(o.agent.ID)+"?stream=conversation", nil)
+	defer resp.Body.Close()
+	var view struct {
+		Text     string  `json:"text"`
+		Withheld float64 `json:"withheld"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("read as the admin: %d %v", resp.StatusCode, err)
+	}
+	withheld := func(second int) string {
+		return fmt.Sprintf("2026-10-22T12:00:0%dZ withheld restricted room turn: content withheld\n", second)
+	}
+	if want := withheld(1) + withheld(2) + withheld(3) + plainTurn; view.Text != want || view.Withheld != 3 {
+		t.Fatalf("an admin outside the restricted room (withheld=%v):\n%s\nwant:\n%s", view.Withheld, view.Text, want)
+	}
+	if strings.Contains(view.Text, "zebra") {
+		t.Fatal("a tool result from the restricted room reached a person who cannot read it")
+	}
+}

@@ -654,6 +654,14 @@ Execution
   terminal_event, report_json?, policy_json?, started_at?, ended_at?)
   — at most one turn per agent with exec in (pending, running)
 - **turn_note**(turn_id, note_id)
+- **turn_room_read**(turn_id, room_id) — PK (turn_id, room_id); a room whose
+  content the turn was given beyond its notes: what a toolbox read returned
+  (`message_get`, `room_history`, `memory_recall`, `memory_list` of a task
+  room, `list_schedules`, the lead's recoveries), recorded against the agent's
+  active turn and its most recently started one before the read answers (a
+  read that cannot be recorded answers an error, not the content), and what
+  the turn's context quotes (`recent_room_history`, `referenced_messages`);
+  migration 129
 - **command_job**(id, agent_id, generation, machine_id, project_id, room_id,
   label?, cmd, cwd, timeout_seconds,
   state[queued|running|done|cancelled|cancelled_unconfirmed|timed_out|lost|
@@ -1663,7 +1671,10 @@ it never silently reruns a turn with uncertain effects.
   begin with the line `... earlier part cut` and the end of that record. `turn`
   (a conversation only) is the id of the turn the page's first records belong
   to when that turn's `turn_start` is before the page. The server needs the
-  turn of every record: before it returns a conversation it replaces each turn
+  turn of every record: the rooms a turn served are its own room, the room of
+  each message it was given, and each room in `turn_room_read` (content a tool
+  result or its context carried, which the log records too); before it returns
+  a conversation it replaces each turn
   that served a private chat by one line unless the reader is an active member
   of that chat (private chats require room membership, see the room rules
   above), each turn that served a restricted room unless the reader can read

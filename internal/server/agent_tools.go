@@ -60,6 +60,18 @@ func (s *Server) requireAgentToolScope(next http.Handler, refuseScoped bool) htt
 	})
 }
 
+// recordToolRoomReads notes, before a toolbox read answers, the rooms whose content the answer carries, against the caller's current turn:
+// the conversation log records the tool result, and the server withholds that turn from a log reader who may not read one of those rooms
+// (Store.TurnWithheldFrom). When it cannot be recorded the read answers with an error instead of the content, so a turn is never shown
+// to such a reader with that content in it. It reports whether the handler may go on.
+func (s *Server) recordToolRoomReads(w http.ResponseWriter, r *http.Request, roomIDs ...string) bool {
+	if err := s.Store.RecordAgentTurnRoomReads(r.Context(), agentToolCaller(r).ID, roomIDs...); err != nil {
+		fail(w, err)
+		return false
+	}
+	return true
+}
+
 func (s *Server) agentToolRooms(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	rooms, err := s.Store.RoomsForAgent(r.Context(), caller.ID, caller.ProjectID)
@@ -116,6 +128,9 @@ func (s *Server) agentToolRoomHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		fail(w, err)
+		return
+	}
+	if !s.recordToolRoomReads(w, r, r.PathValue("room")) {
 		return
 	}
 	writeJSON(w, 200, page)
@@ -387,6 +402,9 @@ func (s *Server) agentToolMessageByNo(w http.ResponseWriter, r *http.Request) {
 	message, err := s.Store.AgentMessageByNo(r.Context(), caller.ID, caller.ProjectID, no)
 	if err != nil {
 		fail(w, err)
+		return
+	}
+	if message.Available && !s.recordToolRoomReads(w, r, message.RoomID) {
 		return
 	}
 	writeJSON(w, http.StatusOK, message)

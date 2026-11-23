@@ -23,6 +23,14 @@ func (s *Server) agentToolRecoveries(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	// A recovery's evidence is what the failed turn's process printed in its room.
+	rooms := make([]string, 0, len(items))
+	for _, item := range items {
+		rooms = append(rooms, item.RoomID)
+	}
+	if !s.recordToolRoomReads(w, r, rooms...) {
+		return
+	}
 	writeJSON(w, 200, map[string]any{"recoveries": items})
 }
 

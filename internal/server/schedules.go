@@ -200,6 +200,10 @@ func (s *Server) agentToolSchedules(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
+		// What a schedule posts is the room's content.
+		if !s.recordToolRoomReads(w, r, roomID) {
+			return
+		}
 		writeJSON(w, 200, map[string]any{"schedules": items})
 		return
 	}

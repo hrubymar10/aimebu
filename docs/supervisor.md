@@ -1401,7 +1401,11 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
 - **Private chats.** The log is one per agent, whichever room a turn served,
   and the route that reads it checks only the room it is asked through. The
   server therefore looks up the rooms of every turn on the page (the turn's own
-  room and the room of each message it was given) and replaces a turn that
+  room, the room of each message it was given, and every room whose content
+  the turn read: what a toolbox read such as `message_get`, `room_history` or
+  `memory_recall` returned, recorded per turn by the server that answered it,
+  and what its context quoted from other rooms, recent history or `#N`
+  references) and replaces a turn that
   served a private chat by one line, `<time> withheld private chat turn:
   content withheld`, unless the reader is an active member of that chat. Being
   the project's owner or an admin does not open someone else's private chat,
