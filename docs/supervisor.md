@@ -343,7 +343,11 @@ setting cannot override): a nested repository has its own config, whose
 filter drivers the helper never reads. The accepted tradeoff is that changes
 inside a submodule or an embedded repository do not count as dirty files in
 the worktree inspection or the description of a limit-killed turn's
-checkout. Repository-local filter drivers, such as the ones
+checkout. Because of that, the worktree removal checks for them separately:
+a gitlink in the index (`ls-files --stage`, which runs no filter) or a `.git`
+below the top level (found by a bounded walk that does not use git or follow
+symlinks) keeps the worktree as `preserved`, as a dirty tree is, since git
+refuses to remove such a worktree anyway. Repository-local filter drivers, such as the ones
 `git lfs install --local` writes, do not run on these calls either: a
 worktree the host creates gets LFS pointer files instead of their content,
 the git-lfs `post-checkout` hook is skipped with the other hooks, and a file

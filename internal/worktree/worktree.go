@@ -180,6 +180,53 @@ func commonDir(ctx context.Context, root string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 
+// maxNestedScan bounds the walk nestedRepos makes without git; a tree with more entries is kept rather than guessed at.
+const maxNestedScan = 200000
+
+// nestedRepos answers why a worktree holds a submodule or an embedded repository ("" when it holds none). A status never goes into one (see
+// gitGuards), so dirtyCount cannot see work in it, and `git worktree remove` refuses such a worktree anyway. It looks for gitlinks in the index
+// (`ls-files --stage` reads only the index and runs no filter) and for a .git below the top level by walking the tree without git, not following
+// symlinks, so no nested repository's config is ever read.
+func nestedRepos(ctx context.Context, path string) (string, error) {
+	output, err := GitCommand(ctx, path, "ls-files", "--stage", "-z").Output()
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range bytes.Split(output, []byte{0}) {
+		if bytes.HasPrefix(entry, []byte("160000 ")) {
+			return "contains a submodule", nil
+		}
+	}
+	seen, found := 0, false
+	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable: nothing to learn here
+		}
+		if seen++; seen > maxNestedScan {
+			return errScanLimit
+		}
+		if d.Name() == ".git" && p != filepath.Join(path, ".git") {
+			found = true
+			return filepath.SkipAll
+		}
+		if p == filepath.Join(path, ".git") && d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	switch {
+	case errors.Is(walkErr, errScanLimit):
+		return "too many files to check for nested repositories", nil
+	case walkErr != nil:
+		return "", walkErr
+	case found:
+		return "contains an embedded repository", nil
+	}
+	return "", nil
+}
+
+var errScanLimit = errors.New("scan limit")
+
 func dirtyCount(ctx context.Context, root string, ignored bool) (int, error) {
 	args := []string{"status", "--porcelain=v1", "-z", "--untracked-files=all"}
 	if ignored {
@@ -317,6 +364,14 @@ func Remove(ctx context.Context, root, roomID, baseRef string, force bool) (Resu
 			}
 			if dirty > 0 {
 				result.State, result.Reason = "preserved", fmt.Sprintf("%d uncommitted or generated files", dirty)
+				return result, nil
+			}
+			nested, err := nestedRepos(ctx, path)
+			if err != nil {
+				return Result{}, err
+			}
+			if nested != "" {
+				result.State, result.Reason = "preserved", nested
 				return result, nil
 			}
 			if baseRef == "" || baseRef == "HEAD" {

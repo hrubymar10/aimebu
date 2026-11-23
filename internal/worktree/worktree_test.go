@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func repoFixture(t *testing.T) string {
@@ -227,5 +229,91 @@ func TestRetireSetsTheKeptBranchAside(t *testing.T) {
 	}
 	if none, err := Retire(ctx, root, "room_never"); err != nil || none.Branch != "" {
 		t.Fatalf("no branch, nothing to do: %+v %v", none, err)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// A worktree whose only changes are inside an embedded repository or a submodule counts as clean to a status that never goes into one, and git
+// refuses to remove it, so Remove must keep it instead of failing; no program the repositories name may run while it checks.
+func TestRemovePreservesWorktreeWithNestedRepository(t *testing.T) {
+	root := repoFixture(t)
+	marks := plantRepoPrograms(t, root)
+	ctx := t.Context()
+	// The test's own plain git calls may run the planted programs; only the ones made while Remove checks count.
+	reset := func() {
+		t.Helper()
+		for _, name := range planted(t, marks) {
+			if err := os.Remove(filepath.Join(marks, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	embedded, err := Ensure(ctx, root, "room_embedded", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(embedded.Path, "inner")
+	runGit(t, embedded.Path, "init", "-q", inner)
+	runGit(t, inner, "config", "user.name", "Test")
+	runGit(t, inner, "config", "user.email", "test@example.invalid")
+	if err := os.WriteFile(filepath.Join(inner, "f.txt"), []byte("one\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, inner, "add", "f.txt")
+	runGit(t, inner, "commit", "-qm", "inner")
+	filter := filepath.Join(t.TempDir(), "filter.sh")
+	if err := testenv.WriteExecutable(filter, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, "inner-filter")+"'\ncat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, inner, "config", "filter.x.clean", filter)
+	if err := os.WriteFile(filepath.Join(inner, ".gitattributes"), []byte("* filter=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inner, "f.txt"), []byte("two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A status may list the embedded repository as one untracked directory, but the check must not depend on that.
+	if why, err := nestedRepos(ctx, embedded.Path); err != nil || why != "contains an embedded repository" {
+		t.Fatalf("nestedRepos=%q %v", why, err)
+	}
+	reset()
+	kept, err := Remove(ctx, root, "room_embedded", embedded.BaseRef, false)
+	if err != nil || kept.State != "preserved" {
+		t.Fatalf("embedded repository: %+v %v", kept, err)
+	}
+	if got := planted(t, marks); len(got) != 0 {
+		t.Fatalf("the check ran planted programs: %v", got)
+	}
+
+	sub, err := Ensure(ctx, root, "room_submodule", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, sub.Path, "update-index", "--add", "--cacheinfo", "160000,"+runGit(t, root, "rev-parse", "HEAD")+",vendor/lib")
+	reset()
+	kept, err = Remove(ctx, root, "room_submodule", sub.BaseRef, false)
+	if err != nil || kept.State != "preserved" {
+		t.Fatalf("submodule: %+v %v", kept, err)
+	}
+	if got := planted(t, marks); len(got) != 0 {
+		t.Fatalf("the check ran planted programs: %v", got)
+	}
+
+	clean, err := Ensure(ctx, root, "room_clean_nested", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := Remove(ctx, root, "room_clean_nested", clean.BaseRef, false)
+	if err != nil || removed.State != "removed" {
+		t.Fatalf("clean worktree: %+v %v", removed, err)
 	}
 }
