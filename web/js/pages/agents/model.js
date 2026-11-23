@@ -94,9 +94,14 @@ export function keepAliveOf(agent) {
   if (!keep) return null;
   const dollars = value => (value < 0.01 ? '<$0.01' : `$${value.toFixed(value < 1 ? 2 : 1)}`);
   const cost = keep.estimate_usd != null ? `, up to ${keep.pings_per_stretch} pings after its last turn ≈ ${dollars(keep.estimate_usd)}` : '';
+  // Only while pings are still planned: after the stretch ends the agent sleeps and the warning would read as spending that goes on.
+  const when = Date.parse(keep.last_ping_at || keep.last_at), time = Number.isFinite(when) ? new Date(when).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+  const at = time ? ` at ${time}` : '';
   let warning = '';
-  if (keep.last_ok === false) warning = `The last ping failed${keep.last_error ? `: ${keep.last_error}` : ''}.`;
-  else if (keep.missed) warning = 'The last ping did not find the cache (it had expired, or the ping differed from a real turn): it paid to write it again.';
+  if (keep.stretch_active === true) {
+    if (keep.last_ok === false) warning = `The last ping${at} failed${keep.last_error ? `: ${keep.last_error}` : ''}.`;
+    else if (keep.missed) warning = `The last ping${at} did not find the cache (it had expired, or the ping differed from a real turn): it paid to write it again.`;
+  }
   return { text: `Cache kept warm every ${keep.interval_minutes} min${cost}`, warning };
 }
 

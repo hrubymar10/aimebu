@@ -155,8 +155,16 @@ assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, estimate_us
 assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, estimate_usd: 0.04 }).text, 'Cache kept warm every 50 min, up to 28 pings after its last turn ≈ $0.04');
 assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, estimate_usd: 0.002 }).text.endsWith('≈ <$0.01'), true);
 assert.equal(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: true }).warning, '');
-assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: false, last_error: 'no key' }).warning, /^The last ping failed: no key\.$/);
-assert.match(keepLine({ interval_minutes: 50, pings_per_stretch: 28, last_ok: true, missed: true }).warning, /did not find the cache/);
+{
+  // The warning names the ping's time (local) and shows only while the stretch of pings is still running.
+  const pingAt = '2026-11-08T15:41:00Z', clock = new Date(pingAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const base = { interval_minutes: 50, pings_per_stretch: 28, last_at: pingAt, last_ping_at: pingAt };
+  assert.equal(keepLine({ ...base, stretch_active: true, last_ok: false, last_error: 'no key' }).warning, `The last ping at ${clock} failed: no key.`);
+  assert.equal(keepLine({ ...base, stretch_active: true, last_ok: true, missed: true }).warning, `The last ping at ${clock} did not find the cache (it had expired, or the ping differed from a real turn): it paid to write it again.`);
+  assert.equal(keepLine({ ...base, stretch_active: false, last_ok: true, missed: true }).warning, '', 'a miss after the stretch ended shows nothing');
+  assert.equal(keepLine({ ...base, stretch_active: false, last_ok: false, last_error: 'no key' }).warning, '', 'a failure after the stretch ended shows nothing');
+  assert.equal(keepLine({ ...base, last_ok: true, missed: true }).warning, '', 'without stretch_active nothing is shown');
+}
 // The one status dot: green and cold, green and warm, red offline, orange when it is not known.
 {
   const dot = (agent, at = nowMs) => plain(m.dotOf(agent, m.stateOf(agent), at));

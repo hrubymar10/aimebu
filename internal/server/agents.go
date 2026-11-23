@@ -512,6 +512,10 @@ type agentKeepAlive struct {
 	CacheRead       int64    `json:"cache_read,omitempty"`
 	CacheWrite      int64    `json:"cache_write,omitempty"`
 	Missed          bool     `json:"missed,omitempty"`
+	// LastPingAt is the last ping's time (the same instant as LastAt, named for the card's warning); StretchActive says more pings are planned for the
+	// agent: its last ping is recent enough that the supervisor is still pinging, and the next one falls before the limit of hours without real work.
+	LastPingAt    string `json:"last_ping_at,omitempty"`
+	StretchActive bool   `json:"stretch_active"`
 }
 
 // agentKeepAliveState works out what a card says about keep-alive (Claude Code and Codex agents; the supervisor pings both).
@@ -553,8 +557,29 @@ func (s *Server) agentKeepAliveState(card store.AgentCard, usage *store.AgentUsa
 		state.LastAt, state.LastOK, state.LastError = ping.At, &okValue, ping.Error
 		state.CacheRead, state.CacheWrite = ping.CacheRead, ping.CacheWrite
 		state.Missed = ping.OK && ping.CacheWrite > ping.CacheRead
+		state.LastPingAt = ping.At
+		state.StretchActive = keepAliveStretchActive(ping.At, card.LastActivityAt, interval, config.StopAfterHrs, time.Now())
 	}
 	return state
+}
+
+// keepAliveStretchActive tells whether pings are still coming: the last ping is under two intervals old (the supervisor pings once per interval; a
+// stretch that ended stops pinging), and when the last real activity is known and a limit of hours is set, the next ping falls before that limit.
+func keepAliveStretchActive(pingAt, lastActivity string, intervalMinutes, stopAfterHours int, now time.Time) bool {
+	at, err := time.Parse(time.RFC3339, pingAt)
+	if err != nil {
+		return false
+	}
+	interval := time.Duration(intervalMinutes) * time.Minute
+	if now.Sub(at) >= 2*interval {
+		return false
+	}
+	if stopAfterHours > 0 {
+		if activity, err := time.Parse(time.RFC3339, lastActivity); err == nil && !at.Add(interval).Before(activity.Add(time.Duration(stopAfterHours)*time.Hour)) {
+			return false
+		}
+	}
+	return true
 }
 
 type agentWarm struct {

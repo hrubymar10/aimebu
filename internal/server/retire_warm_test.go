@@ -404,6 +404,26 @@ func TestAgentCardKeepAliveState(t *testing.T) {
 	if state = f.srv.agentKeepAliveState(card, usage, config); !state.Missed {
 		t.Fatalf("a ping that wrote the whole context missed: %+v", state)
 	}
+	// A fresh ping is in a stretch that goes on; an old one is not; the next ping past the limit of hours without real work is not planned.
+	now := time.Now().UTC()
+	fresh := now.Add(-10 * time.Minute).Format(time.RFC3339)
+	machine.warmMu.Lock()
+	machine.pings["agt_k"] = protocol.KeepAliveReport{AgentID: "agt_k", At: fresh, OK: true, CacheRead: 0, CacheWrite: 90000}
+	machine.warmMu.Unlock()
+	if state = f.srv.agentKeepAliveState(card, usage, config); !state.StretchActive || state.LastPingAt != fresh {
+		t.Fatalf("a recent ping is in a running stretch: %+v", state)
+	}
+	card.LastActivityAt = now.Add(-24 * time.Hour).Format(time.RFC3339)
+	if state = f.srv.agentKeepAliveState(card, usage, config); state.StretchActive {
+		t.Fatalf("the next ping falls past the limit: %+v", state)
+	}
+	card.LastActivityAt = ""
+	machine.warmMu.Lock()
+	machine.pings["agt_k"] = protocol.KeepAliveReport{AgentID: "agt_k", At: now.Add(-3 * time.Hour).Format(time.RFC3339), OK: true, CacheWrite: 1}
+	machine.warmMu.Unlock()
+	if state = f.srv.agentKeepAliveState(card, usage, config); state.StretchActive {
+		t.Fatalf("an old ping is a stretch that ended: %+v", state)
+	}
 	off := config
 	off.Enabled = false
 	other := card
