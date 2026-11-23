@@ -163,16 +163,18 @@ func TestBoundedDrainInterruptsRunningTurnsAndContinuesThemOnTheNewSupervisor(t 
 	if waited := time.Since(began); waited < time.Second {
 		t.Fatalf("the turns were interrupted after %s, before the grace was over", waited)
 	}
+	// The old supervisor's retirement (oldDone) can be seen before the server has handled the turn's exit frame and written its rows, so
+	// each of these is waited for, not read once.
 	for turnID := range original {
-		if got := f.countRows(t, "event", "kind", `turn_id=? AND kind='turn_interrupt_requested' AND json_extract(payload_json,'$.purpose')='supervisor_drain' AND json_extract(payload_json,'$.disposition')='continue'`, turnID); got < 1 {
-			t.Fatalf("turn %s has no recorded interrupt request", turnID)
-		}
-		if got := f.countRows(t, "turn", "exec", `id=? AND exec='exited' AND cancel_intent=0 AND terminal_event=0`, turnID); got != 1 {
-			t.Fatalf("turn %s did not end interrupted", turnID)
-		}
-		if got := f.countRows(t, "event", "kind", `kind='turn_interrupted_continuation' AND json_extract(payload_json,'$.origin_turn_id')=? AND json_extract(payload_json,'$.requested')='1'`, turnID); got != 1 {
-			t.Fatalf("turn %s has %d requested continuations", turnID, got)
-		}
+		waitForGuard(t, machineWaitGuard, func() bool {
+			return f.countRows(t, "event", "kind", `turn_id=? AND kind='turn_interrupt_requested' AND json_extract(payload_json,'$.purpose')='supervisor_drain' AND json_extract(payload_json,'$.disposition')='continue'`, turnID) >= 1
+		})
+		waitForGuard(t, machineWaitGuard, func() bool {
+			return f.countRows(t, "turn", "exec", `id=? AND exec='exited' AND cancel_intent=0 AND terminal_event=0`, turnID) == 1
+		})
+		waitForGuard(t, machineWaitGuard, func() bool {
+			return f.countRows(t, "event", "kind", `kind='turn_interrupted_continuation' AND json_extract(payload_json,'$.origin_turn_id')=? AND json_extract(payload_json,'$.requested')='1'`, turnID) == 1
+		})
 	}
 	if items, err := f.db.InboxForUser(ctx, f.ownerUserID(t)); err != nil || len(items) != 0 {
 		t.Fatalf("the drain raised inbox items: %+v %v", items, err)
