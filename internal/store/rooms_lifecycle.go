@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -88,6 +90,7 @@ func (tx *Tx) beginRoomClose(id, actor string, rev int64, cascade bool) (control
 				}
 			}
 		}
+		var stopped []stoppedSchedule
 		for _, x := range targets {
 			if x.lifecycle != "open" || !cascade && x.id != id {
 				continue
@@ -95,6 +98,11 @@ func (tx *Tx) beginRoomClose(id, actor string, rev int64, cascade bool) (control
 			if _, err := tx.Exec(`UPDATE room SET lifecycle='closing',lifecycle_rev=lifecycle_rev+1 WHERE id=?`, x.id); err != nil {
 				return err
 			}
+			found, err := tx.roomEnabledSchedules(x.id)
+			if err != nil {
+				return err
+			}
+			stopped = append(stopped, found...)
 			if _, err := tx.Exec(`UPDATE schedule SET enabled=0,rev=rev+1,updated_at=? WHERE room_id=? AND enabled=1`, timestamp(), x.id); err != nil {
 				return err
 			}
@@ -152,9 +160,112 @@ func (tx *Tx) beginRoomClose(id, actor string, rev int64, cascade bool) (control
 				controls = append(controls, updated)
 			}
 		}
+		// Every closing room is out of the way by now, so the notice lands in a room that stays open.
+		for _, item := range stopped {
+			if err := tx.noticeScheduleStopped(projectID, item); err != nil {
+				return err
+			}
+		}
 		return nil
 	}()
 	return controls, err
+}
+
+// stoppedSchedule is a schedule that closing its room disabled, with who should hear about it: the agents among its creator and its target
+// (for a lead-targeted schedule, the room's lead).
+type stoppedSchedule struct {
+	id, body, roomTitle string
+	agents              []string
+}
+
+// roomEnabledSchedules lists the room's enabled schedules before closing it disables them.
+func (tx *Tx) roomEnabledSchedules(roomID string) ([]stoppedSchedule, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT s.id,s.body,r.title,s.creator_kind,s.creator_id,COALESCE(s.target_agent_id,''),s.target_lead
+		FROM schedule s JOIN room r ON r.id=s.room_id WHERE s.room_id=? AND s.enabled=1 ORDER BY s.created_at,s.id`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	type row struct {
+		item                         stoppedSchedule
+		creatorKind, creator, target string
+		lead                         bool
+	}
+	var found []row
+	for rows.Next() {
+		var x row
+		if err := rows.Scan(&x.item.id, &x.item.body, &x.item.roomTitle, &x.creatorKind, &x.creator, &x.target, &x.lead); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		found = append(found, x)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]stoppedSchedule, 0, len(found))
+	for _, x := range found {
+		if x.lead {
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN role role ON role.id=a.role_id JOIN room_member rm ON rm.member_id=a.id AND rm.member_kind='agent' AND rm.left_at IS NULL
+				WHERE rm.room_id=? AND role.cap_is_lead=1 AND a.revoked_at IS NULL ORDER BY a.desired='active' DESC,a.id LIMIT 1`, roomID).Scan(&x.target)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+		}
+		seen := map[string]bool{}
+		for _, id := range []string{x.creator, x.target} {
+			if id == "" || seen[id] || id == x.creator && x.creatorKind != "agent" {
+				continue
+			}
+			seen[id] = true
+			x.item.agents = append(x.item.agents, id)
+		}
+		out = append(out, x.item)
+	}
+	return out, nil
+}
+
+// noticeScheduleStopped tells a stopped schedule's creator and target that it stopped, so a reminder someone relies on does not go quiet without
+// a word. The note goes, once, into an open room they all share (routing first, then general, then the home room, then the oldest); with no
+// shared room each agent gets it in a room of its own. A schedule a person made for nobody in particular has no agent to tell: the person sees
+// the room close.
+func (tx *Tx) noticeScheduleStopped(projectID string, item stoppedSchedule) error {
+	if len(item.agents) == 0 {
+		return nil
+	}
+	body := fmt.Sprintf("Schedule %s (%q) stopped because its room %s closed. Create it again in an open room if it is still needed.", item.id, excerptRunes(item.body, 80), item.roomTitle)
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(item.agents)), ",")
+	args := []any{projectID}
+	for _, id := range item.agents {
+		args = append(args, id)
+	}
+	args = append(args, len(item.agents))
+	var shared string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.id FROM room r JOIN room_member m ON m.room_id=r.id AND m.member_kind='agent' AND m.left_at IS NULL
+		WHERE r.project_id=? AND r.lifecycle='open' AND m.member_id IN (`+placeholders+`)
+		GROUP BY r.id HAVING COUNT(DISTINCT m.member_id)=?
+		ORDER BY CASE WHEN r.team_flow_room_key='routing' THEN 0 WHEN r.team_flow_room_key='general' THEN 1 WHEN r.kind='home' THEN 2 ELSE 3 END,r.created_at,r.id LIMIT 1`, args...).Scan(&shared)
+	if err == nil {
+		_, err = tx.InsertMessage(Message{RoomID: shared, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: item.agents})
+		return err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	for _, agentID := range item.agents {
+		roomID, err := tx.flowMigrationAgentRoom(projectID, agentID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{agentID}}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (tx *Tx) CloseTaskRoomAsTool(id, actor string, rev int64, cascade bool) (Room, []AgentCard, error) {

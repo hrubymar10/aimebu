@@ -135,6 +135,64 @@ func TestScheduleCloseDisablesAndReopenDoesNotResume(t *testing.T) {
 	}
 }
 
+// Closing a room disables its schedules and tells the schedule's creator and target, once, in an open room they still share, so a reminder an
+// agent relies on does not stop without a word.
+func TestScheduleCloseNoticesCreatorAndTarget(t *testing.T) {
+	t.Parallel()
+	s, project, room, worker, creator := wakeFixture(t)
+	ctx := context.Background()
+	shared, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "task", Title: "still open", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range []Agent{worker, creator} {
+		if err := s.AddMember(ctx, shared.ID, "agent", agent.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var item Schedule
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		var e error
+		item, e = tx.CreateSchedule(Schedule{RoomID: room.ID, CreatorKind: "agent", CreatorID: creator.ID, TargetAgentID: worker.ID, Body: "check the queue", Kind: "interval", Timezone: "UTC", IntervalSeconds: 300}, time.Now())
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, e := tx.beginRoomClose(room.ID, creator.ID, 0, false)
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var enabled bool
+	if err := s.db.QueryRow(`SELECT enabled FROM schedule WHERE id=?`, item.ID).Scan(&enabled); err != nil || enabled {
+		t.Fatalf("enabled after close=%v err=%v", enabled, err)
+	}
+	rows, err := s.db.Query(`SELECT id,room_id,body FROM message WHERE author_kind='system' AND body LIKE '%stopped because its room%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notices []string
+	var noticeID string
+	for rows.Next() {
+		var id, roomID, body string
+		if err := rows.Scan(&id, &roomID, &body); err != nil {
+			t.Fatal(err)
+		}
+		if roomID != shared.ID || !strings.Contains(body, item.ID) || !strings.Contains(body, "check the queue") {
+			t.Errorf("notice in %s: %q, want it in the shared room %s naming the schedule", roomID, body, shared.ID)
+		}
+		notices, noticeID = append(notices, body), id
+	}
+	rows.Close()
+	if len(notices) != 1 {
+		t.Fatalf("notices=%q, want exactly one", notices)
+	}
+	if got := wakeReasons(t, s, noticeID); !sameWakes(got, map[string]string{"one": "inbox_answer", "lead": "inbox_answer"}) {
+		t.Fatalf("the notice woke %v, want the creator and the target", got)
+	}
+}
+
 // A home-room schedule for the lead reaches the project lead, the same
 // targeted system message and wake note as in a task room. A stopped earlier
 // lead still listed in the room must not shadow the active one.

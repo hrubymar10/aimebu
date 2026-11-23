@@ -475,7 +475,8 @@ a 400 `invalid_schedule` naming it (for example `cron minute: 60 is out of range
 and the response carries `cron`. Responses include UTC `next_run_at`, creator,
 target, last outcome/reason, and revision. Pausing or resuming uses a matching
 revision. Closing a room disables schedules, and reopening does not resume
-them. A delayed server catches up one occurrence per schedule. While a gate
+them; the agents among each schedule's creator and target (the room lead for a
+lead schedule) get one system note saying it stopped, in an open room they share. A delayed server catches up one occurrence per schedule. While a gate
 or target prevents delivery, runs are skipped, recorded, and surfaced by a
 room notice on each changed skip reason. A spring DST gap advances to the
 next valid local minute; a fall overlap runs at its first occurrence only. The same holds for cron:

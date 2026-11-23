@@ -1145,7 +1145,12 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
   explicitly remove preserved content from an archived room with a separate
   destructive confirmation, provided no active agent uses that checkout.
 - Closing a room disables all its schedules in the close transaction;
-  reopening leaves them disabled. The server dispatcher processes each due
+  reopening leaves them disabled. In the same transaction each disabled
+  schedule's creator and target, those that are agents (for a lead schedule,
+  the room's lead), get one targeted system message naming the schedule and
+  the closed room, in an open room of the project they all share (routing,
+  then general, then home, then the oldest); with none shared, each gets its
+  own in a room it is in. The server dispatcher processes each due
   schedule transactionally before dispatch, including once at startup. It
   catches up at most one missed occurrence and advances directly to the next
   future occurrence. A delivered run is a targeted system message and normal
