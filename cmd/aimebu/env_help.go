@@ -73,6 +73,9 @@ var environment = []envVar{
 		"telemetry environment. Any AIMEBU_DEV_<name> becomes AIMEBU_<name>",
 		"for the dev server (for example BIND, ALLOW, TLS_CERT, or TLS_KEY).",
 		"Inherited production AIMEBU_* settings are cleared first."}},
+	{[]string{"AIMEBU_DEV_SENTRY_DSN"}, []string{
+		"make dev only: the Sentry DSN the dev server reports to; without it",
+		"make dev runs with AIMEBU_SENTRY_DSN=off"}},
 	{[]string{"AIMEBU_STUCK_MINUTES"}, []string{"Minutes of silence (1-1440, default 10) before a running turn counts as stuck"}},
 	{[]string{"AIMEBU_TURN_IDLE", "AIMEBU_TURN_MAX"}, []string{
 		"Supervisor stall deadlines per turn: silence with no tool running (default",
