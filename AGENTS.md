@@ -49,8 +49,9 @@ SHA in the handoff.
 ## Live-reload dev server
 
 `make dev` runs `go tool air`. It rebuilds `./tmp/aimebu` on Go or web changes and
-restarts `scripts/dev-run.sh`, which runs `aimebu server` with its embedded
-local supervisor. Environment variables
+restarts `scripts/dev-run.sh`, which runs `aimebu server`. The server starts
+or adopts its local supervisor, a detached process of its own that keeps
+running across the restarts air makes. Environment variables
 (`AIMEBU_BIND`, `AIMEBU_OWNER_LOGIN`, …) pass through from the shell.
 `make dev` exports `AIMEBU_SENTRY_DSN=off`: a sandbox run can never report to
 Sentry unless `AIMEBU_DEV_SENTRY_DSN` sets a DSN explicitly (then the
