@@ -1392,10 +1392,11 @@ the journal, for debugging (retention 14 d): see "Agent output" in
   account's tokens back into `auth.json`, the live account id is checked at
   about +5 s, +30 s and +2 min, then on every usage refresh and before every
   Codex turn on the host until the next switch, against the account the switch
-  installed; when it names another stored profile's account the active profile
-  is installed again and one owner event
-  `switch_overwritten` (with the tool) is raised. The stored profile copy is
-  never overwritten by the old one. Remote-machine switching and a persistent
+  installed; when it names another stored profile's account, those tokens are
+  first saved into that profile if they are newer than what it holds (the token
+  refresher's rule), then the active profile is installed again and one owner
+  event `switch_overwritten` (with the tool) is raised. The active profile's
+  stored copy is never overwritten with them. Remote-machine switching and a persistent
   dispatch gate are later work.
   An explicit forced switch requires stored credentials and skips the incoming
   token refresh; it keeps the ordinary credential swap.

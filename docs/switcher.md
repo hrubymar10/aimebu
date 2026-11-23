@@ -170,7 +170,14 @@ check compares the account id only; when the file names another stored
 profile's account instead, the active profile is installed again (with the
 newest tokens a check saw for it) and one `switch_overwritten` owner event is
 raised per switch. A login of an account no profile holds, or a logged-out
-file, is left alone. The stored profile copy is never overwritten by the old one. A standalone CLI switch should be made while the
+file, is left alone. The tokens written back may be a rotation of that other
+profile's login (a running codex may have refreshed it), so before the active
+profile is installed again they are saved into that profile when they are newer
+than what it holds, by the rule the token refresher commits a rotation by
+(another access token with a later `last_refresh`; older or token-only copies
+are not saved, and the replaced file goes to the profile's backups). The active
+profile's stored copy is never overwritten with them. On the token-copy model the
+active profile is fanned out to the live file again (token-only). A standalone CLI switch should be made while the
 server and any harness sessions using that login are stopped. Remote-machine
 switching is not available in this slice.
 

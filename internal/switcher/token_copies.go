@@ -431,6 +431,7 @@ func (m *Manager) switchTokenCopies(tool, name, activeProfile string) (active st
 		}
 		m.markIncomingStale(tool, name, liveEmail)
 		m.recordSwitchAway(tool, activeProfile)
+		m.recordInstalled(tool, name, nil)
 		return name, true, nil
 	}
 
@@ -448,6 +449,7 @@ func (m *Manager) switchTokenCopies(tool, name, activeProfile string) (active st
 	}
 	m.markIncomingStale(tool, name, liveEmail)
 	m.recordSwitchAway(tool, activeProfile)
+	m.recordInstalled(tool, name, targetData)
 	return name, true, nil
 }
 

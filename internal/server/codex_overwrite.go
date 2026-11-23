@@ -97,8 +97,8 @@ func (s *Server) checkCodexOverwrite() {
 }
 
 // checkCodexWatch is one check. The usual case is cheap: the live file is read and its account id compared with the expected one; only a
-// different account takes the switcher lock (ReinstallIfOverwritten), which installs the snapshot again when the file names an account another
-// stored profile holds.
+// different account takes the switcher lock (ReinstallIfOverwritten), which, when the file names an account another stored profile holds, saves
+// those tokens into that profile if they are newer than what it holds and installs the active profile again.
 func (s *Server) checkCodexWatch(w *codexWatch) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

@@ -137,6 +137,12 @@ func credentialAdvanced(tool string, start, candidate []byte) bool {
 	return old.ExpiresAt != nil && next.ExpiresAt != nil && next.ExpiresAt.After(*old.ExpiresAt)
 }
 
+// CredentialAdvanced is credentialAdvanced for callers outside the package: the switcher's Codex overwrite check saves a credential a running
+// process wrote back into its profile only when it is newer by the rule the refresher commits a rotation by.
+func CredentialAdvanced(tool string, start, candidate []byte) bool {
+	return credentialAdvanced(tool, start, candidate)
+}
+
 // validRotated reports whether data parses as a complete credential with a
 // refresh token.
 func validRotated(tool string, data []byte) bool {
