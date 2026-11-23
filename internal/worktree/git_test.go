@@ -263,6 +263,28 @@ func TestHostGitStatusSkipsNestedRepositories(t *testing.T) {
 // cleans reads as its raw content: once its stat changes, dirtyCount counts it as modified though git with the filter sees it clean. This pins
 // that consequence (see docs/supervisor.md); a driver installed globally keeps working (TestHostGitKeepsGlobalFiltersAndDropsLocalOnes).
 func TestHostGitCountsAFileALocalFilterCleansAsDirty(t *testing.T) {
+	hostFilterCleansAsDirty(t)
+}
+
+// A runner's system git config carries git-lfs filters (filter.lfs.process wins over a clean command). The test environment drops it
+// (testenv.Isolate); this proves the test does not depend on that: with a system config that defines filter.lfs and GIT_CONFIG_NOSYSTEM
+// unset, it still passes, because its own filter has a name no system config uses.
+func TestWorktreeFilterTestSurvivesASystemGitConfigWithFilters(t *testing.T) {
+	system := filepath.Join(t.TempDir(), "system-gitconfig")
+	cfg := "[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n"
+	if err := os.WriteFile(system, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_SYSTEM", system)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "")
+	out, err := exec.Command("git", "config", "--system", "--get", "filter.lfs.process").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "git-lfs") {
+		t.Fatalf("the fake system config is not in effect: %v %q", err, out)
+	}
+	hostFilterCleansAsDirty(t)
+}
+
+func hostFilterCleansAsDirty(t *testing.T) {
 	root := repoFixture(t)
 	marks := t.TempDir()
 	clean := filepath.Join(t.TempDir(), "clean.sh")
@@ -277,10 +299,10 @@ func TestHostGitCountsAFileALocalFilterCleansAsDirty(t *testing.T) {
 		}
 		return string(out)
 	}
-	git("config", "filter.lfs.clean", clean)
-	git("config", "filter.lfs.smudge", "cat")
-	git("config", "filter.lfs.required", "true")
-	if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("*.bin filter=lfs\n"), 0o644); err != nil {
+	git("config", "filter.localdriver.clean", clean)
+	git("config", "filter.localdriver.smudge", "cat")
+	git("config", "filter.localdriver.required", "true")
+	if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("*.bin filter=localdriver\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "big.bin"), []byte("payload\n"), 0o644); err != nil {

@@ -428,3 +428,13 @@ func TestWriteExecutableNeverRaces(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestIsolateDropsTheSystemAndGlobalGitConfig(t *testing.T) {
+	if os.Getenv("GIT_CONFIG_NOSYSTEM") != "1" || os.Getenv("GIT_CONFIG_GLOBAL") == "" {
+		t.Fatalf("git config is not isolated: NOSYSTEM=%q GLOBAL=%q", os.Getenv("GIT_CONFIG_NOSYSTEM"), os.Getenv("GIT_CONFIG_GLOBAL"))
+	}
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "")
+	if err := Check(); err == nil {
+		t.Fatal("Check accepted an environment that reads the system git config")
+	}
+}

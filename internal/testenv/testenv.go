@@ -65,6 +65,17 @@ func Isolate() (root string, cleanup func()) {
 			panic(err)
 		}
 	}
+	// Git reads a system and a global config too, and a runner's system config can carry filters (git-lfs) that win over the ones a test
+	// sets in a repository. Every git a test runs, or a server it starts runs, skips the system config and reads an empty global one.
+	gitGlobal := filepath.Join(root, "gitconfig")
+	if err := os.WriteFile(gitGlobal, nil, 0o600); err != nil {
+		panic(err)
+	}
+	for name, value := range map[string]string{"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": gitGlobal} {
+		if err := os.Setenv(name, value); err != nil {
+			panic(err)
+		}
+	}
 	if err := Check(); err != nil {
 		_ = os.RemoveAll(root)
 		panic(err)
@@ -110,6 +121,12 @@ func Check() error {
 	if got := os.Getenv("AIMEBU_SENTRY_DSN"); got != "off" {
 		return fmt.Errorf("AIMEBU_SENTRY_DSN is %q in the test environment, want \"off\": a test must never send error reports", got)
 	}
+	if os.Getenv("GIT_CONFIG_NOSYSTEM") != "1" {
+		return fmt.Errorf("GIT_CONFIG_NOSYSTEM is not 1 in the test environment: the machine's system git config (git-lfs filters) would reach the tests")
+	}
+	if os.Getenv("GIT_CONFIG_GLOBAL") == "" {
+		return fmt.Errorf("GIT_CONFIG_GLOBAL is not set in the test environment: the person's global git config would reach the tests")
+	}
 	temp, err := resolve(os.TempDir())
 	if err != nil {
 		return err
@@ -119,6 +136,7 @@ func Check() error {
 		return fmt.Errorf("the test environment has no home directory: %w", err)
 	}
 	paths := map[string]string{"the home directory (os.UserHomeDir)": home}
+	paths["GIT_CONFIG_GLOBAL"] = os.Getenv("GIT_CONFIG_GLOBAL")
 	for _, name := range Variables {
 		if value := os.Getenv(name); value != "" {
 			paths[name] = value
