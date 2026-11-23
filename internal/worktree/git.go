@@ -14,10 +14,15 @@ import (
 // repository's shared config, hooks and info/attributes, mounted, and git runs programs that a repository's own config names: core.fsmonitor
 // on every status, hooks on commands such as `worktree add`, gpg.program when log.showSignature asks `git log` to check a signed commit. A
 // planted one would run as the host user. Settings given to git in its environment as command-line config win over every config file.
-var gitGuards = [][2]string{{"core.fsmonitor", "false"}, {"core.hooksPath", os.DevNull}, {"log.showSignature", "false"}}
+//
+// diff.ignoreSubmodules keeps a status out of submodules and embedded repositories: a nested repository has its own config, whose filter drivers
+// gitFilterGuards never reads, so a status that went in would run them. A submodule's ignore setting in .gitmodules (a tracked file the agent
+// writes) outranks it, so GitCommand also puts --ignore-submodules=all on every status, which nothing outranks. A dirty nested repository then
+// does not make the checkout dirty.
+var gitGuards = [][2]string{{"core.fsmonitor", "false"}, {"core.hooksPath", os.DevNull}, {"log.showSignature", "false"}, {"diff.ignoreSubmodules", "all"}}
 
 // GitCommand is a git command run on the host in dir, a checkout an agent may be able to write to; every host-side git call on such a checkout
-// is made through here. Besides gitGuards, it takes from each filter driver the repository's own config (local or worktree scope, includes
+// is made through here. A status never goes into a nested repository (see gitGuards). Besides gitGuards, it takes from each filter driver the repository's own config (local or worktree scope, includes
 // followed) defines or changes the commands that scope gave it: a status runs a file's clean filter when it must read the file, and a checkout
 // its smudge filter. Such a driver keeps the clean, smudge, process and required values the trusted scopes (system, global, command line) give
 // it, and nothing where they give none (a process the repository adds to a driver they give none turns the driver off, since git runs no clean
@@ -28,6 +33,9 @@ var gitGuards = [][2]string{{"core.fsmonitor", "false"}, {"core.hooksPath", os.D
 // The system config is kept (GIT_CONFIG_NOSYSTEM is not set): an agent cannot write it, and dropping it could drop a host-wide setting
 // (safe.directory, for one) that the host's git relies on.
 func GitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	if len(args) > 0 && args[0] == "status" {
+		args = append([]string{"status", "--ignore-submodules=all"}, args[1:]...)
+	}
 	return guardedGit(ctx, dir, append(append([][2]string(nil), gitGuards...), gitFilterGuards(ctx, dir)...), args...)
 }
 

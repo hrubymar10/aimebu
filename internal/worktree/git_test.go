@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
@@ -185,5 +186,75 @@ func TestHostGitKeepsGlobalFiltersAndDropsLocalOnes(t *testing.T) {
 	}
 	if got := strings.Join(planted(t, marks), ","); got != "global" {
 		t.Fatalf("only the global smudge filter may run on worktree add: %q", got)
+	}
+}
+
+// plantEmbeddedRepo commits, in root, an embedded repository x (a gitlink, as `git add x` makes) whose own config has a clean filter for its
+// .txt files, then touches x/a.txt, so a status that recurses into x must read the file through that filter. The filter touches "nested" in the
+// returned folder. When gitmodules is set, root also gets a .gitmodules entry for x that asks for ignore=none, which outranks the
+// diff.ignoreSubmodules setting.
+func plantEmbeddedRepo(t *testing.T, root string, gitmodules bool) string {
+	t.Helper()
+	marks := t.TempDir()
+	git := func(dir string, args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	nested := filepath.Join(root, "x")
+	git(root, "init", "-q", "x")
+	git(nested, "config", "user.name", "Test")
+	git(nested, "config", "user.email", "test@example.invalid")
+	if err := os.WriteFile(filepath.Join(nested, ".gitattributes"), []byte("*.txt filter=y\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(nested, "add", ".")
+	git(nested, "commit", "-qm", "nested")
+	filter := filepath.Join(t.TempDir(), "filter.sh")
+	if err := testenv.WriteExecutable(filter, []byte("#!/bin/sh\ntouch '"+filepath.Join(marks, "nested")+"'\ncat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(nested, "config", "filter.y.clean", filter)
+	if gitmodules {
+		if err := os.WriteFile(filepath.Join(root, ".gitmodules"), []byte("[submodule \"x\"]\n\tpath = x\n\turl = ./x\n\tignore = none\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(root, "add", ".gitmodules")
+	}
+	git(root, "add", "x")
+	git(root, "commit", "-qm", "embed x")
+	now := time.Now().Add(time.Second)
+	if err := os.Chtimes(filepath.Join(nested, "a.txt"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	return marks
+}
+
+// A host-side status does not recurse into a submodule or an embedded repository: the nested repository has its own config, whose filter
+// drivers the guards never read, so a status that went in would run them as the host user. A .gitmodules entry asking for ignore=none does
+// not bring the recursion back. The cost: a nested repository's own changes no longer make the checkout dirty.
+func TestHostGitStatusSkipsNestedRepositories(t *testing.T) {
+	for _, gitmodules := range []bool{false, true} {
+		root := repoFixture(t)
+		marks := plantEmbeddedRepo(t, root, gitmodules)
+		for _, ignored := range []bool{false, true} {
+			if count, err := dirtyCount(context.Background(), root, ignored); err != nil || count != 0 {
+				t.Fatalf("gitmodules=%v ignored=%v: dirtyCount=%d %v", gitmodules, ignored, count, err)
+			}
+		}
+		if got := planted(t, marks); len(got) != 0 {
+			t.Fatalf("gitmodules=%v: a status ran the nested repository's filter: %v", gitmodules, got)
+		}
+		// The plant is live: a plain status goes into x and runs its filter.
+		if out, err := exec.Command("git", "-C", root, "status", "--porcelain").CombinedOutput(); err != nil {
+			t.Fatalf("plain status: %v %s", err, out)
+		}
+		if got := strings.Join(planted(t, marks), ","); got != "nested" {
+			t.Fatalf("gitmodules=%v: plain status must run the nested filter, or this test proves nothing: %q", gitmodules, got)
+		}
 	}
 }

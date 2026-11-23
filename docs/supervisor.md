@@ -336,7 +336,14 @@ over every config file. Optional locks and prompts are off. So repository
 hooks no longer run on these host-side calls (a `worktree add` runs no
 `post-checkout`), while filters from the global and system config (git-lfs
 installed globally, say) still do. A filter driver added between the read of
-the config and the command is not covered.
+the config and the command is not covered. A status made this way does not go
+into submodules or embedded repositories (`diff.ignoreSubmodules=all`, and
+`--ignore-submodules=all` on the command, which a `.gitmodules` `ignore`
+setting cannot override): a nested repository has its own config, whose
+filter drivers the helper never reads. The accepted tradeoff is that changes
+inside a submodule or an embedded repository do not count as dirty files in
+the worktree inspection or the description of a limit-killed turn's
+checkout.
 The server resends an unconfirmed active spawn after reconnect and
 periodically while the machine remains connected, at most 16 per pass; a
 retry with the same HTTP idempotency key also resends it. Stopped agents are
