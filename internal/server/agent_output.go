@@ -25,10 +25,12 @@ const (
 	sizeWait = 5 * time.Second
 )
 
-// agentOutputView is what the route returns: a bounded tail of what the agent's harness wrote to stderr, kept on the machine that ran it.
+// agentOutputView is what the route returns: a bounded tail of one of an agent's two logs (what its harness wrote to stderr, or its
+// conversation), kept on the machine that ran it.
 type agentOutputView struct {
 	AgentID   string    `json:"agent_id"`
 	Machine   string    `json:"machine_id"`
+	Stream    string    `json:"stream"`
 	Text      string    `json:"text"`
 	Bytes     int64     `json:"bytes"`
 	Files     int       `json:"files"`
@@ -36,9 +38,11 @@ type agentOutputView struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// agentOutput is GET /api/rooms/{room}/agents/{agent}/output?lines=N: the end of an agent's captured stderr, for a project's owner or an
-// admin. The output is whatever the harness printed (its tools' too), so it is never offered to anyone else, is not cached, and every read
-// is logged with who asked. The text is read from the machine on demand; it is not stored on the server.
+// agentOutput is GET /api/rooms/{room}/agents/{agent}/output?lines=N&stream=stderr|conversation: the end of an agent's captured stderr
+// (the default, which is what a client that predates streams gets) or of its conversation log, for a project's owner or an admin. The
+// output is whatever the harness printed (its tools' too), and the conversation is everything the model was asked, said and ran, so
+// neither is ever offered to anyone else, neither is cached, and every read is logged with who asked. The text is read from the machine
+// on demand; it is not stored on the server.
 func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request) {
 	room, ok := s.roomAccess(w, r, r.PathValue("room"))
 	if !ok {
@@ -72,18 +76,26 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request) {
 		}
 		lines = n
 	}
+	stream, err := agentlog.ParseStream(r.URL.Query().Get("stream"))
+	if err != nil {
+		apiError(w, 400, "invalid_request", "stream must be stderr or conversation")
+		return
+	}
 	if !s.allowOutputRead(userID(r)) {
 		w.Header().Set("Retry-After", "60")
 		apiError(w, 429, "rate_limited", "agent output was read too often; try again in a minute")
 		return
 	}
-	page, err := s.machineAgentLog(r.Context(), machineID, agentID, lines)
+	page, err := s.machineAgentLog(r.Context(), machineID, agentID, stream, lines)
 	switch {
 	case errors.Is(err, ErrMachineUnavailable):
 		apiError(w, 409, "machine_offline", "the machine this agent runs on is not connected, and its output is kept there")
 		return
 	case errors.Is(err, errAgentLogsUnsupported):
 		apiError(w, 409, "supervisor_outdated", "this machine's supervisor predates agent output: update the supervisor")
+		return
+	case errors.Is(err, errAgentConversationUnsupported):
+		apiError(w, 409, "supervisor_outdated", "this machine's supervisor predates the conversation log: update the supervisor")
 		return
 	case errors.Is(err, agentlog.ErrNoLog):
 		apiError(w, 404, "no_output", "no output has been captured for this agent")
@@ -92,9 +104,9 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 502, "output_unavailable", "the machine could not read the agent's output")
 		return
 	}
-	log.Printf("agent output: %s read %d bytes of %s (room %s)", userID(r), len(page.Text), agentID, room.ID)
+	log.Printf("agent output: %s read %d bytes of %s %s (room %s)", userID(r), len(page.Text), agentID, stream, room.ID)
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, agentOutputView{AgentID: agentID, Machine: machineID, Text: page.Text, Bytes: page.Bytes, Files: page.Files, Truncated: page.Truncated, UpdatedAt: page.UpdatedAt})
+	writeJSON(w, 200, agentOutputView{AgentID: agentID, Machine: machineID, Stream: string(stream), Text: page.Text, Bytes: page.Bytes, Files: page.Files, Truncated: page.Truncated, UpdatedAt: page.UpdatedAt})
 }
 
 // allowOutputRead records a read by a person and says whether they are within the limit.
@@ -127,14 +139,25 @@ func (s *Server) allowOutputRead(user string) bool {
 
 var errAgentLogsUnsupported = errors.New("supervisor does not keep agent output")
 
-// machineAgentLog asks the machine for the end of an agent's output and waits for its answer.
-func (s *Server) machineAgentLog(ctx context.Context, machineID, agentID string, lines int) (agentlog.Page, error) {
+// errAgentConversationUnsupported: the supervisor keeps stderr but predates the conversation log. It would ignore the stream a read names
+// and answer with stderr, so it is never asked.
+var errAgentConversationUnsupported = errors.New("supervisor does not keep the conversation log")
+
+// machineAgentLog asks the machine for the end of one of an agent's logs and waits for its answer.
+func (s *Server) machineAgentLog(ctx context.Context, machineID, agentID string, stream agentlog.Stream, lines int) (agentlog.Page, error) {
 	conn, err := s.machineForID(machineID)
 	if err != nil {
 		return agentlog.Page{}, err
 	}
 	if !conn.supportsAgentLogs {
 		return agentlog.Page{}, errAgentLogsUnsupported
+	}
+	wire := ""
+	if stream == agentlog.StreamConversation {
+		if !conn.supportsAgentConversation {
+			return agentlog.Page{}, errAgentConversationUnsupported
+		}
+		wire = string(stream) // stderr stays unnamed, so the frame is the one an older supervisor has always been sent
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -149,7 +172,7 @@ func (s *Server) machineAgentLog(ctx context.Context, machineID, agentID string,
 	conn.pathPending[id] = channel
 	conn.harnessMu.Unlock()
 	defer func() { conn.harnessMu.Lock(); delete(conn.pathPending, id); conn.harnessMu.Unlock() }()
-	if err := conn.send(protocol.Frame{V: protocol.Version, Type: protocol.AgentLogRead, ReqID: id, AgentID: agentID, LogLines: lines, LogMaxBytes: agentlog.MaxTailBytes}); err != nil {
+	if err := conn.send(protocol.Frame{V: protocol.Version, Type: protocol.AgentLogRead, ReqID: id, AgentID: agentID, LogLines: lines, LogMaxBytes: agentlog.MaxTailBytes, LogStream: wire}); err != nil {
 		return agentlog.Page{}, err
 	}
 	timer := time.NewTimer(outputWait)

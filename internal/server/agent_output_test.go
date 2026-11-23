@@ -23,6 +23,8 @@ type outputFixture struct {
 	mu      sync.Mutex
 	asked   []protocol.Frame
 	answer  func(protocol.Frame) protocol.Frame
+	// oldConversation makes the next connect a supervisor that keeps agent output but predates the conversation log.
+	oldConversation bool
 }
 
 func newOutputFixture(t *testing.T) *outputFixture {
@@ -57,7 +59,7 @@ func newOutputFixture(t *testing.T) *outputFixture {
 
 // connect puts the machine online, with or without support for agent output, answering reads in the background.
 func (o *outputFixture) connect(supports bool) {
-	machine := &machineConn{id: o.machineID, supportsAgentLogs: supports, sendQueue: make(chan protocol.Frame, 8), done: make(chan struct{}), pathPending: map[string]chan protocol.Frame{}}
+	machine := &machineConn{id: o.machineID, supportsAgentLogs: supports, supportsAgentConversation: supports && !o.oldConversation, sendQueue: make(chan protocol.Frame, 8), done: make(chan struct{}), pathPending: map[string]chan protocol.Frame{}}
 	o.machine = machine
 	o.srv.machineMu.Lock()
 	o.srv.machines[o.machineID] = machine
@@ -263,5 +265,89 @@ func TestAgentOutputReadsAreRateLimitedPerPerson(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == 429 {
 		t.Fatal("the limit is shared between people")
+	}
+}
+
+// stream=conversation reads the agent's conversation log: the machine is asked for that stream by name, and the answer says which
+// stream it is. Without the parameter the read is the stderr it always was, in a frame an older supervisor has always been sent.
+func TestAgentConversationIsReadByNamingTheStream(t *testing.T) {
+	o := newOutputFixture(t)
+	status, body, header := o.get(t, o.path(o.agent.ID)+"?stream=conversation&lines=50")
+	if status != 200 || body["stream"] != "conversation" || body["text"] == "" || header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("conversation read: %d %+v", status, body)
+	}
+	if asked := o.requests(); len(asked) != 1 || asked[0].Type != protocol.AgentLogRead || asked[0].LogStream != "conversation" || asked[0].LogLines != 50 || asked[0].LogMaxBytes != agentlog.MaxTailBytes {
+		t.Fatalf("the machine was asked %+v", asked)
+	}
+	for _, query := range []string{"", "?stream=stderr"} {
+		before := len(o.requests())
+		if status, body, _ := o.get(t, o.path(o.agent.ID)+query); status != 200 || body["stream"] != "stderr" || o.requests()[before].LogStream != "" {
+			t.Fatalf("%q: %d %+v asked %+v", query, status, body, o.requests()[before])
+		}
+	}
+	before := len(o.requests())
+	if status, body, _ := o.get(t, o.path(o.agent.ID)+"?stream=stdout"); status != 400 || body["error"] != "invalid_request" || len(o.requests()) != before {
+		t.Fatalf("an unknown stream: %d %+v", status, body)
+	}
+}
+
+// The conversation holds everything the model was asked, said and ran: like the output, it is for a project's owner or an admin only.
+func TestAgentConversationIsForOwnersAndAdminsOnly(t *testing.T) {
+	o := newOutputFixture(t)
+	for _, tc := range []struct {
+		login, role string
+		want        int
+	}{{"convowner", "owner", 200}, {"convoperator", "operator", 403}, {"convviewer", "viewer", 403}, {"convstranger", "", 403}} {
+		cookie, csrf := registerSecondUser(t, o.fixture, tc.login)
+		if tc.role != "" {
+			user, err := o.db.UserByLogin(t.Context(), tc.login)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := o.exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,?)`, o.project.ID, user.ID, tc.role); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := len(o.requests())
+		resp := o.requestAs(t, cookie, csrf, http.MethodGet, o.path(o.agent.ID)+"?stream=conversation", nil)
+		resp.Body.Close()
+		if resp.StatusCode != tc.want && !(tc.want == 403 && resp.StatusCode == 404) {
+			t.Errorf("%s (%s): %d, want %d", tc.login, tc.role, resp.StatusCode, tc.want)
+		}
+		if tc.want != 200 && len(o.requests()) != before {
+			t.Errorf("%s: the machine was asked for a conversation it must not give", tc.login)
+		}
+	}
+}
+
+// A supervisor that keeps agent output but predates the conversation log would ignore the stream and answer with stderr: it is not
+// asked, and the person is told to update it. Its stderr is still readable.
+func TestAgentConversationFromAnOlderSupervisor(t *testing.T) {
+	o := newOutputFixture(t)
+	o.oldConversation = true
+	o.connect(true)
+	before := len(o.requests())
+	if status, body, _ := o.get(t, o.path(o.agent.ID)+"?stream=conversation"); status != 409 || body["error"] != "supervisor_outdated" || len(o.requests()) != before {
+		t.Fatalf("an old supervisor: %d %+v (asked %d)", status, body, len(o.requests())-before)
+	}
+	if status, body, _ := o.get(t, o.path(o.agent.ID)); status != 200 || body["stream"] != "stderr" {
+		t.Fatalf("its stderr: %d %+v", status, body)
+	}
+}
+
+// Both streams count against the same limit of a person's reads.
+func TestAgentConversationReadsShareTheRateLimit(t *testing.T) {
+	o := newOutputFixture(t)
+	for i := 0; i < outputReadsPerMinute; i++ {
+		stream := "stderr"
+		if i%2 == 0 {
+			stream = "conversation"
+		}
+		if status, _, _ := o.get(t, o.path(o.agent.ID)+"?stream="+stream); status != 200 {
+			t.Fatalf("read %d: %d", i, status)
+		}
+	}
+	if status, body, header := o.get(t, o.path(o.agent.ID)+"?stream=conversation"); status != 429 || body["error"] != "rate_limited" || header.Get("Retry-After") == "" {
+		t.Fatalf("past the limit: %d %+v", status, body)
 	}
 }

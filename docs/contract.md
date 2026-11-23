@@ -1425,7 +1425,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version, supervisor_environment?, supports_retire_at_idle?,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, held_keys?[agent_id],
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_agent_conversation_log?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}], command_open?[{job_id, agent_id, generation, pid, pid_start?,
@@ -1614,15 +1614,22 @@ it never silently reruns a turn with uncertain effects.
   there; a supervisor that does not know it answers an unknown-action error, and the removal of the agent that asked stops there until the machine is updated), and `inspect` (read-only: size,
   uncommitted file count, merge state, head commit and last activity, used by
   the cleanup); typed Git error codes are preserved in `worktree_result`.
-- S→M `agent_log_read{v,req_id,agent_id,log_lines?,log_max_bytes?}`; M→S
+- S→M `agent_log_read{v,req_id,agent_id,log_lines?,log_max_bytes?,log_stream?}`; M→S
   `agent_log_result{v,req_id,agent_id,details?,code?,message?}`. The server asks
-  the machine that ran an agent for the end of that agent's captured stderr,
+  the machine that ran an agent for the end of one of that agent's two logs,
   only for a project's owner or an admin who asked (`GET
   /api/rooms/{room}/agents/{agent}/output`), and only when the hello advertised
-  `supports_agent_logs`. `details` is `{text, bytes, files, truncated,
+  `supports_agent_logs`. `log_stream` names the log: absent or `stderr` is the
+  agent's captured stderr, `conversation` is its conversation log. The server
+  sends `conversation` only when the hello advertised
+  `supports_agent_conversation_log`, because a supervisor that predates the
+  field ignores it and would answer with stderr; for stderr it leaves the field
+  out, so that frame is unchanged. `details` is `{text, bytes, files, truncated,
   updated_at}`: at most `log_lines` lines (default 200, never more than 2000)
-  and `log_max_bytes` bytes (never more than 256 KiB), cut at a line start;
-  `code` is `no_log` when nothing was captured for the agent and `log_failed`
+  and `log_max_bytes` bytes (never more than 256 KiB), cut at a line start, and
+  for a conversation at the first line of a record;
+  `code` is `no_log` when nothing was captured for the agent in that stream,
+  `invalid_stream` for a stream the supervisor does not keep, and `log_failed`
   when it could not be read. The frame names an agent id, never a path.
 - S→M `agent_log_usage{v,req_id}`; M→S `agent_log_usage_result{v,req_id,
   details?,code?,message?}`. The server asks a remote machine how much

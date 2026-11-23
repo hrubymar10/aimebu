@@ -77,6 +77,7 @@ var doctorCapabilities = []struct {
 	{"supports_warm", "agents cannot be kept warm on this machine, and its switch of account cannot end them: every turn starts its process", func(c *machineConn) bool { return c.supportsWarm }},
 	{"supports_agent_logs", "an agent's captured stderr cannot be read from the web UI", func(c *machineConn) bool { return c.supportsAgentLogs }},
 	{"supports_agent_log_size", "the size of the agent logs on this machine is not shown", func(c *machineConn) bool { return c.supportsAgentLogSize }},
+	{"supports_agent_conversation_log", "an agent's conversation log cannot be read from the web UI", func(c *machineConn) bool { return c.supportsAgentConversation }},
 	{"supports_stop_replay", "a stop sent while the machine was offline is applied by a fallback that can kill a live process early", func(c *machineConn) bool { return c.supportsStopReplay }},
 	{"supports_turn_interrupt", "a turn cannot be cut without stopping its agent: interrupting an agent a team flow change waits for stops it and starts it again", func(c *machineConn) bool { return c.supportsTurnInterrupt }},
 }

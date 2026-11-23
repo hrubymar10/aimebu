@@ -156,7 +156,7 @@ its lock is only tested, not taken.
   only. An `agent-tools/` folder in `supervisor/` is what an older supervisor
   left (a config per agent, each holding a key); the check warns when it still
   has files, and starting the supervisor deletes it.
-- **agent logs** — the size of the captured agent output in
+- **agent logs** — the size of the captured agent output and conversation logs in
   `supervisor/agent-logs/` against the daily sweep's 256 MiB cap; warns at 80%.
 - **harnesses** — the native `claude`, `codex`, `pi`, `opencode` and `vibe`
   executables the supervisor finds (the same search as Settings → Agents → Harnesses & models

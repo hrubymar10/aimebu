@@ -188,7 +188,10 @@ type Frame struct {
 	SupportsDetectDir          bool `json:"supports_detect_dir,omitempty"`
 	SupportsAgentLogs          bool `json:"supports_agent_logs,omitempty"`
 	SupportsAgentLogSize       bool `json:"supports_agent_log_size,omitempty"`
-	SupportsStopReplay         bool `json:"supports_stop_replay,omitempty"`
+	// SupportsAgentConversationLog says the supervisor keeps each agent's conversation log and answers an agent_log_read that names the
+	// stream. An older one ignores log_stream and would answer with stderr, so the server never asks it for a conversation.
+	SupportsAgentConversationLog bool `json:"supports_agent_conversation_log,omitempty"`
+	SupportsStopReplay           bool `json:"supports_stop_replay,omitempty"`
 	// SupportsTurnInterrupt says the supervisor cuts one turn on a turn_interrupt frame and leaves its agent running. An older one does not
 	// know the frame, so the server keeps to stopping the agent and starting it again.
 	SupportsTurnInterrupt bool `json:"supports_turn_interrupt,omitempty"`
@@ -249,17 +252,19 @@ type Frame struct {
 	// CodexWarmEnabled is the owner's explicit opt-in for Codex app-server warm mode.
 	CodexWarmEnabled bool `json:"codex_warm_enabled,omitempty"`
 	// KeepAliveSettings, on a delivery: see Delivery.KeepAliveSettings.
-	KeepAliveSettings    *KeepAliveSettings `json:"keep_alive,omitempty"`
-	CheckoutPath         string             `json:"checkout_path,omitempty"`
-	CanonicalPath        string             `json:"canonical_path,omitempty"`
-	DirectoryNames       []string           `json:"directory_names,omitempty"`
-	DirectoryPrefix      string             `json:"directory_prefix,omitempty"`
-	RoomID               string             `json:"room_id,omitempty"`
-	BaseRef              string             `json:"base_ref,omitempty"`
-	WorktreeAction       string             `json:"worktree_action,omitempty"`
-	WorktreeForce        bool               `json:"worktree_force,omitempty"`
-	LogLines             int                `json:"log_lines,omitempty"`
-	LogMaxBytes          int                `json:"log_max_bytes,omitempty"`
+	KeepAliveSettings *KeepAliveSettings `json:"keep_alive,omitempty"`
+	CheckoutPath      string             `json:"checkout_path,omitempty"`
+	CanonicalPath     string             `json:"canonical_path,omitempty"`
+	DirectoryNames    []string           `json:"directory_names,omitempty"`
+	DirectoryPrefix   string             `json:"directory_prefix,omitempty"`
+	RoomID            string             `json:"room_id,omitempty"`
+	BaseRef           string             `json:"base_ref,omitempty"`
+	WorktreeAction    string             `json:"worktree_action,omitempty"`
+	WorktreeForce     bool               `json:"worktree_force,omitempty"`
+	LogLines          int                `json:"log_lines,omitempty"`
+	LogMaxBytes       int                `json:"log_max_bytes,omitempty"`
+	// LogStream names the log an agent_log_read asks for: "stderr" (also when empty) or "conversation".
+	LogStream            string             `json:"log_stream,omitempty"`
 	AttachmentBearer     string             `json:"attachment_bearer,omitempty"`
 	TurnID               string             `json:"turn_id,omitempty"`
 	Mode                 adapter.Mode       `json:"mode,omitempty"`

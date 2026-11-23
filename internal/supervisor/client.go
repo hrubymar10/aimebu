@@ -62,7 +62,9 @@ type Client struct {
 	Journal         *Journal
 	// AgentLogs holds what each agent's harness wrote to stderr, on this machine (supervisor/agent-logs/ beside the journal). The server
 	// reads a bounded tail of it for an owner or admin; nothing else leaves the machine.
-	AgentLogs      *agentlog.Store
+	AgentLogs *agentlog.Store
+	// conversations are the conversation logs of the running turns, by turn id (*turnConversation).
+	conversations  sync.Map
 	Adapter        adapter.Adapter
 	PingInterval   time.Duration
 	TurnLimits     TurnLimitOverrides
@@ -361,7 +363,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: !c.NoTurnInterrupt, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsAgentConversationLog: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: !c.NoTurnInterrupt, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -623,7 +625,9 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			result := protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: frame.ReqID, AgentID: frame.AgentID}
 			if c.AgentLogs == nil {
 				result.Code, result.Message = "no_log", "this machine keeps no agent output"
-			} else if page, err := c.AgentLogs.Tail(frame.AgentID, frame.LogLines, frame.LogMaxBytes); errors.Is(err, agentlog.ErrNoLog) {
+			} else if stream, err := agentlog.ParseStream(frame.LogStream); err != nil {
+				result.Code, result.Message = "invalid_stream", "this supervisor keeps no such output stream"
+			} else if page, err := c.AgentLogs.TailStream(frame.AgentID, stream, frame.LogLines, frame.LogMaxBytes); errors.Is(err, agentlog.ErrNoLog) {
 				result.Code, result.Message = "no_log", "no output has been captured for this agent on this machine"
 			} else if err != nil {
 				result.Code, result.Message = "log_failed", "the output could not be read"
@@ -1312,6 +1316,9 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 			spec.StderrSink = sink
 		}
 	}
+	// The conversation log is opened the same way and for the same time: the supervisor frames the turn in it (its start, what the agent
+	// was asked, its end) and the adapter writes what the harness's event stream says in between.
+	closeConversation := c.openConversation(delivery, &spec)
 	c.applyWarmIdle(delivery.WarmIdleSeconds)
 	c.setCodexWarmEnabled(delivery.CodexWarmEnabled)
 	c.keepAliveRemember(spec, delivery.KeepAliveSettings, cred, sharesHome)
@@ -1323,6 +1330,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		if sink != nil {
 			_ = sink.Close()
 		}
+		closeConversation(err)
 		return c.reportStartFailure(ctx, conn, delivery, err)
 	}
 	turn, err := c.startTurn(ctx, spec, sinkWriter, cred)
@@ -1330,6 +1338,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		if sink != nil {
 			_ = sink.Close()
 		}
+		closeConversation(err)
 		if errors.Is(err, errStoppedWhileWaiting) {
 			return c.reportStoppedBeforeStart(ctx, conn, delivery)
 		}
@@ -1358,6 +1367,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 			// The adapter closes its event stream only after it has read the harness's stderr to the end, so nothing is written after this.
 			_ = sink.Close()
 		}
+		closeConversation(nil)
 	}()
 	return nil
 }
@@ -1672,6 +1682,7 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 		exit.ErrorEvent = reason
 		exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\n" + reason)
 	}
+	c.conversationTurnEnd(delivery.TurnID, exit)
 	if err := c.Journal.RecordExitInfo(journalCtx, delivery.TurnID, exit); err != nil {
 		c.report("the exit info of a turn could not be recorded", err)
 		c.warmTurnEnded(turn, adapter.ExitInfo{})

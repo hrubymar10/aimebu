@@ -86,7 +86,7 @@ marked and the file is an orphan the next sweep collects.
 the counts of messages and rooms are unchanged and that the cleanup's source
 contains no statement that deletes either.
 
-Agents' captured stderr (`supervisor/agent-logs/`) is not part of this routine:
+Agents' captured stderr and conversation logs (`supervisor/agent-logs/`) are not part of this routine:
 the supervisor that wrote it removes files older than 14 days, and the oldest
 ones when all of them pass 256 MiB (see [the supervisor](supervisor.md#agent-output)). On the host machine it counts under **Agent runtime** in Health; a remote machine's counts under **Remote agent logs**, asked of that machine (see below).
 

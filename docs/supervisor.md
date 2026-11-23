@@ -1260,9 +1260,10 @@ and the turn limits do not apply to it.
 Each agent's harness writes to stderr while a turn runs (warnings, launcher
 errors, what a tool printed). The supervisor keeps that in a per-agent log on
 the machine that ran it: `supervisor/agent-logs/<agent-dir>/stderr.log`, with
-rotated backups `stderr.log.1` to `.3`. It is the harness's stderr only: stdout
-is its event stream (the whole conversation and every tool result) and is not
-captured.
+rotated backups `stderr.log.1` to `.3`. That file is the harness's stderr only.
+Stdout is the harness's event stream; what the adapters parse from it is kept
+beside it as the agent's conversation log, `conversation.log` (see
+[Conversation log](#conversation-log) below).
 
 - **Capture.** The supervisor gives each turn a process-only sink
   (`adapter.TurnSpec.StderrSink`, never journaled) and every adapter (Claude
@@ -1295,9 +1296,65 @@ captured.
   a remote machine that is offline, or a supervisor without
   `supports_agent_logs`, simply has nothing to show (the web says which). An
   agent that moved to another machine keeps its earlier output on the first.
+  The read names the stream (`stream=stderr|conversation` on the route,
+  `log_stream` in the frame); stderr is the default.
 - **Size.** The server asks each remote machine only for the total size of its
   logs (`agent_log_usage`, advertised as `supports_agent_log_size`) to show in
   Health under "Remote agent logs"; the host's logs are counted with the rest of
   `supervisor/`.
 - **Prune.** `aimebu prune` leaves the logs; `aimebu prune -a` removes them with
   the rest of `supervisor/` (see [pruning](prune.md)).
+
+### Conversation log
+
+The conversation log is what an agent did, turn by turn: what it was asked, what
+the model said, each tool it called with the input, and what each tool returned.
+It is `supervisor/agent-logs/<agent-dir>/conversation.log`, in the same
+directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
+
+- **Source.** The supervisor does not read any harness's own transcript files.
+  Each adapter already parses its harness's event stream for the answer and the
+  usage, and writes the same events to a process-only sink
+  (`adapter.TurnSpec.ConversationSink`, never journaled) as it reads them:
+  Claude Code, Codex (`exec` and the warm app-server), Pi, OpenCode and Vibe,
+  native and Docker alike. The supervisor frames the turn around that: it
+  writes the turn's start and the notes the agent was given before the harness
+  starts, and how the turn ended after its exit is known. The rest of the
+  turn's input (the context: role, roster, room history) is the same from turn
+  to turn and is not repeated in the log. A keep-alive ping is not work and
+  writes nothing. A log that cannot be opened is reported and the turn runs
+  without one.
+- **Format.** One record per event: a line `<UTC time> <kind> <text>`, and the
+  rest of the record's text on following lines that each start with a tab, so a
+  line of a tool's output can never pass for a record of its own. Control
+  characters other than a tab are removed. The kinds are `turn_start` (turn id,
+  generation, mode, harness and model), `prompt` (the turn's notes, or input
+  the harness gave the model on its own, such as the end of a background task),
+  `assistant` (text the model wrote), `thinking` (reasoning the harness reported
+  as text), `tool_call` (the tool's name and its input), `tool_result` (the
+  tool's name, `(failed)` when it failed, and its output), `error` (a failure
+  the harness or the supervisor reported) and `turn_end` (`answered` or `no
+  answer`, why when the supervisor ended it, and the exit status, or `process
+  kept warm`). OpenCode and Vibe report a tool only once it has finished, so
+  their call and result records are written together.
+- **Secret hygiene.** Every text passes the same redaction as stderr (agent,
+  machine and session keys, provider and host API keys by prefix, bearer and
+  basic credentials, cookies, and the value of anything named like a key, token,
+  secret or password) before it is written, in one place every adapter writes
+  through. That is a list of known shapes, not a promise: a tool can print a
+  secret no rule recognises, which is why this log, like stderr, is only ever
+  shown to an owner or admin.
+- **Size.** One record keeps at most 16 KiB of a tool call's input or of a tool
+  result, and 64 KiB of a prompt, of the model's text or of an error; what is
+  over is cut at a character and replaced by a last line `... N bytes cut`. A
+  file rotates at 4 MiB with three backups (16 MiB per agent).
+- **Retention.** The same as stderr and counted in the same total: a file whose
+  last write is more than 14 days old is removed, and past 256 MiB for all
+  agents the oldest files go first, except what was written in the last five
+  minutes or belongs to an agent whose turn is running.
+- **Reading.** As for stderr, through `agent_log_read` with `log_stream:
+  "conversation"`, for a project's owner or an admin only. A supervisor
+  advertises `supports_agent_conversation_log`; the server does not ask one
+  that does not (it would answer with stderr), and the route answers 409
+  `supervisor_outdated`. A tail that was cut starts at the first line of a
+  record.

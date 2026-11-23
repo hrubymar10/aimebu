@@ -42,7 +42,7 @@ needs owner bootstrap again.
 `aimebu prune -a` also keeps the server's log, `server/aimebu.log` and its rotated backups (`aimebu.log.1` to `.3`): they are
 diagnostics, not data.
 
-Agents' captured output, `supervisor/agent-logs/` (see
+Agents' captured output and conversation logs, `supervisor/agent-logs/` (see
 [the supervisor](supervisor.md#agent-output)), is left by plain prune and
 removed by `prune -a` with the rest of `supervisor/`: it comes from
 conversations, unlike the server's own log.

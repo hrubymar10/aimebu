@@ -130,6 +130,7 @@ func (c *Client) keepAliveRemember(spec adapter.TurnSpec, settings *protocol.Kee
 	ping.NativeSessionStarted = true // the real turn creates the session; the ping continues it
 	ping.KeepAlive = true
 	ping.StderrSink = nil
+	ping.ConversationSink = nil
 	ping.AgentTools = nil // the key is the agent's current one at ping time
 	c.kaMu.Lock()
 	defer c.kaMu.Unlock()
