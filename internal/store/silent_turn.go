@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -120,6 +121,12 @@ func (tx *Tx) silentTurnNotice(turn answerTurn) error {
 	if len(lines) == 0 {
 		return nil
 	}
-	_, err = tx.AppendEvent(Event{Kind: silentTurnEvent, ProjectID: projectID, RoomID: turn.roomID, AgentID: turn.agentID, TurnID: turn.id, PayloadJSON: payloadJSON(map[string]string{"woken": strings.Join(authors, ",")})})
+	// notices names the notice messages, so a delivery of one to an agent that addressed the worker can add the end of this turn's output.
+	notices := make([]string, 0, len(lines))
+	for _, messageID := range lines {
+		notices = append(notices, messageID)
+	}
+	slices.Sort(notices)
+	_, err = tx.AppendEvent(Event{Kind: silentTurnEvent, ProjectID: projectID, RoomID: turn.roomID, AgentID: turn.agentID, TurnID: turn.id, PayloadJSON: payloadJSON(map[string]string{"woken": strings.Join(authors, ","), "notices": strings.Join(notices, ",")})})
 	return err
 }

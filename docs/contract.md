@@ -668,10 +668,11 @@ Execution
 - **turn_room_read**(turn_id, room_id) — PK (turn_id, room_id); a room whose
   content the turn was given beyond its notes: what a toolbox read returned
   (`message_get`, `room_history`, `memory_recall`, `memory_list` of a task
-  room, `list_schedules`, the lead's recoveries), recorded against the agent's
+  room, `list_schedules`, the lead's recoveries, `agent_output`), recorded against the agent's
   active turn and its most recently started one before the read answers (a
   read that cannot be recorded answers an error, not the content), and what
-  the turn's context quotes (`recent_room_history`, `referenced_messages`);
+  the turn's context quotes (`recent_room_history`, `referenced_messages`, the
+  rooms of a worker turn whose `worker_output` a notice delivers);
   migration 129. A turn that started before migration 129 ran (its
   `schema_version.applied_at`) and has no row here is judged by the restricted
   rooms its agent was a member of when it started (`room_member` joined/left),
@@ -818,6 +819,15 @@ Inbox, usage, events, settings
   that project's lead cited (`#N`) in their shared chat between agents, while both are leads and the citing
   lead reads the cited room; no other agent gets that;
   except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project; an active lead also gets `other_leaders` (id, slug, project_slug, observed state of the active leads of other projects), filtered by the `dm_agent` reach rule, and no other caller gets that key. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, preserves role cardinality, and refuses reviewer-lineage roles while reviewers are disabled.
+- **`agent_output`** (`GET /api/agent/agents/{id}/output?turns=1..10`) is for
+  an active lead (any non-lead agent of its project) or the flow's coordinator
+  (an agent it may manage under the `stop_agent` rule); others get 403, and
+  another project's agent gets 404. It returns the latest turns of the agent's
+  conversation log, at most 32 KiB, marked `untrusted`. A turn the caller may
+  not read under the `room_history` rule becomes one `withheld` line. The rooms
+  of the shown turns are recorded against the caller's turn before it answers.
+  It shares the viewer's 30-reads-a-minute limit, sends `no-store` and is
+  logged.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
 - **room_view_preference**(user_id, room_id, hidden 0|1, notify[default|all|
@@ -1037,7 +1047,20 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   asks for a reaction instead of an acknowledgement message: it gives none. It is said once until the agent next posts a
   message (event `silent_turn` with the agent and turn; a later one is skipped
   while no message of the agent follows it), and the author's own silent
-  answer to it never raises another, since that note is a system note. An open originating room also
+  answer to it never raises another, since that note is a system note.
+  **Worker output on a notice:** a delivered `silent_turn` or `worker_recovery`
+  note carries `worker_output` `{untrusted, agent_id, turn_id, text?,
+  truncated?, withheld?}`: the end of that turn's conversation records (at most
+  2 KiB, cut at a line, keys and tokens masked again), read from the worker's
+  machine, never stored on the server and never posted to the room. The read
+  starts in the background when the notice is written (at most 3 s, a bounded
+  number at once) and is kept in memory per worker turn and recipient; a
+  delivery waits for an unfinished one at most about 250 ms. Without text,
+  `withheld` is `room_not_readable` (the turn served a room the recipient may not read), `not_found` (the turn is no longer in the end of the worker's log), `unreadable` (the machine is offline or too old, or the read failed) or `not_ready` (the read had not finished when the note was delivered). The turn is judged by the agent room-read rule, and
+  its served rooms are recorded as `turn_room_read` of the recipient's turn
+  before the text is delivered. A turn sent again carries the notes it carried
+  first. The `silent_turn` event payload names its notice messages
+  (`notices`), and `recovery_handed_to_lead` names `message_id`. An open originating room also
   receives a system notice for answers held during validation. When the answer
   was held because no correction could be requested (`no_action_mode` false),
   the author also gets a system note "Your previous reply was held: <reason>"

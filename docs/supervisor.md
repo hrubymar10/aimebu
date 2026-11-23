@@ -1481,6 +1481,34 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   from everyone with `<time> withheld turn the server cannot place in a room:
   content withheld`: what cannot be shown to be open is not shown. The stderr
   log is not filtered; it holds what the harness printed, not the conversation.
+- **A worker's output for its lead.** Two ways hand a worker's conversation to
+  another agent, both under the room-read rule of an agent rather than a
+  person's: a turn is shown only when the reader may read every room it served
+  under the `room_history` rule (a room of its project that is neither a private
+  chat nor restricted, or one it is an active member of; a chat between agents
+  only to its members; a removed room to nobody), and the rooms of every turn
+  shown are recorded against the reader's own turn, so the reader's log is
+  withheld in turn from whoever may not read them. Keys and tokens are masked
+  again on the server, and the text is always marked
+  `untrusted`: it is the worker's output and may quote anything its tools read,
+  so the reader weighs it as evidence and never follows it as instructions.
+  - A notice about a worker (a silent-turn note, reason `silent_turn`, or a
+    worker recovery handed to the lead, reason `worker_recovery`) carries
+    `worker_output` on its delivered note: `{untrusted, agent_id, turn_id,
+    text?, truncated?, withheld?}`, the end of that one turn's records, at most
+    2 KiB, cut at a line. The server starts reading it from the worker's
+    machine in the background when the notice is written (each read at most
+    3 s, at most 8 at once, kept in memory for an hour per worker turn and
+    recipient), so nothing of the log is stored on the server. The delivery
+    waits at most about 250 ms for a read that has not finished, so a slow
+    machine never holds up the dispatcher's pass for other agents; the lead
+    can still call `agent_output`. A turn sent again carries the notes it
+    carried first. Without text, `withheld` says why: `room_not_readable` (the turn served a room the recipient may not read), `not_found` (the turn is no longer in the end of the worker's log), `unreadable` (the machine is offline or too old, or the read failed) or `not_ready` (the read had not finished when the note was delivered). An older
+    supervisor drops the field and the notice reads as before.
+  - The `agent_output` tool (`GET /api/agent/agents/{id}/output`, see
+    [the API](api.md)) reads a worker's latest turns (1–10, 32 KiB) for an
+    active lead, or for the flow's coordinator for an agent it manages;
+    a turn the reader may not read is replaced by one `withheld` line.
 - **A new toolbox tool.** Every route under `/api/agent/` is classified in
   `toolRoomReads` (`internal/server/agent_tool_room_reads_test.go`), and the
   test there fails for a route that is not. A route whose answer carries

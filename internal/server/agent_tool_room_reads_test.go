@@ -30,6 +30,7 @@ var toolRoomReads = map[string]struct{ class, why string }{
 	"GET /api/agent/memory":                                  {recordsRoomReads, "memory_list: a task room's notes are that room's content"},
 	"GET /api/agent/rooms/{room}/schedules":                  {recordsRoomReads, "list_schedules: what a schedule posts into its room"},
 	"GET /api/agent/recoveries":                              {recordsRoomReads, "list_recoveries: the evidence is what a failed turn printed in its room"},
+	"GET /api/agent/agents/{id}/output":                      {recordsRoomReads, "agent_output: a worker's conversation, which carries every room its shown turns served"},
 	"GET /api/agent/rooms":                                   {noRoomContent, "list_rooms: ids and titles, which every turn's context already lists"},
 	"GET /api/agent/agents":                                  {noRoomContent, "list_agents: agent cards"},
 	"GET /api/agent/macros":                                  {noRoomContent, "list_macros: project macros"},

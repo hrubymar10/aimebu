@@ -173,10 +173,10 @@ func TestMCPListsNarrowToolsAndSendsAgentKey(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Result.Tools) != 31 {
+	if len(listed.Result.Tools) != 32 {
 		t.Fatalf("tools=%+v", listed.Result.Tools)
 	}
-	for i, name := range []string{"list_recoveries", "resolve_recovery", "list_rooms", "list_agents", "room_history", "list_macros", "list_schedules", "create_schedule", "delete_schedule", "usage_left", "run_command", "list_commands", "command_log", "cancel_command", "create_room", "dm_agent", "dm_human", "close_room", "handbook_get", "handbook_update", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "set_role", "message_get", "react"} {
+	for i, name := range []string{"list_recoveries", "resolve_recovery", "list_rooms", "list_agents", "room_history", "list_macros", "list_schedules", "create_schedule", "delete_schedule", "usage_left", "run_command", "list_commands", "command_log", "cancel_command", "create_room", "dm_agent", "dm_human", "close_room", "handbook_get", "handbook_update", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "agent_output", "set_role", "message_get", "react"} {
 		if listed.Result.Tools[i].Name != name {
 			t.Fatalf("tool %d = %q", i, listed.Result.Tools[i].Name)
 		}

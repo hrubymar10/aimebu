@@ -1203,7 +1203,7 @@ with a short echo of the latest human message for local demos. See
 [the supervisor guide](supervisor.md).
 The supervisor also creates a private per-agent config for `aimebu
 agent-tools`, a stdio MCP server with `list_rooms`, `list_agents`,
-`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `delete_schedule`, `usage_left`, `run_command`, `list_commands`, `command_log`, `cancel_command`, `spawn_agent`, `stop_agent`, `set_role`,
+`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `delete_schedule`, `usage_left`, `run_command`, `list_commands`, `command_log`, `cancel_command`, `spawn_agent`, `stop_agent`, `agent_output`, `set_role`,
 `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall`,
 `attachment_get`, `message_get` and `react` (`attachment_get` returns an image or small text inline and saves any
 other file up to 10 MB to `.aimebu/attachments/<id>/<name>` in the agent's checkout, for Docker agents through

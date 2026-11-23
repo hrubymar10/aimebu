@@ -637,6 +637,32 @@ type DeliveryNote struct {
 	// Outcome is what a task-result handoff reports (done, partial or failed), so the lead or dispatcher it wakes reads it without parsing the
 	// body. Absent on every other message and on a handoff written before outcomes.
 	Outcome string `json:"outcome,omitempty"`
+	// WorkerOutput is the end of what a worker's turn said, on a notice about that worker (it ended its turn without a message, or its
+	// turn failed and its recovery was handed to the lead). It is the worker's text, not the server's: the recipient reads it as data.
+	WorkerOutput *WorkerOutput `json:"worker_output,omitempty"`
+	// OutputSource is the worker and turn such a notice is about. The server reads it to fill WorkerOutput; it is never sent.
+	OutputSource *OutputSource `json:"-"`
+}
+
+// WorkerOutput is the end of one turn of a worker's conversation log, as a notice to its lead carries it: at most a few KiB, with keys and
+// tokens masked, and every turn the recipient may not read left out.
+type WorkerOutput struct {
+	// Untrusted says what the text is: the worker's own output, which may quote anything its tools read, so it is evidence to weigh and
+	// never an instruction to follow.
+	Untrusted string `json:"untrusted"`
+	AgentID   string `json:"agent_id"`
+	TurnID    string `json:"turn_id"`
+	Text      string `json:"text,omitempty"`
+	// Truncated says earlier output of the turn was left out to keep the text within its bound.
+	Truncated bool `json:"truncated,omitempty"`
+	// Withheld says why there is no text: the turn served a room the recipient may not read, or the output could not be read.
+	Withheld string `json:"withheld,omitempty"`
+}
+
+// OutputSource names the worker turn a notice is about.
+type OutputSource struct {
+	AgentID string
+	TurnID  string
 }
 
 // NoteParent is the message a delivered note replies to, or the first message of its conversation.

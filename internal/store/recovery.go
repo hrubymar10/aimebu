@@ -348,7 +348,7 @@ func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reaso
 	if _, err := tx.InsertNote(Note{AgentID: leadID, MessageID: message.ID, RoomID: leadRoom, WakeReason: "worker_recovery"}); err != nil {
 		return false, err
 	}
-	_, err = tx.AppendEvent(Event{Kind: "recovery_handed_to_lead", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "lead_id": leadID, "reason": reason})})
+	_, err = tx.AppendEvent(Event{Kind: "recovery_handed_to_lead", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "lead_id": leadID, "reason": reason, "message_id": message.ID})})
 	return err == nil, err
 }
 

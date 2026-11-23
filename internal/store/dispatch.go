@@ -474,6 +474,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if err := tx.noteContext(agentID, notes, reasons); err != nil {
 			return err
 		}
+		if err := tx.noteOutputSources(notes, reasons); err != nil {
+			return err
+		}
 		if len(notes) == 0 {
 			// Nothing left to read: the expired notes are dropped so they do not wake the agent again.
 			_, err := tx.dropExpiredNotes(projectID, roomID, agentID, expiredNotes, expiryCutoff)

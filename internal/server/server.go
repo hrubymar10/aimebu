@@ -62,6 +62,8 @@ type Server struct {
 	// outputReads is when each person last read an agent's output, for the limit on how often they may (see agentOutput).
 	outputMu    sync.Mutex
 	outputReads map[string][]time.Time
+	// noticeOutputs is the worker output each delivered notice carried (see addWorkerOutput).
+	noticeOutputs noticeOutputCache
 	// exportPageFn reads one page of a room for the export (a test replaces it to fail partway; nil means the store's own), and exportPageSize
 	// is the page size (a test makes it small; 0 means 500).
 	exportMu       sync.RWMutex
@@ -419,6 +421,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/inbox", s.Auth.RequireUser(http.HandlerFunc(s.inbox)))
 	mux.Handle("GET /api/agent/rooms", s.requireAgentTool(http.HandlerFunc(s.agentToolRooms)))
 	mux.Handle("GET /api/agent/agents", s.requireAgentTool(http.HandlerFunc(s.agentToolAgents)))
+	mux.Handle("GET /api/agent/agents/{id}/output", s.requireAgentTool(http.HandlerFunc(s.agentToolAgentOutput)))
 	mux.Handle("GET /api/agent/recoveries", s.requireAgentTool(http.HandlerFunc(s.agentToolRecoveries)))
 	mux.Handle("POST /api/agent/recoveries/{item}/decision", s.requireAgentTool(http.HandlerFunc(s.agentToolResolveRecovery)))
 	mux.Handle("GET /api/agent/rooms/{room}/history", s.requireAgentTool(http.HandlerFunc(s.agentToolRoomHistory)))

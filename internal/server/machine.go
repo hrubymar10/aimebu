@@ -858,6 +858,10 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 			log.Printf("machine %s: empty answer: agent=%s turn=%s mode=%s exit_code=%s stderr_tail=%q", c.id, frame.AgentID, frame.TurnID, mode, exitCode, stderrTail)
 		}
 		receipt, err := s.Store.ApplyAnswer(ctx, input)
+		if err == nil {
+			// A silent turn's notice may have been written: start reading the end of the turn for the agents it wakes.
+			s.prefetchNoticeOutputs(ctx)
+		}
 		if errors.Is(err, store.ErrConflict) {
 			return c.send(protocol.Frame{V: protocol.Version, Type: protocol.Receipt, TurnID: frame.TurnID, AnswerRev: frame.AnswerRev, Digest: frame.Digest, Result: "conflict"})
 		}
@@ -887,6 +891,8 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 		if err := s.Store.RecordProcessInfo(ctx, frame.TurnID, frame.AgentID, frame.Generation, exit); err != nil {
 			return err
 		}
+		// A recovery may have been handed to the lead: start reading the end of the failed turn for it.
+		s.prefetchNoticeOutputs(ctx)
 		s.noteProviderLimit(ctx, frame.AgentID)
 		if err := s.Store.ConfirmAgentProcessExit(ctx, frame.AgentID); err != nil {
 			return err
@@ -987,6 +993,9 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 		delivery.AttachmentBearer = attachmentBearer(keyHash, delivery.TurnID)
 		break
 	}
+	// A notice about a worker's turn carries the end of that turn's output; read before the turn is admitted, so a slow machine delays
+	// only this delivery and never leaves an admitted turn unsent.
+	s.addWorkerOutput(ctx, &delivery)
 	noteIDs := make([]string, 0, len(delivery.Notes))
 	for _, note := range delivery.Notes {
 		noteIDs = append(noteIDs, note.NoteID)
