@@ -9,11 +9,14 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
-// agentToolDM is the dm_agent tool: an active lead starts (or continues) a private chat with any agent, in any project it may reach.
+// agentToolDM is the dm_agent tool: an active lead starts (or continues) a private chat with any agent of its own project or with the lead of a
+// project it may reach; the dispatcher with an agent of its project it manages; any other active agent with its own project's lead or dispatcher.
 // Authorization is the store's, checked in the same transaction as the write.
 func (s *Server) agentToolDM(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
-	if !activeLead(w, caller) {
+	// Any active agent may call; the store decides whom it may message from its role (lead, coordinator, or any other).
+	if caller.Desired != "active" {
+		apiError(w, http.StatusForbidden, "forbidden", "an active agent is required")
 		return
 	}
 	key, ok := toolRequestKey(w, r)
@@ -120,9 +123,17 @@ func humanDMError(w http.ResponseWriter, err error) {
 }
 
 func toolDMError(w http.ResponseWriter, err error) {
+	var notFound *store.AgentNotFoundError
+	var ambiguous *store.AgentAmbiguousError
 	switch {
+	case errors.As(err, &notFound):
+		apiError(w, 404, "not_found", notFound.Error())
+	case errors.As(err, &ambiguous):
+		apiError(w, 409, "ambiguous_agent", ambiguous.Error())
 	case errors.Is(err, store.ErrForbidden):
 		apiError(w, 403, "forbidden", "you may not message that agent: the people behind this turn must have access to its project, and it must exist")
+	case errors.Is(err, store.ErrCrossProjectLeadOnly):
+		apiError(w, 403, "forbidden", "across projects you may message only that project's lead")
 	case errors.Is(err, store.ErrAgentUnavailable):
 		apiError(w, 409, "agent_unavailable", "that agent is stopped, not accepting work, or removed")
 	case errors.Is(err, store.ErrProjectArchived):

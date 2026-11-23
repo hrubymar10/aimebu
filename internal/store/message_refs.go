@@ -113,6 +113,13 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 				JOIN room_member xo ON xo.room_id=xr.id AND xo.member_kind='agent' AND xo.member_id=? AND xo.left_at IS NULL
 				JOIN room tr ON tr.id=r.id
 				WHERE xg.target_no=m.no AND r.project_id<>xr.project_id AND `+personReadsRoomSQL("xs.author_id")+`)
+		OR EXISTS (SELECT 1 FROM message_reference_grant lg JOIN message ls ON ls.id=lg.source_message_id AND ls.author_kind='agent'
+				JOIN room lr ON lr.id=ls.room_id AND lr.kind='dm'
+				JOIN room_member lo ON lo.room_id=lr.id AND lo.member_kind='agent' AND lo.member_id=? AND lo.left_at IS NULL
+				JOIN agent la ON la.id=ls.author_id AND la.revoked_at IS NULL JOIN role lro ON lro.id=la.role_id AND lro.cap_is_lead=1
+				JOIN agent ra ON ra.id=lo.member_id JOIN role rro ON rro.id=ra.role_id AND rro.cap_is_lead=1
+				WHERE lg.target_no=m.no AND r.kind<>'dm' AND la.project_id=r.project_id AND la.project_id<>?
+				AND (r.restricted=0 OR EXISTS (SELECT 1 FROM room_member lm WHERE lm.room_id=r.id AND lm.member_kind='agent' AND lm.member_id=la.id AND lm.left_at IS NULL)))
 		OR r.project_id IN (?,`+agentDMProjectSQL+`) AND (
 			(r.kind<>'dm' AND r.restricted=0)
 			OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL)
@@ -120,7 +127,7 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 				JOIN room_member own ON own.room_id=source.room_id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL
 				WHERE g.target_no=m.no AND r.kind<>'dm' AND source.room_id<>r.id AND source.room_id IN (SELECT id FROM room WHERE project_id=r.project_id)
 				AND (source.author_kind<>'system' OR EXISTS (SELECT 1 FROM json_each(source.targets_json) WHERE value=?)))))`,
-		no, projectID, agentID, projectID, agentID, agentID, agentID).
+		no, projectID, agentID, agentID, projectID, projectID, agentID, agentID, agentID).
 		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt, &targetProject, &targetProjectName, &pages)
 	if err == sql.ErrNoRows {
 		return unavailable, nil
@@ -258,6 +265,25 @@ func noteWhy(reason string, parent *protocol.NoteParent) string {
 // opaque id: reasons[i] is notes[i]'s wake reason.
 func (tx *Tx) noteContext(agentID string, notes []protocol.DeliveryNote, reasons []string) error {
 	parents := map[string]*protocol.NoteParent{}
+	var ownProject string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, agentID).Scan(&ownProject); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	// foreignAgent names an agent author of another project as slug@project; ok is false for anyone else.
+	foreignAgent := func(authorKind, authorID string) (label string, ok bool, err error) {
+		if authorKind != "agent" || ownProject == "" {
+			return "", false, nil
+		}
+		var slug, project, projectID string
+		err = tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(NULLIF(a.removed_slug,''),a.slug),p.name,p.id FROM agent a JOIN project p ON p.id=a.project_id WHERE a.id=?`, authorID).Scan(&slug, &project, &projectID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		if err != nil || projectID == ownProject {
+			return "", false, err
+		}
+		return slug + "@" + project, true, nil
+	}
 	parent := func(messageID, roomID string) (*protocol.NoteParent, error) {
 		if messageID == "" {
 			return nil, nil
@@ -276,11 +302,28 @@ func (tx *Tx) noteContext(agentID string, notes []protocol.DeliveryNote, reasons
 			return nil, err
 		}
 		found := &protocol.NoteParent{No: no, From: authorLabel(tx.ctx, tx.tx, authorKind, authorID), Body: excerptRunes(body, parentExcerptRunes), Yours: authorKind == "agent" && authorID == agentID}
+		label, foreign, err := foreignAgent(authorKind, authorID)
+		if err != nil {
+			return nil, err
+		}
+		if foreign {
+			found.From, found.AgentID = label, authorID
+		}
 		parents[messageID] = found
 		return found, nil
 	}
 	for i := range notes {
 		note := &notes[i]
+		var authorKind, authorID string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT author_kind,author_id FROM message WHERE id=?`, note.MessageID).Scan(&authorKind, &authorID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if label, foreign, err := foreignAgent(authorKind, authorID); err != nil {
+			return err
+		} else if foreign {
+			note.FromName = label
+		}
 		replyParent, err := parent(note.ReplyTo, note.RoomID)
 		if err != nil {
 			return err

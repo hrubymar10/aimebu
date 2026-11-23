@@ -77,7 +77,17 @@ func (s *Server) agentToolAgents(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
+	out := map[string]any{"agents": agents}
+	// An active lead also sees the leads of other projects it may message (dm_agent's own rule); nobody else gets the key.
+	if caller.IsLead && caller.Desired == "active" {
+		others, err := s.Store.OtherLeadersForTool(r.Context(), caller.ID, caller.ProjectID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		out["other_leaders"] = others
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) agentToolRoomHistory(w http.ResponseWriter, r *http.Request) {

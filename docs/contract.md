@@ -691,8 +691,11 @@ Execution
   migration requests; `leaderboard_start` is retired (the leaderboard rows
   were deleted by migration 56). The kinds written today are spawn, team_spawn,
   switch, scope_control, control (agent lead tool), room_create, room_close,
-  schedule_create, inbox_answer, recovery_decision, dm_agent (a lead's private
-  message to an agent), dm_human (an agent's private message to a person of
+  schedule_create, inbox_answer, recovery_decision, dm_agent (a private
+  message to an agent, named by agent ID or `slug@project`: a lead to an agent of its own project or the lead of another
+  project, the dispatcher to an agent of its project it manages, any other agent to its own project's lead or dispatcher;
+  the name resolves only among projects the people behind the
+  turn may reach, `not_found` is answered only for a reachable project, and a note from an agent of another project carries its agent ID), dm_human (an agent's private message to a person of
   its project) and command_run (an agent's long command outside its turn).
 
 Inbox, usage, events, settings
@@ -789,8 +792,10 @@ Inbox, usage, events, settings
   project's non-private room they can read at that moment, the agents of the citing room may read
   that message alone (`referenced_messages`, `message_get`, with `project` naming its project), for
   as long as the person keeps that access; the grant opens neither the room nor `room_history`,
-  and an uncited number stays `{no,available:false}`;
-  except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, preserves role cardinality, and refuses reviewer-lineage roles while reviewers are disabled.
+  and an uncited number stays `{no,available:false}`. A lead also reads a message of another project that
+  that project's lead cited (`#N`) in their shared chat between agents, while both are leads and the citing
+  lead reads the cited room; no other agent gets that;
+  except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project; an active lead also gets `other_leaders` (id, slug, project_slug, observed state of the active leads of other projects), filtered by the `dm_agent` reach rule, and no other caller gets that key. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, preserves role cardinality, and refuses reviewer-lineage roles while reviewers are disabled.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
 - **room_view_preference**(user_id, room_id, hidden 0|1, notify[default|all|

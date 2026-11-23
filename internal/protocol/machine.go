@@ -597,9 +597,12 @@ type KeepAliveReport struct {
 }
 
 type DeliveryNote struct {
-	NoteID    string `json:"note_id"`
-	RoomID    string `json:"room_id"`
-	From      string `json:"from"`
+	NoteID string `json:"note_id"`
+	RoomID string `json:"room_id"`
+	From   string `json:"from"`
+	// FromName names the sender as slug@project when it is an agent of another project than the recipient's; From is then its
+	// agent_id, so a reply (dm_agent) by ID is always possible.
+	FromName  string `json:"from_name,omitempty"`
 	MessageID string `json:"message_id"`
 	// No is the message's number, the "#N" people see; the agent may name a message by it (reply_to, thread_root, reactions).
 	No          int64  `json:"no,omitempty"`
@@ -623,10 +626,12 @@ type DeliveryNote struct {
 
 // NoteParent is the message a delivered note replies to, or the first message of its conversation.
 type NoteParent struct {
-	No    int64  `json:"no"`
-	From  string `json:"from"`
-	Body  string `json:"body"`
-	Yours bool   `json:"yours,omitempty"`
+	No   int64  `json:"no"`
+	From string `json:"from"`
+	// AgentID is the author's agent_id when it is an agent of another project than the recipient's (From is then slug@project).
+	AgentID string `json:"agent_id,omitempty"`
+	Body    string `json:"body"`
+	Yours   bool   `json:"yours,omitempty"`
 }
 
 type DeliveryAttachment struct {

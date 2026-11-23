@@ -170,8 +170,11 @@ func TestDispatcherCanDispatch(t *testing.T) {
 	if status := statusOf(f.toolPost(t, "/api/agent/dms", dispatcherKey, "dm-3", map[string]string{"target_agent_id": peer.ID, "body": "hi"})); status != 403 {
 		t.Fatalf("dispatcher dm_agent to another project: %d", status)
 	}
-	if status := statusOf(f.toolPost(t, "/api/agent/dms", workerKey, "dm-4", map[string]string{"target_agent_id": dispatcher.ID, "body": "hi"})); status != 403 {
-		t.Fatalf("worker dm_agent: %d", status)
+	if status := statusOf(f.toolPost(t, "/api/agent/dms", workerKey, "dm-4", map[string]string{"target_agent_id": dispatcher.ID, "body": "hi"})); status != 200 {
+		t.Fatalf("worker dm_agent to its own dispatcher: %d", status)
+	}
+	if status := statusOf(f.toolPost(t, "/api/agent/dms", workerKey, "dm-5", map[string]string{"target_agent_id": peer.ID, "body": "hi"})); status != 403 {
+		t.Fatalf("worker dm_agent to another project: %d", status)
 	}
 
 	// (3) Schedules: create, list and delete in the dispatcher's room; a worker may not; a person's schedule stays theirs.

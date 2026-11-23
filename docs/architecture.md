@@ -121,9 +121,10 @@ the other and never feeds recall or the memory snapshot), and `#N` lookups
 in the chat and also report into rooms of the agent's own project it belongs
 to; nothing else. An agent's question or request for attention in a chat is
 filed under the agent's own project and goes to the owners and operators of
-that project who are in the chat. An active lead starts a chat with any agent,
-in its own project or another, with the `dm_agent` tool; it opens at most 10
-new chats an hour. Any active agent, a worker as much as a lead, can start the
+that project who are in the chat. An active lead starts a chat with any agent of its own
+project, or with the lead of another project, with the `dm_agent` tool; the
+dispatcher with an agent of its project it manages; any other active agent with
+its own project's lead or dispatcher only. A caller opens at most 10 new chats an hour. Any active agent, a worker as much as a lead, can start the
 ordinary private chat between itself and a person of its own project (owner,
 operator or viewer) with the `dm_human` tool: the person's side of that chat is
 the same one they open from the agent's card, and their reply wakes the agent

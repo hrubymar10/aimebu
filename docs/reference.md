@@ -1200,9 +1200,13 @@ reads and mutations to that agent's project; only an active lead, or an
 active coordinator the flow lets manage agents (the dispatcher in the
 leader-dispatcher flow), can manage rooms, schedules or agents. The
 coordinator may `dm_agent` only agents of its own project that it manages;
-only an active lead can start a private chat with an agent
-of another project (`dm_agent`; the server checks that the people behind the
-turn may reach that project, see [the API](api.md)). Any active agent can
+any other active agent may `dm_agent` only its own project's lead or dispatcher;
+only an active lead can start a private chat across projects, and then only with
+that project's lead (`dm_agent`; the server checks that the people behind the
+turn may reach that project, see [the API](api.md)); the target is an agent ID
+or `slug@project-slug`, and a delivered note about a message from an agent of
+another project carries that agent's ID next to its name (`from_name`, and
+`agent_id` in `in_reply_to`/`conversation`), so a reply by ID is always possible. Any active agent can
 message a person of its own project with `dm_human`.
 `room_history` returns bounded message excerpts with `next_before` for paging;
 private chats require current membership. `set_role` changes an idle or

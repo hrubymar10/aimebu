@@ -641,6 +641,20 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 			}
 		}
 	}
+	if message.AuthorKind == "agent" {
+		// A lead's "#N" in a chat with another project's lead lets that lead read the message, if it is one of the author's own project that the
+		// author reads (a normal room, or a restricted one it sits in). The read re-checks both leads, so a lead that is no longer one grants nothing.
+		for _, ref := range extractMessageRefs([]string{message.Body}, nil, 100) {
+			if _, err := tx.tx.ExecContext(tx.ctx, `INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
+				SELECT ?,target.no FROM message target JOIN room tr ON tr.id=target.room_id JOIN room sr ON sr.id=?
+				JOIN agent au ON au.id=? JOIN role ro ON ro.id=au.role_id
+				WHERE target.no=? AND target.no>0 AND sr.kind='dm' AND ro.cap_is_lead=1 AND tr.project_id=au.project_id AND tr.kind<>'dm'
+				AND (tr.restricted=0 OR EXISTS(SELECT 1 FROM room_member own WHERE own.room_id=tr.id
+					AND own.member_kind='agent' AND own.member_id=au.id AND own.left_at IS NULL))`, message.ID, message.RoomID, message.AuthorID, ref); err != nil {
+				return Message{}, err
+			}
+		}
+	}
 	if message.AuthorKind == "user" {
 		// A person's "#N" into another project is a grant for the agents of this room, if the person reads the target room now. Agents never
 		// grant across projects, and the read re-checks the person's access, so losing it revokes the grant.
