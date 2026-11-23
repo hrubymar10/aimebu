@@ -268,6 +268,14 @@ func TestResumeAndRawCandidate(t *testing.T) {
 	}
 	implementation := &Adapter{Command: path, AllowNative: true}
 	toolsConfig := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	// The session's transcript is in the config dir the launch uses, so it is resumed.
+	transcript := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", "p", "session-1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	turn, err := implementation.Start(context.Background(), adapter.TurnSpec{TurnID: "resume", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: t.TempDir(), AgentTools: toolsConfig, NativeSessionHandle: "session-1", NativeSessionStarted: true, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)

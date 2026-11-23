@@ -263,8 +263,11 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 	if spec.ForkSession && !spec.NativeSessionStarted {
 		return nil, fmt.Errorf("a forked turn must resume an existing session")
 	}
+	env := adapter.LauncherEnv(childEnv(), spec.LauncherEnvRefs)
+	cwd := cmp.Or(spec.LaunchPath, spec.CheckoutPath)
+	resume := a.resumeOrFresh(spec.NativeSessionHandle, spec.NativeSessionStarted, spec.ForkSession, a.variant() == "docker" || spec.LauncherContainerized, env, cwd)
 	sessionStart := len(args)
-	if spec.NativeSessionStarted {
+	if resume {
 		args = append(args, "--resume", spec.NativeSessionHandle)
 		if spec.ForkSession {
 			// The session is worked on as a copy: Claude saves it under a new id (reported by confirmSession) and leaves the original as it is.
@@ -318,7 +321,6 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 	if spec.LauncherPath != "" {
 		command = spec.LauncherPath
 	}
-	env := adapter.LauncherEnv(childEnv(), spec.LauncherEnvRefs)
 	dir := spec.CheckoutPath
 	if spec.LaunchPath != "" {
 		// Claude keys a session by the folder it is started in as spelled, which it learns from PWD (the kernel only knows the resolved path).

@@ -146,7 +146,22 @@ with the fork flag (the first turn of an agent working on a copy of an existing
 Claude Code session, see [claude-sessions](claude-sessions.md#working-on-a-copy-fork))
 resumes the original with `--resume <id> --fork-session`, and reports the first
 session id that differs from the original as the turn's `native_session_started`
-(the copy's id); later turns resume that id. It never uses ambiguous
+(the copy's id); later turns resume that id. Whether a turn resumes is not left to the started flag alone: before
+launching, the adapter looks for `<id>.jsonl` under `projects/` in the
+`CLAUDE_CONFIG_DIR` (else `~/.claude`) that launch will use (one stat of the
+folder Claude would name for the working directory, then one glob of the project
+folders). A started turn whose transcript is not there (the quota switcher moved
+the agent to another config dir, or the first turn died before Claude wrote
+one) starts fresh with `--session-id` and the same id, since nothing there can
+collide; a first turn whose transcript already exists resumes it rather than
+collide. Each change is logged in one line (no secrets), for example
+`claude: session <id> has no transcript in this launch's config dir; starting it fresh with the same id instead of --resume`,
+`claude: session <id> already has a transcript in this launch's config dir; resuming it instead of --session-id`, or, when the read fails with
+anything but "not found", `claude: could not check the transcript of session <id> (<error>); keeping started=<flag>`. The id never changes, so
+the server's record stays right. A read error, a fork, a containerized launch
+(whose config dir the host cannot see) or an id that is not a plain session id
+keeps the flag's behaviour (an error is logged).
+It never uses ambiguous
 continue-last-session flags. The input prompt is one JSON object containing
 the turn ID, notes, context, and allowed tools.
 The Claude schema spells out `ask:{kind,text,options,free_text}` for inbox
