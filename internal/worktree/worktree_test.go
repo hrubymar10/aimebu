@@ -617,3 +617,83 @@ func TestWalkReasonsAreRelativeToTheWorktree(t *testing.T) {
 		t.Fatalf("reason=%q", why)
 	}
 }
+
+func gitIn(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	output, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v %s", args, err, output)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// TestEnsureBaseRefKinds makes a worktree from every kind of base ref a caller can send (room creation and a spawn's base_ref both end here).
+// Each ref that names a commit works; one that does not says which git step failed and why.
+func TestEnsureBaseRefKinds(t *testing.T) {
+	ctx := context.Background()
+	for _, test := range []struct {
+		name  string
+		setup func(t *testing.T, root string) (ref string)
+		fail  string // a part of the error, or "" when the worktree is made
+	}{
+		{"branch", func(t *testing.T, root string) string { gitIn(t, root, "branch", "feature"); return "feature" }, ""},
+		{"full sha", func(t *testing.T, root string) string { return gitIn(t, root, "rev-parse", "HEAD") }, ""},
+		{"short sha", func(t *testing.T, root string) string { return gitIn(t, root, "rev-parse", "--short", "HEAD") }, ""},
+		{"tag", func(t *testing.T, root string) string { gitIn(t, root, "tag", "v1"); return "v1" }, ""},
+		{"annotated tag", func(t *testing.T, root string) string { gitIn(t, root, "tag", "-a", "-m", "x", "v2"); return "v2" }, ""},
+		{"remote-only branch", func(t *testing.T, root string) string {
+			gitIn(t, root, "update-ref", "refs/remotes/origin/rel", "HEAD")
+			return "origin/rel"
+		}, ""},
+		{"branch checked out in another worktree", func(t *testing.T, root string) string {
+			gitIn(t, root, "worktree", "add", "-q", "-b", "elsewhere", filepath.Join(t.TempDir(), "other"))
+			return "elsewhere"
+		}, ""},
+		{"missing ref", func(t *testing.T, root string) string { return "nope" }, "git rev-parse: fatal"},
+		{"option-like ref", func(t *testing.T, root string) string { return "--all" }, "git rev-parse"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := repoFixture(t)
+			ref := test.setup(t, root)
+			result, err := Ensure(ctx, root, "room_ref", ref)
+			if test.fail != "" {
+				var typed *Error
+				if !errors.As(err, &typed) || typed.Code != "invalid_base" || !strings.Contains(err.Error(), test.fail) || !strings.Contains(err.Error(), `"`+ref+`"`) {
+					t.Fatalf("err=%v", err)
+				}
+				return
+			}
+			if err != nil || result.State != "ready" || result.BaseCommit != gitIn(t, root, "rev-parse", "HEAD") {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestEnsureBaseRefThatMovesKeepsTheRoomsBranch(t *testing.T) {
+	root := repoFixture(t)
+	ctx := context.Background()
+	gitIn(t, root, "branch", "moving")
+	first, err := Ensure(ctx, root, "room_move", "moving")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "next")
+	gitIn(t, root, "branch", "-f", "moving", "HEAD")
+	again, err := Ensure(ctx, root, "room_move", "moving")
+	if err != nil || again.Path != first.Path || again.State != "ready" {
+		t.Fatalf("again=%+v err=%v", again, err)
+	}
+}
+
+func TestEnsureSaysWhichGitStepFailed(t *testing.T) {
+	root := repoFixture(t)
+	ctx := context.Background()
+	// The room's branch exists and is checked out at another path: adding it again is refused by git.
+	gitIn(t, root, "worktree", "add", "-q", "-b", "aimebu/room_busy", filepath.Join(t.TempDir(), "busy"))
+	_, err := Ensure(ctx, root, "room_busy", "")
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Code != "branch_conflict" || !strings.Contains(err.Error(), "git worktree: ") || !strings.Contains(err.Error(), "fatal: ") || !strings.Contains(err.Error(), "aimebu/room_busy") {
+		t.Fatalf("err=%v", err)
+	}
+}

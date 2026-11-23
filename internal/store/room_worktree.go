@@ -115,7 +115,8 @@ func (s *Store) RequestRoomWorktree(ctx context.Context, roomID, baseRef string)
 		err := tx.tx.QueryRowContext(tx.ctx, `SELECT base_ref FROM room_worktree WHERE room_id=?`, roomID).Scan(&prior)
 		if err == nil {
 			if baseRef != "" && prior != "" && baseRef != prior {
-				return ErrConflict
+				// The room's worktree is made once, from one base. Say so, or the caller sees only "conflict".
+				return fmt.Errorf("the room's worktree is already based on %q, so base_ref %q cannot change it (omit base_ref, or send %q): %w", prior, baseRef, prior, ErrConflict)
 			}
 			return nil
 		}

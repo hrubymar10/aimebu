@@ -51,6 +51,17 @@ func git(ctx context.Context, root string, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// gitReason is what git itself said about a failed step: "git rev-parse: exit status 128: fatal: ..." becomes "git rev-parse: fatal: ...".
+func gitReason(err error) string {
+	text := err.Error()
+	if i := strings.Index(text, ": exit status "); i >= 0 {
+		if j := strings.Index(text[i+2:], ": "); j >= 0 {
+			text = text[:i] + text[i+2+j:]
+		}
+	}
+	return text
+}
+
 func repo(ctx context.Context, root string) (string, string, error) {
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -395,7 +406,7 @@ func Ensure(ctx context.Context, root, roomID, baseRef string) (Result, error) {
 		commit, err := git(ctx, root, "rev-parse", "--verify", "--end-of-options", baseRef+"^{commit}")
 		if err != nil {
 			if branchErr != nil {
-				return Result{}, problem("invalid_base", "base ref must name a committed revision")
+				return Result{}, problem("invalid_base", fmt.Sprintf("base ref %q must name a committed revision (%s)", baseRef, gitReason(err)))
 			}
 			commit, err = git(ctx, root, "rev-parse", "--verify", "--end-of-options", branch+"^{commit}")
 			if err != nil {
@@ -436,11 +447,11 @@ func Ensure(ctx context.Context, root, roomID, baseRef string) (Result, error) {
 		}
 		if branchErr == nil {
 			if _, err := git(ctx, root, "worktree", "add", "--", path, branch); err != nil {
-				return Result{}, problem("branch_conflict", err.Error())
+				return Result{}, problem("branch_conflict", "adding the room's existing branch as a worktree failed: "+gitReason(err))
 			}
 		} else {
 			if _, err := git(ctx, root, "worktree", "add", "-b", branch, "--", path, commit); err != nil {
-				return Result{}, problem("worktree_create_failed", err.Error())
+				return Result{}, problem("worktree_create_failed", "creating the worktree from "+baseRef+" ("+commit+") failed: "+gitReason(err))
 			}
 		}
 		return result, nil

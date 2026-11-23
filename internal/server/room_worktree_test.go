@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
@@ -367,5 +368,53 @@ func TestCardWithoutPathsBlanksTheAbsolutePaths(t *testing.T) {
 	}
 	if card.BoundaryGrants[0].Path == "" {
 		t.Fatal("the card the server holds lost its paths")
+	}
+}
+
+// A room's worktree is made once from one base. A later spawn that names another base_ref gets that said, not a bare "conflict".
+func TestSpawnBaseRefAgainstTheRoomsWorktree(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	root := f.project.Folder
+	gitTest(t, root, "init", "-q")
+	gitTest(t, root, "config", "user.name", "Test")
+	gitTest(t, root, "config", "user.email", "test@example.invalid")
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("base\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, root, "add", "tracked.txt")
+	gitTest(t, root, "commit", "-qm", "base")
+	gitTest(t, root, "branch", "other")
+	gitTest(t, root, "tag", "v1")
+	room := f.room
+	host, err := f.db.HostMachine(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		ref  string
+		fail string
+	}{
+		{"", ""},                   // no base_ref: the room's own base
+		{"other", "already based"}, // another spelling of a base the room has
+		{"v1", "already based"},
+		{"nope", "already based"},
+	} {
+		_, err := f.srv.ensureRoomWorktree(t.Context(), room, host, test.ref)
+		if test.fail == "" {
+			if err != nil {
+				t.Fatalf("ref %q: %v", test.ref, err)
+			}
+			continue
+		}
+		if !errors.Is(err, store.ErrConflict) || !strings.Contains(err.Error(), test.fail) || !strings.Contains(err.Error(), `"`+test.ref+`"`) {
+			t.Fatalf("ref %q: %v", test.ref, err)
+		}
+		recorder := httptest.NewRecorder()
+		worktreeError(recorder, err)
+		if recorder.Code != 409 || !strings.Contains(recorder.Body.String(), test.fail) {
+			t.Fatalf("ref %q: %d %s", test.ref, recorder.Code, recorder.Body)
+		}
 	}
 }
