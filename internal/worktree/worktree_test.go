@@ -298,8 +298,12 @@ func TestRemovePreservesWorktreeWithNestedRepository(t *testing.T) {
 	}
 	embeddedRepo(filepath.Join(embedded.Path, "inner"))
 	expectKept("room_embedded", embedded.BaseRef, "1 uncommitted or generated files")
-	if why, err := nestedRepos(ctx, embedded.Path); err != nil || why != "" {
-		t.Fatalf("nestedRepos outside .aimebu/=%q %v", why, err)
+	reset()
+	if why, err := nestedRepos(ctx, embedded.Path); err != nil || why != "contains an embedded repository" {
+		t.Fatalf("nestedRepos at the top level=%q %v", why, err)
+	}
+	if got := planted(t, marks); len(got) != 0 {
+		t.Fatalf("the walk ran planted programs: %v", got)
 	}
 
 	// Ignored files under .aimebu/ do not count as dirty, so an embedded repository there is found by the walk.
@@ -351,14 +355,7 @@ func TestRemovePreservesWorktreeWithNestedRepository(t *testing.T) {
 func TestRemoveWithCommittedSubmodule(t *testing.T) {
 	root := repoFixture(t)
 	ctx := t.Context()
-	// The commit a submodule add would make, without the clone (the tests' PATH has no transport helpers).
-	lib := repoFixture(t)
-	if err := os.WriteFile(filepath.Join(root, ".gitmodules"), []byte("[submodule \"lib\"]\n\tpath = lib\n\turl = "+lib+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, root, "add", ".gitmodules")
-	runGit(t, root, "update-index", "--add", "--cacheinfo", "160000,"+runGit(t, lib, "rev-parse", "HEAD")+",lib")
-	runGit(t, root, "commit", "-qm", "add lib")
+	committedSubmodule(t, root)
 	marks := plantRepoPrograms(t, root)
 
 	fresh, err := Ensure(ctx, root, "room_fresh", "")
@@ -426,5 +423,158 @@ func TestRemoveWithCommittedSubmodule(t *testing.T) {
 		if _, err := os.Stat(forced.Path); !os.IsNotExist(err) {
 			t.Fatalf("%s still there after a forced removal: %v", room, err)
 		}
+	}
+}
+
+// committedSubmodule commits a gitlink lib to root, with its .gitmodules: the commit a submodule add would make, without the clone (the tests'
+// PATH has no transport helpers).
+func committedSubmodule(t *testing.T, root string) {
+	t.Helper()
+	lib := repoFixture(t)
+	if err := os.WriteFile(filepath.Join(root, ".gitmodules"), []byte("[submodule \"lib\"]\n\tpath = lib\n\turl = "+lib+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", ".gitmodules")
+	runGit(t, root, "update-index", "--add", "--cacheinfo", "160000,"+runGit(t, lib, "rev-parse", "HEAD")+",lib")
+	runGit(t, root, "commit", "-qm", "add lib")
+}
+
+// The status does not look for untracked files inside a gitlink's folder, so a file put in an unpopulated submodule folder would be deleted
+// with the worktree: it is kept.
+func TestRemoveKeepsFilesInAnUnpopulatedSubmoduleFolder(t *testing.T) {
+	root := repoFixture(t)
+	committedSubmodule(t, root)
+	item, err := Ensure(t.Context(), root, "room_loose", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(item.Path, "lib", "user.txt"), []byte("work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := dirtyCount(t.Context(), item.Path, true); err != nil || n != 0 {
+		t.Fatalf("the premise: the status does not see the file: %d %v", n, err)
+	}
+	kept, err := Remove(t.Context(), root, "room_loose", item.BaseRef, false)
+	if err != nil || kept.State != "preserved" || kept.Reason != "contains files in a submodule folder" {
+		t.Fatalf("file in a submodule folder: %+v %v", kept, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(item.Path, "lib", "user.txt")); err != nil || string(data) != "work\n" {
+		t.Fatalf("the file is still there: %q %v", data, err)
+	}
+}
+
+// A repository made inside a folder the parent tracks is invisible to the status (the folder is not untracked) and to ls-files (no gitlink),
+// so its own branches would be deleted with the worktree: the walk keeps it.
+func TestRemoveKeepsAnEmbeddedRepositoryInATrackedFolder(t *testing.T) {
+	root := repoFixture(t)
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "a"), []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "pkg/a")
+	runGit(t, root, "commit", "-qm", "pkg")
+	item, err := Ensure(t.Context(), root, "room_inner", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := filepath.Join(item.Path, "pkg")
+	runGit(t, item.Path, "init", "-q", "pkg")
+	runGit(t, pkg, "config", "user.name", "Test")
+	runGit(t, pkg, "config", "user.email", "test@example.invalid")
+	runGit(t, pkg, "add", "a")
+	runGit(t, pkg, "commit", "-qm", "inner")
+	initial := runGit(t, pkg, "symbolic-ref", "--short", "HEAD")
+	runGit(t, pkg, "switch", "-qc", "other")
+	runGit(t, pkg, "commit", "-q", "--allow-empty", "-m", "only on other")
+	runGit(t, pkg, "switch", "-q", initial)
+	if n, err := dirtyCount(t.Context(), item.Path, true); err != nil || n != 0 {
+		t.Fatalf("the premise: the status is clean: %d %v", n, err)
+	}
+	kept, err := Remove(t.Context(), root, "room_inner", item.BaseRef, false)
+	if err != nil || kept.State != "preserved" || kept.Reason != "contains an embedded repository" {
+		t.Fatalf("embedded repository in a tracked folder: %+v %v", kept, err)
+	}
+	if got := runGit(t, pkg, "log", "--format=%s", "-1", "other"); got != "only on other" {
+		t.Fatalf("the inner branch is still there: %q", got)
+	}
+}
+
+// A deinitialized submodule leaves its folder empty but its repository in the worktree's git dir, under modules/; git refuses to remove such a
+// worktree, so Remove keeps it with a reason instead of failing.
+func TestRemoveKeepsADeinitializedSubmodule(t *testing.T) {
+	root := repoFixture(t)
+	committedSubmodule(t, root)
+	item, err := Ensure(t.Context(), root, "room_deinit", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDir := runGit(t, item.Path, "rev-parse", "--absolute-git-dir")
+	// What `git submodule update --init` and then `git submodule deinit lib` leave behind (the fixture cannot clone).
+	if err := os.MkdirAll(filepath.Join(gitDir, "modules", "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "modules", "lib", "HEAD"), []byte("ref: refs/heads/master\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", root, "worktree", "remove", "--", item.Path).CombinedOutput(); err == nil {
+		t.Fatalf("the premise: git refuses the removal: %s", out)
+	}
+	kept, err := Remove(t.Context(), root, "room_deinit", item.BaseRef, false)
+	if err != nil || kept.State != "preserved" || kept.Reason != "contains a checked-out submodule" {
+		t.Fatalf("deinitialized submodule: %+v %v", kept, err)
+	}
+	forced, err := Remove(t.Context(), root, "room_deinit", "", true)
+	if err != nil || forced.State != "removed" {
+		t.Fatalf("forced removal: %+v %v", forced, err)
+	}
+}
+
+// A path the walk cannot read may hide a repository: the worktree is kept, and that is an answer, not an error.
+func TestRemoveKeepsAWorktreeWithAnUnreadablePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a path cannot be made unreadable")
+	}
+	root := repoFixture(t)
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "a"), []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "pkg/a")
+	runGit(t, root, "commit", "-qm", "pkg")
+	item, err := Ensure(t.Context(), root, "room_unreadable", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(item.Path, "pkg")
+	if err := os.Chmod(locked, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("the folder is still readable: this file system ignores the mode")
+	}
+	kept, err := Remove(t.Context(), root, "room_unreadable", item.BaseRef, false)
+	if err != nil || kept.State != "preserved" || kept.Reason != "could not read pkg" {
+		t.Fatalf("unreadable path: %+v %v", kept, err)
+	}
+}
+
+// Over the walk's bound the worktree is kept rather than guessed at.
+func TestRemoveKeepsATreeTooLargeToCheck(t *testing.T) {
+	root := repoFixture(t)
+	item, err := Ensure(t.Context(), root, "room_large", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := maxNestedScan
+	maxNestedScan = 1
+	t.Cleanup(func() { maxNestedScan = saved })
+	kept, err := Remove(t.Context(), root, "room_large", item.BaseRef, false)
+	if err != nil || kept.State != "preserved" || kept.Reason != "too many files to check" {
+		t.Fatalf("tree over the bound: %+v %v", kept, err)
 	}
 }

@@ -43,10 +43,14 @@ checkout record there, and agents in either project can start in that folder.
 
 Existing agent-specific worktrees are still listed in Health and can be removed
 there or with `DELETE /api/agents/{agent}/worktree`. A clean, merged worktree
-is removed (an unpopulated submodule does not count as work); uncommitted or
-unmerged work, a populated or changed submodule, and a repository embedded
-under `.aimebu/` are preserved unless the person uses `force` and confirms
-`REMOVE <name>`. A running agent's worktree cannot be
+is removed (an unpopulated submodule's empty folder does not count as work).
+Whatever the removal cannot prove clean is preserved unless the person uses
+`force` and confirms `REMOVE <name>`: uncommitted or unmerged work; a changed
+submodule, a submodule folder that is not empty, or a submodule checked out
+earlier (its repository left in the worktree's git dir under `modules/`); a
+`.git` anywhere below the top level; a path the check cannot read; and a tree
+of more than 200,000 entries, which it does not walk to the end (`too many
+files to check`). A running agent's worktree cannot be
 removed (`worktree_in_use`). After removal, that agent uses its room's checkout.
 
 **Worktrees are never removed automatically.** Health lists each one with its

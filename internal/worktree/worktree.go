@@ -180,12 +180,18 @@ func commonDir(ctx context.Context, root string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 
-// nestedRepos answers why a worktree holds work in a submodule or an embedded repository that dirtyCount cannot see ("" when it holds none). A
-// status never goes into one (see gitGuards), and `git worktree remove` refuses a worktree with a populated submodule. A worktree is kept when
-// a gitlink in the index differs from the one in HEAD (`ls-files --stage` and `ls-tree`, which run no filter), when a gitlink's folder holds a
-// .git (populated: `git worktree add` never populates one, so a fresh worktree of a repository that commits a submodule is still removed), or
-// when a .git is below .aimebu/: an embedded repository anywhere else is untracked or ignored and so already counted by dirtyCount, while
-// ignored files under .aimebu/ are not. That walk does not use git or follow symlinks, so no nested repository's config is ever read.
+// maxNestedScan bounds the walk nestedRepos makes without git; a tree with more entries is kept rather than guessed at.
+var maxNestedScan = 200000
+
+// nestedRepos answers why a worktree may hold work that dirtyCount cannot see ("" when it can prove there is none). The rule is: when unsure,
+// keep. A status never goes into a submodule or an embedded repository (see gitGuards), and it does not look for untracked files inside a
+// gitlink's folder either, so `git worktree remove` would delete such work. A worktree is kept when a gitlink in the index differs from the one
+// in HEAD (`ls-files --stage` and `ls-tree`, which run no filter); when a gitlink's folder is not empty (populated, or holding loose files:
+// `git worktree add` leaves it empty, so a fresh worktree of a repository that commits a submodule is still removed); when the worktree's git
+// dir has a modules/ entry (a submodule was checked out there, and git refuses to remove the worktree even after a deinit); and when a .git is
+// anywhere below the top level, since an embedded repository inside a folder the parent tracks is invisible to the status. The walk does not use
+// git or follow symlinks, so no nested repository's config is ever read; a path it cannot read, or a tree of more than maxNestedScan entries,
+// keeps the worktree.
 func nestedRepos(ctx context.Context, path string) (string, error) {
 	output, err := GitCommand(ctx, path, "ls-files", "--stage", "-z").Output()
 	if err != nil {
@@ -225,33 +231,92 @@ func nestedRepos(ctx context.Context, path string) (string, error) {
 		return "contains a changed submodule", nil // added in the index
 	}
 	for name := range index {
-		if _, err := os.Lstat(filepath.Join(path, filepath.FromSlash(name), ".git")); err == nil {
-			return "contains a checked-out submodule", nil
-		} else if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
-			return "", err
+		if why := gitlinkFolder(path, name); why != "" {
+			return why, nil
 		}
 	}
-	found := false
-	walkErr := filepath.WalkDir(filepath.Join(path, ".aimebu"), func(p string, d fs.DirEntry, err error) error {
+	gitDir, err := git(ctx, path, "rev-parse", "--git-dir")
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
+	}
+	// Git refuses to remove a worktree whose git dir has modules/ at all, empty or not.
+	if _, err := os.Lstat(filepath.Join(gitDir, "modules")); err == nil {
+		return "contains a checked-out submodule", nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "could not read " + filepath.Join(gitDir, "modules"), nil
+	}
+	return walkForRepos(path), nil
+}
+
+// gitlinkFolder answers why the folder of the gitlink name may hold work ("" when it is missing or empty, as `git worktree add` leaves it).
+func gitlinkFolder(path, name string) string {
+	folder := filepath.Join(path, filepath.FromSlash(name))
+	info, err := os.Lstat(folder)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
+		return ""
+	case err != nil:
+		return "could not read " + name
+	case !info.IsDir():
+		return "contains files in a submodule folder" // a file or a symlink where the submodule goes
+	}
+	dir, err := os.Open(folder)
+	if err != nil {
+		return "could not read " + name
+	}
+	defer dir.Close()
+	names, err := dir.Readdirnames(-1)
+	if err != nil {
+		return "could not read " + name
+	}
+	for _, entry := range names {
+		if entry == ".git" {
+			return "contains a checked-out submodule"
+		}
+	}
+	if len(names) > 0 {
+		return "contains files in a submodule folder"
+	}
+	return ""
+}
+
+// walkForRepos walks the worktree without git and without following symlinks, and answers why it is kept: a .git below the top level, a path
+// it cannot read, or more than maxNestedScan entries ("" when none of these holds).
+func walkForRepos(path string) string {
+	top := filepath.Join(path, ".git")
+	seen, why := 0, ""
+	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil
+			rel, relErr := filepath.Rel(path, p)
+			if relErr != nil {
+				rel = p
 			}
-			return err
+			why = "could not read " + filepath.ToSlash(rel)
+			return filepath.SkipAll
+		}
+		if p == top {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if seen++; seen > maxNestedScan {
+			why = "too many files to check"
+			return filepath.SkipAll
 		}
 		if d.Name() == ".git" {
-			found = true
+			why = "contains an embedded repository"
 			return filepath.SkipAll
 		}
 		return nil
 	})
-	if walkErr != nil {
-		return "", walkErr
+	if walkErr != nil && why == "" {
+		why = "could not read " + filepath.ToSlash(path)
 	}
-	if found {
-		return "contains an embedded repository", nil
-	}
-	return "", nil
+	return why
 }
 
 func dirtyCount(ctx context.Context, root string, ignored bool) (int, error) {

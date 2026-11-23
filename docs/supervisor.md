@@ -344,15 +344,22 @@ filter drivers the helper never reads. The accepted tradeoff is that changes
 inside a submodule or an embedded repository do not count as dirty files in
 the worktree inspection or the description of a limit-killed turn's
 checkout. Because of that, the worktree removal checks for them separately,
-and keeps the worktree as `preserved`, as a dirty tree is, when a gitlink in
-the index differs from the one in `HEAD` (`ls-files --stage` against
-`ls-tree`, neither of which runs a filter), when a gitlink's folder holds a
-`.git` (a populated submodule, which git refuses to remove without `force`),
-or when a `.git` is below `.aimebu/` (found by a walk that does not use git or
-follow symlinks; an embedded repository anywhere else is untracked or ignored,
-so the status already counts it). `git worktree add` never populates a
-submodule, so a clean worktree of a repository that commits one is still
-removed. Repository-local filter drivers, such as the ones
+and its rule is: when it cannot prove the worktree clean, it keeps it as
+`preserved`, as a dirty tree is, with the reason. It keeps it when a gitlink
+in the index differs from the one in `HEAD` (`ls-files --stage` against
+`ls-tree`, neither of which runs a filter); when a gitlink's folder is not
+empty, whether a submodule is checked out there or it holds loose files (the
+status does not look for untracked files inside a gitlink's folder, so
+`git worktree remove` would delete them); when the worktree's git dir has a
+`modules/` entry (a submodule was checked out, and git refuses to remove the
+worktree even after `git submodule deinit` empties its folder); and when a
+`.git` is anywhere below the top level, since a repository made inside a
+folder the parent tracks is invisible to the status and its own branches
+would be deleted. That walk does not use git or follow symlinks; a path it
+cannot read, or a tree of more than 200,000 entries, also keeps the worktree
+(`could not read <path>`, `too many files to check`). `git worktree add` never
+populates a submodule and leaves its folder empty, so a clean worktree of a
+repository that commits one is still removed. Repository-local filter drivers, such as the ones
 `git lfs install --local` writes, do not run on these calls either: a
 worktree the host creates gets LFS pointer files instead of their content,
 the git-lfs `post-checkout` hook is skipped with the other hooks, and a file
