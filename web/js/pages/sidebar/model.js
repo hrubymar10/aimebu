@@ -49,6 +49,8 @@ export function orderRooms(rooms, sort) {
 // They lead a project's rooms in that fixed order: general, routing, then the other flow rooms; task and research rooms follow in their own order.
 export function systemRank(room) {
   if (room.kind === 'dm' || room.kind === 'home') return -1;
+  // The server marks routing and advice rooms with purpose general too, so the general flow key must win before them.
+  if (room.team_flow_room_key === 'general') return 0;
   if (room.team_flow_room_key === 'routing') return 1;
   if (room.team_flow_room_key) return 2;
   return room.kind === 'lobby' || room.purpose === 'general' ? 0 : -1;

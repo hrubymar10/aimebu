@@ -1405,7 +1405,7 @@ async function main() {
       room('rm_close', 'prj_a', 'closing', { parent_id: 'rm_kh', purpose: 'task', lifecycle: 'closing' }),
       room('rm_res', 'prj_a', 'compare', { parent_id: 'rm_kh', purpose: 'research', user_message_count: 2, unread_count: 9 }),
       room('rm_resnew', 'prj_a', 'compare-new', { parent_id: 'rm_kh', purpose: 'research' }),
-      room('rm_gen2', 'prj_a', 'general', { parent_id: 'rm_kh', purpose: 'general', unread_count: 6, working: true, member_count: 5 }),
+      room('rm_gen2', 'prj_a', 'general', { parent_id: 'rm_kh', purpose: 'general', team_flow_room_key: 'general', unread_count: 6, working: true, member_count: 5 }),
       room('rm_route', 'prj_a', 'routing', { parent_id: 'rm_kh', purpose: 'general', restricted: true, team_flow_room_key: 'routing' }),
       room('rm_dm2', 'prj_a', 'ada', { kind: 'dm', purpose: 'task', unread_count: 2, member_count: 2 })];
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': kindRooms, 'GET /api/projects/prj_b/rooms': [], 'GET /api/projects/prj_c/rooms': [], 'GET /api/agent-dms': { project_id: 'prj_agentdm', rooms: [room('rm_chat2', 'prj_agentdm', 'ada & bert', { kind: 'dm', agent_chat: true, unread_count: 1 })], joinable: [] } }) });
@@ -1493,7 +1493,7 @@ async function main() {
     const mixed = [room('rm_oh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }),
       room('rm_ot', 'prj_a', 'zz-task', { parent_id: 'rm_oh', purpose: 'task' }), room('rm_oa', 'prj_a', 'advice', { parent_id: 'rm_oh', purpose: 'general', team_flow_room_key: 'advice' }),
       room('rm_or', 'prj_a', 'routing', { parent_id: 'rm_oh', purpose: 'general', team_flow_room_key: 'routing' }), room('rm_orr', 'prj_a', 'aa-research', { parent_id: 'rm_oh', purpose: 'research' }),
-      room('rm_og', 'prj_a', 'general', { parent_id: 'rm_oh', purpose: 'general', unread_count: 4 })];
+      room('rm_og', 'prj_a', 'general', { parent_id: 'rm_oh', purpose: 'general', team_flow_room_key: 'general', unread_count: 4 })];
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': mixed }) });
     await settle(page);
     await page.evaluate(() => { const group = document.querySelector('[data-room-id=rm_oh]'); if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse').click(); });
@@ -1508,6 +1508,15 @@ async function main() {
       assert.equal(await lone.$$eval('.room-divider', nodes => nodes.length), 0, `no divider with ${name} rooms`);
       await lone.close();
     }
+    // The advice flow (home, advice, general): the server marks advice with purpose general too, so only the general flow key puts general first.
+    const advised = [room('rm_oh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }), room('rm_ot', 'prj_a', 'zz-task', { parent_id: 'rm_oh', purpose: 'task' }),
+      room('rm_oa', 'prj_a', 'advice', { parent_id: 'rm_oh', purpose: 'general', restricted: true, team_flow_room_key: 'advice' }),
+      room('rm_og', 'prj_a', 'general', { parent_id: 'rm_oh', purpose: 'general', team_flow_room_key: 'general' })];
+    const advice = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': advised }) });
+    await settle(advice);
+    await advice.evaluate(() => { const group = document.querySelector('[data-room-id=rm_oh]'); if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse').click(); });
+    assert.deepEqual((await advice.evaluate(order)).ids, ['rm_og', 'rm_oa', 'DIVIDER', 'rm_ot'], 'the advice flow lists general before advice');
+    await advice.close();
   }
 
   // Marking a task room read keeps its addressed count in step with the server's answer.
