@@ -142,11 +142,11 @@ server, and turning a toggle off closes what it had opened.
   that draws "Runs out in …", from `pace.eta_seconds`), the Inbox gets one
   notice per risk episode, with the window, the remaining share and the reset
   time. The episode closes when the window is again projected to last until
-  its reset (or the toggle goes off). The first episode of a reset cycle
-  raises at once; after a recovery in the same cycle it re-arms only once
-  the window has been continuously at risk for ten minutes (a safe reading
-  restarts that clock), so a jittery projection cannot flip the alert back
-  on. A new reset cycle closes and re-arms it too.
+  its reset (or the toggle goes off). An episode raises only once the
+  window has been continuously at risk for ten minutes (a safe reading
+  restarts that clock), the first episode of a reset cycle included, so a
+  data-poor first reading or a jittery projection cannot raise or flip the
+  alert. A new reset cycle closes it and restarts that clock.
 - **Reset notices**: one notice per provider, profile and window when a
   new reset cycle is observed (never for the very first observation). A
   fresh allowance is good news, not a task, so it never enters the Inbox:

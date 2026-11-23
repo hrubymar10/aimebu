@@ -435,7 +435,9 @@ func TestUsageResetNoticeIsNoOpenInboxItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracker, err := usages.NewAlertTracker(root)
+	// A controllable clock: a pace alert needs ten minutes of continuous risk.
+	clock := time.Now().UTC()
+	tracker, err := usages.NewAlertTracker(root, func() time.Time { return clock })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,6 +464,13 @@ func TestUsageResetNoticeIsNoOpenInboxItem(t *testing.T) {
 		Pace: &usages.Pace{ExpectedPercent: 40, DeltaPercent: 45, State: "deficit", EtaSeconds: &eta}}
 	if changed, err := tracker.Observe(snapshot); err != nil || !changed {
 		t.Fatalf("new cycle: %v %v", changed, err)
+	}
+	// Still at risk after the hysteresis: the pace alert raises.
+	clock = clock.Add(11 * time.Minute)
+	afterHysteresis := later.Add(11 * time.Minute)
+	profile.LastRefreshAt = &afterHysteresis
+	if _, err := tracker.Observe(snapshot); err != nil {
+		t.Fatal(err)
 	}
 	resp := f.requestAs(t, f.cookie, f.csrf, http.MethodGet, "/api/inbox", nil)
 	defer resp.Body.Close()

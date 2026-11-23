@@ -54,9 +54,9 @@ type alertWindow struct {
 	Critical    bool      `json:"critical"`
 	// Pace records that a pace alert is open for this window and cycle; it
 	// clears on recovery (the window is again projected to last until its
-	// reset). Recovered records that a recovery happened in this cycle, so a
-	// re-raise waits for the hysteresis; RiskSince is the start of the
-	// current at-risk run (zero while the window is safe), and a re-raise
+	// reset). Recovered records that a recovery happened in this cycle
+	// (informational: every raise now waits for the hysteresis); RiskSince is the start of the
+	// current at-risk run (zero while the window is safe), and a raise
 	// needs the window continuously at risk for paceHysteresis.
 	Pace      bool      `json:"pace,omitempty"`
 	Recovered bool      `json:"pace_recovered,omitempty"`
@@ -70,9 +70,10 @@ type alertWindow struct {
 // then the next observation drops it.
 const resetNoticeTTL = time.Hour
 
-// paceHysteresis is how long a window must stay continuously at risk after a
-// recovery before its pace alert re-arms, so one jittery reading cannot flip
-// the episode back and forth. The first episode of a cycle raises at once.
+// paceHysteresis is how long a window must stay continuously at risk before
+// its pace alert raises (the first episode of a cycle and every re-arm after
+// a recovery alike), so a data-poor first reading or one jittery projection
+// cannot raise or flip the episode.
 const paceHysteresis = 10 * time.Minute
 
 // resetDropPoints is the fall in used percent that marks a reset even while
@@ -312,10 +313,10 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 					if state.RiskSince.IsZero() {
 						state.RiskSince = t.clock()
 					}
-					// The first episode of a cycle raises at once; a re-arm
-					// after a recovery needs the window continuously at risk
-					// for the hysteresis.
-					if !state.Pace && (!state.Recovered || t.clock().Sub(state.RiskSince) >= paceHysteresis) {
+					// Every episode, the first of a cycle included, needs the
+					// window continuously at risk for the hysteresis: a first
+					// reading is data-poor and its projection unreliable.
+					if !state.Pace && t.clock().Sub(state.RiskSince) >= paceHysteresis {
 						state.Pace = true
 						t.addAlert(base, cycle, profile.AlertCredential, provider.ProviderName, profile.ProfileName, window, "pace", remaining)
 						visibleChanged = true

@@ -418,6 +418,11 @@ func TestPaceAlertFiresPerEpisodeAndRearmsAfterRecovery(t *testing.T) {
 			t.Fatalf("observe: created=%v error=%v, want %v", got, err, want)
 		}
 	}
+	observe(false) // the first risky reading is data-poor: no alert yet
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("the first risky reading must not raise: %+v", got)
+	}
+	now = now.Add(11 * time.Minute)
 	observe(true)
 	open := tracker.OpenAlerts()
 	if len(open) != 1 || open[0].Tier != "pace" || open[0].Provider != "codex" || open[0].Window != "session" {
@@ -609,6 +614,11 @@ func TestAlertTogglesCloseOpenAlertsWithoutARefresh(t *testing.T) {
 			Windows: []Window{{Key: "session", PercentUsed: 70, ResetAt: &reset,
 				Pace: &Pace{ExpectedPercent: 40, DeltaPercent: 30, State: "deficit", EtaSeconds: &etaSeconds}}}}}}}}
 	response.Settings.AlertPaceEnabled = true
+	if _, err := tracker.Observe(response); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(11 * time.Minute) // the hysteresis: the first risky reading does not raise
+	response.Providers[0].Profiles[0].LastRefreshAt = &now
 	if changed, err := tracker.Observe(response); err != nil || !changed {
 		t.Fatalf("initial: %v %v", changed, err)
 	}
@@ -724,6 +734,8 @@ func TestPaceAlertOffThenOnCanRaiseAgain(t *testing.T) {
 			t.Fatalf("observe: created=%v error=%v, want %v", got, err, want)
 		}
 	}
+	observe(false)
+	now = now.Add(11 * time.Minute)
 	observe(true)
 	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "pace" {
 		t.Fatalf("pace alert: %+v", got)
@@ -733,8 +745,10 @@ func TestPaceAlertOffThenOnCanRaiseAgain(t *testing.T) {
 	if got := tracker.OpenAlerts(); len(got) != 0 {
 		t.Fatalf("off closes: %+v", got)
 	}
-	// On again during the same ongoing episode: it can raise again.
+	// On again during the same ongoing episode: it can raise again, after the hysteresis.
 	response.Settings.AlertPaceEnabled = true
+	observe(false)
+	now = now.Add(11 * time.Minute)
 	observe(true)
 	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].Tier != "pace" {
 		t.Fatalf("re-enabling during an episode must raise again: %+v", got)
@@ -768,8 +782,8 @@ func TestExpiryAlertOnlyOnTheTokenCopyModel(t *testing.T) {
 	}
 }
 
-// The re-arm after a recovery needs the window continuously at risk for the
-// hysteresis, however short its time-to-full is; a safe reading restarts the
+// Every raise, the first episode of a cycle included, needs the window
+// continuously at risk for the hysteresis, however short its time-to-full is; a safe reading restarts the
 // clock, and one risky reading long after the recovery does not raise.
 func TestPaceAlertRearmNeedsSustainedRisk(t *testing.T) {
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
@@ -801,7 +815,11 @@ func TestPaceAlertRearmNeedsSustainedRisk(t *testing.T) {
 		}
 	}
 	observe(time.Minute, risk)
-	open(1, "the first episode raises at once")
+	open(0, "the first risky reading must not raise")
+	observe(9*time.Minute, risk)
+	open(0, "9 minutes at risk is under the hysteresis")
+	observe(2*time.Minute, risk)
+	open(1, "11 sustained minutes raise the first episode")
 	observe(time.Minute, safe)
 	open(0, "recovery closes")
 	observe(time.Hour, risk) // one risky reading long after the recovery
@@ -1002,5 +1020,37 @@ func TestResetNoticeIsNotAnInboxAlertAndExpires(t *testing.T) {
 	}
 	if _, kept := tracker.state.Alerts[legacy.ID]; kept {
 		t.Fatal("the next usage refresh closes a stored reset notice")
+	}
+}
+
+// A first risky reading that recovers before the hysteresis never alerts.
+func TestPaceAlertFirstReadingRecoversBeforeHysteresis(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	eta := (2 * time.Hour).Seconds()
+	risk := &Pace{State: "deficit", EtaSeconds: &eta}
+	safe := &Pace{State: "reserve", LastsToReset: true}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", Email: "one@example.test", Status: "ok", LastRefreshAt: &now,
+			Windows: []Window{{Key: "session", PercentUsed: 2, ResetAt: &reset, Pace: risk}}}}}}}
+	response.Settings.AlertPaceEnabled = true
+	observe := func(after time.Duration, pace *Pace) {
+		t.Helper()
+		now = now.Add(after)
+		response.Providers[0].Profiles[0].LastRefreshAt = &now
+		response.Providers[0].Profiles[0].Windows[0].Pace = pace
+		if _, err := tracker.Observe(response); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe(0, risk) // t0
+	observe(5*time.Minute, safe)
+	observe(6*time.Minute, risk) // 11 minutes since t0, but the run restarted
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("a recovered first reading must not alert: %+v", got)
 	}
 }
