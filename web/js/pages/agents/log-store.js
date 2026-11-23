@@ -1,7 +1,8 @@
 import { signal } from '../../ui.js';
-import { FOLLOW_FALLBACK_MS, FOLLOW_GAP_MS, LINES_DEFAULT, clampLines, followEvent, lastLines, logFailure, logStatus, nextReadAt, retryAfterMs, stripAnsi } from './log-model.js';
+import { FOLLOW_FALLBACK_MS, FOLLOW_GAP_MS, LINES_DEFAULT, STREAM_DEFAULT, clampLines, conversationTail, followEvent, lastLines, logFailure, logStatus, nextReadAt, retryAfterMs, streamOf, stripAnsi } from './log-model.js';
 
-// The agent log popup's state: which agent it shows, the lines asked for, Follow, and the text of the last read. Reads go through the
+// The agent log popup's state: which agent it shows, which of its two logs (the conversation first, stderr second), the lines asked for, Follow,
+// and the text of the last read. Reads go through the
 // source's shared reader (agent-output-share.js). Follow reads again when an event of the agent arrives (at most once in FOLLOW_GAP_MS), every
 // FOLLOW_FALLBACK_MS while the agent is in a turn, never while the tab is hidden, and after a 429 not before its Retry-After. Every read carries
 // a ticket: opening, closing and a change of lines take a new one, so an answer for an earlier one draws nothing.
@@ -21,7 +22,7 @@ export class LogStore {
 
   open(agentID) {
     this.stopTimers(); this.ticket++;
-    this.state.value = { agentID, lines: LINES_DEFAULT, follow: false, text: '', raw: '', status: '', loading: false, updatedAt: '', readAt: 0 };
+    this.state.value = { agentID, stream: STREAM_DEFAULT, lines: LINES_DEFAULT, follow: false, text: '', raw: '', status: '', loading: false, updatedAt: '', readAt: 0 };
     void this.read();
   }
 
@@ -37,6 +38,17 @@ export class LogStore {
     if (lines === state.lines) return;
     this.ticket++;
     this.state.value = { ...state, lines };
+    void this.read();
+  }
+
+  // The stream switch: the other log is another text, so what is shown goes and the new one is read at once. Follow stays as it is.
+  setStream(value) {
+    const state = this.state.peek();
+    if (!state) return;
+    const stream = streamOf(value);
+    if (stream === streamOf(state.stream)) return;
+    this.ticket++;
+    this.state.value = { ...state, stream, text: '', raw: '', status: '' };
     void this.read();
   }
 
@@ -101,8 +113,10 @@ export class LogStore {
     this.armFallback();
     this.patch(ticket, { loading: true });
     try {
-      const view = await this.source.readOutput(roomID, state.agentID, state.lines, { fresh });
-      const raw = view?.text || '', text = stripAnsi(lastLines(raw, this.state.peek()?.lines || state.lines));
+      const stream = streamOf(state.stream), shown = this.state.peek()?.lines || state.lines;
+      const view = await this.source.readOutput(roomID, state.agentID, state.lines, { fresh, stream });
+      // A conversation's tail begins at a record, so it may hold more lines than were asked for; it is never cut inside one here either.
+      const raw = view?.text || '', text = stripAnsi(stream === 'conversation' ? conversationTail(raw, shown) : lastLines(raw, shown));
       this.patch(ticket, { raw, text, status: logStatus({ ...view, text }), updatedAt: view?.updated_at || '', readAt: this.now() });
     } catch (error) {
       if (error?.status === 429) {

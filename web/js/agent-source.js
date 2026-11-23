@@ -1,5 +1,8 @@
 import { request, currentUser } from './api.js';
 import { OutputShare } from './agent-output-share.js';
+
+// What stands between an agent's id and a stream in the shared reader's key (an id has no space in it).
+const STREAM_KEY = ' ';
 import { uuid } from './uuid.js';
 
 export class MockAgentSource {
@@ -14,7 +17,7 @@ export class MockAgentSource {
     return [...this.agents.values()].filter(agent => agent.room_id === roomID).map(agent => ({ ...agent }));
   }
   async output() { throw Object.assign(new Error('no output has been captured for this agent'), { status: 404, code: 'no_output' }); }
-  readOutput(roomID, agentID, lines) { return this.output(roomID, agentID, lines); }
+  readOutput(roomID, agentID, lines, options = {}) { return this.output(roomID, agentID, lines, options.stream); }
   async catalog() { return { tools: [
     { tool: 'fake', variant: 'test', label: 'Fake', cli_version: 'fixture-1', models: [{ id: 'test', label: 'Test' }, { id: 'fake-reviewer', label: 'Fake reviewer' }], available: true },
     { tool: 'claude', variant: 'native', label: 'Claude Code', cli_version: '', models: [{ id: 'haiku', label: 'Haiku' }], available: false, unavailable_reason: 'not offered by a connected machine' },
@@ -84,7 +87,7 @@ export class HttpAgentSource {
   constructor() {
     this.available = true; this.agents = new Map(); this.activity = new Map(); this.listeners = new Set();
     let channel = null; try { channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('aimebu-agent-output') : null; } catch { channel = null; }
-    this.outputShare = new OutputShare({ fetch: (roomID, agentID, lines) => this.output(roomID, agentID, lines), channel, user: () => currentUser || '' });
+    this.outputShare = new OutputShare({ fetch: (roomID, key, lines) => { const [agentID, stream] = String(key).split(STREAM_KEY); return this.output(roomID, agentID, lines, stream || 'stderr'); }, channel, user: () => currentUser || '' });
   }
   normalize(agent) { const activity = this.activity.get(agent.id); return { ...agent, name: agent.slug, role: agent.role_key, activity: activity?.summary || '', activity_at: activity?.at || agent.last_activity_at || '' }; }
   catalog(machineID) { return request('/api/spawn-catalog' + (machineID ? `?machine_id=${encodeURIComponent(machineID)}` : '')); }
@@ -94,11 +97,16 @@ export class HttpAgentSource {
   async homeLeadOnly(projectID) { return (await request(`/api/projects/${encodeURIComponent(projectID)}/settings`)).home_lead_only !== false; }
   async reviewerAgentsEnabled(projectID) { return (await request(`/api/projects/${encodeURIComponent(projectID)}/settings`)).reviewer_agents_enabled !== false; }
   // The end of what an agent's harness wrote to stderr, for a project's owner or an admin (the server refuses anyone else).
-  async output(roomID, agentID, lines = 200) {
-    return request(`/api/rooms/${encodeURIComponent(roomID)}/agents/${encodeURIComponent(agentID)}/output?lines=${encodeURIComponent(lines)}`);
+  // `stream` is 'stderr' (the default, and what the request says when it names none) or 'conversation': the agent's conversation log.
+  async output(roomID, agentID, lines = 200, stream = 'stderr') {
+    return request(`/api/rooms/${encodeURIComponent(roomID)}/agents/${encodeURIComponent(agentID)}/output?lines=${encodeURIComponent(lines)}${stream === 'conversation' ? '&stream=conversation' : ''}`);
   }
   // The same read, shared with a read already out in this tab or another (agent-output-share.js); `fresh` lets a follow read take an answer that recent.
-  readOutput(roomID, agentID, lines, options) { return this.outputShare.read(roomID, agentID, lines, options); }
+  // The two streams of an agent are shared apart: the reader's key is the agent for stderr (as a tab of an older build names it) and the agent
+  // with the stream for a conversation, so an answer for one never stands in for the other.
+  readOutput(roomID, agentID, lines, { stream = 'stderr', ...options } = {}) {
+    return this.outputShare.read(roomID, stream === 'conversation' ? `${agentID}${STREAM_KEY}conversation` : agentID, lines, options);
+  }
   async list(roomID) {
     try {
       const cards = await request(`/api/rooms/${roomID}/agents`);

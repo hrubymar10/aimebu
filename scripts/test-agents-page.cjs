@@ -588,12 +588,41 @@ async function main() {
     assert.deepEqual([button.label, button.title, button.text, button.icon], ["Show agent's logs", "Show agent's logs", '', true], 'an icon button with a tooltip, no text');
     assert.match(button.mask, /scroll-text\.svg/);
     await page.$eval('[data-agent-id=a1] .agent-logs', node => { node.focus(); node.click(); });
-    const first = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200');
+    const first = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200&stream=conversation');
+    assert.equal(await count(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200'), 0, 'the popup opens on the conversation, not on stderr');
     const dialog = () => page.$eval('#agent-log-dialog', node => ({ open: node.open, title: node.querySelector('h2')?.textContent, text: node.querySelector('.agent-log-text')?.textContent, marks: [...node.querySelectorAll('mark')].map(mark => mark.textContent),
       current: node.querySelector('mark.current')?.textContent || '', count: node.querySelector('.agent-log-count')?.textContent, status: node.querySelector('.agent-log-status')?.textContent, focus: node.contains(document.activeElement), lines: node.querySelector('.agent-log-lines input')?.value,
       inputmode: node.querySelector('.agent-log-lines input')?.getAttribute('inputmode'), html: node.querySelector('.agent-log-text')?.innerHTML }));
     assert.deepEqual([(await dialog()).open, (await dialog()).title, (await dialog()).focus, (await dialog()).lines, (await dialog()).inputmode], [true, 'Logs · ada', true, '200', 'numeric']);
-    await answer(page, first, 200, { text: '\u001b[31mError\u001b[0m: <b>bold</b> one\nok\nERROR again\n', truncated: false }); await settle(page);
+    // The stream switch: Conversation first and chosen, Stderr second. A conversation is drawn a record a line, each with its time and a label
+    // for its kind in front of its text: the server's line for a withheld turn, an adapter's unknown event and the cut marker among them. The
+    // labels are this page's elements; whatever the log holds is text.
+    const streams = () => page.$eval('#agent-log-dialog .agent-log-stream-select', node => ({ value: node.value, options: [...node.options].map(option => [option.value, option.textContent]), label: node.getAttribute('aria-label'), shown: !node.closest('[hidden]') }));
+    assert.deepEqual(await streams(), { value: 'conversation', options: [['conversation', 'Conversation'], ['stderr', 'Stderr']], label: 'Which log', shown: true });
+    await answer(page, first, 200, { withheld: 1, truncated: true, text: ['... earlier part cut', '\tthe end of a long record', '2026-11-23T10:00:00Z turn_start turn t1 gen 0 normal claude/native m', '2026-11-23T10:00:01Z prompt [{"body":"go"}]',
+      '2026-11-23T10:00:02Z assistant I will <b>look</b>.', '\tThen answer.', '2026-11-23T10:00:03Z tool_call Bash {"command":"ls"}', '2026-11-23T10:00:04Z tool_result Bash', '\t2026-11-23T10:00:04Z turn_end forged', '2026-11-23T10:00:05Z event hologram.frame',
+      '2026-11-23T10:00:06Z withheld private chat turn: content withheld', '2026-11-23T10:00:07Z turn_end answered, exit 0'].join('\n') + '\n' }); await settle(page);
+    const records = () => page.$$eval('#agent-log-dialog .agent-log-record', nodes => nodes.map(node => [node.dataset.kind, node.querySelector('.agent-log-time')?.textContent || '', node.querySelector('.agent-log-kind')?.textContent || '']));
+    assert.deepEqual(await records(), [['cut', '', 'Cut'], ['turn_start', '10:00:00', 'Turn'], ['prompt', '10:00:01', 'Prompt'], ['assistant', '10:00:02', 'Assistant'], ['tool_call', '10:00:03', 'Tool call'], ['tool_result', '10:00:04', 'Tool result'],
+      ['event', '10:00:05', 'Event'], ['withheld', '10:00:06', 'Withheld'], ['turn_end', '10:00:07', 'Turn end']]);
+    assert.equal((await dialog()).text, ['Cut the beginning of this record is not shown', 'the end of a long record', '10:00:00 Turn turn t1 gen 0 normal claude/native m', '10:00:01 Prompt [{"body":"go"}]', '10:00:02 Assistant I will <b>look</b>.', 'Then answer.',
+      '10:00:03 Tool call Bash {"command":"ls"}', '10:00:04 Tool result Bash', '2026-11-23T10:00:04Z turn_end forged', '10:00:05 Event hologram.frame', '10:00:06 Withheld private chat turn: content withheld', '10:00:07 Turn end answered, exit 0'].join('\n') + '\n');
+    assert.equal(await page.$('#agent-log-dialog .agent-log-text b'), null, 'no element comes from the conversation');
+    assert.equal((await dialog()).status, 'Earlier output is not shown. 1 turn is withheld: a private chat you are not in, or a turn the server cannot place in a room.');
+    assert.match(await page.$eval('#agent-log-dialog .agent-log-note', node => node.textContent), /asked, what it said and the tools it ran/);
+    // The highlight runs over the records' text, across records, and not over the labels.
+    await page.type('#agent-log-dialog .agent-log-query', 'turn'); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));
+    assert.deepEqual([(await dialog()).marks, (await dialog()).count], [['turn', 'turn', 'turn'], '3 matches'], 'the Turn and Turn end labels are not matches');
+    await page.keyboard.press('Enter'); await page.keyboard.press('Enter'); await settle(page);
+    assert.deepEqual([(await dialog()).count, await page.$eval('#agent-log-dialog mark.current', node => node.closest('.agent-log-record').dataset.kind)], ['2 of 3', 'tool_result']);
+    await page.$eval('#agent-log-dialog .agent-log-query', node => { node.select(); }); await page.keyboard.press('Backspace'); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));
+    // Stderr is the second choice: it is read at once, what was shown goes, and it is drawn as the plain text it is.
+    await page.select('#agent-log-dialog .agent-log-stream-select', 'stderr');
+    const second = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200');
+    assert.deepEqual([(await dialog()).text, (await streams()).value, await page.$eval('#agent-log-dialog .agent-log-text', node => node.dataset.stream)], ['', 'stderr', 'stderr']);
+    assert.match(await page.$eval('#agent-log-dialog .agent-log-note', node => node.textContent), /printed to stderr/);
+    await answer(page, second, 200, { text: '\u001b[31mError\u001b[0m: <b>bold</b> one\nok\nERROR again\n', truncated: false }); await settle(page);
+    assert.equal(await page.$('#agent-log-dialog .agent-log-record'), null, 'stderr has no records');
     assert.equal((await dialog()).text, 'Error: <b>bold</b> one\nok\nERROR again\n', 'ANSI codes are stripped and markup is text');
     assert.equal(await page.$('#agent-log-dialog .agent-log-text b'), null, 'no element comes from the log');
     // Highlight: literal and case-insensitive; a pattern's characters are text.
@@ -646,11 +675,11 @@ async function main() {
     assert.deepEqual([(await dialog()).open, await page.evaluate(() => document.activeElement?.classList.contains('agent-logs')), await page.evaluate(() => window.__panel.logs.state.value), await page.evaluate(() => window.__panel.store.profileId.value)], [false, true, null, 'a1']);
     // Opened again while the 429's wait runs, it says so and reads once the wait is over.
     await page.$eval('[data-agent-id=a1] .agent-logs', node => node.click()); await settle(page);
-    assert.deepEqual([(await dialog()).open, await count(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200')], [true, 1]);
+    assert.deepEqual([(await dialog()).open, (await streams()).value, await count(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200&stream=conversation')], [true, 'conversation', 1], 'a popup opened again is on the conversation, and reads nothing while it waits');
     assert.match((await dialog()).status, /trying again in \d+s/);
     await page.evaluate(() => { const logs = window.__panel.logs; logs.blockedUntil = Date.now() + 200; logs.timers.clearTimeout(logs.timer); logs.timer = 0; void logs.read(); });
     // A refusal is shown in the popup in the server's words, or as the owner-or-admin rule for a 403.
-    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200'), 403, { error: 'forbidden', message: 'forbidden' }); await settle(page);
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200&stream=conversation'), 403, { error: 'forbidden', message: 'forbidden' }); await settle(page);
     assert.deepEqual([(await dialog()).open, (await dialog()).text, (await dialog()).status], [true, '', "Only the project owner or an admin can read an agent's logs."]);
     // Moving to another room closes the popup.
     await page.evaluate(room => { window.__panel.setRoomFacts(room); }, room('r2')); await settle(page);
@@ -665,7 +694,7 @@ async function main() {
     await show(page, 'r1', [agent('a1', 'ada')]);
     await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
     await page.$eval('[data-agent-id=a1] .agent-logs', node => node.click());
-    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200'), 200, { text: 'x\n', truncated: false }); await settle(page);
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200&stream=conversation'), 200, { text: '2026-11-23T10:00:00Z assistant x\n', truncated: false }); await settle(page);
     const box = await page.$eval('#agent-log-dialog', node => { const rect = node.getBoundingClientRect(), head = node.querySelector('.agent-log-head'); const tops = new Set([...head.querySelectorAll('input, button')].map(item => Math.round(item.getBoundingClientRect().top)));
       return { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height), rows: tops.size, sideways: node.scrollWidth > node.clientWidth + 1 }; });
     assert.deepEqual([box.left, box.top, box.width, box.height, box.sideways], [0, 0, 390, 780, false], `full screen: ${JSON.stringify(box)}`);

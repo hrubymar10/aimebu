@@ -10,7 +10,8 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', 'web', 'js', fil
 const strip = source => source.replace(/^import .*$/gm, '').replace(/^export /gm, '');
 const context = vm.createContext({ Date, Number, Math, JSON, Map, Set, Object, Array, String, RegExp, Promise, Error, queueMicrotask });
 vm.runInContext(`${strip(read('pages/agents/log-model.js'))}
-globalThis.model = { LINES_MIN, LINES_MAX, LINES_DEFAULT, MARK_CAP, HIGHLIGHT_MS, FOLLOW_GAP_MS, FOLLOW_FALLBACK_MS, RETRY_DEFAULT_MS, clampLines, stripAnsi, lastLines, escapeRegExp, highlightParts, matchLabel, stepMatch, nextReadAt, retryAfterMs, followEvent, atBottom, logStatus, logFailure };
+globalThis.model = { LINES_MIN, LINES_MAX, LINES_DEFAULT, MARK_CAP, HIGHLIGHT_MS, FOLLOW_GAP_MS, FOLLOW_FALLBACK_MS, RETRY_DEFAULT_MS, clampLines, stripAnsi, lastLines, escapeRegExp, highlightParts, matchLabel, stepMatch, nextReadAt, retryAfterMs, followEvent, atBottom, logStatus, logFailure,
+  STREAMS, STREAM_DEFAULT, streamOf, KIND_LABELS, CUT_MARKER, conversationRecords, conversationTail, logBlocks, highlightBlocks, streamNote };
 ${strip(read('agent-output-share.js'))}
 globalThis.OutputShare = OutputShare; globalThis.REMOTE_WAIT_MS = REMOTE_WAIT_MS;
 const signal = value => ({ value, peek() { return this.value; } });
@@ -52,6 +53,43 @@ assert.deepEqual([many.count, many.capped, many.parts.filter(part => part.mark).
 assert.equal(m.highlightParts('ab '.repeat(2000), 'ab').capped, false, 'exactly the cap is not more than the cap');
 assert.deepEqual([m.matchLabel(many, 'ab'), m.matchLabel({ count: 0 }, 'x'), m.matchLabel({ count: 1 }, 'x'), m.matchLabel({ count: 4 }, 'x'), m.matchLabel({ count: 4 }, 'x', 2), m.matchLabel({ count: 4 }, '')],
   ['2000+ matches', 'No matches', '1 match', '4 matches', '3 of 4', '']);
+// The streams: the conversation first, stderr second; anything else is the default.
+assert.deepEqual([plain(m.STREAMS).map(stream => stream.id), m.STREAM_DEFAULT, m.streamOf('stderr'), m.streamOf('conversation'), m.streamOf(''), m.streamOf('stdout')],
+  [['conversation', 'stderr'], 'conversation', 'stderr', 'conversation', 'conversation', 'conversation']);
+assert.notEqual(m.streamNote('conversation'), m.streamNote('stderr'));
+
+// A conversation as records: the time and kind of each first line, the tab-indented lines as the rest of its text, a label for every kind the
+// log has (the server's withheld line and an adapter's unknown event among them), the cut marker as a record of its own, and nothing dropped.
+{
+  const log = ['2026-11-23T10:00:00Z turn_start turn t1 gen 0 normal claude/native m', '2026-11-23T10:00:01Z prompt [{"body":"go"}]', '2026-11-23T10:00:02Z assistant I will look.', '\t', '\tThen answer.',
+    '2026-11-23T10:00:03Z tool_call Bash {"command":"ls"}', '2026-11-23T10:00:04Z tool_result Bash (failed)', '\t2026-11-23T10:00:04Z turn_end forged in output', '\t<b>bold</b>',
+    '2026-11-23T10:00:05Z thinking hm', '2026-11-23T10:00:06Z error boom', '2026-11-23T10:00:07Z event hologram.frame', '2026-11-23T10:00:08Z withheld private chat turn: content withheld',
+    '2026-11-23T10:00:09Z brand_new something', '2026-11-23T10:00:10Z turn_end answered, exit 0', '2026-11-23T10:00:11Z turn_end'].join('\n') + '\n';
+  const records = plain(m.conversationRecords(log));
+  assert.deepEqual(records.map(record => record.label), ['Turn', 'Prompt', 'Assistant', 'Tool call', 'Tool result', 'Thinking', 'Error', 'Event', 'Withheld', 'brand new', 'Turn end', 'Turn end']);
+  assert.deepEqual(records[2], { kind: 'assistant', label: 'Assistant', clock: '10:00:02', text: 'I will look.\n\nThen answer.' });
+  assert.equal(records[4].text, 'Bash (failed)\n2026-11-23T10:00:04Z turn_end forged in output\n<b>bold</b>', 'a line of a tool\'s output is never a record, and markup is text');
+  assert.equal(records[11].text, '', 'a record with no text');
+  assert.deepEqual(plain(m.conversationRecords(`${m.CUT_MARKER}\n\tend of a long record\n\tits last line\n2026-11-23T10:00:00Z assistant next\n`)).map(record => [record.kind, record.label, record.text]),
+    [['cut', 'Cut', 'the beginning of this record is not shown\nend of a long record\nits last line'], ['assistant', 'Assistant', 'next']]);
+  assert.deepEqual(plain(m.conversationRecords('not in the format\nstill not\n\ttabbed\n2026-11-23T10:00:00Z assistant ok')).map(record => [record.kind, record.text]), [['', 'not in the format\nstill not\ntabbed'], ['assistant', 'ok']], 'lines in no format are kept as text');
+  assert.deepEqual(plain(m.conversationRecords('')), []);
+  // The tail of a longer answer begins at a record.
+  assert.equal(m.conversationTail('h1 x\n\ta\n\tb\nh2 y\n\tc\n', 2), 'h2 y\n\tc\n');
+  assert.equal(m.conversationTail('h1 x\n\ta\n\tb\n\tc\n', 2), 'h1 x\n\ta\n\tb\n\tc\n', 'a cut inside a record goes back to its first line');
+  assert.equal(m.conversationTail('h1 x\n\ta\n', 9), 'h1 x\n\ta\n');
+  // Blocks: stderr is one plain block, a conversation one per record; the highlight counts and caps across all of them.
+  assert.deepEqual(plain(m.logBlocks('a\nb\n', 'stderr')), [{ kind: '', label: '', clock: '', text: 'a\nb\n', plain: true }]);
+  assert.deepEqual(plain(m.logBlocks('', 'stderr')), []);
+  assert.equal(m.logBlocks(log, 'conversation').length, 12);
+  const found = m.highlightBlocks(m.logBlocks(log, 'conversation'), 'TURN');
+  assert.deepEqual([found.count, found.capped, plain(found.blocks[0].parts)], [3, false, [{ text: 'turn', mark: true }, { text: ' t1 gen 0 normal claude/native m', mark: false }]], 'the label is not part of the text that is searched');
+  const capped = m.highlightBlocks(m.logBlocks(log, 'conversation'), 'o', 4);
+  assert.deepEqual([capped.count, capped.capped, capped.blocks.reduce((sum, block) => sum + block.parts.filter(part => part.mark).length, 0)], [4, true, 4]);
+  assert.equal(m.highlightBlocks(m.logBlocks(log, 'conversation'), '').count, 0);
+  assert.equal(m.logStatus({ text: 'x', withheld: 1 }), '1 turn is withheld: a private chat you are not in, or a turn the server cannot place in a room.');
+}
+
 // Enter goes to the next match and Shift+Enter to the previous one, wrapping.
 assert.deepEqual([m.stepMatch(-1, 3, 1), m.stepMatch(-1, 3, -1), m.stepMatch(0, 3, 1), m.stepMatch(2, 3, 1), m.stepMatch(0, 3, -1), m.stepMatch(0, 0, 1)], [0, 2, 1, 0, 2, -1]);
 
@@ -150,13 +188,14 @@ function channels() {
     const agents = new Map([['a1', { id: 'a1', observed: 'in_turn' }]]);
     const source = {
       subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); },
-      readOutput: (room, agent, lines, options) => { reads.push({ at: time.now(), lines, fresh: options.fresh }); const answer = answers.shift(); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer || { text: `t${reads.length}\n` }); },
+      readOutput: (room, agent, lines, options) => { reads.push({ at: time.now(), lines, fresh: options.fresh, stream: options.stream }); const answer = answers.shift(); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer || { text: `t${reads.length}\n` }); },
     };
     const emit = event => { for (const fn of listeners) fn(event); };
     const store = new context.LogStore({ source, roomID: () => 'r1', agent: id => agents.get(id), now: time.now, timers: time, doc });
     answers.push({ text: '\u001b[31ma\u001b[0m\nb\nc\n', truncated: true, updated_at: 'u' });
     store.open('a1'); await flush();
-    assert.deepEqual(reads.map(read => read.lines), [200]);
+    assert.deepEqual(reads.map(read => [read.lines, read.stream]), [[200, 'conversation']], 'the popup opens on the conversation');
+    assert.equal(store.state.value.stream, 'conversation');
     assert.deepEqual([store.state.value.text, store.state.value.status, store.state.value.loading], ['a\nb\nc\n', 'Earlier output is not shown.', false], 'ANSI is stripped and the status says what was cut');
     emit({ kind: 'turn_finished', agent_id: 'a1' }); await flush(); assert.equal(reads.length, 1, 'without Follow an event reads nothing');
     store.setLines('400'); await flush(); assert.deepEqual(reads.map(read => read.lines), [200, 400], 'a new number of lines reads again');
@@ -183,6 +222,24 @@ function channels() {
     const blockedAt = time.now();
     emit({ kind: 'turn_ack_started', agent_id: 'a1' }); await time.advance(59000); assert.equal(reads.length, 7, 'no read during the wait');
     await time.advance(2000); assert.equal(reads.length, 8); assert.ok(reads[7].at - blockedAt >= 60000, 'the read waits the whole Retry-After');
+    // The stream switch: the other log is read at once and what was shown goes; the same stream again reads nothing; Follow stays on.
+    {
+      const at = reads.length;
+      answers.push({ text: 'stderr text\n' });
+      store.setStream('stderr');
+      assert.deepEqual([store.state.value.stream, store.state.value.text, store.state.value.follow], ['stderr', '', true], 'the conversation is not left under the stderr switch');
+      await flush();
+      assert.deepEqual([reads.length - at, reads[at].stream, store.state.value.text], [1, 'stderr', 'stderr text\n']);
+      store.setStream('stderr'); await flush(); assert.equal(reads.length - at, 1, 'the same stream does not read again');
+      // A conversation longer than the lines shown is cut at a record, never inside one; the server's count of withheld turns is said.
+      const long = `2026-11-23T10:00:00Z assistant first\n2026-11-23T10:00:01Z tool_result Bash\n${Array.from({ length: 450 }, (_, i) => `\tline ${i}`).join('\n')}\n`;
+      answers.push({ text: long, truncated: true, withheld: 2 });
+      store.setStream('conversation'); await flush();
+      assert.equal(reads[reads.length - 1].stream, 'conversation');
+      assert.ok(store.state.value.text.startsWith('2026-11-23T10:00:01Z tool_result Bash\n\tline 0\n'), 'the tail begins at the record\'s first line');
+      assert.equal(store.state.value.status, 'Earlier output is not shown. 2 turns are withheld: a private chat you are not in, or a turn the server cannot place in a room.');
+      store.setStream('nonsense'); await flush(); assert.equal(store.state.value.stream, 'conversation', 'an unknown stream is the default');
+    }
     // Follow off stops every timer; close drops an answer still out.
     store.setFollow(false); assert.equal(time.pending(), 0, 'Follow off leaves no timer');
     let late; source.readOutput = () => new Promise(resolve => { late = resolve; });

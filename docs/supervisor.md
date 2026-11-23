@@ -1295,7 +1295,8 @@ beside it as the agent's conversation log, `conversation.log` (see
 - **Reading.** The output never leaves the machine on its own. The server asks
   for a bounded tail (`agent_log_read`, see [the contract](contract.md)) when a
   project's owner or an admin opens the Output section of an agent's profile or
-  its log popup (Show agent's logs; with Follow on, the popup reads again on the
+  its log popup (Show agent's logs, which opens on the conversation log and has
+  stderr as its second stream; with Follow on, the popup reads again on the
   agent's events at most every 4 s, and shares its reads between tabs), so
   a remote machine that is offline, or a supervisor without
   `supports_agent_logs`, simply has nothing to show (the web says which). An
