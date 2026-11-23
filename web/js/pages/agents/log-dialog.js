@@ -57,8 +57,9 @@ export function LogDialog({ store, host }) {
     setCurrent(stepMatch(current, found.count, event.shiftKey ? -1 : 1));
   };
   const commitLines = event => { store.setLines(event.currentTarget.value); setLinesDraft(null); };
+  // Download saves the server's answer as it came (state.raw): ANSI codes kept, every line it returned, not the labelled or cut drawing.
   const download = () => {
-    const url = URL.createObjectURL(new Blob([state.text], { type: 'text/plain;charset=utf-8' }));
+    const url = URL.createObjectURL(new Blob([state.raw], { type: 'text/plain;charset=utf-8' }));
     const link = document.createElement('a'); link.href = url; link.download = `${host.agentSlug(state.agentID) || state.agentID}-${stream === 'conversation' ? 'conversation' : 'logs'}.txt`; document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -74,7 +75,7 @@ export function LogDialog({ store, host }) {
         <span class="agent-log-stream" data-slot="stream"><select class="agent-log-stream-select" aria-label="Which log" value=${stream} onChange=${event => { setPinned(true); store.setStream?.(event.currentTarget.value); }}>
           ${STREAMS.map(item => html`<option key=${item.id} value=${item.id} selected=${item.id === stream}>${item.label}</option>`)}</select></span>
         <span class="agent-log-tools"><${IconButton} name="refresh" label="Read the logs again" className="agent-log-refresh" disabled=${state.loading} onClick=${() => store.read()} />
-          <${IconButton} name="arrow-down" label="Download logs" className="agent-log-download" disabled=${!state.text} onClick=${download} />
+          <${IconButton} name="arrow-down" label="Download logs" className="agent-log-download" disabled=${!state.raw} onClick=${download} />
           <${IconButton} name="close" label="Close logs" className="agent-log-close" onClick=${() => host.closeLogs()} /></span>
       </div>
     </header>

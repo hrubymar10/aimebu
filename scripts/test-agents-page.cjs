@@ -625,6 +625,10 @@ async function main() {
     assert.equal(await page.$('#agent-log-dialog .agent-log-record'), null, 'stderr has no records');
     assert.equal((await dialog()).text, 'Error: <b>bold</b> one\nok\nERROR again\n', 'ANSI codes are stripped and markup is text');
     assert.equal(await page.$('#agent-log-dialog .agent-log-text b'), null, 'no element comes from the log');
+    // Download saves the server's text as it came: ANSI codes and all, not the drawing.
+    await page.evaluate(() => { window.__saved = []; const make = URL.createObjectURL.bind(URL); URL.createObjectURL = blob => { window.__saved.push(blob.text()); return make(blob); }; HTMLAnchorElement.prototype.click = function () { window.__savedName = this.download; }; });
+    await page.$eval('#agent-log-dialog .agent-log-download', node => node.click());
+    assert.deepEqual(await page.evaluate(async () => [await Promise.all(window.__saved), window.__savedName]), [['\u001b[31mError\u001b[0m: <b>bold</b> one\nok\nERROR again\n'], 'ada-logs.txt']);
     // Highlight: literal and case-insensitive; a pattern's characters are text.
     await page.type('#agent-log-dialog .agent-log-query', 'error'); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));
     assert.deepEqual([(await dialog()).marks, (await dialog()).count], [['Error', 'ERROR'], '2 matches']);
