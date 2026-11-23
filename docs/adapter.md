@@ -326,6 +326,20 @@ it was checked in the Claude Code 2.1.329 bundle, where it feeds the check that 
 `claude` (on `PATH`, no login needed) through the Docker entry against a fake
 toolbox, with a user-scope v1 `aimebu` server enabled and then disabled in the
 project, and checks that the toolbox's tools are listed and the v1 tools are not.
+**CLI version table.** `internal/adapter/claude/versions.go` is one table (`cliFeatures`) of the
+version-dependent flags, environment variables, stream events and control requests the adapter
+uses, each with the first Claude Code release whose changelog says it was added:
+`--replay-user-messages` 1.0.86, `--max-budget-usd` 2.0.28, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`
+2.1.4. Everything else the adapter passes or reads has no such changelog entry and is baseline,
+passed to every version (the list is in the table's comment); the adapter sends no control
+requests. The supervisor puts the version it probed for the turn's harness (the launcher's, for an
+agent on a launcher) in `TurnSpec.HarnessVersion`, and the launch passes only what that version
+supports: an older CLI gets no background-tasks variable, a CLI without `--replay-user-messages`
+runs every turn cold (`ErrNoWarm`: a live turn needs the repeat of its input), and a budget set for
+a CLI without `--max-budget-usd` refuses the turn rather than run it uncapped. An unknown or
+unreadable version gets everything, so a launch is what it was before the table; so does the
+pinned CLI (2.1.330). A new capability is one row in the table and one `supports` check where the
+launch builds its arguments.
 Diagnostic turns pass `--strict-mcp-config` with the narrow read-only tool flags. Its capability report advertises schema, compaction,
 context-window, cost, and confirmed-cancel support; it does not claim
 verified no-action or read-only modes. The normal test suite uses a scripted
@@ -350,7 +364,11 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   process reads on standard input). The returned `Turn` ends at that turn's own `result`
   event: a successful result with an answer is a terminal exit with code 0 and the process
   stays up. Any other ending (an error result, a crash, a cancel, input the CLI refuses)
-  ends the process too, and the turn's exit is the process's own. A live session takes one
+  ends the process too, and the turn's exit is the process's own. After an error result
+  or a result without an answer the process is given two seconds to end and is then killed:
+  the CLI does not always end on its own (with CLI 2.1.330 an `is_error` result for an API
+  refusal was followed by `idle`, and the process stayed up until its input was closed), so
+  the kill is what ends it. A live session takes one
   turn at a time (`ErrWarmBusy`).
 - **Which container.** With `TurnSpec.LauncherReportsContainer` (the launcher has
   `turn_activity`), a warm Claude or Codex process in a container is started with
@@ -378,7 +396,7 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   come before the CLI has read the turn's input, so it does not confirm the turn's
   context delivery. So is the partial spend of a turn that ends (killed, cancelled,
   crashed) before the CLI repeated its input: those API responses belong to the CLI's own
-  query. One that reports no spend at all gets no usage event. An error result always counts (it ends the process, and what it says, a provider
+  query. One that reports no spend at all gets no usage event. An error result always counts (it ends the process, by the kill above if the CLI stays up, and what it says, a provider
   limit or a failed sign-in, is the session's). Recorded with CLI 2.1.329 against a local
   stand-in for the API: `internal/adapter/claude/testdata/stream`.
 - **What the journal keeps.** Every `result` is summarized in an event's `detail`
@@ -395,6 +413,27 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   the supervisor sends `background_job_ended` and the server gives the agent a real turn
   with the note "a background job of yours ended; check and report" (at most one per turn;
   see docs/contract.md §6).
+- **Not the idle event (read this before trying it again).** With
+  `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` the CLI writes
+  `{"type":"system","subtype":"session_state_changed","state":"running"|"idle"}` (`running` before
+  each query's init). It was checked with CLI 2.1.330: a warm process started with the adapter's
+  stream-json flags, an isolated `HOME` and `CLAUDE_CONFIG_DIR`, a placeholder API key and
+  `ANTHROPIC_BASE_URL` pointing at a local stand-in for the Messages API (no credentials, no paid
+  calls), whose model answers by calling `StructuredOutput`, a background `Bash` command, or with
+  a 400. It is not used as the end of a warm turn, because the state is the session's, not the
+  turn's:
+  1. `idle` follows the turn's `result` by a millisecond or two (an `is_error` result too), so it
+     ends nothing sooner than the result does.
+  2. When a background task ends during a turn, there is no `idle` after the turn's result: the
+     CLI stays `running` into its own query about the task and says `idle` only after that
+     query's result (5.6 s later with the stand-in, a full model query in real use). A task that
+     ends while the process is idle gets its own `running` … result … `idle` between turns.
+  3. When the turn's input arrives while such a query of the CLI's runs, there is no `idle`
+     between that query's result and the turn's: `idle` comes only after the turn's result.
+
+  Ending a turn at `idle` would hold the turn open for the CLI's own query (2) and pull that
+  query's answer into the turn, where the background-result wake (`OnBackgroundResult`) does not
+  see it. The turn keeps ending at its own result, as above.
 - Measured with a real run (haiku, CLI 2.1.318): `--json-schema` gives `structured_output`
   on every result of a multi-turn stream; `total_cost_usd` stays cumulative per session (the
   existing delta logic applies); an interrupt and a malformed input line each make the CLI

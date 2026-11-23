@@ -1185,6 +1185,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		sharesHome = !row.Containerized || slices.Contains(row.Features, feature)
 		launcherConfirmsEnd = slices.Contains(row.Features, containerEndFeature)
 		spec.LauncherReportsContainer = row.Containerized && slices.Contains(row.Features, adapter.FeatureTurnActivity)
+		spec.HarnessVersion = row.Version
 	}
 	if delivery.DockerOnly && !containerized && delivery.Agent.Tool != "fake" {
 		c.retireWarm(delivery.AgentID, "native launcher while docker-only is on")
@@ -1211,6 +1212,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 				return fmt.Errorf("harness unavailable: %s", row.UnavailableReason)
 			}
 			spec.LauncherPath = row.LauncherPath
+			spec.HarnessVersion = row.Version
 		}
 	}
 	if delivery.Mode == adapter.ModeNormal {

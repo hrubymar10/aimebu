@@ -245,6 +245,14 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 			return nil, err
 		}
 	}
+	version := parseCLIVersion(spec.HarnessVersion)
+	if warm && !version.supports(featureReplayUserMessages) {
+		// Without the repeat of its input a live turn cannot tell its own result from one of the CLI's own queries: the turn runs cold.
+		return nil, adapter.ErrNoWarm
+	}
+	if a.MaxBudgetUSD != "" && !version.supports(featureMaxBudgetUSD) {
+		return nil, fmt.Errorf("Claude Code %s does not support --max-budget-usd (it needs %s or newer): update it, or clear the budget", version, featureSince(featureMaxBudgetUSD))
+	}
 	input, err := turnInput(spec)
 	if err != nil {
 		return nil, err
@@ -332,10 +340,12 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 		env = append(env, "CLAUDE_LAUNCH_FLAGS=")
 	}
 	env = append(env, agentKey...)
-	env = append(env, backgroundTasksEnv)
-	if a.variant() == "docker" {
-		// docker exec carries only the variables the launcher is told to forward by name.
-		env = forwardToDocker(env, backgroundTasksEnvVar)
+	if version.supports(featureDisableBackgroundTasks) {
+		env = append(env, backgroundTasksEnv)
+		if a.variant() == "docker" {
+			// docker exec carries only the variables the launcher is told to forward by name.
+			env = forwardToDocker(env, backgroundTasksEnvVar)
+		}
 	}
 	full := adapter.LauncherArgs(spec, args)
 	shift := len(full) - len(args) // what the launcher puts before the protocol arguments
