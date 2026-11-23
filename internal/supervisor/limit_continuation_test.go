@@ -3,6 +3,8 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
@@ -217,5 +220,110 @@ func TestBackgroundJobEndedFrameCarriesTheAgentAndGeneration(t *testing.T) {
 	}
 	if frame.Type != "background_job_ended" || frame.AgentID != "agt_a" || frame.Generation != 3 {
 		t.Fatalf("frame=%s", encoded)
+	}
+}
+
+// frameCatcher is the server end of a machine socket that only records what the supervisor sends: handleDeliver is driven directly, with no hello.
+func frameCatcher(t *testing.T) (*websocket.Conn, <-chan protocol.Frame) {
+	t.Helper()
+	frames := make(chan protocol.Frame, 32)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		for {
+			frame, err := readFrame(r.Context(), conn)
+			if err != nil {
+				return
+			}
+			frames <- frame
+		}
+	}))
+	t.Cleanup(server.Close)
+	conn, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.CloseNow() })
+	return conn, frames
+}
+
+// A delivery held in the wait for the quarantine of the agent's last warm process ends as the stop's cancel when the agent is stopped, or when the
+// supervisor begins stopping the way a retire-at-idle request does, during the wait: the server gets the exit frame (130, a cancel), and no
+// harness is started.
+func TestDeliveryHeldInTheQuarantineWaitEndsAsTheStopsCancel(t *testing.T) {
+	for _, name := range []string{"agent stopped", "supervisor stopping"} {
+		t.Run(name, func(t *testing.T) {
+			oldRetry, oldQuarantine := warmRetryEvery, warmStuckQuarantine
+			warmRetryEvery, warmStuckQuarantine = 20*time.Millisecond, time.Hour
+			defer func() { warmRetryEvery, warmStuckQuarantine = oldRetry, oldQuarantine }()
+			h := newWarmHarness(t)
+			h.c.warmStuckWait, h.c.warmStuckPoll = 10*time.Second, 10*time.Millisecond
+			h.spawn("agt_a")
+			limitKilledContainerTurn(t, h, "")
+			conn, frames := frameCatcher(t)
+			delivery := protocol.Delivery{AgentID: "agt_a", TurnID: "turn_continue", Generation: 1, DesiredRev: 1, Mode: adapter.ModeNormal,
+				Agent: adapter.AgentSpec{ID: "agt_a", Tool: "fake", Variant: "native", Model: "haiku"}, Context: json.RawMessage(`{}`),
+				Notes: []protocol.DeliveryNote{{NoteID: "note_continue", RoomID: "room", MessageID: "msg", Body: "continue", From: "server"}}}
+			result := make(chan error, 1)
+			go func() { result <- h.c.handleDeliver(context.Background(), conn, delivery) }()
+			select {
+			case err := <-result:
+				t.Fatalf("the delivery must wait for the quarantine: %v", err)
+			case <-time.After(150 * time.Millisecond):
+			}
+			if !h.c.warmStuck("agt_a") {
+				t.Fatal("the slot must still be stuck while the delivery waits")
+			}
+			switch name {
+			case "agent stopped":
+				if !h.c.handleControl(protocol.Frame{AgentID: "agt_a", Generation: 1, DesiredRev: 2, DesiredState: "stopped"}) {
+					t.Fatal("the stop's ack must wait while the process is not confirmed gone")
+				}
+			case "supervisor stopping": // as protocol.RetireAtIdle does in the read loop
+				h.c.retireRequested.Store(true)
+				h.c.mu.Lock()
+				h.c.stopping = true
+				h.c.mu.Unlock()
+			}
+			select {
+			case err := <-result:
+				if err != nil {
+					t.Fatalf("the stopped delivery must be settled, not fail the connection: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("the wait did not end with the stop")
+			}
+			var exit *adapter.ExitInfo
+			for exit == nil {
+				select {
+				case frame := <-frames:
+					if frame.Type == protocol.Process && frame.TurnID == "turn_continue" {
+						exit = frame.Exit
+						if exit == nil {
+							t.Fatalf("a process frame without an exit: %+v", frame)
+						}
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("no exit frame for the stopped delivery")
+				}
+			}
+			if exit.ExitCode != 130 || !exit.CancelIntent || exit.StartFailure || exit.DefiniteFailure || exit.StderrTail != errStoppedWhileWaiting.Error() {
+				t.Fatalf("the exit must be the stop's cancel: %+v", exit)
+			}
+			if h.f.started != 1 || h.f.cold != 0 {
+				t.Fatalf("a harness started after the stop: started=%d cold=%d", h.f.started, h.f.cold)
+			}
+			h.c.mu.Lock()
+			active := h.c.active["agt_a"]
+			h.c.mu.Unlock()
+			if active != "" {
+				t.Fatalf("the agent is still marked busy with %q", active)
+			}
+			h.f.sessions[0].lingers.Store(false)
+			eventually(t, "the stuck slot released once the end is confirmed", func() bool { return !h.c.warmStuck("agt_a") })
+		})
 	}
 }
