@@ -1419,3 +1419,12 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   from everyone with `<time> withheld turn the server cannot place in a room:
   content withheld`: what cannot be shown to be open is not shown. The stderr
   log is not filtered; it holds what the harness printed, not the conversation.
+- **A new toolbox tool.** Every route under `/api/agent/` is classified in
+  `toolRoomReads` (`internal/server/agent_tool_room_reads_test.go`), and the
+  test there fails for a route that is not. A route whose answer carries
+  content of a room (a message, a room's notes, what a schedule posts, a turn's
+  output) is "records room reads": its handler calls `recordToolRoomReads`
+  with those rooms before it answers, and answers an error when that fails.
+  Anything else is "returns no room content", with the reason. Echoing what
+  the agent itself just wrote is not room content; a room's title is not
+  either.
