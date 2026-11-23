@@ -99,6 +99,11 @@ func TestLocalSupervisorMismatchPausesDispatchAndOffersRestart(t *testing.T) {
 	}
 	current := dial("new-build", "new-environment", true)
 	defer current.CloseNow()
+	// The server sends the acknowledgement before it lifts the pause, so the dial returning does not mean the matching hello has been applied.
+	waitForGuard(t, 10*time.Second, func() bool {
+		_, err := f.srv.machineForDispatch(f.machineID)
+		return err == nil
+	})
 	if _, err := f.srv.machineForDispatch(f.machineID); err != nil {
 		t.Fatalf("dispatch stayed paused after matching hello: %v", err)
 	}
