@@ -107,6 +107,14 @@ func (c *Conversation) Error(text string) {
 	}
 }
 
+// Warning is a notice the harness reported that did not stop the turn (a transient provider error it recovered from). It is written as an
+// event record prefixed "warning:", so it is in the log without being an error.
+func (c *Conversation) Warning(text string) {
+	if strings.TrimSpace(text) != "" {
+		c.record(ConversationEvent, "warning: "+text, ConversationTextLimit)
+	}
+}
+
 // Event notes an event of the harness's stream that the adapter does not know (its type), or one it knows and could not read (its type
 // and why). Nothing of the event's content is written. The same note many times in a row (a stream of deltas of an unknown type) is
 // written once.

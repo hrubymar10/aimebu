@@ -521,11 +521,17 @@ line per change; the app-server's kind object gives its type),
 `collab_tool_call` / `collabAgentToolCall` (`collab.<tool>` with its prompt
 and receiver threads; the result is the status and any agent states),
 `web_search`, an `error` item, and the `error` and `turn.failed` events
-(error records). `thread.started`, `turn.started`, `turn.completed`,
+(error records, except a transient `error`: see below). `thread.started`, `turn.started`, `turn.completed`,
 `item.updated`, `user_message` and `todo_list` items, the app-server's
 deltas and its thread, rate-limit and MCP-startup notifications leave no
 record. Any other item type stays generic: a tool call and result under its
-own type name with the rest of the item as input. Any other event or
+own type name with the rest of the item as input. A transient `error` event does not fail a
+turn. Codex prints `Reconnecting... N/5` as an `error` while it retries a dropped stream, and a turn that
+reconnects and then completes keeps its final answer. A reconnect notice is written at once as an `event` record
+`warning: <message>`; any other top-level `error` is held until the turn ends: a later `turn.completed` makes it a
+warning too, while one with no completion after it (or after the completion) fails the turn as before, and
+`turn.failed` always does. The app-server's `error` notification is a warning when it says `willRetry` or reads as a
+reconnect notice, and an error record otherwise; its turn already ends only by `turn/completed`. Any other event or
 notification, and one that cannot be read, is an `event` record. App-server
 shapes were not seen in a recorded stream; they follow the exec items and the
 Codex protocol's camelCase names.

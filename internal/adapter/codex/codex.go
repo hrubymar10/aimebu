@@ -574,6 +574,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 	var candidate []byte
 	completed := false
 	failed := false
+	pendingError := json.RawMessage(nil) // a non-transient error event: fatal unless turn.completed follows it
 	errorEvent := ""
 	sawThread := false
 	threadID := ""
@@ -627,6 +628,11 @@ func (t *turn) run(stdout, stderr io.Reader) {
 			}
 		case "turn.completed":
 			completed = true
+			if pendingError != nil {
+				// The turn went on to complete: the error was a notice, not its end.
+				transcribeNotice(t.conv, pendingError, true)
+				pendingError = nil
+			}
 			input, output := harness.CodexUsage(event)
 			cached := harness.CodexCachedInput(event)
 			written := harness.CodexCacheWrite(event)
@@ -669,10 +675,23 @@ func (t *turn) run(stdout, stderr io.Reader) {
 				usage.CostCumulative = true
 			}
 			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage})
-		case "turn.failed", "error":
+		case "turn.failed":
 			failed = true
 			errorEvent = adapter.SanitizeStderr(string(event.Raw))
 			transcribeFailure(t.conv, event.Raw)
+			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type})
+		case "error":
+			// Codex prints "Reconnecting... N/5" as an error while it retries; that, or any error a turn.completed follows, must not
+			// withhold the answer. A transient notice is a warning at once; another error waits for what follows.
+			errorEvent = adapter.SanitizeStderr(string(event.Raw))
+			if transientError(failureMessage(event.Raw)) {
+				transcribeNotice(t.conv, event.Raw, true)
+			} else {
+				if pendingError != nil {
+					transcribeFailure(t.conv, pendingError)
+				}
+				pendingError = append(json.RawMessage(nil), event.Raw...)
+			}
 			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type})
 		}
 	}
@@ -683,6 +702,10 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		if t.cmd.Process != nil {
 			_ = syscall.Kill(-t.cmd.Process.Pid, syscall.SIGKILL)
 		}
+	}
+	if pendingError != nil {
+		failed = true
+		transcribeFailure(t.conv, pendingError)
 	}
 	terminal := sawThread && completed && !failed && candidate != nil && scanError == nil
 	if terminal {

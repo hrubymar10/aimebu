@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/goccy/go-json"
@@ -214,11 +215,11 @@ func joinedText(value string) string {
 	return value
 }
 
-// transcribeFailure writes a turn.failed or error event: the message it carries, or the event itself when it has none.
-func transcribeFailure(conv *adapter.Conversation, raw json.RawMessage) {
-	if !conv.Active() {
-		return
-	}
+// reconnectNotice matches the transient "Reconnecting... N/5" notice Codex prints as an error event while it retries a dropped stream.
+var reconnectNotice = regexp.MustCompile(`(?i)^\s*re-?connecting\b[\s.\x{2026}:]*\d+\s*/\s*\d+`)
+
+// failureMessage is the message an error or turn.failed event carries, or the event itself when it has none ("" for null).
+func failureMessage(raw json.RawMessage) string {
 	var value struct {
 		Message string `json:"message"`
 		Error   struct {
@@ -228,12 +229,36 @@ func transcribeFailure(conv *adapter.Conversation, raw json.RawMessage) {
 	_ = json.Unmarshal(raw, &value)
 	switch {
 	case value.Error.Message != "":
-		conv.Error(value.Error.Message)
+		return value.Error.Message
 	case value.Message != "":
-		conv.Error(value.Message)
+		return value.Message
 	case string(raw) != "null":
-		conv.Error(string(raw))
+		return string(raw)
 	}
+	return ""
+}
+
+// transientError says whether an error event is a transient notice (a reconnect attempt), not a failure.
+func transientError(message string) bool { return reconnectNotice.MatchString(message) }
+
+// transcribeFailure writes a turn.failed or error event as an error record: the message it carries, or the event itself when it has none.
+func transcribeFailure(conv *adapter.Conversation, raw json.RawMessage) {
+	if conv.Active() {
+		conv.Error(failureMessage(raw))
+	}
+}
+
+// transcribeNotice writes an error event as a warning when it is transient (or the caller knows the turn goes on), else as an error.
+func transcribeNotice(conv *adapter.Conversation, raw json.RawMessage, warning bool) {
+	if !conv.Active() {
+		return
+	}
+	message := failureMessage(raw)
+	if warning || transientError(message) {
+		conv.Warning(message)
+		return
+	}
+	conv.Error(message)
 }
 
 // itemOf is the item of an item event.

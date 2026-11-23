@@ -157,7 +157,7 @@ func TestConversationNotesUnknownAppServerNotifications(t *testing.T) {
 
 // The item shapes real `codex exec --json` turns print (redacted samples written by hand in their shape): an MCP tool's result is its text
 // content, its error an object with a message, a file change lists kind and path, the sub-agent (collab) tool is named by its tool, and an
-// error item and a retry notice are errors. None of them is an unknown event.
+// error item is an error and a retry notice a warning. None of them is an unknown event.
 func TestConversationOfRecordedExecShapes(t *testing.T) {
 	root := t.TempDir()
 	stream := adaptertest.ConversationStream(t, root,
@@ -195,7 +195,7 @@ func TestConversationOfRecordedExecShapes(t *testing.T) {
 		{Kind: adapter.ConversationToolCall, Text: "collab.wait"},
 		{Kind: adapter.ConversationToolResult, Text: "collab.wait\ncompleted"},
 		{Kind: adapter.ConversationError, Text: "a tool was not available"},
-		{Kind: adapter.ConversationError, Text: "Reconnecting... 1/5 (request timed out)"},
+		{Kind: adapter.ConversationEvent, Text: "warning: Reconnecting... 1/5 (request timed out)"},
 		{Kind: adapter.ConversationAssistant, Text: `{"messages":[]}`},
 	})
 }

@@ -274,7 +274,8 @@ func (t *codexWarmTurn) handleNotification(method string, raw json.RawMessage) {
 		if !value.WillRetry {
 			t.errorText = adapter.SanitizeStderr(string(value.Error))
 		}
-		transcribeFailure(t.conv, raw)
+		// An error the app-server will retry, or a reconnect notice, is a warning: the turn goes on.
+		transcribeNotice(t.conv, raw, value.WillRetry)
 		t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: "error"})
 	case "turn/completed":
 		var value struct {
