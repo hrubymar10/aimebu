@@ -42,35 +42,45 @@ assert.equal(tree.sections[0].unread, 0, 'an open parent shows only its own unre
 assert.equal(tree.many, true, 'project b is live although it has no rooms');
 assert.equal(Array.from(tree.collapsible).join(), 'home');
 
-// Rooms nest at any depth: a task under general is a child of general, which gets an expander of its own and counts the grandchild when folded.
-tree = treeOf(state([home, room('gen', 'a', { parent_id: 'home' }), room('deep', 'a', { parent_id: 'gen', unread_count: 3 })]));
+// Rooms nest at any depth: a task under general is a child of general, which gets an expander of its own. Neither carries an unread badge,
+// folded or not; a folded child does not sum its descendants.
+tree = treeOf(state([home, room('gen', 'a', { parent_id: 'home', unread_count: 1 }), room('deep', 'a', { parent_id: 'gen', unread_count: 3 })]));
 same(names(tree.sections[0].children), ['gen']);
 same(names(tree.sections[0].children[0].children), ['deep']);
 assert.equal(tree.sections[0].children[0].collapsible, true);
-assert.equal(tree.sections[0].children[0].unread, 0);
+assert.equal(tree.sections[0].children[0].unread, 0, 'a child room shows no unread badge');
+assert.equal(tree.sections[0].children[0].children[0].unread, 0, 'nor does a grandchild');
 tree = treeOf(state([home, room('gen', 'a', { parent_id: 'home' }), room('deep', 'a', { parent_id: 'gen', unread_count: 3 })], { collapsed: new Set(['gen']) }));
 assert.equal(tree.sections[0].children[0].folded, true);
-assert.equal(tree.sections[0].children[0].unread, 3);
-assert.equal(tree.sections[0].unread, 0, 'an open project row does not add what a folded child already shows');
+assert.equal(tree.sections[0].children[0].unread, 0, 'a folded child does not sum its descendants');
+assert.equal(tree.sections[0].unread, 0);
 assert.equal(Array.from(tree.collapsible).join(), 'home', 'only project rows take part in the first-seen folding');
 
-// A folded row adds every descendant's unread, whatever each one's own fold state: home folded with general expanded still counts the task under it.
-tree = treeOf(state([home, room('gen', 'a', { parent_id: 'home', unread_count: 1 }), room('deep', 'a', { parent_id: 'gen', unread_count: 3 }), room('deeper', 'a', { parent_id: 'deep', unread_count: 5 })], { collapsed: new Set(['home']) }));
-assert.equal(tree.sections[0].unread, 9, 'a folded home counts all of its descendants');
-assert.equal(tree.sections[0].children[0].folded, false);
-assert.equal(tree.sections[0].children[0].unread, 1, 'an expanded general shows its own count only');
+// The home row counts only its own unread messages, folded or expanded; nothing under it is added, at any depth.
+const deepRooms = [home, room('gen', 'a', { parent_id: 'home', unread_count: 1 }), room('deep', 'a', { parent_id: 'gen', unread_count: 3 }), room('deeper', 'a', { parent_id: 'deep', unread_count: 5 })];
+for (const collapsed of [new Set(), new Set(['home'])]) {
+  tree = treeOf(state(deepRooms, { collapsed }));
+  assert.equal(tree.sections[0].unread, 0, 'the home row with no unread of its own shows none');
+}
+const homeOwn = { ...home, unread_count: 7 };
+for (const collapsed of [new Set(), new Set(['home'])]) {
+  tree = treeOf(state([homeOwn, ...deepRooms.slice(1)], { collapsed }));
+  assert.equal(tree.sections[0].unread, 7, 'the home row counts its own unread, the same folded or expanded');
+}
+tree = treeOf(state([homeOwn, ...deepRooms.slice(1)]));
+assert.equal(tree.sections[0].children[0].unread, 0, 'an expanded general shows no badge');
 
-// A folded parent adds its children's unread to itself; the active room counts for nothing.
+// The active room counts for nothing, and a child never adds to the home row.
 tree = treeOf(state([home, room('child', 'a', { parent_id: 'home', unread_count: 2 })], { collapsed: new Set(['home']) }));
 assert.equal(tree.sections[0].folded, true);
-assert.equal(tree.sections[0].unread, 2);
+assert.equal(tree.sections[0].unread, 0);
 tree = treeOf(state([home, room('routing', 'a', { unread_count: 4 }), room('missing-parent', 'a', { parent_id: 'gone', unread_count: 1 })], { collapsed: new Set(['home']), active: 'routing' }));
 same(names(tree.sections), ['home'], 'rooms without a live parent use the project home row');
 same(names(tree.sections[0].children), ['missing-parent', 'routing']);
-assert.equal(tree.sections[0].unread, 1, 'the folded home counts orphaned children but not the active room');
+assert.equal(tree.sections[0].unread, 0, 'orphaned children add nothing to the folded home');
 assert.deepEqual([...tree.holdsActive], ['home'], 'the fallback home holds the active room');
-tree = treeOf(state([home, room('child', 'a', { parent_id: 'home', unread_count: 2 })], { active: 'child' }));
-assert.equal(tree.sections[0].unread, 0);
+tree = treeOf(state([homeOwn, room('child', 'a', { parent_id: 'home', unread_count: 2 })], { active: 'home' }));
+assert.equal(tree.sections[0].unread, 0, 'the open home room is read');
 // The roots on screen, and the one that holds the open room (itself or a child), for the default fold; nothing is a root while a filter is on.
 assert.deepEqual([[...tree.nested], [...tree.holdsActive], [...tree.collapsible]], [['home'], ['home'], ['home']]);
 assert.deepEqual([...treeOf(state([home, room('child', 'a', { parent_id: 'home' })], { active: 'elsewhere' })).holdsActive], []);
@@ -116,9 +126,9 @@ tree = treeOf(state([], { offers: [{ id: 'o1', title: 'Alpha chat' }, { id: 'o2'
 same(tree.offers.map(offer => offer.id), ['o1']);
 
 // A leaf row is a view with nothing under it.
-same(leafView(room('l', 'a', { unread_count: 3 }), 'other', true), { room: room('l', 'a', { unread_count: 3 }), nest: false, chip: true, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: 3 });
-assert.equal(leafView(room('l', 'a', { unread_count: 3 }), 'l').unread, 0);
-assert.equal(leafView(room('old', 'a', { lifecycle: 'closed', unread_count: 3 }), 'other').unread, 0, 'archived history does not advertise unread activity');
+same(leafView(room('l', 'a', { kind: 'dm', unread_count: 3 }), 'other', true), { room: room('l', 'a', { kind: 'dm', unread_count: 3 }), nest: false, chip: true, controls: null, children: [], tail: [], collapsible: false, folded: false, unread: 3 });
+assert.equal(leafView(room('l', 'a', { kind: 'dm', unread_count: 3 }), 'l').unread, 0);
+assert.equal(leafView(room('old', 'a', { kind: 'dm', lifecycle: 'closed', unread_count: 3 }), 'other').unread, 0, 'archived history does not advertise unread activity');
 
 // What a room is: an icon and tooltip from the server's kind, purpose and agent_chat, never from who is in it.
 const typeOf = extra => { const { key, icon, label } = roomType({ kind: 'task', ...extra }); return [key, icon, label]; };
@@ -152,18 +162,19 @@ assert.equal(statusOf({ lifecycle: 'closed' }), null, 'an archived room shows no
 for (const extra of [{ purpose: 'general' }, { kind: 'home' }, { kind: 'dm' }, { kind: 'lobby' }]) assert.equal(statusOf(extra), null, `${JSON.stringify(extra)} shows no status`);
 assert.deepEqual([{}, { purpose: 'research' }, { purpose: 'general' }, { kind: 'home' }, { kind: 'dm' }].map(extra => tracksStatus({ kind: 'task', ...extra })), [true, true, false, false, false]);
 
-// The unread badge: a task or research room counts only the messages that name the person or reply to them; the others count all.
+// The unread badge: only a project's home room and a direct message carry one (their own count); every other room shows none.
 const unreadOf = (extra, active = '') => roomUnread({ id: 'r', kind: 'task', lifecycle: 'open', unread_count: 9, unread_addressed: 2, ...extra }, active);
-assert.equal(unreadOf({}), 2, 'a task room counts what addresses the person');
-assert.equal(unreadOf({ purpose: 'research' }), 2);
-assert.equal(unreadOf({ unread_addressed: 0 }), 0, 'agent chatter alone leaves a task room with no count');
-assert.equal(unreadOf({ unread_addressed: undefined }), 0, 'an older server that sends no addressed count shows none');
-assert.equal(unreadOf({ purpose: 'general' }), 9, 'a general room counts every unread message');
+assert.equal(unreadOf({}), 0, 'a task room shows no count, addressed or not');
+assert.equal(unreadOf({ purpose: 'research' }), 0);
+assert.equal(unreadOf({ purpose: 'general' }), 0, 'a general room shows no count');
+assert.equal(unreadOf({ team_flow_room_key: 'routing' }), 0, 'a routing room shows no count');
+assert.equal(unreadOf({ kind: 'lobby' }), 0);
 assert.equal(unreadOf({ kind: 'dm' }), 9, 'a direct message counts every unread message');
-assert.equal(unreadOf({ kind: 'home' }), 9);
-assert.equal(unreadOf({}, 'r'), 0, 'the open room is read');
-// A folded home adds its task children's addressed counts, not their chatter.
-tree = treeOf(state([room('home', 'a', { kind: 'home' }), room('t1', 'a', { parent_id: 'home', purpose: 'task', unread_count: 20, unread_addressed: 1 }), room('t2', 'a', { parent_id: 'home', purpose: 'research', unread_count: 5 }),
+assert.equal(unreadOf({ kind: 'home' }), 9, 'a home room counts its own unread messages');
+assert.equal(unreadOf({ kind: 'home', lifecycle: 'closed' }), 0);
+assert.equal(unreadOf({ kind: 'home' }, 'r'), 0, 'the open room is read');
+// An addressed message in a task child adds nothing to the folded home: the child keeps its 🔔 (attention_count), which this model does not touch.
+tree = treeOf(state([room('home', 'a', { kind: 'home', unread_count: 2 }), room('t1', 'a', { parent_id: 'home', purpose: 'task', unread_count: 20, unread_addressed: 1 }),
   room('g', 'a', { parent_id: 'home', unread_count: 3 })], { collapsed: new Set(['home']) }));
-assert.equal(tree.sections[0].unread, 4, 'the folded home stands for the addressed messages of its tasks (1) and the unread of its general room (3)');
+assert.equal(tree.sections[0].unread, 2, 'the folded home shows only its own 2');
 console.log('sidebar model: ok');

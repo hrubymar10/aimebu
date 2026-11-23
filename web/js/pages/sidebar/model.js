@@ -72,14 +72,14 @@ export function placeProject(projects, manual, id, targetID, after) {
   return sequence;
 }
 
-// The unread badge of a room row. A collapsed root also stands for the rooms nested under it, so collapsing
-// never hides new activity: its badge is its own unread count plus its children's. The open room counts as read.
-// A task or research room is told by its status, not by a count: most of what is unread in one is agents talking to each other, which nobody reads to
-// catch up. Its badge counts only the unread messages that name the person or reply to them (`unread_addressed`); every other room counts them all.
+// The unread badge of a room row. Only a project's home room and a direct message carry one, and each counts only its own unread messages, folded
+// or not (no sum over the rooms nested under a home row). Every other room, at any depth (general, routing, advice, task and research rooms),
+// shows none: what happens there is told by its status and by the 🔔 of the Inbox items that wait on the person. The open room counts as read.
 export const tracksStatus = room => room.kind === 'task' && room.purpose !== 'general' && room.team_flow_room_key !== 'routing';
 export function roomUnread(room, activeID) {
   if (room.id === activeID || room.lifecycle === 'closed') return 0;
-  return Math.max(0, (tracksStatus(room) ? room.unread_addressed : room.unread_count) || 0);
+  if (room.kind !== 'home' && room.kind !== 'dm') return 0;
+  return Math.max(0, room.unread_count || 0);
 }
 
 // What kind of room a row is, as the server's `kind`, `purpose` and `agent_chat` say, never guessed from who is in it: the glyph (an icon-mask name) and the tooltip.
@@ -199,11 +199,7 @@ export function treeOf(state) {
     if (opts.nest && kids) collapsible.add(room.id);
     const folded = kids > 0 && (collapsed.has(room.id) || (provisional && opts.nest && !seen.has(room.id) && !holders.has(room.id)));
     const childViews = children.map(child => view(child, { chip: false, nest: false, deep: true }));
-    // A folded row stands for everything under it, at any depth and whatever each descendant's own fold state: its badge adds all of their
-    // own unread counts. `below` is that sum, kept on the view so a parent adds it without walking the subtree again.
-    const below = childViews.reduce((sum, child) => sum + roomUnread(child.room, active) + child.below, 0);
-    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, ...(divider > 0 ? { divider } : {}), tail, collapsible: expands && kids > 0, folded, below,
-      unread: roomUnread(room, active) + (folded ? below : 0) };
+    return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: childViews, ...(divider > 0 ? { divider } : {}), tail, collapsible: expands && kids > 0, folded, unread: roomUnread(room, active) };
   };
   const place = (room, nest, extra) => {
     const tail = room.kind === 'home' && tails.get(room.project_id)?.length && !tailed.has(room.project_id) ? tails.get(room.project_id) : null;

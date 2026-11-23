@@ -38,7 +38,7 @@ const rooms = () => ({
     room('rm_api', 'prj_a', 'api-work', { parent_id: 'rm_ah', unread_count: 12, last_activity_at: '2026-01-07T10:00:00Z', attention_count: 2 }), room('rm_notes', 'prj_a', 'notes', { parent_id: 'rm_ah', notify: 'mentions', unread_count: 1 }),
     room('rm_mute', 'prj_a', 'muted-room', { parent_id: 'rm_ah', muted_until: future, unread_count: 5 }), room('rm_old', 'prj_a', 'old-room', { parent_id: 'rm_ah', lifecycle: 'closed' }),
     room('rm_hid', 'prj_a', 'hidden-room', { parent_id: 'rm_ah', hidden: true }), room('rm_dm', 'prj_a', 'ada', { kind: 'dm', unread_count: 2, last_activity_at: '2026-01-08T10:00:00Z' })],
-  prj_b: [room('rm_bh', 'prj_b', 'Beta', { kind: 'home', last_activity_at: '2026-01-03T10:00:00Z' }), room('rm_bg', 'prj_b', 'beta-general', { parent_id: 'rm_bh', unread_count: 7 })],
+  prj_b: [room('rm_bh', 'prj_b', 'Beta', { kind: 'home', unread_count: 11, last_activity_at: '2026-01-03T10:00:00Z' }), room('rm_bg', 'prj_b', 'beta-general', { parent_id: 'rm_bh', unread_count: 7 })],
   prj_c: [room('rm_ch', 'prj_c', 'Gamma', { kind: 'home' }), room('rm_cg', 'prj_c', 'gamma-room', { parent_id: 'rm_ch' })],
 });
 const chats = () => ({ project_id: 'prj_agentdm', rooms: [room('rm_chat', 'prj_agentdm', 'ada & bert', { kind: 'dm', agent_chat: true, unread_count: 1 })], joinable: [{ id: 'rm_join', title: 'bert & cleo', message_count: 4 }] });
@@ -247,8 +247,8 @@ async function main() {
     for (const [id, list] of Object.entries(rooms())) await answer(page, await waitRequest(page, 'GET', `/api/projects/${id}/rooms`), 200, list);
     await answer(page, dms, 200, chats());
     await page.evaluate(() => window.__loading); await settle(page);
-    assert.deepEqual(await rows(page), [['rm_ah', '⌂ Alpha', '21', false], ['rm_gen', '# general', '3', true], ['rm_api', '# api-work', '12', true], ['rm_notes', '# notes', '1', true], ['rm_mute', '# muted-room', '5', true], ['rm_old', '# old-room', '', true],
-      ['rm_bh', '⌂ Beta', '7', false], ['rm_bg', '# beta-general', '7', true], ['rm_ch', '⌂ Gamma', '', false], ['rm_cg', '# gamma-room', '', true], ['rm_dm', '@ ada', '2', false], ['rm_chat', '⇄ ada & bert', '1', false]]);
+    assert.deepEqual(await rows(page), [['rm_ah', '⌂ Alpha', '', false], ['rm_gen', '# general', '', true], ['rm_api', '# api-work', '', true], ['rm_notes', '# notes', '', true], ['rm_mute', '# muted-room', '', true], ['rm_old', '# old-room', '', true],
+      ['rm_bh', '⌂ Beta', '11', false], ['rm_bg', '# beta-general', '', true], ['rm_ch', '⌂ Gamma', '', false], ['rm_cg', '# gamma-room', '', true], ['rm_dm', '@ ada', '2', false], ['rm_chat', '⇄ ada & bert', '1', false]]);
     const tail = await page.$$eval('#projects details', nodes => nodes.map(node => [node.className, node.querySelector('summary').textContent, node.open]));
     assert.deepEqual(tail, [['archived-rooms', 'Archived (1)', false], ['hidden-rooms', 'Hidden (1)', false], ['archived-projects', 'Archived projects (1)', false], ['agent-chat-offers', 'Agent chats you can join (1)', false]]);
     assert.equal(await page.$$eval('#projects details > summary', nodes => nodes.every(node => !!node.querySelector('svg') && getComputedStyle(node).listStyleType === 'none')), true, 'sidebar disclosures use SVG chevrons');
@@ -292,7 +292,7 @@ async function main() {
     const page = await mount({ auto: answerAll({ 'GET /api/projects': projects.map(item => item.id === 'prj_a' ? { ...item, name: longTitle } : item),
       'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === 'rm_ah' ? { ...item, title: longTitle } : { ...item, attention_count: 0 }) }) });
     await page.setViewport({ width: 1200, height: 800 });
-    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click()); // a folded project shows an unread badge at the row end
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click()); // the project opens, with no unread badge on the row
     const measure = () => page.$eval('[data-room-id=rm_ah] > .room-item', row => {
       const name = row.querySelector('.room-item-name'), menu = row.querySelector('.project-menu-btn'), add = row.querySelector('.add-room:not([hidden])'), extra = row.querySelectorAll('.project-move:not(.project-menu-btn), .project-move-up, .project-move-down').length;
       const actions = getComputedStyle(row.querySelector('.room-item-actions')), info = row.querySelector('.room-item-info').getBoundingClientRect();
@@ -357,7 +357,7 @@ async function main() {
     assert.deepEqual([state.same, state.focus, state.fold], [true, true, true]);
     // The hand-written list stores the new record for every room of a refreshed project; the page keeps the one it holds for an unchanged room.
     if (REPLACED) assert.equal(state.kept, true);
-    assert.deepEqual((await rows(page)).filter(row => ['rm_gen', 'rm_api', 'rm_new'].includes(row[0])).map(row => row.slice(0, 3)), [['rm_gen', '# general', ''], ['rm_api', '# api-work', '14'], ['rm_new', '# zeta', '']]);
+    assert.deepEqual((await rows(page)).filter(row => ['rm_gen', 'rm_api', 'rm_new'].includes(row[0])).map(row => row.slice(0, 3)), [['rm_gen', '# general', ''], ['rm_api', '# api-work', ''], ['rm_new', '# zeta', '']]);
     await page.close();
   }
 
@@ -466,7 +466,7 @@ async function main() {
     await page.evaluate(() => { window.__sidebar.rooms.get('rm_notes').user_message_count = 1; window.__sidebar.store.touch(); });
     await settle(page);
     assert.equal((await active()).previews.find(item => item[0] === 'rm_notes')[1], '📎 Attachment');
-    assert.equal(await page.$eval('[data-room-id=rm_api] .room-item-unread', node => node.title), '12 unread messages', 'the unread chip says what it counts');
+    assert.equal(await page.$('[data-room-id=rm_api] .room-item-unread'), null, 'a child room shows no unread chip');
     await page.close();
   }
 
@@ -504,12 +504,35 @@ async function main() {
     assert.deepEqual(await none.evaluate(() => ['rm_ah', 'rm_bh'].map(id => document.querySelector(`[data-room-id=${id}]`).classList.contains('collapsed'))), [true, true], 'with no room to open every project folds');
     await none.close();
   }
-  // A project starts folded, showing its rooms' unread total; the chevron opens it and the browser remembers that, collapse all and expand all work
+  // Only a project's home room and a direct message carry an unread bubble, and the home row counts its own messages only, folded or not. A child room, at
+  // depth 1 or 2 and folded or not, shows none (an addressed message in a task room included); the child keeps its bell, and a direct message keeps its bubble.
+  {
+    const list = rooms().prj_a.map(item => (item.id === 'rm_ah' ? { ...item, unread_count: 21 } : item.id === 'rm_api' ? { ...item, kind: 'task', purpose: 'task', unread_addressed: 3, unread_count: 9 } : item))
+      .concat(room('rm_deep', 'prj_a', 'deep-task', { parent_id: 'rm_gen', kind: 'task', purpose: 'task', unread_count: 8, unread_addressed: 2, attention_count: 1 }));
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': list }) });
+    const badges = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('[data-room-id]')].map(group => { const badge = group.querySelector(':scope > .room-item .room-item-unread'), bell = group.querySelector(':scope > .room-item .room-item-attention'); return [group.dataset.roomId, [badge ? badge.textContent : '', bell ? bell.textContent.trim() : '']]; })));
+    const folded = await badges(); // the project starts folded
+    assert.deepEqual(folded.rm_ah, ['21', '🔔 3'], 'a folded home row counts only its own unread messages, not the rooms under it');
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click());
+    const open = await badges();
+    assert.deepEqual(open.rm_ah, ['21', '🔔 3'], 'the home row shows the same count expanded');
+    for (const id of ['rm_gen', 'rm_api', 'rm_notes', 'rm_mute']) assert.equal(open[id][0], '', `${id}: a child room shows no unread bubble`);
+    assert.equal(open.rm_api[1], '🔔 2', 'an item waiting on the person keeps the child room bell');
+    assert.deepEqual(open.rm_deep, ['', '🔔 1'], 'a room at depth 2 shows no bubble and keeps its bell');
+    assert.equal(open.rm_dm[0], '2', 'a direct message keeps its bubble');
+    await page.$eval('[data-room-id=rm_gen] > .room-item > .room-collapse', node => node.click());
+    const gen = await badges();
+    assert.equal(gen.rm_gen[0], '', 'a folded child does not sum what is under it');
+    assert.equal(gen.rm_ah[0], '21');
+    assert.equal(await page.$eval('[data-room-id=rm_ah] > .room-item .room-item-unread', node => node.title), '21 unread messages', 'the home unread chip says what it counts');
+    await page.close();
+  }
+  // A project starts folded; the chevron opens it and the browser remembers that, collapse all and expand all work
   // on every root and say what the next click does, and a root the person opened is not folded again on the next load.
   {
     const page = await mount();
     const root = id => page.evaluate(id => { const group = document.querySelector(`[data-room-id=${id}]`); const toggle = group.querySelector(':scope > .room-item > .room-collapse'); const badge = group.querySelector(':scope > .room-item .room-item-unread'); return { collapsed: group.classList.contains('collapsed'), label: toggle.getAttribute('aria-label'), expanded: toggle.getAttribute('aria-expanded'), badge: badge && !badge.hidden ? badge.textContent : '' }; }, id);
-    assert.deepEqual(await root('rm_ah'), { collapsed: true, label: 'Expand Alpha', expanded: 'false', badge: '21' });
+    assert.deepEqual(await root('rm_ah'), { collapsed: true, label: 'Expand Alpha', expanded: 'false', badge: '' });
     assert.deepEqual((await root('rm_bh')).collapsed, true, 'every project starts folded');
     await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click());
     assert.deepEqual(await root('rm_ah'), { collapsed: false, label: 'Collapse Alpha', expanded: 'true', badge: '' });
@@ -607,7 +630,7 @@ async function main() {
     });
     if (label === 'phone') assert.ok(drawer.gap <= 28 && drawer.close !== 'none' && drawer.closeLabel === 'Close rooms', `phone: the chevron sits next to its icon and the drawer has a close control: ${JSON.stringify(drawer)}`);
     else assert.equal(drawer.close, 'none', 'a desktop width has no drawer, so no drawer close control');
-    assert.deepEqual(fit.kinds, ['.room-health', '.room-item-attention', '.room-item-unread'], `${label}: the pills that ask for attention stay; the count and the mute bell give way when the row is that narrow: ${JSON.stringify(fit.kinds)}`);
+    assert.deepEqual(fit.kinds, ['.room-health', '.room-item-attention'], `${label}: the pills that ask for attention stay; the count and the mute bell give way when the row is that narrow: ${JSON.stringify(fit.kinds)}`);
     await page.close();
   }
 
@@ -1426,15 +1449,15 @@ async function main() {
       ['rm_route', 'routing', 'icon-mask-route', 'route.svg', 'Routing room', 'Routing room', ''],
       ['rm_dm2', 'dm', 'icon-mask-human', 'human.svg', 'Direct message', 'Direct message', ''],
       ['rm_chat2', 'agent-chat', 'icon-mask-switch', 'switch.svg', 'Chat between agents', 'Chat between agents', '']], 'every kind of room has its own SVG icon with a tooltip and no text glyph');
-    // Task rooms: no grey count, and the unread chip counts only what addresses the person (so chatter alone leaves none).
+    // Task rooms: no grey count and no unread chip, whatever is unread or addressed to the person (the status tells the room).
     const task = kinds.rm_task, addressed = await view('rm_taskn');
     assert.deepEqual([task.count, task.unread, task.name], [false, '', 'build · 4 members'], 'a task room hides its member count (it is in the tooltip) and shows no count for chatter');
-    assert.deepEqual([addressed.count, addressed.unread], [false, '3'], 'a task room still counts what addresses the person');
-    assert.equal(await page.$eval('[data-room-id=rm_taskn] .room-item-unread', node => node.title), '3 unread messages');
+    assert.deepEqual([addressed.count, addressed.unread], [false, ''], 'a task room shows no chip even for what addresses the person');
+    assert.equal(await page.$('[data-room-id=rm_taskn] .room-item-unread'), null);
     assert.deepEqual([kinds.rm_res.count, kinds.rm_res.unread, kinds.rm_res.name], [false, '', 'compare · 2 members'], 'a research room is told like a task room');
-    // General and coordination rooms, the home room and direct messages keep the member count and the count of everything unread.
-    assert.deepEqual([kinds.rm_gen2.count, kinds.rm_gen2.unread, kinds.rm_gen2.status], [true, '6', null], 'a general room keeps its counts and has no status (an agent working does not change that)');
-    assert.deepEqual([kinds.rm_kh.count, kinds.rm_kh.unread, kinds.rm_kh.status], [true, '11', null], 'the folded home keeps its member count and totals its own 2, the 3 addressed to the person in a task room (not its 40) and the 6 of the general room');
+    // General and coordination rooms, the home room and direct messages keep the member count; only the home room and direct messages carry an unread chip.
+    assert.deepEqual([kinds.rm_gen2.count, kinds.rm_gen2.unread, kinds.rm_gen2.status], [true, '', null], 'a general room keeps its member count, shows no unread chip and has no status (an agent working does not change that)');
+    assert.deepEqual([kinds.rm_kh.count, kinds.rm_kh.unread, kinds.rm_kh.status], [true, '2', null], 'the folded home keeps its member count and shows only its own 2, nothing from the rooms under it');
     assert.deepEqual([kinds.rm_dm2.count, kinds.rm_dm2.unread, kinds.rm_dm2.status], [true, '2', null]);
     assert.deepEqual([kinds.rm_chat2.count, kinds.rm_chat2.unread], [true, '1']);
     // The status.
@@ -1472,7 +1495,7 @@ async function main() {
   }
 
   // A room nested two levels down (a task under general) is drawn under its parent with an expander of its own; folding it hides the grandchild
-  // and its unread joins the folded row's badge.
+  // and neither row shows an unread badge.
   {
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': [room('rm_dh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }), room('rm_dg', 'prj_a', 'general', { parent_id: 'rm_dh' }),
       room('rm_dt', 'prj_a', 'deep-task', { parent_id: 'rm_dg', unread_count: 4 })] }) });
@@ -1481,12 +1504,12 @@ async function main() {
     const state = () => page.evaluate(() => { const deep = document.querySelector('[data-room-id=rm_dh] [data-room-id=rm_dg] [data-room-id=rm_dt]'), parent = document.querySelector('[data-room-id=rm_dg]'); return { nested: !!deep, visible: !!deep?.getClientRects().length, expander: !!parent.querySelector(':scope > .room-item > .room-collapse'), folded: parent.classList.contains('collapsed'), badge: parent.querySelector(':scope > .room-item .room-item-unread')?.textContent || '' }; });
     assert.deepEqual(await state(), { nested: true, visible: true, expander: true, folded: false, badge: '' });
     await page.$eval('[data-room-id=rm_dg] > .room-item > .room-collapse', node => node.click());
-    assert.deepEqual(await state(), { nested: true, visible: false, expander: true, folded: true, badge: '4' });
+    assert.deepEqual(await state(), { nested: true, visible: false, expander: true, folded: true, badge: '' });
     await page.close();
   }
 
   // System rooms lead a project's rooms (general, routing, then other flow rooms), then a thin divider, then the task and research rooms; no divider when
-  // either group is empty; the folded project row still sums every room's unread.
+  // either group is empty; the folded project row shows only its own unread.
   {
     const order = () => ({ ids: [...document.querySelectorAll('[data-room-id=rm_oh] > .room-children > .room-group, [data-room-id=rm_oh] > .room-children > .room-divider')].map(node => node.dataset.roomId || 'DIVIDER'),
       divider: (() => { const node = document.querySelector('.room-divider'); return node && { role: node.getAttribute('role'), tab: node.tabIndex, text: node.textContent, color: getComputedStyle(node).borderTopColor, border: getComputedStyle(node).borderTopWidth }; })() });
@@ -1519,11 +1542,11 @@ async function main() {
     await advice.close();
   }
 
-  // Marking a task room read keeps its addressed count in step with the server's answer.
+  // Marking a task room read keeps its addressed count in step with the server's answer (the row shows no chip).
   {
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': [room('rm_kh', 'prj_a', 'Alpha', { kind: 'home', purpose: 'task' }), room('rm_t', 'prj_a', 'task', { parent_id: 'rm_kh', purpose: 'task', unread_count: 6, unread_addressed: 2 })] }) });
     await settle(page);
-    assert.equal(await page.$eval('[data-room-id=rm_t] .room-item-unread', node => node.textContent), '2');
+    assert.equal(await page.$('[data-room-id=rm_t] .room-item-unread'), null);
     await page.evaluate(() => { window.__shown = { rm_t: 40 }; window.__sidebar.setActive('rm_t'); window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_t')); });
     const mark = await waitRequest(page, 'POST', '/api/rooms/rm_t/read');
     await answer(page, mark, 200, { unread_count: 1, unread_addressed: 0, read_cursor: 40, attention_count: 0 }); await settle(page);
