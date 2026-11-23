@@ -194,12 +194,12 @@ func TestScheduleCloseNoticesCreatorAndTarget(t *testing.T) {
 }
 
 // A schedule in a restricted flow room must not leak its text when the room closes: the notice lands in general, which every project member
-// may read, so it names only the schedule and the room.
+// may read, so it names only the schedule: neither its text nor the room's title.
 func TestScheduleCloseNoticeFromRestrictedRoomLeavesTextOut(t *testing.T) {
 	t.Parallel()
 	s, project, room, worker, creator := wakeFixture(t)
 	ctx := context.Background()
-	if _, err := s.db.Exec(`UPDATE room SET team_flow_room_key='routing',restricted=1,title='routing' WHERE id=?`, room.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE room SET team_flow_room_key='routing',restricted=1,title='secret routing title' WHERE id=?`, room.ID); err != nil {
 		t.Fatal(err)
 	}
 	general, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "task", Title: "general", CreatedBy: "owner"})
@@ -236,8 +236,11 @@ func TestScheduleCloseNoticeFromRestrictedRoomLeavesTextOut(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT id,body FROM message WHERE room_id=? AND author_kind='system' AND body LIKE '%stopped because its room%'`, general.ID).Scan(&id, &body); err != nil {
 		t.Fatalf("no notice in general: %v", err)
 	}
-	if !strings.Contains(body, item.ID) || !strings.Contains(body, "routing") {
-		t.Fatalf("notice %q, want the schedule ID and the room title", body)
+	if !strings.Contains(body, item.ID) || !strings.Contains(body, "stopped because its room closed") {
+		t.Fatalf("notice %q, want the schedule ID and that its room closed", body)
+	}
+	if err := s.db.QueryRow(`SELECT count(*) FROM message WHERE room_id<>? AND body LIKE '%secret routing title%'`, room.ID).Scan(&leaked); err != nil || leaked != 0 {
+		t.Fatalf("room title copied out of the restricted room %d times (err=%v)", leaked, err)
 	}
 	if got := wakeReasons(t, s, id); !sameWakes(got, map[string]string{"one": "inbox_answer", "lead": "inbox_answer"}) {
 		t.Fatalf("the notice woke %v, want the creator and the target", got)

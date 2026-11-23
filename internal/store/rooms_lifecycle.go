@@ -235,14 +235,14 @@ func (tx *Tx) roomEnabledSchedules(roomID string) ([]stoppedSchedule, error) {
 // it is not in would wake nobody). A schedule a person made for nobody in particular has no agent to tell: the person sees the room close.
 //
 // The destination is usually more widely read than a restricted room or a private chat (general is open to every project member), so for
-// such a room the note names only the schedule ID and the room title and leaves the schedule's text out.
+// such a room the note names only the schedule ID: the schedule's text and the room's title stay out (the host log still names the room).
 func (tx *Tx) noticeScheduleStopped(projectID string, item stoppedSchedule) error {
 	if len(item.agents) == 0 {
 		return nil
 	}
 	body := fmt.Sprintf("Schedule %s (%q) stopped because its room %s closed. Create it again in an open room if it is still needed.", item.id, excerptRunes(item.body, 80), item.roomTitle)
 	if item.private {
-		body = fmt.Sprintf("Schedule %s stopped because its room %s closed. Create it again in an open room if it is still needed.", item.id, item.roomTitle)
+		body = fmt.Sprintf("Schedule %s stopped because its room closed. Create it again in an open room if it is still needed.", item.id)
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(item.agents)), ",")
 	args := []any{projectID}
