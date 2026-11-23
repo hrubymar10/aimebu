@@ -23,9 +23,10 @@ const attachmentFetchWait = 90 * time.Second
 // saveAttachment answers an attachment_save frame. It saves only for the turn the agent runs here now: the frame's turn must be the agent's
 // active, ordinary turn on this machine, so a turn of another agent, or one that has ended, is refused. The bytes come from the server's
 // agent attachment route under the agent's own key, which applies the same checks as attachment_get (a note delivered in that live turn,
-// room membership still held). The file goes into the turn's checkout through agenttools.SaveAttachment (name cleaning, mode 0600, no linked
-// folder, an atomic write, the 10 MB limit), and the answer is the path as the agent sees it: mapped through its launcher's path map when it
-// has a launcher, as its checkout is.
+// room membership still held). The file goes into the turn's checkout through agenttools.SaveAttachmentLikeCheckout (name cleaning, no
+// linked folder, an atomic write, the 10 MB limit; the checkout's owner and its read access, so a container user other than this process's
+// can read it), and the answer is the path as the agent sees it: mapped through its launcher's path map when it has a launcher, as its
+// checkout is.
 func (c *Client) saveAttachment(ctx context.Context, frame protocol.Frame) protocol.Frame {
 	result := protocol.Frame{V: protocol.Version, Type: protocol.AttachmentSaveResult, ReqID: frame.ReqID, AgentID: frame.AgentID, TurnID: frame.TurnID, AttachmentID: frame.AttachmentID}
 	fail := func(code, message string) protocol.Frame {
@@ -50,7 +51,7 @@ func (c *Client) saveAttachment(ctx context.Context, frame protocol.Frame) proto
 	if err != nil {
 		return fail("fetch_failed", err.Error())
 	}
-	hostPath, err := agenttools.SaveAttachment(info.checkout, frame.AttachmentID, name, data)
+	hostPath, err := agenttools.SaveAttachmentLikeCheckout(info.checkout, frame.AttachmentID, name, data)
 	if err != nil {
 		return fail("save_failed", err.Error())
 	}

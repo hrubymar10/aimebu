@@ -7,7 +7,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"unicode/utf8"
 
@@ -293,5 +296,137 @@ func TestSanitizeAttachmentName(t *testing.T) {
 		if len(got) > maxSavedNameBytes || !utf8.ValidString(got) || filepath.Ext(got) != filepath.Ext(in) || strings.ContainsAny(got, `/\`) {
 			t.Errorf("long name %d bytes -> %q (%d bytes)", len(in), got, len(got))
 		}
+	}
+}
+
+// A file saved for another user (a container's) takes the checkout's read access for group and others, and never more.
+func TestSaveAttachmentLikeCheckoutCopiesTheCheckoutsReadAccess(t *testing.T) {
+	for _, tc := range []struct {
+		checkout       os.FileMode
+		wantDir, wantF os.FileMode
+	}{
+		{0755, 0755, 0644},
+		{0750, 0750, 0640},
+		{0700, 0700, 0600},
+		{0777, 0755, 0644}, // write access is never handed on
+	} {
+		workdir := realTempDir(t)
+		if err := os.Chmod(workdir, tc.checkout); err != nil {
+			t.Fatal(err)
+		}
+		path, err := SaveAttachmentLikeCheckout(workdir, "att_01TEST", "x.zip", []byte("PK"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, dir := range []string{filepath.Dir(path), filepath.Dir(filepath.Dir(path))} {
+			if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != tc.wantDir {
+				t.Errorf("checkout %v: %s mode %v, want %v (%v)", tc.checkout, dir, info.Mode().Perm(), tc.wantDir, err)
+			}
+		}
+		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != tc.wantF {
+			t.Errorf("checkout %v: file mode %v, want %v (%v)", tc.checkout, info.Mode().Perm(), tc.wantF, err)
+		}
+		// .aimebu/ can be passed through as far as the checkout can, never listed by others.
+		if info, err := os.Stat(filepath.Join(workdir, ".aimebu")); err != nil || info.Mode().Perm() != 0700|tc.checkout&0011 {
+			t.Errorf("checkout %v: .aimebu mode %v (%v)", tc.checkout, info.Mode().Perm(), err)
+		}
+	}
+	// The plain save stays private whatever the checkout.
+	workdir := realTempDir(t)
+	if err := os.Chmod(workdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path, err := SaveAttachment(workdir, "att_01TEST", "x.zip", []byte("PK"))
+	if info, statErr := os.Stat(path); err != nil || statErr != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("plain save: %v %v", err, statErr)
+	}
+}
+
+// A checkout owned by another user (the container's) hands that owner the folders and the file; a process that may not give files away
+// still saves them.
+func TestSaveAttachmentLikeCheckoutGivesTheCheckoutsOwner(t *testing.T) {
+	origOwner, origChown := checkoutOwner, chownPath
+	t.Cleanup(func() { checkoutOwner, chownPath = origOwner, origChown })
+	uid, gid := os.Geteuid()+1000, os.Getegid()+1000
+	checkoutOwner = func(os.FileInfo) (int, int, bool) { return uid, gid, true }
+	for _, refuse := range []bool{false, true} {
+		var owned []string
+		chownPath = func(path string, u, g int) error {
+			if u != uid || g != gid {
+				t.Errorf("chown %s to %d:%d, want %d:%d", path, u, g, uid, gid)
+			}
+			owned = append(owned, filepath.Base(path))
+			if refuse {
+				return &os.PathError{Op: "lchown", Path: path, Err: syscall.EPERM}
+			}
+			return nil
+		}
+		workdir := realTempDir(t)
+		path, err := SaveAttachmentLikeCheckout(workdir, "att_01TEST", "x.zip", []byte("PK"))
+		if err != nil {
+			t.Fatalf("refuse=%v: %v", refuse, err)
+		}
+		if len(owned) != 3 || owned[0] != "attachments" || owned[1] != "att_01TEST" || !strings.HasPrefix(owned[2], ".partial-") {
+			t.Fatalf("refuse=%v: chowned %v", refuse, owned)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != "PK" {
+			t.Fatalf("refuse=%v: %q %v", refuse, got, err)
+		}
+	}
+	// The same owner as this process: nothing to give away.
+	checkoutOwner = func(os.FileInfo) (int, int, bool) { return os.Geteuid(), os.Getegid(), true }
+	chownPath = func(path string, _, _ int) error {
+		t.Errorf("chown %s for the process's own checkout", path)
+		return nil
+	}
+	if _, err := SaveAttachmentLikeCheckout(realTempDir(t), "att_01TEST", "x.zip", []byte("PK")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Over the server (no workspace of its own) a file that cannot come back inline is saved from a HEAD alone: the bytes are downloaded once,
+// by the supervisor, not here first. A file that may come back inline is still downloaded.
+func TestAttachmentGetWithoutWorkspaceDecidesFromHead(t *testing.T) {
+	var gets, heads, saves atomic.Int64
+	contentType, size := "application/zip", "2400000"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/agent/attachments/att_01TEST" && (r.Method == http.MethodHead || r.Method == http.MethodGet):
+			if r.Method == http.MethodHead {
+				heads.Add(1)
+			} else {
+				gets.Add(1)
+			}
+			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Content-Length", size)
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte("small note"))
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/agent/attachments/att_01TEST/save":
+			saves.Add(1)
+			_, _ = w.Write([]byte(`{"saved":true,"path":"/workspace/.aimebu/attachments/att_01TEST/a.zip","mime":"application/zip","size":2400000}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	content, failed := callAttachmentGet(t, Server{URL: server.URL, Key: "aak_test"}, `{"attachment_id":"att_01TEST"}`)
+	if failed || heads.Load() != 1 || gets.Load() != 0 || saves.Load() != 1 {
+		t.Fatalf("zip: failed=%v heads=%d gets=%d saves=%d content=%+v", failed, heads.Load(), gets.Load(), saves.Load(), content)
+	}
+	if path, n, _ := savedPath(t, content); path != "/workspace/.aimebu/attachments/att_01TEST/a.zip" || n != 2400000 {
+		t.Fatalf("saved %q %d", path, n)
+	}
+
+	size = strconv.Itoa(MaxAttachmentBytes + 1)
+	content, failed = callAttachmentGet(t, Server{URL: server.URL, Key: "aak_test"}, `{"attachment_id":"att_01TEST"}`)
+	if !failed || gets.Load() != 0 || saves.Load() != 1 || !strings.Contains(content[0].Text, "larger than 10 MB") {
+		t.Fatalf("oversize: failed=%v gets=%d saves=%d content=%+v", failed, gets.Load(), saves.Load(), content)
+	}
+
+	contentType, size = "text/plain", "10"
+	content, failed = callAttachmentGet(t, Server{URL: server.URL, Key: "aak_test"}, `{"attachment_id":"att_01TEST"}`)
+	if failed || gets.Load() != 1 || saves.Load() != 1 || len(content) != 1 || content[0].Text != "small note" {
+		t.Fatalf("small text: failed=%v gets=%d saves=%d content=%+v", failed, gets.Load(), saves.Load(), content)
 	}
 }

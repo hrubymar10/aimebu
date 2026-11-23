@@ -1783,7 +1783,9 @@ it never silently reruns a turn with uncertain effects.
   `code:"turn_not_running"`), fetches the bytes from
   `/api/agent/attachments/{id}` with the agent's own key (so the same rule
   applies again), and writes `<checkout>/.aimebu/attachments/<id>/<name>`:
-  name reduced to one safe file name, mode 0600, no linked folder on the way,
+  name reduced to one safe file name, the checkout's owner and its read access
+  for group and others (never more; `.aimebu/` gains only its search bits),
+  no linked folder on the way,
   an atomic write, at most 10 MB. `details.path` is the path as the agent sees
   it: the host path mapped through the agent's launcher path map, as its
   checkout is. Other codes: `no_workspace`, `no_key`, `fetch_failed`,

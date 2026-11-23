@@ -546,7 +546,7 @@ not fetch or stage them ahead of a turn. A normal agent turn can use the
 membership. For native Claude Code and Codex the tool runs in the stdio
 bridge next to the agent's files, so a file it cannot return inline (a zip, a
 PDF, text over 64 KB; at most 10 MB) is written, only when the agent asks for
-it, to `<checkout>/.aimebu/attachments/<attachment_id>/<name>` with mode 0600
+it, to `<checkout>/.aimebu/attachments/<attachment_id>/<name>` with mode 0600 (as readable as the checkout when the supervisor saves it, below)
 (see [the adapter guide](adapter.md)). The other channels run the tool in the
 server, which asks this supervisor to save it with `attachment_save` (below). Pi Docker has no MCP credential channel, so its private turn input
 includes a turn-scoped HTTP bearer and a server URL reachable from the
@@ -1110,10 +1110,14 @@ endpoint that Docker variants and native Pi, OpenCode and Vibe use: the server c
 the agent's files, the supervisor can. It saves only for that agent's active ordinary turn
 (`turn_not_running` otherwise), downloads the file from `/api/agent/attachments/{id}` with the
 agent's own key (the same checks as the tool: a note in the live turn, room membership), writes
-it with the bridge's helper to `<checkout>/.aimebu/attachments/<id>/<name>` (mode 0600, no
-linked folder, atomic, at most 10 MB) and answers with the path the agent sees: the host path
-mapped through the agent's launcher path map, the rule the Docker adapter uses for the checkout.
-The download runs off the read loop. A supervisor from before the frame never gets it; the
+it with the bridge's helper to `<checkout>/.aimebu/attachments/<id>/<name>` (no linked folder,
+atomic, at most 10 MB) and answers with the path the agent sees: the host path mapped through
+the agent's launcher path map, the rule the Docker adapter uses for the checkout. Unlike the
+bridge's 0600, the folders under `.aimebu/attachments` and the file take the checkout's owner and group (when the supervisor may give
+them away) and the checkout's read access for its group and others, never more, so a container user other than the
+supervisor's can read a file in a checkout it can read; `.aimebu/` itself gains only the checkout's search bits. The download runs off the read loop, and it is the only one: the server's tool
+reads the type and size with a HEAD request and fetches the bytes itself only for a file that may
+come back inline (an image, or text up to 64 KB). A supervisor from before the frame never gets it; the
 tool then says the file cannot be saved, as it does when the machine is offline.
 
 The server can also **interrupt one turn on purpose** without stopping its agent. A supervisor

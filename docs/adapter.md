@@ -235,8 +235,14 @@ the tool runs decides that:
   server. The server may be on another machine and does not know the agent's
   checkout, so it asks the agent's supervisor (`POST
   /api/agent/attachments/{id}/save`, then the `attachment_save` frame; see
-  [the supervisor guide](supervisor.md)). The supervisor writes the file into
-  the turn's checkout with the same helper and the same rules, and the answer
+  [the supervisor guide](supervisor.md)); the server reads only the type and
+  size (a HEAD) and downloads the bytes itself only for a file that may come
+  back inline, so the file is downloaded once. The supervisor writes the file into
+  the turn's checkout with the same helper and the same rules, except that the
+  folders under `.aimebu/attachments` and the file take the checkout's owner
+  and its read access for group and others (never write, never more than the
+  checkout), and `.aimebu/` gains only the checkout's search bits, so a
+  container user other than the supervisor's can read it. The answer
   carries the path the agent sees: for a Docker launcher, the host path mapped
   through its path map (a mirrored checkout keeps the host path). A supervisor
   from before the frame, or a machine that is offline, gets the file answered

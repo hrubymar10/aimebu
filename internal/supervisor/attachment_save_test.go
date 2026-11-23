@@ -56,6 +56,9 @@ func saveFrame(agentID, turnID string) protocol.Frame {
 func TestAttachmentSaveWritesIntoTheTurnCheckout(t *testing.T) {
 	data := append([]byte("PK\x03\x04"), bytes.Repeat([]byte{7}, 4096)...)
 	c, checkout, _ := attachmentSaveClient(t, data, nil)
+	if err := os.Chmod(checkout, 0700); err != nil { // a private checkout keeps the file private
+		t.Fatal(err)
+	}
 	result := c.saveAttachment(t.Context(), saveFrame("agt_a", "turn_live"))
 	if result.Type != protocol.AttachmentSaveResult || result.ReqID != "req1" || result.Code != "" {
 		t.Fatalf("result = %+v", result)
@@ -143,5 +146,23 @@ func TestAttachmentSaveRelaysFetchAndSizeFailures(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(checkout, ".aimebu")); !os.IsNotExist(err) {
 		t.Fatalf("a failed save touched the checkout: %v", err)
+	}
+}
+
+// A checkout the container's user can read gives a saved file it can read: the supervisor saves with the checkout's read access, not 0600.
+func TestAttachmentSaveIsAsReadableAsTheCheckout(t *testing.T) {
+	c, checkout, _ := attachmentSaveClient(t, []byte("PK"), nil)
+	if err := os.Chmod(checkout, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if result := c.saveAttachment(t.Context(), saveFrame("agt_a", "turn_live")); result.Code != "" {
+		t.Fatalf("result = %+v", result)
+	}
+	file := filepath.Join(checkout, ".aimebu", "attachments", "att_01ZIP", "bundle.zip")
+	if info, err := os.Stat(file); err != nil || info.Mode().Perm() != 0644 {
+		t.Fatalf("file mode %v, %v", info.Mode().Perm(), err)
+	}
+	if info, err := os.Stat(filepath.Dir(file)); err != nil || info.Mode().Perm() != 0755 {
+		t.Fatalf("folder mode %v, %v", info.Mode().Perm(), err)
 	}
 }

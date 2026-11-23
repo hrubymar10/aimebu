@@ -119,7 +119,7 @@ var catalog = []tool{
 	{"memory_recall", "Search curated project memory, task notes in joined rooms, and messages in joined rooms. Does not advance read state.", map[string]any{"type": "object", "properties": map[string]any{
 		"query": map[string]string{"type": "string"}, "limit": map[string]string{"type": "integer"},
 	}, "required": []string{"query"}}},
-	{"attachment_get", "Read a file attached to a note in your current turn while you remain a member of its room. Images and text up to 64 KB come back inline. Any other file (a zip, a PDF, larger text) up to 10 MB is saved into your workspace at .aimebu/attachments/<attachment_id>/<name> (mode 0600, ignored by Git, never extracted or run) and the result gives its path as you see it, its type and its size; open it with your own tools. Set save to also save an image or small text. When the file cannot be saved, the result says why.", map[string]any{"type": "object", "properties": map[string]any{
+	{"attachment_get", "Read a file attached to a note in your current turn while you remain a member of its room. Images and text up to 64 KB come back inline. Any other file (a zip, a PDF, larger text) up to 10 MB is saved into your workspace at .aimebu/attachments/<attachment_id>/<name> (no more readable than your workspace, ignored by Git, never extracted or run) and the result gives its path as you see it, its type and its size; open it with your own tools. Set save to also save an image or small text. When the file cannot be saved, the result says why.", map[string]any{"type": "object", "properties": map[string]any{
 		"attachment_id": map[string]string{"type": "string"},
 		"save":          map[string]string{"type": "boolean", "description": "Also save an image or small text to a file; other files are always saved"},
 	}, "required": []string{"attachment_id"}}},
@@ -499,6 +499,11 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		if len(args["save"]) > 0 && json.Unmarshal(args["save"], &saveAttachmentFile) != nil {
 			return toolResult("save must be a boolean", true)
 		}
+		if s.Workdir == "" {
+			if result, done := s.saveWithoutDownload(ctx, id); done {
+				return result
+			}
+		}
 	case "spawn_agent":
 		method, path = http.MethodPost, "/api/agent/agents"
 		requestKey = getString("request_key")
@@ -685,11 +690,10 @@ func (s Server) attachmentResult(ctx context.Context, client *http.Client, id st
 	}
 	contentType, _, _ := mime.ParseMediaType(header.Get("Content-Type"))
 	var inline any
-	switch contentType {
-	case "image/png", "image/jpeg", "image/gif", "image/webp":
-		inline = map[string]string{"type": "image", "data": base64.StdEncoding.EncodeToString(data), "mimeType": contentType}
-	default:
-		if len(data) <= maxInlineText && utf8.Valid(data) && (strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml" || contentType == "image/svg+xml") {
+	if inlineCandidate(contentType, len(data)) {
+		if inlineImage(contentType) {
+			inline = map[string]string{"type": "image", "data": base64.StdEncoding.EncodeToString(data), "mimeType": contentType}
+		} else if utf8.Valid(data) {
 			inline = map[string]string{"type": "text", "text": string(data)}
 		}
 	}
@@ -715,11 +719,66 @@ func (s Server) attachmentResult(ctx context.Context, client *http.Client, id st
 		}
 	}
 	saved, _ := json.Marshal(map[string]any{"saved": true, "path": path, "mime": contentType, "size": size})
-	note := map[string]string{"type": "text", "text": string(saved) + "\nSaved to your workspace (mode 0600, ignored by Git). Open it with your own tools; it is never extracted or run for you."}
+	note := map[string]string{"type": "text", "text": string(saved) + "\nSaved to your workspace (ignored by Git). Open it with your own tools; it is never extracted or run for you."}
 	if inline != nil {
 		return map[string]any{"content": []any{inline, note}, "isError": false}
 	}
 	return map[string]any{"content": []any{note}, "isError": false}
+}
+
+func inlineImage(contentType string) bool {
+	switch contentType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return true
+	}
+	return false
+}
+
+// inlineCandidate says whether an attachment of this type and size may come back inline: an image, or text up to 64 KB (which must also be
+// valid UTF-8, known only from its bytes).
+func inlineCandidate(contentType string, size int) bool {
+	if inlineImage(contentType) {
+		return true
+	}
+	return size <= maxInlineText && (strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml" || contentType == "image/svg+xml")
+}
+
+// saveWithoutDownload is attachment_get where the toolbox has no workspace of its own (the server's HTTP endpoint): it reads the attachment's
+// type and size with a HEAD request and, for a file that cannot come back inline, has the agent's supervisor save it without downloading the
+// bytes here first. done is false when the download path should run instead: the HEAD was refused (the download reports why), the size is
+// unknown, or the file may come back inline.
+func (s Server) saveWithoutDownload(ctx context.Context, id string) (result any, done bool) {
+	client := s.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, strings.TrimRight(s.URL, "/")+"/api/agent/attachments/"+url.PathEscape(id), nil)
+	if err != nil {
+		return nil, false
+	}
+	req.Header.Set("Authorization", "Bearer "+s.Key)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	resp.Body.Close()
+	size, err := strconv.Atoi(resp.Header.Get("Content-Length"))
+	if resp.StatusCode != http.StatusOK || err != nil || size < 0 {
+		return nil, false
+	}
+	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if size > MaxAttachmentBytes {
+		return toolResult(fmt.Sprintf("attachment is larger than %d MB, the most attachment_get returns; it was not saved", MaxAttachmentBytes>>20), true), true
+	}
+	if inlineCandidate(contentType, size) {
+		return nil, false
+	}
+	path, savedSize, err := s.remoteSave(ctx, client, id)
+	if err != nil {
+		return toolResult(fmt.Sprintf("Attachment: %s, %d bytes. It cannot be saved to your workspace here: %v. It is not available as a file.", contentType, size, err), false), true
+	}
+	saved, _ := json.Marshal(map[string]any{"saved": true, "path": path, "mime": contentType, "size": savedSize})
+	return map[string]any{"content": []any{map[string]string{"type": "text", "text": string(saved) + "\nSaved to your workspace (ignored by Git). Open it with your own tools; it is never extracted or run for you."}}, "isError": false}, true
 }
 
 // remoteSave asks the server to have the agent's supervisor save the attachment into the workspace of the agent's running turn, and returns
