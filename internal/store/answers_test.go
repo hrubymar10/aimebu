@@ -1078,3 +1078,98 @@ func TestMessageThatWokeNobodyNotesItsAuthor(t *testing.T) {
 		}
 	})
 }
+
+// A mention that two agents of the room answer to addresses neither, so its author is told at once, with the full IDs that name each one,
+// even in a room a person reads (where the woke-nobody note stays quiet). An agent that shares its name only with a person is addressed with
+// that person, and its author gets no such note.
+func TestAmbiguousMentionNotesItsAuthor(t *testing.T) {
+	t.Parallel()
+	ambiguityNotes := func(t *testing.T, s *Store, f executionFixture) []string {
+		t.Helper()
+		rows, err := s.db.Query(`SELECT m.body FROM message m JOIN note n ON n.message_id=m.id WHERE m.author_kind='system' AND n.agent_id=? AND m.body LIKE ?`, f.agent.ID, ambiguousNotePrefix+"%")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var body string
+			if err := rows.Scan(&body); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, body)
+		}
+		return out
+	}
+	bob := func(t *testing.T, s *Store, projectID string, slug ...string) Agent {
+		t.Helper()
+		name := "bob"
+		if len(slug) > 0 {
+			name = slug[0]
+		}
+		agent, err := s.CreateAgent(context.Background(), Agent{Slug: name, ProjectID: projectID, RoleID: "role_test", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "hash", CreatedBy: "usr_test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return agent
+	}
+	t.Run("two agents share the slug", func(t *testing.T) {
+		t.Parallel()
+		s, f := answerFixture(t, false)
+		ctx := context.Background()
+		other, err := s.CreateProject(ctx, Project{Name: "other", Folder: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		here, there := bob(t, s, f.project.ID), bob(t, s, f.project.ID, "bob-elsewhere")
+		if _, err := s.db.Exec(`UPDATE agent SET project_id=?,slug='bob' WHERE id=?`, other.ID, there.ID); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{here.ID, there.ID} {
+			if err := s.AddMember(ctx, f.room.ID, "agent", id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"@bob please look"}]}`, f.room.ID))
+		if err != nil || receipt.Result != "committed" {
+			t.Fatalf("receipt=%+v err=%v", receipt, err)
+		}
+		if got := wakeReasons(t, s, receipt.MessageIDs[0]); len(got) != 0 {
+			t.Fatalf("an ambiguous mention woke %v", got)
+		}
+		var no int64
+		if err := s.db.QueryRow(`SELECT no FROM message WHERE id=?`, receipt.MessageIDs[0]).Scan(&no); err != nil {
+			t.Fatal(err)
+		}
+		got := ambiguityNotes(t, s, f)
+		if len(got) != 1 || !strings.Contains(got[0], fmt.Sprintf("#%d", no)) || !strings.Contains(got[0], "@bob is ambiguous") ||
+			!strings.Contains(got[0], "@"+here.ID) || !strings.Contains(got[0], "@"+there.ID) {
+			t.Fatalf("notes=%q, want one naming #%d and both full IDs", got, no)
+		}
+	})
+	t.Run("an agent and a person share the name", func(t *testing.T) {
+		t.Parallel()
+		s, f := answerFixture(t, false)
+		ctx := context.Background()
+		agent := bob(t, s, f.project.ID)
+		if err := s.AddMember(ctx, f.room.ID, "agent", agent.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_bob','bob','hash','{}','now')`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,'usr_bob','owner')`, f.project.ID); err != nil {
+			t.Fatal(err)
+		}
+		receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"@bob please look"}]}`, f.room.ID))
+		if err != nil || receipt.Result != "committed" {
+			t.Fatalf("receipt=%+v err=%v", receipt, err)
+		}
+		if got := wakeReasons(t, s, receipt.MessageIDs[0]); !sameWakes(got, map[string]string{"bob": "mention"}) {
+			t.Fatalf("woke %v, want the agent by mention", got)
+		}
+		if got := ambiguityNotes(t, s, f); len(got) != 0 {
+			t.Fatalf("notes=%q, want none", got)
+		}
+	})
+}

@@ -449,9 +449,25 @@ func resolveMentions(body, authorID string, members []roomRecipient, projectID, 
 				}
 				continue
 			}
-			if matches := bySlug[token]; len(matches) == 1 {
+			matches := bySlug[token]
+			agents := 0
+			for _, member := range matches {
+				if member.kind == "agent" {
+					agents++
+				}
+			}
+			if len(matches) == 1 {
 				add(matches[0], "mention") // An exact slug wins over a role.
 				record(token, "slug", "addressed", "exact slug of a room member (a slug wins over a role of the same name)", matches)
+			} else if agents == 1 {
+				// One agent and one or more people share the name (a person's login equal to the agent's slug). The token names
+				// that agent as surely as it names them, and a mention of an agent must always wake it: reading the clash as
+				// ambiguous addressed nobody, so the agent missed every bare @mention while replies and handoffs still reached it.
+				// Everyone who holds the name is addressed; waking one more reader is cheaper than a silent miss.
+				for _, member := range matches {
+					add(member, "mention")
+				}
+				record(token, "slug", "addressed", fmt.Sprintf("the agent with the slug %q and the people with that login share the name, so all of them are addressed; write @%s@%s to address only the agent", token, token, projectName), matches)
 			} else if len(matches) > 1 {
 				record(token, "slug", "ambiguous", fmt.Sprintf("%d room members share the slug %q, so nobody is addressed; write the full form such as @%s@%s to address one", len(matches), token, token, projectName), matches)
 			} else {

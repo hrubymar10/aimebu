@@ -696,7 +696,13 @@ parent author; an explicit mention or handoff wakes the intended agent. A
 handoff wakes the room's lead, or in a task room of the leader-dispatcher flow
 (which has no lead) the dispatcher. An agent message that reached nobody at all,
 in a room of agents alone (no human member, not home), earns its author a short
-system note saying so, so a chain never stops silently; a lead's messages never do. Agent
+system note saying so, so a chain never stops silently; a lead's messages never do.
+Agent slugs and people's logins share one namespace: a name held by one agent
+and by people (an account whose login equals the agent's slug) addresses the
+agent and those people, so a bare `@slug` always wakes the agent, and
+`@slug@<project>` names the agent alone. A name two agents of the room share is
+ambiguous and addresses neither; the author gets an immediate system note,
+in any room, naming the full `@agt_…` ID of each. Agent
 replies to humans still target them, and human replies still wake their parent
 author, and also the agent that started the conversation when that is someone
 else. A message has one link, `reply_to`; the conversation it belongs to

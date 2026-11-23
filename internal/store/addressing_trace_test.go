@@ -149,6 +149,25 @@ func TestTraceExplainsEachWayAMentionResolves(t *testing.T) {
 	}
 }
 
+// A person whose login equals an agent's slug does not make the name ambiguous: the agent and the person are both addressed, so a bare
+// mention of the agent always wakes it. Two agents sharing a slug stay ambiguous.
+func TestSlugSharedByOneAgentAndAPersonAddressesBoth(t *testing.T) {
+	t.Parallel()
+	members := append(traceMembers(), roomRecipient{id: "usr_ada", slug: "ada", kind: "user", implicit: true}, roomRecipient{id: "usr_bob", slug: "bob", kind: "user"})
+	var trace []MentionTrace
+	got := resolveMentions("@ada @bob look", "usr_casey", members, "prj_1", "demo", &trace)
+	if !reflect.DeepEqual(got, map[string]string{"agt_ada": "mention", "usr_ada": "mention"}) {
+		t.Fatalf("targets=%v", got)
+	}
+	if len(trace) != 2 || trace[0].Outcome != "addressed" || !strings.Contains(trace[0].Reason, "share the name") || trace[1].Outcome != "ambiguous" {
+		t.Fatalf("trace=%+v", trace)
+	}
+	// The agent that shares its name with the sender is still woken; the sender is not addressed by their own message.
+	if got := resolveMentions("@ada hi", "usr_ada", members, "prj_1", "demo", nil); !reflect.DeepEqual(got, map[string]string{"agt_ada": "mention"}) {
+		t.Fatalf("person-authored targets=%v", got)
+	}
+}
+
 func TestTraceFlagsMentionsThatAreInvisibleBecauseOfCodeOrEscapes(t *testing.T) {
 	t.Parallel()
 	targets, traces := traceFor(t, "`@ada` please look, and \\@bob, but also @reviewer\n```\n@scout\n```")

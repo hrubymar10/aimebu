@@ -346,8 +346,9 @@ slugs and human logins share one namespace, as in server addressing: a role key
 that is also a slug or login is not offered as a role, a colliding human login
 is not offered, and when two agents share a slug the full `@slug@<project_id>`
 form is inserted. Sent messages highlight a mention only when it resolves under
-the same order (group tag, unique slug/login, `slug@<project id>`, else role
-key). This is narrower than the server, which also accepts member-ID tokens and
+the same order (group tag, unique slug/login, a slug that one agent shares
+only with people's logins — the server addresses the agent and those people —,
+`slug@<project id>`, else role key). This is narrower than the server, which also accepts member-ID tokens and
 `slug@<project name>`; those go unhighlighted. Fenced, inline and indented code,
 link text, and `\@` escapes are never highlighted.
 

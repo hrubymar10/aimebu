@@ -1894,6 +1894,15 @@ CC/Codex, prompt-only on pi):
   read their rooms without a wake), gets its author one targeted system message (`Your message
   woke nobody: #N …`) asking it to mention who should act. One per answer; a
   turn woken by such a message gets no second one.
+- A committed agent message (outside a chat between agents) with a live
+  `@slug` that two or more agents of its room answer to addresses none of
+  them for that token, so its author gets one targeted system message
+  (`Your mention addressed nobody: #N: @slug is ambiguous …`) naming the full
+  `@agt_…` ID of each candidate. It is sent whatever else the message reached
+  and in every room, a person's included; such a message gets no `woke
+  nobody` note as well. One per answer; a turn woken by such a message gets
+  no second one. A slug one agent shares only with people's logins is not
+  ambiguous (§6 Addressing).
 - `visual_plan` and `appendix_pages` are message-scoped display content. The
   v1 block vocabulary is supported; Codex and Claude structured-output
   schemas encode each block's `data` object as a JSON string. Unknown or
@@ -2099,7 +2108,10 @@ Addressing: `@login` resolves against the room's user members and, in a
 non-DM room, every active human of the room's project (they can read the room
 without a `room_member` row); a DM resolves only its peers. Group tags
 (`@channel`, `@humans`, ...) still mean the room's explicit members. A login
-that equals an agent slug is ambiguous, as for two agents with one slug.
+that equals the slug of exactly one agent of the room addresses that agent and
+every person with the login (a live mention of an agent always wakes it; the
+`@slug@<project>` form names the agent alone). Two agents with one slug are
+ambiguous and address nobody.
 
 ## 7. Spawn / move / role change checks
 

@@ -2,7 +2,7 @@ import { Picker } from './picker.js';
 import { agentLabel } from './sender-identity.js';
 // @mention candidates, composer autocomplete and in-message highlighting. Resolution follows the
 // server's addressing order (internal/store/wake.go resolveMentionTargets): group tags win, then an
-// exact unique slug (agent slugs and human logins share one namespace), then an assigned role key;
+// exact unique slug (agent slugs and human logins share one namespace; a slug one agent shares only with people's logins addresses them all), then an assigned role key;
 // `slug@<project>` selects an agent explicitly, the project being named by its id or by its name (a name only when it is a valid
 // mention qualifier, [a-z0-9_.-]+, and no other same-named agent's project shares it: otherwise the id is offered and read). It is deliberately narrower than the server:
 // member-ID tokens are not recognised, so those mentions go unhighlighted.
@@ -56,14 +56,16 @@ export class MentionIndex {
     const at = token.indexOf('@'), slug = at < 0 ? token : token.slice(0, at);
     if (this.historical.has(token)) return true;
     if (at >= 0) return this.qualified(slug, token.slice(at + 1));
-    return this.agentSlugs.has(slug) && this.slugs.get(slug) === 1;
+    return this.agentSlugs.has(slug) && (this.slugs.get(slug) === 1 || this.soleAgent(slug));
   }
+  // One agent holds the name and every other holder is a person: the server addresses all of them, so the name is a live mention of that agent.
+  soleAgent(slug) { return this.cards.filter(card => String(card.slug).toLowerCase() === slug).length === 1; }
   resolve(token) {
     if (GROUPS.has(token)) return 'group';
     const at = token.indexOf('@');
     if (at >= 0) return this.qualified(token.slice(0, at), token.slice(at + 1)) || this.historical.has(token) ? 'mention' : null;
     const matches = this.slugs.get(token) || 0;
-    if (matches === 1) return 'mention';
+    if (matches === 1 || (matches > 1 && this.soleAgent(token))) return 'mention';
     if (matches === 0 && this.roles.has(token)) return 'role';
     return matches === 0 && this.historical.has(token) ? 'mention' : null;
   }

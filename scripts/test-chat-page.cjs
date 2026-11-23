@@ -2823,6 +2823,19 @@ async function main() {
     assert.deepEqual([result.byName, result.byID, result.other], ['mention', 'mention', null], 'the qualifier is read as the project name or id');
     await page.close();
   }
+  // A person's login equal to one agent's slug is a live mention of that agent (the server addresses the agent and the person); two agents
+  // with one slug stay ambiguous.
+  {
+    const page = await mount({ rooms: { rm_a: 1 } });
+    const result = await page.evaluate(async () => {
+      const { MentionIndex } = await import('/js/mentions.js');
+      const card = (id, slug) => ({ id, slug, project_id: 'prj_a', role_key: 'worker', tool: 'codex', model: 'm' });
+      const index = new MentionIndex([card('agt_1', 'wren'), card('agt_2', 'ada'), { ...card('agt_3', 'ada'), project_id: 'prj_b' }], 'prj_a', ['wren', 'ada'], []);
+      return { wren: index.resolve('wren'), ada: index.resolve('ada'), profile: index.opensProfile('wren') };
+    });
+    assert.deepEqual(result, { wren: 'mention', ada: null, profile: true }, 'one agent sharing its slug with a login is a mention; two agents are not');
+    await page.close();
+  }
   assert.deepEqual(errors, []);
   await browser.close(); server.close();
   console.log('chat page: ok');

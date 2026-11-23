@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -324,7 +325,7 @@ func TestDispatchRoundsRoomsAndRespectsSwitchGate(t *testing.T) {
 
 func TestProjectHumansAreAddressableInOrdinaryRoomsOnly(t *testing.T) {
 	t.Parallel()
-	s, project, room, _, _ := wakeFixture(t)
+	s, project, room, one, _ := wakeFixture(t)
 	ctx := context.Background()
 	for _, user := range []struct{ id, login string }{{"usr_alice", "alice"}, {"usr_bob", "bob"}, {"usr_carol", "carol"}, {"usr_gone", "gone"}, {"usr_one", "one"}} {
 		if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES (?,?, 'hash','{}','now')`, user.id, user.login); err != nil {
@@ -373,9 +374,9 @@ func TestProjectHumansAreAddressableInOrdinaryRoomsOnly(t *testing.T) {
 	if got := targetsOf(room.ID, "usr_alice", "@humans @channel sync"); got["usr_carol"] || !got["usr_bob"] {
 		t.Fatalf("group tag reached implicit humans or missed a member: %v", got)
 	}
-	// A login equal to an agent slug stays ambiguous.
-	if got := targetsOf(room.ID, "usr_bob", "@one are you there"); len(got) != 0 {
-		t.Fatalf("ambiguous slug/login addressed someone: %v", got)
+	// A login equal to an agent slug names both: the agent is woken and the person addressed, never neither.
+	if got := targetsOf(room.ID, "usr_bob", "@one are you there"); len(got) != 2 || !got["usr_one"] || !got[one.ID] {
+		t.Fatalf("slug/login clash did not address the agent and the person: %v", got)
 	}
 	// Logins listed for the client match what the server resolves.
 	logins, err := s.RoomUserLogins(ctx, room.ID)
@@ -523,6 +524,96 @@ func TestAgentReplyWakesAreBoundedByTheHopGuard(t *testing.T) {
 	if !woken(worker.ID, back) {
 		t.Fatal("after a person's message the agents may answer each other again")
 	}
+}
+
+// The shape of #46304 and #46526 in the routing room: the lead (wren) and the dispatcher (zeno) are both in the room only because leads and
+// coordinators are put into project rooms (auto), a person whose login is also "wren" owns the project, and the two agents have been replying
+// to each other past the hop guard. The dispatcher's "@wren ..." (a reply into the chain, or a fresh message) must wake the lead by mention,
+// a queued note even while the lead is in a turn; reading the slug/login clash as ambiguous used to address nobody.
+func TestMentionOfAnAgentWakesItWhenAPersonSharesTheNamePastTheHopGuard(t *testing.T) {
+	t.Parallel()
+	s, project, room, dispatcher, lead := wakeFixture(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`UPDATE agent SET slug='wren' WHERE id=?`, lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET slug='zeno' WHERE id=?`, dispatcher.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE room_member SET auto=1 WHERE room_id=? AND member_kind='agent'`, room.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []struct{ id, login, role string }{{"usr_owner", "owner", "owner"}, {"usr_wren", "wren", "owner"}} {
+		if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES (?,?,'hash','{}','now')`, user.id, user.login); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,?)`, project.ID, user.id, user.role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	say := func(author, body, replyTo string) Message {
+		t.Helper()
+		message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: author, Body: body, ReplyTo: replyTo})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return message
+	}
+	wokenAs := func(agent string, message Message) string {
+		t.Helper()
+		var reason string
+		if err := s.db.QueryRow(`SELECT wake_reason FROM note WHERE agent_id=? AND message_id=?`, agent, message.ID).Scan(&reason); err != nil {
+			return ""
+		}
+		return reason
+	}
+	// A long lead/dispatcher chain with no person's message: the hop guard is spent.
+	previous := say(lead.ID, "@zeno dispatch A8-7", "")
+	agents := []string{dispatcher.ID, lead.ID}
+	for hop := 0; hop <= ReplyWakeHops; hop++ {
+		previous = say(agents[hop%2], fmt.Sprintf("reply %d", hop), previous.ID)
+	}
+	if blocked := say(dispatcher.ID, "a plain reply", previous.ID); wokenAs(lead.ID, blocked) != "" {
+		t.Fatal("precondition: a plain reply past the hop guard should not wake the lead")
+	}
+	// The lead is in a turn when the mention arrives: the note is queued for its next turn, not folded or dropped.
+	if _, err := s.db.Exec(`INSERT INTO note(id,agent_id,message_id,room_id,state,wake_reason,created_at) VALUES ('note_busy',?,?,?,'queued','mention',?)`,
+		lead.ID, previous.ID, room.ID, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if a, ready, err := s.PrepareDispatch(ctx, lead.ID, ""); err != nil || !ready {
+		t.Fatalf("lead turn ready=%t %v %+v", ready, err, a)
+	}
+	// #46526: a reply into the chain that starts with a live @wren.
+	reply := say(dispatcher.ID, "@wren A8-7 is started: room `room_x`, worker xena2. Brief has @zeno in it.", previous.ID)
+	if got := wokenAs(lead.ID, reply); got != "mention" {
+		t.Fatalf("#46526 shape: lead wake reason %q, want mention", got)
+	}
+	var state string
+	if err := s.db.QueryRow(`SELECT state FROM note WHERE agent_id=? AND message_id=?`, lead.ID, reply.ID).Scan(&state); err != nil || state != "queued" {
+		t.Fatalf("mid-turn mention note state=%q err=%v, want queued", state, err)
+	}
+	var targets []string
+	if err := json.Unmarshal([]byte(reply.TargetsJSON), &targets); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(targets, ",") != strings.Join(sortedIDs(lead.ID, "usr_wren"), ",") {
+		t.Fatalf("targets=%v, want the lead and the person who share the name", targets)
+	}
+	// #46304: the same mention as a fresh message, not a reply.
+	if fresh := say(dispatcher.ID, "@wren A8-1 is started", ""); wokenAs(lead.ID, fresh) != "mention" {
+		t.Fatal("#46304 shape: a fresh @wren must wake the lead")
+	}
+	// The project-qualified form still names only the agent.
+	qualified := say(dispatcher.ID, "@wren@"+project.Name+" only you", "")
+	if err := json.Unmarshal([]byte(qualified.TargetsJSON), &targets); err != nil || strings.Join(targets, ",") != lead.ID {
+		t.Fatalf("qualified targets=%v err=%v", targets, err)
+	}
+}
+
+func sortedIDs(ids ...string) []string {
+	sort.Strings(ids)
+	return ids
 }
 
 // Two agents that answer every note they are woken by with a reply would go on for ever; the guard stops the exchange after

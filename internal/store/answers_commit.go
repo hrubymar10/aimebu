@@ -93,6 +93,7 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 		heldAt[d.index] = d
 	}
 	var wokeNobody []int64
+	var ambiguities []string
 	for index, item := range input.Parsed.Messages {
 		if d, held := heldAt[index]; held {
 			// Held alone: the row keeps what the agent wrote (its target may not exist or be readable), and the rest of the reply goes on.
@@ -150,7 +151,14 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 				return err
 			}
 		}
-		if forwarded == 0 {
+		ambiguous, err := tx.ambiguousMentions(message)
+		if err != nil {
+			return err
+		}
+		if len(ambiguous) > 0 {
+			ambiguities = append(ambiguities, fmt.Sprintf("#%d: %s", message.No, strings.Join(ambiguous, "; ")))
+		}
+		if forwarded == 0 && len(ambiguous) == 0 {
 			silent, err := tx.messageWokeNobody(turn, message)
 			if err != nil {
 				return err
@@ -196,7 +204,62 @@ func (tx *Tx) commitAnswerMessages(turn answerTurn, input AnswerInput, receipt *
 			return err
 		}
 	}
+	if err := tx.ambiguousMentionNote(turn, ambiguities); err != nil {
+		return err
+	}
 	return tx.noWakeNote(turn, wokeNobody)
+}
+
+const ambiguousNotePrefix = "Your mention addressed nobody: "
+
+// ambiguousMentions lists the live @tokens of a committed agent message that two or more agents of its room answer to. Such a token addresses
+// none of them, whatever else the message reaches (a reply, a person in the room, another mention), so the sender is told at once which full
+// IDs would name each one. An agent that shares its name only with people is not ambiguous: it and the people are all addressed.
+func (tx *Tx) ambiguousMentions(message Message) ([]string, error) {
+	var projectID, projectName string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT p.id,p.name FROM room r JOIN project p ON p.id=r.project_id WHERE r.id=?`, message.RoomID).Scan(&projectID, &projectName); err != nil {
+		return nil, err
+	}
+	if projectID == AgentDMProjectID { // a chat between agents reads no mentions
+		return nil, nil
+	}
+	members, err := tx.roomRecipients(message.RoomID)
+	if err != nil {
+		return nil, err
+	}
+	var trace []MentionTrace
+	resolveMentions(message.Body, message.AuthorID, members, projectID, projectName, &trace)
+	var out []string
+	for _, entry := range trace {
+		if entry.Outcome != "ambiguous" {
+			continue
+		}
+		var forms []string
+		for _, person := range entry.Reached {
+			if person.Kind == "agent" {
+				forms = append(forms, "@"+person.ID)
+			}
+		}
+		out = append(out, fmt.Sprintf("@%s is ambiguous (%d agents in the room share the slug); write the full ID of the one you mean: %s", entry.Token, len(forms), strings.Join(forms, " or ")))
+	}
+	return out, nil
+}
+
+// ambiguousMentionNote tells the agent, as a system note only it can see, which of its mentions addressed nobody because several agents share the
+// name. It is sent in every kind of room, with a person in it or not, because the agent believes it has addressed someone. A turn woken by such
+// a note gets no second one, so an agent that repeats the ambiguous name ends there rather than in a loop of notes.
+func (tx *Tx) ambiguousMentionNote(turn answerTurn, lines []string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	var woken bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
+		WHERE tn.turn_id=? AND m.author_kind='system' AND m.body LIKE ?)`, turn.id, ambiguousNotePrefix+"%").Scan(&woken); err != nil || woken {
+		return err
+	}
+	body := ambiguousNotePrefix + strings.Join(lines, ". ") + ". Send a short pointer to your message with the right name; do not repeat the whole message."
+	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
+	return err
 }
 
 const noWakeNotePrefix = "Your message woke nobody: "
