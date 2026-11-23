@@ -234,6 +234,25 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [window.__jumps, window.__calls.filter(call => call[0] === 'usages').length]), [['q1'], 1]);
       await page.close();
     }
+    // A usage alert card draws its window's chart (the Usages panel's own block): the bar, the numbers and, for a pace alert, the runs-out line. A card
+    // whose provider has no data draws no chart and no error, and the chart follows the usage data when it changes.
+    {
+      const alert = (id, provider, profile, window) => ({ id, project_id: '', room_id: '', kind: 'usage_alert', question: `${provider} · ${profile} · ${window}: projected to run out; 98.0% remaining.`, provider, profile, window, rev: 0, state: 'open' });
+      const page = await mount({ list: [alert('uc1', 'codex', 'main', 'session'), alert('uc2', 'mistral', 'local', 'local'), { ...alert('uc3', 'codex', 'main', 'weekly'), window: 'weekly' }] });
+      await page.evaluate(() => {
+        window.__usage = { settings: { percent_display: 'remaining', refresh_interval_sec: 300 }, providers: [{ provider_name: 'codex', profiles: [{ profile_name: 'main', last_refresh_at: new Date().toISOString(),
+          windows: [{ key: 'session', percent_used: 40, reset_at: new Date(Date.now() + 3 * 3600e3).toISOString(), pace: { state: 'deficit', delta_percent: 20, expected_percent: 20, eta_seconds: 3600 } }] }] }] };
+        window.__inbox.setUsageList(async () => structuredClone(window.__usage));
+        return window.__inbox.refresh({ notify: false });
+      });
+      await page.waitForSelector('[data-inbox-id=uc1] .inbox-usage-chart .usages-progress');
+      assert.deepEqual(await page.$eval('[data-inbox-id=uc1] .inbox-usage-chart', node => [node.querySelector('.usages-window-meta strong').textContent, /Runs out in/.test(node.querySelector('.usages-pace-text')?.textContent || '')]), ['60% left', true]);
+      assert.deepEqual(await page.$$eval('[data-inbox-id=uc2] .inbox-usage-chart, [data-inbox-id=uc3] .inbox-usage-chart', nodes => nodes.length), 0, 'no data for the window: no chart');
+      assert.deepEqual(await page.$$eval('.error:not(:empty)', nodes => nodes.length), 0, 'a missing chart is not an error');
+      await page.evaluate(() => { window.__usage.providers[0].profiles[0].windows[0].percent_used = 70; return window.__inbox.usagesChanged(); });
+      await page.waitForFunction(() => document.querySelector('[data-inbox-id=uc1] .usages-window-meta strong')?.textContent === '30% left');
+      await page.close();
+    }
     // A new list keeps the cards that did not change (the same nodes, what was typed in them), replaces a changed one, drops a gone one and
     // its group, and tells the notifier only about what is new.
     {

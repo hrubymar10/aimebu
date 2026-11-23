@@ -353,7 +353,8 @@ const onboarding = new LazyOnboarding({ create: createFirstProject, spawn: () =>
 importWizard.onClose(() => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'), () => rights.owner);
 // An Inbox usage alert's "Open Usages": leave the Inbox for the chat and show the side panel the top-bar toggle opens.
-inbox.openUsages = () => { inbox.hide(); usagesPopover.show(); };
+inbox.openUsages = item => { inbox.hide(); return usagesPopover.show(item && { provider: item.provider, profile: item.profile }); };
+inbox.setUsageList(() => settings.source.list());
 const topbarMenu = new TopbarMenu();
 new ColumnResize();
 const roomMenu = new RoomMenu();
@@ -647,7 +648,7 @@ async function signedIn(session) {
       dot.title = label; dot.setAttribute('aria-label', label);
     }, seq);
     stream.baseline = () => pageBuild; stream.onVersionChange = () => updateBar.show();
-    stream.onUsagesUpdated = () => { if (active()) { settings.usagesChanged(); usagesPopover.changed(); } };
+    stream.onUsagesUpdated = () => { if (active()) { settings.usagesChanged(); usagesPopover.changed(); void inbox.usagesChanged(); } };
     const refreshInboxAlerts = () => {
       if (!active()) return;
       inbox.refresh().catch(() => {});

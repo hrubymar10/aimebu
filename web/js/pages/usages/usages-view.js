@@ -27,7 +27,8 @@ const MASKS = new Set(['codex', 'claude-code', 'github-copilot', 'mistral', 'oll
 const time = date => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const GROUP_ICON = html`<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 1h2v1H2v12h1.5v1h-2l-.5-.5v-13l.5-.5zm6 6h-2L5 6.5v-2l.5-.5h2l.5.5v2l-.5.5zM6 6h1V5H6v1zm7.5 1h-3l-.5-.5v-3l.5-.5h3l.5.5v3l-.5.5zM11 6h2V4h-2v2zm-3.5 6h-2l-.5-.5v-2l.5-.5h2l.5.5v2l-.5.5zM6 11h1v-1H6v1zm7.5 2h-3l-.5-.5v-3l.5-.5h3l.5.5v3l-.5.5zM11 12h2v-2h-2v2zm-1-2H8v1h2v-1zm0-5H8v1h2V5z"/></svg>`;
 
-function WindowRow({ window, usedDisplay, fetchedAt, stale }) {
+// One window's block (bar, thin line, numbers, pace words): the Inbox's usage alert card draws the same one.
+export function WindowRow({ window, usedDisplay, fetchedAt, stale }) {
   const used = percent(window.percent_used), value = usedDisplay ? used : 100 - used;
   const label = windowLabel(window.key), side = usedDisplay ? 'used' : 'left';
   const pace = stale ? null : window.pace, expected = Number(pace?.expected_percent);

@@ -3,6 +3,8 @@ import { rights } from '../../api.js';
 import { IconButton } from '../../components/icon-button.js';
 import { AnswerControls } from '../../components/answer-controls.js';
 import { renderMarkdown } from '../../markdown.js';
+import { WindowRow } from '../usages/usages-view.js';
+import { staleAge } from '../../usage-alerts.js';
 import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, questionParts, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
 
 // The answer controls are the chat's component too; the wrapper takes no space of its own, and every control is off while the item is being answered.
@@ -30,6 +32,17 @@ function Freeform({ item, store, pending }) {
     <textarea name="answer" rows="2" placeholder="Your answer" required aria-label="Your answer" disabled=${pending}></textarea><button class="btn btn-primary" disabled=${pending}>Send answer</button></form>`;
 }
 
+// The alerted window's chart: the Usages panel's own block, from the usage snapshot the page already reads. No snapshot, or none for this
+// provider, profile and window, draws nothing.
+function UsageChart({ item, store }) {
+  const usage = store.usages.value;
+  const profile = (usage?.providers || []).find(provider => provider.provider_name === item.provider)?.profiles?.find(entry => entry.profile_name === item.profile);
+  const window = profile?.windows?.find(entry => entry.key === item.window);
+  if (!window) return null;
+  const refreshSec = usage?.settings?.refresh_interval_sec;
+  return html`<div class="inbox-usage-chart usages-b"><${WindowRow} window=${window} usedDisplay=${usage?.settings?.percent_display === 'used'} fetchedAt=${profile.last_refresh_at} stale=${!!staleAge(profile.last_refresh_at, refreshSec)} /></div>`;
+}
+
 function Card({ item, store, rooms, onJump, openUsages }) {
   const pending = store.pending.value.has(item.id), kind = item.kind, closed = ['closed', 'closing'].includes(item.room_lifecycle), question = questionParts(item.question);
   const button = (label, onClick, classes = 'btn', extra = {}) => html`<button type="button" class=${classes} disabled=${pending} onClick=${onClick} ...${extra}>${label}</button>`;
@@ -38,7 +51,7 @@ function Card({ item, store, rooms, onJump, openUsages }) {
     <${Raw} item=${item} pending=${pending} /><h3>${question.title}</h3>${question.body && html`<${QuestionBody} source=${question.body} />`}`;
   const wrap = body => html`<article class="inbox-card" data-inbox-id=${item.id} data-rev=${String(item.rev)} data-question=${item.question || ''} data-room-lifecycle=${item.room_lifecycle || ''} data-pending=${pending ? 'true' : undefined}>${head}${body}</article>`;
   if (kind === 'usage_alert') {
-    return wrap(html`${rights.owner && openUsages && button('Open Usages', () => openUsages(), 'btn btn-primary')}<${IconButton} name="close" label="Dismiss usage alert" disabled=${pending} onClick=${() => store.dismiss(item)} />`);
+    return wrap(html`${item.window && html`<${UsageChart} item=${item} store=${store} />`}${rights.owner && openUsages && button('Open Usages', () => openUsages(item), 'btn btn-primary')}<${IconButton} name="close" label="Dismiss usage alert" disabled=${pending} onClick=${() => store.dismiss(item)} />`);
   }
   // A shared agent note waiting for approval: approving switches it on for every project's agents, declining deletes it.
   if (item.note_id) {

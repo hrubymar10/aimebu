@@ -11,6 +11,9 @@ export class InboxStore {
     this.pending = signal(new Set());
     this.bulkBusy = signal(false);
     this.openUsages = signal(null);
+    // The usage snapshot a usage alert card draws its window from; `usageList` (set by the app) reads it, and it is read only while a usage alert is open.
+    this.usages = signal(null);
+    this.usageList = null; this.usageSeq = 0;
     this.keys = new Map();
     this.requestSeq = 0;
     this.generation = 0;
@@ -41,6 +44,7 @@ export class InboxStore {
       if (stale.length) { const next = new Set(this.pending.peek()); for (const id of stale) { next.delete(id); this.keys.delete(id); } this.pending.value = next; }
     });
     this.onItems?.(entries);
+    void this.loadUsages(items);
     if (notify && previous) this.notifications?.arrived(items.filter(item => !previous.has(item.id)), this.projects, this.rooms);
     // A `notice` row (a usage window reset) is good news, not a task: never in the Inbox, it is shown once as a toast when it first appears.
     // The first read only learns what is already there, so a reload does not repeat an old notice.
@@ -49,10 +53,22 @@ export class InboxStore {
     this.noticed = new Set([...(this.noticed || []), ...notices.map(item => item.id)]);
   }
 
+  // The chart in a usage alert card follows the usage data: read it while such a card is open, and again when the live push says it changed.
+  // A failed read (no data, no rights) leaves no snapshot, and the card draws no chart.
+  async loadUsages(items = this.items.peek()) {
+    if (!this.alive || !this.usageList) return;
+    if (!items?.some(item => item.kind === 'usage_alert' && item.window)) { if (this.usages.peek()) this.usages.value = null; return; }
+    const ticket = ++this.usageSeq, generation = this.generation;
+    try {
+      const snapshot = await this.usageList();
+      if (this.owns(generation) && ticket === this.usageSeq) this.usages.value = snapshot;
+    } catch { if (this.owns(generation) && ticket === this.usageSeq) this.usages.value = null; }
+  }
+
   reset() {
     this.requestSeq++; this.generation++;
     batch(() => { this.items.value = undefined; this.pending.value = new Set(); this.bulkBusy.value = false; this.error.value = ''; });
-    this.keys.clear(); this.noticed = undefined;
+    this.keys.clear(); this.noticed = undefined; this.usageSeq++; this.usages.value = null;
     this.onItems?.([]);
   }
 

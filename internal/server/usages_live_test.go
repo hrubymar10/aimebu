@@ -55,6 +55,9 @@ func TestUsageAlertInboxIsGlobalButUsagesChangesStayOwnerOnly(t *testing.T) {
 		Kind      string `json:"kind"`
 		Question  string `json:"question"`
 		CreatedAt string `json:"created_at"`
+		Provider  string `json:"provider"`
+		Profile   string `json:"profile"`
+		Window    string `json:"window"`
 	} {
 		t.Helper()
 		resp := f.requestAs(t, cookie, csrf, http.MethodGet, "/api/inbox", nil)
@@ -66,6 +69,9 @@ func TestUsageAlertInboxIsGlobalButUsagesChangesStayOwnerOnly(t *testing.T) {
 			Kind      string `json:"kind"`
 			Question  string `json:"question"`
 			CreatedAt string `json:"created_at"`
+			Provider  string `json:"provider"`
+			Profile   string `json:"profile"`
+			Window    string `json:"window"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
 			t.Fatal(err)
@@ -79,6 +85,10 @@ func TestUsageAlertInboxIsGlobalButUsagesChangesStayOwnerOnly(t *testing.T) {
 		items := read(identity.cookie, identity.csrf)
 		if len(items) != 1 || items[0].Kind != "usage_alert" || !strings.Contains(items[0].Question, "Codex · work · session: 19.0% remaining") || strings.Contains(items[0].Question, "private@example.test") {
 			t.Fatalf("global alert: %+v", items)
+		}
+		// The row names its window, as the Usages view keys it, so the card can draw that window's chart.
+		if items[0].Provider != "codex" || items[0].Profile != "work" || items[0].Window != "session" {
+			t.Fatalf("alert row must name provider, profile and window: %+v", items[0])
 		}
 		if _, err := time.Parse("2006-01-02T15:04:05.000000000Z", items[0].CreatedAt); err != nil || len(items[0].CreatedAt) != len("2006-01-02T15:04:05.000000000Z") {
 			t.Fatalf("inbox timestamp should sort with store rows: %q %v", items[0].CreatedAt, err)

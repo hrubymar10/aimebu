@@ -23,6 +23,9 @@ export class Inbox {
 
   get openUsages() { return this.store.openUsages.value; }
   set openUsages(value) { this.store.openUsages.value = value; }
+  // `list` reads the usage snapshot a usage alert card draws its chart from; `usagesChanged` is the live push that it changed.
+  setUsageList(list) { this.store.usageList = list; }
+  usagesChanged() { return this.store.loadUsages(); }
   get items() { return this.store.items.value; }
   set items(value) { this.store.items.value = value; }
 

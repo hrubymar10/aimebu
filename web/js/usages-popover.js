@@ -1,5 +1,6 @@
 import { focusPopover, returnFocus } from './popover-focus.js';
 import { html, render, effect } from './ui.js';
+import { maskName } from './usage-privacy.js';
 import { UsagesStore } from './pages/usages/store.js';
 import { UsagesView, usagesGroup, toggleUsagesGroup } from './pages/usages/usages-view.js';
 
@@ -43,9 +44,29 @@ export class UsagesPopover {
   }
   // Nothing of what was drawn stays after a sign-out: the tiles, the cached usage, switcher state and credential tokens.
   reset() { this.store.forget(); render(null, this.body); this.ticket++; this.status.hidden = true; }
-  open() { this.syncRefresh(); this.status.hidden = true; this.popover.hidden = false; this.chat.classList.add('usages-open'); this.toggle.setAttribute('aria-expanded', 'true'); focusPopover(this.popover); this.load(); }
+  open() { this.syncRefresh(); this.status.hidden = true; this.popover.hidden = false; this.chat.classList.add('usages-open'); this.toggle.setAttribute('aria-expanded', 'true'); focusPopover(this.popover); return this.load(); }
   // Open the panel unless it already is (a second call must not toggle it shut); the load is refreshed either way.
-  show() { if (this.popover.hidden) this.open(); else this.load(); }
+  // With a target ({provider, profile}: what a usage alert names) it then scrolls to that profile's row and focuses it.
+  async show(target) {
+    await (this.popover.hidden ? this.open() : this.load());
+    if (target) await this.focusProfile(target);
+  }
+  // The view draws a frame after the load, so wait for the row (up to about a second) rather than assume it is there.
+  async focusProfile({ provider, profile }) {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (this.popover.hidden) return;
+      const tile = [...this.body.querySelectorAll('[data-provider]')].find(node => node.dataset.provider === provider);
+      const row = tile && [...tile.querySelectorAll('[data-profile]')].find(node => node.dataset.profile === maskName(profile || 'local'));
+      if (row) {
+        row.tabIndex = -1; row.scrollIntoView?.({ block: 'center' }); row.focus({ preventScroll: true });
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        // A redraw that replaced the row takes the focus with it: look again until it stays.
+        if (document.activeElement === row && row.isConnected) return;
+        continue;
+      }
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+  }
   close() { this.ticket++; returnFocus(this.popover, this.toggle); this.popover.hidden = true; this.chat.classList.remove('usages-open'); this.toggle.setAttribute('aria-expanded', 'false'); }
   // Ask the server to fetch fresh snapshots (rate limited to one forced refresh per cooldown
   // window, shared with Settings), then re-read the overview the usual way.

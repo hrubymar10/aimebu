@@ -52,6 +52,10 @@ async function main() {
       await page.evaluate(() => { window.__popover.show(); window.__popover.show(); });
       assert.deepEqual(await page.evaluate(() => [!document.querySelector('#usages-popover').hidden, document.querySelector('#usages-toggle').getAttribute('aria-expanded')]), [true, 'true'], 'show() opens the panel and stays open');
       await page.waitForFunction(() => document.querySelector('.usages-popover-body .usages-provider-tile'));
+      // With the profile a usage alert names, show() scrolls to its row and focuses it.
+      await page.evaluate(() => { document.querySelector('#app-view').hidden = false; }); // the fixture hides the app, and a hidden row cannot take focus
+      await page.evaluate(() => window.__popover.show({ provider: 'codex', profile: 'main' }));
+      assert.deepEqual(await page.evaluate(() => [document.activeElement?.dataset.profile, document.activeElement?.closest('[data-provider]')?.dataset.provider]), ['main', 'codex'], 'show() focuses the alerted profile');
       assert.deepEqual(await page.evaluate(() => {
         const view = document.querySelector('.usages-popover-alt .usages-b');
         const plan = view.querySelector('.usages-b-profile[data-profile=main] .switcher-tile-plan');

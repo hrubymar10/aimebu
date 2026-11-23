@@ -547,8 +547,11 @@ v1 JSON format. The cache and API responses contain no secrets. See
 Fresh provider windows at either remaining-quota threshold add a virtual
 `usage_alert` entry to `GET /api/inbox` for the owner and global admins. Its
 question gives the provider, profile name, window, remaining percentage, and
-reset time; it carries no email or credential. The owner alone can open the
-Usages view from that entry. A critical alert supersedes a warning for the
+reset time; it carries no email or credential. The entry also carries
+`provider`, `profile` and `window` (the provider's name, the profile's name and
+the window's key, as `GET /api/usages` keys them; empty for an expiry alert) so
+the browser can draw that window's usage chart in the card and focus its profile
+in the Usages panel. The owner alone can open the Usages panel from that entry. A critical alert supersedes a warning for the
 same window, and each threshold fires once per reset cycle. The server stores
 this dedupe state in private `usages/alerts.json` rather than SQLite. The
 alert closes when its reset time passes, its account disappears, or the

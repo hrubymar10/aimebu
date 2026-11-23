@@ -48,6 +48,11 @@ type InboxEntry struct {
 	BoundaryRequester string `json:"boundary_requester,omitempty"`
 	// NoteID is the shared agent note an approval item asks about (see note_inbox.go); empty for every other item.
 	NoteID string `json:"note_id,omitempty"`
+	// Provider, Profile and Window name the usage window a usage alert or notice is about (the provider's name, the profile's name and the
+	// window's key, as the Usages view keys them), so the browser can draw that window's chart and focus its profile; empty for every other item.
+	Provider string `json:"provider,omitempty"`
+	Profile  string `json:"profile,omitempty"`
+	Window   string `json:"window,omitempty"`
 }
 
 type inboxAsk struct {

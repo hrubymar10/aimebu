@@ -380,6 +380,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 :root[data-input="pointer"]:not([data-theme="high-contrast-dark"]) :is(.room-menu-item, .project-menu-item, .spawn-continue-list [role="menuitem"], .sort-item):focus { outline: none; }
 
 /* An Inbox recovery card: the summary line and the decision first, what the harness left behind folded under Details. */
+.inbox-card .inbox-usage-chart { margin: 8px 0 10px; max-width: 420px; }
 .inbox-card .inbox-summary { margin: 6px 0 10px; color: var(--text-primary); font-size: 14px; }
 /* A long question: the heading is its first line, this is the rest, as rendered Markdown in the body text size, never as heading text. */
 .inbox-card .inbox-question-body { margin: -4px 0 12px; color: var(--text-primary); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
