@@ -1373,4 +1373,17 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   record, going back past the lines asked for when the cut falls inside one;
   only a record longer than the read's byte limit comes as its end behind a
   line `... earlier part cut`. A read is never empty while the log has
-  content.
+  content. The page also names the turn its first records are in (`turn`) when
+  that turn's start is before the page.
+- **Private chats.** The log is one per agent, whichever room a turn served,
+  and the route that reads it checks only the room it is asked through. The
+  server therefore looks up the rooms of every turn on the page (the turn's own
+  room and the room of each message it was given) and replaces a turn that
+  served a private chat by one line, `<time> withheld private chat turn:
+  content withheld`, unless the reader is an active member of that chat. Being
+  the project's owner or an admin does not open someone else's private chat,
+  here as everywhere else. A turn the server cannot place (its room was
+  removed, an older supervisor did not name the page's first turn) is withheld
+  from everyone with `<time> withheld turn the server cannot place in a room:
+  content withheld`: what cannot be shown to be open is not shown. The stderr
+  log is not filtered; it holds what the harness printed, not the conversation.

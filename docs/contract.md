@@ -1631,9 +1631,19 @@ it never silently reruns a turn with uncertain effects.
   `supports_agent_conversation_log`, because a supervisor that predates the
   field ignores it and would answer with stderr; for stderr it leaves the field
   out, so that frame is unchanged. `details` is `{text, bytes, files, truncated,
-  updated_at}`: at most `log_lines` lines (default 200, never more than 2000)
-  and `log_max_bytes` bytes (never more than 256 KiB), cut at a line start, and
-  for a conversation at the first line of a record;
+  updated_at, turn?}`: at most `log_lines` lines (default 200, never more than 2000)
+  and `log_max_bytes` bytes (never more than 256 KiB), cut at a line start. A
+  conversation is cut at the first line of a record, so it may hold more lines
+  than `log_lines`; only when one record is longer than `log_max_bytes` does it
+  begin with the line `... earlier part cut` and the end of that record. `turn`
+  (a conversation only) is the id of the turn the page's first records belong
+  to when that turn's `turn_start` is before the page. The server needs the
+  turn of every record: before it returns a conversation it replaces each turn
+  that served a private chat by one line unless the reader is an active member
+  of that chat (private chats require room membership, see the room rules
+  above), and it does the same, for every reader, with a turn it cannot place
+  in a room, which includes the records before the first `turn_start` of a page
+  that carries no `turn`;
   `code` is `no_log` when nothing was captured for the agent in that stream,
   `invalid_stream` for a stream the supervisor does not keep, and `log_failed`
   when it could not be read. The frame names an agent id, never a path.

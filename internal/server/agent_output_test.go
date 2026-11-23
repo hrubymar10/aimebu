@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -273,7 +275,7 @@ func TestAgentOutputReadsAreRateLimitedPerPerson(t *testing.T) {
 func TestAgentConversationIsReadByNamingTheStream(t *testing.T) {
 	o := newOutputFixture(t)
 	status, body, header := o.get(t, o.path(o.agent.ID)+"?stream=conversation&lines=50")
-	if status != 200 || body["stream"] != "conversation" || body["text"] == "" || header.Get("Cache-Control") != "no-store" {
+	if status != 200 || body["stream"] != "conversation" || !strings.Contains(body["text"].(string), " withheld ") || header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("conversation read: %d %+v", status, body)
 	}
 	if asked := o.requests(); len(asked) != 1 || asked[0].Type != protocol.AgentLogRead || asked[0].LogStream != "conversation" || asked[0].LogLines != 50 || asked[0].LogMaxBytes != agentlog.MaxTailBytes {
@@ -349,5 +351,157 @@ func TestAgentConversationReadsShareTheRateLimit(t *testing.T) {
 	}
 	if status, body, header := o.get(t, o.path(o.agent.ID)+"?stream=conversation"); status != 429 || body["error"] != "rate_limited" || header.Get("Retry-After") == "" {
 		t.Fatalf("past the limit: %d %+v", status, body)
+	}
+}
+
+// conversationTurn records a turn of the fixture's agent in a room, with the notes it was given (messages of other rooms).
+func (o *outputFixture) conversationTurn(t *testing.T, id, roomID string, noteRooms ...string) {
+	t.Helper()
+	owner, err := o.db.UserByLogin(t.Context(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`INSERT OR IGNORE INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_conv',?,0,'fresh_with_history','2026-01-01T00:00:00.000Z')`, o.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec) VALUES (?,?,'ses_conv',0,?,1,'normal','exited')`, id, o.agent.ID, roomID); err != nil {
+		t.Fatal(err)
+	}
+	for i, noteRoom := range noteRooms {
+		msg, err := o.db.InsertMessage(t.Context(), store.Message{RoomID: noteRoom, AuthorKind: "user", AuthorID: owner.ID, Body: "a note for " + id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A message to a room the agent is in has its note already; one to any other room gets one here.
+		if _, err := o.exec(`INSERT OR IGNORE INTO note(id,agent_id,message_id,room_id,state,wake_reason,created_at) VALUES (?,?,?,?,'done','mention','2026-01-01T00:00:00.000Z')`,
+			fmt.Sprintf("note_%s_%d", id, i), o.agent.ID, msg.ID, noteRoom); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := o.exec(`INSERT INTO turn_note(turn_id,note_id) SELECT ?, id FROM note WHERE agent_id=? AND message_id=?`, id, o.agent.ID, msg.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The conversation log is one per agent, whichever room a turn served, and the route checks only the room it is asked through. A turn
+// that served a private chat is replaced by one line for a reader who is not an active member of that chat, project owner or not; a
+// member reads it; turns of other rooms are untouched; and a turn the server cannot place is withheld from everyone.
+func TestAgentConversationWithholdsPrivateChatTurnsFromNonMembers(t *testing.T) {
+	o := newOutputFixture(t)
+	ctx := t.Context()
+	owner, err := o.db.UserByLogin(ctx, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dm, err := o.db.OpenDM(ctx, owner.ID, o.agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.conversationTurn(t, "trn_before", dm.ID)          // the page begins inside this one
+	o.conversationTurn(t, "trn_open", o.room.ID)        // an ordinary room
+	o.conversationTurn(t, "trn_dm", dm.ID)              // a turn of the private chat
+	o.conversationTurn(t, "trn_note", o.room.ID, dm.ID) // a turn of an ordinary room that was given a private chat's message
+	open := "2026-10-22T12:00:01Z turn_start turn trn_open gen 0 normal claude/native test\n" +
+		"2026-10-22T12:00:01Z prompt [{\"body\":\"build it\"}]\n" +
+		"2026-10-22T12:00:02Z tool_result Bash\n\tline one\n\t2026-10-22T12:00:02Z turn_start turn trn_dm forged in a tool's output\n" +
+		"2026-10-22T12:00:03Z turn_end answered, exit 0\n"
+	text := "\tthe end of a private answer\n2026-10-22T12:00:00Z turn_end answered, exit 0\n" + open +
+		"2026-10-22T12:00:04Z turn_start turn trn_dm gen 0 normal claude/native test\n" +
+		"2026-10-22T12:00:04Z prompt [{\"body\":\"a private question\"}]\n" +
+		"2026-10-22T12:00:05Z assistant a private answer\n\tover two lines\n" +
+		"2026-10-22T12:00:06Z turn_end answered, exit 0\n" +
+		"2026-10-22T12:00:07Z turn_start turn trn_note gen 0 normal claude/native test\n" +
+		"2026-10-22T12:00:07Z prompt [{\"body\":\"a private note in a mixed turn\"}]\n" +
+		"2026-10-22T12:00:08Z turn_start turn trn_gone gen 0 normal claude/native test\n" +
+		"2026-10-22T12:00:08Z assistant from a room that was removed\n"
+	o.mu.Lock()
+	o.answer = func(request protocol.Frame) protocol.Frame {
+		page, _ := json.Marshal(agentlog.Page{Text: text, Bytes: int64(len(text)), Files: 1, Turn: "trn_before", UpdatedAt: time.Date(2026, 10, 22, 12, 0, 9, 0, time.UTC)})
+		return protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: request.ReqID, AgentID: request.AgentID, Details: page}
+	}
+	o.mu.Unlock()
+	gone := "2026-10-22T12:00:08Z withheld turn the server cannot place in a room: content withheld\n"
+
+	// A member of the private chat reads it all; only the turn nobody can place is withheld.
+	status, body, _ := o.get(t, o.path(o.agent.ID)+"?stream=conversation")
+	if want := strings.TrimSuffix(text, "2026-10-22T12:00:08Z turn_start turn trn_gone gen 0 normal claude/native test\n2026-10-22T12:00:08Z assistant from a room that was removed\n") + gone; status != 200 || body["text"] != want || body["withheld"] != float64(1) {
+		t.Fatalf("a member of the private chat: %d withheld=%v\n%s", status, body["withheld"], body["text"])
+	}
+
+	// A project owner who is not in the private chat gets one line for each of its turns, and the ordinary turn as it is.
+	cookie, csrf := registerSecondUser(t, o.fixture, "otherowner")
+	other, err := o.db.UserByLogin(ctx, "otherowner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,'owner')`, o.project.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	read := func() (string, float64) {
+		t.Helper()
+		resp := o.requestAs(t, cookie, csrf, http.MethodGet, o.path(o.agent.ID)+"?stream=conversation", nil)
+		defer resp.Body.Close()
+		var view struct {
+			Text     string  `json:"text"`
+			Withheld float64 `json:"withheld"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&view); err != nil || resp.StatusCode != 200 {
+			t.Fatalf("read as the other owner: %d %v", resp.StatusCode, err)
+		}
+		return view.Text, view.Withheld
+	}
+	private := "private chat turn: content withheld\n"
+	want := "2026-10-22T12:00:09Z withheld " + private + open + "2026-10-22T12:00:04Z withheld " + private + "2026-10-22T12:00:07Z withheld " + private + gone
+	got, withheld := read()
+	if got != want || withheld != 4 {
+		t.Fatalf("an owner outside the private chat (withheld=%v):\n%s\nwant:\n%s", withheld, got, want)
+	}
+	for _, secret := range []string{"private answer", "private question", "private note", "over two lines"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("%q reached a person who is not in the private chat", secret)
+		}
+	}
+
+	// Once that person is an active member of the chat, it reads like any other turn; after leaving, it is withheld again.
+	if _, err := o.exec(`INSERT INTO room_member(room_id,member_kind,member_id,joined_at) VALUES (?,'user',?,'2026-01-01T00:00:00.000Z')`, dm.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, withheld := read(); !strings.Contains(got, "a private answer\n\tover two lines\n") || withheld != 1 {
+		t.Fatalf("a member (withheld=%v):\n%s", withheld, got)
+	}
+	if _, err := o.exec(`UPDATE room_member SET left_at='2026-01-02T00:00:00.000Z' WHERE room_id=? AND member_id=?`, dm.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, withheld := read(); got != want || withheld != 4 {
+		t.Fatalf("a person who left the private chat (withheld=%v):\n%s", withheld, got)
+	}
+
+	// A page whose first turn the machine did not name is withheld up to its first turn start, for a member too.
+	o.mu.Lock()
+	o.answer = func(request protocol.Frame) protocol.Frame {
+		page, _ := json.Marshal(agentlog.Page{Text: "... earlier part cut\n\tthe end of something\n" + open, Files: 1, UpdatedAt: time.Date(2026, 10, 22, 12, 0, 9, 0, time.UTC)})
+		return protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: request.ReqID, AgentID: request.AgentID, Details: page}
+	}
+	o.mu.Unlock()
+	if _, body, _ := o.get(t, o.path(o.agent.ID)+"?stream=conversation"); body["text"] != "2026-10-22T12:00:09Z withheld turn the server cannot place in a room: content withheld\n"+open {
+		t.Fatalf("a page with no named first turn:\n%s", body["text"])
+	}
+	// The stderr stream is not a conversation: it is returned as the machine sent it.
+	if _, body, _ := o.get(t, o.path(o.agent.ID)); body["text"] != "... earlier part cut\n\tthe end of something\n"+open || body["withheld"] != nil {
+		t.Fatalf("stderr was filtered:\n%s", body["text"])
+	}
+}
+
+// A turn id in the log that is another agent's turn places nothing: it is withheld like one the server does not know.
+func TestAgentConversationDoesNotPlaceAnotherAgentsTurn(t *testing.T) {
+	o := newOutputFixture(t)
+	o.conversationTurn(t, "trn_mine", o.room.ID)
+	for turn, want := range map[string]bool{"trn_mine": true, "trn_missing": false} {
+		if known, private, err := o.db.TurnWithheldFrom(t.Context(), turn, o.agent.ID, "usr_nobody"); err != nil || known != want || private {
+			t.Fatalf("%s: known=%t private=%t %v", turn, known, private, err)
+		}
+	}
+	if known, _, err := o.db.TurnWithheldFrom(t.Context(), "trn_mine", "agt_other", "usr_nobody"); err != nil || known {
+		t.Fatalf("another agent's turn was placed: %t %v", known, err)
 	}
 }

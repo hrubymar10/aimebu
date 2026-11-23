@@ -9,9 +9,11 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/agentlog"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
@@ -36,6 +38,8 @@ type agentOutputView struct {
 	Files     int       `json:"files"`
 	Truncated bool      `json:"truncated"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Withheld is how many turns of a conversation were replaced by one line each, because the reader may not see what they said.
+	Withheld int `json:"withheld,omitempty"`
 }
 
 // agentOutput is GET /api/rooms/{room}/agents/{agent}/output?lines=N&stream=stderr|conversation: the end of an agent's captured stderr
@@ -104,9 +108,19 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 502, "output_unavailable", "the machine could not read the agent's output")
 		return
 	}
-	log.Printf("agent output: %s read %d bytes of %s %s (room %s)", userID(r), len(page.Text), agentID, stream, room.ID)
+	withheld := 0
+	if stream == agentlog.StreamConversation {
+		// The log is one per agent, whichever room a turn served, and this route checks only the room it was asked through. A turn that
+		// served a private chat is its members' to read, so what it said is taken out here for anyone else.
+		page.Text, withheld, err = s.withholdPrivateTurns(r.Context(), agentID, userID(r), page)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	log.Printf("agent output: %s read %d bytes of %s %s (room %s, %d turns withheld)", userID(r), len(page.Text), agentID, stream, room.ID, withheld)
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, agentOutputView{AgentID: agentID, Machine: machineID, Stream: string(stream), Text: page.Text, Bytes: page.Bytes, Files: page.Files, Truncated: page.Truncated, UpdatedAt: page.UpdatedAt})
+	writeJSON(w, 200, agentOutputView{AgentID: agentID, Machine: machineID, Stream: string(stream), Text: page.Text, Bytes: page.Bytes, Files: page.Files, Truncated: page.Truncated, UpdatedAt: page.UpdatedAt, Withheld: withheld})
 }
 
 // allowOutputRead records a read by a person and says whether they are within the limit.
@@ -243,4 +257,94 @@ func (s *Server) machineAgentLogSize(ctx context.Context, machineID string) (age
 	case <-timer.C:
 		return agentlog.Size{}, errors.New("the machine did not answer")
 	}
+}
+
+const (
+	// withheldKind is the kind of the one line that stands for a turn whose records the reader may not see.
+	withheldKind = "withheld"
+	// privateTurnText and unknownTurnText are what that line says.
+	privateTurnText = "private chat turn: content withheld"
+	unknownTurnText = "turn the server cannot place in a room: content withheld"
+)
+
+// withholdPrivateTurns returns a conversation page's text with every turn the reader may not see replaced by one line. A turn that
+// served a private chat is shown only to an active member of that chat. A turn the server cannot place (its room was removed, the
+// supervisor did not say which turn the page begins in, the line is not in the log's format) is withheld too: what cannot be shown to
+// be open is not shown. The turn of a record is the last turn_start before it, which the supervisor writes and a tool's output cannot
+// forge (its lines start with a tab); for the records before the page's first turn_start it is the turn the machine named.
+func (s *Server) withholdPrivateTurns(ctx context.Context, agentID, reader string, page agentlog.Page) (string, int, error) {
+	verdicts := map[string]string{} // turn id to the text of its placeholder; "" shows the turn
+	verdict := func(turnID string) (string, error) {
+		if turnID == "" {
+			return unknownTurnText, nil
+		}
+		if text, seen := verdicts[turnID]; seen {
+			return text, nil
+		}
+		known, private, err := s.Store.TurnWithheldFrom(ctx, turnID, agentID, reader)
+		if err != nil {
+			return "", err
+		}
+		text := ""
+		switch {
+		case !known:
+			text = unknownTurnText
+		case private:
+			text = privateTurnText
+		}
+		verdicts[turnID] = text
+		return text, nil
+	}
+	var out strings.Builder
+	out.Grow(len(page.Text))
+	withheld := 0
+	hide, err := verdict(page.Turn)
+	if err != nil {
+		return "", 0, err
+	}
+	placed := false // the placeholder of the turn being hidden is written
+	for _, line := range strings.SplitAfter(page.Text, "\n") {
+		if line == "" {
+			continue
+		}
+		stamp, kind, text := recordHeader(line)
+		if kind == string(adapter.ConversationTurnStart) {
+			if hide, err = verdict(agentlog.TurnOfStart(text)); err != nil {
+				return "", 0, err
+			}
+			placed = false
+		}
+		if hide == "" {
+			out.WriteString(line)
+			continue
+		}
+		if !placed {
+			if stamp == "" {
+				// The page begins inside a record of the hidden turn: the line takes the time of the read's newest write.
+				stamp = page.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z")
+			}
+			out.WriteString(stamp + " " + withheldKind + " " + hide + "\n")
+			placed = true
+			withheld++
+		}
+	}
+	return out.String(), withheld, nil
+}
+
+// recordHeader reads the first line of a conversation record, `<UTC time> <kind> <text>`. kind is "" for any other line: a line of a
+// record's body (it starts with a tab), the marker of a cut record, or a line that is not in the format.
+func recordHeader(line string) (stamp, kind, text string) {
+	line = strings.TrimRight(line, "\r\n")
+	if strings.HasPrefix(line, "\t") || line == agentlog.CutMarker {
+		return "", "", ""
+	}
+	stamp, rest, ok := strings.Cut(line, " ")
+	if !ok {
+		return "", "", ""
+	}
+	if _, err := time.Parse("2006-01-02T15:04:05Z", stamp); err != nil {
+		return "", "", ""
+	}
+	kind, text, _ = strings.Cut(rest, " ")
+	return stamp, kind, text
 }

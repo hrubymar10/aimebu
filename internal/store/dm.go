@@ -210,3 +210,26 @@ func (s *Store) UserRoomAccess(ctx context.Context, userID, roomID string) error
 	}
 	return nil
 }
+
+// TurnWithheldFrom says whether what a turn of an agent said may be shown to a person who may otherwise read that agent's output. known
+// is false when the server has no such turn of that agent (its room was removed, or the id is not one of its turns): nothing is known
+// about the rooms it served. private is true when the turn served a private chat (its own room, or the room of any message it was
+// given) that the person is not an active member of: a private chat is its members', whatever role the person has in the project.
+func (s *Store) TurnWithheldFrom(ctx context.Context, turnID, agentID, userID string) (known, private bool, err error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return false, false, err
+	}
+	var turns, closed int
+	err = s.db.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM turn WHERE id=? AND agent_id=?),
+		(SELECT COUNT(*) FROM room r WHERE r.kind='dm'
+			AND r.id IN (SELECT room_id FROM turn WHERE id=? AND agent_id=?
+				UNION SELECT n.room_id FROM turn_note tn JOIN note n ON n.id=tn.note_id WHERE tn.turn_id=?)
+			AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='user'
+				AND m.member_id=? AND m.left_at IS NULL))`,
+		turnID, agentID, turnID, agentID, turnID, userID).Scan(&turns, &closed)
+	if err != nil {
+		return false, false, err
+	}
+	return turns > 0, closed > 0, nil
+}
