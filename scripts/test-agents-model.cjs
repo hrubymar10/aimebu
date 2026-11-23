@@ -45,6 +45,16 @@ const needs = state({ recovery_block: true, last_exit_evidence: 'OAuth session e
 assert.deepEqual([needs.name, needs.kind], ['needs decision', 'attention']);
 assert.match(needs.title, /^Needs your decision: .*decide what to do in Inbox\.\nOAuth session expired$/);
 assert.equal(needs.why.includes('OAuth'), false, 'the sentence beside the state is the decision, the evidence stays in the title');
+// An idle agent that finished with a message for this person, not read yet: still idle (dot and badge), worded "finished" and marked unseen.
+const unseenState = state({ finished_unseen: true });
+assert.deepEqual([unseenState.name, unseenState.kind, unseenState.unseen], ['finished', 'idle', true]);
+assert.match(unseenState.title, /^Finished: .*not seen yet\.$/);
+assert.equal(state({ finished_unseen: false }).name, 'idle');
+assert.equal(state({ finished_unseen: true, observed: 'in_turn' }).name, 'working', 'a working agent is not finished');
+assert.equal(state({ finished_unseen: true, desired: 'not_accepting' }).name, 'paused');
+assert.equal(state({ finished_unseen: true, desired: 'stopped', observed: 'stopped' }).name, 'stopped');
+assert.equal(state({ finished_unseen: true, recovery_block: true }).name, 'needs decision', 'a decision to make outranks it');
+assert.equal(state({ finished_unseen: true, hold: { code: 'limit_guard', text: 'x', detail: 'y' } }).name, 'held: x');
 const guardHold = { code: 'limit_guard', text: 'claude session 95%', detail: 'The limit guard is holding new claude turns.' };
 const guardHeld = state({ hold: guardHold });
 assert.deepEqual([guardHeld.name, guardHeld.kind, guardHeld.title, guardHeld.why], ['held: claude session 95%', 'attention', guardHold.detail, guardHold.detail]);

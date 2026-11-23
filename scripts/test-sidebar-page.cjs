@@ -1464,6 +1464,7 @@ async function main() {
       room('rm_taskn', 'prj_a', 'build-addressed', { parent_id: 'rm_kh', purpose: 'task', unread_count: 40, unread_addressed: 3 }),
       room('rm_work', 'prj_a', 'working', { parent_id: 'rm_kh', purpose: 'task', working: true }),
       room('rm_wait', 'prj_a', 'waiting', { parent_id: 'rm_kh', purpose: 'task', working: true, attention_open: 1, attention_count: 0 }),
+      room('rm_fin', 'prj_a', 'finished', { parent_id: 'rm_kh', purpose: 'task', finished_unseen: true }),
       room('rm_bell', 'prj_a', 'belled', { parent_id: 'rm_kh', purpose: 'task', attention_open: 2, attention_count: 2 }),
       room('rm_close', 'prj_a', 'closing', { parent_id: 'rm_kh', purpose: 'task', lifecycle: 'closing' }),
       room('rm_res', 'prj_a', 'compare', { parent_id: 'rm_kh', purpose: 'research', user_message_count: 2, unread_count: 9 }),
@@ -1494,6 +1495,8 @@ async function main() {
     assert.deepEqual([task.count, task.unread, task.name], [false, '', 'build · 4 members'], 'a task room hides its member count (it is in the tooltip) and shows no count for chatter');
     assert.deepEqual([addressed.count, addressed.unread], [false, ''], 'a task room shows no chip even for what addresses the person');
     assert.equal(await page.$('[data-room-id=rm_taskn] .room-item-unread'), null);
+    const finished = await view('rm_fin');
+    assert.deepEqual(finished.status, ['Finished', 'finished', 'An agent finished and left a message for you that you have not seen yet'], 'a room whose agent finished with a message the person has not seen says so');
     assert.deepEqual([kinds.rm_res.count, kinds.rm_res.unread, kinds.rm_res.name], [false, '', 'compare · 2 members'], 'a research room is told like a task room');
     // General and coordination rooms, the home room and direct messages keep the member count; only the home room and direct messages carry an unread chip.
     assert.deepEqual([kinds.rm_gen2.count, kinds.rm_gen2.unread, kinds.rm_gen2.status], [true, '', null], 'a general room keeps its member count, shows no unread chip and has no status (an agent working does not change that)');

@@ -596,12 +596,12 @@ cursor; posting a message advances the author's own cursor to it; in a room whos
 the user can see in that room and has not seen yet). A person's list also carries what the sidebar draws a room's
 status from: `unread_addressed` (the part of `unread_count` made of messages that name the user or reply to them, whatever the room's `notify` level),
 `attention_open` (open Inbox entries the user can see in the room, seen or not, so a room still reads as waiting for a person after they looked),
-and `working` (true while an agent has a pending or running turn in the room). `purpose` says what a room is for: `task` (the default; every
+and `working` (true while an agent has a pending or running turn in the room). and `finished_unseen` (true while an agent that is not in a turn has written a message for the person, one that names them or replies to them or asks for attention, after the person's read cursor in the room: the agent finished and they have not seen it) `purpose` says what a room is for: `task` (the default; every
 home room, private chat and room made without one), `research` (a read-only investigation that ends in a report) or `general` (the project-wide and
 coordination rooms: a team flow's `general`, `routing` and `advice` rooms, and the room every project starts with). It is chosen when the room is made (the
 `purpose` of `create_room` or of the create-room request, only for a task room) and never worked out from who is in it; migration 126
 backfilled it for existing rooms from the team-flow key, the room's title `general`, and a task room whose only agents besides leads are researchers. The
-sidebar shows a task or research room's `unread_addressed` in place of `unread_count`, and a status word (Closing, Waiting, Working, Done or Idle) in place of
+sidebar shows a task or research room's `unread_addressed` in place of `unread_count`, and a status word (Closing, Waiting, Working, Finished, Done or Idle) in place of
 its member count, which moves into the row's tooltip. Read
 cursors and per-person Inbox seen flags are stored on the server
 (`room_read_cursor` and `inbox_item_seen`), so both counts are shared across
@@ -644,6 +644,7 @@ sentence per flag ("Ada looks stuck", "An answer to Bert could not be delivered"
 "Bert needs a recovery decision"); choosing one opens the matching Inbox item
 (variant A) or the room with its inline callout (variant B) for `recovery_waiting`
 and `held_answer`, and the agent's room for the other flags.
+Listed room agent cards also carry `finished_unseen` (true, omitted otherwise) **for the asking person**: the agent has no pending or running turn and has written a message for that person (one that names them or replies to them, or that asks for attention) after the person's read cursor in the room. It is derived from the read cursor (`room_read_cursor`) on every read, never stored, so it clears exactly when that person's cursor reaches the message (`POST /api/rooms/{room}/read`, shown live through `read_cursor_moved`) and comes back with Mark unread. A reconnect or an event-stream resume never moves the cursor, so it does not clear it; each person in the room has their own cursor and so their own answer. A worker's completion hands off to its coordinator (a lead or the dispatcher) and targets that agent, not the person, so it never sets the state for the person. The agent card says "finished" in place of "idle" (dot and badge stay the idle ones); an agent that is working, paused, stopped, held or waiting on a recovery decision keeps that state.
 Listed room agent cards also carry an optional `hold` (`{code, text, detail}`) when an agent that is idle and accepting
 work will not start its next turn because the limit guard is holding new turns of its tool: `code` is `limit_guard`, `text` the
 short form ("claude session 95%": the tool, the fuller window of the active account and how full it is) and `detail` the sentence

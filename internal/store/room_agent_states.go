@@ -56,7 +56,10 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 		EXISTS(SELECT 1 FROM inbox_item i WHERE i.agent_id=a.id AND i.state='open' AND i.kind='delivery_failed'),
 		EXISTS(SELECT 1 FROM inbox_item i WHERE i.agent_id=a.id AND i.state='open' AND i.kind='recovery'),
 		COALESCE(machine.is_host,0),l.id IS NOT NULL,COALESCE(l.containerized,0),
-		COALESCE((SELECT pm.role FROM membership pm WHERE pm.user_id=? AND pm.project_id=?),'')
+		COALESCE((SELECT pm.role FROM membership pm WHERE pm.user_id=? AND pm.project_id=?),''),
+		NOT EXISTS(SELECT 1 FROM turn ft WHERE ft.agent_id=a.id AND ft.exec IN ('pending','running')) AND EXISTS(SELECT 1 FROM message fm WHERE fm.room_id=m.room_id
+			AND fm.author_kind='agent' AND fm.author_id=a.id AND `+messageForPersonSQL+`
+			AND fm.seq>COALESCE((SELECT rc.last_read_seq FROM room_read_cursor rc WHERE rc.user_id=? AND rc.room_id=m.room_id),0))
 		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL
 		LEFT JOIN machine ON machine.id=a.machine_id
 		LEFT JOIN machine_launcher l ON l.machine_id=a.machine_id AND l.id=a.launcher_id
@@ -66,7 +69,7 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 			WHERE u2.agent_id=a.id AND u2.partial=0 AND ut.generation=a.generation ORDER BY u2.created_at DESC,u2.rowid DESC LIMIT 1)
 		LEFT JOIN turn rt ON rt.id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.exec='running' ORDER BY t.started_at DESC LIMIT 1)
 		LEFT JOIN provider_limit pl ON pl.agent_id=a.id AND pl.tool=a.tool
-		WHERE m.room_id=? ORDER BY a.created_at,a.id`, userID, projectID, roomID)
+		WHERE m.room_id=? ORDER BY a.created_at,a.id`, userID, projectID, userID, userID, roomID)
 	if err != nil {
 		return RoomAgentStates{}, err
 	}
@@ -90,7 +93,7 @@ func (s *Store) AgentRoomStates(ctx context.Context, roomID, projectID, userID s
 			&hasHandoff, &handoffStatus, &handoffSource, &handoffBody, &handoffDeadline, &overallDeadline, &turnOpen, &c.WokenBy,
 			&hasUsage, &input, &output, &used, &window, &cost, &estimated,
 			&hasRunning, &started, &lastEvent, &hasLimit, &reset, &detected, &held, &recovery,
-			&st.MachineIsHost, &st.LauncherKnown, &st.LauncherContainerized, &out.ViewerRole); err != nil {
+			&st.MachineIsHost, &st.LauncherKnown, &st.LauncherContainerized, &out.ViewerRole, &c.FinishedUnseen); err != nil {
 			return RoomAgentStates{}, err
 		}
 		if hasSwitch {

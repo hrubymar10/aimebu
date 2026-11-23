@@ -202,7 +202,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
    row can do without go first, by the width of the row's own text column: the member count (also in the name's tooltip) and the mute bell; the pills that ask for
    the person's attention (the health flag, the bell, the unread count) always stay and tighten their padding. */
 .room-item .room-item-info { container-type: inline-size; }
-@container (max-width: 100px) { .room-item-top { gap: 4px; } .room-item-count, .room-muted, .room-status:not(.room-status-waiting) { display: none; } .room-item-top :is(.room-health, .room-item-attention, .room-item-unread) { padding-left: 3px; padding-right: 3px; margin-left: 0; min-width: 0; } }
+@container (max-width: 100px) { .room-item-top { gap: 4px; } .room-item-count, .room-muted, .room-status:not(.room-status-waiting, .room-status-finished) { display: none; } .room-item-top :is(.room-health, .room-item-attention, .room-item-unread) { padding-left: 3px; padding-right: 3px; margin-left: 0; min-width: 0; } }
 /* A child room holds a message that names the person: a small dot in the theme accent colour (a ring in the row colour keeps it apart from the row). */
 .room-item-mention { flex-shrink: 0; width: 9px; height: 9px; margin-left: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 1px var(--bg-primary); }
 .room-item .room-item-name:hover { background: transparent; border-color: transparent; }
@@ -213,9 +213,10 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .room-item-icon .icon-mask { width: 15px; height: 15px; }
 .room-item .room-status { flex: 0 0 auto; margin: 0; }
 .room-status-working { border-color: var(--accent); color: var(--accent); }
+.room-status-finished { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight: 600; }
 .room-status-waiting { border-color: rgba(227, 160, 8, 0.6); color: #e3a008; background: rgba(227, 160, 8, 0.12); }
 :is([data-theme="high-contrast-dark"], [data-theme="high-contrast-light"]) .room-status { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
-:is([data-theme="high-contrast-dark"], [data-theme="high-contrast-light"]) .room-status-working { font-weight: 700; }
+:is([data-theme="high-contrast-dark"], [data-theme="high-contrast-light"]) .room-status-working, .room-status-finished { font-weight: 700; }
 :is([data-theme="high-contrast-dark"], [data-theme="high-contrast-light"]) .room-status-idle, :is([data-theme="high-contrast-dark"], [data-theme="high-contrast-light"]) .room-status-done { color: var(--text-muted); }
 .room-item .room-health { padding: 1px 5px; } /* the row's reset zeroes the base's padding */
 .room-item .room-project { flex: 0 100 auto; min-width: 0; max-width: 70px; margin: 0 4px; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1132,3 +1133,5 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
 [data-theme^="high-contrast"] .context-menu-item.danger { color: var(--red); }
 [data-theme^="high-contrast"] .context-menu-separator { background: var(--text-primary); }
 [data-theme^="high-contrast"] .context-menu-caption { color: var(--text-secondary); }
+
+.agent-state[data-unseen="true"] .agent-state-label { font-weight: 700; }

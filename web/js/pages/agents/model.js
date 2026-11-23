@@ -36,6 +36,9 @@ export function stateOf(agent) {
     const why = 'Needs your decision: its last turn did not finish cleanly, so nothing new starts until you decide what to do in Inbox.';
     return { name: 'needs decision', kind: 'attention', title: agent.last_exit_evidence ? `${why}\n${agent.last_exit_evidence}` : why, since, observed, why };
   }
+  // An idle agent that finished a turn with a message for this person, which they have not read yet (the server derives it from their read cursor).
+  // It stays an idle agent (same dot and badge); the word and the tooltip say there is something to read, and `unseen` lets the card mark it.
+  if (free && agent.finished_unseen && !agent.hold) return { name: 'finished', kind, title: 'Finished: it left a message for you that you have not seen yet.', since, observed, unseen: true };
   if (free && agent.hold) return { name: `held: ${agent.hold.text}`, kind: 'attention', title: agent.hold.detail, since, observed, why: agent.hold.detail };
   return { name, kind, title, since, observed };
 }

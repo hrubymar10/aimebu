@@ -817,10 +817,10 @@ magnifier for a research room, `#` for a general room, a route for the team flow
 (the room's `kind`, `purpose` and `agent_chat` decide, never who is in it). Only a project's home room and a direct message carry a blue unread
 count, and each counts only its own unread messages: the home row's count is the same folded or expanded, and nothing under it is added. Every room
 nested under a home row (general, routing, advice, task and research rooms, at any depth) shows no unread count at all. A task or research room shows in
-its place a small status: Working (an agent has a running turn), Waiting (an open Inbox item needs an answer), Idle, Done (a research room that has been
+its place a small status: Working (an agent has a running turn), Waiting (an open Inbox item needs an answer), Finished (an agent that is not in a turn left a message for you that you have not seen: it follows your own read cursor, so it clears when you open the room, not on a reconnect, and another person in the room has their own; a worker's completion goes to its coordinator and never sets it), Idle, Done (a research room that has been
 written in and is quiet) or Closing…; its member count is in the row's tooltip instead of a grey number. General, coordination, home and direct-message
 rooms keep the member count. A child room keeps its 🔔 for the open Inbox items that wait on the person, and shows a small mention dot, in the theme's accent colour (tooltip and label "You were mentioned"), while it holds an unread message that names the person or replies to them (`unread_addressed`); reading the room clears the dot. A folded row, at any depth, shows the dot when any room under it does, and still no count. High-contrast themes use their own accent for the dot.
-The warning and bell badges stay on every row. A turn starting or ending redraws the status.
+The agent card says "finished" instead of "idle" for the same state, in bold, until you have seen the message. The warning and bell badges stay on every row. A turn starting or ending redraws the status.
 Unread counts come from per-user read cursors; the 🔔 counts open Inbox items
 this person has not seen. Both states live on the server and follow you across
 browsers. Opening a room marks visible messages read and visible Inbox items

@@ -51,6 +51,9 @@ type AgentCard struct {
 	// WokenBy is why the turn in progress started, when that was an agent's reply to this one ("reply"); the card tags it so a person can
 	// see an exchange between agents as it happens. Empty when idle or for any other reason.
 	WokenBy string `json:"woken_by,omitempty"`
+	// FinishedUnseen is set on a room's agent list for the asking person while this agent is not in a turn and has written a message for them
+	// (see messageForPersonSQL) after their read cursor in the room. It clears when that person's cursor reaches the message.
+	FinishedUnseen bool `json:"finished_unseen,omitempty"`
 }
 
 // wokenBy is the wake reason of the turn that is running (or about to) for agentID, only when it is a reply from another agent.

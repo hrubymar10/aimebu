@@ -162,6 +162,11 @@ async function main() {
       activity: node.querySelector('.agent-activity').textContent, color: getComputedStyle(node.querySelector('.agent-dot')).backgroundColor, stateColor: getComputedStyle(node.querySelector('.agent-state-badge')).color }));
     const [ordinary, decision, held] = [await look('a1'), await look('a2'), await look('a3')];
     assert.deepEqual([ordinary.label, ordinary.dot, ordinary.activity], ['idle', 'idle', '']);
+    await show(page, 'r1', [agent('a1', 'ada', { finished_unseen: true })]);
+    const unseen = await page.$eval('[data-agent-id=a1]', node => ({ label: node.querySelector('.agent-state-label').textContent, dot: node.querySelector('.agent-dot').dataset.state, unseen: node.querySelector('.agent-state').dataset.unseen, title: node.querySelector('.agent-state').title }));
+    assert.deepEqual([unseen.label, unseen.dot, unseen.unseen], ['finished', 'idle', 'true'], 'an idle agent with a message the person has not seen reads finished, still on the idle dot');
+    assert.match(unseen.title, /not seen yet/);
+    await show(page, 'r1', [agent('a1', 'ada'), agent('a2', 'bert', { recovery_block: true, last_exit_evidence: 'Failed to authenticate' }), agent('a3', 'cleo', { hold })]);
     assert.deepEqual([decision.label, decision.dot, decision.state], ['needs decision', 'attention', 'attention']);
     assert.match(decision.activity, /^Needs your decision: .*decide what to do in Inbox\.$/);
     assert.deepEqual([held.label, held.dot, held.state, held.activity], ['held: claude session 95%', 'attention', 'attention', hold.detail]);

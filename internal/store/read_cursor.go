@@ -139,6 +139,12 @@ func (tx *Tx) readCounts(userID, roomID string, state *ReadState) error {
 		userID, userID, roomID, userID).Scan(&state.AttentionCount)
 }
 
+// messageForPersonSQL narrows a message row aliased fm to the ones meant for one person, whose user id is its single placeholder: the message
+// names them or replies to them (their id is in its targets) or asks for a person's attention. A worker's completion hands off to its
+// coordinator, so it targets an agent and never matches. "Finished, not yet seen" is such a message from an agent that is not in a turn,
+// after the person's read cursor: the state is derived from that cursor and stored nowhere.
+const messageForPersonSQL = `(fm.needs_attention=1 OR EXISTS (SELECT 1 FROM json_each(fm.targets_json) WHERE value=?))`
+
 // openAttentionByRoom counts every open inbox entry the user can see per room, seen or not: a room still waits for a person while an
 // entry is open, whether or not they have looked at it.
 func (s *Store) openAttentionByRoom(ctx context.Context, userID string) (map[string]int, error) {

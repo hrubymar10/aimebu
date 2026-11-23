@@ -100,13 +100,14 @@ export function roomType(room) {
 }
 
 // The small status a task or research room shows instead of a count; null for any other room (and an archived one). Closing comes first, then a person
-// being waited on (an open attention item, seen or not), then an agent working (a pending or running turn). What is left is idle; a research room that
+// being waited on (an open attention item, seen or not), then an agent working (a pending or running turn), then an agent that finished with a message for this person they have not seen (`finished_unseen`, from their read cursor). What is left is idle; a research room that
 // has been written in reads as done (the server has no separate report-delivered mark, so it is the quiet room after the work).
 export function roomStatus(room) {
   if (!tracksStatus(room) || room.lifecycle === 'closed') return null;
   if (room.lifecycle === 'closing') return { key: 'closing', label: 'Closing…', title: 'This room is closing' };
   if ((room.attention_open || 0) > 0) return { key: 'waiting', label: 'Waiting', title: 'Waiting for a person: an item needs an answer' };
   if (room.working) return { key: 'working', label: 'Working', title: 'An agent in this room is working' };
+  if (room.finished_unseen) return { key: 'finished', label: 'Finished', title: 'An agent finished and left a message for you that you have not seen yet' };
   if (room.purpose === 'research' && (room.user_message_count || 0) > 0) return { key: 'done', label: 'Done', title: 'Quiet: no agent is working here' };
   return { key: 'idle', label: 'Idle', title: 'Nothing is running in this room' };
 }

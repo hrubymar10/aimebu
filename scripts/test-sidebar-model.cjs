@@ -158,6 +158,14 @@ same(statusOf({ lifecycle: 'closing', working: true, attention_open: 1 }), ['clo
 same(statusOf({ purpose: 'research' }), ['idle', 'Idle'], 'a research room nobody wrote in has no report yet');
 same(statusOf({ purpose: 'research', user_message_count: 3 }), ['done', 'Done'], 'a quiet research room that has been written in is done');
 same(statusOf({ purpose: 'research', user_message_count: 3, working: true }), ['working', 'Working']);
+// An agent that finished with a message the person has not seen (the server derives it from their read cursor) shows as Finished, below Waiting and Working.
+same(statusOf({ finished_unseen: true }), ['finished', 'Finished']);
+same(statusOf({ finished_unseen: true, attention_open: 1 }), ['waiting', 'Waiting'], 'a person being waited on outranks a finished agent');
+same(statusOf({ finished_unseen: true, working: true }), ['working', 'Working'], 'an agent working outranks a finished one');
+same(statusOf({ finished_unseen: true, purpose: 'research', user_message_count: 3 }), ['finished', 'Finished'], 'a research report not yet seen is finished, not done');
+same(statusOf({ finished_unseen: false, purpose: 'research', user_message_count: 3 }), ['done', 'Done'], 'once seen it reads as done');
+assert.equal(statusOf({ finished_unseen: true, lifecycle: 'closed' }), null);
+assert.equal(statusOf({ finished_unseen: true, kind: 'dm' }), null, 'a direct message keeps its unread count instead');
 assert.equal(statusOf({ lifecycle: 'closed' }), null, 'an archived room shows no status');
 for (const extra of [{ purpose: 'general' }, { kind: 'home' }, { kind: 'dm' }, { kind: 'lobby' }]) assert.equal(statusOf(extra), null, `${JSON.stringify(extra)} shows no status`);
 assert.deepEqual([{}, { purpose: 'research' }, { purpose: 'general' }, { kind: 'home' }, { kind: 'dm' }].map(extra => tracksStatus({ kind: 'task', ...extra })), [true, true, false, false, false]);

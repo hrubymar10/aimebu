@@ -143,7 +143,10 @@ type Room struct {
 	// Working is true while an agent has a pending or running turn in the room. Both are set only on a person's room list.
 	UnreadAddressed int  `json:"unread_addressed"`
 	Working         bool `json:"working"`
-	AttentionCount  int  `json:"attention_count"`
+	// FinishedUnseen is true while an agent that is not in a turn has written a message for this person (it names them, or asks for
+	// attention) after the person's read cursor: it finished and they have not seen it. Derived from the read cursor, never stored.
+	FinishedUnseen bool `json:"finished_unseen"`
+	AttentionCount int  `json:"attention_count"`
 	// AttentionOpen counts every open inbox entry this person can see in the room, seen or not (AttentionCount is the unseen ones): the
 	// room is waiting for a person while it is above 0.
 	AttentionOpen int           `json:"attention_open"`
