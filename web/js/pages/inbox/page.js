@@ -3,6 +3,7 @@ import { mountPreactPage } from '../mount-page.js';
 import { InboxPage } from './inbox-page.js';
 import { InboxStore } from './store.js';
 import { countView } from './model.js';
+import { updateAppBadge } from '../../app-badge.js';
 
 // The adapter is the one writer of everything outside the view: the toolbar's count and toggle label, the tab title, and the view's own
 // hidden with the chat and the room list it replaces. It keeps the unsubscribe the source hands back and calls it on destroy.
@@ -17,6 +18,7 @@ export class Inbox {
       const items = this.store.items.value, view = countView(items ? items.length : 0);
       this.badge.textContent = view.text; this.badge.hidden = view.hidden; this.labelToggle(items ? items.length : 0);
       if (items) document.title = view.title;
+      void updateAppBadge(items ? items.length : null);
     });
     this.unsubscribe = source.subscribe(() => this.refresh());
   }
