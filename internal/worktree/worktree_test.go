@@ -308,6 +308,17 @@ func TestRemovePreservesWorktreeWithNestedRepository(t *testing.T) {
 		t.Fatalf("the check ran planted programs: %v", got)
 	}
 
+	// A forced removal is the owner's explicit choice: git removes a worktree with nested repositories when forced.
+	for _, room := range []string{"room_embedded", "room_submodule"} {
+		forced, err := Remove(ctx, root, room, "", true)
+		if err != nil || forced.State != "removed" {
+			t.Fatalf("forced removal of %s: %+v %v", room, forced, err)
+		}
+		if _, err := os.Stat(forced.Path); !os.IsNotExist(err) {
+			t.Fatalf("%s still there after a forced removal: %v", room, err)
+		}
+	}
+
 	clean, err := Ensure(ctx, root, "room_clean_nested", "")
 	if err != nil {
 		t.Fatal(err)
