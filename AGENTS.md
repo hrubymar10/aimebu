@@ -37,7 +37,9 @@ body explaining the reason and tradeoffs. Do not add AI attribution or
 override the configured Git author.
 
 For concurrent agent work, use only your assigned worktree. Run test commands
-under the shared workspace `flock` gate (`flock /tmp/aimebu-test.lock <command>`) for their full duration. Use an
+under the shared test lock for their full duration: `scripts/test-lock.sh <command>`, which queues first come first served and
+prints who holds the lock and your position while it waits (plain `flock /tmp/aimebu-test.lock <command>` still works, on the same lock, but it
+is not fair and shows nothing). Use an
 isolated temporary `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and
 `AIMEBU_CONFIG_DIR` so tests cannot alter real credentials or bus state;
 preserve `GOPATH`, `GOCACHE`, and `GOMODCACHE` from the host environment.
