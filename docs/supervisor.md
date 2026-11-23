@@ -1414,7 +1414,13 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   withheld` unless the reader can read that room under the room-access rule of
   every other read: a member of its project who is its owner or operator, or
   who has a seat in it. A global admin who is only a plain member of the
-  project reads the agent's log but not those turns. A turn the server cannot place (its room was
+  project reads the agent's log but not those turns. A turn that started before
+  migration 129 ran (the migration's `schema_version.applied_at`) and has no
+  `turn_room_read` row recorded nothing about what its tools read, so it counts
+  as having served every restricted room its agent was a member of when it
+  started (`room_member` joined and left times) and is withheld from a reader
+  who cannot read one of them; turns after the upgrade are judged on their
+  records. A turn the server cannot place (its room was
   removed, an older supervisor did not name the page's first turn) is withheld
   from everyone with `<time> withheld turn the server cannot place in a room:
   content withheld`: what cannot be shown to be open is not shown. The stderr

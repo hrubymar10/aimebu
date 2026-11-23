@@ -220,6 +220,11 @@ func (s *Store) UserRoomAccess(ctx context.Context, userID, roomID string) error
 // the project. restricted is true when one of them is a restricted room (routing, advice) the person cannot read under the room-access
 // rule every other read uses (personReadsRoomSQL, the rule of UserRoomAccess): a member of its project who is its owner or operator or
 // has a seat in it. Being a global admin does not open one.
+//
+// A turn that started before migration 129 ran (it is dated by that migration's schema_version.applied_at) and has no turn_room_read row
+// did not record what its tools read, so its log may hold content of any room the agent could read then: it also counts as having served
+// every restricted room the agent was a member of when the turn started (room_member keeps joined_at and left_at), so such a turn is
+// withheld from a person who cannot read one of them. Turns after the upgrade, and a turn that has a turn_room_read row, are unaffected.
 func (s *Store) TurnWithheldFrom(ctx context.Context, turnID, agentID, userID string) (known, private, restricted bool, err error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return false, false, false, err
@@ -233,11 +238,16 @@ func (s *Store) TurnWithheldFrom(ctx context.Context, turnID, agentID, userID st
 		(SELECT COUNT(*) FROM room tr WHERE tr.kind='dm' AND `+served+`
 			AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id=tr.id AND m.member_kind='user'
 				AND m.member_id=? AND m.left_at IS NULL)),
-		(SELECT COUNT(*) FROM room tr WHERE tr.kind<>'dm' AND tr.restricted<>0 AND `+served+`
+		(SELECT COUNT(*) FROM room tr WHERE tr.kind<>'dm' AND tr.restricted<>0 AND (`+served+`
+			OR EXISTS (SELECT 1 FROM turn t WHERE t.id=? AND t.agent_id=? AND t.started_at IS NOT NULL
+				AND t.started_at < (SELECT applied_at FROM schema_version WHERE version=129)
+				AND NOT EXISTS (SELECT 1 FROM turn_room_read rr WHERE rr.turn_id=t.id)
+				AND EXISTS (SELECT 1 FROM room_member am WHERE am.room_id=tr.id AND am.member_kind='agent' AND am.member_id=t.agent_id
+					AND am.joined_at<=t.started_at AND (am.left_at IS NULL OR am.left_at>t.started_at))))
 			AND NOT `+personReadsRoomSQL("?")+`)`,
 		turnID, agentID,
 		turnID, agentID, turnID, turnID, userID,
-		turnID, agentID, turnID, turnID, userID, userID, userID).Scan(&turns, &closed, &guarded)
+		turnID, agentID, turnID, turnID, turnID, agentID, userID, userID, userID).Scan(&turns, &closed, &guarded)
 	if err != nil {
 		return false, false, false, err
 	}

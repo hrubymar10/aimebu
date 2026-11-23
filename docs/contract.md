@@ -651,7 +651,7 @@ Execution
 - **turn**(id, agent_id, session_id, generation, room_id (originating),
   parent_turn_id?, attempt, mode[normal|correction|diagnostic],
   exec (§3.2a), outcome (§3.2b), settle[pending|settled], cancel_intent,
-  terminal_event, report_json?, policy_json?, started_at?, ended_at?)
+  terminal_event, report_json?, policy_json?, login?, started_at?, ended_at?)
   — at most one turn per agent with exec in (pending, running)
 - **turn_note**(turn_id, note_id)
 - **turn_room_read**(turn_id, room_id) — PK (turn_id, room_id); a room whose
@@ -661,7 +661,10 @@ Execution
   active turn and its most recently started one before the read answers (a
   read that cannot be recorded answers an error, not the content), and what
   the turn's context quotes (`recent_room_history`, `referenced_messages`);
-  migration 129
+  migration 129. A turn that started before migration 129 ran (its
+  `schema_version.applied_at`) and has no row here is judged by the restricted
+  rooms its agent was a member of when it started (`room_member` joined/left),
+  so it is withheld from a reader who cannot read one of them
 - **command_job**(id, agent_id, generation, machine_id, project_id, room_id,
   label?, cmd, cwd, timeout_seconds,
   state[queued|running|done|cancelled|cancelled_unconfirmed|timed_out|lost|
@@ -1677,7 +1680,9 @@ it never silently reruns a turn with uncertain effects.
   to when that turn's `turn_start` is before the page. The server needs the
   turn of every record: the rooms a turn served are its own room, the room of
   each message it was given, and each room in `turn_room_read` (content a tool
-  result or its context carried, which the log records too); before it returns
+  result or its context carried, which the log records too; for a turn with no
+  such row that started before migration 129 ran, every restricted room its
+  agent was a member of when it started); before it returns
   a conversation it replaces each turn
   that served a private chat by one line unless the reader is an active member
   of that chat (private chats require room membership, see the room rules
