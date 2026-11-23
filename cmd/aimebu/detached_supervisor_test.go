@@ -14,11 +14,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/server"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 	_ "modernc.org/sqlite"
@@ -119,9 +121,10 @@ func TestStuckSupervisorIsKilledWithItsChildProcessGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	m := &detachedSupervisorManager{ctx: t.Context(), stderr: &stderr, stopBound: 400 * time.Millisecond,
-		holder: func() (int, bool, error) { return parent.Process.Pid, true, nil }}
-	m.killIfStuck(parent.Process.Pid)
+	m := &detachedSupervisorManager{ctx: t.Context(), stderr: &stderr,
+		handover: server.SupervisorHandover{ExitWait: 200 * time.Millisecond, TermWait: 200 * time.Millisecond, Poll: 20 * time.Millisecond},
+		holder:   func() (int, bool, error) { return parent.Process.Pid, true, nil }}
+	m.killIfStuck(parent.Process.Pid, supervisor.ProcessStart(parent.Process.Pid))
 	select {
 	case <-exited:
 	case <-time.After(10 * time.Second):
@@ -160,34 +163,56 @@ func init() {
 	}
 }
 
-// A supervisor that was told to stop and still holds the journal when the bound is over is killed; one that let go of it, or was
-// replaced by another process, is left alone.
+// A supervisor that was told to stop and still holds the journal when the handover's waits are over is sent SIGTERM and then killed; one
+// that let go of it, was replaced by another process, or whose pid now belongs to another process (its start time changed) is left alone.
 func TestStuckSupervisorIsKilledAfterTheStopBound(t *testing.T) {
 	for name, item := range map[string]struct {
 		holderPID int
 		held      bool
+		start     string
 		killed    bool
 	}{
-		"still holds the journal": {4242, true, true},
-		"released the journal":    {0, false, false},
-		"another one took over":   {4343, true, false},
+		"still holds the journal": {4242, true, "start-a", true},
+		"released the journal":    {0, false, "start-a", false},
+		"another one took over":   {4343, true, "start-a", false},
+		"its pid was reused":      {4242, true, "start-b", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var stderr bytes.Buffer
 			killed := make(chan int, 1)
-			m := &detachedSupervisorManager{ctx: t.Context(), stderr: &stderr, stopBound: 300 * time.Millisecond,
-				holder: func() (int, bool, error) { return item.holderPID, item.held, nil },
-				kill:   func(pid int) error { killed <- pid; return nil }}
-			m.killIfStuck(4242)
-			m.killIfStuck(4242) // a second stop of the same process starts no second watch
+			var signalled []syscall.Signal
+			var mu sync.Mutex
+			m := &detachedSupervisorManager{ctx: t.Context(), stderr: &stderr,
+				handover: server.SupervisorHandover{ExitWait: 150 * time.Millisecond, TermWait: 150 * time.Millisecond, Poll: 10 * time.Millisecond,
+					Signal: func(pid int, sig syscall.Signal) error {
+						mu.Lock()
+						signalled = append(signalled, sig)
+						mu.Unlock()
+						return nil
+					}},
+				holder:  func() (int, bool, error) { return item.holderPID, item.held, nil },
+				startOf: func(int) string { return item.start },
+				kill:    func(pid int) error { killed <- pid; return nil }}
+			m.killIfStuck(4242, "start-a")
+			m.killIfStuck(4242, "start-a") // a second stop of the same process starts no second watch
 			select {
 			case pid := <-killed:
 				if !item.killed || pid != 4242 {
 					t.Fatalf("killed pid %d", pid)
 				}
+				mu.Lock()
+				defer mu.Unlock()
+				if len(signalled) != 1 || signalled[0] != syscall.SIGTERM {
+					t.Fatalf("signals before the kill: %v", signalled)
+				}
 			case <-time.After(1500 * time.Millisecond):
 				if item.killed {
 					t.Fatal("the supervisor that kept the journal was not killed")
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				if len(signalled) != 0 {
+					t.Fatalf("a process that is no longer the supervisor was signalled: %v", signalled)
 				}
 			}
 		})

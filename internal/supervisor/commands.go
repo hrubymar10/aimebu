@@ -75,6 +75,9 @@ type commandJob struct {
 	timer    *time.Timer
 	killed   bool
 	timedOut bool
+	// replaced says the kill was this supervisor's own exit while it is being replaced: the end is reported with exit code -1 and the
+	// reason supervisor_replaced, so the agent is woken with it and can run the command again.
+	replaced bool
 	// adopted is a job of a dead predecessor: not this process's child, so it is watched rather than waited for, and its pid is checked
 	// against pidStart before it is signalled (the pid may belong to another process by now).
 	adopted bool
@@ -90,6 +93,24 @@ func (j *commandJob) markKilled(timedOut bool) {
 	defer j.mu.Unlock()
 	j.killed = true
 	j.timedOut = j.timedOut || timedOut
+}
+
+func (j *commandJob) markReplaced() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.replaced = true
+}
+
+// settleReplaced marks the end of a command this supervisor killed on its way out while being replaced.
+func (j *commandJob) settleReplaced(exit *protocol.CommandExit) {
+	j.mu.Lock()
+	replaced := j.replaced
+	j.mu.Unlock()
+	if !replaced || !exit.Killed || exit.TimedOut || exit.Refused != "" {
+		return
+	}
+	code := -1
+	exit.ExitCode, exit.Lost, exit.Reason = &code, false, protocol.CommandEndSupervisorReplaced
 }
 
 func (j *commandJob) markNotOurs() {
@@ -359,6 +380,7 @@ func (c *Client) waitCommand(ctx context.Context, job *commandJob, cmd *exec.Cmd
 	if job.container {
 		settleContainerExit(job, &exit)
 	}
+	job.settleReplaced(&exit)
 	c.finishCommand(ctx, job, exit)
 }
 
@@ -443,6 +465,15 @@ func (c *Client) commandKill(jobID string, timedOut bool) {
 	if commandProcessAlive(job.pid) {
 		_ = adapter.SignalGroup(job.pid, syscall.SIGKILL, notReaped)
 	}
+}
+
+// commandReplace ends one running command because this supervisor is being replaced: the kill of commandKill, with an end that says so
+// (exit code -1, reason supervisor_replaced).
+func (c *Client) commandReplace(jobID string) {
+	if job := c.runner().get(jobID); job != nil {
+		job.markReplaced()
+	}
+	c.commandKill(jobID, false)
 }
 
 // stopUnjournaled ends a command whose start could not be journaled, before the start is reported failed. A native one is killed with its
@@ -597,6 +628,7 @@ func (c *Client) finishAdoptedCommand(ctx context.Context, job *commandJob, exit
 			exit.Unconfirmed = job.container
 		}
 	}
+	job.settleReplaced(&exit)
 	if tail, written, truncated, err := tailFile(job.logPath, commandTailBytes); err == nil {
 		exit.LogBytes, exit.TailTruncated, exit.Tail = written, truncated, adapter.RedactSecrets(tail)
 	}

@@ -188,6 +188,10 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := ensureColumn(ctx, db, "command_exit", "reason", `ALTER TABLE command_exit ADD COLUMN reason TEXT NOT NULL DEFAULT ''`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	random := make([]byte, 16)
 	if _, err := rand.Read(random); err != nil {
 		db.Close()
@@ -718,9 +722,9 @@ func (j *Journal) RecordCommandExit(ctx context.Context, exit protocol.CommandEx
 		exit.EndedAt = timestamp()
 	}
 	result, err := j.db.ExecContext(ctx, `INSERT OR REPLACE INTO command_exit
-		(job_id,exit_code,timed_out,killed,unconfirmed,lost,started_at,ended_at,log_bytes,tail_truncated,tail,refused,exit_acked)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)`, exit.JobID, nullableInt(exit.ExitCode), exit.TimedOut, exit.Killed,
-		exit.Unconfirmed, exit.Lost, exit.StartedAt, exit.EndedAt, exit.LogBytes, exit.TailTruncated, exit.Tail, exit.Refused)
+		(job_id,exit_code,timed_out,killed,unconfirmed,lost,started_at,ended_at,log_bytes,tail_truncated,tail,refused,reason,exit_acked)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, exit.JobID, nullableInt(exit.ExitCode), exit.TimedOut, exit.Killed,
+		exit.Unconfirmed, exit.Lost, exit.StartedAt, exit.EndedAt, exit.LogBytes, exit.TailTruncated, exit.Tail, exit.Refused, exit.Reason)
 	if err != nil {
 		return err
 	}
@@ -765,7 +769,7 @@ func (j *Journal) OpenCommands(ctx context.Context) ([]protocol.CommandOpen, err
 // PendingCommandExits are the ends the server has not acknowledged yet; they are replayed with every connection.
 func (j *Journal) PendingCommandExits(ctx context.Context) ([]protocol.CommandExit, error) {
 	rows, err := j.db.QueryContext(ctx, `SELECT e.job_id,s.agent_id,s.generation,e.exit_code,e.timed_out,e.killed,e.unconfirmed,e.lost,
-		e.started_at,e.ended_at,e.log_bytes,e.tail_truncated,e.tail,e.refused FROM command_exit e JOIN command_start s ON s.job_id=e.job_id
+		e.started_at,e.ended_at,e.log_bytes,e.tail_truncated,e.tail,e.refused,e.reason FROM command_exit e JOIN command_start s ON s.job_id=e.job_id
 		WHERE e.exit_acked=0 ORDER BY e.ended_at,e.job_id`)
 	if err != nil {
 		return nil, err
@@ -776,7 +780,8 @@ func (j *Journal) PendingCommandExits(ctx context.Context) ([]protocol.CommandEx
 		var exit protocol.CommandExit
 		var exitCode sql.NullInt64
 		if err := rows.Scan(&exit.JobID, &exit.AgentID, &exit.Generation, &exitCode, &exit.TimedOut, &exit.Killed,
-			&exit.Unconfirmed, &exit.Lost, &exit.StartedAt, &exit.EndedAt, &exit.LogBytes, &exit.TailTruncated, &exit.Tail, &exit.Refused); err != nil {
+			&exit.Unconfirmed, &exit.Lost, &exit.StartedAt, &exit.EndedAt, &exit.LogBytes, &exit.TailTruncated, &exit.Tail, &exit.Refused,
+			&exit.Reason); err != nil {
 			return nil, err
 		}
 		if exitCode.Valid {

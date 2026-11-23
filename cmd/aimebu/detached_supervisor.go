@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/server"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
@@ -177,20 +178,19 @@ type detachedSupervisorManager struct {
 	replaceOverdue func(context.Context) (bool, error)
 	stopMu         sync.Mutex
 	stopWatched    map[int]bool // the pids a stop was sent to and whose exit is being waited for
-	// Tests replace these: who holds the journal (supervisorPID), how a process is killed, and how long a stop may take (supervisorStopBound).
-	holder    func() (int, bool, error)
-	kill      func(int) error
-	stopBound time.Duration
+	// Tests replace these: who holds the journal (supervisorPID), how a process is killed, when a process started, and the handover's
+	// waits, clock and signal (server.SupervisorHandover).
+	holder   func() (int, bool, error)
+	kill     func(int) error
+	startOf  func(int) string
+	handover server.SupervisorHandover
 }
 
-// supervisorStopBound is how long a supervisor that was told to stop gets to release its journal before it is killed. Its own drain is
-// limited to 40 seconds (supervisorCommand), so one that still holds the journal after this is not draining: it hangs.
-var supervisorStopBound = 75 * time.Second
-
-// killIfStuck waits for a supervisor that was told to stop. One that still holds the journal when the bound is over is killed, with the
-// processes it started (killSupervisorTree), so that its replacement can start: the journal keeps what its turns reported, and the
-// replacement delivers it.
-func (m *detachedSupervisorManager) killIfStuck(pid int) {
+// killIfStuck runs the bounded handover of a supervisor that was told to stop (server.SupervisorHandover): it gets 30 seconds to release
+// the journal, then SIGTERM, and 15 seconds after that it is killed, with the processes it started (killSupervisorTree), so that its
+// replacement can start: the journal keeps what its turns reported, and the replacement delivers it. start is the process's start time
+// when the stop was sent: a pid that belongs to another process by the time a signal is due is never signalled.
+func (m *detachedSupervisorManager) killIfStuck(pid int, start string) {
 	m.stopMu.Lock()
 	if m.stopWatched == nil {
 		m.stopWatched = make(map[int]bool)
@@ -205,49 +205,51 @@ func (m *detachedSupervisorManager) killIfStuck(pid int) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	holder, kill, bound := m.holder, m.kill, m.stopBound
+	handover := m.handover
+	holder := m.holder
 	if holder == nil {
 		holder = func() (int, bool, error) { return supervisorPID(m.config.root) }
 	}
+	handover.Holds = func(p int) (bool, error) {
+		current, held, err := holder()
+		if err != nil {
+			return false, err
+		}
+		return held && current == p, nil
+	}
+	if handover.StartOf == nil {
+		handover.StartOf = m.processStart
+	}
+	if handover.Signal == nil {
+		handover.Signal = func(p int, sig syscall.Signal) error { return syscall.Kill(p, sig) }
+	}
+	kill := m.kill
 	if kill == nil {
 		kill = killSupervisorTree
 	}
-	if bound <= 0 {
-		bound = supervisorStopBound
+	handover.Kill = func(p int) error {
+		err := kill(p)
+		if err != nil {
+			fmt.Fprintln(m.stderr, "supervisor kill:", err)
+		}
+		return err
 	}
-	stopped := time.Now()
 	go func() {
 		defer func() {
 			m.stopMu.Lock()
 			delete(m.stopWatched, pid)
 			m.stopMu.Unlock()
 		}()
-		deadline := time.NewTimer(bound)
-		defer deadline.Stop()
-		ticker := time.NewTicker(250 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			if current, held, err := holder(); err == nil && (!held || current != pid) {
-				log.Printf("supervisor swap: old supervisor pid %d exited %s after it was told to stop", pid, time.Since(stopped).Round(time.Millisecond))
-				return // it exited (and another may already have taken over)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-deadline.C:
-				// Only the process that verifiably still holds the journal is killed, and only while it is the one the stop went to.
-				if current, held, err := holder(); err != nil || !held || current != pid {
-					return
-				}
-				log.Printf("supervisor swap: old supervisor pid %d still holds the journal %s after it was told to stop; killing it", pid, bound)
-				if err := kill(pid); err != nil {
-					fmt.Fprintln(m.stderr, "supervisor kill:", err)
-				}
-				return
-			case <-ticker.C:
-			}
-		}
+		handover.Run(ctx, pid, start)
 	}()
+}
+
+// processStart is the system's record of when pid started (supervisor.ProcessStart), unless a test replaces it.
+func (m *detachedSupervisorManager) processStart(pid int) string {
+	if m.startOf != nil {
+		return m.startOf(pid)
+	}
+	return supervisor.ProcessStart(pid)
 }
 
 type legacyDrainState struct {
@@ -317,6 +319,7 @@ func (m *detachedSupervisorManager) restartNow() error {
 	if m.canInterrupt != nil && m.canInterrupt() {
 		stop = syscall.SIGUSR1
 	}
+	start := m.processStart(pid) // read before the signal: the handover signals this very process and no later owner of its pid
 	if err := syscall.Kill(pid, stop); err != nil {
 		return err
 	}
@@ -325,7 +328,7 @@ func (m *detachedSupervisorManager) restartNow() error {
 		signalName = "SIGUSR1, retire at idle with turn interrupt"
 	}
 	log.Printf("supervisor swap: retire requested: pid %d, stop signal %s, %s", pid, signalName, m.openTurnsNote())
-	m.killIfStuck(pid)
+	m.killIfStuck(pid, start)
 	return nil
 }
 

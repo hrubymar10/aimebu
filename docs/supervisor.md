@@ -43,12 +43,20 @@ signals the process to stop, and each of those turns ends interrupted and
 gets the ordinary one auto-continue on the new supervisor. This cuts every
 turn it runs, of whatever kind. A supervisor that was asked to retire, whose
 grace is over, and which has held its journal without a connection for 30
-seconds more is out of reach of any frame and is replaced the same way. In
-both cases a running `run_command` job still holds the replacement back, and
-a grace of 0 turns both off. A supervisor that was signalled to stop (by the
-drain, by Restart now, or by the manager) and still holds its journal 75
-seconds later is killed, so that its replacement can start; its own drain is
-limited to 40 seconds, so one that is still there is hanging. It is killed
+seconds more is out of reach of any frame and is replaced the same way. A
+grace of 0 turns both off (and with them the whole bound: the supervisor is
+waited for). Every drain ends the same way once its turns were interrupted:
+the server asks the supervisor to exit (the stop signal of Restart now), so a
+running `run_command` job no longer holds the swap.
+**The bounded handover.** A supervisor that was asked to exit (by the drain,
+by Restart now, or by the manager) gets 30 seconds to release its journal;
+then the server sends it SIGTERM, and 15 seconds after that it is killed with
+SIGKILL, so that its replacement can start. Every signal goes only to the
+process the exit request went to: the pid must still hold the journal and
+still have the start time it had when the exit was requested, so a pid the
+system has given to another process since is never signalled (the handover
+then logs that and stops). This holds for whatever build the old supervisor
+is. It is killed
 together with what it started: every process group one of its child processes
 leads (each harness CLI and each `run_command` job runs in a group of its
 own) and its other child processes, so nothing of the old supervisor on the
@@ -59,20 +67,36 @@ heartbeat sweeps it, about fifteen seconds after the host side is gone. For a
 container turn the no-overlap guarantee therefore holds only after that
 sweep: for up to about fifteen seconds the old process can still write in the
 checkout while the new supervisor continues the turn. The journal keeps what its turns reported, and
-the replacement delivers it. The drain also leaves
+the replacement delivers it. A supervisor of this build that is asked to exit
+while it is being replaced does not wait for its `run_command` jobs: it ends
+each one (SIGTERM to its group, SIGKILL after the grace) and records the end
+with exit code `-1` and the reason `supervisor_replaced`. The job is
+`cancelled` with the error `supervisor_replaced: the supervisor was replaced
+while the command ran; run it again if you still need it`, and the wake note
+reaches the agent like any other command end (replayed by the replacement if
+the old connection was already gone). An older build ends its jobs as
+cancelled without the reason. A job that died with a supervisor that had to be
+killed is reported `lost` by the replacement.
+While its server connection is down, the supervisor logs the failed sends
+(`machine socket disconnected`) once, with the reconnect interval, and one line
+with their count once the connection is back. The drain also leaves
 alone the turn of an agent that a team flow change in progress holds (the
 change interrupts it its own way), and it never replaces an interrupt somebody
 already asked for: that turn is only sent the frame again and is settled as
 the first request said. A long command started with
-`run_command` is never cut: it keeps the old supervisor up, and local
-dispatch held, until it ends, also after the turns were interrupted. The
+`run_command` keeps the old supervisor up, and local dispatch held, only
+until the grace is over: the handover ends it (see above). The
 owner's Restart now action interrupts turns and commands at once and gets the
 ordinary one auto-continue. A crashed local supervisor is respawned with backoff.
 The server log tells how a swap goes, one line per step, each starting with
 `supervisor swap:`: `local supervisor restart pending` (the mismatch),
-`drain grace of Ns is over, M turn(s) still running`, `retire requested: pid P,
-stop signal …, M open turn(s)`, `old supervisor pid P exited … after it was
-told to stop` (or `still holds the journal … ; killing it`), `started supervisor
+`drain grace of Ns is over, M turn(s) still running`, `drain over; asking the
+supervisor to exit`, `retire requested: pid P, stop signal …, M open turn(s)`,
+`waiting for supervisor pid P to exit (30s)`, then `old supervisor pid P exited
+… after it was told to stop`, or `supervisor pid P did not exit within 30s; sent
+SIGTERM, waiting 15s` and `supervisor pid P did not exit 15s after SIGTERM;
+sending SIGKILL to it and its child processes` (or `pid P now belongs to another
+process …; not sending …` when its start time changed), `started supervisor
 pid P`, `supervisor pid P connected` and `local supervisor connected: build B`
 (the build is logged when it changes, not on every reconnect). The lines carry
 no paths or secrets.

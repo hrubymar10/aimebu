@@ -77,8 +77,11 @@ type Client struct {
 	// on one. Tests use it to stand in for the older supervisor a newer server finds running after an upgrade.
 	NoTurnInterrupt bool
 	// NoAttachmentSave makes the client behave like a build from before attachment_save, for the same kind of test.
-	NoAttachmentSave   bool
-	retireRequested    atomic.Bool
+	NoAttachmentSave bool
+	retireRequested  atomic.Bool
+	// disconnectedDrops counts the sends that failed for want of a connection since the last one: the first is logged, the rest only
+	// counted and summed up in one line when the connection is back (logDisconnectedDrops).
+	disconnectedDrops  atomic.Int64
 	shutdownRequested  atomic.Bool
 	restartInterrupted atomic.Bool
 	OnError            func(error)
@@ -282,10 +285,7 @@ func (c *Client) Run(ctx context.Context) error {
 			outageReported = true
 			telemetry.ReportWarning(ctx, "supervisor", fmt.Errorf("the server connection failed %d times in a row: %w", failures, err))
 		}
-		delay := c.ReconnectDelay
-		if delay <= 0 {
-			delay = time.Second
-		}
+		delay := c.reconnectDelay()
 		select {
 		case <-ctx.Done():
 			return nil
@@ -375,6 +375,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	if ack.V != protocol.Version || ack.Type != protocol.HelloAck {
 		return fmt.Errorf("expected hello_ack, got %q", ack.Type)
 	}
+	c.logDisconnectedDrops()
 	// A retire request belongs to the previous server connection. The new
 	// server sends another retire frame after this ack if it still needs one.
 	if c.retireRequested.Swap(false) && !c.shutdownRequested.Load() {
@@ -1095,6 +1096,10 @@ func (c *Client) replayReadFailed(ctx context.Context, err error) {
 	c.report("the journal could not be read to replay it after reconnecting", err)
 }
 
+// errMachineDisconnected is a send that found no server connection. While the supervisor reconnects every caller that sends meets it, so
+// the local log has it once per outage, with a count when the connection is back (reportLocal).
+var errMachineDisconnected = errors.New("machine socket disconnected")
+
 // serverUnreachable says whether the supervisor has no live server connection right now.
 func (c *Client) serverUnreachable() bool {
 	c.mu.Lock()
@@ -1107,7 +1112,7 @@ func (c *Client) sendCurrent(ctx context.Context, frame protocol.Frame) error {
 	conn := c.currentConn
 	c.mu.Unlock()
 	if conn == nil {
-		return errors.New("machine socket disconnected")
+		return errMachineDisconnected
 	}
 	return c.send(ctx, conn, frame)
 }
@@ -1789,8 +1794,10 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 			jobs = append(jobs, id)
 		}
 		runner.mu.Unlock()
+		// A replacement does not wait for a long command: it is ended, and its end (exit code -1, reason supervisor_replaced) wakes its
+		// agent, which can run it again on the new supervisor.
 		for _, id := range jobs {
-			go c.commandKill(id, false)
+			go c.commandReplace(id)
 		}
 	}
 	done := make(chan struct{})
@@ -1939,9 +1946,31 @@ func (c *Client) degraded(cause string, err error) {
 
 // reportLocal is for a failure that has its own, classified Sentry report (a warm-process refusal, an error frame from the server): the local log only.
 func (c *Client) reportLocal(err error) {
-	if c.OnError != nil {
-		c.OnError(err)
+	if c.OnError == nil {
+		return
 	}
+	if errors.Is(err, errMachineDisconnected) {
+		if c.disconnectedDrops.Add(1) != 1 {
+			return
+		}
+		err = fmt.Errorf("%w; further sends are counted until it is back (reconnecting every %s)", err, c.reconnectDelay())
+	}
+	c.OnError(err)
+}
+
+// logDisconnectedDrops sums up, once the connection is back, the sends that failed for want of one.
+func (c *Client) logDisconnectedDrops() {
+	if dropped := c.disconnectedDrops.Swap(0); dropped > 1 && c.OnError != nil {
+		c.OnError(fmt.Errorf("machine socket reconnected: %d sends failed while it was disconnected (reconnecting every %s)", dropped, c.reconnectDelay()))
+	}
+}
+
+// reconnectDelay is the wait between two connection attempts.
+func (c *Client) reconnectDelay() time.Duration {
+	if c.ReconnectDelay > 0 {
+		return c.ReconnectDelay
+	}
+	return time.Second
 }
 
 // sweepAgentLogs removes agents' captured output that is older than its retention, or past the size cap, once at start and then daily.

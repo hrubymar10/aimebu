@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -263,5 +264,34 @@ func TestReplayReadFailureIsNotReportedOnShutdown(t *testing.T) {
 	telemetry.Current().Flush(time.Second)
 	if got := transport.sent(); len(got) != 1 {
 		t.Fatalf("a replay read failure must be reported: %+v", got)
+	}
+}
+
+// While the connection is down every send meets the same error: the local log has it once, with the reconnect interval, and one line
+// with the count once the connection is back.
+func TestDisconnectedSendsAreLoggedOncePerOutage(t *testing.T) {
+	var lines []string
+	c := &Client{ReconnectDelay: 5 * time.Second, OnError: func(err error) { lines = append(lines, err.Error()) }}
+	for range 40 {
+		if err := c.sendCurrent(t.Context(), protocol.Frame{}); !errors.Is(err, errMachineDisconnected) {
+			t.Fatalf("send without a connection: %v", err)
+		}
+		c.unsent(fmt.Errorf("a frame: %w", errMachineDisconnected))
+	}
+	c.unsent(errors.New("something else"))
+	c.logDisconnectedDrops()
+	want := []string{
+		"a frame: machine socket disconnected; further sends are counted until it is back (reconnecting every 5s)",
+		"something else",
+		"machine socket reconnected: 40 sends failed while it was disconnected (reconnecting every 5s)",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("log lines:\n%s", strings.Join(lines, "\n"))
+	}
+	lines = nil
+	c.logDisconnectedDrops()
+	c.unsent(errMachineDisconnected)
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "machine socket disconnected;") {
+		t.Fatalf("a new outage is logged again: %q", lines)
 	}
 }

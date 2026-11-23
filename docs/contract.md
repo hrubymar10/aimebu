@@ -1457,10 +1457,19 @@ interrupt and disposition, and a turn that already has a
 `turn_interrupt_requested` event keeps it (the first recorded disposition
 wins; the drain only sends the frame again). A team flow change's own
 interrupt does not yield: its `requeue` replaces a `continue` the drain
-recorded before the change began. An older supervisor is waited
-for as before, and a command outside
-a turn is never ended for this: the old supervisor stays up, and local
-dispatch stays held, until its commands finish. A turn whose process in a
+recorded before the change began. A supervisor that did not announce
+`supports_turn_interrupt` is stopped and started again when the grace is
+over. Either way the drain then ends with the bounded handover, whatever the
+old supervisor's build: the server asks it to exit (the stop signal of
+Restart now), waits 30 seconds for it to release the journal, sends SIGTERM,
+and 15 seconds later kills it and the processes it started with SIGKILL. A
+signal goes only to the process the exit was requested of, verified by pid
+and process start time; a reused pid is never signalled. A command outside a
+turn no longer holds the swap: the old supervisor ends its commands on that
+exit (or they are killed with it), and this build reports each such end with
+`exit_code` -1 and `reason: supervisor_replaced` (§4.1), which makes the job
+`cancelled` with that reason and wakes its agent. A grace of `0` turns the
+bound off. A turn whose process in a
 container is not confirmed gone holds the supervisor for its quarantine
 (§4.2) first. The owner can choose Restart now to interrupt current
 work and trigger the ordinary auto-continue. A crashed detached supervisor is
@@ -1489,13 +1498,13 @@ it never silently reruns a turn with uncertain effects.
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}], command_open?[{job_id, agent_id, generation, pid, pid_start?,
   log_path, started_at}], command_exits?[{job_id, agent_id, generation,
-  exit_code?, timed_out?, killed?, unconfirmed?, lost?, started_at, ended_at,
+  exit_code?, timed_out?, killed?, unconfirmed?, lost?, reason?, started_at, ended_at,
   log_bytes, tail_truncated?, tail?}]}` — `command_open` and `command_exits`
   are the long commands outside a turn this supervisor still runs and the ends
   it has not been acknowledged for.
 - S→M `retire_at_idle{v}` asks a detached supervisor to reject new work, finish
-  its running turns and commands, and exit. A server replacing an older
-  supervisor waits for its recorded work to finish before stopping it.
+  its running turns and commands, and exit. The wait is bounded by the drain
+  grace and the handover (§3), not by the supervisor's work.
 - `supports_turn_interrupt=true` in `hello` says the supervisor cuts one
   running turn on a `turn_interrupt` frame (§4.2) and leaves its agent
   running. The server sends the frame only to a supervisor that says so; for
@@ -1742,7 +1751,7 @@ it never silently reruns a turn with uncertain effects.
   instead (`409 command_refused`, naming the update). A Docker start may be
   answered after later frames. The command gets none of the agent's keys.
 - M→S `command_ended{v, job_id, agent_id, generation, command_exit:{exit_code?,
-  timed_out?, killed?, unconfirmed?, lost?, refused?, started_at, ended_at,
+  timed_out?, killed?, unconfirmed?, lost?, refused?, reason?, started_at, ended_at,
   log_bytes, tail_truncated?, tail?}}`; S→M `ack{v, job_id, level=command_exit}` after the
   end commits. The end is replayed until it is acknowledged, like a turn's
   process exit. `tail` is the last lines of the job's output, redacted before
@@ -1751,6 +1760,10 @@ it never silently reruns a turn with uncertain effects.
   `cancelled_unconfirmed`, whatever the reason for the kill; `refused` (the
   Docker launcher refused the command before it ran: an image from before
   command runs) makes it `failed` with that message and no exit code.
+  `reason: supervisor_replaced` (with `killed` and `exit_code` -1) says the
+  supervisor ended the command on its exit while being replaced: the job is
+  `cancelled` with the error `supervisor_replaced: …` and the agent is woken;
+  a server that does not know the reason reads the end as a kill.
 - M→S `background_job_ended{v, agent_id, generation}` — the agent's live
   (warm) harness process answered, between turns, a query it ran on its own
   because a background job the agent had started ended (Claude Code's

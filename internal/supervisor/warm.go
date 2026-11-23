@@ -1613,6 +1613,10 @@ func (c *Client) identityOf(pid int) string {
 	return processStart(pid)
 }
 
+// ProcessStart is processStart for the server's supervisor handover, which tells the supervisor it asked to exit from a later process
+// that reuses its pid.
+func ProcessStart(pid int) string { return processStart(pid) }
+
 // processStart is the system's own record of when a process started, for telling a process from a later one that reuses its pid.
 func processStart(pid int) string {
 	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()

@@ -304,6 +304,9 @@ func (s *Server) ownedCommand(w http.ResponseWriter, r *http.Request, caller sto
 	return job, true
 }
 
+// commandSupervisorReplaced is the error a command's end carries when its supervisor ended it on its way out, being replaced.
+const commandSupervisorReplaced = protocol.CommandEndSupervisorReplaced + ": the supervisor was replaced while the command ran"
+
 func commandTerminal(state string) bool {
 	return state != "queued" && state != "running"
 }
@@ -339,9 +342,13 @@ func (s *Server) handleCommandEnd(ctx context.Context, conn *machineConn, frame 
 		state = "cancelled_unconfirmed"
 		if exit.TimedOut {
 			message = "it reached its timeout; the kill could not be confirmed"
+		} else if exit.Reason == protocol.CommandEndSupervisorReplaced {
+			message = commandSupervisorReplaced + "; the kill could not be confirmed"
 		}
 	case exit.TimedOut:
 		state = "timed_out"
+	case exit.Reason == protocol.CommandEndSupervisorReplaced:
+		state, message = "cancelled", commandSupervisorReplaced+"; run it again if you still need it"
 	case exit.Killed:
 		state = "cancelled"
 	}

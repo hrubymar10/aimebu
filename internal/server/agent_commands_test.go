@@ -540,3 +540,30 @@ func TestDockerVariantCommandNeedsAContainerCapableSupervisor(t *testing.T) {
 		t.Fatalf("run_command %d %s", call.status, call.body)
 	}
 }
+
+// A command its supervisor ended on its way out, being replaced, is recorded cancelled with exit code -1 and the reason, and wakes its
+// agent, which can run it again on the new supervisor.
+func TestCommandEndedBySupervisorReplacementWakesTheAgent(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	conn := f.dialCommandMachine(t, nil, nil)
+	answer, run := f.startCommandCall(t, conn, key, "replaced")
+	writeCommandFrame(t, conn, commandStartedFrame(run))
+	if call := waitCommandCall(t, answer); call.status != 201 {
+		t.Fatalf("run_command %d %s", call.status, call.body)
+	}
+	frame := commandEndedFrame(run, run.Generation, -1)
+	frame.CommandExit.Killed, frame.CommandExit.Reason = true, protocol.CommandEndSupervisorReplaced
+	writeCommandFrame(t, conn, frame)
+	waitCommandAck(t, conn, run.JobID)
+	job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID)
+	if err != nil || job.State != "cancelled" || job.ExitCode == nil || *job.ExitCode != -1 ||
+		!strings.HasPrefix(job.Error, protocol.CommandEndSupervisorReplaced+": ") {
+		t.Fatalf("job %+v err=%v", job, err)
+	}
+	if commandNotes(t, f, agent.ID) != 1 {
+		t.Fatal("the agent was not woken by its command's end")
+	}
+}

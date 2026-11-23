@@ -345,12 +345,15 @@ func TestBoundedDrainSendsTheInterruptOnlyWhereItApplies(t *testing.T) {
 	}
 }
 
-// A long command outside a turn is not the drain's to end: when the grace is over the turn is interrupted and the command is left
-// running, which keeps the old supervisor up (it exits only when idle) until the command ends.
-func TestBoundedDrainLeavesALongCommandRunning(t *testing.T) {
+// A long command outside a turn no longer holds the swap: when the grace is over the turn is interrupted and the supervisor is asked to
+// exit (the bounded handover follows). The server does not end the command itself; the supervisor ends it on its way out and reports it.
+func TestBoundedDrainAsksTheSupervisorToExitUnderALongCommand(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.srv.Version = "new-build"
+	restarts := make(chan struct{}, 4)
+	f.srv.LocalSupervisorRestart = func() error { restarts <- struct{}{}; return nil }
+	f.srv.turnInterruptWait = 200 * time.Millisecond // the test's socket does not answer the interrupt
 	agent, turn, note, _ := f.execution(t)
 	_, key := f.createToolAgent(t, "role_t6")
 	first := f.dialCommandMachine(t, nil, []protocol.CommandExit{})
@@ -370,7 +373,15 @@ func TestBoundedDrainLeavesALongCommandRunning(t *testing.T) {
 	}
 	job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID)
 	if err != nil || job.State != "running" {
-		t.Fatalf("the command was not left running: %+v %v", job, err)
+		t.Fatalf("the server ended the command itself: %+v %v", job, err)
+	}
+	select {
+	case <-restarts:
+	default:
+		t.Fatal("the supervisor was not asked to exit when the grace was over")
+	}
+	if exit := f.srv.localSupervisorRestartExit(turn.ID, adapter.ExitInfo{CancelIntent: true}); !exit.Interrupted {
+		t.Fatalf("the turn's end on the exit is not read as an interruption: %+v", exit)
 	}
 }
 
@@ -531,8 +542,9 @@ func TestBoundedDrainRestartsASupervisorThatCannotInterruptATurn(t *testing.T) {
 	}
 }
 
-// A long command outside a turn keeps also the older supervisor up: it is not restarted while the command runs.
-func TestBoundedDrainDoesNotRestartAnOlderSupervisorUnderALongCommand(t *testing.T) {
+// A long command outside a turn does not keep the older supervisor up either: it is restarted when the grace is over, and an overdue one
+// is replaced, whatever command runs.
+func TestBoundedDrainRestartsAnOlderSupervisorUnderALongCommand(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.srv.Version = "new-build"
@@ -554,11 +566,14 @@ func TestBoundedDrainDoesNotRestartAnOlderSupervisorUnderALongCommand(t *testing
 	_ = framesFor(t, conn, 2500*time.Millisecond, protocol.TurnInterrupt)
 	select {
 	case <-restarts:
-		t.Fatal("the supervisor was restarted under a running command")
 	default:
+		t.Fatal("the supervisor was not restarted under a running command")
 	}
-	if overdue, err := f.srv.ReplaceOverdueLocalSupervisor(t.Context()); overdue || err != nil {
-		t.Fatalf("overdue under a running command: %t %v", overdue, err)
+	f.srv.localDrainMu.Lock()
+	f.srv.localDrainDeadline = time.Now().Add(-localDrainOverdueAfter - time.Second)
+	f.srv.localDrainMu.Unlock()
+	if overdue, err := f.srv.ReplaceOverdueLocalSupervisor(t.Context()); !overdue || err != nil {
+		t.Fatalf("an overdue supervisor under a running command was not replaced: %t %v", overdue, err)
 	}
 }
 

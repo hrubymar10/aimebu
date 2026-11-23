@@ -151,8 +151,10 @@ func (s *Server) LocalSupervisorCanInterrupt() bool {
 // has a limit: the owner's drain grace. When it runs out, every ordinary turn the old supervisor still runs is interrupted with the
 // continue disposition (see store.RequestTurnInterrupt): the turn ends, the supervisor goes idle and exits, and the turn is continued on
 // its replacement, outside the chain's one automatic continuation. A supervisor that cannot be interrupted turn by turn (an older build,
-// or one that lost its connection for good) is stopped and started again instead. A command outside a turn is never ended for this: the
-// old supervisor stays up until its commands finish, as before.
+// or one that lost its connection for good) is stopped and started again instead. Either way the drain ends with the bounded handover:
+// the supervisor is asked to exit, and is signalled and killed if it does not (SupervisorHandover). A command outside a turn no longer
+// holds the swap: the supervisor ends it on its way out (a build that knows the reason reports it supervisor_replaced, exit code -1),
+// and a supervisor that does not is killed with it.
 const (
 	supervisorDrainGraceKey     = "supervisor_drain_grace_seconds"
 	defaultDrainGraceSeconds    = 5 * 60
@@ -226,52 +228,36 @@ func (s *Server) startLocalDrainGrace(ctx context.Context, c *machineConn) {
 			running = len(ids)
 		}
 		log.Printf("supervisor swap: drain grace of %ds is over, %d turn(s) still running; ending the drain", grace, running)
-		if !c.supportsTurnInterrupt {
-			s.restartDrainingSupervisor(ctx, c)
-			return
+		if c.supportsTurnInterrupt {
+			s.interruptDrainingTurns(ctx, c)
 		}
-		s.interruptDrainingTurns(ctx, c)
+		s.restartDrainingSupervisor(ctx, c)
 	})
 }
 
-// drainCommandPoll is how often a drain that waits for a command outside a turn looks whether it has ended.
-var drainCommandPoll = 2 * time.Second
-
-// restartDrainingSupervisor ends the drain of a supervisor that knows no turn_interrupt: when the grace is over it is stopped and started
-// again, with the turns it runs marked so that they end interrupted and are continued once on the replacement. A command outside a turn
-// is still never cut: while one runs the stop waits, as the drain of a newer supervisor does.
+// restartDrainingSupervisor ends the drain: when the grace is over the supervisor is asked to exit, whatever it still runs, and its
+// manager starts the bounded handover (signalled after HandoverExitWait, killed after HandoverTermWait more). The turns it runs are marked
+// so that they end interrupted: one the drain already interrupted keeps the continue disposition it recorded, any other is continued once
+// on the replacement. A command outside a turn is ended by the old supervisor on its way out; it no longer holds the swap.
 func (s *Server) restartDrainingSupervisor(ctx context.Context, c *machineConn) {
 	if s.LocalSupervisorRestart == nil {
 		return
 	}
-	ticker := time.NewTicker(drainCommandPoll)
-	defer ticker.Stop()
-	for {
-		running, err := s.Store.MachineRunningCommand(ctx, c.id)
-		if err != nil {
-			telemetry.ReportError(ctx, "machine", fmt.Errorf("supervisor drain: looking for running commands: %w", err))
-			return
-		}
-		if !running {
-			break
-		}
-		select {
-		case <-ticker.C:
-		case <-c.done:
-			return
-		case <-ctx.Done():
-			return
-		}
-	}
 	select {
 	case <-c.done:
-		return // it went by itself, or its next connection starts this again
+		// It went by itself (its interrupted turns ended and it was idle), or its next connection starts the drain again. The exit
+		// request is not sent then: the journal may already be held by its replacement.
+		return
 	default:
 	}
 	if s.localSupervisorUpgradeRequired.Load() {
 		return
 	}
-	log.Printf("supervisor drain: grace over and the supervisor cannot interrupt a turn; restarting it")
+	if c.supportsTurnInterrupt {
+		log.Printf("supervisor swap: drain over; asking the supervisor to exit")
+	} else {
+		log.Printf("supervisor drain: grace over and the supervisor cannot interrupt a turn; restarting it")
+	}
 	if err := s.forceLocalSupervisorRestart(ctx); err != nil {
 		telemetry.ReportError(ctx, "machine", fmt.Errorf("supervisor drain: restarting the supervisor: %w", err))
 	}
@@ -294,9 +280,6 @@ func (s *Server) ReplaceOverdueLocalSupervisor(ctx context.Context) (bool, error
 		return false, nil
 	}
 	if grace, err := s.drainGraceSeconds(ctx); err != nil || grace == 0 {
-		return false, err
-	}
-	if running, err := s.Store.MachineRunningCommand(ctx, s.localSupervisorID()); err != nil || running {
 		return false, err
 	}
 	log.Printf("supervisor drain: grace over and the supervisor is neither connected nor gone; restarting it")

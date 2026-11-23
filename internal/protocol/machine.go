@@ -383,7 +383,10 @@ type CommandExit struct {
 	Lost        bool `json:"lost,omitempty"`
 	// Refused says the command never ran, and why: a Docker launcher whose container runs an image from before command runs refuses it
 	// (exit 126, no exit marker). The job then fails with this message instead of reporting an exit code of the person's command.
-	Refused       string `json:"refused,omitempty"`
+	Refused string `json:"refused,omitempty"`
+	// Reason says why the supervisor itself ended the command, when that is not a cancel, a stop or a timeout: CommandEndSupervisorReplaced.
+	// A server that does not know it still reads the end as a kill.
+	Reason        string `json:"reason,omitempty"`
 	StartedAt     string `json:"started_at"`
 	EndedAt       string `json:"ended_at"`
 	LogBytes      int64  `json:"log_bytes"`
@@ -391,6 +394,10 @@ type CommandExit struct {
 	// Tail is the last lines of the job's output, redacted before it is sent: what the wake note shows.
 	Tail string `json:"tail,omitempty"`
 }
+
+// CommandEndSupervisorReplaced is the Reason of a command its supervisor ended because the supervisor was being replaced (the server's
+// handover after the drain): the exit code is -1 and the agent may run the command again.
+const CommandEndSupervisorReplaced = "supervisor_replaced"
 
 // CommandOpen is a command this supervisor runs, reported with hello after a restart.
 type CommandOpen struct {

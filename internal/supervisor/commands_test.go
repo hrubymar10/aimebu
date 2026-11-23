@@ -368,3 +368,60 @@ func TestCommandCwdMayNotLeaveTheCheckout(t *testing.T) {
 	}
 	waitCommandExit(t, sink)
 }
+
+// A supervisor that is being replaced does not wait for a long command: its exit ends the command and reports the end with exit code -1
+// and the reason supervisor_replaced (journaled, so a replacement replays it if this connection is gone), which wakes the agent.
+func TestReplacedSupervisorEndsItsCommandsAsSupervisorReplaced(t *testing.T) {
+	c, j, _ := commandTestClient(t)
+	sink := make(chan protocol.CommandExit, 1)
+	c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
+	result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_gate", AgentID: "agt_one", Generation: 1,
+		CheckoutPath: t.TempDir(), Cmd: "sleep 600", TimeoutSeconds: 7200})
+	if result.Result != "ok" {
+		t.Fatalf("start: %+v", result)
+	}
+	c.MarkRestartInterruption()
+	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+	defer cancel()
+	began := time.Now()
+	if err := c.StopAcceptingAndDrain(ctx); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if waited := time.Since(began); waited > 20*time.Second {
+		t.Fatalf("the exit waited %s for the command", waited)
+	}
+	exit := waitCommandExit(t, sink)
+	if exit.JobID != "cmd_gate" || exit.ExitCode == nil || *exit.ExitCode != -1 || exit.Reason != protocol.CommandEndSupervisorReplaced ||
+		!exit.Killed || exit.TimedOut || exit.Lost {
+		t.Fatalf("exit %+v", exit)
+	}
+	if c.hasActiveWork() {
+		t.Fatal("the command still holds the supervisor")
+	}
+	exits, err := j.PendingCommandExits(t.Context())
+	if err != nil || len(exits) != 1 || exits[0].Reason != protocol.CommandEndSupervisorReplaced || exits[0].ExitCode == nil || *exits[0].ExitCode != -1 {
+		t.Fatalf("journaled exits %+v %v", exits, err)
+	}
+}
+
+// A command adopted from a dead predecessor is ended the same way when this supervisor is replaced in turn.
+func TestReplacedSupervisorEndsAnAdoptedCommandAsSupervisorReplaced(t *testing.T) {
+	c, j, _ := commandTestClient(t)
+	sink := make(chan protocol.CommandExit, 1)
+	c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
+	pid := startPredecessorCommand(t, c, j, "cmd_adopted", 3600, time.Now())
+	c.reconcileCommands(t.Context())
+	c.MarkRestartInterruption()
+	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+	defer cancel()
+	if err := c.StopAcceptingAndDrain(ctx); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	exit := waitCommandExit(t, sink)
+	if exit.JobID != "cmd_adopted" || exit.ExitCode == nil || *exit.ExitCode != -1 || exit.Reason != protocol.CommandEndSupervisorReplaced || !exit.Killed {
+		t.Fatalf("exit %+v", exit)
+	}
+	if commandProcessAlive(pid) {
+		t.Fatal("the adopted process is still running")
+	}
+}
