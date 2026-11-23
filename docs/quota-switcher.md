@@ -84,14 +84,14 @@ and its System event commit together, so one cannot be stored without the other.
 
 ## What happens around the switch
 
-- **Running turns wait.** If an agent of the tool is in a turn, the switch is held
-  (`agents running`) and retried; it never interrupts. This is the same check the
-  web switch makes.
-- **Warm agents are ended first.** The host's supervisor ends the idle warm
-  processes and cache pings of the tool, which hold the old login, the same as for a
-  web switch ([switcher.md](switcher.md)). One it cannot confirm ended holds the switch
-  with its own reason, `agents kept warm could not be ended`, retried like the
-  others; the automatic switch never forces past it.
+- **A switch never waits for agents.** Running turns keep the token they hold and
+  finish on it; a turn that then fails on the limit goes through the ordinary
+  failed/limit path, and the queue continues on the new login. The web switch is
+  the same ([switcher.md](switcher.md)).
+- **Warm agents are ended afterwards, in the background.** The host's supervisor
+  ends the idle warm processes and cache pings of the tool, best effort and
+  without blocking; the next turn starts on the new login. A Codex login that a
+  running session writes back is installed again (`switch_overwritten`).
 - **Provider limits are lifted.** A switch that changed the login lifts the
   provider limits of the host's agents of the tool (each with its
   `provider_limit_cleared` event and its inbox notice resolved): the limit belonged to
@@ -169,7 +169,7 @@ reads the fuller of the session and weekly percentages and compares with `>=`:
 - **soft** (default: the tool's own switcher limit, Claude 95 and Codex 98): the server dispatches no *new* turn to agents of the tool
   **on the host machine** (the account the usage reader and the switcher watch; an agent on a remote machine has its own
   login and is not held); queued notes wait.
-  A turn already running finishes, which also lets a switch happen (a switch waits for running turns).
+  A turn already running finishes; a switch does not wait for it.
   The switcher's limits are **clamped to the soft threshold** (each profile's own limit or the soft
   one, whichever is lower), so the soft threshold is where it leaves a profile: with another profile
   usable it moves at once and the hold lifts with it. With no usable profile it stays, and the hold

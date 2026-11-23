@@ -147,6 +147,18 @@ func (w *Writer) LockStorage(dir string) (release func() (lost bool), err error)
 	return lock.release, nil
 }
 
+// LockRefresh takes Claude's `<dir>/.oauth_refresh.lock`, the lock a Claude process holds while it refreshes its OAuth token, the same way LockStorage
+// takes the storage-write lock. The switcher holds it across the file swap so a refresh in flight finishes before the swap and a new one starts after
+// it: Claude re-reads the file before every refresh, so it then refreshes the incoming account's token, never the outgoing one's. When both are
+// taken, this one comes first (Claude's own order). dir must exist.
+func (w *Writer) LockRefresh(dir string) (release func() (lost bool), err error) {
+	lock, err := w.lockDir(dir, OAuthRefreshLockPath)
+	if err != nil {
+		return nil, err
+	}
+	return lock.release, nil
+}
+
 // ClearTarget removes the account login from t. A Claude target keeps its MCP OAuth
 // logins (ClaudeMCPOnly) and is removed outright only when it has none; every other
 // target is removed. A target that is already gone is cleared. It never destroys an

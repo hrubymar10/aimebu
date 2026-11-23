@@ -364,150 +364,29 @@ func TestADryRunNeverTouchesTheSwitcher(t *testing.T) {
 	}
 }
 
-func TestARunningTurnHoldsTheSwitchUntilTheAgentIsIdle(t *testing.T) {
+// A switch never waits for agents: the automatic switch moves off a profile at its limit while an agent is in a turn, and the turn keeps the
+// token it holds.
+func TestTheAutomaticSwitchGoesAheadWithARunningTurn(t *testing.T) {
 	f, m, _ := quotaEnv(t)
 	agent, turn, _, _ := f.execution(t)
-	setAgent := func(observed, exec string) {
-		t.Helper()
-		if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-			if _, err := tx.Exec(`UPDATE agent SET tool='claude',observed=? WHERE id=?`, observed, agent.ID); err != nil {
-				return err
-			}
-			_, err := tx.Exec(`UPDATE turn SET exec=? WHERE id=?`, exec, turn.ID)
+	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`UPDATE agent SET tool='claude',observed='in_turn' WHERE id=?`, agent.ID); err != nil {
 			return err
-		}); err != nil {
-			t.Fatal(err)
 		}
+		_, err := tx.Exec(`UPDATE turn SET exec='running' WHERE id=?`, turn.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
-	setAgent("in_turn", "running")
 	src := &quotaFakeSource{}
-	runner, now := runnerOver(t, f, src)
+	runner, _ := runnerOver(t, f, src)
 	quotaConfig(t, runner, nil)
 	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
-	runner.Evaluate(context.Background())
-	if activeProfile(t, m) != "A" {
-		t.Fatal("switched under a running turn")
-	}
-	_, o, _ := getQuota(t, f)
-	if d := o.Tools["claude"].LastDecision; d == nil || d.Action != quota.ActionHold || d.Reason != quota.ReasonAgentsRunning {
-		t.Fatalf("decision = %+v", d)
-	}
-	if o.Tools["claude"].State.Hold != quota.ReasonAgentsRunning {
-		t.Fatalf("state.hold = %q", o.Tools["claude"].State.Hold)
-	}
-	setAgent("idle", "exited")
-	*now = now.Add(31 * time.Second) // past the 30 s back-off
 	runner.Evaluate(context.Background())
 	if got := activeProfile(t, m); got != "B" {
-		t.Fatalf("after the turn ended the switch was not made: active = %s", got)
+		t.Fatalf("a running turn held the switch: active = %s", got)
 	}
-}
-
-// The unlocked pre-check passes, then a turn starts before the switch gets the lock: the switch must be
-// refused under the lock (agents running), not swap credentials under the new turn.
-func TestATurnThatStartsAfterThePreCheckStillHoldsTheSwitch(t *testing.T) {
-	f, m, _ := quotaEnv(t)
-	agent, turn, _, _ := f.execution(t)
-	setAgent := func(observed, exec string) {
-		t.Helper()
-		if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-			if _, err := tx.Exec(`UPDATE agent SET tool='claude',observed=? WHERE id=?`, observed, agent.ID); err != nil {
-				return err
-			}
-			_, err := tx.Exec(`UPDATE turn SET exec=? WHERE id=?`, exec, turn.ID)
-			return err
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	setAgent("idle", "exited")
-	src := &quotaFakeSource{}
-	runner := quota.NewRunner(f.srv.Store, src, quotaActuator{s: f.srv, afterPreCheck: func() { setAgent("in_turn", "running") }}, quotaEvents{f.srv})
-	runner.SetClock(time.Now)
-	quotaConfig(t, runner, nil)
-	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
-	f.srv.quota.Store(runner)
-	runner.Evaluate(context.Background())
-	if got := activeProfile(t, m); got != "A" {
-		t.Fatalf("active = %s: credentials were swapped under a turn that started after the pre-check", got)
-	}
-	_, o, _ := getQuota(t, f)
-	if d := o.Tools["claude"].LastDecision; d == nil || d.Action != quota.ActionHold || d.Reason != quota.ReasonAgentsRunning {
-		t.Fatalf("decision = %+v", d)
-	}
-}
-
-// The web switch has the same gap as the quota actuator: its unlocked check passes, a turn starts, then the
-// switch gets the lock. The guard under the lock must refuse it (409, nothing swapped).
-func TestTheWebSwitchRechecksRunningTurnsUnderTheLock(t *testing.T) {
-	f, m, _ := quotaEnv(t)
-	agent, turn, _, _ := f.execution(t)
-	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-		if _, err := tx.Exec(`UPDATE agent SET tool='claude',observed='idle' WHERE id=?`, agent.ID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(`UPDATE turn SET exec='exited' WHERE id=?`, turn.ID)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	f.srv.switcherAfterPreCheck = func() {
-		if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-			if _, err := tx.Exec(`UPDATE agent SET observed='in_turn' WHERE id=?`, agent.ID); err != nil {
-				return err
-			}
-			_, err := tx.Exec(`UPDATE turn SET exec='running' WHERE id=?`, turn.ID)
-			return err
-		}); err != nil {
-			t.Error(err)
-		}
-	}
-	resp := f.request(http.MethodPost, "/api/switcher/claude/use", map[string]string{"name": "B"}, true)
-	var body struct {
-		Error  string                `json:"error"`
-		Agents []store.SwitcherAgent `json:"agents"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	resp.Body.Close()
-	if resp.StatusCode != 409 || body.Error != "agents_running" || len(body.Agents) != 1 {
-		t.Fatalf("status=%d body=%+v: a turn that started after the pre-check must refuse the switch", resp.StatusCode, body)
-	}
-	if got := activeProfile(t, m); got != "A" {
-		t.Fatalf("active = %s: credentials were swapped under the turn", got)
-	}
-}
-
-// A failure of the quiescence check itself is a server fault: it answers 500 without echoing the store's text, never a
-// 400 carrying raw database wording.
-func TestAFailingQuiescenceCheckAnswersAsAnInternalError(t *testing.T) {
-	f, m, _ := quotaEnv(t)
-	agent, turn, _, _ := f.execution(t)
-	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-		if _, err := tx.Exec(`UPDATE agent SET tool='claude',observed='idle' WHERE id=?`, agent.ID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(`UPDATE turn SET exec='exited' WHERE id=?`, turn.ID)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	f.srv.switcherAfterPreCheck = func() {
-		if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-			_, err := tx.Exec(`ALTER TABLE agent RENAME TO agent_gone`)
-			return err
-		}); err != nil {
-			t.Error(err)
-		}
-	}
-	resp := f.request(http.MethodPost, "/api/switcher/claude/use", map[string]string{"name": "B"}, true)
-	raw, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != 500 || strings.Contains(string(raw), "no such table") || strings.Contains(string(raw), "agent_gone") {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
-	}
-	if got := activeProfile(t, m); got != "A" {
-		t.Fatalf("active = %s", got)
-	}
+	f.srv.WaitUsageRefreshes()
 }
 
 // A login waiting in the live file makes the switcher refuse (ErrLoginPending): a
@@ -591,72 +470,68 @@ func TestQuotaSourceMapsTheUsageSnapshotAndTheSwitcher(t *testing.T) {
 	_ = m
 }
 
-// The web switch holds new turns of the tool before it ends the host's warm processes (and for as long as the switch runs), so none can start and park
-// an idle process on the login about to go; the hold is released whatever the switch came to.
-func TestTheWebSwitchHoldsNewTurnsBeforeRetiringWarmAgents(t *testing.T) {
+// A switch never waits for agents kept warm: the web switch answers as soon as the swap is made, and the warm processes are ended in the background,
+// even when the supervisor cannot confirm it.
+func TestTheWebSwitchSucceedsWithAnUnconfirmedWarmAgentAndRetiresInTheBackground(t *testing.T) {
 	f, m, _ := quotaEnv(t)
 	machine := connectHost(t, f, true)
-	heldWhenAsked := make(chan bool, 1)
+	asked := make(chan struct{})
 	go func() {
-		request := <-machine.sendQueue
-		for request.Type == protocol.KeepAlivePausedFrame {
-			request = <-machine.sendQueue
-		}
-		heldWhenAsked <- f.srv.Store.DispatchHeldForSwitch("claude")
-		machine.harnessMu.Lock()
-		waiter := machine.pathPending[request.ReqID]
-		machine.harnessMu.Unlock()
-		waiter <- protocol.Frame{V: protocol.Version, Type: protocol.RetireWarmResult, ReqID: request.ReqID, Result: "ok"}
+		answerRetire(machine, "error", "a warm process of the tool is not confirmed gone")
+		close(asked)
 	}()
 	resp := f.request(http.MethodPost, "/api/switcher/claude/use", map[string]string{"name": "B"}, true)
+	var body struct {
+		Active   string `json:"active"`
+		Switched bool   `json:"switched"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
 	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	if !<-heldWhenAsked {
-		t.Fatal("new turns were not held when the supervisor was asked to end its warm agents")
-	}
-	if f.srv.Store.DispatchHeldForSwitch("claude") {
-		t.Fatal("the hold outlived the switch")
+	if resp.StatusCode != 200 || !body.Switched || body.Active != "B" {
+		t.Fatalf("status=%d body=%+v", resp.StatusCode, body)
 	}
 	if got := activeProfile(t, m); got != "B" {
 		t.Fatalf("active = %s", got)
 	}
+	select {
+	case <-asked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the supervisor was not asked to end its warm agents after the switch")
+	}
+	f.srv.WaitUsageRefreshes() // waits for the background retire too
+	if f.srv.kaSwitchingTool("claude") {
+		t.Fatal("the cache-ping hold outlived the background retire")
+	}
 }
 
-// Removing the active profile deletes the live login the host's warm processes hold: it is refused (409 warm_agents, nothing deleted) unless the
-// supervisor confirms they are gone, the same as a switch away from it.
-func TestRemovingTheActiveProfileRetiresWarmAgentsFirst(t *testing.T) {
+// Removing the active profile does not wait for agents either: it is removed at once and the warm processes are ended in the background.
+func TestRemovingTheActiveProfileDoesNotWaitForWarmAgents(t *testing.T) {
 	f, m, _ := quotaEnv(t)
 	machine := connectHost(t, f, true)
-	shortRetireWait(f)
-	stop := answerRetireUntilStopped(machine, nil)
+	asked := make(chan struct{})
+	go func() {
+		answerRetire(machine, "error", "a warm process of the tool is not confirmed gone")
+		close(asked)
+	}()
 	resp := f.request(http.MethodDelete, "/api/switcher/claude/profiles/A", nil, true)
-	var body struct {
-		Error string `json:"error"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	resp.Body.Close()
-	if resp.StatusCode != 409 || body.Error != "warm_agents" {
-		t.Fatalf("status=%d body=%+v", resp.StatusCode, body)
-	}
-	if got := activeProfile(t, m); got != "A" {
-		t.Fatalf("active = %s: the profile was removed under a warm process", got)
-	}
-	if f.srv.Store.DispatchHeldForSwitch("claude") {
-		t.Fatal("a refused removal must release its hold")
-	}
-	stop()
-	go answerRetire(machine, "ok", "")
-	resp = f.request(http.MethodDelete, "/api/switcher/claude/profiles/A", nil, true)
 	resp.Body.Close()
 	if resp.StatusCode != 204 {
-		t.Fatalf("confirmed: status=%d", resp.StatusCode)
+		t.Fatalf("status=%d", resp.StatusCode)
 	}
+	if got := activeProfile(t, m); got == "A" {
+		t.Fatal("the profile was not removed")
+	}
+	select {
+	case <-asked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the supervisor was not asked to end its warm agents after the removal")
+	}
+	f.srv.WaitUsageRefreshes()
 }
 
-// hostAgent spawns an agent in the fixture's room and makes it an agent of tool on the host machine. It returns the agent's id.
-func hostAgent(t *testing.T, f *fixture, key, tool string) string {
+// limitHostAgent gives the fixture's room an agent of tool on the host machine whose last turn met the provider's usage limit (a 429
+// usage_limit_reached), in force until an hour from now. It returns the agent's id.
+func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
 	t.Helper()
 	host, err := f.srv.Store.HostMachine(context.Background())
 	if err != nil {
@@ -672,20 +547,6 @@ func hostAgent(t *testing.T, f *fixture, key, tool string) string {
 	if status != 201 || card.ID == "" {
 		t.Fatalf("spawn=%d %+v", status, raw)
 	}
-	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-		_, err := tx.Exec(`UPDATE agent SET tool=?, machine_id=? WHERE id=?`, tool, host.ID, card.ID)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return card.ID
-}
-
-// limitHostAgent gives the fixture's room an agent of tool on the host machine whose last turn met the provider's usage limit (a 429
-// usage_limit_reached), in force until an hour from now. It returns the agent's id.
-func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
-	t.Helper()
-	agentID := hostAgent(t, f, key, tool)
 	stamp := func(at time.Time) string { return at.UTC().Format("2006-01-02T15:04:05.000000000Z") }
 	turnID := "turn_" + key
 	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
@@ -693,9 +554,10 @@ func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
 			query string
 			args  []any
 		}{
+			{`UPDATE agent SET tool=?, machine_id=? WHERE id=?`, []any{tool, host.ID, card.ID}},
 			{`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec,outcome,settle)
-				SELECT ?,?,s.id,0,?,1,'normal','exited','failed','settled' FROM session s WHERE s.agent_id=? LIMIT 1`, []any{turnID, agentID, f.room.ID, agentID}},
-			{`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES (?,?,?,?,?)`, []any{agentID, turnID, stamp(time.Now()), stamp(time.Now().Add(time.Hour)), tool}},
+				SELECT ?,?,s.id,0,?,1,'normal','exited','failed','settled' FROM session s WHERE s.agent_id=? LIMIT 1`, []any{turnID, card.ID, f.room.ID, card.ID}},
+			{`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES (?,?,?,?,?)`, []any{card.ID, turnID, stamp(time.Now()), stamp(time.Now().Add(time.Hour)), tool}},
 		} {
 			if _, err := tx.Exec(statement.query, statement.args...); err != nil {
 				return err
@@ -705,7 +567,7 @@ func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return agentID
+	return card.ID
 }
 
 // A harness that met the provider's usage limit marks the host's active profile exhausted although the usage snapshot still reads under the
@@ -796,23 +658,27 @@ func TestAWebSwitchLiftsOnlyTheSwitchedToolsProviderLimits(t *testing.T) {
 	f.srv.WaitUsageRefreshes()
 }
 
-// Warm agents the host's supervisor cannot confirm ended hold the automatic switch with their own reason, not "agents running": no turn runs.
-func TestUnconfirmedWarmAgentsHoldTheAutomaticSwitchWithTheirOwnReason(t *testing.T) {
+// Warm agents the host's supervisor cannot confirm ended no longer hold the automatic switch: it switches, and retires them in the background.
+func TestUnconfirmedWarmAgentsDoNotHoldTheAutomaticSwitch(t *testing.T) {
 	f, m, _ := quotaEnv(t)
 	machine := connectHost(t, f, true)
 	src := &quotaFakeSource{}
 	runner, _ := runnerOver(t, f, src)
 	quotaConfig(t, runner, nil)
 	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
-	shortRetireWait(f)
-	stop := answerRetireUntilStopped(machine, nil)
-	defer stop()
+	asked := make(chan struct{})
+	go func() {
+		answerRetire(machine, "error", "a warm process of the tool is not confirmed gone")
+		close(asked)
+	}()
 	runner.Evaluate(context.Background())
-	if got := activeProfile(t, m); got != "A" {
-		t.Fatalf("active = %s: switched under an unconfirmed warm process", got)
+	if got := activeProfile(t, m); got != "B" {
+		t.Fatalf("active = %s: an unconfirmed warm process held the switch", got)
 	}
-	_, o, _ := getQuota(t, f)
-	if last := o.Tools["claude"].LastDecision; last == nil || last.Action != quota.ActionHold || last.Reason != quota.ReasonWarmAgents {
-		t.Fatalf("last decision = %+v", last)
+	select {
+	case <-asked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the supervisor was not asked to end its warm agents after the switch")
 	}
+	f.srv.WaitUsageRefreshes()
 }

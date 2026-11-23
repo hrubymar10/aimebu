@@ -817,28 +817,16 @@ Warm Codex first requires token-only credentials without a refresh token, or
 an API key without refresh credentials. Full credentials run cold, so a warm
 process never keeps a refresh token while it is idle or in a turn.
 
-*Account switch.* A warm process holds the login it started with. The guarantee: **a switch of account (by
-hand, or the automatic one) and the removal of the active profile go on only when every idle warm process of the
-tool on the host is confirmed gone, and none can have been started since.** In order:
+*Account switch.* A warm process holds the login it started with. **A switch of account (by hand, or the
+automatic one) and the removal of the active profile never wait for agents or warm processes.** After the swap the
+server retires the host's warm processes of the tool in the background:
 
-1. The server holds new turns of the tool on the host (the agents wait in the queue; a hold of its own, apart from
-   the limit guard's) and waits for the transactions that are open, so a turn that was being dispatched is
-   recorded by then. Only then does it check for running turns (`409 agents_running`).
-2. It sends the host's supervisor a `retire_warm` request for the tool (the login is on the host, so no other
-   machine is asked) and goes on only when it answers `ok`, that is, every idle process of the tool is confirmed
-   gone. An `error` answer names the agents it could not confirm (`retire_blocked`, sorted agent ids; a process in a
-   container is first checked with the container-gone check, so one whose container Docker shows ended or gone is
-   confirmed then and there). The server asks again every 5 s for up to 60 s, each ask trying the stuck processes
-   again; then it refuses the switch (`409 warm_agents` with the named agents and `can_force`; the automatic switch
-   holds with the reason `agents kept warm could not be ended`). No answer within 30 s, or a supervisor that goes
-   away before it answers, refuses at once. The owner can send the switch again with `force_warm`: it then goes on
-   past the named agents (or, from an older supervisor that names none, every agent of the tool on the host),
-   which are **quarantined**: the server dispatches them no turn and holds their pings (`paused_agents`) until
-   their supervisor sends `warm_ended` for them, at most 10 minutes (in memory; the supervisor's own quarantine of
-   the unconfirmed process stands either way). Each gets an `agent_switch_quarantined` event. Force never goes past a
-   supervisor that did not answer.
-3. The swap itself checks for running turns once more under the switcher's lock. The hold of turns ends when the
-   switch is over, whatever it came to.
+1. It sends the host's supervisor a `retire_warm` request for the tool (the login is on the host, so no other
+   machine is asked), holding the tool's cache pings back first (see below).
+2. The supervisor ends every idle process of the tool and answers `ok`, or `error` when one is not confirmed gone.
+   `error`, no answer within 30 s, or a supervisor that goes away is only logged: nothing is refused, and nothing
+   waits for it. The supervisor's own quarantine of an unconfirmed process still keeps a new process off that
+   session; the agent's next turn starts a fresh process on the new login.
 
 The server's view of a host can only be ahead of reality, never behind. A supervisor therefore tells the server
 before it keeps a process: when a turn ends and its process would go idle it sends `warm_claim` (the count of
@@ -859,8 +847,8 @@ begins its counter again, on a new connection). A report's count is its live war
 (`processes`; the `agents` list is only the picture for the screen) plus `pings_active`.
 
 A host whose supervisor is **not connected** is not taken to have no warm processes: a dropped connection or a
-server restart leaves a supervisor's idle processes running. The switch is refused (`409 warm_agents`) until the
-supervisor is back and can answer, unless the server knows the host has none: it never connected, its supervisor
+server restart leaves a supervisor's idle processes running. The background retire cannot reach it until the
+supervisor is back and can answer (it is logged, and the switch is not held), unless the server knows the host has none: it never connected, its supervisor
 cannot keep anything warm, or its last `warm_state` (a supervisor that stops cleanly sends one more, synchronously,
 after it has ended everything and before the connection closes) listed none, **no warm slot and no ping** (`pings_active`
 counts the cache pings that run or are held in quarantine, which are processes on the login though they hold no

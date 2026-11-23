@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/switcher"
@@ -132,50 +131,19 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name  string `json:"name"`
 		Force bool   `json:"force"`
-		// ForceWarm switches although warm agents of the tool could not be confirmed ended after the bounded wait: they are quarantined instead.
-		ForceWarm bool `json:"force_warm"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	// No new turn of the tool starts from here until the switch is over (the host's agents of the tool wait in the queue), so none can start, end and
-	// park an idle warm process on the login that is about to go after the processes below were ended. The check for running turns comes after the
-	// hold: a turn that was being dispatched when it was taken is recorded by then and refuses the switch.
-	releaseDispatch := s.Store.HoldDispatch(r.PathValue("tool"))
-	defer releaseDispatch()
-	if !s.switcherQuiescent(w, r, r.PathValue("tool")) {
-		return
-	}
-	// Agents kept warm hold the login they started with: they are ended, and confirmed gone, before the swap. Their turns are held by the
-	// switch's own guard below too, which is taken right before the swap and covers the swap itself.
-	releaseWarm, quarantined, err := s.retireHostWarmForce(r.Context(), r.PathValue("tool"), req.ForceWarm)
-	if err != nil {
-		s.warmAgentsRefusal(w, r, err, true)
-		return
-	}
-	defer releaseWarm() // cache pings of the tool stay held back until the switch is over, whatever it came to
-	if s.switcherAfterPreCheck != nil {
-		s.switcherAfterPreCheck()
-	}
-	// The check above is an early refusal: the switch can wait up to 45s for the account lock and the incoming
-	// refresh, and a turn may start meanwhile. Quiescence is checked again under the switcher lock.
-	switchGuard := switcher.SwitchGuard{Quiet: s.quietGuard(r.Context(), r.PathValue("tool")), Hold: s.Store.HoldTurns}
+	// A switch never waits for agents: a running turn keeps the token it holds, and the swap itself keeps what protects the credentials (the account
+	// lock, the incoming refresh and, for Claude, its own refresh locks). The warm processes of the tool are ended in the background afterwards.
 	var active string
 	var changed bool
+	var err error
 	if req.Force {
-		active, changed, err = s.Switcher.SwitchForceGuarded(r.PathValue("tool"), req.Name, switchGuard)
+		active, changed, err = s.Switcher.SwitchForceGuarded(r.PathValue("tool"), req.Name, switcher.SwitchGuard{})
 	} else {
-		active, changed, err = s.Switcher.SwitchGuarded(r.PathValue("tool"), req.Name, switchGuard)
-	}
-	var running agentsRunningError
-	if errors.As(err, &running) {
-		writeJSON(w, 409, map[string]any{"error": "agents_running", "message": "wait for affected agents to finish or stop them before switching", "agents": running.agents})
-		return
-	}
-	var guard guardFailure
-	if errors.As(err, &guard) {
-		fail(w, guard.err)
-		return
+		active, changed, err = s.Switcher.SwitchGuarded(r.PathValue("tool"), req.Name, switcher.SwitchGuard{})
 	}
 	if err != nil {
 		switcherError(w, err)
@@ -184,12 +152,7 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		s.accountSwitched(r.Context(), r.PathValue("tool"))
 	}
-	response := map[string]any{"active": active, "switched": changed}
-	if len(quarantined) > 0 {
-		labels, _ := s.Store.AgentLabels(r.Context(), quarantined)
-		response["quarantined"] = labels
-	}
-	writeJSON(w, 200, response)
+	writeJSON(w, 200, map[string]any{"active": active, "switched": changed})
 }
 
 func (s *Server) switcherRemove(w http.ResponseWriter, r *http.Request) {
@@ -203,18 +166,9 @@ func (s *Server) switcherRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if active == name {
-		// Removing the active profile deletes the live login the host's warm processes of the tool hold: same as a switch away from it.
-		releaseDispatch := s.Store.HoldDispatch(tool)
-		defer releaseDispatch()
-		if !s.switcherQuiescent(w, r, tool) {
-			return
-		}
-		releaseWarm, err := s.retireHostWarm(r.Context(), tool)
-		if err != nil {
-			s.warmAgentsRefusal(w, r, err, false)
-			return
-		}
-		defer releaseWarm()
+		// Removing the active profile deletes the live login: like a switch, it does not wait for agents, and the warm processes of the tool
+		// are ended in the background afterwards.
+		defer s.retireWarmAfterSwitch(tool)
 	}
 	if err := s.Switcher.Remove(tool, name, active == name); err != nil {
 		switcherError(w, err)
@@ -249,53 +203,6 @@ func (s *Server) switcherRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"name": req.Name})
 }
 
-// warmAgentsRefusal answers 409 warm_agents for a switch (or a removal of the active profile) that the host's warm processes block. When the
-// supervisor named them, the message and `agents` name them (slug@project), and `can_force` says whether the request may be sent again with
-// force_warm to switch anyway (the switch can; a removal cannot).
-func (s *Server) warmAgentsRefusal(w http.ResponseWriter, r *http.Request, err error, canForce bool) {
-	body := map[string]any{"error": "warm_agents", "message": err.Error(), "agents": []store.AgentLabel{}, "can_force": false}
-	var blocked warmBlockedError
-	if errors.As(err, &blocked) {
-		body["can_force"] = canForce
-		labels, _ := s.Store.AgentLabels(r.Context(), blocked.agents)
-		if len(labels) > 0 {
-			body["agents"] = labels
-			names := make([]string, 0, len(labels))
-			for _, label := range labels {
-				names = append(names, label.Label)
-			}
-			body["message"] = "these agents kept warm could not be confirmed ended: " + strings.Join(names, ", ")
-		}
-	}
-	writeJSON(w, 409, body)
-}
-
-// agentsRunningError is what the switcher's quiescence guard returns when agents of the tool are running.
-type agentsRunningError struct{ agents []store.SwitcherAgent }
-
-func (agentsRunningError) Error() string { return "agents of the tool are running" }
-
-// guardFailure wraps an error from the quiescence check itself (a store failure), so a handler can tell it from a
-// switcher refusal and answer it as an internal error instead of echoing its text as a bad request.
-type guardFailure struct{ err error }
-
-func (e guardFailure) Error() string { return e.err.Error() }
-func (e guardFailure) Unwrap() error { return e.err }
-
-// quietGuard is SwitchGuard.Quiet for tool: it runs under the switcher lock, right before the swap.
-func (s *Server) quietGuard(ctx context.Context, tool string) func() error {
-	return func() error {
-		running, err := s.runningAgents(ctx, tool)
-		if err != nil {
-			return guardFailure{err}
-		}
-		if len(running) > 0 {
-			return agentsRunningError{agents: running}
-		}
-		return nil
-	}
-}
-
 func (s *Server) refreshSwitchedUsage(tool string) {
 	if s.Usages == nil {
 		return
@@ -313,40 +220,14 @@ func (s *Server) refreshSwitchedUsage(tool string) {
 // WaitUsageRefreshes blocks until the usage refreshes that switches started in the background have finished. A refresh writes the usage
 // cache into the usages directory, so whoever is about to remove or replace that directory (a test's cleanup) waits first; a refresh that was
 // not waited for can recreate the directory, or land a file in it while it is being removed ("directory not empty").
-func (s *Server) WaitUsageRefreshes() { s.usageRefreshes.Wait() }
-
-func (s *Server) switcherQuiescent(w http.ResponseWriter, r *http.Request, tool string) bool {
-	running, err := s.runningAgents(r.Context(), tool)
-	if err != nil {
-		fail(w, err)
-		return false
-	}
-	if len(running) > 0 {
-		writeJSON(w, 409, map[string]any{"error": "agents_running", "message": "wait for affected agents to finish or stop them before switching", "agents": running})
-		return false
-	}
-	return true
-}
-
-// runningAgents lists the agents of tool on the host that a login swap would hit and
-// that are in a turn (or being interrupted). The web switch and the automatic quota
-// switcher share it, so both wait for the same thing.
-func (s *Server) runningAgents(ctx context.Context, tool string) ([]store.SwitcherAgent, error) {
-	host, err := s.Store.HostMachine(ctx)
-	if err != nil {
-		return nil, err
-	}
-	agents, err := s.Store.SwitcherAgents(ctx, host.ID, tool)
-	if err != nil {
-		return nil, err
-	}
-	running := []store.SwitcherAgent{}
-	for _, agent := range agents {
-		if agent.Running || agent.Observed == "in_turn" || agent.Observed == "interrupting" {
-			running = append(running, agent)
-		}
-	}
-	return running, nil
+func (s *Server) WaitUsageRefreshes() {
+	s.switchBackgroundContext() // so cancelling below always has a context to cancel
+	s.switchBgMu.Lock()
+	cancel := s.switchBgCancel
+	s.switchBgMu.Unlock()
+	cancel() // the waits of a switch's background work end here: a Codex check does not outlive its test
+	s.switchBg.Wait()
+	s.usageRefreshes.Wait()
 }
 
 // usageProvider maps a switcher tool to its usage provider name.

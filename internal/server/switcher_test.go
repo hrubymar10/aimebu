@@ -17,7 +17,7 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
-func TestSwitcherRoutesShowImpactAndRefuseRunningTurn(t *testing.T) {
+func TestSwitcherRoutesShowImpactAndSwitchPastARunningTurn(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
@@ -88,34 +88,18 @@ func TestSwitcherRoutesShowImpactAndRefuseRunningTurn(t *testing.T) {
 	if resp.StatusCode != 200 || len(status.Affected["codex"]) != 1 || !status.Affected["codex"][0].Running {
 		t.Fatalf("impact=%+v status=%d", status, resp.StatusCode)
 	}
+	// A switch never waits for agents: with an agent in a turn it succeeds.
 	resp = f.request(http.MethodPost, "/api/switcher/codex/use", map[string]string{"name": "empty"}, true)
-	var blocked struct {
-		Error  string                `json:"error"`
-		Agents []store.SwitcherAgent `json:"agents"`
+	var switched struct {
+		Active   string `json:"active"`
+		Switched bool   `json:"switched"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&blocked); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&switched); err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 409 || blocked.Error != "agents_running" || len(blocked.Agents) != 1 || blocked.Agents[0].ID != agent.ID {
-		t.Fatalf("blocked=%+v status=%d", blocked, resp.StatusCode)
-	}
-	if _, err := os.Stat(live); err != nil {
-		t.Fatalf("blocked switch changed live file: %v", err)
-	}
-	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-		if _, err := tx.Exec(`UPDATE turn SET exec='exited' WHERE id=?`, turn.ID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(`UPDATE agent SET observed='idle' WHERE id=?`, agent.ID)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	resp = f.request(http.MethodPost, "/api/switcher/codex/use", map[string]string{"name": "empty"}, true)
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("quiescent switch status=%d", resp.StatusCode)
+	if resp.StatusCode != 200 || !switched.Switched || switched.Active != "empty" {
+		t.Fatalf("switched=%+v status=%d", switched, resp.StatusCode)
 	}
 	if _, err := os.Stat(live); !os.IsNotExist(err) {
 		t.Fatalf("empty target did not clear temp live credentials: %v", err)

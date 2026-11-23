@@ -50,8 +50,6 @@ type Store struct {
 	holds  map[string]string
 	// switchHolds counts the account switches in progress per tool: while one runs no new turn of the tool is dispatched on the host (see HoldDispatch).
 	switchHolds map[string]int
-	// quarantine holds new turns of agents a forced account switch went past (see switch_quarantine.go), until when.
-	quarantine map[string]time.Time
 }
 
 // defaultTurnGateWait is far longer than the file swap HoldTurns exists for (a few seconds at worst, a busy Claude

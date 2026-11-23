@@ -81,6 +81,9 @@ assert.equal(describe(quota('quota_hold', { tool: 'claude', reason: 'active snap
 view = describe(quota('quota_switch_dry_run', { tool: 'claude', from: 'main', to: 'bkp', reason: 'the active profile is over its limit or unusable' }));
 assert.equal(view.text, 'Automatic account switch due, not made: dry run is on');
 assert.equal(view.details, 'claude · main → bkp · the active profile is over its limit or unusable');
+view = describe(quota('switch_overwritten', { tool: 'codex' }));
+assert.equal(view.details, 'tool: codex');
+assert.match(view.text, /installed again/);
 assert.equal(describe(quota('quota_switch', { tool: '<b>x</b>' })).details, '<b>x</b>', 'markup stays text');
 assert.equal(describe({ kind: 'agent_stopped', payload_json: JSON.stringify({ tool: 'claude', from: 'a', to: 'b' }) }).details, '', 'quota keys must not leak into other events');
 

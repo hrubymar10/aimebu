@@ -70,15 +70,6 @@ type SwitchGuard struct {
 	// ExpectedActive, when set, must still be the active profile of the tool; otherwise
 	// the switch is refused with ErrActiveChanged.
 	ExpectedActive string
-	// Quiet, when set, is called under the lock immediately before the swap, after every other
-	// check. It is for a condition that can change while the caller waits for the account lock or
-	// the incoming refresh (a turn starting on the tool). A non-nil error aborts the switch before
-	// anything is written and is returned unchanged.
-	Quiet func() error
-	// Hold, when set, is called under the lock right before Quiet and returns a release that runs when the switch
-	// returns. It keeps the condition Quiet checked from changing before the swap has finished. The hold must not
-	// open a store transaction (Store.HoldTurns blocks them all) and should cover file I/O only.
-	Hold func() (release func())
 }
 
 // SwitchGuarded is Switch with its guard conditions checked under the lock.
@@ -86,7 +77,7 @@ func (m *Manager) SwitchGuarded(tool, name string, guard SwitchGuard) (active st
 	return m.switchGuarded(tool, name, guard, false)
 }
 
-// SwitchForceGuarded keeps the server's turn and warm-agent guards for a forced switch.
+// SwitchForceGuarded is SwitchGuarded without the incoming refresh ("Install anyway").
 func (m *Manager) SwitchForceGuarded(tool, name string, guard SwitchGuard) (active string, switched bool, err error) {
 	return m.switchGuarded(tool, name, guard, true)
 }
@@ -244,12 +235,22 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force 
 	if guard.ExpectedActive != "" && activeProfile != guard.ExpectedActive {
 		return activeProfile, false, fmt.Errorf("%w: expected %s, %s is active", ErrActiveChanged, guard.ExpectedActive, activeProfile)
 	}
-	if guard.Hold != nil {
-		defer guard.Hold()()
-	}
-	if guard.Quiet != nil {
-		if err := guard.Quiet(); err != nil {
-			return activeProfile, false, err
+
+	// Claude: its OAuth refresh lock is held from here to the end of the swap, taken before the storage-write lock (Claude's own order). A refresh
+	// in flight finishes first and a new one starts after the swap; Claude re-reads the file before every refresh and saves compare-and-swap, so a
+	// running session never writes the outgoing account's token into the incoming login.
+	if tool == ToolClaude {
+		releaseRefresh, lockErr := m.lockClaudeRefresh(tool)
+		if lockErr != nil {
+			return "", false, lockErr
+		}
+		if releaseRefresh != nil {
+			defer func() {
+				if releaseRefresh() {
+					log.Printf("switcher: %s: the OAuth refresh lock lost its heartbeat during the switch; the swap itself completed", tool)
+					telemetry.WarnCause(context.Background(), "switcher", "the OAuth refresh lock lost its heartbeat during a switch; the swap itself completed")
+				}
+			}()
 		}
 	}
 
@@ -761,6 +762,24 @@ func clearLiveLogin(tool, livePath string, preLive []byte) error {
 
 // storageLockTimeout bounds the wait for Claude's storage-write lock; a var so tests need not wait it out.
 var storageLockTimeout = 3 * time.Second
+
+// lockClaudeRefresh takes Claude's <configdir>/.oauth_refresh.lock (see credtarget.Writer.LockRefresh). A nil release means the config directory does
+// not exist, so no Claude can be refreshing there.
+func (m *Manager) lockClaudeRefresh(tool string) (release func() bool, err error) {
+	livePath, err := m.liveCredPath(tool)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Dir(livePath)
+	if _, statErr := os.Stat(dir); statErr != nil {
+		return nil, nil
+	}
+	rel, lockErr := (&credtarget.Writer{LockTimeout: storageLockTimeout}).LockRefresh(dir)
+	if lockErr != nil {
+		return nil, fmt.Errorf("switch refused: Claude is refreshing its login, try again in a minute: %w", lockErr)
+	}
+	return rel, nil
+}
 
 // lockClaudeStorage takes Claude's <configdir>/.storage-write.lock for the live credential file
 // and returns its release (reporting a lost heartbeat). It returns a nil release when the config

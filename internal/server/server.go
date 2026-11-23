@@ -71,9 +71,15 @@ type Server struct {
 	Usages         *usages.Reader
 	refresherMu    sync.Mutex
 	usageRefreshes sync.WaitGroup // the usage refreshes a switch started in the background (see refreshSwitchedUsage)
-	refresher      *usages.TargetRefresher
-	claimsDone     chan struct{} // closed once the live-file claims are released after shutdown
-	liveClaims     *switcher.LiveClaims
+	switchBg       sync.WaitGroup // the warm retires and Codex overwrite checks a switch started in the background (see accountSwitched)
+	switchBgMu     sync.Mutex     // guards switchBgCtx and switchBgCancel
+	switchBgCtx    context.Context
+	switchBgCancel context.CancelFunc
+	// switchCheckAfter is the clock of the Codex overwrite check: tests replace it; nil is time.After.
+	switchCheckAfter func(time.Duration) <-chan time.Time
+	refresher        *usages.TargetRefresher
+	claimsDone       chan struct{} // closed once the live-file claims are released after shutdown
+	liveClaims       *switcher.LiveClaims
 	// refresherBlocked is why this process may not refresh a tool's live login: another refresher's claim, or another
 	// root's token-copy marker for the same live file. "" means it may.
 	refresherBlocked func(tool string) string
@@ -84,8 +90,6 @@ type Server struct {
 	quota atomic.Pointer[quota.Runner]
 	// guard is the limit guard, started with the quota switcher and read the same way.
 	guard atomic.Pointer[quota.Guard]
-	// switcherAfterPreCheck is a test seam: it runs between the web switch's unlocked check and the switch.
-	switcherAfterPreCheck func()
 	// TokenAutoRefreshAvailable says whether the refresh executor can run; nil means
 	// harness-docker-ctrl on PATH. Tests replace it.
 	TokenAutoRefreshAvailable func() bool
@@ -163,8 +167,6 @@ type Server struct {
 	telemetryIDs         sync.Map // user id -> the id that person's reports carry (see telemetry_identity.go)
 	// Presence tracks when a person's browser sessions last showed real activity; nil in tests that build a Server by hand.
 	Presence *humanPresence
-	// retireWait and retireEvery are the bounded wait for the warm processes an account switch ends, and its interval; zero is the default (tests).
-	retireWait, retireEvery time.Duration
 }
 
 func New(db *store.Store) *Server {

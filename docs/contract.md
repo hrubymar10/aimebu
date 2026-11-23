@@ -1370,21 +1370,24 @@ the journal, for debugging (retention 14 d): see "Agent output" in
   is host-machine-wide per tool across projects. Remote machines have no
   switcher profile set in this slice.
 - Host-machine switching requires owner and shows the agents using the tool.
-  A switch returns 409 with the running agents while any matching turn is
-  active; the owner waits or stops those agents and retries. Remote-machine
-  switching and a persistent dispatch gate are later work.
+  **A switch never waits for agents**, neither the web switch nor the automatic
+  one, and neither does the removal of the active profile: running turns keep
+  the token they hold and finish on it; a turn that then fails on the limit goes
+  through the ordinary failed/limit path, and the queue continues on the new
+  login. The swap keeps what protects the credentials (the account lock, the
+  incoming-profile refresh and, for Claude, Claude's own `.oauth_refresh.lock`
+  and `.storage-write.lock` held across the file swap). After the swap the
+  host's warm processes and cache pings of the tool are retired in the
+  background, best effort and without blocking; the next turn starts a fresh
+  process on the new login. For Codex, whose running process may write the old
+  account's tokens back into `auth.json`, the live account id is checked at
+  about +5 s, +30 s and +2 min; when it no longer matches the active profile
+  the active profile is installed again and one owner event
+  `switch_overwritten` (with the tool) is raised. The stored profile copy is
+  never overwritten by the old one. Remote-machine switching and a persistent
+  dispatch gate are later work.
   An explicit forced switch requires stored credentials and skips the incoming
-  token refresh; it keeps the ordinary turn guard and credential swap.
-- A switch ends the host's idle warm processes and cache pings of the tool
-  first. It asks the host's supervisor again for a bounded time (60 s) while
-  one is not confirmed ended, then refuses with 409 `warm_agents`, naming the
-  agents the supervisor reports (`agents`, `can_force`). A switch sent again
-  with `force_warm` goes past them: those agents are quarantined (no new turn,
-  no cache ping) until their supervisor reports the process ended, at most
-  10 minutes. Force never goes past a supervisor that is not connected or does
-  not answer. The automatic switcher never forces.
-- A switch that changed the host's login lifts the provider limits of the
-  host's agents of that tool.
+  token refresh; it keeps the ordinary credential swap.
 
 ## 3d. Deployment
 

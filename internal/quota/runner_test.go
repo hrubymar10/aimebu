@@ -497,12 +497,12 @@ func TestWarmupCountsContinuousOkTimeAndARestartWaitsAgain(t *testing.T) {
 
 func TestAHeldSwitchBacksOffThenRetriesAndSucceeds(t *testing.T) {
 	h := newHarness(t)
-	h.act.hold = ReasonAgentsRunning
+	h.act.hold = ReasonAccountBusy
 	h.tick(0)
-	if action, reason := h.lastReason(); action != ActionHold || reason != ReasonAgentsRunning {
+	if action, reason := h.lastReason(); action != ActionHold || reason != ReasonAccountBusy {
 		t.Fatalf("decision = %s %s", action, reason)
 	}
-	if v := h.view(); v.State.Hold != ReasonAgentsRunning {
+	if v := h.view(); v.State.Hold != ReasonAccountBusy {
 		t.Fatalf("state.hold = %q", v.State.Hold)
 	}
 	h.tick(29 * time.Second) // inside the 30 s back-off: not even tried

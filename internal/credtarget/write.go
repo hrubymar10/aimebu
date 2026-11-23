@@ -255,6 +255,9 @@ func refreshTokenOnDisk(tool string, data []byte) bool {
 // StorageWriteLockPath is `<configdir>/.storage-write.lock`.
 func StorageWriteLockPath(configDir string) string { return configDir + "/.storage-write.lock" }
 
+// OAuthRefreshLockPath is `<configdir>/.oauth_refresh.lock`, the lock Claude holds while it refreshes its OAuth token.
+func OAuthRefreshLockPath(configDir string) string { return configDir + "/.oauth_refresh.lock" }
+
 // storageLock is a held <configdir>/.storage-write.lock.
 type storageLock struct {
 	path        string
@@ -268,11 +271,16 @@ type storageLock struct {
 // (mkdir is atomic), named after the resolved path, kept alive by refreshing its
 // mtime, and taken over once that mtime is older than the stale window.
 func (w *Writer) lockStorage(configDir string) (*storageLock, error) {
+	return w.lockDir(configDir, StorageWriteLockPath)
+}
+
+// lockDir is lockStorage for any of Claude's lock directories: lockPath names it from the resolved config directory.
+func (w *Writer) lockDir(configDir string, lockPath func(string) string) (*storageLock, error) {
 	real, err := filepath.EvalSymlinks(configDir)
 	if err != nil {
 		real = configDir
 	}
-	path := StorageWriteLockPath(real)
+	path := lockPath(real)
 	timeout := w.LockTimeout
 	if timeout <= 0 {
 		timeout = defaultLockTimeout

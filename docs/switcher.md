@@ -148,20 +148,21 @@ carries them forward like any other: logging out of an MCP server while
 another account is active does not remove it from a profile that still holds
 it (there are no tombstones).
 
-The UI lists host agents on the selected tool before a switch. If any has an
-active turn, the API returns 409 with those agents; wait for the turn to finish
-or stop it before retrying. Agents kept warm hold the login they started with, so
-the switch first has the host's supervisor end them, and waits up to 60 seconds
-for any it cannot confirm ended. If some still are not, the switch is refused
-(409 `warm_agents`), naming those agents. In Settings → Server → Accounts &
-usage the Switch dialog then asks again, naming them, and offers **Switch
-anyway** (a danger button, with a warning); declining leaves the red error text,
-which names them too. Switching anyway (`force_warm` in the API) goes on and
-quarantines them: they get no new turn until their old process is confirmed
-ended (at most 10 minutes), while everything else moves to the new login. Removing the active profile is refused
-the same way but cannot be forced. A switch that changed the login also lifts
-the provider usage limits of the host's agents of the tool, so agents stopped at
-the old login's limit continue. A standalone CLI switch should be made while the
+The UI lists host agents on the selected tool before a switch, for information.
+**A switch never waits for agents**: a running turn keeps the token it holds and
+finishes on it (a turn that then fails on the limit goes through the ordinary
+failed/limit path, and the queue continues on the new login). The swap keeps the
+account lock, the incoming refresh and, for Claude, Claude's own
+`.oauth_refresh.lock` and `.storage-write.lock` held across the file swap
+(Claude re-reads the file before every refresh and saves compare-and-swap, so a
+running session never writes the old account into the new one). After the swap
+the warm processes and cache pings of the tool are retired in the background,
+best effort; the next turn starts a fresh process on the new login. A running
+codex may write the old account's tokens back into `auth.json` (an in-flight
+write takes no lock), so after a Codex switch the live account id is checked at
+about +5 s, +30 s and +2 min; if it no longer matches the active profile, the
+profile is installed again and a `switch_overwritten` owner event is raised. The
+stored profile copy is never overwritten by the old one. A standalone CLI switch should be made while the
 server and any harness sessions using that login are stopped. Remote-machine
 switching is not available in this slice.
 

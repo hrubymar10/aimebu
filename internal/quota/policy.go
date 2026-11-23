@@ -32,10 +32,6 @@ const (
 	ReasonHigherUsable    = "a higher-priority profile is usable again"
 
 	// Reasons the runner gives to what happens around the switch itself.
-	ReasonAgentsRunning = "agents running"
-	// ReasonWarmAgents: agents of the tool kept warm (or their cache pings) could not be confirmed ended, so the login they hold cannot be
-	// swapped yet. It is its own hold, not "agents running": no turn runs, and the web switch names the agents and offers to switch anyway.
-	ReasonWarmAgents    = "agents kept warm could not be ended"
 	ReasonActiveChanged = "the active profile changed; deciding again"
 	ReasonRefreshFailed = "incoming refresh failed"
 	ReasonAccountBusy   = "account busy"

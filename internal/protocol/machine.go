@@ -176,12 +176,9 @@ type Frame struct {
 	// Warm, on a warm_state frame, is the supervisor's whole warm picture at that moment.
 	Warm *WarmReport `json:"warm,omitempty"`
 	// RetireTool, on a retire_warm request, is the tool whose idle warm processes are to end.
-	RetireTool string `json:"retire_tool,omitempty"`
-	// RetireBlocked, on an "error" retire_warm_result, names the agents whose warm process or cache ping of the tool is not confirmed gone (sorted).
-	// An older supervisor leaves it out; the server then cannot name them.
-	RetireBlocked       []string `json:"retire_blocked,omitempty"`
-	SupportsSessionScan bool     `json:"supports_session_scan,omitempty"`
-	SupportsSessionFork bool     `json:"supports_session_fork,omitempty"`
+	RetireTool          string `json:"retire_tool,omitempty"`
+	SupportsSessionScan bool   `json:"supports_session_scan,omitempty"`
+	SupportsSessionFork bool   `json:"supports_session_fork,omitempty"`
 	// SupportsSessionCopy says the supervisor copies a Claude Code session to another folder's project directory when a session_scan names
 	// ScanSessionID and CopyTo. One that does not would ignore CopyTo and answer as a plain lookup, so the server never asks it.
 	SupportsSessionCopy bool `json:"supports_session_copy,omitempty"`

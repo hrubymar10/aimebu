@@ -39,9 +39,6 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if desired != "active" || revoked {
 			return nil
 		}
-		if s.AgentQuarantined(agentID) {
-			return nil // a forced account switch went past its warm process: no turn until that process is confirmed gone
-		}
 		var clearPending bool
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent_context_clear WHERE agent_id=?)`, agentID).Scan(&clearPending); err != nil {
 			return err

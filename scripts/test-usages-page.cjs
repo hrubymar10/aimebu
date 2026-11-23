@@ -160,60 +160,6 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'use')), ['use', 'codex', 'backup', true]);
       await page.close();
     }
-    // Warm agents the host could not end block a switch (409 warm_agents after the server's own wait): the dialog names them and offers Switch anyway,
-    // with a warning; declined, the red error text names them; accepted, the switch is sent again with force_warm.
-    for (const accept of [false, true]) {
-      const page = await mount();
-      await page.evaluate(() => {
-        window.__source.use = async (...args) => {
-          window.__calls.push(['use', ...args]);
-          if (args[3]) return { active: args[1], switched: true, quarantined: [{ id: 'agt_1', label: 'tara@p' }] };
-          const error = new Error('these agents kept warm could not be confirmed ended: tara@p, owen@p');
-          error.status = 409; error.code = 'warm_agents';
-          error.body = { error: 'warm_agents', message: error.message, can_force: true, agents: [{ id: 'agt_1', label: 'tara@p' }, { id: 'agt_2', label: 'owen@p' }] };
-          throw error;
-        };
-      });
-      await click(page, `${cardOf('codex')} .usages-b-profile[data-profile=backup] .usages-b-switch`);
-      await dialog(page);
-      await click(page, '#app-dialog .app-dialog-ok');
-      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open && /Switch anyway/.test(document.querySelector('#app-dialog .app-dialog-ok')?.textContent || ''));
-      const asked = await page.evaluate(() => ({ message: document.querySelector('#app-dialog .app-dialog-message').textContent,
-        danger: document.querySelector('#app-dialog .app-dialog-ok').classList.contains('btn-danger') }));
-      assert.match(asked.message, /tara@p, owen@p/, 'the dialog names the blocking agents');
-      assert.match(asked.message, /quarantined/, 'and warns what switching anyway does');
-      assert.ok(asked.danger, 'Switch anyway is a danger button');
-      await click(page, accept ? '#app-dialog .app-dialog-ok' : '#app-dialog .app-dialog-cancel');
-      await settle(page);
-      const uses = await page.evaluate(() => window.__calls.filter(call => call[0] === 'use'));
-      if (accept) {
-        assert.deepEqual(uses, [['use', 'codex', 'backup'], ['use', 'codex', 'backup', false, true]], 'Switch anyway sends force_warm');
-        assert.equal(await page.$eval('#usages-error', el => el.textContent), '', 'a forced switch leaves no error');
-      } else {
-        assert.deepEqual(uses, [['use', 'codex', 'backup']], 'declined: nothing is forced');
-        assert.equal(await page.$eval('#usages-error', el => el.textContent), 'these agents kept warm could not be confirmed ended: tara@p, owen@p', 'the red text names the agents');
-      }
-      await page.close();
-    }
-    // A refusal the server does not offer to force (a supervisor that did not answer) is only the red text, with no second dialog.
-    {
-      const page = await mount();
-      await page.evaluate(() => {
-        window.__source.use = async (...args) => {
-          window.__calls.push(['use', ...args]);
-          const error = new Error('agents kept warm on the host could not be ended: a warm process of the tool is not confirmed gone');
-          error.status = 409; error.code = 'warm_agents'; error.body = { error: 'warm_agents', message: error.message, can_force: false, agents: [] };
-          throw error;
-        };
-      });
-      await click(page, `${cardOf('codex')} .usages-b-profile[data-profile=backup] .usages-b-switch`);
-      await dialog(page);
-      await click(page, '#app-dialog .app-dialog-ok');
-      await page.waitForFunction(() => /could not be ended/.test(document.querySelector('#usages-error').textContent));
-      assert.equal(await page.evaluate(() => window.__calls.filter(call => call[0] === 'use').length), 1);
-      assert.equal(await page.evaluate(() => !!document.querySelector('#app-dialog')?.open), false, 'no Switch anyway without can_force');
-      await page.close();
-    }
     // Settings refetches both the usage cards and switcher list after its own
     // removal, and after the live event for a CLI removal in another process.
     for (const external of [false, true]) {

@@ -20,7 +20,7 @@ var systemEventKinds = []string{
 	"agent_spawn_requested", "agent_spawn_confirmed", "agent_spawn_failed",
 	"agent_control_requested", "agent_control_applied",
 	"agent_context_cleared", "agent_context_compacted",
-	"agent_switch_requested", "agent_switch_starting", "agent_switch_completed", "agent_switch_failed", "agent_switch_quarantined",
+	"agent_switch_requested", "agent_switch_starting", "agent_switch_completed", "agent_switch_failed",
 	"agent_turn_budget_exceeded", "loop_guard",
 	"room_created", "room_renamed", "room_closing", "room_closed", "room_reopened", "room_close_blocked",
 	"room_member_joined", "room_member_left",
@@ -39,6 +39,7 @@ var systemEventKinds = []string{
 	"update_status",
 	"quota_switch", "quota_switch_dry_run", "quota_hold", "quota_switch_failed", "quota_reset_seen", "quota_switcher_tripped",
 	"limit_guard_soft", "limit_guard_hard", "limit_guard_clear",
+	"switch_overwritten",
 }
 
 // IsSystemEventKind says whether an event of this kind is in the system-events feed.

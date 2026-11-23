@@ -3,10 +3,11 @@ package switcher
 import (
 	"errors"
 	"os"
-	"strings"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
 	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
 
@@ -124,56 +125,29 @@ func TestAnUnguardedSwitchIgnoresTheGuardConditions(t *testing.T) {
 	}
 }
 
-// The quiescence guard runs under the lock, right before the swap: an error aborts the switch
-// untouched and comes back unchanged; it is not asked when there is nothing to switch.
-func TestAQuietGuardErrorAbortsTheSwitchBeforeAnythingIsWritten(t *testing.T) {
+// A Claude refresh in flight holds <configdir>/.oauth_refresh.lock: the swap waits for it (and refuses, untouched, when it does not let go in
+// time), and holds the lock itself across the swap so a new refresh starts only after it.
+func TestAClaudeSwitchHoldsTheOAuthRefreshLockAcrossTheSwap(t *testing.T) {
 	m, livePath, credA := guardedFixture(t)
-	busy := errors.New("a turn is running")
-	calls := 0
-	_, switched, err := m.SwitchGuarded(ToolClaude, "b", SwitchGuard{ExpectedActive: "a", Quiet: func() error { calls++; return busy }})
-	if !errors.Is(err, busy) || switched || calls != 1 {
-		t.Fatalf("switched=%v err=%v calls=%d", switched, err, calls)
+	old := storageLockTimeout
+	storageLockTimeout = 200 * time.Millisecond
+	defer func() { storageLockTimeout = old }()
+	dir := filepath.Dir(livePath)
+	release, err := (&credtarget.Writer{LockTimeout: time.Second}).LockRefresh(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, switched, err := m.SwitchGuarded(ToolClaude, "b", SwitchGuard{ExpectedActive: "a"}); err == nil || switched {
+		t.Fatalf("a held refresh lock must stop the swap: switched=%v err=%v", switched, err)
 	}
 	if got := readFile(t, livePath); got != credA {
 		t.Fatalf("the live credentials were touched: %q", got)
 	}
-	if state, err := m.loadState(); err != nil || state.Active[ToolClaude] != "a" {
-		t.Fatalf("active moved: %+v %v", state.Active, err)
-	}
-	// Nothing to switch (b is the target and a is active, then target == active): the guard is not asked.
-	calls = 0
-	if _, _, err := m.SwitchGuarded(ToolClaude, "a", SwitchGuard{ExpectedActive: "a", Quiet: func() error { calls++; return busy }}); err != nil || calls != 0 {
-		t.Fatalf("a no-op must not consult the guard: err=%v calls=%d", err, calls)
-	}
-	// Quiet and willing: the switch runs.
-	if _, switched, err := m.SwitchGuarded(ToolClaude, "b", SwitchGuard{ExpectedActive: "a", Quiet: func() error { return nil }}); err != nil || !switched {
+	release()
+	if _, switched, err := m.SwitchGuarded(ToolClaude, "b", SwitchGuard{ExpectedActive: "a"}); err != nil || !switched {
 		t.Fatalf("switched=%v err=%v", switched, err)
 	}
-}
-
-// The hold is taken before the quiescence check and kept until the swap has finished, so a turn cannot start in between;
-// it is released on a refusal too, and not taken for a no-op.
-func TestTheHoldSpansTheQuietCheckAndTheSwap(t *testing.T) {
-	m, _, _ := guardedFixture(t)
-	var events []string
-	hold := func() func() { events = append(events, "hold"); return func() { events = append(events, "release") } }
-	quiet := func() error { events = append(events, "quiet"); return nil }
-	if _, switched, err := m.SwitchGuarded(ToolClaude, "b", SwitchGuard{ExpectedActive: "a", Hold: hold, Quiet: quiet}); err != nil || !switched {
-		t.Fatalf("switched=%v err=%v", switched, err)
-	}
-	if got := strings.Join(events, ","); got != "hold,quiet,release" {
-		t.Fatalf("order = %s", got)
-	}
-	events = nil
-	busy := errors.New("a turn is running")
-	if _, _, err := m.SwitchGuarded(ToolClaude, "a", SwitchGuard{ExpectedActive: "b", Hold: hold, Quiet: func() error { events = append(events, "quiet"); return busy }}); !errors.Is(err, busy) {
-		t.Fatalf("err=%v", err)
-	}
-	if got := strings.Join(events, ","); got != "hold,quiet,release" {
-		t.Fatalf("a refusal must release the hold: %s", got)
-	}
-	events = nil
-	if _, _, err := m.SwitchGuarded(ToolClaude, "b", SwitchGuard{ExpectedActive: "b", Hold: hold}); err != nil || len(events) != 0 {
-		t.Fatalf("a no-op must not take the hold: err=%v events=%v", err, events)
+	if _, err := os.Stat(credtarget.OAuthRefreshLockPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("the refresh lock must be released after the swap: %v", err)
 	}
 }

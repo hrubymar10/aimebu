@@ -297,25 +297,3 @@ func TestParseContainerState(t *testing.T) {
 		t.Error("a name was asked about as if it were an ID")
 	}
 }
-
-// An account switch's retire names a stuck process in a container that still runs, and confirms it gone once the container is (the retire asks
-// Docker itself; the watcher may get there first, which is the same result).
-func TestRetireForASwitchNamesAStuckContainerAndSettlesAGoneOne(t *testing.T) {
-	h, docker := containerHarness(t, time.Hour)
-	h.run("agt_a", func(s *adapter.TurnSpec) { s.LauncherContainerized = true; s.Agent.Tool = "claude" })
-	h.seen("agt_a")
-	h.f.sessions[0].lingers.Store(true)
-	if blocked := h.c.retireWarmToolBlocking("claude", "an account switch"); len(blocked) != 1 || blocked[0] != "agt_a" {
-		t.Fatalf("a process in a running container is not confirmed gone and is named: %v", blocked)
-	}
-	if !h.stuck("agt_a") {
-		t.Fatal("the unconfirmed process must stay quarantined")
-	}
-	docker.set(func(d *fakeDocker) { d.containers[containerOne] = "exited" })
-	if blocked := h.c.retireWarmToolBlocking("claude", "an account switch"); len(blocked) != 0 {
-		t.Fatalf("a process whose container exited is confirmed gone by the retire itself: %v", blocked)
-	}
-	if h.stuck("agt_a") || h.c.warmLive.Load() != 0 {
-		t.Fatalf("stuck=%t live=%d", h.stuck("agt_a"), h.c.warmLive.Load())
-	}
-}

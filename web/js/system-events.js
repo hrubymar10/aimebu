@@ -11,7 +11,7 @@ const labels = {
   agent_spawn_requested: 'Agent spawn requested', agent_spawn_confirmed: 'Agent spawned', agent_spawn_failed: 'Agent spawn failed',
   agent_control_requested: 'Agent control requested', agent_control_applied: 'Agent control applied',
   agent_context_cleared: 'Context cleared', agent_context_compacted: 'Context compacted',
-  agent_switch_requested: 'Agent switch requested', agent_switch_starting: 'Agent switch starting', agent_switch_completed: 'Agent switched', agent_switch_failed: 'Agent switch failed', agent_switch_quarantined: 'Held after an account switch: its warm process was not confirmed ended',
+  agent_switch_requested: 'Agent switch requested', agent_switch_starting: 'Agent switch starting', agent_switch_completed: 'Agent switched', agent_switch_failed: 'Agent switch failed',
   agent_turn_budget_exceeded: 'Agent paused: turn budget exceeded', loop_guard: 'Agents stopped answering each other',
   room_created: 'Room created', room_renamed: 'Room renamed', room_closing: 'Room closing', room_closed: 'Room closed', room_reopened: 'Room reopened', room_removed: 'Room removed', room_close_blocked: 'Room close blocked',
   room_member_joined: 'Joined the room', room_member_left: 'Left the room',
@@ -31,7 +31,7 @@ const labels = {
   user_created: 'User created', user_deactivated: 'User deactivated', user_admin_changed: 'Admin changed', user_invite_created: 'Invite created', user_invite_redeemed: 'Invite redeemed',
   credential_alert: 'Credential alert', update_status: 'Update status',
   quota_switch: 'Automatic account switch', quota_switch_dry_run: 'Automatic account switch due, not made: dry run is on', quota_hold: 'Automatic account switch held', quota_switch_failed: 'Automatic account switch failed',
-  quota_reset_seen: 'Weekly window reset seen', quota_switcher_tripped: 'Automatic switching tripped',
+  switch_overwritten: 'A running session wrote the old login back after a switch: the new login was installed again', quota_reset_seen: 'Weekly window reset seen', quota_switcher_tripped: 'Automatic switching tripped',
   limit_guard_soft: 'Usage limit near: new turns held', limit_guard_hard: 'Usage limit reached', limit_guard_clear: 'Usage back under the limit: new turns resume',
 };
 
@@ -99,6 +99,7 @@ export function describeEvent(event, names = {}) {
     const move = payload.from && payload.to ? `${payload.from} → ${payload.to}` : (payload.profile ?? '');
     return { text: parts[0], where, details: [payload.tool, move, payload.reason].filter(Boolean).map(String).join(' · ') };
   }
+  if (event.kind === 'switch_overwritten') return { text: parts[0], where, details: payload.tool ? `tool: ${payload.tool}` : '' };
   if (event.kind.startsWith('limit_guard_')) {
     // {tool, profile, percent, window, soft, hard, next}: which profile is how full, and what happens next.
     const full = payload.percent ? `${payload.percent}% ${payload.window ?? ''}`.trim() : '';

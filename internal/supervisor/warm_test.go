@@ -1877,14 +1877,6 @@ func TestWarmRetireByTool(t *testing.T) {
 	if h.c.RetireWarmTool("claude", "an account switch") {
 		t.Fatal("a process that cannot be confirmed gone must answer false, so the switch is refused")
 	}
-	// Asked again (the server's bounded wait), the stuck process is named, so the switch's refusal can say which agent holds it; the other tool's
-	// process is not.
-	if blocked := h.c.retireWarmToolBlocking("claude", "an account switch"); len(blocked) != 1 || blocked[0] != "agt_claude" {
-		t.Fatalf("blocked = %v", blocked)
-	}
-	if blocked := h.c.retireWarmToolBlocking("codex", "an account switch"); len(blocked) != 0 {
-		t.Fatalf("codex blocked = %v", blocked)
-	}
 }
 
 // A supervisor with a warm adapter says so in hello; one without does not.

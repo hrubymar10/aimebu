@@ -157,6 +157,12 @@ func (s *Server) noteProviderLimit(ctx context.Context, agentID string) {
 // host's agents of the tool met on the old login are lifted, so they go on with the new one instead of waiting for the old one's reset.
 func (s *Server) accountSwitched(ctx context.Context, tool string) {
 	s.refreshSwitchedUsage(tool)
+	// A switch never waits for agents: the warm processes of the tool are ended in the background, and a Codex login that a running session writes
+	// back is put right again.
+	s.retireWarmAfterSwitch(tool)
+	if tool == switcher.ToolCodex {
+		s.watchCodexOverwrite()
+	}
 	host, err := s.Store.HostMachine(ctx)
 	if err != nil {
 		log.Printf("switcher: %s switched, but the host's provider limits were not lifted: %v", tool, err)
@@ -174,40 +180,13 @@ func (s *Server) currentRefresher() *usages.TargetRefresher {
 	return s.refresher
 }
 
-// quotaActuator switches through Switcher.Switch after the shared running-turn check.
+// quotaActuator switches through Switcher.Switch. It never waits for agents (see accountSwitched): running turns keep the token they hold.
 type quotaActuator struct {
 	s *Server
-	// afterPreCheck is a test seam: it runs between the unlocked pre-check and the switch.
-	afterPreCheck func()
 }
 
 func (a quotaActuator) Switch(ctx context.Context, tool, from, to string) (bool, string, error) {
-	// No new turn of the tool starts until the switch is over, so none can start, end and park an idle warm process on the login that is about to go
-	// after the processes below were ended; the check for running turns comes after the hold (see switcherUse).
-	releaseDispatch := a.s.Store.HoldDispatch(tool)
-	defer releaseDispatch()
-	running, err := a.s.runningAgents(ctx, tool)
-	if err != nil {
-		return false, "", err
-	}
-	if len(running) > 0 {
-		return false, quota.ReasonAgentsRunning, nil
-	}
-	// Agents kept warm hold the login they started with: they are ended, and confirmed gone, before the swap.
-	releaseWarm, err := a.s.retireHostWarm(ctx, tool)
-	if err != nil {
-		log.Printf("quota: switch %s %s -> %s held: %v", tool, from, to, err)
-		return false, quota.ReasonWarmAgents, nil
-	}
-	defer releaseWarm() // cache pings of the tool stay held back until the switch is over, whatever it came to
-	if a.afterPreCheck != nil {
-		a.afterPreCheck()
-	}
-	// The pre-check above is only a cheap early refusal: the switch can wait up to 45s for the account
-	// lock and for the incoming refresh, and a turn may start meanwhile and have its credentials swapped
-	// under it. So quiescence is checked again, under the switcher lock, right before the swap.
-	_, changed, err := a.s.Switcher.SwitchGuarded(tool, to, switcher.SwitchGuard{ExpectedActive: from, Quiet: a.s.quietGuard(ctx, tool), Hold: a.s.Store.HoldTurns})
-	var turnRunning agentsRunningError
+	_, changed, err := a.s.Switcher.SwitchGuarded(tool, to, switcher.SwitchGuard{ExpectedActive: from})
 	switch {
 	case err == nil:
 		if changed {
@@ -224,8 +203,6 @@ func (a quotaActuator) Switch(ctx context.Context, tool, from, to string) (bool,
 		return false, quota.ReasonSwitcherOff, nil
 	case errors.Is(err, switcher.ErrActiveChanged):
 		return false, quota.ReasonActiveChanged, nil
-	case errors.As(err, &turnRunning):
-		return false, quota.ReasonAgentsRunning, nil
 	}
 	return false, "", err
 }

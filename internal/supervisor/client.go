@@ -683,9 +683,8 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			go func(request protocol.Frame) {
 				defer telemetry.Recover(ctx)
 				result := protocol.Frame{V: protocol.Version, Type: protocol.RetireWarmResult, ReqID: request.ReqID, Result: "ok"}
-				if blocked := c.retireWarmToolBlocking(request.RetireTool, "an account switch"); len(blocked) > 0 {
+				if !c.RetireWarmTool(request.RetireTool, "an account switch") {
 					result.Result, result.Message = "error", "a warm process of the tool is not confirmed gone"
-					result.RetireBlocked = blocked
 				}
 				if probeCtx.Err() != nil {
 					return
