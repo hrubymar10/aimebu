@@ -43,8 +43,10 @@ checkout record there, and agents in either project can start in that folder.
 
 Existing agent-specific worktrees are still listed in Health and can be removed
 there or with `DELETE /api/agents/{agent}/worktree`. A clean, merged worktree
-is removed; uncommitted or unmerged work is preserved unless the person uses
-`force` and confirms `REMOVE <name>`. A running agent's worktree cannot be
+is removed (an unpopulated submodule does not count as work); uncommitted or
+unmerged work, a populated or changed submodule, and a repository embedded
+under `.aimebu/` are preserved unless the person uses `force` and confirms
+`REMOVE <name>`. A running agent's worktree cannot be
 removed (`worktree_in_use`). After removal, that agent uses its room's checkout.
 
 **Worktrees are never removed automatically.** Health lists each one with its

@@ -180,52 +180,79 @@ func commonDir(ctx context.Context, root string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 
-// maxNestedScan bounds the walk nestedRepos makes without git; a tree with more entries is kept rather than guessed at.
-const maxNestedScan = 200000
-
-// nestedRepos answers why a worktree holds a submodule or an embedded repository ("" when it holds none). A status never goes into one (see
-// gitGuards), so dirtyCount cannot see work in it, and `git worktree remove` refuses such a worktree anyway. It looks for gitlinks in the index
-// (`ls-files --stage` reads only the index and runs no filter) and for a .git below the top level by walking the tree without git, not following
-// symlinks, so no nested repository's config is ever read.
+// nestedRepos answers why a worktree holds work in a submodule or an embedded repository that dirtyCount cannot see ("" when it holds none). A
+// status never goes into one (see gitGuards), and `git worktree remove` refuses a worktree with a populated submodule. A worktree is kept when
+// a gitlink in the index differs from the one in HEAD (`ls-files --stage` and `ls-tree`, which run no filter), when a gitlink's folder holds a
+// .git (populated: `git worktree add` never populates one, so a fresh worktree of a repository that commits a submodule is still removed), or
+// when a .git is below .aimebu/: an embedded repository anywhere else is untracked or ignored and so already counted by dirtyCount, while
+// ignored files under .aimebu/ are not. That walk does not use git or follow symlinks, so no nested repository's config is ever read.
 func nestedRepos(ctx context.Context, path string) (string, error) {
 	output, err := GitCommand(ctx, path, "ls-files", "--stage", "-z").Output()
 	if err != nil {
 		return "", err
 	}
+	index := map[string]string{}
 	for _, entry := range bytes.Split(output, []byte{0}) {
-		if bytes.HasPrefix(entry, []byte("160000 ")) {
-			return "contains a submodule", nil
+		// <mode> SP <object> SP <stage> TAB <path>
+		meta, name, ok := bytes.Cut(entry, []byte{'\t'})
+		if !ok || !bytes.HasPrefix(meta, []byte("160000 ")) {
+			continue
+		}
+		fields := strings.Fields(string(meta))
+		if len(fields) != 3 || fields[2] != "0" {
+			return "contains a changed submodule", nil // a conflicted gitlink
+		}
+		index[string(name)] = fields[1]
+	}
+	output, err = GitCommand(ctx, path, "ls-tree", "-r", "-z", "--full-tree", "HEAD").Output()
+	if err != nil {
+		return "", err
+	}
+	committed := 0
+	for _, entry := range bytes.Split(output, []byte{0}) {
+		// <mode> SP <type> SP <object> TAB <path>
+		meta, name, ok := bytes.Cut(entry, []byte{'\t'})
+		if !ok || !bytes.HasPrefix(meta, []byte("160000 ")) {
+			continue
+		}
+		fields := strings.Fields(string(meta))
+		if len(fields) != 3 || index[string(name)] != fields[2] {
+			return "contains a changed submodule", nil // changed or removed in the index
+		}
+		committed++
+	}
+	if committed != len(index) {
+		return "contains a changed submodule", nil // added in the index
+	}
+	for name := range index {
+		if _, err := os.Lstat(filepath.Join(path, filepath.FromSlash(name), ".git")); err == nil {
+			return "contains a checked-out submodule", nil
+		} else if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+			return "", err
 		}
 	}
-	seen, found := 0, false
-	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+	found := false
+	walkErr := filepath.WalkDir(filepath.Join(path, ".aimebu"), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // unreadable: nothing to learn here
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
 		}
-		if seen++; seen > maxNestedScan {
-			return errScanLimit
-		}
-		if d.Name() == ".git" && p != filepath.Join(path, ".git") {
+		if d.Name() == ".git" {
 			found = true
 			return filepath.SkipAll
 		}
-		if p == filepath.Join(path, ".git") && d.IsDir() {
-			return filepath.SkipDir
-		}
 		return nil
 	})
-	switch {
-	case errors.Is(walkErr, errScanLimit):
-		return "too many files to check for nested repositories", nil
-	case walkErr != nil:
+	if walkErr != nil {
 		return "", walkErr
-	case found:
+	}
+	if found {
 		return "contains an embedded repository", nil
 	}
 	return "", nil
 }
-
-var errScanLimit = errors.New("scan limit")
 
 func dirtyCount(ctx context.Context, root string, ignored bool) (int, error) {
 	args := []string{"status", "--porcelain=v1", "-z", "--untracked-files=all"}
