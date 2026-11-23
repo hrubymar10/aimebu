@@ -207,12 +207,14 @@ func TestPlainMessageSettlesNothingWithTwoOpenAttentionCards(t *testing.T) {
 	s, f := answerFixture(t, false)
 	ctx := context.Background()
 	first := attentionQuestion(t, s, f)
-	second, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "agent", AuthorID: f.agent.ID, Body: "And this?", NeedsAttention: true})
+	// The second card is another agent's: an agent's own newer card would replace its first one.
+	peer := peerAgent(t, s, f)
+	second, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "agent", AuthorID: peer, Body: "And this?", NeedsAttention: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`INSERT INTO inbox_item(id,project_id,room_id,message_id,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at)
-		SELECT 'inb_second',project_id,room_id,?,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at FROM inbox_item WHERE id=?`, second.ID, first.ID); err != nil {
+		SELECT 'inb_second',project_id,room_id,?,turn_id,?,requester_kind,?,kind,options_json,created_at FROM inbox_item WHERE id=?`, second.ID, peer, peer, first.ID); err != nil {
 		t.Fatal(err)
 	}
 	items, err := s.InboxForUser(ctx, "usr_answers")
@@ -321,12 +323,14 @@ func TestSweepDoesNotSettleAnUnansweredCardByAnEarlierPlainMessage(t *testing.T)
 	s, f := answerFixture(t, false)
 	ctx := context.Background()
 	first := attentionQuestion(t, s, f)
-	second, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "agent", AuthorID: f.agent.ID, Body: "And this?", NeedsAttention: true})
+	// The second card is another agent's: an agent's own newer card would replace its first one.
+	peer := peerAgent(t, s, f)
+	second, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "agent", AuthorID: peer, Body: "And this?", NeedsAttention: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`INSERT INTO inbox_item(id,project_id,room_id,message_id,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at)
-		SELECT 'inb_second',project_id,room_id,?,turn_id,agent_id,requester_kind,requester_id,kind,options_json,created_at FROM inbox_item WHERE id=?`, second.ID, first.ID); err != nil {
+		SELECT 'inb_second',project_id,room_id,?,turn_id,?,requester_kind,?,kind,options_json,created_at FROM inbox_item WHERE id=?`, second.ID, peer, peer, first.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_answers", Body: "plain chat"}); err != nil {

@@ -710,7 +710,12 @@ Inbox, usage, events, settings
   count leave out and the browser shows once as a toast.
   An open agent `ask` question or approval becomes `superseded` when a later
   message from a person or that asking agent commits in the same room; system
-  messages and messages in other rooms do not supersede it. Supersession and
+  messages and messages in other rooms do not supersede it. Any open
+  question or approval card an agent's message raised (an ask or an attention
+  card) also becomes `superseded` when the same agent raises a newer card in
+  the same room, or when a person replies anywhere in that card's thread; a
+  card with proposed answers or open questions is not settled by a person's
+  unrelated message. Supersession and
   the new message commit in one transaction. A superseded item only leaves the
   Inbox listing and the unseen count: it is not closed, its chat answer
   controls stay active, and an inbox answer still resolves it
@@ -1269,7 +1274,8 @@ compare-and-set on (state, rev) — an answer to an open item matches
   collect one answer per question and add a free-text Other choice to each.
   The room and inbox use the same item and answer endpoint. An explicit ask
   cannot be combined with attention controls.
-- Supersede (agent asks only): a later qualifying room message sets
+- Supersede (agent asks and attention cards only): a later qualifying room
+  message (for a card, also the same agent's newer card in the room) sets
   `open → superseded` in that message's transaction. It only removes the item
   from the Inbox listing and the unseen count — the ask is not closed, so the
   chat keeps its answer controls and an answer resolves it.

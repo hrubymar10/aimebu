@@ -700,13 +700,20 @@ project's home room; the Inbox view omits a hidden item and the per-room
 attention counts, the read cursor's attention count and the seen-marking exclude
 it. A real `ask`, a recovery and the other kinds are never hidden. A question with no structured `ask` is narrower, because it is a message
 in a conversation, and a person usually answers it in the chat: any later
-message from a person in the same room supersedes it only when it replies in
-the card's thread (`answered in thread`) or when it is a plain message (a reply to nothing) and the room's only open
+message from a person in the same room supersedes it only when it replies
+anywhere in the card's thread (`answered in thread`) or when it is a plain message (a reply to nothing) and the room's only open
 card of this kind (`answered in room`); with two or more open, a plain message
-settles none of them. Only a message as it is written applies the room rule; the
-startup sweep settles by thread reply alone. The asking agent supersedes it only with its own newer message replying to it. The
+settles none of them. A card with structured answers (`proposed_answers` or
+`open_questions`) waits for its answer: the plain-message room rule never
+settles it, only a reply in its thread, an answer, or a newer card. Only a message as it is written applies the room rule; the
+startup sweep settles by thread reply alone. The asking agent supersedes it with its own newer message replying to it, and an
+agent's newer card in the same room (an `ask`, or a message with
+`needs_attention`, `proposed_answers` or `open_questions`) supersedes every
+older open card of that agent in that room, structured or not (`newer card`);
+another agent's card, or a card in another room, does not. The periodic sweep
+applies the newer-card rule to cards opened before it existed. The
 `inbox_item_resolved` event carries `reason` (`answered in thread`,
-`answered in room` or `newer message`).
+`answered in room`, `newer card` or `newer message`).
 
 Items nobody can act on settle without a person. Closing a room (when it
 becomes `closed`) and stopping an agent resolve the open `recovery` and

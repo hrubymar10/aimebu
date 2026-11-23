@@ -44,8 +44,9 @@ func (tx *Tx) settleCandidates(query string, args ...any) ([]settleCandidate, er
 	return out, rows.Err()
 }
 
-// SettleOrphanedInbox settles, in one pass: the open recovery and delivery_failed items of a stopped agent or a closed room, and the open
-// questions whose thread a person (or the asking agent) has since replied in (a plain message in the room settles only as it is written, never here). The room-close, stop and message hooks settle these as they
+// SettleOrphanedInbox settles, in one pass: the open recovery and delivery_failed items of a stopped agent or a closed room, the open
+// questions whose thread a person (or the asking agent) has since replied in (a plain message in the room settles only as it is written, never
+// here), and the cards of an agent that has since raised a newer card in the same room. The room-close, stop and message hooks settle these as they
 // happen; this catches what they cannot (a turn killed by the stop only ends, and raises its recovery, after it) and what was open before.
 func (s *Store) SettleOrphanedInbox(ctx context.Context) error {
 	return s.Tx(ctx, func(tx *Tx) error {
@@ -72,6 +73,22 @@ func (s *Store) SettleOrphanedInbox(ctx context.Context) error {
 			return err
 		}
 		for _, c := range answered {
+			if err := tx.closeAnsweredQuestion(c.id, c.reason); err != nil {
+				return err
+			}
+		}
+		// An agent's newer card in the same room replaces its older ones (what supersedeAsks does as the card is written); this settles
+		// the cards opened before that rule.
+		newer, err := tx.settleCandidates(`SELECT i.id,'newer card' FROM inbox_item i JOIN message ask ON ask.id=i.message_id
+			WHERE i.state='open' AND i.kind IN ('question','approval') AND i.requester_kind='agent'
+			AND EXISTS(SELECT 1 FROM inbox_item n JOIN message nm ON nm.id=n.message_id
+				WHERE n.room_id=i.room_id AND n.requester_kind='agent' AND n.requester_id=i.requester_id
+				AND n.kind IN ('question','approval') AND nm.seq>ask.seq)
+			ORDER BY i.id LIMIT ?`, settleItemLimit)
+		if err != nil {
+			return err
+		}
+		for _, c := range newer {
 			if err := tx.closeAnsweredQuestion(c.id, c.reason); err != nil {
 				return err
 			}
