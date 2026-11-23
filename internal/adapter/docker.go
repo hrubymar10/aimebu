@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
 	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/v2/internal/runtimeignore"
 	"github.com/hrubymar10/aimebu/v2/internal/worktree"
@@ -276,8 +277,9 @@ func agentHTTPMCP(access *AgentToolsAccess, agentID string, docker bool) (endpoi
 
 // BridgeEntry is the stdio MCP entry of `aimebu agent-tools` for a native turn: the server address, the agent's id and the rest of the bridge's
 // environment, but never the key. The key is NamedKey in the entry's environment, which the harness expands (or forwards) from its own, where
-// the turn put it, so it is in neither the entry nor any file.
-func BridgeEntry(access *AgentToolsAccess, agentID, namedKey string) (command string, args []string, env map[string]string, err error) {
+// the turn put it, so it is in neither the entry nor any file. Workdir, when set, is the agent's workspace (the bridge runs next to it), where
+// attachment_get saves a file it cannot return inline.
+func BridgeEntry(access *AgentToolsAccess, agentID, namedKey, workdir string) (command string, args []string, env map[string]string, err error) {
 	if access == nil {
 		return "", nil, nil, errors.New("normal turn requires agent tools access")
 	}
@@ -293,6 +295,12 @@ func BridgeEntry(access *AgentToolsAccess, agentID, namedKey string) (command st
 	}
 	if namedKey != "" {
 		env[AgentKeyEnv] = namedKey
+	}
+	if workdir != "" {
+		if !filepath.IsAbs(workdir) {
+			return "", nil, nil, errors.New("invalid agent workspace")
+		}
+		env[agenttools.WorkdirEnv] = workdir
 	}
 	return access.Command, []string{"agent-tools"}, env, nil
 }

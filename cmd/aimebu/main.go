@@ -188,7 +188,7 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 			fmt.Fprintln(stderr, "agent-tools requires AIMEBU_URL and AIMEBU_AGENT_KEY")
 			return 1
 		}
-		if err := (agenttools.Server{URL: os.Getenv("AIMEBU_URL"), Key: os.Getenv("AIMEBU_AGENT_KEY"), Client: tlsclient.NewHTTPClient(0)}).Serve(ctx, os.Stdin, stdout); err != nil {
+		if err := (agenttools.Server{URL: os.Getenv("AIMEBU_URL"), Key: os.Getenv("AIMEBU_AGENT_KEY"), Workdir: os.Getenv(agenttools.WorkdirEnv), Client: tlsclient.NewHTTPClient(0)}).Serve(ctx, os.Stdin, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

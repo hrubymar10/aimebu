@@ -26,12 +26,12 @@ func TestAttachmentGetBoundsInlineContent(t *testing.T) {
 		wantText          string
 	}{
 		{"png", "image/png", []byte("png"), true, ""},
-		{"bmp", "image/bmp", []byte("bmp"), false, "Inline content omitted"},
+		{"bmp", "image/bmp", []byte("bmp"), false, "cannot save the file there"},
 		{"svg is read as source text", "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), false, "svg xmlns"},
-		{"large svg", "image/svg+xml", bytes.Repeat([]byte("x"), 65<<10), false, "Inline content omitted"},
+		{"large svg", "image/svg+xml", bytes.Repeat([]byte("x"), 65<<10), false, "cannot save the file there"},
 		{"text", "text/plain", []byte("small note"), false, "small note"},
-		{"large text", "text/plain", bytes.Repeat([]byte("x"), 65<<10), false, "Inline content omitted"},
-		{"binary", "application/octet-stream", bytes.Repeat([]byte{0xff}, 1<<20), false, "Inline content omitted"},
+		{"large text", "text/plain", bytes.Repeat([]byte("x"), 65<<10), false, "cannot save the file there"},
+		{"binary", "application/octet-stream", bytes.Repeat([]byte{0xff}, 1<<20), false, "cannot save the file there"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

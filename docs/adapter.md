@@ -206,11 +206,39 @@ without `prompt_overrides` (`prompt.WithoutOverrides`), so the agent never reads
 them twice. A turn without overrides uses the shipped bytes, so the goldens are
 unchanged.
 Input attachments on notes carry an ID, safe display name, MIME type, size,
-and digest. Claude Code, Codex, and native Pi fetch content through the
-room-scoped `attachment_get` MCP tool. Pi Docker has no MCP channel; its prompt
-receives a turn-scoped HTTP bearer and reachable URL for on-demand download to
-its own temporary directory. The bearer is omitted from the supervisor journal
-and stops working when the turn ends.
+and digest. Claude Code, Codex, native Pi, OpenCode and Vibe fetch content
+through the room-scoped `attachment_get` MCP tool. It returns a PNG, JPEG, GIF
+or WebP image and UTF-8 text up to 64 KB inline. Anything else up to 10 MB
+(`agenttools.MaxAttachmentBytes`, the upload limit; a bigger one is refused
+with a message saying so) is saved as a file where the tool can reach the
+agent's workspace, and `save: true` saves an inline image or text too. Where
+the tool runs decides that:
+
+- Native Claude Code and native Codex start the `aimebu agent-tools` stdio
+  bridge on the supervisor's machine, next to the checkout. The adapter puts
+  the workspace in the bridge entry (`AIMEBU_AGENT_WORKDIR`: Claude's launch
+  folder, else the checkout), and the bridge writes
+  `<workspace>/.aimebu/attachments/<attachment_id>/<name>`, mode 0600 under
+  folders it creates 0700, and answers with
+  `{"saved":true,"path","mime","size"}` (the absolute path, which the agent
+  sees as is). The name is the stored display name reduced to one safe file
+  name: the last path element, no control or format characters, no leading
+  dots, valid UTF-8, at most 200 bytes with a short extension kept, and
+  `attachment` when nothing is left. `.aimebu/` gets its `*` `.gitignore`
+  (`runtimeignore.Ensure`), so a saved file can never be staged. A folder on the
+  way that is a link, or a path that resolves outside the workspace, is
+  refused and nothing is written. The file is written under a temporary name
+  and renamed into place; asking again replaces it. Nothing is extracted or
+  run: the agent opens the file with its own tools.
+- Docker variants (Claude, Codex, OpenCode, Vibe) and native Pi, OpenCode and
+  Vibe reach the HTTP MCP endpoint, which runs the same tool inside the
+  server. The server may be on another machine and does not know the agent's
+  checkout, so it saves nothing: such a file is answered with its type, its
+  size and a line saying it cannot be saved there.
+- Pi Docker has no MCP channel; its prompt receives a turn-scoped HTTP bearer
+  and reachable URL for on-demand download to its own temporary directory. The
+  bearer is omitted from the supervisor journal and stops working when the
+  turn ends.
 
 Its parser retains the result event's `result` string byte-for-byte as the
 final candidate (the last result that answers the turn; see "Which result is the

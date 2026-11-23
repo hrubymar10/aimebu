@@ -3,6 +3,7 @@ package claude
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -296,7 +297,7 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 			} else {
 				// The bridge's entry is inline, and its key is a reference Claude expands from its own environment, where the turn puts it:
 				// the key is in no argument list and no file.
-				command, bridgeArgs, bridgeEnv, err := adapter.BridgeEntry(spec.AgentTools, spec.Agent.ID, "${"+adapter.AgentKeyEnv+"}")
+				command, bridgeArgs, bridgeEnv, err := adapter.BridgeEntry(spec.AgentTools, spec.Agent.ID, "${"+adapter.AgentKeyEnv+"}", cmp.Or(spec.LaunchPath, spec.CheckoutPath))
 				if err != nil {
 					return nil, err
 				}

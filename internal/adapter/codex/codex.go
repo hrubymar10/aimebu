@@ -381,7 +381,7 @@ func codexConfig(spec adapter.TurnSpec) ([]byte, error) {
 	if spec.Mode != adapter.ModeNormal || spec.AgentTools == nil {
 		return []byte("# aimebu private Codex runtime\n"), nil
 	}
-	command, args, env, err := adapter.BridgeEntry(spec.AgentTools, spec.Agent.ID, "")
+	command, args, env, err := adapter.BridgeEntry(spec.AgentTools, spec.Agent.ID, "", spec.CheckoutPath)
 	if err != nil {
 		return nil, err
 	}

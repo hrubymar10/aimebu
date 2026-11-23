@@ -34,6 +34,9 @@ var environment = []envVar{
 	{[]string{"AIMEBU_AGENT_ID", "AIMEBU_AGENT_KEY"}, []string{
 		"A managed agent's identity and key for agent-tools; the supervisor sets",
 		"them in the agent's MCP config, you normally never do"}},
+	{[]string{"AIMEBU_AGENT_WORKDIR"}, []string{
+		"The agent's workspace, where agent-tools saves an attachment it cannot",
+		"return inline; the supervisor sets it for native Claude Code and Codex"}},
 	{[]string{"AIMEBU_OWNER_LOGIN", "AIMEBU_OWNER_PASSWORD"}, []string{"Bootstrap the owner account on first start (set both; without them the server prints a one-time setup token)"}},
 	{[]string{"AIMEBU_EMBEDDED_SUPERVISOR"}, []string{"Set to 0 to run the server without its local supervisor (remote-only)"}},
 	{[]string{"AIMEBU_SUPERVISOR"}, []string{"Ignored: the local supervisor always runs as its own process (a server that has it set says so in its log)"}},

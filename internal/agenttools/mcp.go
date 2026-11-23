@@ -23,9 +23,12 @@ import (
 )
 
 type Server struct {
-	URL         string
-	Key         string
-	Client      *http.Client
+	URL    string
+	Key    string
+	Client *http.Client
+	// Workdir is the agent's workspace as the agent sees it. Only the stdio bridge, which runs next to the agent's files, sets it; there
+	// attachment_get saves a file it cannot return inline under <Workdir>/.aimebu/attachments. The server's HTTP endpoint leaves it empty.
+	Workdir     string
 	retryWindow time.Duration // tests shorten the default minute
 }
 
@@ -114,8 +117,9 @@ var catalog = []tool{
 	{"memory_recall", "Search curated project memory, task notes in joined rooms, and messages in joined rooms. Does not advance read state.", map[string]any{"type": "object", "properties": map[string]any{
 		"query": map[string]string{"type": "string"}, "limit": map[string]string{"type": "integer"},
 	}, "required": []string{"query"}}},
-	{"attachment_get", "Read a file attached to a note in your current turn while you remain a member of its room.", map[string]any{"type": "object", "properties": map[string]any{
+	{"attachment_get", "Read a file attached to a note in your current turn while you remain a member of its room. Images and text up to 64 KB come back inline. Any other file (a zip, a PDF, larger text) up to 10 MB is saved into your workspace at .aimebu/attachments/<attachment_id>/<name> (mode 0600, ignored by Git, never extracted or run) and the result gives its path, type and size; open it with your own tools. Set save to also save an image or small text. Saving needs a workspace the tool can reach; where it cannot, the result says so.", map[string]any{"type": "object", "properties": map[string]any{
 		"attachment_id": map[string]string{"type": "string"},
+		"save":          map[string]string{"type": "boolean", "description": "Also save an image or small text to a file; other files are always saved"},
 	}, "required": []string{"attachment_id"}}},
 	{"spawn_agent", "Active lead only. Spawn one non-lead agent. Supply role_key and omit tool, variant, and model to use the next available role default. Give a concrete reason when choosing a different harness or model. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"room_id": map[string]string{"type": "string"}, "role_key": map[string]string{"type": "string"},
@@ -234,6 +238,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 	method, path := http.MethodGet, ""
 	var body any
 	var requestKey string
+	var saveAttachmentFile bool
 	getString := func(field string) string {
 		var value string
 		_ = json.Unmarshal(args[field], &value)
@@ -489,6 +494,9 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 			return toolResult("invalid attachment_id", true)
 		}
 		path = "/api/agent/attachments/" + url.PathEscape(id)
+		if len(args["save"]) > 0 && json.Unmarshal(args["save"], &saveAttachmentFile) != nil {
+			return toolResult("save must be a boolean", true)
+		}
 	case "spawn_agent":
 		method, path = http.MethodPost, "/api/agent/agents"
 		requestKey = getString("request_key")
@@ -648,7 +656,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 	defer resp.Body.Close()
 	limit := int64(1<<20 + 1)
 	if name == "attachment_get" {
-		limit = 10<<20 + 1
+		limit = MaxAttachmentBytes + 1
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
@@ -658,24 +666,50 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		return toolResult(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, data), true)
 	}
 	if name == "attachment_get" {
-		if len(data) > 10<<20 {
-			return toolResult("attachment exceeds 10 MB", true)
-		}
-		contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-		switch contentType {
-		case "image/png", "image/jpeg", "image/gif", "image/webp":
-			return map[string]any{"content": []any{map[string]string{"type": "image", "data": base64.StdEncoding.EncodeToString(data), "mimeType": contentType}}, "isError": false}
-		}
-		const maxInlineText = 64 << 10
-		if len(data) <= maxInlineText && utf8.Valid(data) && (strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml" || contentType == "image/svg+xml") {
-			return toolResult(string(data), false)
-		}
-		return toolResult(fmt.Sprintf("Attachment: %s, %d bytes. Inline content omitted; download the file through an authenticated room client if you need its bytes.", contentType, len(data)), false)
+		return s.attachmentResult(getString("attachment_id"), resp.Header, data, saveAttachmentFile)
 	}
 	if len(data) > 1<<20 {
 		return toolResult("tool response exceeds 1 MB", true)
 	}
 	return toolResult(string(data), false)
+}
+
+// attachmentResult turns a downloaded attachment into the tool's answer: an image or small text inline, anything else saved into the agent's
+// workspace (when this side of the toolbox can reach it), and an image or small text saved too when the agent asked.
+func (s Server) attachmentResult(id string, header http.Header, data []byte, save bool) any {
+	if len(data) > MaxAttachmentBytes {
+		return toolResult(fmt.Sprintf("attachment is larger than %d MB, the most attachment_get returns; it was not saved", MaxAttachmentBytes>>20), true)
+	}
+	contentType, _, _ := mime.ParseMediaType(header.Get("Content-Type"))
+	var inline any
+	switch contentType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		inline = map[string]string{"type": "image", "data": base64.StdEncoding.EncodeToString(data), "mimeType": contentType}
+	default:
+		if len(data) <= maxInlineText && utf8.Valid(data) && (strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml" || contentType == "image/svg+xml") {
+			inline = map[string]string{"type": "text", "text": string(data)}
+		}
+	}
+	if inline != nil && !save {
+		return map[string]any{"content": []any{inline}, "isError": false}
+	}
+	if s.Workdir == "" {
+		note := fmt.Sprintf("Attachment: %s, %d bytes. This toolbox runs apart from your workspace, so it cannot save the file there; it is not available as a file here.", contentType, len(data))
+		if inline != nil {
+			return map[string]any{"content": []any{inline, map[string]string{"type": "text", "text": note}}, "isError": false}
+		}
+		return toolResult(note, false)
+	}
+	path, err := saveAttachment(s.Workdir, id, attachmentFileName(header.Get("Content-Disposition")), data)
+	if err != nil {
+		return toolResult(fmt.Sprintf("Attachment: %s, %d bytes. It could not be saved: %v", contentType, len(data), err), true)
+	}
+	saved, _ := json.Marshal(map[string]any{"saved": true, "path": path, "mime": contentType, "size": len(data)})
+	note := map[string]string{"type": "text", "text": string(saved) + "\nSaved to your workspace (mode 0600, ignored by Git). Open it with your own tools; it is never extracted or run for you."}
+	if inline != nil {
+		return map[string]any{"content": []any{inline, note}, "isError": false}
+	}
+	return map[string]any{"content": []any{note}, "isError": false}
 }
 
 func retryableConnectionError(err error) bool {

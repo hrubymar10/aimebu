@@ -219,7 +219,8 @@ the harness the key in the harness's environment (`AIMEBU_AGENT_KEY`), never in 
 (`ps` shows that to every local user):
 
 The bridge (`aimebu agent-tools`) reads `AIMEBU_URL`, `AIMEBU_AGENT_ID` and `AIMEBU_AGENT_KEY` from the environment it is started with; the first two
-are in its MCP entry, the key is the variable the harness fills from its own environment:
+are in its MCP entry, the key is the variable the harness fills from its own environment. The entry also carries `AIMEBU_AGENT_WORKDIR`, the
+agent's checkout (Claude's launch folder when it has one), where `attachment_get` saves a file it cannot return inline:
 
 - Claude: the `aimebu` MCP entry is inline (`--mcp-config <json>`), a stdio entry for `aimebu agent-tools`
   whose environment says `AIMEBU_AGENT_KEY=${AIMEBU_AGENT_KEY}`, which Claude expands from its own environment.
@@ -540,9 +541,14 @@ Live process goroutines send through the current machine socket after reconnect.
 The supervisor replays each unacknowledged process exit and unreceipted answer
 after `hello`, so a disconnect cannot strand those frames or rerun the tool.
 Attachments remain under the server's private storage; the supervisor does
-not fetch or stage them in a shared checkout. A normal agent turn can use the
+not fetch or stage them ahead of a turn. A normal agent turn can use the
 `attachment_get` MCP tool, which checks the delivered note and current room
-membership. Pi Docker has no MCP credential channel, so its private turn input
+membership. For native Claude Code and Codex the tool runs in the stdio
+bridge next to the agent's files, so a file it cannot return inline (a zip, a
+PDF, text over 64 KB; at most 10 MB) is written, only when the agent asks for
+it, to `<checkout>/.aimebu/attachments/<attachment_id>/<name>` with mode 0600
+(see [the adapter guide](adapter.md)). The other channels run the tool in the
+server and cannot write into a checkout. Pi Docker has no MCP credential channel, so its private turn input
 includes a turn-scoped HTTP bearer and a server URL reachable from the
 container. That bearer is not journaled or included in receipts, and loses
 access when the turn ends or the agent leaves the room.
