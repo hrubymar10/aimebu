@@ -85,11 +85,12 @@ export class MockAgentSource {
 
 export class HttpAgentSource {
   constructor() {
-    this.available = true; this.agents = new Map(); this.activity = new Map(); this.listeners = new Set();
+    this.available = true; this.agents = new Map(); this.activity = new Map(); this.turns = new Map(); this.listeners = new Set();
     let channel = null; try { channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('aimebu-agent-output') : null; } catch { channel = null; }
     this.outputShare = new OutputShare({ fetch: (roomID, key, lines) => { const [agentID, stream] = String(key).split(STREAM_KEY); return this.output(roomID, agentID, lines, stream || 'stderr'); }, channel, user: () => currentUser || '' });
   }
-  normalize(agent) { const activity = this.activity.get(agent.id); return { ...agent, name: agent.slug, role: agent.role_key, activity: activity?.summary || '', activity_at: activity?.at || agent.last_activity_at || '' }; }
+  // turn_started_at is when the turn running now was first acknowledged, known only for a turn that started while this page was open.
+  normalize(agent) { const activity = this.activity.get(agent.id), turn = this.turns.get(agent.id); return { ...agent, name: agent.slug, role: agent.role_key, activity: activity?.summary || '', activity_at: activity?.at || agent.last_activity_at || '', turn_started_at: turn?.at || '' }; }
   catalog(machineID) { return request('/api/spawn-catalog' + (machineID ? `?machine_id=${encodeURIComponent(machineID)}` : '')); }
   roles() { return request('/api/roles'); }
   teamFlow(projectID) { return request(`/api/projects/${encodeURIComponent(projectID)}/team-flow`); }
@@ -203,6 +204,8 @@ export class HttpAgentSource {
       const labels = { turn_recorded: 'Queued', turn_dispatch_requested: 'Starting', answer_committed: 'Replied', answer_held: 'Reply held', turn_process_exit: 'Finished', turn_finished: 'Finished', turn_lost: 'Needs recovery', turn_never_started: 'Never started' };
       const label = labels[event.kind] || (event.kind.startsWith('turn_ack_') ? 'Working' : '');
       const previous = this.activity.get(event.agent_id);
+      if (event.kind.startsWith('turn_ack_') && event.turn_id && this.turns.get(event.agent_id)?.turnID !== event.turn_id) this.turns.set(event.agent_id, { turnID: event.turn_id, at: event.created_at });
+      else if (['turn_finished', 'turn_process_exit', 'turn_lost', 'turn_never_started'].includes(event.kind) && this.turns.get(event.agent_id)?.turnID === event.turn_id) this.turns.delete(event.agent_id);
       if (payload.summary) this.activity.set(event.agent_id, { summary: payload.summary, turnID: event.turn_id, kind: event.kind, at: event.created_at });
       else if (label && !((event.kind === 'turn_process_exit' || event.kind === 'turn_finished') && previous?.turnID === event.turn_id && previous.kind === 'answer_committed')) {
         const when = new Date(event.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

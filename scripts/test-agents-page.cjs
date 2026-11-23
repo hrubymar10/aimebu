@@ -629,6 +629,21 @@ async function main() {
     await page.evaluate(() => { window.__saved = []; const make = URL.createObjectURL.bind(URL); URL.createObjectURL = blob => { window.__saved.push(blob.text()); return make(blob); }; HTMLAnchorElement.prototype.click = function () { window.__savedName = this.download; }; });
     await page.$eval('#agent-log-dialog .agent-log-download', node => node.click());
     assert.deepEqual(await page.evaluate(async () => [await Promise.all(window.__saved), window.__savedName]), [['\u001b[31mError\u001b[0m: <b>bold</b> one\nok\nERROR again\n'], 'ada-logs.txt']);
+    // The summary over the text: the state chip, a last activity that ticks with the panel's clock, and the health flags of the card.
+    const summary = () => page.$eval('#agent-log-dialog .agent-summary', node => ({ state: node.dataset.state, chip: node.querySelector('.agent-summary-chip').textContent, activity: node.querySelector('.agent-summary-activity').textContent, turn: node.querySelector('.agent-summary-turn')?.textContent || '' }));
+    const shown = await summary();
+    assert.deepEqual([shown.state, shown.chip, shown.turn], ['working', 'Working', 'In a turn'], JSON.stringify(shown));
+    assert.match(shown.activity, /^Last activity .+ ago$/);
+    await page.$eval('#agent-log-dialog .agent-log-text', node => { window.__logText = node.firstChild; });
+    // The store's own one-second tick would put the real time back between the write and the read: it is stopped for this check.
+    await page.evaluate(() => { clearInterval(window.__panel.store.tick); window.__panel.store.now.value = Date.parse('2026-01-01T10:03:12Z'); }); await settle(page);
+    assert.equal((await summary()).activity, 'Last activity 3m 12s ago', 'the last activity follows the clock');
+    assert.equal(await page.$eval('#agent-log-dialog .agent-log-text', node => !!window.__logText && node.firstChild === window.__logText), true, 'a tick leaves the log text alone');
+    // A turn acknowledged while the page is open has a start, and the turn line counts from it; its end forgets it.
+    const turnStart = await page.evaluate(() => { const source = window.__panel.source; void source.onEvent({ kind: 'turn_ack_started', agent_id: 'a1', turn_id: 't9', created_at: '2026-01-01T09:22:00Z', payload_json: '{}' });
+      const started = source.normalize({ id: 'a1' }).turn_started_at; void source.onEvent({ kind: 'turn_ack_progress', agent_id: 'a1', turn_id: 't9', created_at: '2026-01-01T09:30:00Z', payload_json: '{}' });
+      const kept = source.normalize({ id: 'a1' }).turn_started_at; void source.onEvent({ kind: 'turn_finished', agent_id: 'a1', turn_id: 't9', created_at: '2026-01-01T09:40:00Z', payload_json: '{}' }); return [started, kept, source.normalize({ id: 'a1' }).turn_started_at]; });
+    assert.deepEqual(turnStart, ['2026-01-01T09:22:00Z', '2026-01-01T09:22:00Z', '']);
     // Highlight: literal and case-insensitive; a pattern's characters are text.
     await page.type('#agent-log-dialog .agent-log-query', 'error'); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));
     assert.deepEqual([(await dialog()).marks, (await dialog()).count], [['Error', 'ERROR'], '2 matches']);

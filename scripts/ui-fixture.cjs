@@ -109,7 +109,7 @@ const FIXTURE = async () => {
     // The agent log popup with a read drawn and a highlight, from the real dialog over a store that holds one answer.
     const { LogDialog } = await import('/js/pages/agents/log-dialog.js'), { signal } = await import('/js/ui.js');
     const logs = { state: signal({ agentID: agent.id, lines: 200, follow: true, text: 'Error: first\nworking\nerror again\n', status: 'Earlier output is not shown.', loading: false }), setLines() {}, setFollow() {}, read() {} };
-    render(html`<${LogDialog} store=${logs} host=${{ agentName: () => 'claude-reviewer', agentSlug: () => 'claude-reviewer', closeLogs() {} }} />`, document.querySelector('#agent-log-dialog'));
+    render(html`<${LogDialog} store=${logs} host=${{ agentName: () => 'claude-reviewer', agentSlug: () => 'claude-reviewer', closeLogs() {}, store: { now: signal(Date.now()), agents: signal(new Map([[agent.id, { ...agent, last_activity_at: new Date(Date.now() - 192000).toISOString(), turn_started_at: new Date(Date.now() - 2460000).toISOString(), health_flags: [{ code: 'stuck' }], last_exit_evidence: 'Process exited with code 17.' }]])) } }} />`, document.querySelector('#agent-log-dialog'));
   }
   // The Settings dialog is a chunk the app fetches on first use, and nothing opens it here: make it, so its navigation and sections are in the page for the audits.
   {

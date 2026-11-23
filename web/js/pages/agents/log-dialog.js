@@ -1,5 +1,6 @@
 import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
+import { AgentSummary } from './summary.js';
 import { HIGHLIGHT_MS, LINES_MAX, LINES_MIN, STREAMS, atBottom, highlightBlocks, logBlocks, matchLabel, stepMatch, streamNote, streamOf } from './log-model.js';
 
 // The text with its matches as <mark> elements. Preact writes every part as a text node or a <mark> with a text node in it, never as HTML,
@@ -79,7 +80,7 @@ export function LogDialog({ store, host }) {
           <${IconButton} name="close" label="Close logs" className="agent-log-close" onClick=${() => host.closeLogs()} /></span>
       </div>
     </header>
-    <div class="agent-log-summary" data-slot="summary"></div>
+    <div class="agent-log-summary">${host.store && html`<${AgentSummary} store=${host.store} agentID=${state.agentID} />`}</div>
     <p class="agent-log-note">${streamNote(stream)}</p>
     <${LogText} blocks=${found.blocks} current=${current} follow=${state.follow} onPinned=${setPinned} textRef=${textRef} label=${`Logs of ${name}`} stream=${stream} />
     <p class="agent-log-status" role="status">${[state.loading && !state.text ? 'Loading…' : state.status, state.follow && !pinned ? 'Scrolled up: Follow keeps reading but leaves the view where it is.' : ''].filter(Boolean).join(' ')}</p>`;
