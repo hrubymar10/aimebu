@@ -359,11 +359,15 @@ func (tx *Tx) SetReaction(messageID, kind, memberID, emoji string, active bool) 
 	return err
 }
 
+// eventBoundsSQL uses two scalar subqueries: MIN and MAX in one SELECT make
+// SQLite skip its min/max optimisation and scan the whole event index.
+const eventBoundsSQL = `SELECT COALESCE((SELECT MIN(seq) FROM event),0),COALESCE((SELECT MAX(seq) FROM event),0)`
+
 func (s *Store) EventBounds(ctx context.Context) (min, max int64, err error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return 0, 0, err
 	}
-	err = s.readDB.QueryRowContext(ctx, `SELECT COALESCE(MIN(seq),0),COALESCE(MAX(seq),0) FROM event`).Scan(&min, &max)
+	err = s.readDB.QueryRowContext(ctx, eventBoundsSQL).Scan(&min, &max)
 	return
 }
 
